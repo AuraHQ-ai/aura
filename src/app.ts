@@ -1,13 +1,15 @@
 import { Hono } from "hono";
-import { App, ExpressReceiver } from "@slack/bolt";
-import { registerHandlers } from "./slack/handler.js";
+import { WebClient } from "@slack/web-api";
 import { cronApp } from "./cron/consolidate.js";
+import { runPipeline } from "./pipeline/index.js";
 import { logger } from "./lib/logger.js";
+import { recordError } from "./lib/metrics.js";
+import crypto from "node:crypto";
 
-// ── Slack Bolt Setup ────────────────────────────────────────────────────────
+// ── Config ──────────────────────────────────────────────────────────────────
 
-const signingSecret = process.env.SLACK_SIGNING_SECRET;
-const botToken = process.env.SLACK_BOT_TOKEN;
+const signingSecret = process.env.SLACK_SIGNING_SECRET || "";
+const botToken = process.env.SLACK_BOT_TOKEN || "";
 const botUserId = process.env.AURA_BOT_USER_ID || "";
 
 if (!signingSecret || !botToken) {
@@ -16,16 +18,7 @@ if (!signingSecret || !botToken) {
   );
 }
 
-/**
- * We use a custom receiver approach to integrate Slack Bolt with Hono
- * for Vercel serverless deployment.
- *
- * The flow:
- * 1. Hono receives POST /api/slack/events
- * 2. We parse the body and pass it to Slack Bolt for verification + dispatch
- * 3. Bolt calls our registered event handlers
- * 4. Handlers run the pipeline and respond
- */
+const slackClient = new WebClient(botToken);
 
 // ── Hono App ────────────────────────────────────────────────────────────────
 
@@ -47,40 +40,68 @@ app.get("/api/health", (c) => {
 // Mount cron routes
 app.route("/", cronApp);
 
-// ── Slack Events Endpoint ───────────────────────────────────────────────────
+// ── Slack Signature Verification ────────────────────────────────────────────
 
-// Store a reference to the Bolt app for request processing
-let boltApp: App | null = null;
+function verifySlackSignature(
+  body: string,
+  timestamp: string,
+  signature: string,
+): boolean {
+  if (!signingSecret) return false;
 
-function getBoltApp(): App {
-  if (boltApp) return boltApp;
+  // Reject requests older than 5 minutes (replay attack protection)
+  const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 300;
+  if (parseInt(timestamp) < fiveMinutesAgo) return false;
 
-  // Create a custom receiver that we control
-  const receiver = new ExpressReceiver({
-    signingSecret: signingSecret || "dummy",
-    processBeforeResponse: true,
-  });
+  const sigBasestring = `v0:${timestamp}:${body}`;
+  const mySignature =
+    "v0=" +
+    crypto
+      .createHmac("sha256", signingSecret)
+      .update(sigBasestring, "utf8")
+      .digest("hex");
 
-  boltApp = new App({
-    token: botToken,
-    receiver,
-    // We handle initialization ourselves
-  });
-
-  // Register event handlers
-  registerHandlers(boltApp, botUserId);
-
-  return boltApp;
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(mySignature, "utf8"),
+      Buffer.from(signature, "utf8"),
+    );
+  } catch {
+    return false;
+  }
 }
 
-/**
- * Main Slack events endpoint.
- * Handles:
- * - URL verification challenge (Slack setup)
- * - Event dispatch to Bolt handlers
- */
+// ── Slack Retry Detection (must be registered before the handler) ───────────
+
+app.use("/api/slack/*", async (c, next) => {
+  // Slack retries events if it doesn't get a 200 within 3 seconds.
+  // If we see a retry header, acknowledge without re-processing.
+  const retryNum = c.req.header("x-slack-retry-num");
+  const retryReason = c.req.header("x-slack-retry-reason");
+
+  if (retryNum) {
+    logger.info("Slack retry detected — acknowledging without processing", {
+      retryNum,
+      retryReason,
+    });
+    return c.json({ ok: true });
+  }
+
+  await next();
+});
+
+// ── Slack Events Endpoint ───────────────────────────────────────────────────
+
 app.post("/api/slack/events", async (c) => {
-  const body = await c.req.json();
+  const rawBody = await c.req.text();
+
+  // Parse the body
+  let body: any;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
 
   // Handle Slack URL verification challenge
   if (body.type === "url_verification") {
@@ -89,51 +110,51 @@ app.post("/api/slack/events", async (c) => {
   }
 
   // Verify request signature
-  const timestamp = c.req.header("x-slack-request-timestamp");
-  const signature = c.req.header("x-slack-signature");
+  const timestamp = c.req.header("x-slack-request-timestamp") || "";
+  const signature = c.req.header("x-slack-signature") || "";
 
-  if (!timestamp || !signature) {
-    return c.json({ error: "Missing Slack headers" }, 401);
+  if (signingSecret && !verifySlackSignature(rawBody, timestamp, signature)) {
+    logger.warn("Invalid Slack signature — rejecting request");
+    return c.json({ error: "Invalid signature" }, 401);
   }
 
   // Process the event
-  try {
-    const bolt = getBoltApp();
+  if (body.event) {
+    const event = body.event;
 
-    // For Slack events, we need to acknowledge quickly (within 3 seconds)
-    // and process the event asynchronously
-    if (body.event) {
-      const event = body.event;
-      logger.debug("Dispatching event", { type: event.type });
+    logger.debug("Dispatching Slack event", {
+      type: event.type,
+      subtype: event.subtype,
+      channel: event.channel,
+    });
 
-      // Process the event using Bolt's event handling
-      // We simulate what Bolt would do by directly calling our pipeline
-      const { runPipeline } = await import("./pipeline/index.js");
-      const { WebClient } = await import("@slack/web-api");
-
-      const client = new WebClient(botToken);
-
-      // Run pipeline — in Vercel, we'd use waitUntil here
-      // For now, we fire-and-forget to meet the 3-second deadline
-      const pipelinePromise = runPipeline({
-        event,
-        client,
-        botUserId,
+    // Run pipeline asynchronously.
+    // On Vercel, we must acknowledge within 3 seconds, so we process
+    // in the background using waitUntil where available.
+    const pipelinePromise = runPipeline({
+      event,
+      client: slackClient,
+      botUserId,
+    }).catch((err) => {
+      recordError("pipeline", err, {
+        eventType: event.type,
+        channel: event.channel,
       });
+    });
 
-      // If we have access to waitUntil (Vercel), use it
-      // Otherwise, just don't await — the response goes out immediately
-      pipelinePromise.catch((err) => {
-        logger.error("Pipeline error (background)", { error: String(err) });
-      });
+    // Use Vercel's waitUntil if available (keeps the function alive
+    // after the response is sent)
+    const ctx = c.executionCtx as any;
+    if (ctx?.waitUntil) {
+      ctx.waitUntil(pipelinePromise);
+    } else {
+      // Fire and forget — response goes out immediately
+      void pipelinePromise;
     }
-
-    // Acknowledge immediately
-    return c.json({ ok: true });
-  } catch (error) {
-    logger.error("Failed to process Slack event", { error: String(error) });
-    return c.json({ error: "Internal error" }, 500);
   }
+
+  // Acknowledge immediately (must happen within 3 seconds for Slack)
+  return c.json({ ok: true });
 });
 
 export default app;

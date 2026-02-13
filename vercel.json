@@ -2,9 +2,15 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install",
   "framework": null,
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
     { "source": "/slack/events", "destination": "/api/slack/events" },
-    { "source": "/api/cron/consolidate", "destination": "/api/cron/consolidate" }
+    { "source": "/health", "destination": "/api/health" },
+    { "source": "/(.*)", "destination": "/api/index" }
   ],
   "crons": [
     {

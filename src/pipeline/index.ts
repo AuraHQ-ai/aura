@@ -13,9 +13,17 @@ import {
   formatKnowledgeSummary,
   forgetMemories,
 } from "../memory/transparency.js";
-import { getOrCreateProfile, recordInteraction, updateProfileFromConversation } from "../users/profiles.js";
+import {
+  getOrCreateProfile,
+  recordInteraction,
+  updateProfileFromConversation,
+} from "../users/profiles.js";
 import { logger } from "../lib/logger.js";
+import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import type { KnownEventFromType } from "@slack/bolt";
+
+/** Maximum message length we'll process (characters). Slack max is ~40k. */
+const MAX_MESSAGE_LENGTH = 8000;
 
 interface PipelineOptions {
   event: KnownEventFromType<"message"> | KnownEventFromType<"app_mention">;
@@ -31,10 +39,11 @@ interface PipelineOptions {
  * Steps:
  * 1. Parse context (who, where, what)
  * 2. Decide if we should respond
- * 3. Assemble prompt (memories + profile + thread context)
- * 4. Call LLM
- * 5. Post-process and send response
- * 6. Background: store messages, extract memories, update profile
+ * 3. Handle special commands (transparency)
+ * 4. Assemble prompt (memories + profile + thread context)
+ * 5. Call LLM
+ * 6. Post-process and send response
+ * 7. Background: store messages, extract memories, update profile
  */
 export async function runPipeline(options: PipelineOptions): Promise<void> {
   const { event, client, botUserId, waitUntil } = options;
@@ -50,8 +59,11 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // 2. Should we respond?
   if (!shouldRespond(context)) {
     // Still store the message for context, but don't respond
+    const storePromise = storeUserMessage(context);
     if (waitUntil) {
-      waitUntil(storeUserMessage(context));
+      waitUntil(storePromise);
+    } else {
+      await storePromise;
     }
     return;
   }
@@ -60,32 +72,68 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     userId: context.userId,
     channelType: context.channelType,
     isDm: context.isDm,
+    textLength: context.text.length,
     textPreview: context.text.substring(0, 80),
   });
 
   try {
+    // ── Edge case: empty or near-empty message ───────────────────────────
+    if (context.text.trim().length === 0) {
+      // User just @mentioned Aura with no text
+      await client.chat.postMessage({
+        channel: context.channelId,
+        text: "Hey. What's up?",
+        thread_ts: context.threadTs || context.messageTs,
+      });
+      return;
+    }
+
+    // ── Edge case: extremely long message ────────────────────────────────
+    let messageText = context.text;
+    if (messageText.length > MAX_MESSAGE_LENGTH) {
+      messageText = messageText.substring(0, MAX_MESSAGE_LENGTH);
+      logger.warn("Truncated long message", {
+        originalLength: context.text.length,
+        truncatedTo: MAX_MESSAGE_LENGTH,
+      });
+    }
+
     // Ensure user has a profile
     const displayName = await resolveDisplayName(client, context.userId);
-    const profile = await getOrCreateProfile(
-      context.userId,
-      displayName,
-    );
+    await getOrCreateProfile(context.userId, displayName);
 
     // 3. Check for transparency commands first
     const transparencyResult = await handleTransparencyCommands(
-      context,
+      { ...context, text: messageText },
       client,
     );
-    if (transparencyResult) return;
+    if (transparencyResult) {
+      recordPipelineMetrics({
+        totalMs: Date.now() - pipelineStart,
+        memoriesUsed: 0,
+        modifications: [],
+        channelType: context.channelType,
+        userId: context.userId,
+        isTransparencyCommand: true,
+      });
+      return;
+    }
 
     // 4. Assemble prompt
-    const { systemPrompt, memories, userProfile } = await assemblePrompt(context);
+    const retrievalStart = Date.now();
+    const { systemPrompt, memories } = await assemblePrompt({
+      ...context,
+      text: messageText,
+    });
+    const retrievalMs = Date.now() - retrievalStart;
 
     // 5. Call LLM
+    const llmStart = Date.now();
     const response = await generateResponse({
       systemPrompt,
-      userMessage: context.text,
+      userMessage: messageText,
     });
+    const llmMs = Date.now() - llmStart;
 
     // 6. Send response to Slack
     await client.chat.postMessage({
@@ -95,16 +143,34 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     });
 
     const totalMs = Date.now() - pipelineStart;
+
+    // Record metrics
+    recordPipelineMetrics({
+      totalMs,
+      llmMs,
+      retrievalMs,
+      memoriesUsed: memories.length,
+      promptTokens: response.usage?.promptTokens,
+      completionTokens: response.usage?.completionTokens,
+      totalTokens: response.usage?.totalTokens,
+      modifications: response.modifications,
+      channelType: context.channelType,
+      userId: context.userId,
+      isTransparencyCommand: false,
+    });
+
     logger.info(`Pipeline completed in ${totalMs}ms`, {
       userId: context.userId,
       channelType: context.channelType,
       memoriesUsed: memories.length,
+      llmMs,
+      retrievalMs,
       modifications: response.modifications,
     });
 
     // 7. Background tasks (via waitUntil so they don't block the response)
     const backgroundTasks = runBackgroundTasks({
-      context,
+      context: { ...context, text: messageText },
       response: response.raw,
       displayName,
     });
@@ -112,14 +178,13 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     if (waitUntil) {
       waitUntil(backgroundTasks);
     } else {
-      // If no waitUntil available, await them (but this adds latency)
       await backgroundTasks;
     }
   } catch (error) {
-    logger.error("Pipeline failed", {
-      error: String(error),
+    recordError("pipeline", error, {
       userId: context.userId,
       channelId: context.channelId,
+      channelType: context.channelType,
     });
 
     // Try to send a graceful error message
@@ -130,7 +195,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         thread_ts: context.threadTs || context.messageTs,
       });
     } catch {
-      // If we can't even send the error message, just log and move on
       logger.error("Failed to send error message to Slack");
     }
   }
@@ -161,8 +225,8 @@ async function handleTransparencyCommands(
       });
       return true;
     } catch (error) {
-      logger.error("Failed to get knowledge summary", {
-        error: String(error),
+      recordError("transparency.knowledge", error, {
+        userId: context.userId,
       });
       await client.chat.postMessage({
         channel: context.channelId,
@@ -200,7 +264,10 @@ async function handleTransparencyCommands(
       }
       return true;
     } catch (error) {
-      logger.error("Failed to forget memories", { error: String(error) });
+      recordError("transparency.forget", error, {
+        userId: context.userId,
+        whatToForget,
+      });
       await client.chat.postMessage({
         channel: context.channelId,
         text: "Something went wrong trying to forget that. Try again?",
@@ -228,7 +295,7 @@ async function storeUserMessage(context: MessageContext): Promise<void> {
       content: context.text,
     });
   } catch (error) {
-    logger.error("Failed to store user message", { error: String(error) });
+    recordError("storeUserMessage", error, { userId: context.userId });
   }
 }
 
@@ -254,8 +321,7 @@ async function runBackgroundTasks(params: {
       content: context.text,
     });
 
-    // Store Aura's response
-    // Generate a pseudo-timestamp for the assistant message
+    // Store Aura's response with a pseudo-timestamp
     const assistantTs = `${context.messageTs}-aura`;
     await storeMessage({
       slackTs: assistantTs,
@@ -285,26 +351,32 @@ async function runBackgroundTasks(params: {
       response,
     );
   } catch (error) {
-    logger.error("Background task failed", { error: String(error) });
-    // Non-fatal — don't crash
+    recordError("backgroundTasks", error, { userId: context.userId });
   }
 }
 
 /**
  * Resolve a Slack user's display name.
+ * Cached per function invocation (Vercel serverless).
  */
+const displayNameCache = new Map<string, string>();
+
 async function resolveDisplayName(
   client: WebClient,
   userId: string,
 ): Promise<string> {
+  const cached = displayNameCache.get(userId);
+  if (cached) return cached;
+
   try {
     const result = await client.users.info({ user: userId });
-    return (
+    const name =
       result.user?.profile?.display_name ||
       result.user?.real_name ||
       result.user?.name ||
-      userId
-    );
+      userId;
+    displayNameCache.set(userId, name);
+    return name;
   } catch {
     return userId;
   }
