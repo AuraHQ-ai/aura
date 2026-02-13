@@ -8,6 +8,11 @@ import { assemblePrompt } from "./prompt.js";
 import { generateResponse } from "./respond.js";
 import { storeMessage } from "../memory/store.js";
 import { extractMemories } from "../memory/extract.js";
+import {
+  getKnowledgeAboutUser,
+  formatKnowledgeSummary,
+  forgetMemories,
+} from "../memory/transparency.js";
 import { getOrCreateProfile, recordInteraction, updateProfileFromConversation } from "../users/profiles.js";
 import { logger } from "../lib/logger.js";
 import type { KnownEventFromType } from "@slack/bolt";
@@ -133,6 +138,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
 
 /**
  * Handle transparency commands: "what do you know about me?" and "forget X"
+ * Returns true if a command was handled (pipeline should stop), false otherwise.
  */
 async function handleTransparencyCommands(
   context: MessageContext,
@@ -145,15 +151,63 @@ async function handleTransparencyCommands(
     text.includes("what do you know about me") ||
     text.includes("what do you remember about me")
   ) {
-    // This will be fully implemented in M3
-    // For now, return false to let the normal pipeline handle it
-    return false;
+    try {
+      const knowledge = await getKnowledgeAboutUser(context.userId);
+      const summary = formatKnowledgeSummary(knowledge);
+      await client.chat.postMessage({
+        channel: context.channelId,
+        text: summary,
+        thread_ts: context.threadTs || context.messageTs,
+      });
+      return true;
+    } catch (error) {
+      logger.error("Failed to get knowledge summary", {
+        error: String(error),
+      });
+      await client.chat.postMessage({
+        channel: context.channelId,
+        text: "I hit a snag pulling that together. Try again in a moment.",
+        thread_ts: context.threadTs || context.messageTs,
+      });
+      return true;
+    }
   }
 
   // "Forget X" command
-  if (text.startsWith("forget ") || text.startsWith("please forget ")) {
-    // This will be fully implemented in M3
-    return false;
+  const forgetMatch = text.match(
+    /^(?:please\s+)?forget\s+(?:about\s+)?(?:that\s+)?(.+)/i,
+  );
+  if (forgetMatch) {
+    const whatToForget = forgetMatch[1].trim();
+    try {
+      const result = await forgetMemories(context.userId, whatToForget);
+      if (result.forgottenCount === 0) {
+        await client.chat.postMessage({
+          channel: context.channelId,
+          text: `I looked, but I couldn't find anything matching "${whatToForget}" in what I know about you. Maybe I never stored it, or it might be phrased differently in my memory.`,
+          thread_ts: context.threadTs || context.messageTs,
+        });
+      } else {
+        const examplesText =
+          result.examples.length > 0
+            ? `\n\nRemoved things like:\n${result.examples.map((e) => `- ${e}`).join("\n")}`
+            : "";
+        await client.chat.postMessage({
+          channel: context.channelId,
+          text: `Done. I forgot ${result.forgottenCount} thing${result.forgottenCount === 1 ? "" : "s"} related to "${whatToForget}".${examplesText}`,
+          thread_ts: context.threadTs || context.messageTs,
+        });
+      }
+      return true;
+    } catch (error) {
+      logger.error("Failed to forget memories", { error: String(error) });
+      await client.chat.postMessage({
+        channel: context.channelId,
+        text: "Something went wrong trying to forget that. Try again?",
+        thread_ts: context.threadTs || context.messageTs,
+      });
+      return true;
+    }
   }
 
   return false;
