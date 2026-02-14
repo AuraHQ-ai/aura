@@ -703,5 +703,302 @@ export function createSlackTools(client: WebClient) {
         }
       },
     }),
+
+    // ── Slack Lists Tools ──────────────────────────────────────────────────
+
+    list_slack_list_items: tool({
+      description:
+        "Retrieve items (rows) from a Slack List. Use this to read bug trackers, project lists, task lists, or any Slack List. Requires the list ID.",
+      inputSchema: z.object({
+        list_id: z
+          .string()
+          .describe("The ID of the Slack List to read items from"),
+        limit: z
+          .number()
+          .min(1)
+          .max(100)
+          .default(50)
+          .describe("Maximum number of items to return"),
+      }),
+      execute: async ({ list_id, limit }) => {
+        try {
+          await throttle();
+          const result = await (client as any).apiCall("slackLists.items.list", {
+            list_id,
+            limit,
+          });
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to read list: ${result.error || "unknown error"}`,
+            };
+          }
+
+          logger.info("list_slack_list_items tool called", {
+            list_id,
+            itemCount: result.items?.length || 0,
+          });
+
+          return {
+            ok: true,
+            list_id,
+            items: result.items || [],
+            count: result.items?.length || 0,
+          };
+        } catch (error: any) {
+          logger.error("list_slack_list_items tool failed", {
+            list_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read list items: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    get_slack_list_item: tool({
+      description:
+        "Get details about a specific item (row) in a Slack List by its record ID. Returns all fields/columns for that item.",
+      inputSchema: z.object({
+        list_id: z
+          .string()
+          .describe("The ID of the Slack List"),
+        item_id: z
+          .string()
+          .describe("The ID of the specific item/record to retrieve"),
+      }),
+      execute: async ({ list_id, item_id }) => {
+        try {
+          await throttle();
+          const result = await (client as any).apiCall("slackLists.items.info", {
+            list_id,
+            item_id,
+          });
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to read list item: ${result.error || "unknown error"}`,
+            };
+          }
+
+          logger.info("get_slack_list_item tool called", {
+            list_id,
+            item_id,
+          });
+
+          return {
+            ok: true,
+            item: result.item || null,
+          };
+        } catch (error: any) {
+          logger.error("get_slack_list_item tool failed", {
+            list_id,
+            item_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to get list item: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    // ── Canvas Tools ───────────────────────────────────────────────────────
+
+    read_canvas: tool({
+      description:
+        "Read the content of a Slack Canvas by looking up its sections. Returns the canvas structure and content.",
+      inputSchema: z.object({
+        canvas_id: z
+          .string()
+          .describe("The ID of the Canvas to read"),
+      }),
+      execute: async ({ canvas_id }) => {
+        try {
+          await throttle();
+          const result = await (client as any).apiCall("canvases.sections.lookup", {
+            canvas_id,
+          });
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to read canvas: ${result.error || "unknown error"}`,
+            };
+          }
+
+          logger.info("read_canvas tool called", { canvas_id });
+
+          return {
+            ok: true,
+            canvas_id,
+            sections: result.sections || [],
+          };
+        } catch (error: any) {
+          logger.error("read_canvas tool failed", {
+            canvas_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read canvas: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    create_canvas: tool({
+      description:
+        "Create a new Slack Canvas with a title and markdown content. Can optionally be added to a channel.",
+      inputSchema: z.object({
+        title: z
+          .string()
+          .describe("Title for the new canvas"),
+        content: z
+          .string()
+          .describe("Markdown content for the canvas body"),
+        channel_name: z
+          .string()
+          .optional()
+          .describe("Optional channel name to add the canvas to as a tab"),
+      }),
+      execute: async ({ title, content, channel_name }) => {
+        try {
+          const params: any = {
+            title,
+            document_content: {
+              type: "markdown",
+              markdown: content,
+            },
+          };
+
+          // If a channel is specified, add the canvas to it
+          if (channel_name) {
+            const channel = await resolveChannelByName(client, channel_name);
+            if (channel) {
+              params.channel_id = channel.id;
+            }
+          }
+
+          await throttle();
+          const result = await (client as any).apiCall("canvases.create", params);
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to create canvas: ${result.error || "unknown error"}`,
+            };
+          }
+
+          logger.info("create_canvas tool called", {
+            title,
+            canvasId: result.canvas_id,
+            channel: channel_name,
+          });
+
+          return {
+            ok: true,
+            canvas_id: result.canvas_id,
+            message: channel_name
+              ? `Canvas "${title}" created and added to #${channel_name}`
+              : `Canvas "${title}" created`,
+          };
+        } catch (error: any) {
+          logger.error("create_canvas tool failed", {
+            title,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to create canvas: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    edit_canvas: tool({
+      description:
+        "Edit an existing Slack Canvas. Supports inserting content at the start or end, replacing a section, or renaming the canvas.",
+      inputSchema: z.object({
+        canvas_id: z
+          .string()
+          .describe("The ID of the Canvas to edit"),
+        operation: z
+          .enum(["insert_at_end", "insert_at_start", "replace", "rename"])
+          .describe("The type of edit operation to perform"),
+        content: z
+          .string()
+          .describe("Markdown content to insert/replace, or the new title for rename"),
+        section_id: z
+          .string()
+          .optional()
+          .describe("Section ID to replace (required for 'replace' operation). Use read_canvas to find section IDs."),
+      }),
+      execute: async ({ canvas_id, operation, content, section_id }) => {
+        try {
+          let changes: any[];
+
+          if (operation === "rename") {
+            changes = [{ operation: "rename", title: content }];
+          } else if (operation === "replace") {
+            if (!section_id) {
+              return {
+                ok: false,
+                error: "Section ID is required for replace operations. Use read_canvas to find section IDs.",
+              };
+            }
+            changes = [{
+              operation: "replace",
+              section_id,
+              document_content: { type: "markdown", markdown: content },
+            }];
+          } else {
+            // insert_at_start or insert_at_end
+            changes = [{
+              operation,
+              document_content: { type: "markdown", markdown: content },
+            }];
+          }
+
+          await throttle();
+          const result = await (client as any).apiCall("canvases.edit", {
+            canvas_id,
+            changes,
+          });
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to edit canvas: ${result.error || "unknown error"}`,
+            };
+          }
+
+          logger.info("edit_canvas tool called", {
+            canvas_id,
+            operation,
+          });
+
+          return {
+            ok: true,
+            message: `Canvas updated (${operation})`,
+          };
+        } catch (error: any) {
+          logger.error("edit_canvas tool failed", {
+            canvas_id,
+            operation,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to edit canvas: ${error.message}`,
+          };
+        }
+      },
+    }),
   };
 }
