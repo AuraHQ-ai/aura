@@ -3,17 +3,17 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Caches (per function invocation) ─────────────────────────────────────────
 
-/**
- * Resolve a channel name (with or without #) to a channel ID.
- * Paginates through conversations.list to find a match.
- */
-async function resolveChannelByName(
+/** Cached channel list — avoids repeated conversations.list calls within one invocation. */
+let channelCache: { id: string; name: string }[] | null = null;
+
+async function getChannelList(
   client: WebClient,
-  name: string,
-): Promise<{ id: string; name: string } | null> {
-  const cleanName = name.replace(/^#/, "").toLowerCase();
+): Promise<{ id: string; name: string }[]> {
+  if (channelCache) return channelCache;
+
+  const channels: { id: string; name: string }[] = [];
   let cursor: string | undefined;
 
   do {
@@ -24,72 +24,116 @@ async function resolveChannelByName(
       cursor,
     });
 
-    const match = result.channels?.find(
-      (ch) => ch.name?.toLowerCase() === cleanName,
-    );
-    if (match && match.id && match.name) {
-      return { id: match.id, name: match.name };
+    for (const ch of result.channels || []) {
+      if (ch.id && ch.name) {
+        channels.push({ id: ch.id, name: ch.name });
+      }
     }
 
     cursor = result.response_metadata?.next_cursor || undefined;
   } while (cursor);
 
-  return null;
+  channelCache = channels;
+  return channels;
+}
+
+/** Cached user list — avoids repeated users.list calls. */
+let userCache: { id: string; displayName: string; realName: string; username: string }[] | null = null;
+
+async function getUserList(
+  client: WebClient,
+): Promise<{ id: string; displayName: string; realName: string; username: string }[]> {
+  if (userCache) return userCache;
+
+  const users: { id: string; displayName: string; realName: string; username: string }[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const result = await client.users.list({ limit: 200, cursor });
+
+    for (const u of result.members || []) {
+      if (u.deleted || u.is_bot || !u.id) continue;
+      users.push({
+        id: u.id,
+        displayName: u.profile?.display_name || "",
+        realName: u.real_name || "",
+        username: u.name || "",
+      });
+    }
+
+    cursor = result.response_metadata?.next_cursor || undefined;
+  } while (cursor);
+
+  userCache = users;
+  return users;
+}
+
+/** Cache for user ID -> display name lookups. */
+const userIdNameCache = new Map<string, string>();
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a channel name (with or without #) to a channel ID.
+ * Uses cached channel list.
+ */
+async function resolveChannelByName(
+  client: WebClient,
+  name: string,
+): Promise<{ id: string; name: string } | null> {
+  const cleanName = name.replace(/^#/, "").toLowerCase();
+  const channels = await getChannelList(client);
+  return channels.find((ch) => ch.name.toLowerCase() === cleanName) || null;
 }
 
 /**
  * Resolve a user display name / real name to a Slack user ID.
- * Searches through users.list for a case-insensitive match on
- * display_name, real_name, or name (username).
+ * Uses cached user list.
  */
 async function resolveUserByName(
   client: WebClient,
   name: string,
 ): Promise<{ id: string; name: string } | null> {
   const cleanName = name.replace(/^@/, "").toLowerCase();
-  let cursor: string | undefined;
+  const users = await getUserList(client);
 
-  do {
-    const result = await client.users.list({ limit: 200, cursor });
+  const match = users.find(
+    (u) =>
+      u.displayName.toLowerCase() === cleanName ||
+      u.realName.toLowerCase() === cleanName ||
+      u.username.toLowerCase() === cleanName,
+  );
 
-    const match = result.members?.find((u) => {
-      if (u.deleted || u.is_bot) return false;
-      return (
-        u.profile?.display_name?.toLowerCase() === cleanName ||
-        u.real_name?.toLowerCase() === cleanName ||
-        u.name?.toLowerCase() === cleanName
-      );
-    });
-
-    if (match && match.id) {
-      return {
-        id: match.id,
-        name:
-          match.profile?.display_name || match.real_name || match.name || name,
-      };
-    }
-
-    cursor = result.response_metadata?.next_cursor || undefined;
-  } while (cursor);
+  if (match) {
+    return {
+      id: match.id,
+      name: match.displayName || match.realName || match.username,
+    };
+  }
 
   return null;
 }
 
 /**
  * Resolve a Slack user ID to a display name.
+ * Caches results for the duration of the invocation.
  */
 async function resolveUserById(
   client: WebClient,
   userId: string,
 ): Promise<string> {
+  const cached = userIdNameCache.get(userId);
+  if (cached) return cached;
+
   try {
     const result = await client.users.info({ user: userId });
-    return (
+    const name =
       result.user?.profile?.display_name ||
       result.user?.real_name ||
       result.user?.name ||
-      userId
-    );
+      userId;
+    userIdNameCache.set(userId, name);
+    return name;
   } catch {
     return userId;
   }
@@ -116,6 +160,7 @@ export function createSlackTools(client: WebClient) {
       }),
       execute: async ({ limit }) => {
         try {
+          // Use full API call here (not cache) to get extra fields like topic, member count
           const result = await client.conversations.list({
             types: "public_channel,private_channel",
             exclude_archived: true,
@@ -129,6 +174,9 @@ export function createSlackTools(client: WebClient) {
             member_count: ch.num_members || 0,
             is_member: ch.is_member || false,
           }));
+
+          // Populate the channel cache while we're at it
+          channelCache = channels.map((ch) => ({ id: ch.id, name: ch.name }));
 
           logger.info("list_channels tool called", {
             count: channels.length,
