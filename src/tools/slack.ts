@@ -423,6 +423,219 @@ export function createSlackTools(client: WebClient) {
       },
     }),
 
+    list_users: tool({
+      description:
+        "List members of the Slack workspace. Returns display names, real names, usernames, and roles. Excludes deleted users and bots.",
+      inputSchema: z.object({
+        limit: z
+          .number()
+          .min(1)
+          .max(200)
+          .default(100)
+          .describe("Maximum number of users to return"),
+      }),
+      execute: async ({ limit }) => {
+        try {
+          const allUsers = await getUserList(client);
+          const users = allUsers.slice(0, limit).map((u) => ({
+            display_name: u.displayName || u.realName || u.username,
+            real_name: u.realName,
+            username: u.username,
+            id: u.id,
+          }));
+
+          logger.info("list_users tool called", { count: users.length });
+
+          return {
+            ok: true,
+            users,
+            total: allUsers.length,
+            showing: users.length,
+          };
+        } catch (error: any) {
+          logger.error("list_users tool failed", { error: error.message });
+          return { ok: false, error: `Failed to list users: ${error.message}` };
+        }
+      },
+    }),
+
+    get_user_info: tool({
+      description:
+        "Get detailed profile information about a specific Slack user by their display name, real name, or username. Returns timezone, status, title, phone, email (if visible), and more.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe("The display name, real name, or username of the person to look up"),
+      }),
+      execute: async ({ user_name }) => {
+        try {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
+            return {
+              ok: false,
+              error: `Could not find a user named "${user_name}". Use list_users to see available members.`,
+            };
+          }
+
+          await throttle();
+          const result = await client.users.info({ user: user.id });
+          const u = result.user;
+
+          if (!u) {
+            return { ok: false, error: `Failed to fetch profile for ${user_name}.` };
+          }
+
+          const profile = {
+            display_name: u.profile?.display_name || "",
+            real_name: u.real_name || "",
+            username: u.name || "",
+            title: u.profile?.title || "",
+            status_text: u.profile?.status_text || "",
+            status_emoji: u.profile?.status_emoji || "",
+            timezone: u.tz || "",
+            timezone_label: u.tz_label || "",
+            email: u.profile?.email || "",
+            phone: u.profile?.phone || "",
+            is_admin: u.is_admin || false,
+            is_owner: u.is_owner || false,
+          };
+
+          logger.info("get_user_info tool called", {
+            user: user.name,
+            userId: user.id,
+          });
+
+          return { ok: true, profile };
+        } catch (error: any) {
+          logger.error("get_user_info tool failed", {
+            user_name,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to get info for ${user_name}: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    search_users: tool({
+      description:
+        "Search for workspace members by partial name match. Useful when you don't know the exact name. Searches across display names, real names, and usernames.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe("Partial name to search for, e.g. 'joan' or 'rodriguez'"),
+      }),
+      execute: async ({ query }) => {
+        try {
+          const allUsers = await getUserList(client);
+          const q = query.toLowerCase();
+
+          const matches = allUsers.filter(
+            (u) =>
+              u.displayName.toLowerCase().includes(q) ||
+              u.realName.toLowerCase().includes(q) ||
+              u.username.toLowerCase().includes(q),
+          );
+
+          const results = matches.map((u) => ({
+            display_name: u.displayName || u.realName || u.username,
+            real_name: u.realName,
+            username: u.username,
+            id: u.id,
+          }));
+
+          logger.info("search_users tool called", {
+            query,
+            matchCount: results.length,
+          });
+
+          return {
+            ok: true,
+            query,
+            results,
+            count: results.length,
+          };
+        } catch (error: any) {
+          logger.error("search_users tool failed", {
+            query,
+            error: error.message,
+          });
+          return { ok: false, error: `Failed to search users: ${error.message}` };
+        }
+      },
+    }),
+
+    search_messages: tool({
+      description:
+        "Search for messages across the entire Slack workspace. Supports Slack's search syntax: use 'in:#channel' to filter by channel, 'from:@user' to filter by sender. Requires SLACK_USER_TOKEN to be configured.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe("Search query. Supports Slack search syntax like 'budget in:#finance from:@joan'"),
+        count: z
+          .number()
+          .min(1)
+          .max(20)
+          .default(10)
+          .describe("Number of results to return (max 20)"),
+      }),
+      execute: async ({ query, count }) => {
+        const userToken = process.env.SLACK_USER_TOKEN;
+        if (!userToken) {
+          return {
+            ok: false,
+            error:
+              "Message search requires a SLACK_USER_TOKEN environment variable (a user OAuth token with search:read scope). It's not currently configured.",
+          };
+        }
+
+        try {
+          // Use a separate client with the user token for search
+          const { WebClient } = await import("@slack/web-api");
+          const searchClient = new WebClient(userToken);
+
+          await throttle();
+          const result = await searchClient.search.messages({
+            query,
+            count,
+            sort: "timestamp",
+            sort_dir: "desc",
+          });
+
+          const matches = (result.messages?.matches || []).map((m: any) => ({
+            user: m.username || m.user || "unknown",
+            text: m.text || "",
+            channel: m.channel?.name || "unknown",
+            timestamp: m.ts || "",
+            permalink: m.permalink || "",
+          }));
+
+          logger.info("search_messages tool called", {
+            query,
+            matchCount: matches.length,
+          });
+
+          return {
+            ok: true,
+            query,
+            results: matches,
+            count: matches.length,
+          };
+        } catch (error: any) {
+          logger.error("search_messages tool failed", {
+            query,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to search messages: ${error.message}`,
+          };
+        }
+      },
+    }),
+
     send_direct_message: tool({
       description:
         "Send a direct message to a user by their display name or username. Opens a DM conversation if one doesn't exist.",

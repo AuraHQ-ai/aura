@@ -81,6 +81,10 @@ Available tools:
 - **read_channel_history** — read recent messages from a channel you're in
 - **send_channel_message** — post a message to a channel you're in
 - **send_direct_message** — send a DM to someone by their name
+- **list_users** — list workspace members with their names and roles
+- **get_user_info** — get detailed profile info about someone (title, timezone, status, etc.)
+- **search_users** — fuzzy search for people by partial name
+- **search_messages** — search messages across all channels (supports Slack search syntax like "in:#channel from:@user")
 
 When to use tools:
 - When someone asks you to DO something ("post in #general", "DM Joan", "what's been happening in #engineering"), use the appropriate tool.
