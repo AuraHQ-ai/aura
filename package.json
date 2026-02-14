@@ -21,6 +21,7 @@
     "@neondatabase/serverless": "^1.0.0",
     "@slack/bolt": "^4.3.0",
     "@slack/web-api": "^7.9.1",
+    "@vercel/functions": "^3.4.2",
     "ai": "^6.0.86",
     "drizzle-orm": "^0.44.0",
     "hono": "^4.11.9",

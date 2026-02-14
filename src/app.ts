@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
+import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { runPipeline } from "./pipeline/index.js";
 import { logger } from "./lib/logger.js";
@@ -147,19 +148,9 @@ app.post("/api/slack/events", async (c) => {
       });
     });
 
-    // Use Vercel's waitUntil if available (keeps the function alive
-    // after the response is sent)
-    try {
-      const ctx = c.executionCtx as any;
-      if (ctx?.waitUntil) {
-        ctx.waitUntil(pipelinePromise);
-      } else {
-        void pipelinePromise;
-      }
-    } catch {
-      // executionCtx not available in Node.js runtime — fire and forget
-      void pipelinePromise;
-    }
+    // Keep the function alive after the response is sent so the
+    // pipeline can finish (LLM call, Slack reply, memory extraction).
+    waitUntil(pipelinePromise);
   }
 
   // Acknowledge immediately (must happen within 3 seconds for Slack)
