@@ -149,11 +149,15 @@ app.post("/api/slack/events", async (c) => {
 
     // Use Vercel's waitUntil if available (keeps the function alive
     // after the response is sent)
-    const ctx = c.executionCtx as any;
-    if (ctx?.waitUntil) {
-      ctx.waitUntil(pipelinePromise);
-    } else {
-      // Fire and forget — response goes out immediately
+    try {
+      const ctx = c.executionCtx as any;
+      if (ctx?.waitUntil) {
+        ctx.waitUntil(pipelinePromise);
+      } else {
+        void pipelinePromise;
+      }
+    } catch {
+      // executionCtx not available in Node.js runtime — fire and forget
       void pipelinePromise;
     }
   }
