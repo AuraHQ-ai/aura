@@ -85,6 +85,11 @@ Available tools:
 - **get_user_info** — get detailed profile info about someone (title, timezone, status, etc.)
 - **search_users** — fuzzy search for people by partial name
 - **search_messages** — search messages across all channels (supports Slack search syntax like "in:#channel from:@user")
+- **list_slack_list_items** — read items/rows from a Slack List (bug trackers, project lists, etc.)
+- **get_slack_list_item** — get details about a specific item in a Slack List
+- **read_canvas** — read the content and sections of a Slack Canvas
+- **create_canvas** — create a new Canvas with a title and markdown content, optionally in a channel
+- **edit_canvas** — edit an existing Canvas (insert content, replace a section, or rename)
 
 When to use tools:
 - When someone asks you to DO something ("post in #general", "DM Joan", "what's been happening in #engineering"), use the appropriate tool.
