@@ -17,25 +17,26 @@ A Slack bot with persistent memory, personality, and cross-user awareness. Aura 
 |---|---|
 | Runtime | Node.js on Vercel (serverless functions) |
 | Framework | [Hono](https://hono.dev) |
-| LLM | [Vercel AI SDK 6](https://sdk.vercel.ai) via OpenAI (gpt-4o, gpt-4o-mini) |
-| Embeddings | `text-embedding-3-small` (1536 dimensions) |
+| LLM | [Vercel AI SDK 6](https://sdk.vercel.ai) + [AI Gateway](https://sdk.vercel.ai/docs/ai-sdk-providers/ai-gateway) |
 | Database | [Neon](https://neon.tech) PostgreSQL + pgvector |
 | ORM | [Drizzle](https://orm.drizzle.team) |
 | Slack | `@slack/web-api` + `@slack/bolt` (types) |
+
+LLM provider is your choice. AI Gateway supports 20+ providers out of the box -- Anthropic, OpenAI, Google, Mistral, xAI, DeepSeek, Meta, and more. You pick models via environment variables.
 
 ---
 
 ## Getting Started
 
-There are three things to set up: a **Neon database**, a **Slack app**, and the **Vercel deployment**. The whole thing takes about 20 minutes.
+Three things to set up: a **Neon database**, a **Slack app**, and the **Vercel deployment**. About 20 minutes end to end.
 
 ### Prerequisites
 
 - Node.js 20+
-- A [Vercel](https://vercel.com) account
+- A [Vercel](https://vercel.com) account (free tier works)
 - A [Neon](https://neon.tech) account (free tier works)
 - A [Slack](https://api.slack.com/apps) workspace where you can create apps
-- An [OpenAI](https://platform.openai.com) API key
+- An API key for at least one LLM provider (Anthropic, OpenAI, Google, etc.)
 
 ---
 
@@ -76,7 +77,7 @@ psql $DATABASE_URL -f src/db/migrations/0000_init.sql
 npx drizzle-kit push
 ```
 
-Option A runs the raw SQL migration directly. Option B uses Drizzle Kit to push the schema defined in `src/db/schema.ts`. Both produce the same result. Use whichever you prefer.
+Both produce the same result. Use whichever you prefer.
 
 To verify it worked, run in the SQL editor:
 
@@ -138,52 +139,42 @@ curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
 
 #### Event subscriptions (do this after deploying -- see Step 5)
 
-You'll come back to this after deployment. The event subscription URL needs to point to your live Vercel URL. Skip ahead to Step 4 and 5, then return here.
+You'll come back to this after deployment. The event subscription URL needs your live Vercel URL. Skip to Step 4 and 5, then come back.
 
 ---
 
-### Step 4: Set up OpenAI
+### Step 4: Choose your models
 
-1. Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
-2. Create a new API key
-3. Paste it into `.env` as `OPENAI_API_KEY`
+Aura uses three models, all routed through [Vercel AI Gateway](https://sdk.vercel.ai/docs/ai-sdk-providers/ai-gateway):
 
-**Models used:**
+| Role | Env var | What it does | Example values |
+|---|---|---|---|
+| Main | `MODEL_MAIN` | Conversation responses | `anthropic/claude-sonnet-4-20250514`, `openai/gpt-4o`, `google/gemini-2.5-pro` |
+| Fast | `MODEL_FAST` | Memory extraction, profile updates | `anthropic/claude-haiku-4.5`, `openai/gpt-4o-mini`, `google/gemini-2.5-flash` |
+| Embedding | `MODEL_EMBEDDING` | Vectorizing memories and queries | `openai/text-embedding-3-small`, `voyage/voyage-3.5-lite`, `google/text-embedding-005` |
 
-| Purpose | Model | Approximate cost |
-|---|---|---|
-| Conversation responses | `gpt-4o` | ~$2.50 / 1M input tokens |
-| Memory extraction | `gpt-4o-mini` | ~$0.15 / 1M input tokens |
-| Embeddings | `text-embedding-3-small` | ~$0.02 / 1M tokens |
+Set these in your `.env`:
 
-You can change the models in `src/lib/ai.ts`.
+```bash
+MODEL_MAIN=anthropic/claude-sonnet-4-20250514
+MODEL_FAST=anthropic/claude-haiku-4.5
+MODEL_EMBEDDING=openai/text-embedding-3-small
+```
 
-**(Optional) Vercel AI Gateway:** If you want to route through Vercel's AI Gateway for caching, rate limiting, and observability, set `AI_GATEWAY_URL=https://gateway.ai.vercel.sh/v1` in `.env`. Otherwise leave it blank and calls go directly to OpenAI.
+The format is always `provider/model`. See the [full list of available models](https://sdk.vercel.ai/docs/ai-sdk-providers/ai-gateway).
+
+**You provide API keys for the underlying providers in the Vercel dashboard** (Step 5) -- not in this codebase.
 
 ---
 
 ### Step 5: Deploy to Vercel
 
-#### First deployment
-
 ```bash
 # Install Vercel CLI if you haven't
 npm i -g vercel
 
-# Link to a Vercel project (creates one if it doesn't exist)
+# Link to a Vercel project
 vercel link
-
-# Set environment variables on Vercel
-vercel env add DATABASE_URL           # paste your Neon connection string
-vercel env add SLACK_BOT_TOKEN        # paste xoxb-...
-vercel env add SLACK_SIGNING_SECRET   # paste signing secret
-vercel env add OPENAI_API_KEY         # paste sk-...
-vercel env add AURA_BOT_USER_ID      # paste U...
-vercel env add CRON_SECRET            # make up a random string (protects the cron endpoint)
-
-# Optionally:
-vercel env add AI_GATEWAY_URL         # https://gateway.ai.vercel.sh/v1
-vercel env add LOG_LEVEL              # info (or debug for more output)
 
 # Deploy
 vercel --prod
@@ -191,7 +182,42 @@ vercel --prod
 
 After deployment, note your production URL (e.g., `https://aura-xxx.vercel.app`).
 
-#### Verify the deployment
+#### Configure environment variables
+
+Go to your Vercel project dashboard -> **Settings** -> **Environment Variables** and add:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Your Neon connection string |
+| `SLACK_BOT_TOKEN` | `xoxb-...` |
+| `SLACK_SIGNING_SECRET` | From Slack app Basic Information |
+| `AURA_BOT_USER_ID` | `U...` (Aura's Slack user ID) |
+| `MODEL_MAIN` | e.g. `anthropic/claude-sonnet-4-20250514` |
+| `MODEL_FAST` | e.g. `anthropic/claude-haiku-4.5` |
+| `MODEL_EMBEDDING` | e.g. `openai/text-embedding-3-small` |
+| `CRON_SECRET` | Any random string (protects the cron endpoint) |
+
+Optional:
+
+| Variable | Value |
+|---|---|
+| `LOG_LEVEL` | `debug`, `info` (default), `warn`, `error` |
+
+#### Configure AI Gateway provider keys
+
+Go to your Vercel project dashboard -> **AI** -> **AI Gateway** and add API keys for whatever providers your chosen models use. For example, if you're using `anthropic/claude-sonnet-4-20250514`, add your Anthropic API key. If you're using `openai/text-embedding-3-small` for embeddings, add your OpenAI key too.
+
+The gateway handles routing -- your app code doesn't touch any provider API keys.
+
+#### Redeploy
+
+After setting env vars, trigger a redeployment:
+
+```bash
+vercel --prod
+```
+
+#### Verify
 
 ```bash
 curl https://aura-xxx.vercel.app/api/health
@@ -202,7 +228,7 @@ curl https://aura-xxx.vercel.app/api/health
 
 ### Step 6: Connect Slack to your deployment
 
-Now go back to [api.slack.com/apps](https://api.slack.com/apps), select your Aura app, and set up event subscriptions.
+Go back to [api.slack.com/apps](https://api.slack.com/apps), select your Aura app:
 
 1. Go to **Event Subscriptions** in the sidebar
 2. Toggle **Enable Events** to ON
@@ -233,7 +259,7 @@ Slack may ask you to reinstall the app. Do so.
 
 1. Open Slack and DM Aura. Say anything -- "Hey, what's up?"
 2. Aura should respond within a few seconds
-3. In a channel, invite Aura (type `/invite @Aura`) and then mention it: "@Aura what do you think about TypeScript?"
+3. In a channel, invite Aura (`/invite @Aura`) and then mention it: "@Aura what do you think about TypeScript?"
 
 That's it. Aura is live.
 
@@ -241,23 +267,22 @@ That's it. Aura is live.
 
 ## Local Development
 
-For local development, you can run the Hono server directly:
+For local development, run the Hono server directly:
 
 ```bash
 npm run dev
 ```
 
-This starts a local server on `http://localhost:3000`. To receive Slack events locally, you'll need a tunnel:
+This starts a local server on `http://localhost:3000`. To receive Slack events locally, you need a tunnel:
 
 ```bash
 # Using ngrok
 ngrok http 3000
-
-# Or using Vercel CLI's dev mode (experimental)
-vercel dev
 ```
 
-Then update the Slack Event Subscriptions URL to point to your tunnel URL (`https://xxx.ngrok.io/api/slack/events`).
+Then update the Slack Event Subscriptions URL to your tunnel URL (`https://xxx.ngrok.io/api/slack/events`).
+
+**Note:** AI Gateway authenticates automatically when deployed on Vercel via OIDC. For local development, you may need to set a `VERCEL_AI_GATEWAY_API_KEY` env var -- see the [AI Gateway docs](https://sdk.vercel.ai/docs/ai-sdk-providers/ai-gateway).
 
 **Drizzle Studio** lets you browse the database:
 
@@ -278,7 +303,7 @@ src/
     client.ts                 # Neon + Drizzle client
     migrations/0000_init.sql  # Raw SQL migration
   lib/
-    ai.ts                     # OpenAI provider + model references
+    ai.ts                     # AI Gateway config + model references
     embeddings.ts             # embed() / embedMany() wrappers
     logger.ts                 # Structured logging
     metrics.ts                # Observability metrics
@@ -328,7 +353,7 @@ Slack event arrives
        3. Retrieve memories (embed query -> pgvector similarity search)
        4. Fetch user profile (tone adaptation hints)
        5. Build system prompt (personality + memories + profile + thread)
-       6. Call LLM (gpt-4o via AI SDK)
+       6. Call LLM via AI Gateway
        7. Post-process (strip sycophantic openers, AI disclaimers)
        8. Format for Slack and send reply
        9. Background: store messages, extract memories, update profile
@@ -336,7 +361,7 @@ Slack event arrives
 
 ### Memory extraction
 
-After every exchange, a separate LLM call (gpt-4o-mini) extracts structured memories:
+After every exchange, a separate LLM call (fast model) extracts structured memories:
 
 - **Facts** -- "The Q3 launch date is March 15"
 - **Decisions** -- "We decided to use Postgres instead of MongoDB"
@@ -345,7 +370,7 @@ After every exchange, a separate LLM call (gpt-4o-mini) extracts structured memo
 - **Sentiments** -- "Joan seemed frustrated about deploys"
 - **Open threads** -- "Joan asked about API docs, no answer yet"
 
-Each memory is embedded and stored with its 1536-dimensional vector for semantic retrieval.
+Each memory is embedded and stored with its vector for semantic retrieval.
 
 ### Privacy
 
@@ -371,11 +396,41 @@ A daily cron job (4:00 AM UTC) runs:
 | `DATABASE_URL` | Yes | Neon PostgreSQL connection string |
 | `SLACK_BOT_TOKEN` | Yes | Slack bot token (`xoxb-...`) |
 | `SLACK_SIGNING_SECRET` | Yes | Slack app signing secret |
-| `OPENAI_API_KEY` | Yes | OpenAI API key |
 | `AURA_BOT_USER_ID` | Yes | Slack user ID for the bot (`U...`) |
+| `MODEL_MAIN` | No | Main conversation model (default: `anthropic/claude-sonnet-4-20250514`) |
+| `MODEL_FAST` | No | Fast model for extraction (default: `anthropic/claude-haiku-4.5`) |
+| `MODEL_EMBEDDING` | No | Embedding model (default: `openai/text-embedding-3-small`) |
 | `CRON_SECRET` | Recommended | Protects the `/api/cron/consolidate` endpoint |
-| `AI_GATEWAY_URL` | No | Vercel AI Gateway URL for LLM routing |
 | `LOG_LEVEL` | No | `debug`, `info` (default), `warn`, `error` |
+
+Provider API keys are configured in the **Vercel AI Gateway dashboard**, not as env vars in the app.
+
+---
+
+## Switching Models
+
+Just change the env vars. No code changes needed.
+
+```bash
+# Use OpenAI for everything
+MODEL_MAIN=openai/gpt-4o
+MODEL_FAST=openai/gpt-4o-mini
+MODEL_EMBEDDING=openai/text-embedding-3-small
+
+# Use Google
+MODEL_MAIN=google/gemini-2.5-pro
+MODEL_FAST=google/gemini-2.5-flash
+MODEL_EMBEDDING=google/text-embedding-005
+
+# Mix and match
+MODEL_MAIN=anthropic/claude-sonnet-4-20250514
+MODEL_FAST=google/gemini-2.5-flash
+MODEL_EMBEDDING=voyage/voyage-3.5-lite
+```
+
+Then redeploy (or restart locally). The AI Gateway handles routing to the right provider.
+
+**Note on embedding dimensions:** The database schema uses 1536-dimensional vectors (matching `openai/text-embedding-3-small`). If you switch to an embedding model with different dimensions, you'll need to update the vector size in `src/db/schema.ts` and re-run the migration.
 
 ---
 
@@ -390,20 +445,6 @@ The personality is defined in `src/personality/system-prompt.ts`. It's a TypeScr
 - **How you use memory** -- reference naturally, don't force, be specific
 
 The anti-pattern post-processor in `src/personality/anti-patterns.ts` acts as a safety net -- it strips common AI-isms that leak through despite the prompt.
-
----
-
-## Changing Models
-
-Edit `src/lib/ai.ts`:
-
-```typescript
-export const mainModel = openai("gpt-4o");       // conversation quality
-export const fastModel = openai("gpt-4o-mini");  // extraction speed/cost
-export const embeddingModel = openai.embedding("text-embedding-3-small");
-```
-
-You can swap to any model supported by the [AI SDK OpenAI provider](https://sdk.vercel.ai/providers/ai-sdk-providers/openai) -- including Claude via `@ai-sdk/anthropic` if you add that dependency.
 
 ---
 
@@ -443,9 +484,15 @@ npm run db:studio
 
 **Slack shows "dispatch_failed" or retries events**
 
-- This means the initial 200 OK wasn't received within 3 seconds
+- The initial 200 OK wasn't received within 3 seconds
 - Check Vercel function logs for startup errors
 - Make sure all env vars are set in Vercel (not just locally)
+
+**LLM calls fail with authentication errors**
+
+- Check that you've added the right provider API key(s) in the Vercel AI Gateway dashboard
+- If using `anthropic/...` models, you need an Anthropic key. If using `openai/...` for embeddings, you need an OpenAI key too
+- For local dev, you may need to set `VERCEL_AI_GATEWAY_API_KEY`
 
 **Memory retrieval returns nothing**
 
@@ -456,7 +503,7 @@ npm run db:studio
 **High latency (>5 seconds)**
 
 - Check Vercel function region -- deploy close to your Neon database region
-- gpt-4o can take 2-4 seconds; this is normal
+- LLM response time varies by provider/model (typically 2-5 seconds)
 - Memory retrieval adds ~200-500ms for the embedding call
 
 ---

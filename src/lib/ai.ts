@@ -1,23 +1,33 @@
-import { createOpenAI } from "@ai-sdk/openai";
+import { gateway } from "@ai-sdk/gateway";
 
 /**
- * Primary LLM provider — routed through Vercel AI Gateway if configured,
- * otherwise direct to OpenAI.
- */
-const baseURL = process.env.AI_GATEWAY_URL || undefined;
-
-export const openai = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  ...(baseURL ? { baseURL } : {}),
-});
-
-/**
- * Model references — centralised so we can swap easily.
+ * All LLM and embedding calls go through Vercel AI Gateway.
  *
- * - `mainModel` — for conversation responses (quality matters)
- * - `fastModel` — for memory extraction, profile updates (speed/cost matters)
- * - `embeddingModel` — for embedding memories and queries
+ * Models are configured via environment variables using the
+ * `provider/model` format (e.g. "anthropic/claude-sonnet-4-20250514", "openai/gpt-4o").
+ *
+ * API keys for each provider are configured in the Vercel dashboard
+ * under AI Gateway settings — not in this codebase.
+ *
+ * When deployed on Vercel, auth is handled automatically via OIDC.
+ * For local development, set VERCEL_AI_GATEWAY_API_KEY in .env.
  */
-export const mainModel = openai("gpt-4o");
-export const fastModel = openai("gpt-4o-mini");
-export const embeddingModel = openai.embedding("text-embedding-3-small");
+
+/**
+ * Model references — configured via env, centralised here.
+ *
+ * - `mainModel`      — conversation responses (quality matters)
+ * - `fastModel`      — memory extraction, profile updates (speed/cost matters)
+ * - `embeddingModel`  — embedding memories and queries
+ */
+export const mainModel = gateway(
+  process.env.MODEL_MAIN || "anthropic/claude-sonnet-4-20250514",
+);
+
+export const fastModel = gateway(
+  process.env.MODEL_FAST || "anthropic/claude-haiku-4.5",
+);
+
+export const embeddingModel = gateway.embedding(
+  process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
+);

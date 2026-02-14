@@ -20,8 +20,8 @@ export interface LLMResponse {
   flaggedWords: string[];
   /** Token usage */
   usage?: {
-    promptTokens: number;
-    completionTokens: number;
+    inputTokens: number;
+    outputTokens: number;
     totalTokens: number;
   };
 }
@@ -48,18 +48,16 @@ export async function generateResponse(
   // Format for Slack
   const formatted = formatForSlack(cleaned);
 
+  const inputTokens = usage.inputTokens ?? 0;
+  const outputTokens = usage.outputTokens ?? 0;
+  const totalTokens = inputTokens + outputTokens;
+
   logger.info(`LLM response generated in ${llmMs}ms`, {
     rawLength: text.length,
     cleanedLength: cleaned.length,
     modifications,
     flaggedWords,
-    usage: usage
-      ? {
-          promptTokens: usage.promptTokens,
-          completionTokens: usage.completionTokens,
-          totalTokens: usage.totalTokens,
-        }
-      : undefined,
+    usage: { inputTokens, outputTokens, totalTokens },
   });
 
   return {
@@ -67,12 +65,6 @@ export async function generateResponse(
     formatted,
     modifications,
     flaggedWords,
-    usage: usage
-      ? {
-          promptTokens: usage.promptTokens,
-          completionTokens: usage.completionTokens,
-          totalTokens: usage.totalTokens,
-        }
-      : undefined,
+    usage: { inputTokens, outputTokens, totalTokens },
   };
 }

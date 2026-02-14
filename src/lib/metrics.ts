@@ -18,8 +18,8 @@ interface PipelineMetrics {
   /** Number of memories retrieved */
   memoriesUsed: number;
   /** Token usage */
-  promptTokens?: number;
-  completionTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
   totalTokens?: number;
   /** Anti-pattern modifications made */
   modifications: string[];
