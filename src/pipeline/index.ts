@@ -147,12 +147,15 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     });
     const llmMs = Date.now() - llmStart;
 
-    // 6. Send response to Slack
-    await client.chat.postMessage({
-      channel: context.channelId,
-      text: response.formatted,
-      thread_ts: replyThreadTs,
-    });
+    // 6. Send response to Slack (skip if empty — model may have
+    //    completed the request entirely via tool calls)
+    if (response.formatted.trim().length > 0) {
+      await client.chat.postMessage({
+        channel: context.channelId,
+        text: response.formatted,
+        thread_ts: replyThreadTs,
+      });
+    }
 
     const totalMs = Date.now() - pipelineStart;
 
