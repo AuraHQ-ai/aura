@@ -1,0 +1,20 @@
+{
+  "installCommand": "npm install",
+  "framework": null,
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/slack/events", "destination": "/api/slack/events" },
+    { "source": "/health", "destination": "/api/health" },
+    { "source": "/(.*)", "destination": "/api/index" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/consolidate",
+      "schedule": "0 4 * * *"
+    }
+  ]
+}
