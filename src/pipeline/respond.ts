@@ -1,6 +1,6 @@
 import { generateText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
-import { mainModel } from "../lib/ai.js";
+import { getMainModel } from "../lib/ai.js";
 import { postProcessResponse } from "../personality/anti-patterns.js";
 import { formatForSlack } from "../slack/formatter.js";
 import { createSlackTools } from "../tools/slack.js";
@@ -37,8 +37,10 @@ export async function generateResponse(
 ): Promise<LLMResponse> {
   const start = Date.now();
 
+  const model = await getMainModel();
+
   const { text, usage } = await generateText({
-    model: mainModel,
+    model,
     system: options.systemPrompt,
     prompt: options.userMessage,
     tools: createSlackTools(options.slackClient),

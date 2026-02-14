@@ -157,6 +157,15 @@ export const channels = pgTable(
   ],
 );
 
+// ── Settings ────────────────────────────────────────────────────────────────
+
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+});
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -167,3 +176,4 @@ export type UserProfile = typeof userProfiles.$inferSelect;
 export type NewUserProfile = typeof userProfiles.$inferInsert;
 export type Channel = typeof channels.$inferSelect;
 export type NewChannel = typeof channels.$inferInsert;
+export type Setting = typeof settings.$inferSelect;

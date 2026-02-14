@@ -3,6 +3,8 @@ import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { runPipeline } from "./pipeline/index.js";
+import { publishHomeTab, ACTION_TO_SETTING, isAdmin } from "./slack/home.js";
+import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
 import crypto from "node:crypto";
@@ -128,6 +130,17 @@ app.post("/api/slack/events", async (c) => {
   if (body.event) {
     const event = body.event;
 
+    // Handle App Home opened
+    if (event.type === "app_home_opened") {
+      const homePromise = publishHomeTab(slackClient, event.user).catch(
+        (err) => {
+          recordError("app_home", err, { userId: event.user });
+        },
+      );
+      waitUntil(homePromise);
+      return c.json({ ok: true });
+    }
+
     logger.debug("Dispatching Slack event", {
       type: event.type,
       subtype: event.subtype,
@@ -154,6 +167,67 @@ app.post("/api/slack/events", async (c) => {
   }
 
   // Acknowledge immediately (must happen within 3 seconds for Slack)
+  return c.json({ ok: true });
+});
+
+// ── Slack Interactions Endpoint ─────────────────────────────────────────────
+
+app.post("/api/slack/interactions", async (c) => {
+  const rawBody = await c.req.text();
+
+  // Verify signature (same as events)
+  const timestamp = c.req.header("x-slack-request-timestamp") || "";
+  const signature = c.req.header("x-slack-signature") || "";
+
+  if (!verifySlackSignature(rawBody, timestamp, signature)) {
+    logger.warn("Invalid Slack signature on interactions endpoint");
+    return c.json({ error: "Invalid signature" }, 401);
+  }
+
+  // Parse the payload (URL-encoded form with a `payload` field)
+  const params = new URLSearchParams(rawBody);
+  const payloadStr = params.get("payload");
+  if (!payloadStr) {
+    return c.json({ error: "Missing payload" }, 400);
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(payloadStr);
+  } catch {
+    return c.json({ error: "Invalid payload JSON" }, 400);
+  }
+
+  // Handle block_actions (dropdown changes)
+  if (payload.type === "block_actions" && payload.actions) {
+    const userId = payload.user?.id;
+
+    if (!userId || !isAdmin(userId)) {
+      logger.warn("Non-admin attempted settings change", { userId });
+      return c.json({ ok: true });
+    }
+
+    for (const action of payload.actions) {
+      const settingKey = ACTION_TO_SETTING[action.action_id];
+      if (settingKey && action.selected_option?.value) {
+        const newValue = action.selected_option.value;
+
+        const savePromise = (async () => {
+          try {
+            await setSetting(settingKey, newValue, userId);
+            // Refresh the home tab to confirm the change
+            await publishHomeTab(slackClient, userId);
+          } catch (err) {
+            recordError("interactions.save", err, { userId, settingKey });
+          }
+        })();
+
+        waitUntil(savePromise);
+      }
+    }
+  }
+
+  // Acknowledge immediately
   return c.json({ ok: true });
 });
 

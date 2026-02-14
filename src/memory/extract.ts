@@ -1,6 +1,6 @@
 import { generateText, Output } from "ai";
 import { z } from "zod";
-import { fastModel } from "../lib/ai.js";
+import { getFastModel } from "../lib/ai.js";
 import { embedTexts } from "../lib/embeddings.js";
 import { storeMemories } from "./store.js";
 import { logger } from "../lib/logger.js";
@@ -72,8 +72,10 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
   try {
     const conversationText = `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${context.assistantResponse}`;
 
+    const model = await getFastModel();
+
     const { output: object } = await generateText({
-      model: fastModel,
+      model,
       output: Output.object({ schema: extractedMemoriesSchema }),
       system: EXTRACTION_PROMPT,
       prompt: conversationText,

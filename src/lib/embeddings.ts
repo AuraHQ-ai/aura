@@ -1,5 +1,5 @@
 import { embed, embedMany } from "ai";
-import { embeddingModel } from "./ai.js";
+import { getEmbeddingModel } from "./ai.js";
 import { logger } from "./logger.js";
 
 /**
@@ -7,8 +7,9 @@ import { logger } from "./logger.js";
  */
 export async function embedText(text: string): Promise<number[]> {
   const start = Date.now();
+  const model = await getEmbeddingModel();
   const { embedding } = await embed({
-    model: embeddingModel,
+    model,
     value: text,
   });
   logger.debug(`Embedded text in ${Date.now() - start}ms`, {
@@ -24,8 +25,9 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
 
   const start = Date.now();
+  const model = await getEmbeddingModel();
   const { embeddings } = await embedMany({
-    model: embeddingModel,
+    model,
     values: texts,
   });
   logger.debug(`Embedded ${texts.length} texts in ${Date.now() - start}ms`);

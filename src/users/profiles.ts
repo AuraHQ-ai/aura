@@ -8,7 +8,7 @@ import {
   type CommunicationStyle,
   type KnownFacts,
 } from "../db/schema.js";
-import { fastModel } from "../lib/ai.js";
+import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 /**
@@ -117,8 +117,10 @@ export async function updateProfileFromConversation(
     const existingFacts = profile.knownFacts || {};
     const existingStyle = profile.communicationStyle;
 
+    const model = await getFastModel();
+
     const { output: object } = await generateText({
-      model: fastModel,
+      model,
       output: Output.object({ schema: profileUpdateSchema }),
       system: `You are analyzing a user's communication style and extracting facts about them. Based on the conversation below and their existing profile, provide an updated assessment.
 
