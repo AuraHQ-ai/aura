@@ -3,6 +3,35 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 
+// ── Rate Limiter ─────────────────────────────────────────────────────────────
+
+/**
+ * Simple token-bucket rate limiter for Slack API calls.
+ * Slack's Tier 2/3 methods allow ~20-50 requests per minute.
+ * We limit to 15 req/min with a burst of 5 to stay well under.
+ */
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const MAX_REQUESTS_PER_WINDOW = 15;
+const requestTimestamps: number[] = [];
+
+async function throttle(): Promise<void> {
+  const now = Date.now();
+
+  // Prune timestamps outside the window
+  while (requestTimestamps.length > 0 && requestTimestamps[0] < now - RATE_LIMIT_WINDOW_MS) {
+    requestTimestamps.shift();
+  }
+
+  if (requestTimestamps.length >= MAX_REQUESTS_PER_WINDOW) {
+    // Wait until the oldest request falls outside the window
+    const waitMs = requestTimestamps[0] + RATE_LIMIT_WINDOW_MS - now + 50;
+    logger.info(`Slack API throttle: waiting ${waitMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+
+  requestTimestamps.push(Date.now());
+}
+
 // ── Caches (per function invocation) ─────────────────────────────────────────
 
 /** Cached channel list — avoids repeated conversations.list calls within one invocation. */
@@ -17,6 +46,7 @@ async function getChannelList(
   let cursor: string | undefined;
 
   do {
+    await throttle();
     const result = await client.conversations.list({
       types: "public_channel,private_channel",
       exclude_archived: true,
@@ -49,6 +79,7 @@ async function getUserList(
   let cursor: string | undefined;
 
   do {
+    await throttle();
     const result = await client.users.list({ limit: 200, cursor });
 
     for (const u of result.members || []) {
@@ -126,6 +157,7 @@ async function resolveUserById(
   if (cached) return cached;
 
   try {
+    await throttle();
     const result = await client.users.info({ user: userId });
     const name =
       result.user?.profile?.display_name ||
@@ -161,6 +193,7 @@ export function createSlackTools(client: WebClient) {
       execute: async ({ limit }) => {
         try {
           // Use full API call here (not cache) to get extra fields like topic, member count
+          await throttle();
           const result = await client.conversations.list({
             types: "public_channel,private_channel",
             exclude_archived: true,
@@ -212,6 +245,7 @@ export function createSlackTools(client: WebClient) {
             };
           }
 
+          await throttle();
           await client.conversations.join({ channel: channel.id });
 
           logger.info("join_channel tool called", {
@@ -269,6 +303,7 @@ export function createSlackTools(client: WebClient) {
             };
           }
 
+          await throttle();
           const result = await client.conversations.history({
             channel: channel.id,
             limit,
@@ -344,6 +379,7 @@ export function createSlackTools(client: WebClient) {
             };
           }
 
+          await throttle();
           const result = await client.chat.postMessage({
             channel: channel.id,
             text: message,
@@ -411,6 +447,7 @@ export function createSlackTools(client: WebClient) {
           }
 
           // Open a DM conversation
+          await throttle();
           const dmResult = await client.conversations.open({
             users: user.id,
           });
@@ -423,6 +460,7 @@ export function createSlackTools(client: WebClient) {
             };
           }
 
+          await throttle();
           const result = await client.chat.postMessage({
             channel: dmChannelId,
             text: message,
