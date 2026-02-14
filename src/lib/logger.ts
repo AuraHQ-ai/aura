@@ -8,7 +8,10 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 };
 
 const currentLevel: LogLevel =
-  (process.env.LOG_LEVEL as LogLevel) || "info";
+  process.env.LOG_LEVEL &&
+  process.env.LOG_LEVEL in LOG_LEVELS
+    ? (process.env.LOG_LEVEL as LogLevel)
+    : "info";
 
 function shouldLog(level: LogLevel): boolean {
   return LOG_LEVELS[level] >= LOG_LEVELS[currentLevel];
