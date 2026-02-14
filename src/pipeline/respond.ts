@@ -1,12 +1,15 @@
-import { generateText } from "ai";
+import { generateText, stepCountIs } from "ai";
+import type { WebClient } from "@slack/web-api";
 import { mainModel } from "../lib/ai.js";
 import { postProcessResponse } from "../personality/anti-patterns.js";
 import { formatForSlack } from "../slack/formatter.js";
+import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 
 interface RespondOptions {
   systemPrompt: string;
   userMessage: string;
+  slackClient: WebClient;
 }
 
 export interface LLMResponse {
@@ -38,6 +41,8 @@ export async function generateResponse(
     model: mainModel,
     system: options.systemPrompt,
     prompt: options.userMessage,
+    tools: createSlackTools(options.slackClient),
+    stopWhen: stepCountIs(5),
   });
 
   const llmMs = Date.now() - start;

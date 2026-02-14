@@ -143,6 +143,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     const response = await generateResponse({
       systemPrompt,
       userMessage: messageText,
+      slackClient: client,
     });
     const llmMs = Date.now() - llmStart;
 
