@@ -3,7 +3,7 @@
   "framework": null,
   "functions": {
     "api/**/*.ts": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   },
   "rewrites": [

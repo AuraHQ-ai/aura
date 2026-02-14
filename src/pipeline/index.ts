@@ -192,7 +192,18 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     } else {
       await backgroundTasks;
     }
-  } catch (error) {
+  } catch (error: any) {
+    const errorMessage = error?.message || String(error);
+    const errorName = error?.name || "UnknownError";
+
+    logger.error("Pipeline error", {
+      errorName,
+      errorMessage,
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+    });
+
     recordError("pipeline", error, {
       userId: context.userId,
       channelId: context.channelId,
