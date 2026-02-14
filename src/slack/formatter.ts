@@ -23,9 +23,14 @@ export function markdownToSlackMrkdwn(markdown: string): string {
   // Convert links: [text](url) → <url|text>
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
 
-  // Convert bold: **text** → *text*
-  // Must be done before italic to avoid conflicts
-  result = result.replace(/\*\*(.+?)\*\*/g, "*$1*");
+  // Convert bold: **text** → *text* (via placeholder to avoid italic conflict)
+  result = result.replace(/\*\*(.+?)\*\*/g, "\x00BOLD$1\x00BOLD");
+
+  // Convert italic: *text* → _text_ (must happen after bold placeholder)
+  result = result.replace(/\*(.+?)\*/g, "_$1_");
+
+  // Restore bold placeholders to Slack bold *text*
+  result = result.replace(/\x00BOLD(.+?)\x00BOLD/g, "*$1*");
 
   // Convert strikethrough: ~~text~~ → ~text~
   result = result.replace(/~~(.+?)~~/g, "~$1~");

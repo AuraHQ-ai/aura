@@ -49,9 +49,10 @@ export async function mergeDuplicateMemories(): Promise<number> {
     // Fetch all memory IDs with embeddings to iterate individually,
     // leveraging the HNSW index for nearest-neighbor lookups.
     const allMemories = await db.execute(sql`
-      SELECT id, embedding, relevance_score, created_at
+      SELECT id, relevance_score, created_at
       FROM memories
       WHERE embedding IS NOT NULL
+        AND relevance_score > 0.01
       ORDER BY id
     `);
 
@@ -76,6 +77,7 @@ export async function mergeDuplicateMemories(): Promise<number> {
         FROM memories
         WHERE id <> ${mem.id}
           AND embedding IS NOT NULL
+          AND relevance_score > 0.01
           AND 1 - (embedding <=> (SELECT embedding FROM memories WHERE id = ${mem.id})) > 0.95
         ORDER BY embedding <=> (SELECT embedding FROM memories WHERE id = ${mem.id})
         LIMIT 10
