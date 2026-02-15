@@ -1,4 +1,3 @@
-import { Sandbox } from "e2b";
 import { getSetting, setSetting } from "./settings.js";
 import { logger } from "./logger.js";
 
@@ -6,13 +5,22 @@ const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Per-invocation cache -- reuse the same sandbox within a single request */
-let cachedSandbox: Sandbox | null = null;
+let cachedSandbox: any | null = null;
+
+/**
+ * Dynamically import the E2B SDK to avoid ESM/CJS compatibility issues
+ * at module load time (chalk is ESM-only, Vercel bundles as CJS).
+ */
+async function loadE2B() {
+  const { Sandbox } = await import("e2b");
+  return Sandbox;
+}
 
 /**
  * Get or create a sandbox. Tries to resume a previously paused sandbox,
  * creates a new one if none exists or resume fails.
  */
-export async function getOrCreateSandbox(): Promise<Sandbox> {
+export async function getOrCreateSandbox(): Promise<any> {
   // Return cached instance within the same invocation
   if (cachedSandbox) {
     try {
@@ -30,6 +38,8 @@ export async function getOrCreateSandbox(): Promise<Sandbox> {
       "E2B_API_KEY is not configured. Sandbox execution is not available.",
     );
   }
+
+  const Sandbox = await loadE2B();
 
   // Try to resume a previously paused sandbox
   const savedId = await getSetting(SANDBOX_NOTE_KEY);
