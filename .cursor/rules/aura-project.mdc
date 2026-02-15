@@ -60,6 +60,14 @@ alwaysApply: true
   import { SomeSDK } from "some-sdk";
   ```
 
+## GitHub Access
+
+- `GITHUB_TOKEN` is a PAT scoped to `realadvisor/aura` (contents + PRs)
+- Passed to E2B sandbox via `envs` for git/gh CLI operations
+- Aura can read her own code via `read_own_source` tool (GitHub API, no sandbox needed)
+- NEVER push to main -- always use branches + PRs
+- For self-edits to `system-prompt.ts`, flag as "self-edit" in the PR
+
 ## TypeScript
 
 - Always run `npx tsc --noEmit` before committing.
