@@ -5,6 +5,7 @@ import { logger } from "../lib/logger.js";
 import { createNoteTools } from "./notes.js";
 import { createScheduleTools, type ScheduleContext } from "./schedule.js";
 import { createListWriteTools } from "./lists.js";
+import { createWebTools } from "./web.js";
 
 // ── Rate Limiter ─────────────────────────────────────────────────────────────
 
@@ -1300,5 +1301,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Scheduling Tools ─────────────────────────────────────────────────
     ...createScheduleTools(client, context),
+
+    // ── Web Tools ────────────────────────────────────────────────────────
+    ...createWebTools(),
   };
 }
