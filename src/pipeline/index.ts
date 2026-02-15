@@ -147,6 +147,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // 4b. Download images if the message has file attachments
     const botToken = process.env.SLACK_BOT_TOKEN || "";
     const images = await downloadEventImages(event, botToken);
+    if (images.length > 0) {
+      logger.info("Images ready for LLM", {
+        count: images.length,
+        names: images.map((i) => i.name),
+      });
+    }
 
     // 5. Call LLM
     const llmStart = Date.now();

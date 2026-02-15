@@ -28,7 +28,9 @@ export function getImageFiles(
   if (!Array.isArray(files) || files.length === 0) return [];
 
   return files.filter((f: any) => {
-    if (!f.url_private_download) return false;
+    // Slack uses url_private_download or url_private
+    if (!f.url_private_download && !f.url_private) return false;
+    if (!f.url_private_download) f.url_private_download = f.url_private;
     if (!f.mimetype || !SUPPORTED_IMAGE_TYPES.has(f.mimetype)) return false;
     if (f.size && f.size > MAX_FILE_SIZE) {
       logger.warn("Skipping large image file", {
