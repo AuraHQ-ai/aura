@@ -43,8 +43,26 @@ alwaysApply: true
 - **Models**: Resolve dynamically via `getMainModel()` / `getFastModel()` / `getEmbeddingModel()` (DB first, then env var, then default).
 - **System prompt**: All personality, tools, and self-awareness in `src/personality/system-prompt.ts`.
 
+## Adding Dependencies -- CRITICAL
+
+- **NEVER use static `import` for optional/external SDKs** (e2b, tavily, etc.). Always use `await import("package")` inside the function that needs it. Static imports cause the module to load on EVERY request, and ESM-only packages (like those using `chalk`) will crash Vercel's CJS runtime.
+- **After adding any new npm package**, verify it works at runtime, not just type-checking. `tsc --noEmit` does NOT catch ESM/CJS compatibility issues.
+- **Check if the package is ESM-only** before adding it. If it is, it MUST be dynamically imported.
+- **Pattern for optional dependencies**:
+  ```typescript
+  // GOOD: dynamic import, loads only when needed
+  async function doThing() {
+    const { SomeSDK } = await import("some-sdk");
+    return SomeSDK.create();
+  }
+  
+  // BAD: static import, loads on every cold start, crashes if ESM-only
+  import { SomeSDK } from "some-sdk";
+  ```
+
 ## TypeScript
 
 - Always run `npx tsc --noEmit` before committing.
 - Use `.js` extensions in imports (ESM with `"type": "module"`).
 - AI SDK v6 uses `inputSchema` (not `parameters`) and `stopWhen: stepCountIs(N)` (not `maxSteps`).
+- Remember: `tsc` catches type errors but NOT runtime issues (ESM/CJS, missing env vars, API incompatibilities). Be extra careful with new dependencies.
