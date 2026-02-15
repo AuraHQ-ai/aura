@@ -9,7 +9,10 @@ A Slack bot with persistent memory, personality, cross-user awareness, and auton
 - **Recalls** relevant context via semantic search across all past conversations
 - **Adapts** its tone to each person's communication style
 - **Acts** -- sends messages, joins channels, creates canvases, manages Slack Lists, reacts to messages
+- **Executes** -- runs shell commands, git, tests, scripts in a sandboxed Linux VM (E2B)
 - **Schedules** -- sets reminders, builds recurring routines, follows up on tasks autonomously
+- **Searches the web** -- searches the internet and reads URLs via Tavily
+- **Sees images** -- reads images shared in Slack messages (multimodal)
 - **Self-aware** -- understands its own architecture, constraints, and limitations
 - **Respects privacy** -- DM content stays private unless explicitly shared
 - **Forgets on request** -- users can ask "what do you know about me?" or say "forget X"
@@ -26,6 +29,8 @@ A Slack bot with persistent memory, personality, cross-user awareness, and auton
 | ORM | [Drizzle](https://orm.drizzle.team) |
 | Slack | `@slack/web-api` + `@slack/bolt` (types) |
 | Scheduling | `cron-parser` for recurring actions |
+| Sandbox | [E2B](https://e2b.dev) cloud sandboxes for shell execution |
+| Web Search | [Tavily](https://tavily.com) AI search API |
 
 LLM provider is your choice. AI Gateway supports 20+ providers out of the box -- Anthropic, OpenAI, Google, Mistral, xAI, DeepSeek, Meta, and more. You pick models via environment variables or the in-Slack settings UI.
 
@@ -199,6 +204,9 @@ Go to your Vercel project dashboard -> **Settings** -> **Environment Variables**
 | `MODEL_EMBEDDING` | No | Embedding model (default: `openai/text-embedding-3-small`) |
 | `CRON_SECRET` | Recommended | Protects cron endpoints |
 | `SLACK_USER_TOKEN` | No | User token for message search (`xoxp-...`) |
+| `TAVILY_API_KEY` | No | Web search API key (free tier: 1000/month) |
+| `E2B_API_KEY` | No | E2B sandbox API key (for shell execution) |
+| `E2B_TEMPLATE_ID` | No | Custom E2B template ID (uses default if unset) |
 | `LOG_LEVEL` | No | `debug`, `info` (default), `warn`, `error` |
 
 #### Redeploy after setting env vars:
@@ -260,6 +268,26 @@ Aura uses AI SDK tool calling to take actions in Slack autonomously. The LLM dec
 | Notes | save, read (with line numbers), edit (append/prepend/replace lines/insert), delete |
 | Scheduling | schedule one-shot or recurring tasks (cron + timezone), list, cancel |
 | Status | set Aura's own Slack status with auto-expiration |
+| Web | web_search (Tavily), read_url (content extraction) |
+| Sandbox | run_command, read_sandbox_file, write_sandbox_file (E2B Linux VM) |
+
+### Sandbox (Linux VM)
+
+Aura has access to a persistent, sandboxed Linux VM via [E2B](https://e2b.dev). She can run any shell command, use git, run tests, write scripts, and more -- all in an isolated cloud environment.
+
+- Pre-installed: git, node, python, gh (GitHub CLI), gcloud, vercel CLI, ripgrep, curl, jq
+- Persistent: the sandbox state (files, installed packages) survives across conversations
+- Paused between uses to save credits, resumed on demand (~1-2 seconds)
+- Output is truncated to avoid token bloat
+- Install additional tools on the fly with `apt-get install` or `pip install`
+
+To use a custom template with more tools pre-installed:
+```bash
+npx e2b template init    # creates e2b.Dockerfile
+# edit e2b.Dockerfile to add your tools
+npx e2b template build   # returns a template ID
+# set E2B_TEMPLATE_ID env var to the template ID
+```
 
 ### Scheduling System
 
@@ -298,6 +326,8 @@ src/
     metrics.ts                # Observability metrics
     privacy.ts                # DM privacy filtering
     settings.ts               # Settings CRUD (key-value in DB)
+    sandbox.ts                # E2B sandbox lifecycle (create, pause, resume)
+    files.ts                  # Slack file download (multimodal images)
     temporal.ts               # Time/date helpers
   memory/
     store.ts                  # Message + memory CRUD
@@ -318,6 +348,8 @@ src/
     lists.ts                  # Slack Lists write tools
     notes.ts                  # Agent scratchpad (CRUD with line-level editing)
     schedule.ts               # Scheduling tools (schedule, list, cancel actions)
+    sandbox.ts                # E2B sandbox tools (shell, file read/write)
+    web.ts                    # Web search (Tavily) and URL reading
   slack/
     formatter.ts              # Markdown -> Slack mrkdwn
     home.ts                   # App Home settings tab (Block Kit)
