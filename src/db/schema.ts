@@ -166,6 +166,22 @@ export const settings = pgTable("settings", {
   updatedBy: text("updated_by"),
 });
 
+// ── Notes (agent scratchpad) ────────────────────────────────────────────────
+
+export const notes = pgTable(
+  "notes",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    topic: text("topic").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("notes_topic_idx").on(table.topic)],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
