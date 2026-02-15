@@ -158,7 +158,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       });
     }
 
-    // 5. Call LLM
+    // 5. Call LLM (streams response directly to Slack via chat.update)
     const llmStart = Date.now();
     const response = await generateResponse({
       systemPrompt,
@@ -166,18 +166,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       slackClient: client,
       context: { userId: context.userId, channelId: context.channelId },
       images,
+      channelId: context.channelId,
+      threadTs: replyThreadTs,
     });
     const llmMs = Date.now() - llmStart;
 
-    // 6. Send response to Slack (skip if empty — model may have
-    //    completed the request entirely via tool calls)
-    if (response.formatted.trim().length > 0) {
-      await client.chat.postMessage({
-        channel: context.channelId,
-        text: response.formatted,
-        thread_ts: replyThreadTs,
-      });
-    }
+    // Response is already posted to Slack via streaming updates
 
     const totalMs = Date.now() - pipelineStart;
 

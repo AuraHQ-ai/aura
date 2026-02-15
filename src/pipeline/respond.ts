@@ -1,4 +1,4 @@
-import { generateText, stepCountIs } from "ai";
+import { streamText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
 import { getMainModel } from "../lib/ai.js";
 import { postProcessResponse } from "../personality/anti-patterns.js";
@@ -7,12 +7,46 @@ import { createSlackTools } from "../tools/slack.js";
 import type { SlackImage } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 
+// ── Tool Status Messages ─────────────────────────────────────────────────────
+
+const TOOL_STATUS: Record<string, string> = {
+  web_search: "_Searching the web..._",
+  read_url: "_Reading a link..._",
+  read_channel_history: "_Reading channel history..._",
+  read_canvas: "_Reading a canvas..._",
+  list_channels: "_Looking at channels..._",
+  join_channel: "_Joining a channel..._",
+  search_messages: "_Searching messages..._",
+  search_users: "_Looking up users..._",
+  list_users: "_Looking up users..._",
+  get_user_info: "_Looking up a profile..._",
+  send_channel_message: "_Sending a message..._",
+  send_direct_message: "_Sending a DM..._",
+  send_thread_reply: "_Replying in thread..._",
+  create_channel: "_Creating a channel..._",
+  invite_to_channel: "_Inviting someone..._",
+  schedule_action: "_Scheduling a task..._",
+  list_scheduled_actions: "_Checking the schedule..._",
+  save_note: "_Saving a note..._",
+  read_note: "_Reading a note..._",
+  edit_note: "_Editing a note..._",
+  list_slack_list_items: "_Reading a list..._",
+  create_canvas: "_Creating a canvas..._",
+  edit_canvas: "_Editing a canvas..._",
+  add_reaction: "_Reacting..._",
+  set_my_status: "_Updating status..._",
+};
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
 interface RespondOptions {
   systemPrompt: string;
   userMessage: string;
   slackClient: WebClient;
   context?: { userId?: string; channelId?: string };
   images?: SlackImage[];
+  channelId: string;
+  threadTs?: string;
 }
 
 export interface LLMResponse {
@@ -24,6 +58,8 @@ export interface LLMResponse {
   modifications: string[];
   /** Flagged words found */
   flaggedWords: string[];
+  /** Whether the response was already posted to Slack via streaming */
+  alreadyPosted: boolean;
   /** Token usage */
   usage?: {
     inputTokens: number;
@@ -32,23 +68,72 @@ export interface LLMResponse {
   };
 }
 
+// ── Debounce Helper ──────────────────────────────────────────────────────────
+
+const UPDATE_INTERVAL_MS = 1500;
+
+// ── Main Function ────────────────────────────────────────────────────────────
+
 /**
- * Call the LLM and post-process the response.
+ * Stream LLM response with live Slack updates.
+ *
+ * Posts a placeholder message immediately, then progressively updates it
+ * as text chunks arrive and tool calls are made. The final update contains
+ * the post-processed, formatted response.
  */
 export async function generateResponse(
   options: RespondOptions,
 ): Promise<LLMResponse> {
   const start = Date.now();
+  const { slackClient, channelId, threadTs } = options;
 
   const model = await getMainModel();
   const hasImages = options.images && options.images.length > 0;
 
-  // Abort the LLM call if it takes longer than 120 seconds
-  const abortController = new AbortController();
-  const abortTimeout = setTimeout(() => abortController.abort(), 120_000);
+  // ── Post placeholder message ─────────────────────────────────────────
+  let messageTs: string | undefined;
+  try {
+    const placeholderResult = await slackClient.chat.postMessage({
+      channel: channelId,
+      text: "...",
+      thread_ts: threadTs,
+    });
+    messageTs = placeholderResult.ts;
+  } catch (error: any) {
+    logger.error("Failed to post placeholder message", {
+      error: error.message,
+    });
+  }
 
-  // Build multimodal messages if images are present, otherwise use simple prompt
-  const generateOptions: any = {
+  // Helper to update the placeholder message
+  const updateMessage = async (text: string) => {
+    if (!messageTs) return;
+    try {
+      await slackClient.chat.update({
+        channel: channelId,
+        ts: messageTs,
+        text,
+      });
+    } catch {
+      // Swallow update errors (rate limits, etc.)
+    }
+  };
+
+  // ── Inactivity timeout ───────────────────────────────────────────────
+  const abortController = new AbortController();
+  let inactivityTimer: ReturnType<typeof setTimeout> = undefined as any;
+
+  const resetTimer = () => {
+    clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(() => {
+      logger.warn("LLM inactivity timeout (90s), aborting");
+      abortController.abort();
+    }, 90_000);
+  };
+  resetTimer(); // start the initial timer
+
+  // ── Build stream options ─────────────────────────────────────────────
+  const streamOptions: any = {
     model,
     system: options.systemPrompt,
     tools: createSlackTools(options.slackClient, options.context),
@@ -57,8 +142,6 @@ export async function generateResponse(
   };
 
   if (hasImages) {
-    // Multimodal: use messages format with content parts
-    // AI SDK v6 uses `image` (not `data`) and `mediaType` (not `mimeType`)
     const content: any[] = [
       { type: "text", text: options.userMessage },
       ...options.images!.map((img) => ({
@@ -67,53 +150,129 @@ export async function generateResponse(
         mediaType: img.mimeType,
       })),
     ];
-    generateOptions.messages = [{ role: "user", content }];
+    streamOptions.messages = [{ role: "user", content }];
   } else {
-    generateOptions.prompt = options.userMessage;
+    streamOptions.prompt = options.userMessage;
   }
 
-  logger.info("Starting LLM call", {
+  logger.info("Starting LLM stream", {
     model: model.modelId || "unknown",
     hasImages,
-    toolCount: Object.keys(generateOptions.tools || {}).length,
+    toolCount: Object.keys(streamOptions.tools || {}).length,
     promptLength: options.systemPrompt.length,
   });
 
-  let text: string;
-  let usage: any;
+  // ── Stream and update ────────────────────────────────────────────────
+  let accumulatedText = "";
+  let lastUpdateMs = 0;
+  let currentToolStatus = "";
+
   try {
-    const result = await generateText(generateOptions);
-    text = result.text;
-    usage = result.usage;
-  } finally {
-    clearTimeout(abortTimeout);
+    const result = streamText(streamOptions);
+
+    for await (const chunk of result.fullStream) {
+      resetTimer(); // reset inactivity timer on every chunk
+
+      switch (chunk.type) {
+        case "tool-call": {
+          // Show tool status in the placeholder
+          const status =
+            TOOL_STATUS[chunk.toolName] || `_Working on it..._`;
+          currentToolStatus = status;
+
+          // If we have accumulated text, show text + status
+          const statusText = accumulatedText
+            ? `${accumulatedText}\n\n${status}`
+            : status;
+
+          await updateMessage(statusText);
+          lastUpdateMs = Date.now();
+          break;
+        }
+
+        case "tool-result": {
+          // Clear the tool status after tool completes
+          currentToolStatus = "";
+          break;
+        }
+
+        case "text-delta": {
+          accumulatedText += chunk.text;
+
+          // Debounced update: only update Slack every 1.5s
+          const now = Date.now();
+          if (now - lastUpdateMs >= UPDATE_INTERVAL_MS) {
+            await updateMessage(accumulatedText);
+            lastUpdateMs = now;
+          }
+          break;
+        }
+      }
+    }
+
+    // ── Final update ─────────────────────────────────────────────────────
+    clearTimeout(inactivityTimer);
+
+    const llmMs = Date.now() - start;
+
+    // Get usage from the resolved promises
+    const usage = await result.usage;
+    const text = await result.text;
+
+    // Use the full text from the result (not accumulated, in case of multi-step)
+    const finalText = text || accumulatedText;
+
+    // Post-process: strip anti-patterns
+    const { cleaned, flaggedWords, modifications } =
+      postProcessResponse(finalText);
+
+    // Format for Slack
+    const formatted = formatForSlack(cleaned);
+
+    // Final update with the post-processed version
+    if (formatted.trim().length > 0) {
+      await updateMessage(formatted);
+    } else if (messageTs) {
+      // If the response is empty (tool-only), delete the placeholder
+      try {
+        await slackClient.chat.delete({ channel: channelId, ts: messageTs });
+      } catch {
+        // If we can't delete, just update to empty-ish
+        await updateMessage("_Done._");
+      }
+    }
+
+    const inputTokens = usage.inputTokens ?? 0;
+    const outputTokens = usage.outputTokens ?? 0;
+    const totalTokens = inputTokens + outputTokens;
+
+    logger.info(`LLM stream completed in ${llmMs}ms`, {
+      rawLength: finalText.length,
+      cleanedLength: cleaned.length,
+      modifications,
+      flaggedWords,
+      usage: { inputTokens, outputTokens, totalTokens },
+    });
+
+    return {
+      raw: finalText,
+      formatted,
+      modifications,
+      flaggedWords,
+      alreadyPosted: true,
+      usage: { inputTokens, outputTokens, totalTokens },
+    };
+  } catch (error: any) {
+    clearTimeout(inactivityTimer);
+
+    // If we have a placeholder, update it with an error message
+    if (messageTs && accumulatedText) {
+      // If we got partial text before the error, post what we have
+      await updateMessage(
+        accumulatedText + "\n\n_...interrupted. Something went wrong._",
+      );
+    }
+
+    throw error; // re-throw so the pipeline catch block handles it
   }
-
-  const llmMs = Date.now() - start;
-
-  // Post-process: strip anti-patterns
-  const { cleaned, flaggedWords, modifications } = postProcessResponse(text);
-
-  // Format for Slack
-  const formatted = formatForSlack(cleaned);
-
-  const inputTokens = usage.inputTokens ?? 0;
-  const outputTokens = usage.outputTokens ?? 0;
-  const totalTokens = inputTokens + outputTokens;
-
-  logger.info(`LLM response generated in ${llmMs}ms`, {
-    rawLength: text.length,
-    cleanedLength: cleaned.length,
-    modifications,
-    flaggedWords,
-    usage: { inputTokens, outputTokens, totalTokens },
-  });
-
-  return {
-    raw: text,
-    formatted,
-    modifications,
-    flaggedWords,
-    usage: { inputTokens, outputTokens, totalTokens },
-  };
 }
