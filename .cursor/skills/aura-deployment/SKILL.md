@@ -9,6 +9,17 @@ description: Deploy Aura to Vercel, manage environment variables, read logs, and
 
 The project uses `npx --yes vercel@50.13.2` (not globally installed). Always include `--scope real-advisor`.
 
+## Pre-Push Checklist (CRITICAL)
+
+Before pushing to main (which deploys to production immediately):
+
+1. `npx tsc --noEmit` -- type check passes
+2. **New npm packages?** Check if ESM-only. If yes, MUST use dynamic `import()` not static `import`. Static imports of ESM-only packages crash the entire Vercel function.
+3. **New tools/features?** Verify they fail gracefully if their API key isn't set (return error message, don't crash)
+4. **No secrets in code** -- use env vars, never hardcode
+
+Lesson learned: A static `import` of the `e2b` package (which uses ESM-only `chalk`) crashed ALL of Aura on prod -- not just the sandbox feature. Every request failed. Dynamic import fixed it.
+
 ## Deploy
 
 Push to `main` triggers auto-deploy. For manual deploy:
