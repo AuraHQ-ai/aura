@@ -100,8 +100,9 @@ export function createScheduleTools(
           ),
         channel_name: z
           .string()
+          .optional()
           .describe(
-            "Channel to post results in, e.g. 'general' or '#bugs'",
+            "Channel to post results in, e.g. 'general' or '#bugs'. Optional -- omit for DM-only actions where the description specifies a DM target.",
           ),
         recurring: z
           .string()
@@ -137,12 +138,19 @@ export function createScheduleTools(
             };
           }
 
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) {
-            return {
-              ok: false,
-              error: `Could not find channel "${channel_name}".`,
-            };
+          let channelId = "";
+          let channelLabel = "DM-routed";
+
+          if (channel_name) {
+            const channel = await resolveChannelByName(client, channel_name);
+            if (!channel) {
+              return {
+                ok: false,
+                error: `Could not find channel "${channel_name}".`,
+              };
+            }
+            channelId = channel.id;
+            channelLabel = `#${channel.name}`;
           }
 
           const executeAt = new Date(Date.now() + delayMs);
@@ -151,7 +159,7 @@ export function createScheduleTools(
           await db.insert(scheduledActions).values({
             description,
             executeAt,
-            channelId: channel.id,
+            channelId,
             requestedBy,
             recurring: recurring || null,
             timezone,
@@ -167,13 +175,13 @@ export function createScheduleTools(
             description: description.substring(0, 80),
             executeAt: timeStr,
             recurring,
-            channel: channel.name,
+            channel: channelLabel,
             requestedBy,
           });
 
           return {
             ok: true,
-            message: `Scheduled${recurStr}. First execution at ${timeStr} in #${channel.name}.`,
+            message: `Scheduled${recurStr}. First execution at ${timeStr}${channelId ? ` in ${channelLabel}` : " (DM-routed via description)"}.`,
             execute_at: timeStr,
           };
         } catch (error: any) {
