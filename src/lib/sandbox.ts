@@ -42,6 +42,13 @@ export async function getOrCreateSandbox(): Promise<any> {
 
   const Sandbox = await loadE2B();
 
+  // Env vars to inject into the sandbox
+  const envs: Record<string, string> = {};
+  if (process.env.GITHUB_TOKEN) {
+    envs.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+    envs.GH_TOKEN = process.env.GITHUB_TOKEN;
+  }
+
   // Try to resume a previously paused sandbox
   const savedId = await getSetting(SANDBOX_NOTE_KEY);
   if (savedId) {
@@ -50,8 +57,30 @@ export async function getOrCreateSandbox(): Promise<any> {
       const sandbox = await Sandbox.connect(savedId, {
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
+
+      // Inject env vars into resumed sandbox (connect() doesn't support envs)
+      if (Object.keys(envs).length > 0) {
+        const exports = Object.entries(envs)
+          .map(([k, v]) => `export ${k}="${v}"`)
+          .join(" && ");
+        await sandbox.commands.run(`${exports} && echo 'env set'`, {
+          cwd: "/home/user",
+          timeoutMs: 5000,
+        });
+
+        // Also write to .bashrc so env persists across commands
+        const bashrcLines = Object.entries(envs)
+          .map(([k, v]) => `export ${k}="${v}"`)
+          .join("\n");
+        await sandbox.files.write("/home/user/.env_injected", bashrcLines);
+        await sandbox.commands.run(
+          'grep -q env_injected /home/user/.bashrc || echo "source /home/user/.env_injected" >> /home/user/.bashrc',
+          { cwd: "/home/user", timeoutMs: 5000 },
+        );
+      }
+
       cachedSandbox = sandbox;
-      logger.info("E2B sandbox resumed", { sandboxId: savedId });
+      logger.info("E2B sandbox resumed with env vars", { sandboxId: savedId });
       return sandbox;
     } catch (error: any) {
       logger.warn("Failed to resume sandbox, creating new one", {
@@ -64,13 +93,6 @@ export async function getOrCreateSandbox(): Promise<any> {
   // Create a new sandbox
   const templateId = process.env.E2B_TEMPLATE_ID || undefined;
   logger.info("Creating new E2B sandbox", { templateId: templateId || "default" });
-
-  // Pass selected env vars to the sandbox for git/gh operations
-  const envs: Record<string, string> = {};
-  if (process.env.GITHUB_TOKEN) {
-    envs.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-    envs.GH_TOKEN = process.env.GITHUB_TOKEN; // gh CLI reads this
-  }
 
   const createOptions: any = { timeoutMs: DEFAULT_TIMEOUT_MS, envs };
   const sandbox = templateId
