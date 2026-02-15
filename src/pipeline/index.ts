@@ -79,6 +79,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     isDm: context.isDm,
     textLength: context.text.length,
     textPreview: context.text.substring(0, 80),
+    hasFiles: Array.isArray((event as any).files),
+    fileCount: (event as any).files?.length || 0,
+    fileTypes: (event as any).files?.map((f: any) => f.mimetype) || [],
+    subtype: (event as any).subtype || "none",
   });
 
   // Determine thread_ts for replies:
