@@ -4,6 +4,7 @@ import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { createNoteTools } from "./notes.js";
 import { createScheduleTools, type ScheduleContext } from "./schedule.js";
+import { createListWriteTools } from "./lists.js";
 
 // ── Rate Limiter ─────────────────────────────────────────────────────────────
 
@@ -352,6 +353,11 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 user: userName,
                 text: msg.text || "",
                 timestamp: msg.ts || "",
+                reactions:
+                  (msg as any).reactions?.map((r: any) => ({
+                    name: r.name,
+                    count: r.count,
+                  })) || [],
               };
             }),
           );
@@ -1034,6 +1040,260 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         }
       },
     }),
+
+    // ── Message Management Tools ──────────────────────────────────────────
+
+    edit_message: tool({
+      description:
+        "Edit one of Aura's own messages. Bots can only edit their own messages.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Channel where the message is"),
+        message_ts: z.string().describe("Timestamp of the message to edit"),
+        new_text: z.string().describe("The new message text"),
+      }),
+      execute: async ({ channel_name, message_ts, new_text }) => {
+        try {
+          const channel = await resolveChannelByName(client, channel_name);
+          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          await throttle();
+          await client.chat.update({ channel: channel.id, ts: message_ts, text: new_text });
+          logger.info("edit_message tool called", { channel: channel.name, ts: message_ts });
+          return { ok: true, message: `Message updated in #${channel.name}` };
+        } catch (error: any) {
+          logger.error("edit_message tool failed", { error: error.message });
+          return { ok: false, error: `Failed to edit message: ${error.message}` };
+        }
+      },
+    }),
+
+    delete_message: tool({
+      description:
+        "Delete one of Aura's own messages. Bots can only delete their own messages.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Channel where the message is"),
+        message_ts: z.string().describe("Timestamp of the message to delete"),
+      }),
+      execute: async ({ channel_name, message_ts }) => {
+        try {
+          const channel = await resolveChannelByName(client, channel_name);
+          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          await throttle();
+          await client.chat.delete({ channel: channel.id, ts: message_ts });
+          logger.info("delete_message tool called", { channel: channel.name, ts: message_ts });
+          return { ok: true, message: `Message deleted from #${channel.name}` };
+        } catch (error: any) {
+          logger.error("delete_message tool failed", { error: error.message });
+          return { ok: false, error: `Failed to delete message: ${error.message}` };
+        }
+      },
+    }),
+
+    send_thread_reply: tool({
+      description:
+        "Reply in a specific thread in a channel. Use this instead of send_channel_message when you want to respond in a thread.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Channel where the thread is"),
+        thread_ts: z.string().describe("Timestamp of the parent message (thread)"),
+        message: z.string().describe("The reply text"),
+      }),
+      execute: async ({ channel_name, thread_ts, message }) => {
+        try {
+          const channel = await resolveChannelByName(client, channel_name);
+          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          await throttle();
+          const result = await client.chat.postMessage({
+            channel: channel.id,
+            text: message,
+            thread_ts,
+          });
+          logger.info("send_thread_reply tool called", { channel: channel.name, thread_ts });
+          return { ok: true, message: `Reply sent in thread in #${channel.name}`, timestamp: result.ts };
+        } catch (error: any) {
+          logger.error("send_thread_reply tool failed", { error: error.message });
+          return { ok: false, error: `Failed to send thread reply: ${error.message}` };
+        }
+      },
+    }),
+
+    // ── Reaction Tools ──────────────────────────────────────────────────────
+
+    add_reaction: tool({
+      description:
+        "Add an emoji reaction to a message. Use this to acknowledge, vote, triage, or signal without a full text reply.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Channel where the message is"),
+        message_ts: z.string().describe("Timestamp of the message to react to"),
+        emoji: z.string().describe("Emoji name without colons, e.g. 'eyes', 'white_check_mark', 'thumbsup'"),
+      }),
+      execute: async ({ channel_name, message_ts, emoji }) => {
+        try {
+          const channel = await resolveChannelByName(client, channel_name);
+          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          await throttle();
+          await client.reactions.add({ channel: channel.id, timestamp: message_ts, name: emoji });
+          logger.info("add_reaction tool called", { channel: channel.name, emoji });
+          return { ok: true, message: `Reacted with :${emoji}: in #${channel.name}` };
+        } catch (error: any) {
+          logger.error("add_reaction tool failed", { error: error.message });
+          return { ok: false, error: `Failed to add reaction: ${error.message}` };
+        }
+      },
+    }),
+
+    remove_reaction: tool({
+      description:
+        "Remove an emoji reaction from a message.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Channel where the message is"),
+        message_ts: z.string().describe("Timestamp of the message"),
+        emoji: z.string().describe("Emoji name without colons"),
+      }),
+      execute: async ({ channel_name, message_ts, emoji }) => {
+        try {
+          const channel = await resolveChannelByName(client, channel_name);
+          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          await throttle();
+          await client.reactions.remove({ channel: channel.id, timestamp: message_ts, name: emoji });
+          logger.info("remove_reaction tool called", { channel: channel.name, emoji });
+          return { ok: true, message: `Removed :${emoji}: from message in #${channel.name}` };
+        } catch (error: any) {
+          logger.error("remove_reaction tool failed", { error: error.message });
+          return { ok: false, error: `Failed to remove reaction: ${error.message}` };
+        }
+      },
+    }),
+
+    // ── Channel Management Tools ────────────────────────────────────────────
+
+    create_channel: tool({
+      description:
+        "Create a new Slack channel.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Name for the new channel (lowercase, hyphens, underscores only)"),
+        is_private: z.boolean().default(false).describe("Create as a private channel"),
+      }),
+      execute: async ({ channel_name, is_private }) => {
+        try {
+          await throttle();
+          const result = await client.conversations.create({
+            name: channel_name.toLowerCase().replace(/[^a-z0-9_-]/g, "-"),
+            is_private,
+          });
+          const ch = result.channel as any;
+          // Invalidate channel cache
+          channelCache = null;
+          logger.info("create_channel tool called", { channel: ch?.name, id: ch?.id });
+          return { ok: true, message: `Created ${is_private ? "private" : "public"} channel #${ch?.name}`, channel_id: ch?.id };
+        } catch (error: any) {
+          logger.error("create_channel tool failed", { error: error.message });
+          if (error.data?.error === "name_taken") {
+            return { ok: false, error: `A channel named "${channel_name}" already exists.` };
+          }
+          return { ok: false, error: `Failed to create channel: ${error.message}` };
+        }
+      },
+    }),
+
+    set_channel_topic: tool({
+      description:
+        "Set or update a channel's topic. Aura must be a member of the channel.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Channel name"),
+        topic: z.string().describe("The new topic text"),
+      }),
+      execute: async ({ channel_name, topic }) => {
+        try {
+          const channel = await resolveChannelByName(client, channel_name);
+          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          await throttle();
+          await client.conversations.setTopic({ channel: channel.id, topic });
+          logger.info("set_channel_topic tool called", { channel: channel.name });
+          return { ok: true, message: `Topic updated for #${channel.name}` };
+        } catch (error: any) {
+          logger.error("set_channel_topic tool failed", { error: error.message });
+          return { ok: false, error: `Failed to set topic: ${error.message}` };
+        }
+      },
+    }),
+
+    invite_to_channel: tool({
+      description:
+        "Invite a user to a channel. Aura must be a member of the channel.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Channel to invite the user to"),
+        user_name: z.string().describe("Display name, username, or user ID of the person to invite"),
+      }),
+      execute: async ({ channel_name, user_name }) => {
+        try {
+          const channel = await resolveChannelByName(client, channel_name);
+          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const user = await resolveUserByName(client, user_name);
+          if (!user) return { ok: false, error: `User "${user_name}" not found.` };
+          await throttle();
+          await client.conversations.invite({ channel: channel.id, users: user.id });
+          logger.info("invite_to_channel tool called", { channel: channel.name, user: user.name });
+          return { ok: true, message: `Invited ${user.name} to #${channel.name}` };
+        } catch (error: any) {
+          logger.error("invite_to_channel tool failed", { error: error.message });
+          if (error.data?.error === "already_in_channel") {
+            return { ok: false, error: `${user_name} is already in #${channel_name}.` };
+          }
+          return { ok: false, error: `Failed to invite: ${error.message}` };
+        }
+      },
+    }),
+
+    leave_channel: tool({
+      description:
+        "Leave a channel Aura is currently a member of.",
+      inputSchema: z.object({
+        channel_name: z.string().describe("Channel to leave"),
+      }),
+      execute: async ({ channel_name }) => {
+        try {
+          const channel = await resolveChannelByName(client, channel_name);
+          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          await throttle();
+          await client.conversations.leave({ channel: channel.id });
+          channelCache = null; // invalidate
+          logger.info("leave_channel tool called", { channel: channel.name });
+          return { ok: true, message: `Left #${channel.name}` };
+        } catch (error: any) {
+          logger.error("leave_channel tool failed", { error: error.message });
+          return { ok: false, error: `Failed to leave channel: ${error.message}` };
+        }
+      },
+    }),
+
+    // ── Status Tool ─────────────────────────────────────────────────────────
+
+    set_my_status: tool({
+      description:
+        "Set Aura's own Slack status. Use this to signal what you're doing (e.g. 'Running morning digest', 'Monitoring #bugs').",
+      inputSchema: z.object({
+        status_text: z.string().describe("Status text, e.g. 'Running morning digest'"),
+        status_emoji: z.string().describe("Status emoji, e.g. ':mag:' or ':robot_face:'"),
+        expiration_minutes: z.number().optional().describe("Auto-clear the status after this many minutes"),
+      }),
+      execute: async ({ status_text, status_emoji, expiration_minutes }) => {
+        try {
+          const profile: any = { status_text, status_emoji };
+          if (expiration_minutes) {
+            profile.status_expiration = Math.floor(Date.now() / 1000) + expiration_minutes * 60;
+          }
+          await throttle();
+          await client.users.profile.set({ profile });
+          logger.info("set_my_status tool called", { status_text, status_emoji });
+          return { ok: true, message: `Status set to ${status_emoji} ${status_text}` };
+        } catch (error: any) {
+          logger.error("set_my_status tool failed", { error: error.message });
+          return { ok: false, error: `Failed to set status: ${error.message}` };
+        }
+      },
+    }),
+
+    // ── Slack Lists Write Tools ────────────────────────────────────────────
+    ...createListWriteTools(client),
 
     // ── Note / Scratchpad Tools ────────────────────────────────────────────
     ...createNoteTools(),

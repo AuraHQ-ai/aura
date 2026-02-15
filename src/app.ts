@@ -132,6 +132,45 @@ app.post("/api/slack/events", async (c) => {
   if (body.event) {
     const event = body.event;
 
+    // Handle reaction events -- store as memory for awareness
+    if (event.type === "reaction_added" && event.user && event.item) {
+      const reactionPromise = (async () => {
+        try {
+          // Resolve user name for the memory
+          let userName = event.user;
+          try {
+            const userResult = await slackClient.users.info({ user: event.user });
+            userName =
+              userResult.user?.profile?.display_name ||
+              userResult.user?.real_name ||
+              userResult.user?.name ||
+              event.user;
+          } catch {}
+
+          // Store as a lightweight memory via the store module
+          const { storeMessage } = await import("./memory/store.js");
+          await storeMessage({
+            slackTs: `reaction-${event.event_ts}`,
+            channelId: event.item.channel || "",
+            channelType: "public_channel",
+            userId: event.user,
+            role: "user",
+            content: `${userName} reacted with :${event.reaction}: to a message`,
+          });
+
+          logger.info("Reaction event stored", {
+            user: userName,
+            reaction: event.reaction,
+            channel: event.item.channel,
+          });
+        } catch (err) {
+          recordError("reaction_event", err, { userId: event.user });
+        }
+      })();
+      waitUntil(reactionPromise);
+      return c.json({ ok: true });
+    }
+
     // Handle App Home opened
     if (event.type === "app_home_opened") {
       const homePromise = publishHomeTab(slackClient, event.user).catch(
@@ -148,6 +187,14 @@ app.post("/api/slack/events", async (c) => {
       subtype: event.subtype,
       channel: event.channel,
     });
+
+    // Instant eyes reaction -- acknowledge the message so the user
+    // knows Aura saw it while the pipeline processes (~10s)
+    if (event.type === "message" || event.type === "app_mention") {
+      slackClient.reactions
+        .add({ channel: event.channel, timestamp: event.ts, name: "eyes" })
+        .catch(() => {}); // fire and forget
+    }
 
     // Run pipeline asynchronously.
     // On Vercel, we must acknowledge within 3 seconds, so we process
