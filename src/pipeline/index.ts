@@ -92,9 +92,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       : context.messageTs;
 
   try {
-    // ── Edge case: empty or near-empty message ───────────────────────────
-    if (context.text.trim().length === 0) {
-      // User just @mentioned Aura with no text
+    // ── Edge case: empty or near-empty message (but allow image-only) ───
+    const hasFiles = Array.isArray((event as any).files) && (event as any).files.length > 0;
+    if (context.text.trim().length === 0 && !hasFiles) {
+      // User just @mentioned Aura with no text and no files
       await client.chat.postMessage({
         channel: context.channelId,
         text: "Hey. What's up?",
@@ -104,7 +105,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     }
 
     // ── Edge case: extremely long message ────────────────────────────────
-    let messageText = context.text;
+    let messageText = context.text || (hasFiles ? "What do you see in this image?" : "");
     if (messageText.length > MAX_MESSAGE_LENGTH) {
       messageText = messageText.substring(0, MAX_MESSAGE_LENGTH);
       logger.warn("Truncated long message", {

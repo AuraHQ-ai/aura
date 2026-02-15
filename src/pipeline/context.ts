@@ -32,10 +32,13 @@ export function buildMessageContext(
   event: KnownEventFromType<"message"> | KnownEventFromType<"app_mention">,
   botUserId: string,
 ): MessageContext | null {
-  // Skip bot messages, message_changed, etc.
+  // Skip bot messages, message_changed, etc. -- but allow file_share (image uploads)
   if ("subtype" in event && event.subtype) {
-    logger.debug("Skipping message with subtype", { subtype: event.subtype });
-    return null;
+    const allowedSubtypes = new Set(["file_share"]);
+    if (!allowedSubtypes.has(event.subtype as string)) {
+      logger.debug("Skipping message with subtype", { subtype: event.subtype });
+      return null;
+    }
   }
 
   // Skip messages from our own bot
@@ -47,7 +50,9 @@ export function buildMessageContext(
   const userId = "user" in event ? event.user! : "";
   const channelId = event.channel;
 
-  if (!userId || !text.trim()) {
+  // Allow empty text if the message has file attachments (image-only messages)
+  const hasFiles = Array.isArray((event as any).files) && (event as any).files.length > 0;
+  if (!userId || (!text.trim() && !hasFiles)) {
     return null;
   }
 
