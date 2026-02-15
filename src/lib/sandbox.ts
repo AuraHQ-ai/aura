@@ -8,12 +8,16 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 let cachedSandbox: any | null = null;
 
 /**
- * Dynamically import the E2B SDK to avoid ESM/CJS compatibility issues
- * at module load time (chalk is ESM-only, Vercel bundles as CJS).
+ * Dynamically import the E2B SDK to avoid ESM/CJS compatibility issues.
+ * The variable-based import prevents Vercel's bundler (nft) from
+ * statically resolving and inlining the e2b package, which would
+ * cause chalk (ESM-only) to crash the CJS runtime.
  */
 async function loadE2B() {
-  const { Sandbox } = await import("e2b");
-  return Sandbox;
+  // Variable indirection prevents bundler from tracing this import
+  const pkg = "e2b";
+  const mod = await import(/* webpackIgnore: true */ pkg);
+  return mod.Sandbox;
 }
 
 /**
