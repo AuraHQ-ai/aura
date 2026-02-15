@@ -43,12 +43,17 @@ export async function generateResponse(
   const model = await getMainModel();
   const hasImages = options.images && options.images.length > 0;
 
+  // Abort the LLM call if it takes longer than 120 seconds
+  const abortController = new AbortController();
+  const abortTimeout = setTimeout(() => abortController.abort(), 120_000);
+
   // Build multimodal messages if images are present, otherwise use simple prompt
   const generateOptions: any = {
     model,
     system: options.systemPrompt,
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(5),
+    abortSignal: abortController.signal,
   };
 
   if (hasImages) {
@@ -67,7 +72,22 @@ export async function generateResponse(
     generateOptions.prompt = options.userMessage;
   }
 
-  const { text, usage } = await generateText(generateOptions);
+  logger.info("Starting LLM call", {
+    model: model.modelId || "unknown",
+    hasImages,
+    toolCount: Object.keys(generateOptions.tools || {}).length,
+    promptLength: options.systemPrompt.length,
+  });
+
+  let text: string;
+  let usage: any;
+  try {
+    const result = await generateText(generateOptions);
+    text = result.text;
+    usage = result.usage;
+  } finally {
+    clearTimeout(abortTimeout);
+  }
 
   const llmMs = Date.now() - start;
 
