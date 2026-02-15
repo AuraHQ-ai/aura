@@ -182,6 +182,36 @@ export const notes = pgTable(
   (table) => [uniqueIndex("notes_topic_idx").on(table.topic)],
 );
 
+// ── Scheduled Actions ───────────────────────────────────────────────────────
+
+export const scheduledActions = pgTable(
+  "scheduled_actions",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    description: text("description").notNull(),
+    executeAt: timestamptz("execute_at").notNull(),
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts"),
+    requestedBy: text("requested_by").notNull(),
+    recurring: text("recurring"),
+    timezone: text("timezone").notNull().default("UTC"),
+    priority: text("priority").notNull().default("normal"),
+    status: text("status").notNull().default("pending"),
+    lastResult: text("last_result"),
+    result: text("result"),
+    retries: integer("retries").notNull().default(0),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("scheduled_actions_status_execute_idx").on(
+      table.status,
+      table.executeAt,
+    ),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;

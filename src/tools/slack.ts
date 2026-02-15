@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { createNoteTools } from "./notes.js";
+import { createScheduleTools, type ScheduleContext } from "./schedule.js";
 
 // ── Rate Limiter ─────────────────────────────────────────────────────────────
 
@@ -178,7 +179,7 @@ async function resolveUserById(
  * Create Slack tools for the AI SDK.
  * Each tool receives the WebClient via closure.
  */
-export function createSlackTools(client: WebClient) {
+export function createSlackTools(client: WebClient, context?: ScheduleContext) {
   return {
     list_channels: tool({
       description:
@@ -1004,5 +1005,8 @@ export function createSlackTools(client: WebClient) {
 
     // ── Note / Scratchpad Tools ────────────────────────────────────────────
     ...createNoteTools(),
+
+    // ── Scheduling Tools ─────────────────────────────────────────────────
+    ...createScheduleTools(client, context),
   };
 }

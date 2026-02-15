@@ -144,6 +144,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       systemPrompt,
       userMessage: messageText,
       slackClient: client,
+      context: { userId: context.userId, channelId: context.channelId },
     });
     const llmMs = Date.now() - llmStart;
 

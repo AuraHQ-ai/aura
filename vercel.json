@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/consolidate",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/scheduler",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
