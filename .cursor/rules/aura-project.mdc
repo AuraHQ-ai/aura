@@ -1,0 +1,50 @@
+---
+description: Core conventions for the Aura project -- deployment, env vars, Slack app, and coding patterns.
+alwaysApply: true
+---
+
+# Aura Project Conventions
+
+## Deployment
+
+- **Push to `main` to deploy.** Vercel auto-deploys from GitHub. No manual `vercel --prod` needed for code changes.
+- **Use `npx --yes vercel@50.13.2` for CLI operations** (the project doesn't have Vercel CLI installed globally). Always use `--scope real-advisor`.
+- **Migrations run automatically** via the `vercel-build` script (`tsc && tsx src/db/migrate.ts`). No separate migration step needed.
+- **Production URL**: `https://aura-alpha-five.vercel.app`
+
+## Environment Variables
+
+- **Add env vars via CLI**: `printf '%s' 'value' | npx --yes vercel@50.13.2 env add VAR_NAME production --scope real-advisor`
+- **Always use `printf '%s'`** to pipe values -- never `echo` (it adds trailing newlines that break Vercel).
+- **After adding env vars**, trigger a redeploy: either push a commit or run `npx --yes vercel@50.13.2 --prod --scope real-advisor`.
+- **List env vars**: `npx --yes vercel@50.13.2 env ls --scope real-advisor`
+
+## Vercel Logs
+
+- **Stream runtime logs**: `npx --yes vercel@50.13.2 logs aura-alpha-five.vercel.app --scope real-advisor`
+- Logs stream in real-time. Run in background with a timeout to capture output.
+- Build logs are separate: `npx --yes vercel@50.13.2 inspect <deployment-url> --logs --scope real-advisor`
+
+## Slack App
+
+- **Slack app name**: Aura
+- **Bot token env var**: `SLACK_BOT_TOKEN` (xoxb-...)
+- **User token env var**: `SLACK_USER_TOKEN` (xoxp-...) -- for message search
+- **Admin user IDs**: `AURA_ADMIN_USER_IDS` (comma-separated)
+- When adding new Slack API methods, check if new bot scopes are needed and document them in the README.
+- After adding scopes, the app must be reinstalled to the workspace.
+
+## Coding Patterns
+
+- **Tools**: Use AI SDK `tool()` with `inputSchema` (Zod) and `execute`. Group in `src/tools/`.
+- **Cron jobs**: Hono sub-apps in `src/cron/`, entry points in `api/cron/`, schedule in `vercel.json`.
+- **Rate limiting**: All Slack API calls go through the `throttle()` function in `src/tools/slack.ts`.
+- **Caching**: Channel and user lists are cached per invocation to avoid rate limits.
+- **Models**: Resolve dynamically via `getMainModel()` / `getFastModel()` / `getEmbeddingModel()` (DB first, then env var, then default).
+- **System prompt**: All personality, tools, and self-awareness in `src/personality/system-prompt.ts`.
+
+## TypeScript
+
+- Always run `npx tsc --noEmit` before committing.
+- Use `.js` extensions in imports (ESM with `"type": "module"`).
+- AI SDK v6 uses `inputSchema` (not `parameters`) and `stopWhen: stepCountIs(N)` (not `maxSteps`).

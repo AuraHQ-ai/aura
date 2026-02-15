@@ -1,0 +1,47 @@
+---
+description: How to add new tools to Aura -- the pattern for creating AI SDK tools that the LLM can call.
+globs: src/tools/**/*.ts
+alwaysApply: false
+---
+
+# Adding Tools to Aura
+
+## Tool file pattern
+
+```typescript
+import { tool } from "ai";
+import { z } from "zod";
+
+export function createMyTools() {
+  return {
+    my_tool: tool({
+      description: "Clear description of what this does and when to use it.",
+      inputSchema: z.object({
+        param: z.string().describe("What this parameter is"),
+      }),
+      execute: async ({ param }) => {
+        try {
+          // ... implementation
+          logger.info("my_tool called", { param });
+          return { ok: true, result: "..." };
+        } catch (error: any) {
+          logger.error("my_tool failed", { error: error.message });
+          return { ok: false, error: `Failed: ${error.message}` };
+        }
+      },
+    }),
+  };
+}
+```
+
+## Checklist for new tools
+
+1. Create tool in `src/tools/` (new file or existing)
+2. Use `inputSchema` (NOT `parameters`) -- AI SDK v6
+3. Return `{ ok: true, ... }` on success, `{ ok: false, error: "..." }` on failure
+4. Log with `logger.info` / `logger.error`
+5. Add `await throttle()` before any Slack API calls
+6. Spread into `createSlackTools` in `src/tools/slack.ts`
+7. Add to the tools list in `src/personality/system-prompt.ts`
+8. Add usage guidance in the system prompt
+9. Document any new Slack scopes needed in README
