@@ -10,6 +10,7 @@ A Slack bot with persistent memory, personality, cross-user awareness, and auton
 - **Adapts** its tone to each person's communication style
 - **Acts** -- sends messages, joins channels, creates canvases, manages Slack Lists, reacts to messages
 - **Executes** -- runs shell commands, git, tests, scripts in a sandboxed Linux VM (E2B)
+- **Self-aware** -- reads her own source code, opens PRs against herself
 - **Schedules** -- sets reminders, builds recurring routines, follows up on tasks autonomously
 - **Searches the web** -- searches the internet and reads URLs via Tavily
 - **Sees images** -- reads images shared in Slack messages (multimodal)
@@ -207,6 +208,7 @@ Go to your Vercel project dashboard -> **Settings** -> **Environment Variables**
 | `TAVILY_API_KEY` | No | Web search API key (free tier: 1000/month) |
 | `E2B_API_KEY` | No | E2B sandbox API key (for shell execution) |
 | `E2B_TEMPLATE_ID` | No | Custom E2B template ID (uses default if unset) |
+| `GITHUB_TOKEN` | No | GitHub PAT for self-access (read code, open PRs) |
 | `LOG_LEVEL` | No | `debug`, `info` (default), `warn`, `error` |
 
 #### Redeploy after setting env vars:
@@ -269,7 +271,7 @@ Aura uses AI SDK tool calling to take actions in Slack autonomously. The LLM dec
 | Scheduling | schedule one-shot or recurring tasks (cron + timezone), list, cancel |
 | Status | set Aura's own Slack status with auto-expiration |
 | Web | web_search (Tavily), read_url (content extraction) |
-| Sandbox | run_command, read_sandbox_file, write_sandbox_file (E2B Linux VM) |
+| Sandbox | run_command, read_sandbox_file, write_sandbox_file, read_own_source (E2B Linux VM) |
 
 ### Sandbox (Linux VM)
 

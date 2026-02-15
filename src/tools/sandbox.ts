@@ -200,5 +200,71 @@ export function createSandboxTools() {
         }
       },
     }),
+
+    read_own_source: tool({
+      description:
+        "Read a file from Aura's own source code (github.com/realadvisor/aura). Fast, no sandbox needed. Use this to understand how you work, debug issues, or review your own code before proposing changes.",
+      inputSchema: z.object({
+        path: z
+          .string()
+          .describe(
+            "File path relative to repo root, e.g. 'src/pipeline/respond.ts' or 'src/personality/system-prompt.ts'",
+          ),
+      }),
+      execute: async ({ path }) => {
+        const token = process.env.GITHUB_TOKEN;
+        if (!token) {
+          return {
+            ok: false,
+            error:
+              "GITHUB_TOKEN is not configured. Cannot read source code.",
+          };
+        }
+
+        try {
+          const url = `https://api.github.com/repos/realadvisor/aura/contents/${path}`;
+          const response = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/vnd.github.raw",
+              "User-Agent": "Aura/1.0",
+            },
+            signal: AbortSignal.timeout(10000),
+          });
+
+          if (!response.ok) {
+            return {
+              ok: false,
+              error: `GitHub API returned ${response.status}: ${response.statusText}`,
+            };
+          }
+
+          const content = await response.text();
+          const truncated = truncateOutput(content, 8000);
+
+          logger.info("read_own_source tool called", {
+            path,
+            length: content.length,
+          });
+
+          return {
+            ok: true,
+            path,
+            content: truncated,
+            length: content.length,
+            truncated: content.length > 8000,
+          };
+        } catch (error: any) {
+          logger.error("read_own_source tool failed", {
+            path,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read source: ${error.message}`,
+          };
+        }
+      },
+    }),
   };
 }

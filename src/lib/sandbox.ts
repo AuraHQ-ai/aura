@@ -65,7 +65,14 @@ export async function getOrCreateSandbox(): Promise<any> {
   const templateId = process.env.E2B_TEMPLATE_ID || undefined;
   logger.info("Creating new E2B sandbox", { templateId: templateId || "default" });
 
-  const createOptions: any = { timeoutMs: DEFAULT_TIMEOUT_MS };
+  // Pass selected env vars to the sandbox for git/gh operations
+  const envs: Record<string, string> = {};
+  if (process.env.GITHUB_TOKEN) {
+    envs.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+    envs.GH_TOKEN = process.env.GITHUB_TOKEN; // gh CLI reads this
+  }
+
+  const createOptions: any = { timeoutMs: DEFAULT_TIMEOUT_MS, envs };
   const sandbox = templateId
     ? await Sandbox.create(templateId, createOptions)
     : await Sandbox.create(createOptions);
