@@ -126,9 +126,9 @@ export async function generateResponse(
   const resetTimer = () => {
     clearTimeout(inactivityTimer);
     inactivityTimer = setTimeout(() => {
-      logger.warn("LLM inactivity timeout (90s), aborting");
+      logger.warn("LLM inactivity timeout (180s), aborting");
       abortController.abort();
-    }, 90_000);
+    }, 180_000);
   };
   resetTimer(); // start the initial timer
 
@@ -137,7 +137,7 @@ export async function generateResponse(
     model,
     system: options.systemPrompt,
     tools: createSlackTools(options.slackClient, options.context),
-    stopWhen: stepCountIs(5),
+    stopWhen: stepCountIs(25),
     abortSignal: abortController.signal,
   };
 
@@ -265,12 +265,19 @@ export async function generateResponse(
   } catch (error: any) {
     clearTimeout(inactivityTimer);
 
-    // If we have a placeholder, update it with an error message
-    if (messageTs && accumulatedText) {
-      // If we got partial text before the error, post what we have
-      await updateMessage(
-        accumulatedText + "\n\n_...interrupted. Something went wrong._",
-      );
+    // If we have a placeholder, update it with an error/interruption message
+    if (messageTs) {
+      if (accumulatedText) {
+        // Got partial text before the error — show what we have
+        await updateMessage(
+          accumulatedText + "\n\n_...interrupted. Something went wrong._",
+        );
+      } else {
+        // Aborted during tool calls before any text was generated
+        await updateMessage(
+          "_Sorry, I got interrupted before I could finish. Try again?_",
+        );
+      }
     }
 
     throw error; // re-throw so the pipeline catch block handles it
