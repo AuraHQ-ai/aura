@@ -19,6 +19,7 @@ import {
   recordInteraction,
   updateProfileFromConversation,
 } from "../users/profiles.js";
+import { downloadEventImages, type SlackImage } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import type { KnownEventFromType } from "@slack/bolt";
@@ -142,6 +143,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     });
     const retrievalMs = Date.now() - retrievalStart;
 
+    // 4b. Download images if the message has file attachments
+    const botToken = process.env.SLACK_BOT_TOKEN || "";
+    const images = await downloadEventImages(event, botToken);
+
     // 5. Call LLM
     const llmStart = Date.now();
     const response = await generateResponse({
@@ -149,6 +154,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       userMessage: messageText,
       slackClient: client,
       context: { userId: context.userId, channelId: context.channelId },
+      images,
     });
     const llmMs = Date.now() - llmStart;
 

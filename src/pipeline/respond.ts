@@ -4,6 +4,7 @@ import { getMainModel } from "../lib/ai.js";
 import { postProcessResponse } from "../personality/anti-patterns.js";
 import { formatForSlack } from "../slack/formatter.js";
 import { createSlackTools } from "../tools/slack.js";
+import type { SlackImage } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 
 interface RespondOptions {
@@ -11,6 +12,7 @@ interface RespondOptions {
   userMessage: string;
   slackClient: WebClient;
   context?: { userId?: string; channelId?: string };
+  images?: SlackImage[];
 }
 
 export interface LLMResponse {
@@ -39,14 +41,32 @@ export async function generateResponse(
   const start = Date.now();
 
   const model = await getMainModel();
+  const hasImages = options.images && options.images.length > 0;
 
-  const { text, usage } = await generateText({
+  // Build multimodal messages if images are present, otherwise use simple prompt
+  const generateOptions: any = {
     model,
     system: options.systemPrompt,
-    prompt: options.userMessage,
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(5),
-  });
+  };
+
+  if (hasImages) {
+    // Multimodal: use messages format with content parts
+    const content: any[] = [
+      { type: "text", text: options.userMessage },
+      ...options.images!.map((img) => ({
+        type: "image",
+        data: img.data,
+        mimeType: img.mimeType,
+      })),
+    ];
+    generateOptions.messages = [{ role: "user", content }];
+  } else {
+    generateOptions.prompt = options.userMessage;
+  }
+
+  const { text, usage } = await generateText(generateOptions);
 
   const llmMs = Date.now() - start;
 
