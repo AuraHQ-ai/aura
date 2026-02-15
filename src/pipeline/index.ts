@@ -2,6 +2,7 @@ import type { WebClient } from "@slack/web-api";
 import {
   buildMessageContext,
   shouldRespond,
+  resolveSlackEntities,
   type MessageContext,
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
@@ -55,6 +56,9 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     logger.debug("Skipped event — no valid context");
     return;
   }
+
+  // 1b. Resolve Slack entity references (<@U...>, <#C...>) to readable names
+  context.text = await resolveSlackEntities(client, context.text);
 
   // 2. Should we respond?
   if (!shouldRespond(context)) {

@@ -1,4 +1,5 @@
 import type { KnownEventFromType, SlackEventMiddlewareArgs } from "@slack/bolt";
+import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 
 export type ChannelType = "dm" | "public_channel" | "private_channel";
@@ -104,4 +105,94 @@ function resolveChannelType(
     return "public_channel";
   }
   return "public_channel";
+}
+
+// ── Slack Entity Resolution ──────────────────────────────────────────────────
+
+/** Per-invocation cache for user ID -> name lookups */
+const userNameCache = new Map<string, string>();
+
+/** Per-invocation cache for channel ID -> name lookups */
+const channelNameCache = new Map<string, string>();
+
+/**
+ * Resolve Slack entity references in message text to human-readable format.
+ *
+ * Transforms:
+ * - <@U066V1AN6>        -> @jonas (U066V1AN6)
+ * - <#C0BNVKS77|dev>    -> #dev (C0BNVKS77)
+ * - <#C0BNVKS77>        -> #dev (C0BNVKS77)
+ *
+ * The LLM then sees both the name and the ID, so tools can use either.
+ */
+export async function resolveSlackEntities(
+  client: WebClient,
+  text: string,
+): Promise<string> {
+  // Match all Slack entity references: <@U...>, <#C...|name>, <#C...>
+  const entityPattern = /<(@|#)([A-Z0-9]+)(?:\|([^>]*))?>/g;
+  const matches = [...text.matchAll(entityPattern)];
+
+  if (matches.length === 0) return text;
+
+  let resolved = text;
+
+  for (const match of matches) {
+    const [fullMatch, type, id, label] = match;
+
+    if (type === "@") {
+      // User mention: <@U066V1AN6>
+      const name = await resolveUserId(client, id);
+      resolved = resolved.replace(fullMatch, `@${name} (${id})`);
+    } else if (type === "#") {
+      // Channel mention: <#C0BNVKS77|dev> or <#C0BNVKS77>
+      if (label) {
+        // Label already provided by Slack
+        resolved = resolved.replace(fullMatch, `#${label} (${id})`);
+      } else {
+        const name = await resolveChannelId(client, id);
+        resolved = resolved.replace(fullMatch, `#${name} (${id})`);
+      }
+    }
+  }
+
+  return resolved;
+}
+
+async function resolveUserId(
+  client: WebClient,
+  userId: string,
+): Promise<string> {
+  const cached = userNameCache.get(userId);
+  if (cached) return cached;
+
+  try {
+    const result = await client.users.info({ user: userId });
+    const name =
+      result.user?.profile?.display_name ||
+      result.user?.real_name ||
+      result.user?.name ||
+      userId;
+    userNameCache.set(userId, name);
+    return name;
+  } catch {
+    return userId;
+  }
+}
+
+async function resolveChannelId(
+  client: WebClient,
+  channelId: string,
+): Promise<string> {
+  const cached = channelNameCache.get(channelId);
+  if (cached) return cached;
+
+  try {
+    const result = await client.conversations.info({ channel: channelId });
+    const name = (result.channel as any)?.name || channelId;
+    channelNameCache.set(channelId, name);
+    return name;
+  } catch {
+    return channelId;
+  }
 }

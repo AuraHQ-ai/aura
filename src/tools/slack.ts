@@ -107,34 +107,65 @@ const userIdNameCache = new Map<string, string>();
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Resolve a channel name (with or without #) to a channel ID.
- * Uses cached channel list.
+ * Resolve a channel name or ID to a channel object.
+ * Accepts: "general", "#general", "C0BNVKS77", "#dev (C0BNVKS77)"
  */
 async function resolveChannelByName(
   client: WebClient,
   name: string,
 ): Promise<{ id: string; name: string } | null> {
-  const cleanName = name.replace(/^#/, "").toLowerCase();
+  const cleaned = name.replace(/^#/, "").trim();
+
+  // Extract parenthetical ID if present: "dev (C0BNVKS77)" -> use ID
+  const idInParens = cleaned.match(/\(?(C[A-Z0-9]+)\)?/);
+  if (idInParens) {
+    const id = idInParens[1];
+    const displayName = cleaned.replace(/\s*\(?C[A-Z0-9]+\)?/, "").trim();
+    return { id, name: displayName || id };
+  }
+
+  // If it looks like a raw channel ID
+  if (/^C[A-Z0-9]+$/.test(cleaned)) {
+    return { id: cleaned, name: cleaned };
+  }
+
+  // Name-based lookup via cache
   const channels = await getChannelList(client);
-  return channels.find((ch) => ch.name.toLowerCase() === cleanName) || null;
+  return channels.find((ch) => ch.name.toLowerCase() === cleaned.toLowerCase()) || null;
 }
 
 /**
- * Resolve a user display name / real name to a Slack user ID.
- * Uses cached user list.
+ * Resolve a user display name, username, or ID to a user object.
+ * Accepts: "jonas", "@jonas", "U066V1AN6", "jonas (U066V1AN6)"
  */
 async function resolveUserByName(
   client: WebClient,
   name: string,
 ): Promise<{ id: string; name: string } | null> {
-  const cleanName = name.replace(/^@/, "").toLowerCase();
+  const cleaned = name.replace(/^@/, "").trim();
+
+  // Extract parenthetical ID if present: "jonas (U066V1AN6)" -> use ID
+  const idInParens = cleaned.match(/\(?(U[A-Z0-9]+)\)?/);
+  if (idInParens) {
+    const id = idInParens[1];
+    const displayName = cleaned.replace(/\s*\(?U[A-Z0-9]+\)?/, "").trim();
+    return { id, name: displayName || id };
+  }
+
+  // If it looks like a raw user ID
+  if (/^U[A-Z0-9]+$/.test(cleaned)) {
+    return { id: cleaned, name: cleaned };
+  }
+
+  // Name-based lookup via cache
+  const cleanLower = cleaned.toLowerCase();
   const users = await getUserList(client);
 
   const match = users.find(
     (u) =>
-      u.displayName.toLowerCase() === cleanName ||
-      u.realName.toLowerCase() === cleanName ||
-      u.username.toLowerCase() === cleanName,
+      u.displayName.toLowerCase() === cleanLower ||
+      u.realName.toLowerCase() === cleanLower ||
+      u.username.toLowerCase() === cleanLower,
   );
 
   if (match) {
@@ -488,6 +519,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           }
 
           const profile = {
+            id: u.id || "",
             display_name: u.profile?.display_name || "",
             real_name: u.real_name || "",
             username: u.name || "",
