@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
+import { createNoteTools } from "./notes.js";
 
 // ── Rate Limiter ─────────────────────────────────────────────────────────────
 
@@ -1000,5 +1001,8 @@ export function createSlackTools(client: WebClient) {
         }
       },
     }),
+
+    // ── Note / Scratchpad Tools ────────────────────────────────────────────
+    ...createNoteTools(),
   };
 }
