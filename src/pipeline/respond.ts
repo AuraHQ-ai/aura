@@ -10,6 +10,7 @@ interface RespondOptions {
   systemPrompt: string;
   userMessage: string;
   slackClient: WebClient;
+  context?: { userId?: string; channelId?: string };
 }
 
 export interface LLMResponse {
@@ -43,7 +44,7 @@ export async function generateResponse(
     model,
     system: options.systemPrompt,
     prompt: options.userMessage,
-    tools: createSlackTools(options.slackClient),
+    tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(5),
   });
 
