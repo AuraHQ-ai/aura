@@ -188,12 +188,25 @@ app.post("/api/slack/events", async (c) => {
       channel: event.channel,
     });
 
-    // Instant eyes reaction -- acknowledge the message so the user
-    // knows Aura saw it while the pipeline processes (~10s)
+    // Instant eyes reaction -- only for messages Aura will actually process
     if (event.type === "message" || event.type === "app_mention") {
-      slackClient.reactions
-        .add({ channel: event.channel, timestamp: event.ts, name: "eyes" })
-        .catch(() => {}); // fire and forget
+      // Skip bot's own messages
+      const isSelf = event.bot_id || ("user" in event && event.user === botUserId);
+      // In channels, only react when mentioned or addressed by name
+      const isDm = event.channel_type === "im";
+      const isMentioned =
+        event.type === "app_mention" ||
+        (typeof event.text === "string" &&
+          new RegExp(`<@${botUserId}>`).test(event.text));
+      const isAddressedByName =
+        typeof event.text === "string" &&
+        (/\baura[,:]?\s/i.test(event.text) || /\baura[?!.]?\s*$/i.test(event.text));
+
+      if (!isSelf && (isDm || isMentioned || isAddressedByName)) {
+        slackClient.reactions
+          .add({ channel: event.channel, timestamp: event.ts, name: "eyes" })
+          .catch(() => {}); // fire and forget
+      }
     }
 
     // Run pipeline asynchronously.
