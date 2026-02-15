@@ -1,6 +1,6 @@
 # Aura v0
 
-A Slack bot with persistent memory, personality, and cross-user awareness. Aura remembers every conversation, builds profiles of the people it talks to, and responds with a consistent, opinionated personality -- not like a tool, but like a colleague.
+A Slack bot with persistent memory, personality, cross-user awareness, and autonomous capabilities. Aura remembers every conversation, builds profiles of the people she talks to, takes proactive actions via tools, schedules her own tasks, and responds with a consistent, opinionated personality -- not like a tool, but like a colleague.
 
 ## What it does
 
@@ -8,21 +8,26 @@ A Slack bot with persistent memory, personality, and cross-user awareness. Aura 
 - **Remembers** everything -- facts, decisions, personal details, relationships, sentiments
 - **Recalls** relevant context via semantic search across all past conversations
 - **Adapts** its tone to each person's communication style
+- **Acts** -- sends messages, joins channels, creates canvases, manages Slack Lists, reacts to messages
+- **Schedules** -- sets reminders, builds recurring routines, follows up on tasks autonomously
+- **Self-aware** -- understands its own architecture, constraints, and limitations
 - **Respects privacy** -- DM content stays private unless explicitly shared
 - **Forgets on request** -- users can ask "what do you know about me?" or say "forget X"
+- **Configurable** -- admins change models via the Slack App Home tab, no redeploy needed
 
 ## Stack
 
 | Layer | Technology |
 |---|---|
-| Runtime | Node.js on Vercel (serverless functions) |
+| Runtime | Node.js on Vercel (serverless functions, 300s timeout) |
 | Framework | [Hono](https://hono.dev) |
 | LLM | [Vercel AI SDK 6](https://sdk.vercel.ai) + [AI Gateway](https://sdk.vercel.ai/docs/ai-sdk-providers/ai-gateway) |
 | Database | [Neon](https://neon.tech) PostgreSQL + pgvector |
 | ORM | [Drizzle](https://orm.drizzle.team) |
 | Slack | `@slack/web-api` + `@slack/bolt` (types) |
+| Scheduling | `cron-parser` for recurring actions |
 
-LLM provider is your choice. AI Gateway supports 20+ providers out of the box -- Anthropic, OpenAI, Google, Mistral, xAI, DeepSeek, Meta, and more. You pick models via environment variables.
+LLM provider is your choice. AI Gateway supports 20+ providers out of the box -- Anthropic, OpenAI, Google, Mistral, xAI, DeepSeek, Meta, and more. You pick models via environment variables or the in-Slack settings UI.
 
 ---
 
@@ -33,7 +38,7 @@ Three things to set up: a **Neon database**, a **Slack app**, and the **Vercel d
 ### Prerequisites
 
 - Node.js 20+
-- A [Vercel](https://vercel.com) account with AI Gateway enabled
+- A [Vercel](https://vercel.com) account (Pro plan recommended for 5-min cron intervals)
 - A [Neon](https://neon.tech) account (free tier works)
 - A [Slack](https://api.slack.com/apps) workspace where you can create apps
 
@@ -70,15 +75,7 @@ You'll fill in the values in the steps below.
 npm run db:migrate
 ```
 
-This creates all four tables (`messages`, `memories`, `user_profiles`, `channels`), the pgvector extension, and all indexes. Drizzle tracks applied migrations, so it's safe to run again -- it won't re-apply anything.
-
-To verify it worked, run in the Neon SQL editor:
-
-```sql
-SELECT tablename FROM pg_tables WHERE schemaname = 'public';
-```
-
-You should see: `messages`, `memories`, `user_profiles`, `channels`.
+This creates all tables (`messages`, `memories`, `user_profiles`, `channels`, `settings`, `notes`, `scheduled_actions`), the pgvector extension, and all indexes. Drizzle tracks applied migrations, so it's safe to run again.
 
 ---
 
@@ -97,19 +94,37 @@ Go to **OAuth & Permissions** in the sidebar. Under **Bot Token Scopes**, add:
 | `app_mentions:read` | Receive @Aura mentions in channels |
 | `channels:history` | Read messages in public channels |
 | `channels:read` | List channels Aura is in |
-| `chat:write` | Send messages |
+| `channels:join` | Join public channels |
+| `channels:manage` | Create channels, set topic, invite users |
+| `chat:write` | Send, edit, delete messages |
 | `groups:history` | Read messages in private channels |
 | `groups:read` | List private channels Aura is in |
+| `groups:write` | Manage private channels |
 | `im:history` | Read DM messages |
 | `im:read` | Access DM channel info |
 | `im:write` | Open DMs |
 | `mpim:history` | Read group DM messages |
 | `mpim:read` | Access group DM channel info |
-| `users:read` | Look up user profiles (display name, timezone) |
+| `users:read` | Look up user profiles |
+| `reactions:write` | Add/remove emoji reactions |
+| `reactions:read` | Read reactions on messages |
+| `lists:read` | Read Slack List items |
+| `lists:write` | Create/update/delete Slack List items |
+| `canvases:read` | Read Canvas content |
+| `canvases:write` | Create/edit Canvases |
+| `users.profile:write` | Set bot's own status |
+
+Optional (for message search):
+
+| Scope | Type | Why |
+|---|---|---|
+| `search:read` | **User Token** | Search messages across channels |
 
 #### Install to workspace
 
 Still on **OAuth & Permissions**, click **Install to Workspace** and authorize. Copy the **Bot User OAuth Token** (`xoxb-...`) into `.env` as `SLACK_BOT_TOKEN`.
+
+If you added the `search:read` user token scope, also copy the **User OAuth Token** (`xoxp-...`) into `.env` as `SLACK_USER_TOKEN`.
 
 #### Signing secret
 
@@ -117,7 +132,7 @@ Go to **Basic Information** in the sidebar. Under **App Credentials**, copy the 
 
 #### Get the bot user ID
 
-You need Aura's Slack user ID (starts with `U`). The easiest way:
+You need Aura's Slack user ID (starts with `U`):
 
 1. Open Slack, find Aura in the member list
 2. Click on its profile, click the three dots (**...**), click **Copy member ID**
@@ -130,31 +145,31 @@ curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   https://slack.com/api/auth.test | jq -r .user_id
 ```
 
-#### Event subscriptions (do this after deploying -- see Step 5)
+#### App Home
 
-You'll come back to this after deployment. The event subscription URL needs your live Vercel URL. Skip to Step 4 and 5, then come back.
+Go to **App Home** in the sidebar:
+- Check **Home Tab** under "Show Tabs"
+- Check **Messages Tab** and "Allow users to send Slash commands and messages from the messages tab"
+
+#### Event Subscriptions (do this after deploying -- see Step 5)
+
+You'll come back to this after deployment.
+
+#### Interactivity (do this after deploying -- see Step 5)
+
+Go to **Interactivity & Shortcuts**, toggle ON, and set the Request URL to your deployment URL + `/api/slack/interactions`.
 
 ---
 
 ### Step 4: Choose your models
 
-Aura uses three models, all routed through [Vercel AI Gateway](https://sdk.vercel.ai/docs/ai-sdk-providers/ai-gateway):
+Aura uses three models, all routed through [Vercel AI Gateway](https://sdk.vercel.ai/docs/ai-sdk-providers/ai-gateway). Models can also be changed at runtime via the App Home settings tab.
 
 | Role | Env var | What it does | Example values |
 |---|---|---|---|
-| Main | `MODEL_MAIN` | Conversation responses | `anthropic/claude-sonnet-4-20250514`, `openai/gpt-4o`, `google/gemini-2.5-pro` |
-| Fast | `MODEL_FAST` | Memory extraction, profile updates | `anthropic/claude-haiku-4.5`, `openai/gpt-4o-mini`, `google/gemini-2.5-flash` |
-| Embedding | `MODEL_EMBEDDING` | Vectorizing memories and queries | `openai/text-embedding-3-small`, `voyage/voyage-3.5-lite`, `google/text-embedding-005` |
-
-Set these in your `.env`:
-
-```bash
-MODEL_MAIN=anthropic/claude-sonnet-4-20250514
-MODEL_FAST=anthropic/claude-haiku-4.5
-MODEL_EMBEDDING=openai/text-embedding-3-small
-```
-
-The format is always `provider/model`. See the [full list of available models](https://sdk.vercel.ai/docs/ai-sdk-providers/ai-gateway).
+| Main | `MODEL_MAIN` | Conversation responses | `anthropic/claude-opus-4-6`, `openai/gpt-5.2`, `google/gemini-3-pro-preview` |
+| Fast | `MODEL_FAST` | Memory extraction, profile updates | `anthropic/claude-haiku-4-5`, `openai/gpt-5.1-instant`, `google/gemini-3-flash` |
+| Embedding | `MODEL_EMBEDDING` | Vectorizing memories and queries | `openai/text-embedding-3-small` |
 
 No API keys to manage -- Vercel AI Gateway handles provider access and billing.
 
@@ -163,52 +178,33 @@ No API keys to manage -- Vercel AI Gateway handles provider access and billing.
 ### Step 5: Deploy to Vercel
 
 ```bash
-# Install Vercel CLI if you haven't
-npm i -g vercel
-
-# Link to a Vercel project
-vercel link
-
-# Deploy
 vercel --prod
 ```
 
-After deployment, note your production URL (e.g., `https://aura-xxx.vercel.app`).
+After deployment, note your production URL.
 
 #### Configure environment variables
 
 Go to your Vercel project dashboard -> **Settings** -> **Environment Variables** and add:
 
-| Variable | Value |
-|---|---|
-| `DATABASE_URL` | Your Neon connection string |
-| `SLACK_BOT_TOKEN` | `xoxb-...` |
-| `SLACK_SIGNING_SECRET` | From Slack app Basic Information |
-| `AURA_BOT_USER_ID` | `U...` (Aura's Slack user ID) |
-| `MODEL_MAIN` | e.g. `anthropic/claude-sonnet-4-20250514` |
-| `MODEL_FAST` | e.g. `anthropic/claude-haiku-4.5` |
-| `MODEL_EMBEDDING` | e.g. `openai/text-embedding-3-small` |
-| `CRON_SECRET` | Any random string (protects the cron endpoint) |
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | Neon PostgreSQL connection string |
+| `SLACK_BOT_TOKEN` | Yes | Slack bot token (`xoxb-...`) |
+| `SLACK_SIGNING_SECRET` | Yes | Slack app signing secret |
+| `AURA_BOT_USER_ID` | Yes | Slack user ID for the bot (`U...`) |
+| `AURA_ADMIN_USER_IDS` | Recommended | Comma-separated Slack user IDs that can change settings |
+| `MODEL_MAIN` | No | Main model (default: `anthropic/claude-sonnet-4-20250514`) |
+| `MODEL_FAST` | No | Fast model (default: `anthropic/claude-haiku-4-5`) |
+| `MODEL_EMBEDDING` | No | Embedding model (default: `openai/text-embedding-3-small`) |
+| `CRON_SECRET` | Recommended | Protects cron endpoints |
+| `SLACK_USER_TOKEN` | No | User token for message search (`xoxp-...`) |
+| `LOG_LEVEL` | No | `debug`, `info` (default), `warn`, `error` |
 
-Optional:
-
-| Variable | Value |
-|---|---|
-| `LOG_LEVEL` | `debug`, `info` (default), `warn`, `error` |
-
-#### Redeploy
-
-After setting env vars, trigger a redeployment:
+#### Redeploy after setting env vars:
 
 ```bash
 vercel --prod
-```
-
-#### Verify
-
-```bash
-curl https://aura-xxx.vercel.app/api/health
-# Should return: {"ok":true,"timestamp":"..."}
 ```
 
 ---
@@ -217,17 +213,9 @@ curl https://aura-xxx.vercel.app/api/health
 
 Go back to [api.slack.com/apps](https://api.slack.com/apps), select your Aura app:
 
-1. Go to **Event Subscriptions** in the sidebar
-2. Toggle **Enable Events** to ON
-3. Set the **Request URL** to:
+1. **Event Subscriptions** -> Enable Events -> Set Request URL to `https://your-app.vercel.app/api/slack/events`
 
-   ```
-   https://aura-xxx.vercel.app/api/slack/events
-   ```
-
-   Slack will send a challenge request. Your app handles this automatically -- you should see a green checkmark.
-
-4. Under **Subscribe to bot events**, add:
+2. **Subscribe to bot events**:
 
    | Event | Why |
    |---|---|
@@ -235,47 +223,61 @@ Go back to [api.slack.com/apps](https://api.slack.com/apps), select your Aura ap
    | `message.channels` | Public channel messages |
    | `message.groups` | Private channel messages |
    | `app_mention` | @Aura mentions |
+   | `app_home_opened` | App Home tab |
+   | `reaction_added` | Reaction awareness |
 
-5. Click **Save Changes**
+3. **Interactivity & Shortcuts** -> Enable -> Set Request URL to `https://your-app.vercel.app/api/slack/interactions`
 
-Slack may ask you to reinstall the app. Do so.
+4. **Save Changes** and reinstall the app when prompted.
 
 ---
 
 ### Step 7: Talk to Aura
 
 1. Open Slack and DM Aura. Say anything -- "Hey, what's up?"
-2. Aura should respond within a few seconds
-3. In a channel, invite Aura (`/invite @Aura`) and then mention it: "@Aura what do you think about TypeScript?"
+2. You should see an :eyes: reaction immediately, then a response within a few seconds
+3. In a channel, invite Aura (`/invite @Aura`) and then mention it
 
 That's it. Aura is live.
 
 ---
 
-## Local Development
+## Capabilities
 
-For local development, run the Hono server directly:
+### Tool Calling
 
-```bash
-npm run dev
-```
+Aura uses AI SDK tool calling to take actions in Slack autonomously. The LLM decides when to use tools based on what the user asks.
 
-This starts a local server on `http://localhost:3000`. To receive Slack events locally, you need a tunnel:
+| Category | Tools |
+|---|---|
+| Channels | list, join, leave, create, set topic, invite users |
+| Messages | send to channel, send thread reply, send DM, edit own, delete own |
+| Reactions | add, remove (+ reads reactions in channel history) |
+| Users | list, search, get detailed profile |
+| Search | search messages across channels (requires user token) |
+| Slack Lists | read items, create, update, delete items |
+| Canvases | read, create, edit |
+| Notes | save, read (with line numbers), edit (append/prepend/replace lines/insert), delete |
+| Scheduling | schedule one-shot or recurring tasks (cron + timezone), list, cancel |
+| Status | set Aura's own Slack status with auto-expiration |
 
-```bash
-# Using ngrok
-ngrok http 3000
-```
+### Scheduling System
 
-Then update the Slack Event Subscriptions URL to your tunnel URL (`https://xxx.ngrok.io/api/slack/events`).
+A 5-minute sweeper cron processes due scheduled actions. Everything -- reminders, morning routines, monitoring, follow-ups -- is a `schedule_action` call.
 
-**Note:** AI Gateway authenticates automatically via OIDC when deployed on Vercel. For local development, run `vercel env pull` to get a local `.env` with the right credentials, or use `vercel dev` which handles auth automatically.
+- **One-shot**: "Remind me in 2 hours to check the deploy"
+- **Recurring**: Uses cron expressions with timezone support: `"0 9 * * 1-5"` + `"Europe/Zurich"`
+- **Self-scheduling**: Aura can schedule her own follow-ups
+- **Autonomous**: recurring actions carry `lastResult` forward for continuity
+- **Resilient**: 3 retries with backoff, then DM escalation to the requester
 
-**Drizzle Studio** lets you browse the database:
+### Settings UI
 
-```bash
-npm run db:studio
-```
+Admins can change models via the **Slack App Home tab** -- three dropdowns for Main, Fast, and Embedding models. Changes take effect on the next message, no redeploy needed. Settings are stored in the database.
+
+### Slack Entity Resolution
+
+Incoming messages are preprocessed to resolve Slack's encoded references (`<@U066V1AN6>` -> `@jonas (U066V1AN6)`). All tools accept both names and IDs, so the LLM can use either format.
 
 ---
 
@@ -283,18 +285,19 @@ npm run db:studio
 
 ```
 src/
-  app.ts                      # Hono app, Slack endpoint, signature verification
+  app.ts                      # Hono app, Slack events/interactions, signature verification
   index.ts                    # Local dev server entry point
   db/
-    schema.ts                 # Drizzle schema (4 tables)
+    schema.ts                 # Drizzle schema (7 tables)
     client.ts                 # Neon + Drizzle client
     migrate.ts                # Programmatic migration runner
   lib/
-    ai.ts                     # AI Gateway config + model references
+    ai.ts                     # AI Gateway config + dynamic model resolution
     embeddings.ts             # embed() / embedMany() wrappers
     logger.ts                 # Structured logging
     metrics.ts                # Observability metrics
     privacy.ts                # DM privacy filtering
+    settings.ts               # Settings CRUD (key-value in DB)
     temporal.ts               # Time/date helpers
   memory/
     store.ts                  # Message + memory CRUD
@@ -303,25 +306,36 @@ src/
     consolidate.ts            # Daily merge/decay cron logic
     transparency.ts           # "What do you know" / "forget X"
   personality/
-    system-prompt.ts          # Aura's personality + prompt builder
+    system-prompt.ts          # Personality + tools + self-awareness prompt
     anti-patterns.ts          # Post-processing: strip AI-isms
   pipeline/
     index.ts                  # Main orchestrator
-    context.ts                # Parse Slack events
+    context.ts                # Parse Slack events + entity resolution
     prompt.ts                 # Assemble full LLM prompt
-    respond.ts                # Call LLM, post-process
+    respond.ts                # Call LLM with tools, post-process
+  tools/
+    slack.ts                  # Slack tools (channels, messages, reactions, users, canvases)
+    lists.ts                  # Slack Lists write tools
+    notes.ts                  # Agent scratchpad (CRUD with line-level editing)
+    schedule.ts               # Scheduling tools (schedule, list, cancel actions)
   slack/
     formatter.ts              # Markdown -> Slack mrkdwn
+    home.ts                   # App Home settings tab (Block Kit)
     handler.ts                # Alternative Bolt integration (reference)
   users/
     profiles.ts               # User profile CRUD + LLM-based updates
   cron/
-    consolidate.ts            # Vercel Cron handler
+    consolidate.ts            # Daily memory consolidation
+    scheduler.ts              # 5-minute sweeper for scheduled actions
 api/
   index.ts                    # Vercel entry (catch-all)
   health.ts                   # Health check
-  slack/events.ts             # Slack events entry
-  cron/consolidate.ts         # Cron entry
+  slack/
+    events.ts                 # Slack events entry
+    interactions.ts           # Slack interactive payloads (App Home dropdowns)
+  cron/
+    consolidate.ts            # Memory consolidation cron entry
+    scheduler.ts              # Scheduled actions sweeper entry
 ```
 
 ---
@@ -334,21 +348,38 @@ api/
 Slack event arrives
   -> POST /api/slack/events
   -> Acknowledge immediately (200 OK within 3 seconds)
+  -> React with :eyes: (instant acknowledgment)
   -> Background: run pipeline
        1. Parse context (who, where, thread?)
-       2. Should we respond? (DMs: always. Channels: only if @mentioned)
-       3. Retrieve memories (embed query -> pgvector similarity search)
-       4. Fetch user profile (tone adaptation hints)
-       5. Build system prompt (personality + memories + profile + thread)
-       6. Call LLM via AI Gateway
-       7. Post-process (strip sycophantic openers, AI disclaimers)
-       8. Format for Slack and send reply
-       9. Background: store messages, extract memories, update profile
+       2. Resolve Slack entities (<@U...> -> @name (ID))
+       3. Should we respond? (DMs: always. Channels: only if @mentioned)
+       4. Retrieve memories (embed query -> pgvector similarity search)
+       5. Fetch user profile (tone adaptation hints)
+       6. Build system prompt (personality + architecture + tools + memories + profile + thread)
+       7. Call LLM via AI Gateway (with tools + stopWhen for multi-step)
+       8. Post-process (strip sycophantic openers, AI disclaimers)
+       9. Format for Slack and send reply
+      10. Background: store messages, extract memories, update profile
+```
+
+### Scheduling flow
+
+```
+User: "Check #bugs every weekday at 9 AM CET"
+  -> LLM calls schedule_action tool
+  -> Row inserted: cron="0 9 * * 1-5", tz="Europe/Zurich"
+
+Every 5 minutes (sweeper cron):
+  -> Query due actions (priority DESC, time ASC)
+  -> For each: call generateText with all tools
+  -> LLM reads channels, posts digests, escalates if urgent
+  -> Mark completed, schedule next occurrence via cron-parser
+  -> Carry lastResult forward for continuity
 ```
 
 ### Memory extraction
 
-After every exchange, a separate LLM call (fast model) extracts structured memories:
+After every exchange, a fast-model LLM call extracts structured memories:
 
 - **Facts** -- "The Q3 launch date is March 15"
 - **Decisions** -- "We decided to use Postgres instead of MongoDB"
@@ -357,7 +388,7 @@ After every exchange, a separate LLM call (fast model) extracts structured memor
 - **Sentiments** -- "Joan seemed frustrated about deploys"
 - **Open threads** -- "Joan asked about API docs, no answer yet"
 
-Each memory is embedded and stored with its vector for semantic retrieval.
+Each memory is embedded as a 1536-dimensional vector for semantic retrieval.
 
 ### Privacy
 
@@ -376,46 +407,11 @@ A daily cron job (4:00 AM UTC) runs:
 
 ---
 
-## Environment Variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `DATABASE_URL` | Yes | Neon PostgreSQL connection string |
-| `SLACK_BOT_TOKEN` | Yes | Slack bot token (`xoxb-...`) |
-| `SLACK_SIGNING_SECRET` | Yes | Slack app signing secret |
-| `AURA_BOT_USER_ID` | Yes | Slack user ID for the bot (`U...`) |
-| `MODEL_MAIN` | No | Main conversation model (default: `anthropic/claude-sonnet-4-20250514`) |
-| `MODEL_FAST` | No | Fast model for extraction (default: `anthropic/claude-haiku-4.5`) |
-| `MODEL_EMBEDDING` | No | Embedding model (default: `openai/text-embedding-3-small`) |
-| `CRON_SECRET` | Recommended | Protects the `/api/cron/consolidate` endpoint |
-| `LOG_LEVEL` | No | `debug`, `info` (default), `warn`, `error` |
-
-No provider API keys needed -- AI Gateway handles provider access and billing through your Vercel account.
-
----
-
 ## Switching Models
 
-Just change the env vars. No code changes needed.
+Change via the **App Home tab** in Slack (instant, no redeploy), or via env vars (requires redeploy).
 
-```bash
-# Use OpenAI for everything
-MODEL_MAIN=openai/gpt-4o
-MODEL_FAST=openai/gpt-4o-mini
-MODEL_EMBEDDING=openai/text-embedding-3-small
-
-# Use Google
-MODEL_MAIN=google/gemini-2.5-pro
-MODEL_FAST=google/gemini-2.5-flash
-MODEL_EMBEDDING=google/text-embedding-005
-
-# Mix and match
-MODEL_MAIN=anthropic/claude-sonnet-4-20250514
-MODEL_FAST=google/gemini-2.5-flash
-MODEL_EMBEDDING=voyage/voyage-3.5-lite
-```
-
-Then redeploy (or restart locally). The AI Gateway handles routing to the right provider.
+Available models include Claude Opus 4.6, GPT-5.2, Gemini 3 Pro, and many more -- see the App Home dropdowns for the full catalog.
 
 **Note on embedding dimensions:** The database schema uses 1536-dimensional vectors (matching `openai/text-embedding-3-small`). If you switch to an embedding model with different dimensions, you'll need to update the vector size in `src/db/schema.ts` and re-run the migration.
 
@@ -423,87 +419,80 @@ Then redeploy (or restart locally). The AI Gateway handles routing to the right 
 
 ## Customizing Aura's Personality
 
-The personality is defined in `src/personality/system-prompt.ts`. It's a TypeScript template string, version-controlled, and deliberately editable. The key sections:
+The personality is defined in `src/personality/system-prompt.ts`. Key sections:
 
 - **Who you are** -- core traits (direct, warm, concise, opinionated, witty, curious, self-aware)
 - **How you communicate** -- formatting rules, energy matching
 - **What you NEVER do** -- hard anti-patterns (no sycophancy, no disclaimers, no "delve")
 - **How you disagree** -- push back with evidence, accept gracefully when overruled
 - **How you use memory** -- reference naturally, don't force, be specific
+- **How you work** -- architectural self-awareness (pipeline, runtime, memory system, scheduling)
+- **Tools** -- full catalog of available actions with usage guidance
 
-The anti-pattern post-processor in `src/personality/anti-patterns.ts` acts as a safety net -- it strips common AI-isms that leak through despite the prompt.
+The anti-pattern post-processor in `src/personality/anti-patterns.ts` strips common AI-isms that leak through despite the prompt.
 
 ---
 
 ## Database Management
 
-Migrations run automatically on every Vercel deploy via the `vercel-build` script. Drizzle tracks what's been applied, so deploys with no new migrations are a no-op.
+Migrations run automatically on every Vercel deploy via the `vercel-build` script.
 
 ```bash
-# Run migrations manually (local or CI)
-npm run db:migrate
-
-# Generate a new migration after changing src/db/schema.ts
-npm run db:generate
-
-# Push schema directly without migration files (dev only)
-npm run db:push
-
-# Browse the database
-npm run db:studio
+npm run db:migrate        # Run migrations manually
+npm run db:generate       # Generate a new migration after schema changes
+npm run db:push           # Push schema directly (dev only)
+npm run db:studio         # Browse the database
 ```
 
-**Workflow for schema changes:**
+**Tables:** `messages`, `memories`, `user_profiles`, `channels`, `settings`, `notes`, `scheduled_actions`
 
-1. Edit `src/db/schema.ts`
-2. Run `npm run db:generate` -- creates a new SQL migration in `drizzle/`
-3. Commit the migration file
-4. Deploy -- `vercel-build` applies it automatically
+---
+
+## Local Development
+
+```bash
+npm run dev               # Start local server on http://localhost:3000
+ngrok http 3000           # Tunnel for Slack events
+npm run db:studio         # Browse the database
+```
+
+AI Gateway authenticates automatically via OIDC when deployed on Vercel. For local development, run `vercel env pull` or use `vercel dev`.
 
 ---
 
 ## Troubleshooting
 
 **Aura doesn't respond to DMs**
-
 - Check that `im:history` and `im:read` scopes are added
-- Make sure the `message.im` event subscription is enabled
+- Make sure `message.im` event subscription is enabled
 - Verify `AURA_BOT_USER_ID` matches the bot's actual Slack user ID
 
 **Aura doesn't respond to @mentions in channels**
-
 - Invite Aura to the channel first (`/invite @Aura`)
 - Check that `app_mention` event subscription is enabled
-- Check that `channels:history` and `chat:write` scopes are added
 
 **"Invalid signature" in logs**
-
 - Verify `SLACK_SIGNING_SECRET` matches the one in your Slack app's Basic Information page
-- If using a tunnel (ngrok), make sure you're not double-proxying
 
 **Slack shows "dispatch_failed" or retries events**
-
-- The initial 200 OK wasn't received within 3 seconds
-- Check Vercel function logs for startup errors
-- Make sure all env vars are set in Vercel (not just locally)
+- Check Vercel function logs for errors
+- Make sure all env vars are set in Vercel
 
 **LLM calls fail with authentication errors**
-
 - Make sure AI Gateway is enabled on your Vercel project
-- Check that OIDC auth is working -- redeploy if it was recently enabled
 - For local dev, run `vercel env pull` or use `vercel dev`
 
-**Memory retrieval returns nothing**
+**"Insufficient funds" errors**
+- Top up your Vercel AI Gateway credits at vercel.com/~/ai
 
-- Check that the `pgvector` extension is enabled: `SELECT * FROM pg_extension WHERE extname = 'vector';`
-- Verify memories exist: `SELECT count(*) FROM memories WHERE embedding IS NOT NULL;`
-- The HNSW index is created automatically by the migration
+**Slack rate limiting warnings**
+- The tools have built-in rate limiting (15 req/min) and caching
+- If you still hit limits, reduce tool-heavy queries
 
-**High latency (>5 seconds)**
-
-- Check Vercel function region -- deploy close to your Neon database region
-- LLM response time varies by provider/model (typically 2-5 seconds)
-- Memory retrieval adds ~200-500ms for the embedding call
+**App Home tab not showing**
+- Enable Home Tab in Slack app settings -> App Home
+- Add `app_home_opened` to bot event subscriptions
+- Make sure `AURA_ADMIN_USER_IDS` is set for edit access
 
 ---
 
