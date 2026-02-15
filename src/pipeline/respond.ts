@@ -53,12 +53,13 @@ export async function generateResponse(
 
   if (hasImages) {
     // Multimodal: use messages format with content parts
+    // AI SDK v6 uses `image` (not `data`) and `mediaType` (not `mimeType`)
     const content: any[] = [
       { type: "text", text: options.userMessage },
       ...options.images!.map((img) => ({
         type: "image",
-        data: img.data,
-        mimeType: img.mimeType,
+        image: img.data,
+        mediaType: img.mimeType,
       })),
     ];
     generateOptions.messages = [{ role: "user", content }];
