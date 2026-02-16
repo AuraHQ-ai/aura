@@ -10,7 +10,7 @@ ALTER TABLE "jobs" ADD COLUMN "retries" integer DEFAULT 0 NOT NULL;--> statement
 CREATE INDEX "jobs_status_execute_idx" ON "jobs" USING btree ("status","execute_at");--> statement-breakpoint
 
 -- Step 2: Migrate pending scheduled_actions into jobs before dropping the table
-INSERT INTO "jobs" ("name", "description", "execute_at", "channel_id", "thread_ts", "requested_by", "recurring", "timezone", "priority", "status", "last_result", "result", "retries", "created_at", "updated_at")
+INSERT INTO "jobs" ("name", "description", "execute_at", "channel_id", "thread_ts", "requested_by", "cron_schedule", "timezone", "priority", "status", "last_result", "result", "retries", "created_at", "updated_at")
 SELECT
   'action-' || "id",
   "description",
