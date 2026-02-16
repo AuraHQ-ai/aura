@@ -77,6 +77,7 @@ async function main() {
   try {
     try {
       run(`git rev-parse --git-dir`, { cwd: REPO_DIR });
+      run(`git remote set-url origin ${getRepoUrl()}`);
       run(`git fetch origin`);
       run(`git checkout main`);
       run(`git reset --hard origin/main`);
