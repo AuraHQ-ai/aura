@@ -162,7 +162,16 @@ export function createSandboxTools() {
           });
 
           // Write the config file for the runner script
-          const config = JSON.stringify({ prompt, branch_name, pr_title, pr_body });
+          const config = JSON.stringify({
+            prompt,
+            branch_name,
+            pr_title,
+            pr_body,
+            // Pass API keys via config so the runner doesn't depend on env var propagation
+            // (env vars set via `export` in one commands.run() don't persist to the next)
+            anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+            github_token: process.env.GITHUB_TOKEN,
+          });
           await sandbox.files.write("/home/user/agent-config.json", config);
 
           // Copy the runner template into the sandbox.
@@ -200,7 +209,7 @@ export function createSandboxTools() {
           logger.info("patch_own_code: executing agent runner", { branch: branch_name });
 
           const result = await sandbox.commands.run(
-            "NODE_PATH=/home/user/node_modules node /home/user/agent-runner.mjs",
+            "source /home/user/.env_injected 2>/dev/null; NODE_PATH=/home/user/node_modules node /home/user/agent-runner.mjs",
             {
               cwd: "/home/user",
               timeoutMs: 300_000,
