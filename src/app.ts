@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
-import { schedulerApp } from "./cron/scheduler.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { runPipeline } from "./pipeline/index.js";
 import { publishHomeTab, ACTION_TO_SETTING, isAdmin } from "./slack/home.js";
@@ -44,7 +43,6 @@ app.get("/api/health", (c) => {
 
 // Mount cron routes
 app.route("/", cronApp);
-app.route("/", schedulerApp);
 app.route("/", heartbeatApp);
 
 // ── Slack Signature Verification ────────────────────────────────────────────

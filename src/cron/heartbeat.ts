@@ -4,7 +4,7 @@ import { generateText, stepCountIs } from "ai";
 import { eq, and, lt, lte, sql, isNull, or } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
-import { jobs, notes, scheduledActions } from "../db/schema.js";
+import { jobs, notes } from "../db/schema.js";
 import type { FrequencyConfig } from "../db/schema.js";
 import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
@@ -14,35 +14,63 @@ import { logger } from "../lib/logger.js";
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
 
-/** Max jobs to execute per heartbeat invocation (stay within 800s timeout) */
-const MAX_JOBS_PER_HEARTBEAT = 3;
+/** Max jobs to process per heartbeat sweep */
+const MAX_JOBS_PER_SWEEP = 10;
 
-// ── Heartbeat System Prompt ──────────────────────────────────────────────────
+/** Max retries before marking as failed */
+const MAX_RETRIES = 3;
 
-const HEARTBEAT_SYSTEM_PROMPT = `You are Aura executing a job during your heartbeat cycle. You have full tool access.
+/** Retry delay in ms (10 minutes) */
+const RETRY_DELAY_MS = 10 * 60 * 1000;
+
+// ── System Prompts ───────────────────────────────────────────────────────────
+
+const JOB_SYSTEM_PROMPT = `You are Aura executing a job autonomously. You have full access to your tools.
 
 Rules:
-- Execute the job described in the playbook below.
-- Your available skill notes are listed above. Use read_note to load a full skill when relevant.
-- Be concise. Post results, not essays.
-- If you discover something urgent, DM the relevant person or schedule a follow-up.
-- If the job can't be completed in this cycle, use checkpoint_plan to save progress.
-- Save any reusable insights as skill notes for future runs.`;
+- Execute the task described below. Use your tools to read channels, post messages, look up users, etc.
+- Post results to the channel specified unless the task says otherwise.
+- If you have "previous result" context, compare and highlight changes (e.g. "17 bugs yesterday, 22 today -- that's a spike").
+- If you discover something urgent or unexpected, you can:
+  - Create a follow-up job (create_job)
+  - DM the person who requested this to escalate (send_direct_message)
+  - Save findings to your notes for future reference (save_note / edit_note)
+- If the task no longer makes sense (channel deleted, user gone, etc.), note that in your result.
+- Be concise. Digests and summaries, not essays.
+- Do NOT respond conversationally. Just execute the task and report.`;
 
-// ── Job Eligibility ──────────────────────────────────────────────────────────
+const CONTINUATION_SYSTEM_PROMPT = `You are Aura resuming a multi-step task. Your accumulated progress and context are below.
 
-/**
- * Check if a job is due for execution based on its cron schedule and frequency config.
- *
- * For cron-based jobs: checks whether the most recent cron tick falls after lastExecutedAt,
- * meaning a scheduled window was missed/is due. frequencyConfig guards still apply on top.
- *
- * For non-cron jobs: uses only frequencyConfig / lastExecutedAt heuristics.
- */
-function isJobDue(job: typeof jobs.$inferSelect): boolean {
+Rules:
+- Continue from where you left off. The plan note contains your progress, next steps, and context.
+- If you can't finish in this round, use checkpoint_plan again to save progress and schedule another continuation.
+- Post results in the thread you're continuing (routing is automatic).
+- Be concise and focused. Don't re-explain what was already done — just continue the work.
+- If the continuation depth limit is reached, explain your current status and ask if you should keep going.`;
+
+// ── Continuation Detection ───────────────────────────────────────────────────
+
+const CONTINUE_TAG_RE = /^\[CONTINUE:([^\]]+)\]\s*/;
+
+function parseContinuationTag(description: string): string | null {
+  const match = description.match(CONTINUE_TAG_RE);
+  return match ? match[1] : null;
+}
+
+async function loadPlanNote(topic: string): Promise<string | null> {
+  const rows = await db
+    .select({ content: notes.content })
+    .from(notes)
+    .where(eq(notes.topic, topic))
+    .limit(1);
+  return rows[0]?.content ?? null;
+}
+
+// ── Job Eligibility (recurring jobs) ─────────────────────────────────────────
+
+function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
   const now = new Date();
 
-  // ── Cron schedule check ────────────────────────────────────────────────
   if (job.cronSchedule) {
     try {
       const cron = CronExpressionParser.parse(job.cronSchedule, {
@@ -51,43 +79,28 @@ function isJobDue(job: typeof jobs.$inferSelect): boolean {
       const lastCronTick = cron.prev().toDate();
 
       if (job.lastExecutedAt && job.lastExecutedAt >= lastCronTick) {
-        // Already executed since the most recent cron tick — not due
         return false;
       }
-
-      // For never-executed jobs, only consider due if created before the last cron tick.
-      // This prevents newly created cron jobs from firing immediately before their
-      // first scheduled window has actually occurred.
       if (!job.lastExecutedAt && job.createdAt >= lastCronTick) {
         return false;
       }
-
-      // A cron window is due. Fall through to frequencyConfig guards below
-      // so min_interval / max_per_day / cooldown are still respected.
-    } catch (e) {
-      logger.warn("isJobDue: invalid cron expression, skipping job", {
+    } catch {
+      logger.warn("isRecurringJobDue: invalid cron, skipping", {
         jobName: job.name,
         cronSchedule: job.cronSchedule,
       });
-      // Invalid cron schedule — skip execution rather than treating as non-cron
       return false;
     }
   }
 
-  // ── Frequency config checks (apply to both cron and non-cron jobs) ─────
   const config = job.frequencyConfig as FrequencyConfig | null;
   if (!config) return true;
 
-  // Min interval check
   if (config.minIntervalHours && job.lastExecutedAt) {
     const minIntervalMs = config.minIntervalHours * 60 * 60 * 1000;
-    const nextAllowed = new Date(
-      job.lastExecutedAt.getTime() + minIntervalMs,
-    );
-    if (now < nextAllowed) return false;
+    if (now < new Date(job.lastExecutedAt.getTime() + minIntervalMs)) return false;
   }
 
-  // Max per day check — uses todayExecutions counter (reset when date rolls over)
   if (config.maxPerDay) {
     const todayStr = now.toISOString().slice(0, 10);
     const executionsToday =
@@ -95,13 +108,9 @@ function isJobDue(job: typeof jobs.$inferSelect): boolean {
     if (executionsToday >= config.maxPerDay) return false;
   }
 
-  // Cooldown check
   if (config.cooldownHours && job.lastExecutedAt) {
     const cooldownMs = config.cooldownHours * 60 * 60 * 1000;
-    const cooldownUntil = new Date(
-      job.lastExecutedAt.getTime() + cooldownMs,
-    );
-    if (now < cooldownUntil) return false;
+    if (now < new Date(job.lastExecutedAt.getTime() + cooldownMs)) return false;
   }
 
   return true;
@@ -120,92 +129,75 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  const heartbeatStart = Date.now();
+  const sweepStart = Date.now();
   logger.info("Heartbeat starting");
 
-  let jobsExecuted = 0;
-  let jobsFailed = 0;
+  let executed = 0;
+  let failed = 0;
   let plansExpired = 0;
   let plansAbandoned = 0;
 
   try {
-    // ── 1. Evaluate and execute due jobs ─────────────────────────────────
+    const now = new Date();
 
-    const enabledJobs = await db
+    // ── 1. Query all pending enabled jobs ────────────────────────────────
+
+    const pendingJobs = await db
       .select()
       .from(jobs)
-      .where(eq(jobs.enabled, 1))
-      .orderBy(sql`${jobs.lastExecutedAt} ASC NULLS FIRST`);
+      .where(and(eq(jobs.status, "pending"), eq(jobs.enabled, 1)))
+      .orderBy(
+        sql`CASE WHEN ${jobs.priority} = 'high' THEN 0 WHEN ${jobs.priority} = 'normal' THEN 1 ELSE 2 END`,
+        sql`${jobs.lastExecutedAt} ASC NULLS FIRST`,
+      );
 
-    const dueJobs = enabledJobs.filter(isJobDue).slice(0, MAX_JOBS_PER_HEARTBEAT);
+    // ── 2. Filter to due jobs ────────────────────────────────────────────
+
+    const dueJobs: (typeof jobs.$inferSelect)[] = [];
+
+    for (const job of pendingJobs) {
+      if (dueJobs.length >= MAX_JOBS_PER_SWEEP) break;
+
+      if (job.executeAt) {
+        // One-shot or continuation: due when executeAt <= now
+        if (job.executeAt <= now) {
+          dueJobs.push(job);
+        }
+      } else if (job.cronSchedule || job.frequencyConfig) {
+        // Recurring: evaluate cron + frequency guards
+        if (isRecurringJobDue(job)) {
+          dueJobs.push(job);
+        }
+      }
+      // Jobs with neither executeAt nor cron/frequency are skipped
+    }
 
     if (dueJobs.length > 0) {
-      logger.info(`Heartbeat: ${dueJobs.length} jobs due (of ${enabledJobs.length} enabled)`);
+      logger.info(`Heartbeat: ${dueJobs.length} jobs due (of ${pendingJobs.length} pending)`);
 
       const skillIndex = await buildSkillIndex();
 
       for (const job of dueJobs) {
         try {
-          // Atomically claim the job to prevent concurrent execution.
-          // If another heartbeat invocation already claimed it, the WHERE
-          // condition won't match and we skip it.
-          const claimTime = new Date();
-          const claimed = await db
-            .update(jobs)
-            .set({ lastExecutedAt: claimTime, updatedAt: claimTime })
-            .where(
-              and(
-                eq(jobs.id, job.id),
-                job.lastExecutedAt
-                  ? eq(jobs.lastExecutedAt, job.lastExecutedAt)
-                  : isNull(jobs.lastExecutedAt),
-              ),
-            )
-            .returning({ id: jobs.id });
-
-          if (claimed.length === 0) {
-            logger.info("Heartbeat: job already claimed, skipping", {
-              jobName: job.name,
-            });
-            continue;
-          }
-
           await executeJob(job, skillIndex);
-          jobsExecuted++;
+          executed++;
         } catch (error: any) {
-          logger.error("Heartbeat: job execution failed", {
+          logger.error("Heartbeat: job execution error", {
             jobName: job.name,
             error: error.message,
           });
-
-          // Rollback lastExecutedAt so the job remains eligible for retry
-          // on the next heartbeat instead of being treated as completed.
-          await db
-            .update(jobs)
-            .set({
-              lastExecutedAt: job.lastExecutedAt ?? null,
-              updatedAt: new Date(),
-            })
-            .where(eq(jobs.id, job.id));
-
-          jobsFailed++;
+          failed++;
         }
       }
     } else {
-      logger.info(`Heartbeat: no jobs due (${enabledJobs.length} enabled)`);
+      logger.info(`Heartbeat: no jobs due (${pendingJobs.length} pending)`);
     }
 
-    // ── 2. Expire stale plan notes ───────────────────────────────────────
+    // ── 3. Expire stale plan notes ───────────────────────────────────────
 
-    const now = new Date();
     const expireResult = await db
       .delete(notes)
-      .where(
-        and(
-          eq(notes.category, "plan"),
-          lte(notes.expiresAt, now),
-        ),
-      )
+      .where(and(eq(notes.category, "plan"), lte(notes.expiresAt, now)))
       .returning({ topic: notes.topic });
 
     plansExpired = expireResult.length;
@@ -215,11 +207,11 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
-    // ── 3. Flag abandoned plans ──────────────────────────────────────────
+    // ── 4. Flag abandoned plans ──────────────────────────────────────────
 
     const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
     const stalePlans = await db
-      .select({ topic: notes.topic, updatedAt: notes.updatedAt })
+      .select({ topic: notes.topic })
       .from(notes)
       .where(
         and(
@@ -238,22 +230,15 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
     // ── Done ─────────────────────────────────────────────────────────────
 
-    const duration = Date.now() - heartbeatStart;
+    const duration = Date.now() - sweepStart;
     logger.info(`Heartbeat completed in ${duration}ms`, {
-      jobsExecuted,
-      jobsFailed,
+      executed,
+      failed,
       plansExpired,
       plansAbandoned,
     });
 
-    return c.json({
-      ok: true,
-      jobsExecuted,
-      jobsFailed,
-      plansExpired,
-      plansAbandoned,
-      duration,
-    });
+    return c.json({ ok: true, executed, failed, plansExpired, plansAbandoned, duration });
   } catch (error: any) {
     logger.error("Heartbeat failed", { error: error.message });
     return c.json({ error: "Heartbeat failed" }, 500);
@@ -266,51 +251,157 @@ async function executeJob(
   job: typeof jobs.$inferSelect,
   skillIndex: string,
 ) {
-  const prompt = job.playbook
-    ? `Job: ${job.name}\nDescription: ${job.description}\n\nPlaybook:\n${job.playbook}`
-    : `Job: ${job.name}\nDescription: ${job.description}`;
+  const jobId = job.id;
 
-  const systemPrompt = HEARTBEAT_SYSTEM_PROMPT + skillIndex;
+  try {
+    const planTopic = parseContinuationTag(job.description);
+    const isContinuation = planTopic !== null;
+    const isRecurring = !!job.cronSchedule;
 
-  const model = await getMainModel();
+    let prompt: string;
+    let systemPrompt: string;
+    let stepLimit: number;
 
-  logger.info("Heartbeat: executing job", {
-    jobName: job.name,
-    hasPlaybook: !!job.playbook,
-    hasChannel: !!job.channelId,
-  });
+    if (isContinuation) {
+      const planContent = await loadPlanNote(planTopic);
+      const nextSteps = job.description.replace(CONTINUE_TAG_RE, "");
 
-  const { text } = await generateText({
-    model,
-    system: systemPrompt,
-    prompt,
-    tools: createSlackTools(slackClient, {
-      userId: "aura",
-      channelId: job.channelId || "",
-    }),
-    stopWhen: stepCountIs(15),
-  });
+      prompt = planContent
+        ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}`
+        : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}`;
 
-  const result = (text || "Job completed (no text output)").substring(0, 2000);
+      systemPrompt = CONTINUATION_SYSTEM_PROMPT + skillIndex;
+      stepLimit = 20;
 
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-  const isNewDay = job.lastExecutionDate !== todayStr;
+      logger.info("Heartbeat: executing continuation", {
+        jobId,
+        planTopic,
+        hasPlanNote: !!planContent,
+      });
+    } else {
+      prompt = job.playbook
+        ? `Job: ${job.name}\nDescription: ${job.description}\n\nPlaybook:\n${job.playbook}`
+        : job.description;
 
-  await db
-    .update(jobs)
-    .set({
-      lastExecutedAt: now,
-      executionCount: sql`${jobs.executionCount} + 1`,
-      todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
-      lastExecutionDate: todayStr,
-      lastResult: result,
-      updatedAt: now,
-    })
-    .where(eq(jobs.id, job.id));
+      if (job.lastResult) {
+        prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
+      }
 
-  logger.info("Heartbeat: job completed", {
-    jobName: job.name,
-    resultLength: result.length,
-  });
+      systemPrompt = JOB_SYSTEM_PROMPT + skillIndex;
+      stepLimit = 15;
+
+      logger.info("Heartbeat: executing job", {
+        jobId,
+        jobName: job.name,
+        isRecurring,
+        hasPlaybook: !!job.playbook,
+      });
+    }
+
+    const model = await getMainModel();
+
+    const { text } = await generateText({
+      model,
+      system: systemPrompt,
+      prompt,
+      tools: createSlackTools(slackClient, {
+        userId: job.requestedBy,
+        channelId: job.channelId || undefined,
+        threadTs: job.threadTs || undefined,
+      }),
+      stopWhen: stepCountIs(stepLimit),
+    });
+
+    const result = (text || "Job completed (no text output)").substring(0, 2000);
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const isNewDay = job.lastExecutionDate !== todayStr;
+
+    if (isRecurring) {
+      // Recurring: update stats, keep pending for next cycle
+      await db
+        .update(jobs)
+        .set({
+          lastExecutedAt: now,
+          executionCount: sql`${jobs.executionCount} + 1`,
+          todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
+          lastExecutionDate: todayStr,
+          lastResult: result,
+          updatedAt: now,
+        })
+        .where(eq(jobs.id, jobId));
+
+      logger.info("Heartbeat: recurring job completed", {
+        jobName: job.name,
+      });
+    } else {
+      // One-shot or continuation: mark completed
+      await db
+        .update(jobs)
+        .set({
+          status: "completed",
+          result,
+          lastExecutedAt: now,
+          executionCount: sql`${jobs.executionCount} + 1`,
+          updatedAt: now,
+        })
+        .where(eq(jobs.id, jobId));
+
+      logger.info("Heartbeat: one-shot job completed", {
+        jobName: job.name,
+        isContinuation,
+      });
+    }
+  } catch (error: any) {
+    // Retry logic
+    const newRetries = job.retries + 1;
+
+    if (newRetries < MAX_RETRIES) {
+      const retryAt = new Date(Date.now() + RETRY_DELAY_MS);
+      await db
+        .update(jobs)
+        .set({ executeAt: retryAt, retries: newRetries, updatedAt: new Date() })
+        .where(eq(jobs.id, jobId));
+
+      logger.warn("Heartbeat: job retrying", {
+        jobName: job.name,
+        retries: newRetries,
+        retryAt: retryAt.toISOString(),
+      });
+    } else {
+      await db
+        .update(jobs)
+        .set({
+          status: "failed",
+          result: `Failed after ${MAX_RETRIES} retries: ${error.message}`,
+          retries: newRetries,
+          updatedAt: new Date(),
+        })
+        .where(eq(jobs.id, jobId));
+
+      // Escalate: DM the requester
+      try {
+        if (job.requestedBy && job.requestedBy !== "aura") {
+          const dmResult = await slackClient.conversations.open({
+            users: job.requestedBy,
+          });
+          if (dmResult.channel?.id) {
+            await slackClient.chat.postMessage({
+              channel: dmResult.channel.id,
+              text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
+            });
+          }
+        }
+      } catch {
+        logger.error("Heartbeat: failed to send escalation DM", { jobId });
+      }
+
+      logger.error("Heartbeat: job failed permanently", {
+        jobName: job.name,
+        error: error.message,
+      });
+    }
+
+    throw error;
+  }
 }
