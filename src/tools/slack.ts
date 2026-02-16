@@ -1186,9 +1186,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             item_id,
           });
 
+          const item = result.item
+            ? {
+                ...result.item,
+                thread_channel_id: result.item.message?.channel_id || null,
+                thread_ts: result.item.message?.ts || null,
+              }
+            : null;
+
           return {
             ok: true,
-            item: result.item || null,
+            item,
           };
         } catch (error: any) {
           logger.error("get_slack_list_item tool failed", {
