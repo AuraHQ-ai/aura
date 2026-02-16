@@ -47,14 +47,23 @@ async function getChannelList(
 }
 
 /** Cached user list — avoids repeated users.list calls. */
-let userCache: { id: string; displayName: string; realName: string; username: string }[] | null = null;
+let userCache:
+  | { id: string; displayName: string; realName: string; username: string }[]
+  | null = null;
 
 async function getUserList(
   client: WebClient,
-): Promise<{ id: string; displayName: string; realName: string; username: string }[]> {
+): Promise<
+  { id: string; displayName: string; realName: string; username: string }[]
+> {
   if (userCache) return userCache;
 
-  const users: { id: string; displayName: string; realName: string; username: string }[] = [];
+  const users: {
+    id: string;
+    displayName: string;
+    realName: string;
+    username: string;
+  }[] = [];
   let cursor: string | undefined;
 
   do {
@@ -120,7 +129,10 @@ async function searchPublicChannelByName(
 
     return null;
   } catch (error: any) {
-    logger.warn("searchPublicChannelByName fallback failed", { name, error: error.message });
+    logger.warn("searchPublicChannelByName fallback failed", {
+      name,
+      error: error.message,
+    });
     return null;
   }
 }
@@ -155,17 +167,22 @@ async function resolveChannelByName(
 
   // Name-based lookup via bot's cache (channels bot is already in)
   const channels = await getChannelList(client);
-  const match = channels.find((ch) => ch.name.toLowerCase() === cleaned.toLowerCase());
+  const match = channels.find(
+    (ch) => ch.name.toLowerCase() === cleaned.toLowerCase(),
+  );
   if (match) return match;
 
   // Fallback: search all public channels via user token
   if (options?.fallbackToUserToken) {
     const fallbackMatch = await searchPublicChannelByName(cleaned);
     if (fallbackMatch) {
-      logger.info("resolveChannelByName: found channel via user token fallback", {
-        name: cleaned,
-        channelId: fallbackMatch.id,
-      });
+      logger.info(
+        "resolveChannelByName: found channel via user token fallback",
+        {
+          name: cleaned,
+          channelId: fallbackMatch.id,
+        },
+      );
       return fallbackMatch;
     }
   }
@@ -324,7 +341,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                   if (ch.is_member && ch.id) {
                     botMemberIds.add(ch.id);
                   }
-                  if (ch.is_private && !allChannels.find((existing) => existing.id === ch.id)) {
+                  if (
+                    ch.is_private &&
+                    !allChannels.find((existing) => existing.id === ch.id)
+                  ) {
                     botPrivateChannels.push({
                       name: ch.name || "unknown",
                       id: ch.id || "",
@@ -335,7 +355,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                   }
                 }
 
-                botCursor = botResult.response_metadata?.next_cursor || undefined;
+                botCursor =
+                  botResult.response_metadata?.next_cursor || undefined;
               } while (botCursor);
 
               // Fix is_member on public channels to reflect the bot's membership
@@ -351,9 +372,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               // Enforce the limit after merging public + private channels
               allChannels = allChannels.slice(0, limit);
             } catch (userTokenError: any) {
-              logger.warn("list_channels user token path failed, falling back to bot-only", {
-                error: userTokenError.message,
-              });
+              logger.warn(
+                "list_channels user token path failed, falling back to bot-only",
+                {
+                  error: userTokenError.message,
+                },
+              );
               // Fall through to bot-only listing below
               allChannels = [];
             }
@@ -388,7 +412,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         } catch (error: any) {
           logger.error("list_channels tool failed", { error: error.message });
-          return { ok: false, error: `Failed to list channels: ${error.message}` };
+          return {
+            ok: false,
+            error: `Failed to list channels: ${error.message}`,
+          };
         }
       },
     }),
@@ -399,11 +426,15 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       inputSchema: z.object({
         channel: z
           .string()
-          .describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
       }),
       execute: async ({ channel: channelInput }) => {
         try {
-          const channel = await resolveChannelByName(client, channelInput, { fallbackToUserToken: true });
+          const channel = await resolveChannelByName(client, channelInput, {
+            fallbackToUserToken: true,
+          });
           if (!channel) {
             return {
               ok: false,
@@ -454,7 +485,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       inputSchema: z.object({
         channel: z
           .string()
-          .describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
         limit: z
           .number()
           .min(1)
@@ -538,10 +571,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       inputSchema: z.object({
         channel: z
           .string()
-          .describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
         message: z
           .string()
-          .describe("The message text to send. Supports Slack mrkdwn formatting."),
+          .describe(
+            "The message text to send. Supports Slack mrkdwn formatting.",
+          ),
       }),
       execute: async ({ channel: channelInput, message }) => {
         try {
@@ -639,7 +676,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       inputSchema: z.object({
         user_name: z
           .string()
-          .describe("The display name, real name, or username of the person to look up"),
+          .describe(
+            "The display name, real name, or username of the person to look up",
+          ),
       }),
       execute: async ({ user_name }) => {
         try {
@@ -656,7 +695,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const u = result.user;
 
           if (!u) {
-            return { ok: false, error: `Failed to fetch profile for ${user_name}.` };
+            return {
+              ok: false,
+              error: `Failed to fetch profile for ${user_name}.`,
+            };
           }
 
           const profile = {
@@ -737,7 +779,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             query,
             error: error.message,
           });
-          return { ok: false, error: `Failed to search users: ${error.message}` };
+          return {
+            ok: false,
+            error: `Failed to search users: ${error.message}`,
+          };
         }
       },
     }),
@@ -748,7 +793,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       inputSchema: z.object({
         query: z
           .string()
-          .describe("Search query. Supports Slack search syntax like 'budget in:#finance from:@joan'"),
+          .describe(
+            "Search query. Supports Slack search syntax like 'budget in:#finance from:@joan'",
+          ),
         count: z
           .number()
           .min(1)
@@ -822,7 +869,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           ),
         message: z
           .string()
-          .describe("The message text to send. Supports Slack mrkdwn formatting."),
+          .describe(
+            "The message text to send. Supports Slack mrkdwn formatting.",
+          ),
       }),
       execute: async ({ user_name, message }) => {
         try {
@@ -1019,7 +1068,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             if (!adminIds.includes(requesterId)) {
               return {
                 ok: false,
-                error: "Only admins can list all DM conversations. Use read_dm_history to check your own DM with Aura.",
+                error:
+                  "Only admins can list all DM conversations. Use read_dm_history to check your own DM with Aura.",
               };
             }
           }
@@ -1028,7 +1078,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const allUsers = await getUserList(client);
           const userNameMap = new Map<string, string>();
           for (const u of allUsers) {
-            userNameMap.set(u.id, u.displayName || u.realName || u.username || u.id);
+            userNameMap.set(
+              u.id,
+              u.displayName || u.realName || u.username || u.id,
+            );
           }
 
           const conversations: Array<{
@@ -1061,9 +1114,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 user_id: ch.user,
                 dm_channel_id: ch.id,
                 last_message_preview: "",
-                last_activity_ts: typeof updated === "number" && updated > 0
-                  ? String(updated)
-                  : "",
+                last_activity_ts:
+                  typeof updated === "number" && updated > 0
+                    ? String(updated)
+                    : "",
               });
 
               fetched++;
@@ -1113,10 +1167,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       execute: async ({ list_id, limit }) => {
         try {
           await throttle();
-          const result = await (client as any).apiCall("slackLists.items.list", {
-            list_id,
-            limit,
-          });
+          const result = await (client as any).apiCall(
+            "slackLists.items.list",
+            {
+              list_id,
+              limit,
+            },
+          );
 
           if (!result.ok) {
             return {
@@ -1159,9 +1216,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Get details about a specific item (row) in a Slack List by its record ID. Returns all fields/columns for that item.",
       inputSchema: z.object({
-        list_id: z
-          .string()
-          .describe("The ID of the Slack List"),
+        list_id: z.string().describe("The ID of the Slack List"),
         item_id: z
           .string()
           .describe("The ID of the specific item/record to retrieve"),
@@ -1169,10 +1224,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       execute: async ({ list_id, item_id }) => {
         try {
           await throttle();
-          const result = await (client as any).apiCall("slackLists.items.info", {
-            list_id,
-            id: item_id,
-          });
+          const result = await (client as any).apiCall(
+            "slackLists.items.info",
+            {
+              list_id,
+              id: item_id,
+            },
+          );
 
           if (!result.ok) {
             return {
@@ -1186,11 +1244,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             item_id,
           });
 
-          const item = result.item
+          const raw = result.record || result.item;
+          const item = raw
             ? {
-                ...result.item,
-                thread_channel_id: result.item.message?.channel_id || null,
-                thread_ts: result.item.message?.ts || null,
+                ...raw,
+                thread_channel_id: raw.message?.channel_id || null,
+                thread_ts: raw.message?.ts || null,
               }
             : null;
 
@@ -1218,16 +1277,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Read the content of a Slack Canvas by looking up its sections. Returns the canvas structure and content.",
       inputSchema: z.object({
-        canvas_id: z
-          .string()
-          .describe("The ID of the Canvas to read"),
+        canvas_id: z.string().describe("The ID of the Canvas to read"),
       }),
       execute: async ({ canvas_id }) => {
         try {
           await throttle();
-          const result = await (client as any).apiCall("canvases.sections.lookup", {
-            canvas_id,
-          });
+          const result = await (client as any).apiCall(
+            "canvases.sections.lookup",
+            {
+              canvas_id,
+            },
+          );
 
           if (!result.ok) {
             return {
@@ -1260,12 +1320,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Create a new Slack Canvas with a title and markdown content. Can optionally be added to a channel.",
       inputSchema: z.object({
-        title: z
-          .string()
-          .describe("Title for the new canvas"),
-        content: z
-          .string()
-          .describe("Markdown content for the canvas body"),
+        title: z.string().describe("Title for the new canvas"),
+        content: z.string().describe("Markdown content for the canvas body"),
         channel_name: z
           .string()
           .optional()
@@ -1290,7 +1346,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           }
 
           await throttle();
-          const result = await (client as any).apiCall("canvases.create", params);
+          const result = await (client as any).apiCall(
+            "canvases.create",
+            params,
+          );
 
           if (!result.ok) {
             return {
@@ -1329,19 +1388,21 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Edit an existing Slack Canvas. Supports inserting content at the start or end, replacing a section, or renaming the canvas.",
       inputSchema: z.object({
-        canvas_id: z
-          .string()
-          .describe("The ID of the Canvas to edit"),
+        canvas_id: z.string().describe("The ID of the Canvas to edit"),
         operation: z
           .enum(["insert_at_end", "insert_at_start", "replace", "rename"])
           .describe("The type of edit operation to perform"),
         content: z
           .string()
-          .describe("Markdown content to insert/replace, or the new title for rename"),
+          .describe(
+            "Markdown content to insert/replace, or the new title for rename",
+          ),
         section_id: z
           .string()
           .optional()
-          .describe("Section ID to replace (required for 'replace' operation). Use read_canvas to find section IDs."),
+          .describe(
+            "Section ID to replace (required for 'replace' operation). Use read_canvas to find section IDs.",
+          ),
       }),
       execute: async ({ canvas_id, operation, content, section_id }) => {
         try {
@@ -1353,20 +1414,25 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             if (!section_id) {
               return {
                 ok: false,
-                error: "Section ID is required for replace operations. Use read_canvas to find section IDs.",
+                error:
+                  "Section ID is required for replace operations. Use read_canvas to find section IDs.",
               };
             }
-            changes = [{
-              operation: "replace",
-              section_id,
-              document_content: { type: "markdown", markdown: content },
-            }];
+            changes = [
+              {
+                operation: "replace",
+                section_id,
+                document_content: { type: "markdown", markdown: content },
+              },
+            ];
           } else {
             // insert_at_start or insert_at_end
-            changes = [{
-              operation,
-              document_content: { type: "markdown", markdown: content },
-            }];
+            changes = [
+              {
+                operation,
+                document_content: { type: "markdown", markdown: content },
+              },
+            ];
           }
 
           await throttle();
@@ -1411,21 +1477,36 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Edit one of Aura's own messages. Bots can only edit their own messages.",
       inputSchema: z.object({
-        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
         message_ts: z.string().describe("Timestamp of the message to edit"),
         new_text: z.string().describe("The new message text"),
       }),
       execute: async ({ channel: channelInput, message_ts, new_text }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
-          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
+          if (!channel)
+            return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
-          await client.chat.update({ channel: channel.id, ts: message_ts, text: new_text });
-          logger.info("edit_message tool called", { channel: channel.name, ts: message_ts });
+          await client.chat.update({
+            channel: channel.id,
+            ts: message_ts,
+            text: new_text,
+          });
+          logger.info("edit_message tool called", {
+            channel: channel.name,
+            ts: message_ts,
+          });
           return { ok: true, message: `Message updated in #${channel.name}` };
         } catch (error: any) {
           logger.error("edit_message tool failed", { error: error.message });
-          return { ok: false, error: `Failed to edit message: ${error.message}` };
+          return {
+            ok: false,
+            error: `Failed to edit message: ${error.message}`,
+          };
         }
       },
     }),
@@ -1434,20 +1515,31 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Delete one of Aura's own messages. Bots can only delete their own messages.",
       inputSchema: z.object({
-        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
         message_ts: z.string().describe("Timestamp of the message to delete"),
       }),
       execute: async ({ channel: channelInput, message_ts }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
-          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
+          if (!channel)
+            return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.chat.delete({ channel: channel.id, ts: message_ts });
-          logger.info("delete_message tool called", { channel: channel.name, ts: message_ts });
+          logger.info("delete_message tool called", {
+            channel: channel.name,
+            ts: message_ts,
+          });
           return { ok: true, message: `Message deleted from #${channel.name}` };
         } catch (error: any) {
           logger.error("delete_message tool failed", { error: error.message });
-          return { ok: false, error: `Failed to delete message: ${error.message}` };
+          return {
+            ok: false,
+            error: `Failed to delete message: ${error.message}`,
+          };
         }
       },
     }),
@@ -1456,25 +1548,44 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Reply in a specific thread in a channel. Use this instead of send_channel_message when you want to respond in a thread. Also used to comment on Slack List items — each List item has an associated channel_id and ts, so pass those here.",
       inputSchema: z.object({
-        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
-        thread_ts: z.string().describe("Timestamp of the parent message (thread)"),
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
+        thread_ts: z
+          .string()
+          .describe("Timestamp of the parent message (thread)"),
         message: z.string().describe("The reply text"),
       }),
       execute: async ({ channel: channelInput, thread_ts, message }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
-          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
+          if (!channel)
+            return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           const result = await client.chat.postMessage({
             channel: channel.id,
             text: message,
             thread_ts,
           });
-          logger.info("send_thread_reply tool called", { channel: channel.name, thread_ts });
-          return { ok: true, message: `Reply sent in thread in #${channel.name}`, timestamp: result.ts };
+          logger.info("send_thread_reply tool called", {
+            channel: channel.name,
+            thread_ts,
+          });
+          return {
+            ok: true,
+            message: `Reply sent in thread in #${channel.name}`,
+            timestamp: result.ts,
+          };
         } catch (error: any) {
-          logger.error("send_thread_reply tool failed", { error: error.message });
-          return { ok: false, error: `Failed to send thread reply: ${error.message}` };
+          logger.error("send_thread_reply tool failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to send thread reply: ${error.message}`,
+          };
         }
       },
     }),
@@ -1485,44 +1596,83 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Add an emoji reaction to a message. Use this to acknowledge, vote, triage, or signal without a full text reply.",
       inputSchema: z.object({
-        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
         message_ts: z.string().describe("Timestamp of the message to react to"),
-        emoji: z.string().describe("Emoji name without colons, e.g. 'eyes', 'white_check_mark', 'thumbsup'"),
+        emoji: z
+          .string()
+          .describe(
+            "Emoji name without colons, e.g. 'eyes', 'white_check_mark', 'thumbsup'",
+          ),
       }),
       execute: async ({ channel: channelInput, message_ts, emoji }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
-          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
+          if (!channel)
+            return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
-          await client.reactions.add({ channel: channel.id, timestamp: message_ts, name: emoji });
-          logger.info("add_reaction tool called", { channel: channel.name, emoji });
-          return { ok: true, message: `Reacted with :${emoji}: in #${channel.name}` };
+          await client.reactions.add({
+            channel: channel.id,
+            timestamp: message_ts,
+            name: emoji,
+          });
+          logger.info("add_reaction tool called", {
+            channel: channel.name,
+            emoji,
+          });
+          return {
+            ok: true,
+            message: `Reacted with :${emoji}: in #${channel.name}`,
+          };
         } catch (error: any) {
           logger.error("add_reaction tool failed", { error: error.message });
-          return { ok: false, error: `Failed to add reaction: ${error.message}` };
+          return {
+            ok: false,
+            error: `Failed to add reaction: ${error.message}`,
+          };
         }
       },
     }),
 
     remove_reaction: tool({
-      description:
-        "Remove an emoji reaction from a message.",
+      description: "Remove an emoji reaction from a message.",
       inputSchema: z.object({
-        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
         message_ts: z.string().describe("Timestamp of the message"),
         emoji: z.string().describe("Emoji name without colons"),
       }),
       execute: async ({ channel: channelInput, message_ts, emoji }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
-          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
+          if (!channel)
+            return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
-          await client.reactions.remove({ channel: channel.id, timestamp: message_ts, name: emoji });
-          logger.info("remove_reaction tool called", { channel: channel.name, emoji });
-          return { ok: true, message: `Removed :${emoji}: from message in #${channel.name}` };
+          await client.reactions.remove({
+            channel: channel.id,
+            timestamp: message_ts,
+            name: emoji,
+          });
+          logger.info("remove_reaction tool called", {
+            channel: channel.name,
+            emoji,
+          });
+          return {
+            ok: true,
+            message: `Removed :${emoji}: from message in #${channel.name}`,
+          };
         } catch (error: any) {
           logger.error("remove_reaction tool failed", { error: error.message });
-          return { ok: false, error: `Failed to remove reaction: ${error.message}` };
+          return {
+            ok: false,
+            error: `Failed to remove reaction: ${error.message}`,
+          };
         }
       },
     }),
@@ -1530,11 +1680,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Channel Management Tools ────────────────────────────────────────────
 
     create_channel: tool({
-      description:
-        "Create a new Slack channel.",
+      description: "Create a new Slack channel.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Name for the new channel (lowercase, hyphens, underscores only)"),
-        is_private: z.boolean().default(false).describe("Create as a private channel"),
+        channel_name: z
+          .string()
+          .describe(
+            "Name for the new channel (lowercase, hyphens, underscores only)",
+          ),
+        is_private: z
+          .boolean()
+          .default(false)
+          .describe("Create as a private channel"),
       }),
       execute: async ({ channel_name, is_private }) => {
         try {
@@ -1546,14 +1702,27 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const ch = result.channel as any;
           // Invalidate channel cache
           channelCache = null;
-          logger.info("create_channel tool called", { channel: ch?.name, id: ch?.id });
-          return { ok: true, message: `Created ${is_private ? "private" : "public"} channel #${ch?.name}`, channel_id: ch?.id };
+          logger.info("create_channel tool called", {
+            channel: ch?.name,
+            id: ch?.id,
+          });
+          return {
+            ok: true,
+            message: `Created ${is_private ? "private" : "public"} channel #${ch?.name}`,
+            channel_id: ch?.id,
+          };
         } catch (error: any) {
           logger.error("create_channel tool failed", { error: error.message });
           if (error.data?.error === "name_taken") {
-            return { ok: false, error: `A channel named "${channel_name}" already exists.` };
+            return {
+              ok: false,
+              error: `A channel named "${channel_name}" already exists.`,
+            };
           }
-          return { ok: false, error: `Failed to create channel: ${error.message}` };
+          return {
+            ok: false,
+            error: `Failed to create channel: ${error.message}`,
+          };
         }
       },
     }),
@@ -1562,19 +1731,28 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Set or update a channel's topic. Aura must be a member of the channel.",
       inputSchema: z.object({
-        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
         topic: z.string().describe("The new topic text"),
       }),
       execute: async ({ channel: channelInput, topic }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
-          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
+          if (!channel)
+            return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.conversations.setTopic({ channel: channel.id, topic });
-          logger.info("set_channel_topic tool called", { channel: channel.name });
+          logger.info("set_channel_topic tool called", {
+            channel: channel.name,
+          });
           return { ok: true, message: `Topic updated for #${channel.name}` };
         } catch (error: any) {
-          logger.error("set_channel_topic tool failed", { error: error.message });
+          logger.error("set_channel_topic tool failed", {
+            error: error.message,
+          });
           return { ok: false, error: `Failed to set topic: ${error.message}` };
         }
       },
@@ -1584,23 +1762,47 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Invite a user to a channel. Aura must be a member of the channel.",
       inputSchema: z.object({
-        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
-        user_name: z.string().describe("Display name, username, or user ID of the person to invite"),
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
+        user_name: z
+          .string()
+          .describe(
+            "Display name, username, or user ID of the person to invite",
+          ),
       }),
       execute: async ({ channel: channelInput, user_name }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
-          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
+          if (!channel)
+            return { ok: false, error: `Channel "${channelInput}" not found.` };
           const user = await resolveUserByName(client, user_name);
-          if (!user) return { ok: false, error: `User "${user_name}" not found.` };
+          if (!user)
+            return { ok: false, error: `User "${user_name}" not found.` };
           await throttle();
-          await client.conversations.invite({ channel: channel.id, users: user.id });
-          logger.info("invite_to_channel tool called", { channel: channel.name, user: user.name });
-          return { ok: true, message: `Invited ${user.name} to #${channel.name}` };
+          await client.conversations.invite({
+            channel: channel.id,
+            users: user.id,
+          });
+          logger.info("invite_to_channel tool called", {
+            channel: channel.name,
+            user: user.name,
+          });
+          return {
+            ok: true,
+            message: `Invited ${user.name} to #${channel.name}`,
+          };
         } catch (error: any) {
-          logger.error("invite_to_channel tool failed", { error: error.message });
+          logger.error("invite_to_channel tool failed", {
+            error: error.message,
+          });
           if (error.data?.error === "already_in_channel") {
-            return { ok: false, error: `${user_name} is already in #${channelInput}.` };
+            return {
+              ok: false,
+              error: `${user_name} is already in #${channelInput}.`,
+            };
           }
           return { ok: false, error: `Failed to invite: ${error.message}` };
         }
@@ -1608,15 +1810,19 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     }),
 
     leave_channel: tool({
-      description:
-        "Leave a channel Aura is currently a member of.",
+      description: "Leave a channel Aura is currently a member of.",
       inputSchema: z.object({
-        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
       }),
       execute: async ({ channel: channelInput }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
-          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
+          if (!channel)
+            return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.conversations.leave({ channel: channel.id });
           channelCache = null; // invalidate
@@ -1624,7 +1830,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return { ok: true, message: `Left #${channel.name}` };
         } catch (error: any) {
           logger.error("leave_channel tool failed", { error: error.message });
-          return { ok: false, error: `Failed to leave channel: ${error.message}` };
+          return {
+            ok: false,
+            error: `Failed to leave channel: ${error.message}`,
+          };
         }
       },
     }),
@@ -1635,20 +1844,34 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Set Aura's own Slack status. Use this to signal what you're doing (e.g. 'Running morning digest', 'Monitoring #bugs').",
       inputSchema: z.object({
-        status_text: z.string().describe("Status text, e.g. 'Running morning digest'"),
-        status_emoji: z.string().describe("Status emoji, e.g. ':mag:' or ':robot_face:'"),
-        expiration_minutes: z.number().optional().describe("Auto-clear the status after this many minutes"),
+        status_text: z
+          .string()
+          .describe("Status text, e.g. 'Running morning digest'"),
+        status_emoji: z
+          .string()
+          .describe("Status emoji, e.g. ':mag:' or ':robot_face:'"),
+        expiration_minutes: z
+          .number()
+          .optional()
+          .describe("Auto-clear the status after this many minutes"),
       }),
       execute: async ({ status_text, status_emoji, expiration_minutes }) => {
         try {
           const profile: any = { status_text, status_emoji };
           if (expiration_minutes) {
-            profile.status_expiration = Math.floor(Date.now() / 1000) + expiration_minutes * 60;
+            profile.status_expiration =
+              Math.floor(Date.now() / 1000) + expiration_minutes * 60;
           }
           await throttle();
           await client.users.profile.set({ profile });
-          logger.info("set_my_status tool called", { status_text, status_emoji });
-          return { ok: true, message: `Status set to ${status_emoji} ${status_text}` };
+          logger.info("set_my_status tool called", {
+            status_text,
+            status_emoji,
+          });
+          return {
+            ok: true,
+            message: `Status set to ${status_emoji} ${status_text}`,
+          };
         } catch (error: any) {
           logger.error("set_my_status tool failed", { error: error.message });
           return { ok: false, error: `Failed to set status: ${error.message}` };
