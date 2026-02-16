@@ -329,30 +329,44 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             } while (cursor && collected.length < limit);
 
             allChannels = collected.slice(0, limit);
-          }
 
-          // Also fetch private channels via bot token (user token may not have access to bot's private channels)
-          await throttle();
-          const botResult = await client.conversations.list({
-            types: "private_channel",
-            exclude_archived: true,
-            limit,
-          });
+            // Fetch bot's channels to get accurate is_member (user token's is_member reflects the user, not the bot)
+            // and to discover private channels the bot is in
+            await throttle();
+            const botResult = await client.conversations.list({
+              types: "public_channel,private_channel",
+              exclude_archived: true,
+              limit,
+            });
 
-          for (const ch of botResult.channels || []) {
-            if (!allChannels.find((existing) => existing.id === ch.id)) {
-              allChannels.push({
-                name: ch.name || "unknown",
-                id: ch.id || "",
-                topic: ch.topic?.value || "",
-                member_count: ch.num_members || 0,
-                is_member: ch.is_member || false,
-              });
+            const botMemberIds = new Set(
+              (botResult.channels || [])
+                .filter((ch) => ch.is_member)
+                .map((ch) => ch.id)
+            );
+
+            // Fix is_member on public channels to reflect the bot's membership
+            for (const ch of allChannels) {
+              ch.is_member = botMemberIds.has(ch.id);
             }
-          }
 
-          // If user token wasn't available, fall back to bot-only listing
-          if (!userToken) {
+            // Add private channels from bot that aren't already listed
+            for (const ch of botResult.channels || []) {
+              if (ch.is_private && !allChannels.find((existing) => existing.id === ch.id)) {
+                allChannels.push({
+                  name: ch.name || "unknown",
+                  id: ch.id || "",
+                  topic: ch.topic?.value || "",
+                  member_count: ch.num_members || 0,
+                  is_member: ch.is_member || false,
+                });
+              }
+            }
+
+            // Enforce the limit after merging public + private channels
+            allChannels = allChannels.slice(0, limit);
+          } else {
+            // No user token — fall back to bot-only listing
             await throttle();
             const result = await client.conversations.list({
               types: "public_channel,private_channel",
