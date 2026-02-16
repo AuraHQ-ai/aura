@@ -21,6 +21,7 @@ export async function getBigQueryClient() {
       logger.warn(
         "GOOGLE_BQ_CREDENTIALS not set — BigQuery tools will be unavailable",
       );
+      clientPromise = null;
       return null;
     }
 
@@ -40,6 +41,7 @@ export async function getBigQueryClient() {
       logger.error("Failed to initialize BigQuery client", {
         error: error.message,
       });
+      clientPromise = null;
       return null;
     }
   })();
