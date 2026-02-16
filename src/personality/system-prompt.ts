@@ -344,6 +344,8 @@ export async function buildSystemPrompt(
   parts.push(PERSONALITY);
 
   // Self-directive: agent's own persistent context, loaded every invocation
+  // Hard cap at ~2000 tokens (~8000 chars) to prevent context-window overflow
+  const SELF_DIRECTIVE_MAX_CHARS = 8000;
   try {
     const rows = await db
       .select({ content: notes.content })
@@ -351,8 +353,13 @@ export async function buildSystemPrompt(
       .where(eq(notes.topic, "self-directive"))
       .limit(1);
     if (rows[0]?.content) {
+      let content = rows[0].content;
+      if (content.length > SELF_DIRECTIVE_MAX_CHARS) {
+        content = content.slice(0, SELF_DIRECTIVE_MAX_CHARS) + "\n\n[truncated — self-directive exceeded ~2000 token limit, consolidate it]";
+        logger.warn("Self-directive note truncated", { originalLength: rows[0].content.length, limit: SELF_DIRECTIVE_MAX_CHARS });
+      }
       parts.push(
-        `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${rows[0].content}`,
+        `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}`,
       );
     }
   } catch (error) {
