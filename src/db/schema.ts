@@ -166,7 +166,7 @@ export const settings = pgTable("settings", {
   updatedBy: text("updated_by"),
 });
 
-// ── Notes (agent scratchpad) ────────────────────────────────────────────────
+// ── Notes (agent scratchpad with three-tier hierarchy) ──────────────────────
 
 export const notes = pgTable(
   "notes",
@@ -176,39 +176,58 @@ export const notes = pgTable(
       .default(sql`gen_random_uuid()`),
     topic: text("topic").notNull(),
     content: text("content").notNull(),
+    category: text("category").notNull().default("knowledge"),
+    expiresAt: timestamptz("expires_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("notes_topic_idx").on(table.topic)],
+  (table) => [
+    uniqueIndex("notes_topic_idx").on(table.topic),
+    index("notes_category_idx").on(table.category),
+  ],
 );
 
-// ── Scheduled Actions ───────────────────────────────────────────────────────
+// ── Jobs (unified: one-shot tasks, recurring work, continuations) ───────────
 
-export const scheduledActions = pgTable(
-  "scheduled_actions",
+export interface FrequencyConfig {
+  minIntervalHours?: number;
+  maxPerDay?: number;
+  cooldownHours?: number;
+}
+
+export const jobs = pgTable(
+  "jobs",
   {
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
     description: text("description").notNull(),
-    executeAt: timestamptz("execute_at").notNull(),
-    channelId: text("channel_id").notNull(),
+    playbook: text("playbook"),
+    cronSchedule: text("cron_schedule"),
+    frequencyConfig: jsonb("frequency_config").$type<FrequencyConfig>(),
+    channelId: text("channel_id"),
     threadTs: text("thread_ts"),
-    requestedBy: text("requested_by").notNull(),
-    recurring: text("recurring"),
-    timezone: text("timezone").notNull().default("UTC"),
+    executeAt: timestamptz("execute_at"),
+    requestedBy: text("requested_by").notNull().default("aura"),
     priority: text("priority").notNull().default("normal"),
     status: text("status").notNull().default("pending"),
-    lastResult: text("last_result"),
+    timezone: text("timezone").notNull().default("UTC"),
     result: text("result"),
     retries: integer("retries").notNull().default(0),
+    lastExecutedAt: timestamptz("last_executed_at"),
+    lastResult: text("last_result"),
+    executionCount: integer("execution_count").notNull().default(0),
+    todayExecutions: integer("today_executions").notNull().default(0),
+    lastExecutionDate: text("last_execution_date"),
+    enabled: integer("enabled").notNull().default(1),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    index("scheduled_actions_status_execute_idx").on(
-      table.status,
-      table.executeAt,
-    ),
+    uniqueIndex("jobs_name_idx").on(table.name),
+    index("jobs_enabled_idx").on(table.enabled),
+    index("jobs_status_execute_idx").on(table.status, table.executeAt),
   ],
 );
 
@@ -223,3 +242,13 @@ export type NewUserProfile = typeof userProfiles.$inferInsert;
 export type Channel = typeof channels.$inferSelect;
 export type NewChannel = typeof channels.$inferInsert;
 export type Setting = typeof settings.$inferSelect;
+export type Job = typeof jobs.$inferSelect;
+export type NewJob = typeof jobs.$inferInsert;
+export type Note = typeof notes.$inferSelect;
+
+/** Context for tools that need to know the current conversation's routing. */
+export interface ScheduleContext {
+  userId?: string;
+  channelId?: string;
+  threadTs?: string;
+}
