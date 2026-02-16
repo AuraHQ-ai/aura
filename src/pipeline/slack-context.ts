@@ -109,7 +109,7 @@ export async function fetchConversationContext(
 
       for (const msg of rawMessages) {
         const userId = msg.user || msg.bot_id || "unknown";
-        const isBot = msg.user === botUserId || (!msg.user && !!msg.bot_id);
+        const isBot = msg.user === botUserId;
         const displayName = isBot
           ? "Aura"
           : await resolveDisplayName(client, userId);
@@ -148,7 +148,7 @@ export async function fetchConversationContext(
 
     for (const msg of rawHistory) {
       const userId = msg.user || msg.bot_id || "unknown";
-      const isBot = msg.user === botUserId || (!msg.user && !!msg.bot_id);
+      const isBot = msg.user === botUserId;
       const displayName = isBot
         ? "Aura"
         : await resolveDisplayName(client, userId);
