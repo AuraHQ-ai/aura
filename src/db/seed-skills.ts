@@ -47,30 +47,29 @@ const SEED_SKILLS = [
     content: `# How to follow up with someone over multiple days
 
 1. DM the person with the request.
-2. Create a plan note: "follow-up-{person}-{topic}" with context (what you asked,
-   who asked you, deadline, escalation contact).
-3. Schedule a check action: "[CONTINUE:follow-up-{person}-{topic}] Check if {person}
-   replied via read_dm_history. If yes, report to {requester}. If no, send gentle
-   nudge. If 3 days passed, escalate to {requester}."
-4. Set continue_in_minutes to 240 (4 hours) for first check.
-5. On each check: if no reply, reschedule with escalating intervals (4h, 12h, 24h).`,
+2. Save a plan note ("follow-up-{person}-{topic}") with context: what you asked,
+   who asked you, deadline, escalation contact.
+3. Create a follow-up job with create_job: execute_in "4 hours", description:
+   "Check if {person} replied via read_dm_history. If yes, report to {requester}.
+   If no, send gentle nudge. If 3 days passed, escalate to {requester}."
+4. On each check: if no reply, create another follow-up job with escalating
+   intervals (4h, 12h, 24h).`,
   },
   {
     topic: "continuation-protocol",
     category: "skill",
     content: `# How to handle tasks that exceed your step limit
 
-1. At the start of ambitious work, create a plan note with your goal and approach.
-2. Work through the steps, updating the plan note with findings as you go.
-3. Around step 18-20, if not done: call checkpoint_plan with:
-   - progress: what you've accomplished
-   - next_steps: exactly what to do next (be specific -- your future self needs this)
-   - context: all accumulated data, findings, intermediate results
-4. The scheduler picks this up in ~5 minutes and continues.
-5. Multiple continuations are fine -- up to 5 rounds. After 5, the system asks the
-   user for permission to continue (prevents runaway chains).
-6. Keep context concise -- trim completed steps, keep only active findings.
-   Large plan notes waste tokens on every continuation.`,
+You have up to 50 tool calls per job execution. This is enough for most tasks.
+
+1. Plan before you act. For ambitious work, sketch your approach first.
+2. Be efficient with tool calls -- batch reads, avoid redundant lookups.
+3. If you can't finish within 50 steps:
+   - Post a summary of what's done and what remains.
+   - Create a follow-up job (create_job) with a clear description of the next steps.
+   - The heartbeat will pick it up in the next cycle (~30 min).
+4. For multi-day workflows (follow-ups, campaigns), use scheduled jobs with
+   appropriate delays rather than trying to do everything in one execution.`,
   },
 ];
 

@@ -20,8 +20,8 @@ const MAX_JOBS_PER_SWEEP = 10;
 /** Max retries before marking as failed */
 const MAX_RETRIES = 3;
 
-/** Retry delay in ms (10 minutes) */
-const RETRY_DELAY_MS = 10 * 60 * 1000;
+/** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
+const RETRY_DELAY_MS = 30 * 60 * 1000;
 
 // ── System Prompts ───────────────────────────────────────────────────────────
 
@@ -272,11 +272,10 @@ async function executeJob(
   try {
     const planTopic = parseContinuationTag(job.description);
     const isContinuation = planTopic !== null;
-    const isRecurring = !!job.cronSchedule;
+    const isRecurring = !!job.cronSchedule || !!job.frequencyConfig;
 
     let prompt: string;
     let systemPrompt: string;
-    let stepLimit: number;
 
     if (isContinuation) {
       const planContent = await loadPlanNote(planTopic);
@@ -287,7 +286,6 @@ async function executeJob(
         : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}`;
 
       systemPrompt = CONTINUATION_SYSTEM_PROMPT + skillIndex;
-      stepLimit = 20;
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
@@ -304,7 +302,6 @@ async function executeJob(
       }
 
       systemPrompt = JOB_SYSTEM_PROMPT + skillIndex;
-      stepLimit = 15;
 
       logger.info("Heartbeat: executing job", {
         jobId,
@@ -325,7 +322,7 @@ async function executeJob(
         channelId: job.channelId || undefined,
         threadTs: job.threadTs || undefined,
       }),
-      stopWhen: stepCountIs(stepLimit),
+      stopWhen: stepCountIs(50),
     });
 
     const result = (text || "Job completed (no text output)").substring(0, 2000);
@@ -353,7 +350,7 @@ async function executeJob(
         jobName: job.name,
       });
     } else {
-      // One-shot or continuation: mark completed
+      // One-shot: mark completed
       await db
         .update(jobs)
         .set({
