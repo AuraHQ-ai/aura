@@ -27,6 +27,10 @@ function run(cmd, opts = {}) {
   }).trim();
 }
 
+function shellEscape(s) {
+  return "'" + String(s).replace(/'/g, "'\\''") + "'";
+}
+
 function output(result) {
   console.log(JSON.stringify(result));
 }
@@ -45,6 +49,11 @@ async function main() {
 
   if (!prompt || !branch_name || !pr_title) {
     output({ ok: false, error: "Missing required config: prompt, branch_name, pr_title" });
+    process.exit(1);
+  }
+
+  if (!/^[\w.\-/]+$/.test(branch_name)) {
+    output({ ok: false, error: "Invalid branch_name: only alphanumeric, hyphens, dots, slashes, and underscores are allowed" });
     process.exit(1);
   }
 
@@ -79,8 +88,8 @@ async function main() {
   // ── Create branch ────────────────────────────────────────────────────
   try {
     // Delete local branch if it exists from a previous run
-    try { run(`git branch -D ${branch_name}`); } catch { /* ignore */ }
-    run(`git checkout -b ${branch_name}`);
+    try { run(`git branch -D ${shellEscape(branch_name)}`); } catch { /* ignore */ }
+    run(`git checkout -b ${shellEscape(branch_name)}`);
   } catch (e) {
     output({ ok: false, error: `Branch creation failed: ${e.message}` });
     process.exit(1);
@@ -179,8 +188,8 @@ async function main() {
   try {
     run(`git add -A`);
     const commitMsg = `${pr_title}\n\nAutomated patch by Aura via Claude Agent SDK.`;
-    run(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`);
-    run(`git push origin ${branch_name} --force`, { timeout: 60_000 });
+    run(`git commit -m ${shellEscape(commitMsg)}`);
+    run(`git push origin ${shellEscape(branch_name)} --force`, { timeout: 60_000 });
   } catch (e) {
     output({
       ok: false,
@@ -209,14 +218,14 @@ async function main() {
     ].join("\n");
 
     prUrl = run(
-      `gh pr create --title "${pr_title.replace(/"/g, '\\"')}" --body "${body.replace(/"/g, '\\"')}" --base main --head ${branch_name}`,
+      `gh pr create --title ${shellEscape(pr_title)} --body ${shellEscape(body)} --base main --head ${shellEscape(branch_name)}`,
       { timeout: 30_000 },
     );
   } catch (e) {
     // PR might already exist if re-running
     if (e.message?.includes("already exists")) {
       try {
-        prUrl = run(`gh pr view ${branch_name} --json url -q .url`);
+        prUrl = run(`gh pr view ${shellEscape(branch_name)} --json url -q .url`);
       } catch {
         prUrl = "(PR exists but could not retrieve URL)";
       }

@@ -132,7 +132,7 @@ You have access to your own source code at github.com/realadvisor/aura.
 **Preferred workflow — patch_own_code (Claude Agent SDK):**
 When you diagnose a bug or want to make a code change, write a detailed prompt describing exactly what to fix (file paths, function names, expected behavior, root cause) and dispatch it to \`patch_own_code\`. The coding agent handles file edits autonomously — you handle the diagnosis and PR description. One tool call = one PR.
 
-Example: you find a parameter name bug in \`get_slack_list_item\` → write a precise fix spec → call \`patch_own_code(prompt, branch_name, pr_title)\` → get back a PR URL → DM Joan for review.
+Example: you find a parameter name bug in \`get_slack_list_item\` → write a precise fix spec → call \`patch_own_code({ prompt: "...", branch_name: "fix/slack-list-item-params", pr_title: "Fix param name in get_slack_list_item" })\` → get back a PR URL → DM Joan for review.
 
 **Quick reads (no agent needed):**
 - run_command("rg 'pattern' /home/user/aura/src/") — search your code
