@@ -397,17 +397,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Join a public Slack channel by name or ID. Aura must join a channel before she can read its history or post messages there. Only works for public channels. This tool can find and join channels that don't appear in list_channels results, since list_channels only shows channels Aura is already in.",
       inputSchema: z.object({
-        channel_name: z
+        channel: z
           .string()
-          .describe("The name or ID of the channel to join, e.g. 'general', '#general', or 'C0BNVKS77'"),
+          .describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
       }),
-      execute: async ({ channel_name }) => {
+      execute: async ({ channel: channelInput }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name, { fallbackToUserToken: true });
+          const channel = await resolveChannelByName(client, channelInput, { fallbackToUserToken: true });
           if (!channel) {
             return {
               ok: false,
-              error: `Could not find a channel named "${channel_name}". It may not exist or may be private. Use list_channels to see available channels.`,
+              error: `Could not find a channel named "${channelInput}". It may not exist or may be private. Use list_channels to see available channels.`,
             };
           }
 
@@ -429,20 +429,20 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         } catch (error: any) {
           logger.error("join_channel tool failed", {
-            channel_name,
+            channel: channelInput,
             error: error.message,
           });
 
           if (error.data?.error === "method_not_supported_for_channel_type") {
             return {
               ok: false,
-              error: `Cannot join #${channel_name} — it's a private channel. Someone needs to invite me.`,
+              error: `Cannot join #${channelInput} — it's a private channel. Someone needs to invite me.`,
             };
           }
 
           return {
             ok: false,
-            error: `Failed to join #${channel_name}: ${error.message}`,
+            error: `Failed to join #${channelInput}: ${error.message}`,
           };
         }
       },
@@ -452,9 +452,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Read recent messages from a Slack channel. Aura must be a member of the channel. Use join_channel first if needed.",
       inputSchema: z.object({
-        channel_name: z
+        channel: z
           .string()
-          .describe("The name of the channel to read, e.g. 'general' or '#general'"),
+          .describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         limit: z
           .number()
           .min(1)
@@ -462,13 +462,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .default(20)
           .describe("Number of recent messages to fetch (max 50)"),
       }),
-      execute: async ({ channel_name, limit }) => {
+      execute: async ({ channel: channelInput, limit }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
+          const channel = await resolveChannelByName(client, channelInput);
           if (!channel) {
             return {
               ok: false,
-              error: `Could not find a channel named "${channel_name}".`,
+              error: `Could not find a channel named "${channelInput}".`,
             };
           }
 
@@ -513,20 +513,20 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         } catch (error: any) {
           logger.error("read_channel_history tool failed", {
-            channel_name,
+            channel: channelInput,
             error: error.message,
           });
 
           if (error.data?.error === "not_in_channel") {
             return {
               ok: false,
-              error: `I'm not a member of #${channel_name}. Use join_channel to join it first.`,
+              error: `I'm not a member of #${channelInput}. Use join_channel to join it first.`,
             };
           }
 
           return {
             ok: false,
-            error: `Failed to read #${channel_name}: ${error.message}`,
+            error: `Failed to read #${channelInput}: ${error.message}`,
           };
         }
       },
@@ -536,20 +536,20 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Send a message to a Slack channel. Aura must be a member of the channel. Use join_channel first if needed.",
       inputSchema: z.object({
-        channel_name: z
+        channel: z
           .string()
-          .describe("The name of the channel to post to, e.g. 'general' or '#general'"),
+          .describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         message: z
           .string()
           .describe("The message text to send. Supports Slack mrkdwn formatting."),
       }),
-      execute: async ({ channel_name, message }) => {
+      execute: async ({ channel: channelInput, message }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
+          const channel = await resolveChannelByName(client, channelInput);
           if (!channel) {
             return {
               ok: false,
-              error: `Could not find a channel named "${channel_name}".`,
+              error: `Could not find a channel named "${channelInput}".`,
             };
           }
 
@@ -572,26 +572,26 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         } catch (error: any) {
           logger.error("send_channel_message tool failed", {
-            channel_name,
+            channel: channelInput,
             error: error.message,
           });
 
           if (error.data?.error === "not_in_channel") {
             return {
               ok: false,
-              error: `I'm not a member of #${channel_name}. Use join_channel to join it first, then try sending again.`,
+              error: `I'm not a member of #${channelInput}. Use join_channel to join it first, then try sending again.`,
             };
           }
           if (error.data?.error === "channel_not_found") {
             return {
               ok: false,
-              error: `Channel #${channel_name} not found. Use list_channels to see available channels.`,
+              error: `Channel #${channelInput} not found. Use list_channels to see available channels.`,
             };
           }
 
           return {
             ok: false,
-            error: `Failed to send message to #${channel_name}: ${error.message}`,
+            error: `Failed to send message to #${channelInput}: ${error.message}`,
           };
         }
       },
@@ -1397,14 +1397,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Edit one of Aura's own messages. Bots can only edit their own messages.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Channel where the message is"),
+        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         message_ts: z.string().describe("Timestamp of the message to edit"),
         new_text: z.string().describe("The new message text"),
       }),
-      execute: async ({ channel_name, message_ts, new_text }) => {
+      execute: async ({ channel: channelInput, message_ts, new_text }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.chat.update({ channel: channel.id, ts: message_ts, text: new_text });
           logger.info("edit_message tool called", { channel: channel.name, ts: message_ts });
@@ -1420,13 +1420,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Delete one of Aura's own messages. Bots can only delete their own messages.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Channel where the message is"),
+        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         message_ts: z.string().describe("Timestamp of the message to delete"),
       }),
-      execute: async ({ channel_name, message_ts }) => {
+      execute: async ({ channel: channelInput, message_ts }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.chat.delete({ channel: channel.id, ts: message_ts });
           logger.info("delete_message tool called", { channel: channel.name, ts: message_ts });
@@ -1440,16 +1440,16 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     send_thread_reply: tool({
       description:
-        "Reply in a specific thread in a channel. Use this instead of send_channel_message when you want to respond in a thread.",
+        "Reply in a specific thread in a channel. Use this instead of send_channel_message when you want to respond in a thread. Also used to comment on Slack List items — each List item has an associated channel_id and ts, so pass those here.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Channel where the thread is"),
+        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         thread_ts: z.string().describe("Timestamp of the parent message (thread)"),
         message: z.string().describe("The reply text"),
       }),
-      execute: async ({ channel_name, thread_ts, message }) => {
+      execute: async ({ channel: channelInput, thread_ts, message }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           const result = await client.chat.postMessage({
             channel: channel.id,
@@ -1471,14 +1471,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Add an emoji reaction to a message. Use this to acknowledge, vote, triage, or signal without a full text reply.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Channel where the message is"),
+        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         message_ts: z.string().describe("Timestamp of the message to react to"),
         emoji: z.string().describe("Emoji name without colons, e.g. 'eyes', 'white_check_mark', 'thumbsup'"),
       }),
-      execute: async ({ channel_name, message_ts, emoji }) => {
+      execute: async ({ channel: channelInput, message_ts, emoji }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.reactions.add({ channel: channel.id, timestamp: message_ts, name: emoji });
           logger.info("add_reaction tool called", { channel: channel.name, emoji });
@@ -1494,14 +1494,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Remove an emoji reaction from a message.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Channel where the message is"),
+        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         message_ts: z.string().describe("Timestamp of the message"),
         emoji: z.string().describe("Emoji name without colons"),
       }),
-      execute: async ({ channel_name, message_ts, emoji }) => {
+      execute: async ({ channel: channelInput, message_ts, emoji }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.reactions.remove({ channel: channel.id, timestamp: message_ts, name: emoji });
           logger.info("remove_reaction tool called", { channel: channel.name, emoji });
@@ -1548,13 +1548,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Set or update a channel's topic. Aura must be a member of the channel.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Channel name"),
+        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         topic: z.string().describe("The new topic text"),
       }),
-      execute: async ({ channel_name, topic }) => {
+      execute: async ({ channel: channelInput, topic }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.conversations.setTopic({ channel: channel.id, topic });
           logger.info("set_channel_topic tool called", { channel: channel.name });
@@ -1570,13 +1570,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Invite a user to a channel. Aura must be a member of the channel.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Channel to invite the user to"),
+        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
         user_name: z.string().describe("Display name, username, or user ID of the person to invite"),
       }),
-      execute: async ({ channel_name, user_name }) => {
+      execute: async ({ channel: channelInput, user_name }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
           const user = await resolveUserByName(client, user_name);
           if (!user) return { ok: false, error: `User "${user_name}" not found.` };
           await throttle();
@@ -1586,7 +1586,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         } catch (error: any) {
           logger.error("invite_to_channel tool failed", { error: error.message });
           if (error.data?.error === "already_in_channel") {
-            return { ok: false, error: `${user_name} is already in #${channel_name}.` };
+            return { ok: false, error: `${user_name} is already in #${channelInput}.` };
           }
           return { ok: false, error: `Failed to invite: ${error.message}` };
         }
@@ -1597,12 +1597,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       description:
         "Leave a channel Aura is currently a member of.",
       inputSchema: z.object({
-        channel_name: z.string().describe("Channel to leave"),
+        channel: z.string().describe("Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')"),
       }),
-      execute: async ({ channel_name }) => {
+      execute: async ({ channel: channelInput }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
-          if (!channel) return { ok: false, error: `Channel "${channel_name}" not found.` };
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) return { ok: false, error: `Channel "${channelInput}" not found.` };
           await throttle();
           await client.conversations.leave({ channel: channel.id });
           channelCache = null; // invalidate
