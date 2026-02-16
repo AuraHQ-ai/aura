@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { eq, and, or, desc } from "drizzle-orm";
+import { eq, and, or, desc, isNotNull, ne, sql } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
@@ -188,6 +188,9 @@ export function createJobTools(
           const updateSet: Record<string, unknown> = {
             description,
             updatedAt: new Date(),
+            status: "pending",
+            enabled: 1,
+            retries: 0,
           };
           if (playbook !== undefined) updateSet.playbook = playbook || null;
           if (recurring !== undefined) updateSet.cronSchedule = recurring || null;
@@ -267,25 +270,18 @@ export function createJobTools(
           const conditions = [eq(jobs.status, status)];
           if (recurring_only) {
             conditions.push(
-              or(
-                eq(jobs.cronSchedule, ""),
-                eq(jobs.cronSchedule, null as any),
-              )! as any === false
-                ? eq(jobs.status, status) // fallback, won't happen
-                : eq(jobs.status, status), // we'll filter in code
+              and(isNotNull(jobs.cronSchedule), ne(jobs.cronSchedule, ""))!,
             );
           }
 
           const rows = await db
             .select()
             .from(jobs)
-            .where(eq(jobs.status, status))
+            .where(and(...conditions))
             .orderBy(desc(jobs.createdAt))
             .limit(limit);
 
-          const filtered = recurring_only
-            ? rows.filter((j) => j.cronSchedule)
-            : rows;
+          const filtered = rows;
 
           const result = filtered.map((j) => ({
             id: j.id,
