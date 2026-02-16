@@ -217,10 +217,12 @@ export async function generateResponse(
 
     // Get usage from the resolved promises
     const usage = await result.usage;
-    const text = await result.text;
 
-    // Use the full text from the result (not accumulated, in case of multi-step)
-    const finalText = text || accumulatedText;
+    // Always use accumulatedText as the source of truth.
+    // result.text only contains the LAST step's text in multi-step responses
+    // (e.g. text → tool call → text), which drops everything before the final step.
+    // accumulatedText captures every text-delta across all steps.
+    const finalText = accumulatedText;
 
     // Post-process: strip anti-patterns
     const { cleaned, flaggedWords, modifications } =
