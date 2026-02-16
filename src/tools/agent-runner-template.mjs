@@ -15,7 +15,6 @@ import { readFileSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 
 const REPO_DIR = "/home/user/aura";
-const REPO_URL = `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/realadvisor/aura.git`;
 
 function run(cmd, opts = {}) {
   return execSync(cmd, {
@@ -63,6 +62,8 @@ async function main() {
     process.env.GITHUB_TOKEN = github_token;
     process.env.GH_TOKEN = github_token;
   }
+
+  const REPO_URL = `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/realadvisor/aura.git`;
 
   if (!process.env.ANTHROPIC_API_KEY) {
     output({ ok: false, error: "ANTHROPIC_API_KEY not available (not in config or environment)" });
