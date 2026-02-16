@@ -52,14 +52,16 @@ function wrapTablesInCodeBlocks(text: string): string {
       i + 1 < lines.length &&
       isSeparatorRow(lines[i + 1])
     ) {
-      // Remember pipe count from the header row to validate continuation rows
-      const headerPipes = countPipes(lines[i]);
+      // Compute column count from the header to determine the minimum
+      // pipe count for body rows (columns - 1 covers borderless rows).
+      const columns = countColumns(lines[i]);
+      const minPipes = columns - 1;
       // Collect all contiguous table rows (including separator)
       const tableLines: string[] = [];
       while (
         i < lines.length &&
         (isSeparatorRow(lines[i]) ||
-          (isTableRow(lines[i]) && countPipes(lines[i]) >= headerPipes - 1))
+          (isTableRow(lines[i]) && countPipes(lines[i]) >= minPipes))
       ) {
         tableLines.push(lines[i]);
         i++;
@@ -92,6 +94,14 @@ function isSeparatorRow(line: string): boolean {
   const trimmed = line.trim();
   // Must contain pipes and dashes; only pipes, dashes, colons, spaces allowed
   return /^\|?[\s\-:|]+\|[\s\-:|]+\|?$/.test(trimmed);
+}
+
+/** Count the number of data columns in a table row */
+function countColumns(line: string): number {
+  return line
+    .trim()
+    .split("|")
+    .filter((p) => p.trim() !== "").length;
 }
 
 /** Count the number of pipe characters in a line */
