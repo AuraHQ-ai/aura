@@ -68,9 +68,9 @@ export function createListWriteTools(client: WebClient) {
           await throttle();
 
           const cells = Object.entries(fields).map(([column_id, value]) => ({
+            ...(typeof value === "object" && value !== null && !Array.isArray(value) ? value : { value }),
             row_id: item_id,
             column_id,
-            ...(typeof value === "object" && !Array.isArray(value) ? value : { value }),
           }));
 
           const result = await (client as any).apiCall("slackLists.items.update", {
