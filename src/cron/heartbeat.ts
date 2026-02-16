@@ -146,6 +146,30 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
       for (const job of dueJobs) {
         try {
+          // Atomically claim the job to prevent concurrent execution.
+          // If another heartbeat invocation already claimed it, the WHERE
+          // condition won't match and we skip it.
+          const claimTime = new Date();
+          const claimed = await db
+            .update(jobs)
+            .set({ lastExecutedAt: claimTime, updatedAt: claimTime })
+            .where(
+              and(
+                eq(jobs.id, job.id),
+                job.lastExecutedAt
+                  ? eq(jobs.lastExecutedAt, job.lastExecutedAt)
+                  : isNull(jobs.lastExecutedAt),
+              ),
+            )
+            .returning({ id: jobs.id });
+
+          if (claimed.length === 0) {
+            logger.info("Heartbeat: job already claimed, skipping", {
+              jobName: job.name,
+            });
+            continue;
+          }
+
           await executeJob(job, skillIndex);
           jobsExecuted++;
         } catch (error: any) {

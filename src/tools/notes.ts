@@ -67,9 +67,9 @@ export function createNoteTools(context?: ScheduleContext) {
           .describe("The full content of the note (markdown supported)"),
         category: z
           .enum(["skill", "plan", "knowledge"])
-          .default("knowledge")
+          .optional()
           .describe(
-            "Note category: 'skill' for durable playbooks, 'plan' for ephemeral work-in-progress, 'knowledge' for general reference",
+            "Note category: 'skill' for durable playbooks, 'plan' for ephemeral work-in-progress, 'knowledge' for general reference. Defaults to 'knowledge' for new notes. Omit to preserve existing category on update.",
           ),
         expires_in: z
           .string()
@@ -92,34 +92,42 @@ export function createNoteTools(context?: ScheduleContext) {
             expiresAt = new Date(Date.now() + ms);
           }
 
+          const effectiveCategory = category ?? "knowledge";
+
+          const updateSet: Record<string, unknown> = {
+            content,
+            updatedAt: new Date(),
+          };
+          if (category !== undefined) {
+            updateSet.category = category;
+          }
+          if (expires_in !== undefined) {
+            updateSet.expiresAt = expiresAt;
+          }
+
           await db
             .insert(notes)
             .values({
               topic,
               content,
-              category,
+              category: effectiveCategory,
               expiresAt,
               updatedAt: new Date(),
             })
             .onConflictDoUpdate({
               target: notes.topic,
-              set: {
-                content,
-                category,
-                expiresAt,
-                updatedAt: new Date(),
-              },
+              set: updateSet,
             });
 
           logger.info("save_note tool called", {
             topic,
-            category,
+            category: effectiveCategory,
             contentLength: content.length,
           });
 
           return {
             ok: true,
-            message: `Note "${topic}" saved (${category}, ${content.split("\n").length} lines${expiresAt ? `, expires ${expiresAt.toISOString()}` : ""})`,
+            message: `Note "${topic}" saved (${effectiveCategory}, ${content.split("\n").length} lines${expiresAt ? `, expires ${expiresAt.toISOString()}` : ""})`,
           };
         } catch (error: any) {
           logger.error("save_note tool failed", {
@@ -444,6 +452,14 @@ export function createNoteTools(context?: ScheduleContext) {
         continue_in_minutes,
       }) => {
         try {
+          // Reject topics containing ']' — they break the [CONTINUE:topic] tag parser
+          if (topic.includes("]")) {
+            return {
+              ok: false,
+              error: `Topic must not contain ']' characters (breaks continuation tag parsing). Got: "${topic}"`,
+            };
+          }
+
           // Read existing plan note to check continuation depth
           const existing = await getNoteByTopic(topic);
           let depth = 0;
