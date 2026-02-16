@@ -7,6 +7,7 @@ import {
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
 import { generateResponse } from "./respond.js";
+import { fetchConversationContext } from "./slack-context.js";
 import { storeMessage } from "../memory/store.js";
 import { extractMemories } from "../memory/extract.js";
 import {
@@ -62,9 +63,24 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // 1b. Resolve Slack entity references (<@U...>, <#C...>) to readable names
   context.text = await resolveSlackEntities(client, context.text);
 
+  // 1c. Fetch live conversation context from Slack API (used by both
+  //     shouldRespond and assemblePrompt — fetched once, reused)
+  const conversation = await fetchConversationContext(
+    client,
+    context.channelId,
+    botUserId,
+    context.threadTs,
+  );
+
   // 2. Should we respond?
-  if (!shouldRespond(context)) {
-    // Still store the message for context, but don't respond
+  const decision = await shouldRespond(context, conversation);
+  if (!decision.respond) {
+    logger.debug("Decided not to respond", {
+      reason: decision.reason,
+      userId: context.userId,
+      channelId: context.channelId,
+    });
+    // Still store the message for long-term memory, but don't respond
     const storePromise = storeUserMessage(context);
     if (waitUntil) {
       waitUntil(storePromise);
@@ -78,6 +94,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     userId: context.userId,
     channelType: context.channelType,
     isDm: context.isDm,
+    respondReason: decision.reason,
     textLength: context.text.length,
     textPreview: context.text.substring(0, 80),
     hasFiles: Array.isArray((event as any).files),
@@ -141,12 +158,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       return;
     }
 
-    // 4. Assemble prompt
+    // 4. Assemble prompt (memories + profile + live Slack context)
     const retrievalStart = Date.now();
-    const { systemPrompt, memories } = await assemblePrompt({
-      ...context,
-      text: messageText,
-    });
+    const { systemPrompt, memories } = await assemblePrompt(
+      { ...context, text: messageText },
+      conversation,
+    );
     const retrievalMs = Date.now() - retrievalStart;
 
     // 4b. Download images if the message has file attachments
