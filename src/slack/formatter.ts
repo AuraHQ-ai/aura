@@ -49,28 +49,6 @@ export function markdownToSlackMrkdwn(markdown: string): string {
 const SLACK_MAX_LENGTH = 39_000;
 
 /**
- * Truncate a single Slack message to the given limit.
- * Tries to cut at a paragraph or sentence boundary for readability.
- */
-export function truncateForSlack(
-  text: string,
-  maxLength = SLACK_MAX_LENGTH,
-): string {
-  if (text.length <= maxLength) return text;
-
-  const truncated = text.substring(0, maxLength);
-  const lastNewline = truncated.lastIndexOf("\n");
-  const lastPeriod = truncated.lastIndexOf(". ");
-
-  const cutPoint = Math.max(lastNewline, lastPeriod);
-  if (cutPoint > maxLength * 0.7) {
-    return truncated.substring(0, cutPoint + 1) + "\n\n...";
-  }
-
-  return truncated + "...";
-}
-
-/**
  * Split a long message into multiple Slack-safe chunks.
  *
  * Prefers splitting at double-newlines (paragraph boundaries), then single
