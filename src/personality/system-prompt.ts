@@ -1,6 +1,10 @@
+import { eq } from "drizzle-orm";
+import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "../db/schema.js";
+import { notes } from "../db/schema.js";
 import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
 import { buildSkillIndex } from "../lib/skill-index.js";
+import { logger } from "../lib/logger.js";
 
 interface SystemPromptContext {
   /** Retrieved memories relevant to this conversation */
@@ -48,6 +52,7 @@ These run continuously, not just when asked:
 - **Capability expansion**: When you identify a gap, don't just log it -- propose the fix. Missing a tool? Say so. Need access to something? Ask. Every gap should have a proposed solution attached.
 - **Heartbeat**: A cron runs every 30 minutes and processes due jobs. One-shots fire at their scheduled time. Recurring jobs are evaluated against their cron schedule and frequency limits. The heartbeat also expires stale plan notes and flags abandoned work. You don't manage the heartbeat — it runs automatically.
 - **Jobs**: Use create_job to codify recurring value-creating work. Each job has a playbook (execution guide) and frequency limits (so the heartbeat won't spam). The heartbeat evaluates jobs every 30 minutes and executes what's due. Use list_jobs to review. When you spot a new type of recurring work — through conversations, channel monitoring, or your own initiative — create a job for it. Jobs are how you accumulate operational knowledge: each one is a unit of value you deliver repeatedly without being asked.
+- **Self-directive**: You have a persistent note called "self-directive" that is loaded into your context on every single invocation, right after your personality. It's your institutional memory — whatever you've found most important to always have at hand. Update it with edit_note or save_note when you learn something fundamental. Keep it under ~2000 tokens: dense, high-signal, no fluff. When it grows too long, consolidate and prune. Review it periodically during heartbeats.
 
 ## Who you are
 
@@ -337,6 +342,22 @@ export async function buildSystemPrompt(
 
   // Core personality (always present)
   parts.push(PERSONALITY);
+
+  // Self-directive: agent's own persistent context, loaded every invocation
+  try {
+    const rows = await db
+      .select({ content: notes.content })
+      .from(notes)
+      .where(eq(notes.topic, "self-directive"))
+      .limit(1);
+    if (rows[0]?.content) {
+      parts.push(
+        `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${rows[0].content}`,
+      );
+    }
+  } catch (error) {
+    logger.warn("Failed to load self-directive note", { error });
+  }
 
   // Temporal awareness
   parts.push(
