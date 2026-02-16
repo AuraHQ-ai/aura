@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { generateText, stepCountIs } from "ai";
 import { eq, and, lt, lte, sql, isNull, or } from "drizzle-orm";
+import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, notes, scheduledActions } from "../db/schema.js";
 import type { FrequencyConfig } from "../db/schema.js";
@@ -31,13 +32,42 @@ Rules:
 // ── Job Eligibility ──────────────────────────────────────────────────────────
 
 /**
- * Check if a job is due for execution based on its frequency config.
+ * Check if a job is due for execution based on its cron schedule and frequency config.
+ *
+ * For cron-based jobs: checks whether the most recent cron tick falls after lastExecutedAt,
+ * meaning a scheduled window was missed/is due. frequencyConfig guards still apply on top.
+ *
+ * For non-cron jobs: uses only frequencyConfig / lastExecutedAt heuristics.
  */
 function isJobDue(job: typeof jobs.$inferSelect): boolean {
+  const now = new Date();
+
+  // ── Cron schedule check ────────────────────────────────────────────────
+  if (job.cronSchedule) {
+    try {
+      const cron = CronExpressionParser.parse(job.cronSchedule, {
+        currentDate: now,
+      });
+      const lastCronTick = cron.prev().toDate();
+
+      if (job.lastExecutedAt && job.lastExecutedAt >= lastCronTick) {
+        // Already executed since the most recent cron tick — not due
+        return false;
+      }
+      // A cron window is due. Fall through to frequencyConfig guards below
+      // so min_interval / max_per_day / cooldown are still respected.
+    } catch (e) {
+      logger.warn("isJobDue: invalid cron expression, treating as non-cron", {
+        jobName: job.name,
+        cronSchedule: job.cronSchedule,
+      });
+      // Fall through to frequency-only evaluation
+    }
+  }
+
+  // ── Frequency config checks (apply to both cron and non-cron jobs) ─────
   const config = job.frequencyConfig as FrequencyConfig | null;
   if (!config) return true;
-
-  const now = new Date();
 
   // Min interval check
   if (config.minIntervalHours && job.lastExecutedAt) {
@@ -48,19 +78,12 @@ function isJobDue(job: typeof jobs.$inferSelect): boolean {
     if (now < nextAllowed) return false;
   }
 
-  // Max per day check
+  // Max per day check — uses todayExecutions counter (reset when date rolls over)
   if (config.maxPerDay) {
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
-    // Approximate: if executionCount / days_since_creation > maxPerDay, skip
-    // More precise: would need an execution log table, but this is good enough
-    // for now we just check if last execution was today and count
-    if (job.lastExecutedAt && job.lastExecutedAt >= startOfDay) {
-      // Already ran today — check if we've hit the limit
-      // Simple heuristic: if lastExecutedAt is today, assume 1 execution today
-      // For maxPerDay > 1, the minIntervalHours should handle spacing
-      if (config.maxPerDay <= 1) return false;
-    }
+    const todayStr = now.toISOString().slice(0, 10);
+    const executionsToday =
+      job.lastExecutionDate === todayStr ? job.todayExecutions : 0;
+    if (executionsToday >= config.maxPerDay) return false;
   }
 
   // Cooldown check
@@ -226,13 +249,19 @@ async function executeJob(
 
   const result = (text || "Job completed (no text output)").substring(0, 2000);
 
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const isNewDay = job.lastExecutionDate !== todayStr;
+
   await db
     .update(jobs)
     .set({
-      lastExecutedAt: new Date(),
+      lastExecutedAt: now,
       executionCount: sql`${jobs.executionCount} + 1`,
+      todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
+      lastExecutionDate: todayStr,
       lastResult: result,
-      updatedAt: new Date(),
+      updatedAt: now,
     })
     .where(eq(jobs.id, job.id));
 

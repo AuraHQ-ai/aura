@@ -210,6 +210,8 @@ export const jobs = pgTable(
     lastExecutedAt: timestamptz("last_executed_at"),
     lastResult: text("last_result"),
     executionCount: integer("execution_count").notNull().default(0),
+    todayExecutions: integer("today_executions").notNull().default(0),
+    lastExecutionDate: text("last_execution_date"),
     enabled: integer("enabled").notNull().default(1),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
