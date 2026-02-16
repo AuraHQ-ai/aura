@@ -15,7 +15,9 @@ import { readFileSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 
 const REPO_DIR = "/home/user/aura";
-const REPO_URL = `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/realadvisor/aura.git`;
+function getRepoUrl() {
+  return `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/realadvisor/aura.git`;
+}
 
 function run(cmd, opts = {}) {
   return execSync(cmd, {
@@ -80,7 +82,7 @@ async function main() {
       run(`git reset --hard origin/main`);
       run(`git clean -fd`);
     } catch {
-      run(`git clone ${REPO_URL} ${REPO_DIR}`, { cwd: "/home/user" });
+      run(`git clone ${getRepoUrl()} ${REPO_DIR}`, { cwd: "/home/user" });
     }
   } catch (e) {
     output({ ok: false, error: `Git setup failed: ${e.message}` });
