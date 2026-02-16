@@ -11,22 +11,6 @@ const WRITE_KEYWORDS =
 const MAX_RESULT_CHARS = 8000;
 
 /**
- * Truncate a stringified result to stay within token budget.
- * Preserves the beginning and end for readability.
- */
-function truncateResult(text: string, maxChars = MAX_RESULT_CHARS): string {
-  if (text.length <= maxChars) return text;
-  const half = Math.floor(maxChars / 2);
-  return (
-    text.slice(0, half) +
-    "\n\n...(truncated " +
-    (text.length - maxChars) +
-    " chars)...\n\n" +
-    text.slice(-half)
-  );
-}
-
-/**
  * Create BigQuery tools for the AI SDK.
  * All tools are read-only. DML/DDL is rejected.
  */
@@ -182,12 +166,12 @@ export function createBigQueryTools() {
 
           const serialized = JSON.stringify(result);
           if (serialized.length > MAX_RESULT_CHARS) {
+            const reducedCount = Math.max(1, Math.floor(samples.length / 2));
             return {
               ...result,
-              sample_rows: JSON.parse(
-                truncateResult(JSON.stringify(samples), MAX_RESULT_CHARS - 2000),
-              ),
+              sample_rows: samples.slice(0, reducedCount),
               _truncated: true,
+              _note: `Showing ${reducedCount} of ${samples.length} sample rows to stay within size limits.`,
             };
           }
 
@@ -274,18 +258,15 @@ export function createBigQueryTools() {
 
           const serialized = JSON.stringify(result);
           if (serialized.length > MAX_RESULT_CHARS) {
+            const reducedCount = Math.max(10, Math.floor(resultRows.length / 2));
             return {
               ok: true,
               columns,
-              rows: JSON.parse(
-                truncateResult(
-                  JSON.stringify(resultRows),
-                  MAX_RESULT_CHARS - 500,
-                ),
-              ),
+              rows: resultRows.slice(0, reducedCount),
               total_rows: totalRows,
               bytes_processed: bytesProcessed,
               _truncated: true,
+              _note: `Showing ${reducedCount} of ${totalRows} rows. Use a more specific query or smaller LIMIT.`,
             };
           }
 
