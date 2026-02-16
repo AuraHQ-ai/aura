@@ -1,6 +1,10 @@
+import { eq } from "drizzle-orm";
+import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "../db/schema.js";
+import { notes } from "../db/schema.js";
 import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
 import { buildSkillIndex } from "../lib/skill-index.js";
+import { logger } from "../lib/logger.js";
 
 interface SystemPromptContext {
   /** Retrieved memories relevant to this conversation */
@@ -339,6 +343,22 @@ export async function buildSystemPrompt(
 
   // Core personality (always present)
   parts.push(PERSONALITY);
+
+  // Self-directive: agent's own editable context (identity, company, priorities)
+  try {
+    const selfDirective = await db
+      .select({ content: notes.content })
+      .from(notes)
+      .where(eq(notes.topic, "self-directive"))
+      .limit(1);
+    if (selfDirective[0]?.content) {
+      parts.push(
+        `\n## Self-directive\n\nThis is your own living context document. You wrote this and maintain it yourself.\n\n${selfDirective[0].content}`,
+      );
+    }
+  } catch (error) {
+    logger.warn("Failed to load self-directive note", { error });
+  }
 
   // Temporal awareness
   parts.push(
