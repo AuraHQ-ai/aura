@@ -4,9 +4,10 @@ import { generateText, stepCountIs } from "ai";
 import { eq, and, lte, sql } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
-import { scheduledActions } from "../db/schema.js";
+import { scheduledActions, notes } from "../db/schema.js";
 import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
+import { buildSkillIndex } from "../lib/skill-index.js";
 import { logger } from "../lib/logger.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
@@ -21,7 +22,7 @@ const MAX_RETRIES = 3;
 /** Retry delay in ms (10 minutes) */
 const RETRY_DELAY_MS = 10 * 60 * 1000;
 
-// ── Sweeper System Prompt ────────────────────────────────────────────────────
+// ── System Prompts ───────────────────────────────────────────────────────────
 
 const SWEEPER_SYSTEM_PROMPT = `You are Aura executing a scheduled task autonomously. You have full access to your tools.
 
@@ -37,12 +38,44 @@ Rules:
 - Be concise. Digests and summaries, not essays.
 - Do NOT respond conversationally. Just execute the task and report.`;
 
+const CONTINUATION_SYSTEM_PROMPT = `You are Aura resuming a multi-step task. Your accumulated progress and context are below.
+
+Rules:
+- Continue from where you left off. The plan note contains your progress, next steps, and context.
+- If you can't finish in this round, use checkpoint_plan again to save progress and schedule another continuation.
+- Post results in the thread you're continuing (routing is automatic).
+- Be concise and focused. Don't re-explain what was already done — just continue the work.
+- If the continuation depth limit is reached, explain your current status and ask if you should keep going.`;
+
+// ── Continuation Detection ───────────────────────────────────────────────────
+
+const CONTINUE_TAG_RE = /^\[CONTINUE:([^\]]+)\]\s*/;
+
+/**
+ * Check if an action description is a continuation and extract the plan topic.
+ */
+function parseContinuationTag(description: string): string | null {
+  const match = description.match(CONTINUE_TAG_RE);
+  return match ? match[1] : null;
+}
+
+/**
+ * Load a plan note's content directly from the DB.
+ */
+async function loadPlanNote(topic: string): Promise<string | null> {
+  const rows = await db
+    .select({ content: notes.content })
+    .from(notes)
+    .where(eq(notes.topic, topic))
+    .limit(1);
+  return rows[0]?.content ?? null;
+}
+
 // ── Scheduler Cron App ───────────────────────────────────────────────────────
 
 export const schedulerApp = new Hono();
 
 schedulerApp.get("/api/cron/scheduler", async (c) => {
-  // Verify cron secret
   const authHeader = c.req.header("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
@@ -55,7 +88,6 @@ schedulerApp.get("/api/cron/scheduler", async (c) => {
   logger.info("Scheduler sweep starting");
 
   try {
-    // Query due actions: pending, execute_at <= now, ordered by priority then time
     const dueActions = await db
       .select()
       .from(scheduledActions)
@@ -113,28 +145,58 @@ async function executeAction(action: typeof scheduledActions.$inferSelect) {
   const actionId = action.id;
 
   try {
-    // Build the prompt with context from previous executions
-    let prompt = action.description;
-    if (action.lastResult) {
-      prompt += `\n\nPrevious result for context:\n${action.lastResult}`;
+    const planTopic = parseContinuationTag(action.description);
+    const isContinuation = planTopic !== null;
+
+    let prompt: string;
+    let systemPrompt: string;
+    let stepLimit: number;
+
+    if (isContinuation) {
+      // Load plan note and inject into prompt
+      const planContent = await loadPlanNote(planTopic);
+      const nextSteps = action.description.replace(CONTINUE_TAG_RE, "");
+      const skillIndex = await buildSkillIndex();
+
+      prompt = planContent
+        ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}`
+        : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}`;
+
+      systemPrompt = CONTINUATION_SYSTEM_PROMPT + skillIndex;
+      stepLimit = 20;
+
+      logger.info("Scheduler: executing continuation", {
+        actionId,
+        planTopic,
+        hasPlanNote: !!planContent,
+      });
+    } else {
+      // Regular action
+      prompt = action.description;
+      if (action.lastResult) {
+        prompt += `\n\nPrevious result for context:\n${action.lastResult}`;
+      }
+      const skillIndex = await buildSkillIndex();
+      systemPrompt = SWEEPER_SYSTEM_PROMPT + skillIndex;
+      stepLimit = 15;
     }
 
     const model = await getMainModel();
 
     const { text } = await generateText({
       model,
-      system: SWEEPER_SYSTEM_PROMPT,
+      system: systemPrompt,
       prompt,
       tools: createSlackTools(slackClient, {
         userId: action.requestedBy,
         channelId: action.channelId,
+        threadTs: action.threadTs || undefined,
       }),
-      stopWhen: stepCountIs(15),
+      stopWhen: stepCountIs(stepLimit),
     });
 
     const result = text || "Task completed (no text output)";
 
-    // Mark as completed
     await db
       .update(scheduledActions)
       .set({ status: "completed", result })
@@ -143,9 +205,9 @@ async function executeAction(action: typeof scheduledActions.$inferSelect) {
     logger.info("Scheduler: action completed", {
       actionId,
       description: action.description.substring(0, 80),
+      isContinuation,
     });
 
-    // Handle recurring: compute next occurrence and insert
     if (action.recurring) {
       await scheduleNextOccurrence(action, result);
     }
@@ -153,7 +215,6 @@ async function executeAction(action: typeof scheduledActions.$inferSelect) {
     const newRetries = action.retries + 1;
 
     if (newRetries < MAX_RETRIES) {
-      // Retry: push back 10 minutes
       const retryAt = new Date(Date.now() + RETRY_DELAY_MS);
       await db
         .update(scheduledActions)
@@ -169,7 +230,6 @@ async function executeAction(action: typeof scheduledActions.$inferSelect) {
         retryAt: retryAt.toISOString(),
       });
     } else {
-      // Exhausted retries: mark failed and escalate
       await db
         .update(scheduledActions)
         .set({
@@ -179,7 +239,6 @@ async function executeAction(action: typeof scheduledActions.$inferSelect) {
         })
         .where(eq(scheduledActions.id, actionId));
 
-      // Try to DM the requester about the failure
       try {
         if (action.requestedBy && action.requestedBy !== "aura") {
           const dmResult = await slackClient.conversations.open({
@@ -227,7 +286,7 @@ async function scheduleNextOccurrence(
       recurring: action.recurring,
       timezone: action.timezone,
       priority: action.priority,
-      lastResult: lastResult.substring(0, 2000), // cap at 2k chars
+      lastResult: lastResult.substring(0, 2000),
     });
 
     logger.info("Scheduler: next recurring occurrence scheduled", {

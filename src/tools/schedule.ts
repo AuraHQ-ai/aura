@@ -5,39 +5,7 @@ import type { WebClient } from "@slack/web-api";
 import { db } from "../db/client.js";
 import { scheduledActions } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
-
-// ── Time Parsing ─────────────────────────────────────────────────────────────
-
-/**
- * Parse a relative time string into milliseconds.
- * Supports: "30 minutes", "2 hours", "1 day", "3 days", "1 week", "tomorrow"
- */
-function parseRelativeTime(input: string): number | null {
-  const cleaned = input.trim().toLowerCase();
-
-  if (cleaned === "tomorrow") {
-    // Tomorrow at 9 AM local -- approximate with +15h from now
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(9, 0, 0, 0);
-    return tomorrow.getTime() - Date.now();
-  }
-
-  const match = cleaned.match(
-    /^(\d+)\s*(min(?:ute)?s?|h(?:our)?s?|d(?:ay)?s?|w(?:eek)?s?)$/,
-  );
-  if (!match) return null;
-
-  const num = parseInt(match[1]);
-  const unit = match[2];
-
-  if (unit.startsWith("min")) return num * 60 * 1000;
-  if (unit.startsWith("h")) return num * 60 * 60 * 1000;
-  if (unit.startsWith("d")) return num * 24 * 60 * 60 * 1000;
-  if (unit.startsWith("w")) return num * 7 * 24 * 60 * 60 * 1000;
-
-  return null;
-}
+import { parseRelativeTime } from "../lib/temporal.js";
 
 // ── Channel Resolution (lightweight, uses WebClient) ─────────────────────────
 
@@ -74,6 +42,7 @@ async function resolveChannelByName(
 export interface ScheduleContext {
   userId?: string;
   channelId?: string;
+  threadTs?: string;
 }
 
 /**

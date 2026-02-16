@@ -4,6 +4,7 @@ import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { createNoteTools } from "./notes.js";
 import { createScheduleTools, type ScheduleContext } from "./schedule.js";
+import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
 import { createSandboxTools } from "./sandbox.js";
 import { createWebTools } from "./web.js";
@@ -1643,11 +1644,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Slack Lists Write Tools ────────────────────────────────────────────
     ...createListWriteTools(client),
 
-    // ── Note / Scratchpad Tools ────────────────────────────────────────────
-    ...createNoteTools(),
+    // ── Note / Scratchpad Tools (with context for checkpoint_plan routing) ─
+    ...createNoteTools(context),
 
     // ── Scheduling Tools ─────────────────────────────────────────────────
     ...createScheduleTools(client, context),
+
+    // ── Job Tools ────────────────────────────────────────────────────────
+    ...createJobTools(client),
 
     // ── Web Tools ────────────────────────────────────────────────────────
     ...createWebTools(),

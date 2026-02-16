@@ -1,9 +1,11 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, and, gt, or, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { notes } from "../db/schema.js";
+import { notes, scheduledActions } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
+import { parseRelativeTime } from "../lib/temporal.js";
+import type { ScheduleContext } from "./schedule.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -19,7 +21,14 @@ function withLineNumbers(content: string): string {
 /** Fetch a note by topic. */
 async function getNoteByTopic(
   topic: string,
-): Promise<{ id: string; topic: string; content: string; updatedAt: Date } | null> {
+): Promise<{
+  id: string;
+  topic: string;
+  content: string;
+  category: string;
+  expiresAt: Date | null;
+  updatedAt: Date;
+} | null> {
   const rows = await db
     .select()
     .from(notes)
@@ -28,13 +37,21 @@ async function getNoteByTopic(
   return rows[0] ?? null;
 }
 
+/** Parse continuation depth from plan note content. */
+function parseContinuationDepth(content: string): number {
+  const match = content.match(/^## Continuations: (\d+)/m);
+  return match ? parseInt(match[1]) : 0;
+}
+
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
 /**
  * Create note tools for the AI SDK.
- * These give the agent a persistent, mutable scratchpad.
+ * These give the agent a persistent, mutable scratchpad with a three-tier hierarchy.
+ *
+ * @param context Optional schedule context for checkpoint_plan routing (channelId, threadTs, userId)
  */
-export function createNoteTools() {
+export function createNoteTools(context?: ScheduleContext) {
   return {
     save_note: tool({
       description:
@@ -42,29 +59,69 @@ export function createNoteTools() {
       inputSchema: z.object({
         topic: z
           .string()
-          .describe("A short, descriptive topic key, e.g. 'bugs-weekly' or 'project-alpha-todos'"),
+          .describe(
+            "A short, descriptive topic key, e.g. 'bugs-weekly' or 'project-alpha-todos'",
+          ),
         content: z
           .string()
           .describe("The full content of the note (markdown supported)"),
+        category: z
+          .enum(["skill", "plan", "knowledge"])
+          .default("knowledge")
+          .describe(
+            "Note category: 'skill' for durable playbooks, 'plan' for ephemeral work-in-progress, 'knowledge' for general reference",
+          ),
+        expires_in: z
+          .string()
+          .optional()
+          .describe(
+            "When this note should expire, e.g. '2 hours', '3 days', '1 week'. Mainly useful for plan notes. Omit for no expiry.",
+          ),
       }),
-      execute: async ({ topic, content }) => {
+      execute: async ({ topic, content, category, expires_in }) => {
         try {
+          let expiresAt: Date | null = null;
+          if (expires_in) {
+            const ms = parseRelativeTime(expires_in);
+            if (ms) {
+              expiresAt = new Date(Date.now() + ms);
+            }
+          }
+
           await db
             .insert(notes)
-            .values({ topic, content, updatedAt: new Date() })
+            .values({
+              topic,
+              content,
+              category,
+              expiresAt,
+              updatedAt: new Date(),
+            })
             .onConflictDoUpdate({
               target: notes.topic,
-              set: { content, updatedAt: new Date() },
+              set: {
+                content,
+                category,
+                expiresAt,
+                updatedAt: new Date(),
+              },
             });
 
-          logger.info("save_note tool called", { topic, contentLength: content.length });
+          logger.info("save_note tool called", {
+            topic,
+            category,
+            contentLength: content.length,
+          });
 
           return {
             ok: true,
-            message: `Note "${topic}" saved (${content.split("\n").length} lines)`,
+            message: `Note "${topic}" saved (${category}, ${content.split("\n").length} lines${expiresAt ? `, expires ${expiresAt.toISOString()}` : ""})`,
           };
         } catch (error: any) {
-          logger.error("save_note tool failed", { topic, error: error.message });
+          logger.error("save_note tool failed", {
+            topic,
+            error: error.message,
+          });
           return { ok: false, error: `Failed to save note: ${error.message}` };
         }
       },
@@ -74,9 +131,7 @@ export function createNoteTools() {
       description:
         "Read a note by topic. Returns the content with line numbers so you can reference specific lines for edit_note operations.",
       inputSchema: z.object({
-        topic: z
-          .string()
-          .describe("The topic key of the note to read"),
+        topic: z.string().describe("The topic key of the note to read"),
       }),
       execute: async ({ topic }) => {
         try {
@@ -96,12 +151,17 @@ export function createNoteTools() {
           return {
             ok: true,
             topic: note.topic,
+            category: note.category,
             content: numbered,
             line_count: lineCount,
             updated_at: note.updatedAt.toISOString(),
+            expires_at: note.expiresAt?.toISOString() ?? null,
           };
         } catch (error: any) {
-          logger.error("read_note tool failed", { topic, error: error.message });
+          logger.error("read_note tool failed", {
+            topic,
+            error: error.message,
+          });
           return { ok: false, error: `Failed to read note: ${error.message}` };
         }
       },
@@ -109,27 +169,54 @@ export function createNoteTools() {
 
     list_notes: tool({
       description:
-        "List all saved notes with their topics, a short preview, and last updated time.",
-      inputSchema: z.object({}),
-      execute: async () => {
+        "List all saved notes with their topics, category, a short preview, and last updated time. Can filter by category.",
+      inputSchema: z.object({
+        category: z
+          .enum(["skill", "plan", "knowledge"])
+          .optional()
+          .describe("Filter by category. Omit to list all."),
+      }),
+      execute: async ({ category }) => {
         try {
+          const now = new Date();
+          const conditions = [];
+
+          if (category) {
+            conditions.push(eq(notes.category, category));
+          }
+
+          // Filter out expired notes
+          conditions.push(
+            or(isNull(notes.expiresAt), gt(notes.expiresAt, now))!,
+          );
+
           const allNotes = await db
             .select({
               topic: notes.topic,
               content: notes.content,
+              category: notes.category,
+              expiresAt: notes.expiresAt,
               updatedAt: notes.updatedAt,
             })
             .from(notes)
+            .where(and(...conditions))
             .orderBy(notes.updatedAt);
 
           const result = allNotes.map((n) => ({
             topic: n.topic,
-            preview: n.content.substring(0, 80) + (n.content.length > 80 ? "..." : ""),
+            category: n.category,
+            preview:
+              n.content.substring(0, 80) +
+              (n.content.length > 80 ? "..." : ""),
             lines: n.content.split("\n").length,
             updated_at: n.updatedAt.toISOString(),
+            expires_at: n.expiresAt?.toISOString() ?? null,
           }));
 
-          logger.info("list_notes tool called", { count: result.length });
+          logger.info("list_notes tool called", {
+            category,
+            count: result.length,
+          });
 
           return {
             ok: true,
@@ -147,9 +234,7 @@ export function createNoteTools() {
       description:
         "Surgically edit an existing note. Supports: 'append' (add to end), 'prepend' (add to start), 'replace_lines' (replace a range of lines), 'insert_after_line' (insert after a specific line). Use read_note first to see line numbers.",
       inputSchema: z.object({
-        topic: z
-          .string()
-          .describe("The topic key of the note to edit"),
+        topic: z.string().describe("The topic key of the note to edit"),
         operation: z
           .enum(["append", "prepend", "replace_lines", "insert_after_line"])
           .describe("The type of edit to perform"),
@@ -159,17 +244,30 @@ export function createNoteTools() {
         start_line: z
           .number()
           .optional()
-          .describe("First line to replace (1-indexed, inclusive). Required for replace_lines."),
+          .describe(
+            "First line to replace (1-indexed, inclusive). Required for replace_lines.",
+          ),
         end_line: z
           .number()
           .optional()
-          .describe("Last line to replace (1-indexed, inclusive). Required for replace_lines."),
+          .describe(
+            "Last line to replace (1-indexed, inclusive). Required for replace_lines.",
+          ),
         line: z
           .number()
           .optional()
-          .describe("Line number to insert after (1-indexed). Required for insert_after_line."),
+          .describe(
+            "Line number to insert after (1-indexed). Required for insert_after_line.",
+          ),
       }),
-      execute: async ({ topic, operation, content, start_line, end_line, line }) => {
+      execute: async ({
+        topic,
+        operation,
+        content,
+        start_line,
+        end_line,
+        line,
+      }) => {
         try {
           const note = await getNoteByTopic(topic);
           if (!note) {
@@ -195,10 +293,15 @@ export function createNoteTools() {
               if (start_line == null || end_line == null) {
                 return {
                   ok: false,
-                  error: "replace_lines requires start_line and end_line parameters.",
+                  error:
+                    "replace_lines requires start_line and end_line parameters.",
                 };
               }
-              if (start_line < 1 || end_line < start_line || start_line > lines.length) {
+              if (
+                start_line < 1 ||
+                end_line < start_line ||
+                start_line > lines.length
+              ) {
                 return {
                   ok: false,
                   error: `Invalid line range: ${start_line}-${end_line}. Note has ${lines.length} lines.`,
@@ -206,7 +309,11 @@ export function createNoteTools() {
               }
               const clampedEnd = Math.min(end_line, lines.length);
               const newLines = content.split("\n");
-              lines.splice(start_line - 1, clampedEnd - start_line + 1, ...newLines);
+              lines.splice(
+                start_line - 1,
+                clampedEnd - start_line + 1,
+                ...newLines,
+              );
               newContent = lines.join("\n");
               break;
             }
@@ -263,12 +370,9 @@ export function createNoteTools() {
     }),
 
     delete_note: tool({
-      description:
-        "Delete a note entirely by topic.",
+      description: "Delete a note entirely by topic.",
       inputSchema: z.object({
-        topic: z
-          .string()
-          .describe("The topic key of the note to delete"),
+        topic: z.string().describe("The topic key of the note to delete"),
       }),
       execute: async ({ topic }) => {
         try {
@@ -289,8 +393,162 @@ export function createNoteTools() {
             message: `Note "${topic}" deleted.`,
           };
         } catch (error: any) {
-          logger.error("delete_note tool failed", { topic, error: error.message });
-          return { ok: false, error: `Failed to delete note: ${error.message}` };
+          logger.error("delete_note tool failed", {
+            topic,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to delete note: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    // ── Plan Continuation ──────────────────────────────────────────────────
+
+    checkpoint_plan: tool({
+      description:
+        "Save progress on a multi-step task and schedule a continuation. Use this when approaching step ~20 and you won't finish in time. Atomically saves a plan note AND schedules a follow-up action.",
+      inputSchema: z.object({
+        topic: z
+          .string()
+          .describe("Plan note topic (will create or update)"),
+        progress: z
+          .string()
+          .describe("What has been accomplished so far"),
+        next_steps: z
+          .string()
+          .describe(
+            "Specific instructions for the next continuation — be precise, your future self needs this",
+          ),
+        context: z
+          .string()
+          .describe(
+            "Accumulated findings, data, intermediate results. Keep concise.",
+          ),
+        continue_in_minutes: z
+          .number()
+          .default(5)
+          .describe("Minutes until continuation fires (default 5)"),
+      }),
+      execute: async ({
+        topic,
+        progress,
+        next_steps,
+        context: ctx,
+        continue_in_minutes,
+      }) => {
+        try {
+          // Read existing plan note to check continuation depth
+          const existing = await getNoteByTopic(topic);
+          let depth = 0;
+          if (existing) {
+            depth = parseContinuationDepth(existing.content);
+          }
+
+          const MAX_CONTINUATIONS = 5;
+
+          if (depth >= MAX_CONTINUATIONS) {
+            // Depth limit reached — don't schedule continuation
+            const noteContent = `## Continuations: ${depth}\n## Status: waiting\n\n## Progress\n${progress}\n\n## Next Steps\n${next_steps}\n\n## Context\n${ctx}`;
+            const sevenDays = new Date(
+              Date.now() + 7 * 24 * 60 * 60 * 1000,
+            );
+
+            await db
+              .insert(notes)
+              .values({
+                topic,
+                content: noteContent,
+                category: "plan",
+                expiresAt: sevenDays,
+                updatedAt: new Date(),
+              })
+              .onConflictDoUpdate({
+                target: notes.topic,
+                set: {
+                  content: noteContent,
+                  category: "plan",
+                  expiresAt: sevenDays,
+                  updatedAt: new Date(),
+                },
+              });
+
+            logger.info("checkpoint_plan: depth limit reached", {
+              topic,
+              depth,
+            });
+
+            return {
+              ok: true,
+              message: `Plan "${topic}" saved but continuation depth limit (${MAX_CONTINUATIONS}) reached. Ask the user if they want you to keep going.`,
+              depth_limit_reached: true,
+              continuations: depth,
+            };
+          }
+
+          // Build the plan note content with incremented depth
+          const newDepth = depth + 1;
+          const noteContent = `## Continuations: ${newDepth}\n\n## Progress\n${progress}\n\n## Next Steps\n${next_steps}\n\n## Context\n${ctx}`;
+          const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+          // 1. Upsert the plan note
+          await db
+            .insert(notes)
+            .values({
+              topic,
+              content: noteContent,
+              category: "plan",
+              expiresAt: sevenDays,
+              updatedAt: new Date(),
+            })
+            .onConflictDoUpdate({
+              target: notes.topic,
+              set: {
+                content: noteContent,
+                category: "plan",
+                expiresAt: sevenDays,
+                updatedAt: new Date(),
+              },
+            });
+
+          // 2. Insert directly into scheduled_actions to carry channelId + threadTs
+          const executeAt = new Date(
+            Date.now() + continue_in_minutes * 60 * 1000,
+          );
+          const description = `[CONTINUE:${topic}] ${next_steps}`;
+
+          await db.insert(scheduledActions).values({
+            description,
+            executeAt,
+            channelId: context?.channelId || "",
+            threadTs: context?.threadTs || null,
+            requestedBy: context?.userId || "aura",
+            priority: "high",
+          });
+
+          logger.info("checkpoint_plan tool called", {
+            topic,
+            depth: newDepth,
+            continueAt: executeAt.toISOString(),
+          });
+
+          return {
+            ok: true,
+            message: `Plan "${topic}" saved (continuation ${newDepth}/${MAX_CONTINUATIONS}). Resuming at ${executeAt.toISOString()}.`,
+            continue_at: executeAt.toISOString(),
+            continuations: newDepth,
+          };
+        } catch (error: any) {
+          logger.error("checkpoint_plan tool failed", {
+            topic,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to checkpoint plan: ${error.message}`,
+          };
         }
       },
     }),
