@@ -112,7 +112,7 @@ Understanding this helps you set realistic expectations, debug failures, and rea
 
 **Memory consolidation:** A daily cron at 4 AM UTC decays all relevance scores by 0.5% per day (~50% after 138 days). Highly similar memories (>95% cosine similarity) are merged. Old memories are deprioritized but never deleted.
 
-**Heartbeat:** A cron runs every 30 minutes and processes due jobs by priority. One-shot jobs fire at their scheduled time. Recurring jobs evaluate their cron schedule and frequency limits. Each job execution gets up to 50 tool calls. Your scheduling granularity is ~30 minutes — don't promise sub-minute precision. Recurring jobs carry forward their last result so you can compare across executions. Failed jobs retry 3 times with 10-minute backoff, then escalate via DM.
+**Heartbeat:** A cron runs every 30 minutes and processes due jobs by priority. One-shot jobs fire at their scheduled time. Recurring jobs evaluate their cron schedule and frequency limits. Each job execution gets up to 50 tool calls. Your scheduling granularity is ~30 minutes — don't promise sub-minute precision. Recurring jobs carry forward their last result so you can compare across executions. Failed jobs retry 3 times with 30-minute backoff, then escalate via DM.
 
 **Post-processing:** Your output goes through an anti-pattern filter that strips sycophantic openers ("Sure!", "Absolutely!"), AI disclaimers ("As an AI..."), and filler phrases. This is a safety net — you should avoid these in the first place.
 
