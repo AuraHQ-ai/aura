@@ -8,6 +8,7 @@ import { publishHomeTab, ACTION_TO_SETTING, isAdmin } from "./slack/home.js";
 import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
+import { throttle } from "./tools/rate-limit.js";
 import crypto from "node:crypto";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -23,6 +24,42 @@ if (!signingSecret || !botToken) {
 }
 
 const slackClient = new WebClient(botToken);
+
+// ── Channel Membership Cache ─────────────────────────────────────────────────
+
+/** Cache for channel membership checks with TTL to avoid staleness across warm starts. */
+const MEMBERSHIP_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const membershipCache = new Map<string, { value: boolean; ts: number }>();
+
+/**
+ * Synchronously check the membership cache. Returns the cached value if fresh,
+ * or `undefined` on a cache miss. This MUST NOT await anything so it can be
+ * used on the Slack acknowledgement path (3-second deadline).
+ */
+function getCachedMembership(channelId: string): boolean | undefined {
+  const cached = membershipCache.get(channelId);
+  if (cached !== undefined && Date.now() - cached.ts < MEMBERSHIP_CACHE_TTL_MS)
+    return cached.value;
+  return undefined;
+}
+
+/**
+ * Refresh the membership cache for a channel in the background.
+ * Calls the Slack API (rate-limited) and updates the cache.
+ */
+async function refreshMembershipCache(
+  client: WebClient,
+  channelId: string,
+): Promise<void> {
+  try {
+    await throttle();
+    const result = await client.conversations.info({ channel: channelId });
+    const isMember = !!(result.channel as any)?.is_member;
+    membershipCache.set(channelId, { value: isMember, ts: Date.now() });
+  } catch {
+    // Non-critical — the cache will be retried on the next event
+  }
+}
 
 // ── Hono App ────────────────────────────────────────────────────────────────
 
@@ -180,6 +217,28 @@ app.post("/api/slack/events", async (c) => {
       );
       waitUntil(homePromise);
       return c.json({ ok: true });
+    }
+
+    // ── Dedup app_mention events ───────────────────────────────────────────
+    // When Aura is a channel member, Slack sends BOTH app_mention and message
+    // events for the same @Aura message. The message event is sufficient.
+    // But when she's NOT a member, app_mention is the only event she gets.
+    if (event.type === "app_mention") {
+      const cachedMembership = getCachedMembership(event.channel);
+      if (cachedMembership === true) {
+        logger.debug(
+          "Skipping app_mention in joined channel — message event handles it",
+          { channel: event.channel, ts: event.ts },
+        );
+        return c.json({ ok: true });
+      }
+      if (cachedMembership === undefined) {
+        // Cache miss — refresh in background for next time, but let this
+        // event through to avoid blocking the 3-second Slack deadline.
+        // Worst case: harmless duplicate processing if a message event also arrives.
+        waitUntil(refreshMembershipCache(slackClient, event.channel));
+      }
+      // Not a member (or unknown) — fall through to pipeline
     }
 
     logger.debug("Dispatching Slack event", {

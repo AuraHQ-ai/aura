@@ -1,5 +1,8 @@
 import type { KnownEventFromType, SlackEventMiddlewareArgs } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
+import { generateText } from "ai";
+import { getFastModel } from "../lib/ai.js";
+import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
 
 export type ChannelType = "dm" | "public_channel" | "private_channel";
@@ -86,18 +89,139 @@ export function buildMessageContext(
   };
 }
 
+export interface ShouldRespondResult {
+  respond: boolean;
+  reason: string;
+}
+
 /**
- * Determine if Aura should respond to this message.
+ * Determine if Aura should respond to this message (Tiers 2–3 only).
  *
- * Rules:
- * - In DMs: always respond
- * - In channels: only if @mentioned or addressed by name
+ * Tier 1 (DMs, explicit @mention, addressed by name) is handled inline
+ * by the pipeline before this function is called — see `runPipeline` in
+ * `index.ts`. This function is only invoked when Tier 1 did NOT match.
+ *
+ * Tiers handled here:
+ * 2. LLM gate: Aura is a thread participant or it's her thread
+ * 3. LLM gate: Aura posted recently in the channel (non-threaded, within 1h)
+ * 4. Default: don't respond
  */
-export function shouldRespond(context: MessageContext): boolean {
-  if (context.isDm) return true;
-  if (context.isMentioned) return true;
-  if (context.isAddressedByName) return true;
-  return false;
+export async function shouldRespond(
+  context: MessageContext,
+  conversation: ConversationContext,
+): Promise<ShouldRespondResult> {
+  // Tier 2: Aura is a thread participant or it's her thread
+  if (conversation.isAuraParticipant || conversation.isAuraThread) {
+    const shouldReply = await llmShouldRespond(context, conversation, true);
+    return {
+      respond: shouldReply,
+      reason: shouldReply ? "thread_participant_llm_yes" : "thread_participant_llm_no",
+    };
+  }
+
+  // Tier 3: Aura posted recently in the channel (non-threaded)
+  if (conversation.auraRecentlyActive) {
+    const shouldReply = await llmShouldRespond(context, conversation, false);
+    return {
+      respond: shouldReply,
+      reason: shouldReply ? "recent_channel_llm_yes" : "recent_channel_llm_no",
+    };
+  }
+
+  // Default: don't respond
+  return { respond: false, reason: "no_trigger" };
+}
+
+// ── LLM Gate ─────────────────────────────────────────────────────────────────
+
+const SHOULD_RESPOND_PROMPT_PARTICIPANT = `You are deciding whether Aura (a Slack bot and team assistant) should respond to the latest message.
+
+Aura is already a participant in this conversation (she has sent messages before).
+
+Rules:
+- Answer RESPOND if the message asks a question, requests an action, continues a conversation that needs Aura's input, shares information Aura should acknowledge, or is clearly directed at Aura.
+- Answer SKIP if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, or is something where responding would add nothing.
+- When in doubt, lean toward RESPOND — it's better to be helpful than to ignore someone.
+
+Answer with a single word: RESPOND or SKIP.`;
+
+const SHOULD_RESPOND_PROMPT_RECENTLY_ACTIVE = `You are deciding whether Aura (a Slack bot and team assistant) should respond to the latest message.
+
+Aura has been active in this channel recently, but is NOT necessarily a participant in this specific conversation or thread.
+
+Rules:
+- Answer RESPOND if the message asks a question, requests an action, shares information Aura should acknowledge, or is clearly directed at Aura.
+- Answer SKIP if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, is part of an ongoing conversation between other people that Aura is not involved in, or is something where responding would add nothing.
+- When in doubt, lean toward SKIP — Aura should not intrude on conversations she's not part of.
+
+Answer with a single word: RESPOND or SKIP.`;
+
+/**
+ * Ask the fast model (Haiku) whether Aura should respond to a message
+ * in a conversation she's participating in.
+ *
+ * @param isParticipant - true if Aura is a direct participant in this thread/conversation (Tier 2),
+ *   false if she's only recently active in the channel (Tier 3).
+ *
+ * Returns true if the model says RESPOND, false if SKIP.
+ * Defaults to true on any failure (better to over-respond than miss).
+ */
+async function llmShouldRespond(
+  context: MessageContext,
+  conversation: ConversationContext,
+  isParticipant: boolean,
+): Promise<boolean> {
+  try {
+    // Build a concise view of the last few messages
+    const messages =
+      conversation.thread && conversation.thread.length > 0
+        ? conversation.thread
+        : conversation.recentMessages;
+    const recent = messages.slice(-5);
+    const conversationText = recent
+      .map((m: SlackThreadMessage) => `[${m.displayName}]: ${m.text}`)
+      .join("\n");
+
+    // Resolve the sender's display name from conversation messages, falling back to raw ID
+    const senderEntry = messages.find((m) => m.user === context.userId);
+    const senderName = senderEntry?.displayName ?? context.userId;
+
+    const systemPrompt = isParticipant
+      ? SHOULD_RESPOND_PROMPT_PARTICIPANT
+      : SHOULD_RESPOND_PROMPT_RECENTLY_ACTIVE;
+
+    const userMessage = `Recent conversation:\n${conversationText}\n\nLatest message from ${senderName}:\n${context.text}\n\nShould Aura respond?`;
+
+    const model = await getFastModel();
+    const result = await generateText({
+      model,
+      system: systemPrompt,
+      prompt: userMessage,
+      maxOutputTokens: 5,
+    });
+
+    const answer = result.text.trim().toUpperCase();
+    const shouldReply = answer.startsWith("RESPOND");
+
+    logger.debug("LLM shouldRespond gate", {
+      answer: result.text.trim(),
+      shouldReply,
+      userId: context.userId,
+      channelId: context.channelId,
+    });
+
+    return shouldReply;
+  } catch (error: any) {
+    // Tier 2 (participant): fail open — better to over-respond than miss.
+    // Tier 3 (recently active): fail closed — don't intrude on unrelated conversations.
+    const fallback = isParticipant;
+    logger.error("LLM shouldRespond gate failed", {
+      error: error.message,
+      fallback: fallback ? "RESPOND" : "SKIP",
+      isParticipant,
+    });
+    return fallback;
+  }
 }
 
 function resolveChannelType(

@@ -17,8 +17,10 @@ interface SystemPromptContext {
   channelType: "dm" | "public_channel" | "private_channel";
   /** User's timezone (from profile or Slack) */
   userTimezone?: string;
-  /** Recent thread messages for context */
+  /** Recent thread or channel messages for context */
   threadContext?: string;
+  /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
+  isChannelHistory?: boolean;
 }
 
 /**
@@ -404,11 +406,12 @@ export async function buildSystemPrompt(
     parts.push(skillIndex);
   }
 
-  // Thread context
+  // Conversation context (thread or recent channel messages)
   if (context.threadContext) {
-    parts.push(
-      `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`,
-    );
+    const heading = context.isChannelHistory
+      ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
+      : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
+    parts.push(heading);
   }
 
   return parts.join("\n\n");
