@@ -110,12 +110,59 @@ const userIdNameCache = new Map<string, string>();
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
+ * Search for a public channel by name using the user token.
+ * The bot token's conversations.list only returns channels the bot is in,
+ * so we need the user token to find channels the bot hasn't joined yet.
+ */
+async function searchPublicChannelByName(
+  name: string,
+): Promise<{ id: string; name: string } | null> {
+  const userToken = process.env.SLACK_USER_TOKEN;
+  if (!userToken) return null;
+
+  try {
+    const { WebClient } = await import("@slack/web-api");
+    const userClient = new WebClient(userToken);
+    const cleanLower = name.toLowerCase();
+
+    let cursor: string | undefined;
+    do {
+      await throttle();
+      const result = await userClient.conversations.list({
+        types: "public_channel",
+        exclude_archived: true,
+        limit: 200,
+        cursor,
+      });
+
+      for (const ch of result.channels || []) {
+        if (ch.id && ch.name && ch.name.toLowerCase() === cleanLower) {
+          return { id: ch.id, name: ch.name };
+        }
+      }
+
+      cursor = result.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+
+    return null;
+  } catch (error: any) {
+    logger.warn("searchPublicChannelByName fallback failed", { name, error: error.message });
+    return null;
+  }
+}
+
+/**
  * Resolve a channel name or ID to a channel object.
  * Accepts: "general", "#general", "C0BNVKS77", "#dev (C0BNVKS77)"
+ *
+ * When fallbackToUserToken is true and the bot's channel cache misses,
+ * falls back to searching all public channels via the user token.
+ * This is needed for join_channel — the bot can't see channels it hasn't joined.
  */
 async function resolveChannelByName(
   client: WebClient,
   name: string,
+  options?: { fallbackToUserToken?: boolean },
 ): Promise<{ id: string; name: string } | null> {
   const cleaned = name.replace(/^#/, "").trim();
 
@@ -132,9 +179,24 @@ async function resolveChannelByName(
     return { id: cleaned, name: cleaned };
   }
 
-  // Name-based lookup via cache
+  // Name-based lookup via bot's cache (channels bot is already in)
   const channels = await getChannelList(client);
-  return channels.find((ch) => ch.name.toLowerCase() === cleaned.toLowerCase()) || null;
+  const match = channels.find((ch) => ch.name.toLowerCase() === cleaned.toLowerCase());
+  if (match) return match;
+
+  // Fallback: search all public channels via user token
+  if (options?.fallbackToUserToken) {
+    const fallbackMatch = await searchPublicChannelByName(cleaned);
+    if (fallbackMatch) {
+      logger.info("resolveChannelByName: found channel via user token fallback", {
+        name: cleaned,
+        channelId: fallbackMatch.id,
+      });
+      return fallbackMatch;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -228,33 +290,127 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ limit }) => {
         try {
-          // Use full API call here (not cache) to get extra fields like topic, member count
-          await throttle();
-          const result = await client.conversations.list({
-            types: "public_channel,private_channel",
-            exclude_archived: true,
-            limit,
-          });
+          // Try user token first — it can see ALL public channels, not just ones the bot is in
+          const userToken = process.env.SLACK_USER_TOKEN;
+          let allChannels: Array<{
+            name: string;
+            id: string;
+            topic: string;
+            member_count: number;
+            is_member: boolean;
+          }> = [];
 
-          const channels = (result.channels || []).map((ch) => ({
-            name: ch.name || "unknown",
-            id: ch.id || "",
-            topic: ch.topic?.value || "",
-            member_count: ch.num_members || 0,
-            is_member: ch.is_member || false,
-          }));
+          if (userToken) {
+            try {
+              const { WebClient } = await import("@slack/web-api");
+              const userClient = new WebClient(userToken);
 
-          // Populate the channel cache while we're at it
-          channelCache = channels.map((ch) => ({ id: ch.id, name: ch.name }));
+              let cursor: string | undefined;
+              const collected: typeof allChannels = [];
+              do {
+                await throttle();
+                const result = await userClient.conversations.list({
+                  types: "public_channel",
+                  exclude_archived: true,
+                  limit: 200,
+                  cursor,
+                });
+
+                for (const ch of result.channels || []) {
+                  collected.push({
+                    name: ch.name || "unknown",
+                    id: ch.id || "",
+                    topic: ch.topic?.value || "",
+                    member_count: ch.num_members || 0,
+                    is_member: ch.is_member || false,
+                  });
+                }
+
+                cursor = result.response_metadata?.next_cursor || undefined;
+              } while (cursor && collected.length < limit);
+
+              allChannels = collected.slice(0, limit);
+
+              // Fetch ALL bot's channels (paginated) to get accurate is_member
+              // (user token's is_member reflects the user, not the bot)
+              // and to discover private channels the bot is in
+              const botMemberIds = new Set<string>();
+              const botPrivateChannels: typeof allChannels = [];
+              let botCursor: string | undefined;
+              do {
+                await throttle();
+                const botResult = await client.conversations.list({
+                  types: "public_channel,private_channel",
+                  exclude_archived: true,
+                  limit: 200,
+                  cursor: botCursor,
+                });
+
+                for (const ch of botResult.channels || []) {
+                  if (ch.is_member && ch.id) {
+                    botMemberIds.add(ch.id);
+                  }
+                  if (ch.is_private && !allChannels.find((existing) => existing.id === ch.id)) {
+                    botPrivateChannels.push({
+                      name: ch.name || "unknown",
+                      id: ch.id || "",
+                      topic: ch.topic?.value || "",
+                      member_count: ch.num_members || 0,
+                      is_member: ch.is_member || false,
+                    });
+                  }
+                }
+
+                botCursor = botResult.response_metadata?.next_cursor || undefined;
+              } while (botCursor);
+
+              // Fix is_member on public channels to reflect the bot's membership
+              for (const ch of allChannels) {
+                ch.is_member = botMemberIds.has(ch.id);
+              }
+
+              // Add private channels from bot that aren't already listed
+              for (const ch of botPrivateChannels) {
+                allChannels.push(ch);
+              }
+
+              // Enforce the limit after merging public + private channels
+              allChannels = allChannels.slice(0, limit);
+            } catch (userTokenError: any) {
+              logger.warn("list_channels user token path failed, falling back to bot-only", {
+                error: userTokenError.message,
+              });
+              // Fall through to bot-only listing below
+              allChannels = [];
+            }
+          }
+
+          if (allChannels.length === 0) {
+            // No user token, or user token failed — fall back to bot-only listing
+            await throttle();
+            const result = await client.conversations.list({
+              types: "public_channel,private_channel",
+              exclude_archived: true,
+              limit,
+            });
+
+            allChannels = (result.channels || []).map((ch) => ({
+              name: ch.name || "unknown",
+              id: ch.id || "",
+              topic: ch.topic?.value || "",
+              member_count: ch.num_members || 0,
+              is_member: ch.is_member || false,
+            }));
+          }
 
           logger.info("list_channels tool called", {
-            count: channels.length,
+            count: allChannels.length,
           });
 
           return {
             ok: true,
-            channels,
-            total: channels.length,
+            channels: allChannels,
+            total: allChannels.length,
           };
         } catch (error: any) {
           logger.error("list_channels tool failed", { error: error.message });
@@ -273,16 +429,19 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ channel_name }) => {
         try {
-          const channel = await resolveChannelByName(client, channel_name);
+          const channel = await resolveChannelByName(client, channel_name, { fallbackToUserToken: true });
           if (!channel) {
             return {
               ok: false,
-              error: `Could not find a channel named "${channel_name}". Use list_channels to see available channels.`,
+              error: `Could not find a channel named "${channel_name}". It may not exist or may be private. Use list_channels to see available channels.`,
             };
           }
 
           await throttle();
           await client.conversations.join({ channel: channel.id });
+
+          // Invalidate cache so subsequent calls see the newly joined channel
+          channelCache = null;
 
           logger.info("join_channel tool called", {
             channel: channel.name,
