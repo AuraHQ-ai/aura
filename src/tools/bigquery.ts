@@ -3,9 +3,50 @@ import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
 
-/** DML/DDL keywords that indicate a write operation. */
-const WRITE_KEYWORDS =
-  /^\s*(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|MERGE)\b/i;
+/**
+ * Strip leading SQL comments (line -- and block comments) and whitespace
+ * so the first real token can be inspected.
+ */
+function stripLeadingComments(sql: string): string {
+  let s = sql;
+  while (true) {
+    s = s.replace(/^\s+/, "");
+    if (s.startsWith("--")) {
+      const nl = s.indexOf("\n");
+      s = nl === -1 ? "" : s.slice(nl + 1);
+    } else if (s.startsWith("/*")) {
+      const end = s.indexOf("*/");
+      s = end === -1 ? "" : s.slice(end + 2);
+    } else {
+      break;
+    }
+  }
+  return s;
+}
+
+/**
+ * Validate that a SQL string is a read-only SELECT query.
+ * Returns an error message if the query is not allowed, or null if OK.
+ */
+function validateReadOnlySQL(sql: string): string | null {
+  // Reject multi-statement scripts (semicolons not inside string literals)
+  // Strip string literals first to avoid false positives
+  const withoutStrings = sql.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+  if (withoutStrings.includes(";")) {
+    return "Multi-statement queries are not allowed. Submit one SELECT at a time.";
+  }
+
+  // Strip leading comments to find the real first keyword
+  const stripped = stripLeadingComments(sql);
+  const firstToken = stripped.match(/^(\w+)/i)?.[1]?.toUpperCase();
+
+  // Allowlist: only SELECT and WITH (CTE) are permitted
+  if (firstToken !== "SELECT" && firstToken !== "WITH") {
+    return "Only SELECT queries are permitted. DML, DDL, CALL, EXPORT, and other statements are blocked.";
+  }
+
+  return null;
+}
 
 /** Max result payload size to avoid token bloat. */
 const MAX_RESULT_CHARS = 8000;
@@ -214,13 +255,10 @@ export function createBigQueryTools() {
           };
         }
 
-        // Safety: reject DML/DDL
-        if (WRITE_KEYWORDS.test(sql)) {
-          return {
-            ok: false,
-            error:
-              "Write operations are not allowed. Only SELECT queries are permitted.",
-          };
+        // Safety: only allow read-only SELECT / WITH queries
+        const validationError = validateReadOnlySQL(sql);
+        if (validationError) {
+          return { ok: false, error: validationError };
         }
 
         // Inject LIMIT if not already present
@@ -232,6 +270,7 @@ export function createBigQueryTools() {
             query: finalSql,
             useLegacySql: false,
             maximumBytesBilled: String(1e9),
+            maxResults: max_rows,
           });
 
           const jobMeta = (queryJob as any)?.statistics?.query ?? {};
