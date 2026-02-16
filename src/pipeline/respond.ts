@@ -233,7 +233,7 @@ export async function generateResponse(
     const chunks = formatForSlack(cleaned);
     const formatted = chunks.join("\n\n");
 
-    if (chunks.length > 0 && chunks[0].trim().length > 0) {
+    if (messageTs && chunks.length > 0 && chunks[0].trim().length > 0) {
       // Update the existing placeholder with the first chunk
       await updateMessage(chunks[0]);
 
