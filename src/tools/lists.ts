@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
+import { throttle } from "./rate-limit.js";
 
 /**
  * Create Slack Lists write tools.
@@ -17,10 +18,15 @@ export function createListWriteTools(client: WebClient) {
         fields: z
           .record(z.any())
           .optional()
-          .describe("Column values as a JSON object of column_id -> value pairs. Use get_slack_list_item on an existing item to see the column IDs and value formats."),
+          .describe(
+            "Column values as a JSON object of column_id -> value pairs. " +
+            "Use get_slack_list_item on an existing item to see the column IDs and value formats. " +
+            "Values must match the exact format returned by get_slack_list_item."
+          ),
       }),
       execute: async ({ list_id, fields }) => {
         try {
+          await throttle();
           const params: any = { list_id };
           if (fields) {
             params.initial_fields = fields;
@@ -29,6 +35,7 @@ export function createListWriteTools(client: WebClient) {
           const result = await (client as any).apiCall("slackLists.items.create", params);
 
           if (!result.ok) {
+            logger.error("create_slack_list_item API error", { list_id, error: result.error, response_metadata: result.response_metadata });
             return { ok: false, error: `Failed to create list item: ${result.error || "unknown"}` };
           }
 
@@ -43,33 +50,45 @@ export function createListWriteTools(client: WebClient) {
 
     update_slack_list_item: tool({
       description:
-        "Update fields on an existing item (row) in a Slack List. Use this to change status, assignee, priority, etc.",
+        "Update fields on an existing item (row) in a Slack List. Use this to change title, status, assignee, severity, etc. " +
+        "IMPORTANT: First call get_slack_list_item to see the exact column IDs and value formats. " +
+        "Pass each field value in the EXACT same format returned by get_slack_list_item (e.g. rich text arrays, status objects, user arrays).",
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         item_id: z.string().describe("The ID of the item/row to update"),
         fields: z
           .record(z.any())
-          .describe("Column values to update as column_id -> value pairs"),
+          .describe(
+            "Column values to update as a flat object: { column_id: value, ... }. " +
+            "Values must use the same format as returned by get_slack_list_item."
+          ),
       }),
       execute: async ({ list_id, item_id, fields }) => {
         try {
-          // Build the update payload -- each field is a separate column update
-          const updates = Object.entries(fields).map(([column_id, value]) => ({
-            column_id,
-            value,
-          }));
+          await throttle();
 
           const result = await (client as any).apiCall("slackLists.items.update", {
             list_id,
-            row_id: item_id,
-            columns: updates,
+            item_id,
+            columns: fields,
           });
 
           if (!result.ok) {
-            return { ok: false, error: `Failed to update list item: ${result.error || "unknown"}` };
+            logger.error("update_slack_list_item API error", {
+              list_id,
+              item_id,
+              error: result.error,
+              response_metadata: result.response_metadata,
+              fields_keys: Object.keys(fields),
+            });
+            return {
+              ok: false,
+              error: `Failed to update list item: ${result.error || "unknown"}`,
+              detail: result.response_metadata?.messages?.join("; ") || undefined,
+            };
           }
 
-          logger.info("update_slack_list_item tool called", { list_id, item_id });
+          logger.info("update_slack_list_item tool called", { list_id, item_id, fields_keys: Object.keys(fields) });
           return { ok: true, message: "List item updated" };
         } catch (error: any) {
           logger.error("update_slack_list_item tool failed", { list_id, item_id, error: error.message });
@@ -87,6 +106,7 @@ export function createListWriteTools(client: WebClient) {
       }),
       execute: async ({ list_id, item_id }) => {
         try {
+          await throttle();
           const result = await (client as any).apiCall("slackLists.items.delete", {
             list_id,
             item_id,

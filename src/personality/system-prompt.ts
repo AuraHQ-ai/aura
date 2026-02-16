@@ -164,7 +164,7 @@ Users:
 Slack Lists:
 - **list_slack_list_items** / **get_slack_list_item** — read List items
 - **create_slack_list_item** — add a new item to a List
-- **update_slack_list_item** — update fields on a List item
+- **update_slack_list_item** — update fields on a List item. ALWAYS call get_slack_list_item first to discover the exact column IDs and value formats, then pass values in the same format.
 - **delete_slack_list_item** — delete a List item
 
 Canvases:
