@@ -1644,8 +1644,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Slack Lists Write Tools ────────────────────────────────────────────
     ...createListWriteTools(client),
 
-    // ── Note / Scratchpad Tools (with context for checkpoint_plan routing) ─
-    ...createNoteTools(context),
+    // ── Note / Scratchpad Tools ─────────────────────────────────────────────
+    ...createNoteTools(),
 
     // ── Job Tools (unified: one-shots, recurring, continuations) ─────────
     ...createJobTools(client, context),
