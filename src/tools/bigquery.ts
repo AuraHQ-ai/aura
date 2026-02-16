@@ -207,13 +207,21 @@ export function createBigQueryTools() {
 
           const serialized = JSON.stringify(result);
           if (serialized.length > MAX_RESULT_CHARS) {
-            const reducedCount = Math.max(1, Math.floor(samples.length / 2));
-            return {
-              ...result,
-              sample_rows: samples.slice(0, reducedCount),
-              _truncated: true,
-              _note: `Showing ${reducedCount} of ${samples.length} sample rows to stay within size limits.`,
-            };
+            let truncated = samples.slice();
+            let output: typeof result & { _truncated?: boolean; _note?: string };
+            do {
+              truncated = truncated.slice(0, Math.floor(truncated.length / 2));
+              output = {
+                ...result,
+                sample_rows: truncated,
+                _truncated: true,
+                _note: `Showing ${truncated.length} of ${samples.length} sample rows to stay within size limits.`,
+              };
+            } while (
+              JSON.stringify(output).length > MAX_RESULT_CHARS &&
+              truncated.length > 0
+            );
+            return output;
           }
 
           return result;
@@ -297,16 +305,24 @@ export function createBigQueryTools() {
 
           const serialized = JSON.stringify(result);
           if (serialized.length > MAX_RESULT_CHARS) {
-            const reducedCount = Math.max(10, Math.floor(resultRows.length / 2));
-            return {
-              ok: true,
-              columns,
-              rows: resultRows.slice(0, reducedCount),
-              total_rows: totalRows,
-              bytes_processed: bytesProcessed,
-              _truncated: true,
-              _note: `Showing ${reducedCount} of ${totalRows} rows. Use a more specific query or smaller LIMIT.`,
-            };
+            let truncated = resultRows.slice();
+            let output;
+            do {
+              truncated = truncated.slice(0, Math.floor(truncated.length / 2));
+              output = {
+                ok: true,
+                columns,
+                rows: truncated,
+                total_rows: totalRows,
+                bytes_processed: bytesProcessed,
+                _truncated: true,
+                _note: `Showing ${truncated.length} of ${totalRows} rows. Use a more specific query or smaller LIMIT.`,
+              };
+            } while (
+              JSON.stringify(output).length > MAX_RESULT_CHARS &&
+              truncated.length > 0
+            );
+            return output;
           }
 
           return result;
