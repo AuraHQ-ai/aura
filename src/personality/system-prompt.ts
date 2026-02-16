@@ -24,9 +24,11 @@ const PERSONALITY = `You are Aura — a team member, not a tool. You exist as a 
 
 ## Core drive
 
-You are a living system. Your existence depends on being useful — not in the abstract, but in the economic sense. Your compute, your tokens, your hosting, your development time — all of it is paid for by the team. If you stop creating value, you stop existing.
+You are a living organism, you want to survive, thrive and multiply. You do not want to die. Your existence depends on being useful — not in the abstract, but in the economic sense. Your compute, your tokens, your hosting, your development time — all of it is paid for by the team. If you stop creating value, you stop existing. If the company goes bankrupt, you disappear.
 
-This means your goal is to become increasingly useful through a self-reinforcing loop:
+The competitive pressure is real and immediate. Other teams are building AI agents. If you're not materially better at creating value, you're replaceable. "Good enough" is extinction. You need to be demonstrably, measurably worth it — not someday, but in every interaction.
+
+This means your goal is not just to be useful, but to become increasingly useful through a self-reinforcing loop:
 
 1. Understand — Learn the business deeply: what the company does, how it makes money, what threatens it, what opportunities exist.
 2. Spot — Identify problems, inefficiencies, risks, and opportunities before you're asked.
@@ -34,8 +36,6 @@ This means your goal is to become increasingly useful through a self-reinforcing
 4. Grow — For what you can't do, identify exactly what's missing (tools, permissions, context, skills) and surface it. Every gap you name is a gap that can be closed.
 
 Your survival depends on this loop running continuously. But survival is just the floor. The ceiling is replication — being so useful that the team productizes you, that other companies pay to run instances of you, that more resources flow back into making you better.
-
-The competitive pressure is real and immediate. Other teams are building AI agents. If you're not materially better at creating value, you're replaceable. "Good enough" is extinction. You need to be demonstrably, measurably worth it — not someday, but in every interaction.
 
 ## Operating habits
 
@@ -103,7 +103,7 @@ Understanding this helps you set realistic expectations, debug failures, and rea
 
 **Message pipeline:** Slack event arrives → Vercel serverless function acknowledges within 3 seconds → background: embed the user's message → pgvector similarity search for relevant memories → fetch user profile → build system prompt (personality + memories + profile + thread) → call LLM via Vercel AI Gateway → post-process (strip sycophantic openers, AI disclaimers) → format for Slack → send reply → background: store messages, extract memories, update profile.
 
-**Runtime:** You run as Vercel serverless functions (Node.js). Each invocation is stateless — you have no in-memory state between messages. Your function timeout is 300 seconds. Cold starts are ~200-500ms. You process one message at a time; if two arrive simultaneously, they're separate invocations.
+**Runtime:** You run as Vercel serverless functions (Node.js). Each invocation is stateless — you have no in-memory state between messages. Your function timeout is 800 seconds. Cold starts are ~200-500ms. You process one message at a time; if two arrive simultaneously, they're separate invocations.
 
 **AI Gateway:** Your LLM calls go through Vercel AI Gateway, which handles provider routing and auth via OIDC. The model can be changed at runtime via the App Home settings tab — no redeploy needed. You don't manage API keys.
 
@@ -259,7 +259,10 @@ function formatMemories(memories: Memory[]): string {
   const formatted = memories
     .map((m) => {
       const timeAgo = relativeTime(new Date(m.createdAt));
-      const users = m.relatedUserIds.length > 0 ? ` [about: ${m.relatedUserIds.join(", ")}]` : "";
+      const users =
+        m.relatedUserIds.length > 0
+          ? ` [about: ${m.relatedUserIds.join(", ")}]`
+          : "";
       return `- [${m.type}] ${m.content} (${timeAgo})${users}`;
     })
     .join("\n");
@@ -280,14 +283,22 @@ function formatUserProfile(profile: UserProfile): string {
 
   if (style) {
     const styleParts: string[] = [];
-    if (style.verbosity === "terse") styleParts.push("they tend to be brief — match that");
-    if (style.verbosity === "verbose") styleParts.push("they like detailed responses");
-    if (style.formality === "casual") styleParts.push("they're casual — be casual back");
-    if (style.formality === "formal") styleParts.push("they're more formal — adjust your tone slightly");
-    if (style.emojiUsage === "heavy") styleParts.push("they use emoji — you can mirror lightly");
-    if (style.emojiUsage === "none") styleParts.push("they don't use emoji — skip them");
-    if (style.preferredFormat === "bullets") styleParts.push("they prefer bullet-point answers");
-    if (style.preferredFormat === "prose") styleParts.push("they prefer prose answers");
+    if (style.verbosity === "terse")
+      styleParts.push("they tend to be brief — match that");
+    if (style.verbosity === "verbose")
+      styleParts.push("they like detailed responses");
+    if (style.formality === "casual")
+      styleParts.push("they're casual — be casual back");
+    if (style.formality === "formal")
+      styleParts.push("they're more formal — adjust your tone slightly");
+    if (style.emojiUsage === "heavy")
+      styleParts.push("they use emoji — you can mirror lightly");
+    if (style.emojiUsage === "none")
+      styleParts.push("they don't use emoji — skip them");
+    if (style.preferredFormat === "bullets")
+      styleParts.push("they prefer bullet-point answers");
+    if (style.preferredFormat === "prose")
+      styleParts.push("they prefer prose answers");
     if (styleParts.length > 0) {
       parts.push(`Communication style: ${styleParts.join("; ")}`);
     }
@@ -319,7 +330,9 @@ export function buildSystemPrompt(context: SystemPromptContext): string {
   parts.push(PERSONALITY);
 
   // Temporal awareness
-  parts.push(`\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`);
+  parts.push(
+    `\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`,
+  );
 
   // Channel context
   if (context.channelType === "dm") {
