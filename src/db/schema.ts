@@ -187,7 +187,7 @@ export const notes = pgTable(
   ],
 );
 
-// ── Jobs (autonomous recurring work) ────────────────────────────────────────
+// ── Jobs (unified: one-shot tasks, recurring work, continuations) ───────────
 
 export interface FrequencyConfig {
   minIntervalHours?: number;
@@ -207,6 +207,14 @@ export const jobs = pgTable(
     cronSchedule: text("cron_schedule"),
     frequencyConfig: jsonb("frequency_config").$type<FrequencyConfig>(),
     channelId: text("channel_id"),
+    threadTs: text("thread_ts"),
+    executeAt: timestamptz("execute_at"),
+    requestedBy: text("requested_by").notNull().default("aura"),
+    priority: text("priority").notNull().default("normal"),
+    status: text("status").notNull().default("pending"),
+    timezone: text("timezone").notNull().default("UTC"),
+    result: text("result"),
+    retries: integer("retries").notNull().default(0),
     lastExecutedAt: timestamptz("last_executed_at"),
     lastResult: text("last_result"),
     executionCount: integer("execution_count").notNull().default(0),
@@ -219,36 +227,7 @@ export const jobs = pgTable(
   (table) => [
     uniqueIndex("jobs_name_idx").on(table.name),
     index("jobs_enabled_idx").on(table.enabled),
-  ],
-);
-
-// ── Scheduled Actions ───────────────────────────────────────────────────────
-
-export const scheduledActions = pgTable(
-  "scheduled_actions",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    description: text("description").notNull(),
-    executeAt: timestamptz("execute_at").notNull(),
-    channelId: text("channel_id").notNull(),
-    threadTs: text("thread_ts"),
-    requestedBy: text("requested_by").notNull(),
-    recurring: text("recurring"),
-    timezone: text("timezone").notNull().default("UTC"),
-    priority: text("priority").notNull().default("normal"),
-    status: text("status").notNull().default("pending"),
-    lastResult: text("last_result"),
-    result: text("result"),
-    retries: integer("retries").notNull().default(0),
-    createdAt: timestamptz("created_at").notNull().defaultNow(),
-  },
-  (table) => [
-    index("scheduled_actions_status_execute_idx").on(
-      table.status,
-      table.executeAt,
-    ),
+    index("jobs_status_execute_idx").on(table.status, table.executeAt),
   ],
 );
 
@@ -266,3 +245,10 @@ export type Setting = typeof settings.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
+
+/** Context for tools that need to know the current conversation's routing. */
+export interface ScheduleContext {
+  userId?: string;
+  channelId?: string;
+  threadTs?: string;
+}

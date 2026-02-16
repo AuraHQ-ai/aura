@@ -3,11 +3,11 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { createNoteTools } from "./notes.js";
-import { createScheduleTools, type ScheduleContext } from "./schedule.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
 import { createSandboxTools } from "./sandbox.js";
 import { createWebTools } from "./web.js";
+import type { ScheduleContext } from "../db/schema.js";
 import { throttle } from "./rate-limit.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
@@ -1647,11 +1647,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Note / Scratchpad Tools (with context for checkpoint_plan routing) ─
     ...createNoteTools(context),
 
-    // ── Scheduling Tools ─────────────────────────────────────────────────
-    ...createScheduleTools(client, context),
-
-    // ── Job Tools ────────────────────────────────────────────────────────
-    ...createJobTools(client),
+    // ── Job Tools (unified: one-shots, recurring, continuations) ─────────
+    ...createJobTools(client, context),
 
     // ── Web Tools ────────────────────────────────────────────────────────
     ...createWebTools(),

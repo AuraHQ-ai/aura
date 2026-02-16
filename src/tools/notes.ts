@@ -2,10 +2,10 @@ import { tool } from "ai";
 import { z } from "zod";
 import { eq, and, gt, or, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { notes, scheduledActions } from "../db/schema.js";
+import { notes, jobs } from "../db/schema.js";
+import type { ScheduleContext } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime } from "../lib/temporal.js";
-import type { ScheduleContext } from "./schedule.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -540,8 +540,9 @@ export function createNoteTools(context?: ScheduleContext) {
                 },
               });
 
-            // 2. Insert directly into scheduled_actions to carry channelId + threadTs
-            await tx.insert(scheduledActions).values({
+            // 2. Insert a continuation job with channelId + threadTs for routing
+            await tx.insert(jobs).values({
+              name: `continue-${topic}-${Date.now().toString(36)}`,
               description,
               executeAt,
               channelId: context?.channelId || "",
