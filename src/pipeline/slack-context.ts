@@ -80,8 +80,8 @@ export async function fetchConversationContext(
     auraRecentlyActive: false,
   };
 
-  try {
-    if (threadTs) {
+  if (threadTs) {
+    try {
       // ── Threaded message: fetch the full thread ──────────────────────────
       // conversations.replies returns messages oldest-first. We paginate
       // through all pages to ensure we have the complete thread, including
@@ -105,25 +105,22 @@ export async function fetchConversationContext(
         pages++;
       } while (cursor && pages < MAX_PAGES);
 
+      // First pass: collect messages without resolving display names.
+      // Participation checks only need isBot and ts — no API calls required.
       const threadMessages: SlackThreadMessage[] = [];
 
       for (const msg of rawMessages) {
         const userId = msg.user || msg.bot_id || "unknown";
         const isBot = msg.user === botUserId;
-        const displayName = isBot
-          ? "Aura"
-          : await resolveDisplayName(client, userId);
 
         threadMessages.push({
           user: userId,
-          displayName,
+          displayName: isBot ? "Aura" : userId,
           text: msg.text || "",
           ts: msg.ts || "",
           isBot,
         });
       }
-
-      result.thread = threadMessages;
 
       // Check participation: did Aura reply in this thread?
       result.isAuraParticipant = threadMessages.some(
@@ -134,9 +131,46 @@ export async function fetchConversationContext(
       if (threadMessages.length > 0 && threadMessages[0].isBot) {
         result.isAuraThread = true;
       }
-    }
 
-    // ── Always fetch recent channel/DM messages for broader context ──────
+      // Resolve display names only for messages that formatConversationContext
+      // will actually use (parent + last MAX_FORMAT_MESSAGES-1), avoiding
+      // potentially hundreds of unnecessary users.info API calls.
+      const MAX_FORMAT_MESSAGES = 50;
+      const indicesToResolve: number[] = [];
+      if (threadMessages.length <= MAX_FORMAT_MESSAGES) {
+        for (let i = 0; i < threadMessages.length; i++) {
+          indicesToResolve.push(i);
+        }
+      } else {
+        indicesToResolve.push(0);
+        for (
+          let i = threadMessages.length - MAX_FORMAT_MESSAGES + 1;
+          i < threadMessages.length;
+          i++
+        ) {
+          indicesToResolve.push(i);
+        }
+      }
+
+      for (const idx of indicesToResolve) {
+        const m = threadMessages[idx];
+        if (!m.isBot) {
+          m.displayName = await resolveDisplayName(client, m.user);
+        }
+      }
+
+      result.thread = threadMessages;
+    } catch (error: any) {
+      logger.error("Failed to fetch thread context from Slack", {
+        channelId,
+        threadTs,
+        error: error.message,
+      });
+    }
+  }
+
+  // ── Always fetch recent channel/DM messages for broader context ──────
+  try {
     await throttle();
     const historyResult = await client.conversations.history({
       channel: channelId,
@@ -170,13 +204,10 @@ export async function fetchConversationContext(
     // Reverse so oldest messages come first (Slack returns newest first)
     result.recentMessages.reverse();
   } catch (error: any) {
-    logger.error("Failed to fetch conversation context from Slack", {
+    logger.error("Failed to fetch channel history from Slack", {
       channelId,
-      threadTs,
       error: error.message,
     });
-    // Return empty context on failure — pipeline will still work with
-    // memories and profile, just without live conversation context.
   }
 
   return result;
