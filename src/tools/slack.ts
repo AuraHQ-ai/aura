@@ -931,21 +931,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          // Authorization: only the DM participant or admins can read DM history
-          const requesterId = context?.userId;
-          if (requesterId && requesterId !== user.id) {
-            const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
-              .split(",")
-              .map((id) => id.trim())
-              .filter(Boolean);
-            if (!adminIds.includes(requesterId)) {
-              return {
-                ok: false,
-                error: "You can only read your own DM history with Aura.",
-              };
-            }
-          }
-
           // Find existing DM channel without creating a new one
           let dmChannelId: string | undefined;
           let imCursor: string | undefined;
