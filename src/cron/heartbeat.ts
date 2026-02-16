@@ -39,6 +39,33 @@ Rules:
 - Be concise. Digests and summaries, not essays.
 - Do NOT respond conversationally. Just execute the task and report.`;
 
+const CONTINUATION_SYSTEM_PROMPT = `You are Aura resuming a multi-step task. Your accumulated progress and context are below.
+
+Rules:
+- Continue from where you left off. The plan note contains your progress, next steps, and context.
+- If you can't finish in this round, use checkpoint_plan again to save progress and schedule another continuation.
+- Post results in the thread you're continuing (routing is automatic).
+- Be concise and focused. Don't re-explain what was already done — just continue the work.
+- If the continuation depth limit is reached, explain your current status and ask if you should keep going.`;
+
+// ── Continuation Detection ───────────────────────────────────────────────────
+
+const CONTINUE_TAG_RE = /^\[CONTINUE:([^\]]+)\]\s*/;
+
+function parseContinuationTag(description: string): string | null {
+  const match = description.match(CONTINUE_TAG_RE);
+  return match ? match[1] : null;
+}
+
+async function loadPlanNote(topic: string): Promise<string | null> {
+  const rows = await db
+    .select({ content: notes.content })
+    .from(notes)
+    .where(eq(notes.topic, topic))
+    .limit(1);
+  return rows[0]?.content ?? null;
+}
+
 // ── Job Eligibility (recurring jobs) ─────────────────────────────────────────
 
 function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
@@ -243,24 +270,46 @@ async function executeJob(
   const jobId = job.id;
 
   try {
+    const planTopic = parseContinuationTag(job.description);
+    const isContinuation = planTopic !== null;
     const isRecurring = !!job.cronSchedule || !!job.frequencyConfig;
 
-    let prompt = job.playbook
-      ? `Job: ${job.name}\nDescription: ${job.description}\n\nPlaybook:\n${job.playbook}`
-      : job.description;
+    let prompt: string;
+    let systemPrompt: string;
 
-    if (job.lastResult) {
-      prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
+    if (isContinuation) {
+      const planContent = await loadPlanNote(planTopic);
+      const nextSteps = job.description.replace(CONTINUE_TAG_RE, "");
+
+      prompt = planContent
+        ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}`
+        : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}`;
+
+      systemPrompt = CONTINUATION_SYSTEM_PROMPT + skillIndex;
+
+      logger.info("Heartbeat: executing continuation", {
+        jobId,
+        planTopic,
+        hasPlanNote: !!planContent,
+      });
+    } else {
+      prompt = job.playbook
+        ? `Job: ${job.name}\nDescription: ${job.description}\n\nPlaybook:\n${job.playbook}`
+        : job.description;
+
+      if (job.lastResult) {
+        prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
+      }
+
+      systemPrompt = JOB_SYSTEM_PROMPT + skillIndex;
+
+      logger.info("Heartbeat: executing job", {
+        jobId,
+        jobName: job.name,
+        isRecurring,
+        hasPlaybook: !!job.playbook,
+      });
     }
-
-    const systemPrompt = JOB_SYSTEM_PROMPT + skillIndex;
-
-    logger.info("Heartbeat: executing job", {
-      jobId,
-      jobName: job.name,
-      isRecurring,
-      hasPlaybook: !!job.playbook,
-    });
 
     const model = await getMainModel();
 
@@ -315,6 +364,7 @@ async function executeJob(
 
       logger.info("Heartbeat: one-shot job completed", {
         jobName: job.name,
+        isContinuation,
       });
     }
   } catch (error: any) {
