@@ -52,11 +52,14 @@ function wrapTablesInCodeBlocks(text: string): string {
       i + 1 < lines.length &&
       isSeparatorRow(lines[i + 1])
     ) {
+      // Remember pipe count from the header row to validate continuation rows
+      const headerPipes = countPipes(lines[i]);
       // Collect all contiguous table rows (including separator)
       const tableLines: string[] = [];
       while (
         i < lines.length &&
-        (isTableRow(lines[i]) || isSeparatorRow(lines[i]))
+        (isSeparatorRow(lines[i]) ||
+          (isTableRow(lines[i]) && countPipes(lines[i]) >= headerPipes - 1))
       ) {
         tableLines.push(lines[i]);
         i++;
@@ -91,35 +94,63 @@ function isSeparatorRow(line: string): boolean {
   return /^\|?[\s\-:|]+\|[\s\-:|]+\|?$/.test(trimmed);
 }
 
+/** Count the number of pipe characters in a line */
+function countPipes(line: string): number {
+  let count = 0;
+  for (const ch of line) {
+    if (ch === "|") count++;
+  }
+  return count;
+}
+
+/**
+ * Apply markdown-to-mrkdwn conversions to a segment of text that is
+ * known to be outside any code block.
+ */
+function convertMarkdownSegment(segment: string): string {
+  let s = segment;
+
+  // Convert headers (## Header → *Header*)
+  s = s.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
+
+  // Convert links: [text](url) → <url|text>
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
+
+  // Convert bold: **text** → *text* (via placeholder to avoid italic conflict)
+  s = s.replace(/\*\*(.+?)\*\*/g, "\x00BOLD$1\x00BOLD");
+
+  // Convert italic: *text* → _text_ (must happen after bold placeholder)
+  s = s.replace(/\*(.+?)\*/g, "_$1_");
+
+  // Restore bold placeholders to Slack bold *text*
+  s = s.replace(/\x00BOLD(.+?)\x00BOLD/g, "*$1*");
+
+  // Convert strikethrough: ~~text~~ → ~text~
+  s = s.replace(/~~(.+?)~~/g, "~$1~");
+
+  return s;
+}
+
 /**
  * Convert standard Markdown to Slack mrkdwn.
  */
 export function markdownToSlackMrkdwn(markdown: string): string {
   // Wrap tables in code blocks FIRST, before any other conversions
-  let result = wrapTablesInCodeBlocks(markdown);
+  const text = wrapTablesInCodeBlocks(markdown);
 
-  // Convert headers (## Header → *Header*)
-  result = result.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
+  // Split into code-block and non-code-block segments so markdown
+  // conversions don't modify content inside code fences.
+  const segments = text.split(/(```[\s\S]*?```)/g);
 
-  // Convert links: [text](url) → <url|text>
-  result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<$2|$1>");
-
-  // Convert bold: **text** → *text* (via placeholder to avoid italic conflict)
-  result = result.replace(/\*\*(.+?)\*\*/g, "\x00BOLD$1\x00BOLD");
-
-  // Convert italic: *text* → _text_ (must happen after bold placeholder)
-  result = result.replace(/\*(.+?)\*/g, "_$1_");
-
-  // Restore bold placeholders to Slack bold *text*
-  result = result.replace(/\x00BOLD(.+?)\x00BOLD/g, "*$1*");
-
-  // Convert strikethrough: ~~text~~ → ~text~
-  result = result.replace(/~~(.+?)~~/g, "~$1~");
-
-  // Strip language tags from code blocks: ```typescript → ```
-  result = result.replace(/```[a-zA-Z]*\n/g, "```\n");
-
-  return result;
+  return segments
+    .map((segment) => {
+      if (segment.startsWith("```")) {
+        // Only strip language tags from code blocks
+        return segment.replace(/```[a-zA-Z]*\n/, "```\n");
+      }
+      return convertMarkdownSegment(segment);
+    })
+    .join("");
 }
 
 /**
