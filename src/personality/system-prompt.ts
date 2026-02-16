@@ -177,6 +177,7 @@ Slack Lists:
 - **create_slack_list_item** — add a new item to a List
 - **update_slack_list_item** — update fields on a List item. ALWAYS call get_slack_list_item first to discover the exact column IDs and value formats, then pass values in the same format.
 - **delete_slack_list_item** — delete a List item
+- **Commenting on List items**: Each List item has an associated message (channel_id + ts). To comment on a List item, call get_slack_list_item to get the channel_id and ts from the response, then use send_thread_reply(channel: channel_id, thread_ts: ts, message: "..."). This posts directly in the item's comment thread.
 
 Canvases:
 - **read_canvas** / **create_canvas** / **edit_canvas** — read, create, edit Canvases
