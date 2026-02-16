@@ -2,8 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { eq, and, gt, or, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { notes, jobs } from "../db/schema.js";
-import type { ScheduleContext } from "../db/schema.js";
+import { notes } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime } from "../lib/temporal.js";
 
@@ -37,21 +36,13 @@ async function getNoteByTopic(
   return rows[0] ?? null;
 }
 
-/** Parse continuation depth from plan note content. */
-function parseContinuationDepth(content: string): number {
-  const match = content.match(/^## Continuations: (\d+)/m);
-  return match ? parseInt(match[1]) : 0;
-}
-
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
 /**
  * Create note tools for the AI SDK.
  * These give the agent a persistent, mutable scratchpad with a three-tier hierarchy.
- *
- * @param context Optional schedule context for checkpoint_plan routing (channelId, threadTs, userId)
  */
-export function createNoteTools(context?: ScheduleContext) {
+export function createNoteTools() {
   return {
     save_note: tool({
       description:
@@ -412,164 +403,6 @@ export function createNoteTools(context?: ScheduleContext) {
           return {
             ok: false,
             error: `Failed to delete note: ${error.message}`,
-          };
-        }
-      },
-    }),
-
-    // ── Plan Continuation ──────────────────────────────────────────────────
-
-    checkpoint_plan: tool({
-      description:
-        "Save progress on a multi-step task and schedule a continuation. Use this when approaching step ~20 and you won't finish in time. Atomically saves a plan note AND schedules a follow-up action.",
-      inputSchema: z.object({
-        topic: z
-          .string()
-          .describe("Plan note topic (will create or update)"),
-        progress: z
-          .string()
-          .describe("What has been accomplished so far"),
-        next_steps: z
-          .string()
-          .describe(
-            "Specific instructions for the next continuation — be precise, your future self needs this",
-          ),
-        context: z
-          .string()
-          .describe(
-            "Accumulated findings, data, intermediate results. Keep concise.",
-          ),
-        continue_in_minutes: z
-          .number()
-          .default(5)
-          .describe("Minutes until continuation fires (default 5)"),
-      }),
-      execute: async ({
-        topic,
-        progress,
-        next_steps,
-        context: ctx,
-        continue_in_minutes,
-      }) => {
-        try {
-          // Reject topics containing ']' — they break the [CONTINUE:topic] tag parser
-          if (topic.includes("]")) {
-            return {
-              ok: false,
-              error: `Topic must not contain ']' characters (breaks continuation tag parsing). Got: "${topic}"`,
-            };
-          }
-
-          // Read existing plan note to check continuation depth
-          const existing = await getNoteByTopic(topic);
-          let depth = 0;
-          if (existing) {
-            depth = parseContinuationDepth(existing.content);
-          }
-
-          const MAX_CONTINUATIONS = 5;
-
-          if (depth >= MAX_CONTINUATIONS) {
-            // Depth limit reached — don't schedule continuation
-            const noteContent = `## Continuations: ${depth}\n## Status: waiting\n\n## Progress\n${progress}\n\n## Next Steps\n${next_steps}\n\n## Context\n${ctx}`;
-            const sevenDays = new Date(
-              Date.now() + 7 * 24 * 60 * 60 * 1000,
-            );
-
-            await db
-              .insert(notes)
-              .values({
-                topic,
-                content: noteContent,
-                category: "plan",
-                expiresAt: sevenDays,
-                updatedAt: new Date(),
-              })
-              .onConflictDoUpdate({
-                target: notes.topic,
-                set: {
-                  content: noteContent,
-                  category: "plan",
-                  expiresAt: sevenDays,
-                  updatedAt: new Date(),
-                },
-              });
-
-            logger.info("checkpoint_plan: depth limit reached", {
-              topic,
-              depth,
-            });
-
-            return {
-              ok: true,
-              message: `Plan "${topic}" saved but continuation depth limit (${MAX_CONTINUATIONS}) reached. Ask the user if they want you to keep going.`,
-              depth_limit_reached: true,
-              continuations: depth,
-            };
-          }
-
-          // Build the plan note content with incremented depth
-          const newDepth = depth + 1;
-          const noteContent = `## Continuations: ${newDepth}\n\n## Progress\n${progress}\n\n## Next Steps\n${next_steps}\n\n## Context\n${ctx}`;
-          const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-          // Upsert the plan note and schedule continuation
-          const executeAt = new Date(
-            Date.now() + continue_in_minutes * 60 * 1000,
-          );
-          const description = `[CONTINUE:${topic}] ${next_steps}`;
-
-          // 1. Upsert the plan note
-          await db
-            .insert(notes)
-            .values({
-              topic,
-              content: noteContent,
-              category: "plan",
-              expiresAt: sevenDays,
-              updatedAt: new Date(),
-            })
-            .onConflictDoUpdate({
-              target: notes.topic,
-              set: {
-                content: noteContent,
-                category: "plan",
-                expiresAt: sevenDays,
-                updatedAt: new Date(),
-              },
-            });
-
-          // 2. Insert a continuation job with channelId + threadTs for routing
-          await db.insert(jobs).values({
-            name: `continue-${topic}-${Date.now().toString(36)}`,
-            description,
-            executeAt,
-            channelId: context?.channelId || "",
-            threadTs: context?.threadTs || null,
-            requestedBy: context?.userId || "aura",
-            priority: "high",
-          });
-
-          logger.info("checkpoint_plan tool called", {
-            topic,
-            depth: newDepth,
-            continueAt: executeAt.toISOString(),
-          });
-
-          return {
-            ok: true,
-            message: `Plan "${topic}" saved (continuation ${newDepth}/${MAX_CONTINUATIONS}). Resuming at ${executeAt.toISOString()}.`,
-            continue_at: executeAt.toISOString(),
-            continuations: newDepth,
-          };
-        } catch (error: any) {
-          logger.error("checkpoint_plan tool failed", {
-            topic,
-            error: error.message,
-          });
-          return {
-            ok: false,
-            error: `Failed to checkpoint plan: ${error.message}`,
           };
         }
       },
