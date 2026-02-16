@@ -75,6 +75,7 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
     try {
       const cron = CronExpressionParser.parse(job.cronSchedule, {
         currentDate: now,
+        tz: job.timezone || undefined,
       });
       const lastCronTick = cron.prev().toDate();
 
@@ -322,6 +323,8 @@ async function executeJob(
       await db
         .update(jobs)
         .set({
+          executeAt: null,
+          retries: 0,
           lastExecutedAt: now,
           executionCount: sql`${jobs.executionCount} + 1`,
           todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
