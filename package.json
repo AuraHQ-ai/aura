@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@ai-sdk/gateway": "^3.0.46",
+    "@google-cloud/bigquery": "^8.1.1",
     "@hono/node-server": "^1.19.9",
     "@neondatabase/serverless": "^1.0.0",
     "@slack/bolt": "^4.3.0",
