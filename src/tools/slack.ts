@@ -931,17 +931,52 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          // Open/find the DM channel
-          await throttle();
-          const dmResult = await client.conversations.open({
-            users: user.id,
-          });
+          // Authorization: only the DM participant or admins can read DM history
+          const requesterId = context?.userId;
+          if (requesterId && requesterId !== user.id) {
+            const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
+              .split(",")
+              .map((id) => id.trim())
+              .filter(Boolean);
+            if (!adminIds.includes(requesterId)) {
+              return {
+                ok: false,
+                error: "You can only read your own DM history with Aura.",
+              };
+            }
+          }
 
-          const dmChannelId = dmResult.channel?.id;
+          // Find existing DM channel without creating a new one
+          let dmChannelId: string | undefined;
+          let imCursor: string | undefined;
+
+          do {
+            await throttle();
+            const imResult = await client.conversations.list({
+              types: "im",
+              limit: 200,
+              cursor: imCursor,
+            });
+
+            for (const ch of imResult.channels || []) {
+              if (ch.user === user.id && ch.id) {
+                dmChannelId = ch.id;
+                break;
+              }
+            }
+
+            if (dmChannelId) break;
+            imCursor = imResult.response_metadata?.next_cursor || undefined;
+          } while (imCursor);
+
           if (!dmChannelId) {
             return {
-              ok: false,
-              error: `Failed to open a DM channel with ${user.name}.`,
+              ok: true,
+              user: user.name,
+              user_id: user.id,
+              messages: [],
+              count: 0,
+              note: "No prior DM conversation exists with this user.",
             };
           }
 
@@ -1004,7 +1039,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     list_dm_conversations: tool({
       description:
-        "List recent DM conversations Aura has had. Returns the list of users Aura has open DM channels with, sorted by most recent activity. Use this to see who you've been talking to, find conversations to follow up on, or enumerate your DM activity.",
+        "List DM conversations Aura has had. Returns the list of users Aura has open DM channels with. Use this to see who you've been talking to, find conversations to follow up on, or enumerate your DM activity. Admin-only.",
       inputSchema: z.object({
         limit: z
           .number()
@@ -1015,6 +1050,28 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ limit }) => {
         try {
+          // Authorization: only admins can list all DM conversations
+          const requesterId = context?.userId;
+          if (requesterId) {
+            const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
+              .split(",")
+              .map((id) => id.trim())
+              .filter(Boolean);
+            if (!adminIds.includes(requesterId)) {
+              return {
+                ok: false,
+                error: "Only admins can list all DM conversations. Use read_dm_history to check your own DM with Aura.",
+              };
+            }
+          }
+
+          // Pre-load user list to avoid N+1 API calls for name resolution
+          const allUsers = await getUserList(client);
+          const userNameMap = new Map<string, string>();
+          for (const u of allUsers) {
+            userNameMap.set(u.id, u.displayName || u.realName || u.username || u.id);
+          }
+
           const conversations: Array<{
             user_name: string;
             user_id: string;
@@ -1038,14 +1095,15 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             for (const ch of result.channels || []) {
               if (!ch.id || !ch.user) continue;
 
-              const userName = await resolveUserById(client, ch.user);
+              const userName = userNameMap.get(ch.user) || ch.user;
+              const updated = (ch as any).updated;
               conversations.push({
                 user_name: userName,
                 user_id: ch.user,
                 dm_channel_id: ch.id,
                 last_message_preview: "",
-                last_activity_ts: (ch as any).updated
-                  ? String((ch as any).updated)
+                last_activity_ts: typeof updated === "number" && updated > 0
+                  ? String(updated)
                   : "",
               });
 
@@ -1055,12 +1113,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
             cursor = result.response_metadata?.next_cursor || undefined;
           } while (cursor && fetched < limit);
-
-          // Sort by last activity (most recent first)
-          conversations.sort(
-            (a, b) =>
-              Number(b.last_activity_ts) - Number(a.last_activity_ts),
-          );
 
           logger.info("list_dm_conversations tool called", {
             count: conversations.length,
