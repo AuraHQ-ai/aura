@@ -20,8 +20,8 @@ export function createListWriteTools(client: WebClient) {
           .optional()
           .describe(
             "Column values as a JSON object of column_id -> value pairs. " +
-            "Use get_slack_list_item on an existing item to see the column IDs and value formats. " +
-            "Values must match the exact format returned by get_slack_list_item."
+              "Use get_slack_list_item on an existing item to see the column IDs and value formats. " +
+              "Values must match the exact format returned by get_slack_list_item.",
           ),
       }),
       execute: async ({ list_id, fields }) => {
@@ -32,18 +32,42 @@ export function createListWriteTools(client: WebClient) {
             params.initial_fields = fields;
           }
 
-          const result = await (client as any).apiCall("slackLists.items.create", params);
+          const result = await (client as any).apiCall(
+            "slackLists.items.create",
+            params,
+          );
 
           if (!result.ok) {
-            logger.error("create_slack_list_item API error", { list_id, error: result.error, response_metadata: result.response_metadata });
-            return { ok: false, error: `Failed to create list item: ${result.error || "unknown"}` };
+            logger.error("create_slack_list_item API error", {
+              list_id,
+              error: result.error,
+              response_metadata: result.response_metadata,
+            });
+            return {
+              ok: false,
+              error: `Failed to create list item: ${result.error || "unknown"}`,
+            };
           }
 
-          logger.info("create_slack_list_item tool called", { list_id, itemId: result.item?.id });
-          return { ok: true, item_id: result.item?.id, message: "List item created" };
+          const created = result.record || result.item;
+          logger.info("create_slack_list_item tool called", {
+            list_id,
+            itemId: created?.id,
+          });
+          return {
+            ok: true,
+            item_id: created?.id,
+            message: "List item created",
+          };
         } catch (error: any) {
-          logger.error("create_slack_list_item tool failed", { list_id, error: error.message });
-          return { ok: false, error: `Failed to create list item: ${error.message}` };
+          logger.error("create_slack_list_item tool failed", {
+            list_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to create list item: ${error.message}`,
+          };
         }
       },
     }),
@@ -60,7 +84,7 @@ export function createListWriteTools(client: WebClient) {
           .record(z.any())
           .describe(
             "Column values to update as a flat object: { column_id: value, ... }. " +
-            "Values must use the same format as returned by get_slack_list_item."
+              "Values must use the same format as returned by get_slack_list_item.",
           ),
       }),
       execute: async ({ list_id, item_id, fields }) => {
@@ -68,15 +92,22 @@ export function createListWriteTools(client: WebClient) {
           await throttle();
 
           const cells = Object.entries(fields).map(([column_id, value]) => ({
-            ...(typeof value === "object" && value !== null && !Array.isArray(value) ? value : { value }),
+            ...(typeof value === "object" &&
+            value !== null &&
+            !Array.isArray(value)
+              ? value
+              : { value }),
             row_id: item_id,
             column_id,
           }));
 
-          const result = await (client as any).apiCall("slackLists.items.update", {
-            list_id,
-            cells,
-          });
+          const result = await (client as any).apiCall(
+            "slackLists.items.update",
+            {
+              list_id,
+              cells,
+            },
+          );
 
           if (!result.ok) {
             logger.error("update_slack_list_item API error", {
@@ -89,22 +120,33 @@ export function createListWriteTools(client: WebClient) {
             return {
               ok: false,
               error: `Failed to update list item: ${result.error || "unknown"}`,
-              detail: result.response_metadata?.messages?.join("; ") || undefined,
+              detail:
+                result.response_metadata?.messages?.join("; ") || undefined,
             };
           }
 
-          logger.info("update_slack_list_item tool called", { list_id, item_id, fields_keys: Object.keys(fields) });
+          logger.info("update_slack_list_item tool called", {
+            list_id,
+            item_id,
+            fields_keys: Object.keys(fields),
+          });
           return { ok: true, message: "List item updated" };
         } catch (error: any) {
-          logger.error("update_slack_list_item tool failed", { list_id, item_id, error: error.message });
-          return { ok: false, error: `Failed to update list item: ${error.message}` };
+          logger.error("update_slack_list_item tool failed", {
+            list_id,
+            item_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to update list item: ${error.message}`,
+          };
         }
       },
     }),
 
     delete_slack_list_item: tool({
-      description:
-        "Delete an item (row) from a Slack List.",
+      description: "Delete an item (row) from a Slack List.",
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         item_id: z.string().describe("The ID of the item/row to delete"),
@@ -112,20 +154,36 @@ export function createListWriteTools(client: WebClient) {
       execute: async ({ list_id, item_id }) => {
         try {
           await throttle();
-          const result = await (client as any).apiCall("slackLists.items.delete", {
-            list_id,
-            id: item_id,
-          });
+          const result = await (client as any).apiCall(
+            "slackLists.items.delete",
+            {
+              list_id,
+              id: item_id,
+            },
+          );
 
           if (!result.ok) {
-            return { ok: false, error: `Failed to delete list item: ${result.error || "unknown"}` };
+            return {
+              ok: false,
+              error: `Failed to delete list item: ${result.error || "unknown"}`,
+            };
           }
 
-          logger.info("delete_slack_list_item tool called", { list_id, item_id });
+          logger.info("delete_slack_list_item tool called", {
+            list_id,
+            item_id,
+          });
           return { ok: true, message: "List item deleted" };
         } catch (error: any) {
-          logger.error("delete_slack_list_item tool failed", { list_id, item_id, error: error.message });
-          return { ok: false, error: `Failed to delete list item: ${error.message}` };
+          logger.error("delete_slack_list_item tool failed", {
+            list_id,
+            item_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to delete list item: ${error.message}`,
+          };
         }
       },
     }),
