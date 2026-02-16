@@ -175,9 +175,15 @@ export async function fetchConversationContext(
  *
  * Thread context takes priority over channel context when both exist.
  * Uses display names for readability.
+ *
+ * @param includeChannelFallback - When true, falls back to recent channel/DM
+ *   messages if no thread is available. Should be true for DMs and threaded
+ *   messages, false for non-threaded channel messages (to avoid mislabeling
+ *   unrelated channel history as "thread context" in the system prompt).
  */
 export function formatConversationContext(
   conversation: ConversationContext,
+  includeChannelFallback: boolean = true,
 ): string | undefined {
   // Prefer thread context if available
   if (conversation.thread && conversation.thread.length > 0) {
@@ -187,8 +193,8 @@ export function formatConversationContext(
     return formatted;
   }
 
-  // Fall back to recent channel/DM messages
-  if (conversation.recentMessages.length > 0) {
+  // Fall back to recent channel/DM messages only when appropriate
+  if (includeChannelFallback && conversation.recentMessages.length > 0) {
     const formatted = conversation.recentMessages
       .map((m) => `${m.displayName}: ${m.text}`)
       .join("\n\n");

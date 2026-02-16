@@ -38,8 +38,12 @@ export async function assemblePrompt(
     getProfile(context.userId),
   ]);
 
-  // Format conversation context from live Slack data (already fetched by pipeline)
-  const threadContext = formatConversationContext(conversation);
+  // Format conversation context from live Slack data (already fetched by pipeline).
+  // Only use channel-history fallback for DMs and threaded messages; for
+  // non-threaded channel messages the channel history would be mislabeled
+  // as "thread context" in the system prompt.
+  const useChannelFallback = context.isDm || !!context.threadTs;
+  const threadContext = formatConversationContext(conversation, useChannelFallback);
 
   // Determine channel context string
   const channelContext = context.isDm ? "DM" : context.channelId;
