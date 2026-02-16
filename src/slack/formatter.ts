@@ -9,13 +9,94 @@
  * - Code blocks: ```lang\n...\n``` → ```\n...\n``` (no language tag)
  * - Links: [text](url) → <url|text>
  * - Headers: ## Header → *Header*
+ * - Tables: pipe-delimited tables → wrapped in ``` code blocks
  */
+
+/**
+ * Detect markdown tables and wrap them in code blocks so they render
+ * as aligned monospace text in Slack. Must run BEFORE other markdown
+ * conversions to avoid mangling pipe characters.
+ *
+ * A markdown table is detected as 2+ consecutive lines where each line
+ * contains at least one `|`. The second line must be a separator row
+ * (contains `---`).
+ *
+ * Tables already inside code blocks are left untouched.
+ */
+function wrapTablesInCodeBlocks(text: string): string {
+  const lines = text.split("\n");
+  const result: string[] = [];
+  let i = 0;
+  let inCodeBlock = false;
+
+  while (i < lines.length) {
+    // Track code block boundaries
+    if (lines[i].trimStart().startsWith("```")) {
+      inCodeBlock = !inCodeBlock;
+      result.push(lines[i]);
+      i++;
+      continue;
+    }
+
+    // Skip table detection inside code blocks
+    if (inCodeBlock) {
+      result.push(lines[i]);
+      i++;
+      continue;
+    }
+
+    // Check if this line could be the start of a table:
+    // current line is a table row, AND next line is a separator row
+    if (
+      isTableRow(lines[i]) &&
+      i + 1 < lines.length &&
+      isSeparatorRow(lines[i + 1])
+    ) {
+      // Collect all contiguous table rows (including separator)
+      const tableLines: string[] = [];
+      while (
+        i < lines.length &&
+        (isTableRow(lines[i]) || isSeparatorRow(lines[i]))
+      ) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      // Wrap the table in a code block
+      result.push("```");
+      result.push(...tableLines);
+      result.push("```");
+    } else {
+      result.push(lines[i]);
+      i++;
+    }
+  }
+
+  return result.join("\n");
+}
+
+/** A table row contains at least one pipe character and has word content */
+function isTableRow(line: string): boolean {
+  if (!line) return false;
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) return false;
+  // Must have at least some word content (not just pipes and dashes)
+  return /\w/.test(trimmed);
+}
+
+/** A separator row looks like |---|---|---| or ---|---|--- with optional colons for alignment */
+function isSeparatorRow(line: string): boolean {
+  if (!line) return false;
+  const trimmed = line.trim();
+  // Must contain pipes and dashes; only pipes, dashes, colons, spaces allowed
+  return /^\|?[\s\-:|]+\|[\s\-:|]+\|?$/.test(trimmed);
+}
 
 /**
  * Convert standard Markdown to Slack mrkdwn.
  */
 export function markdownToSlackMrkdwn(markdown: string): string {
-  let result = markdown;
+  // Wrap tables in code blocks FIRST, before any other conversions
+  let result = wrapTablesInCodeBlocks(markdown);
 
   // Convert headers (## Header → *Header*)
   result = result.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
