@@ -18,6 +18,7 @@ A Slack bot with persistent memory, personality, cross-user awareness, and auton
 - **Respects privacy** -- DM content stays private unless explicitly shared
 - **Forgets on request** -- users can ask "what do you know about me?" or say "forget X"
 - **Configurable** -- admins change models via the Slack App Home tab, no redeploy needed
+- 🔧 **Self-patching** -- Can diagnose issues in its own codebase and dispatch coding agents to open PRs with fixes
 
 ## Stack
 
