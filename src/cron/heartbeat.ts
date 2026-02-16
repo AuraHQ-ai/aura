@@ -54,14 +54,23 @@ function isJobDue(job: typeof jobs.$inferSelect): boolean {
         // Already executed since the most recent cron tick — not due
         return false;
       }
+
+      // For never-executed jobs, only consider due if created before the last cron tick.
+      // This prevents newly created cron jobs from firing immediately before their
+      // first scheduled window has actually occurred.
+      if (!job.lastExecutedAt && job.createdAt >= lastCronTick) {
+        return false;
+      }
+
       // A cron window is due. Fall through to frequencyConfig guards below
       // so min_interval / max_per_day / cooldown are still respected.
     } catch (e) {
-      logger.warn("isJobDue: invalid cron expression, treating as non-cron", {
+      logger.warn("isJobDue: invalid cron expression, skipping job", {
         jobName: job.name,
         cronSchedule: job.cronSchedule,
       });
-      // Fall through to frequency-only evaluation
+      // Invalid cron schedule — skip execution rather than treating as non-cron
+      return false;
     }
   }
 

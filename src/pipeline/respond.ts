@@ -43,7 +43,7 @@ interface RespondOptions {
   systemPrompt: string;
   userMessage: string;
   slackClient: WebClient;
-  context?: { userId?: string; channelId?: string };
+  context?: { userId?: string; channelId?: string; threadTs?: string };
   images?: SlackImage[];
   channelId: string;
   threadTs?: string;

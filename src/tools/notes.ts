@@ -83,9 +83,13 @@ export function createNoteTools(context?: ScheduleContext) {
           let expiresAt: Date | null = null;
           if (expires_in) {
             const ms = parseRelativeTime(expires_in);
-            if (ms) {
-              expiresAt = new Date(Date.now() + ms);
+            if (!ms) {
+              return {
+                ok: false,
+                error: `Could not parse expires_in "${expires_in}". Use formats like "30 minutes", "2 hours", "3 days", "1 week".`,
+              };
             }
+            expiresAt = new Date(Date.now() + ms);
           }
 
           await db
@@ -493,39 +497,42 @@ export function createNoteTools(context?: ScheduleContext) {
           const noteContent = `## Continuations: ${newDepth}\n\n## Progress\n${progress}\n\n## Next Steps\n${next_steps}\n\n## Context\n${ctx}`;
           const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-          // 1. Upsert the plan note
-          await db
-            .insert(notes)
-            .values({
-              topic,
-              content: noteContent,
-              category: "plan",
-              expiresAt: sevenDays,
-              updatedAt: new Date(),
-            })
-            .onConflictDoUpdate({
-              target: notes.topic,
-              set: {
-                content: noteContent,
-                category: "plan",
-                expiresAt: sevenDays,
-                updatedAt: new Date(),
-              },
-            });
-
-          // 2. Insert directly into scheduled_actions to carry channelId + threadTs
+          // Atomically upsert the plan note AND schedule continuation
           const executeAt = new Date(
             Date.now() + continue_in_minutes * 60 * 1000,
           );
           const description = `[CONTINUE:${topic}] ${next_steps}`;
 
-          await db.insert(scheduledActions).values({
-            description,
-            executeAt,
-            channelId: context?.channelId || "",
-            threadTs: context?.threadTs || null,
-            requestedBy: context?.userId || "aura",
-            priority: "high",
+          await db.transaction(async (tx) => {
+            // 1. Upsert the plan note
+            await tx
+              .insert(notes)
+              .values({
+                topic,
+                content: noteContent,
+                category: "plan",
+                expiresAt: sevenDays,
+                updatedAt: new Date(),
+              })
+              .onConflictDoUpdate({
+                target: notes.topic,
+                set: {
+                  content: noteContent,
+                  category: "plan",
+                  expiresAt: sevenDays,
+                  updatedAt: new Date(),
+                },
+              });
+
+            // 2. Insert directly into scheduled_actions to carry channelId + threadTs
+            await tx.insert(scheduledActions).values({
+              description,
+              executeAt,
+              channelId: context?.channelId || "",
+              threadTs: context?.threadTs || null,
+              requestedBy: context?.userId || "aura",
+              priority: "high",
+            });
           });
 
           logger.info("checkpoint_plan tool called", {
