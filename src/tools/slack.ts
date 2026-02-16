@@ -7,6 +7,7 @@ import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
 import { createSandboxTools } from "./sandbox.js";
 import { createWebTools } from "./web.js";
+import { createBigQueryTools } from "./bigquery.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { throttle } from "./rate-limit.js";
 
@@ -1655,5 +1656,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Sandbox Tools ────────────────────────────────────────────────────
     ...createSandboxTools(),
+
+    // ── BigQuery Tools ────────────────────────────────────────────────────
+    ...createBigQueryTools(),
   };
 }
