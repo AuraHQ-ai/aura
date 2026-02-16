@@ -201,7 +201,7 @@ async function llmShouldRespond(
     });
 
     const answer = result.text.trim().toUpperCase();
-    const shouldReply = answer.includes("RESPOND");
+    const shouldReply = answer.startsWith("RESPOND");
 
     logger.debug("LLM shouldRespond gate", {
       answer: result.text.trim(),
