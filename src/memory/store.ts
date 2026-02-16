@@ -1,4 +1,4 @@
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages, memories, type NewMessage, type NewMemory } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
@@ -56,38 +56,3 @@ export async function storeMemories(newMemories: NewMemory[]): Promise<string[]>
   }
 }
 
-/**
- * Get recent messages from a thread for context.
- */
-export async function getThreadMessages(
-  threadTs: string,
-  channelId: string,
-  limit = 20,
-) {
-  return db
-    .select()
-    .from(messages)
-    .where(
-      and(
-        eq(messages.channelId, channelId),
-        sql`(${messages.slackThreadTs} = ${threadTs} OR ${messages.slackTs} = ${threadTs})`,
-      ),
-    )
-    .orderBy(desc(messages.createdAt))
-    .limit(limit);
-}
-
-/**
- * Get recent messages from a channel (for non-threaded context).
- */
-export async function getRecentChannelMessages(
-  channelId: string,
-  limit = 10,
-) {
-  return db
-    .select()
-    .from(messages)
-    .where(eq(messages.channelId, channelId))
-    .orderBy(desc(messages.createdAt))
-    .limit(limit);
-}

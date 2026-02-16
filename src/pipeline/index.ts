@@ -7,6 +7,11 @@ import {
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
 import { generateResponse } from "./respond.js";
+import {
+  fetchConversationContext,
+  resolveDisplayName,
+  type ConversationContext,
+} from "./slack-context.js";
 import { storeMessage } from "../memory/store.js";
 import { extractMemories } from "../memory/extract.js";
 import {
@@ -63,8 +68,35 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   context.text = await resolveSlackEntities(client, context.text);
 
   // 2. Should we respond?
-  if (!shouldRespond(context)) {
-    // Still store the message for context, but don't respond
+  // Tier 1 checks are deterministic and need no API calls. Only fetch
+  // conversation context from the Slack API when Tiers 2–3 need it.
+  let conversation: ConversationContext | undefined;
+  let decision: { respond: boolean; reason: string };
+
+  if (context.isDm) {
+    decision = { respond: true, reason: "dm" };
+  } else if (context.isMentioned) {
+    decision = { respond: true, reason: "mentioned" };
+  } else if (context.isAddressedByName) {
+    decision = { respond: true, reason: "addressed_by_name" };
+  } else {
+    // Tiers 2–3 need live conversation context from the Slack API
+    conversation = await fetchConversationContext(
+      client,
+      context.channelId,
+      botUserId,
+      context.threadTs,
+    );
+    decision = await shouldRespond(context, conversation);
+  }
+
+  if (!decision.respond) {
+    logger.debug("Decided not to respond", {
+      reason: decision.reason,
+      userId: context.userId,
+      channelId: context.channelId,
+    });
+    // Still store the message for long-term memory, but don't respond
     const storePromise = storeUserMessage(context);
     if (waitUntil) {
       waitUntil(storePromise);
@@ -78,6 +110,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     userId: context.userId,
     channelType: context.channelType,
     isDm: context.isDm,
+    respondReason: decision.reason,
     textLength: context.text.length,
     textPreview: context.text.substring(0, 80),
     hasFiles: Array.isArray((event as any).files),
@@ -141,12 +174,21 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       return;
     }
 
-    // 4. Assemble prompt
+    // 4. Assemble prompt (memories + profile + live Slack context)
+    // Fetch conversation context now if it wasn't needed earlier (Tier 1 path)
+    if (!conversation) {
+      conversation = await fetchConversationContext(
+        client,
+        context.channelId,
+        botUserId,
+        context.threadTs,
+      );
+    }
     const retrievalStart = Date.now();
-    const { systemPrompt, memories } = await assemblePrompt({
-      ...context,
-      text: messageText,
-    });
+    const { systemPrompt, memories } = await assemblePrompt(
+      { ...context, text: messageText },
+      conversation,
+    );
     const retrievalMs = Date.now() - retrievalStart;
 
     // 4b. Download images if the message has file attachments
@@ -411,29 +453,3 @@ async function runBackgroundTasks(params: {
   }
 }
 
-/**
- * Resolve a Slack user's display name.
- * Cached per function invocation (Vercel serverless).
- */
-const displayNameCache = new Map<string, string>();
-
-async function resolveDisplayName(
-  client: WebClient,
-  userId: string,
-): Promise<string> {
-  const cached = displayNameCache.get(userId);
-  if (cached) return cached;
-
-  try {
-    const result = await client.users.info({ user: userId });
-    const name =
-      result.user?.profile?.display_name ||
-      result.user?.real_name ||
-      result.user?.name ||
-      userId;
-    displayNameCache.set(userId, name);
-    return name;
-  } catch {
-    return userId;
-  }
-}
