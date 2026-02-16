@@ -171,9 +171,9 @@ export function createJobTools(
             };
           }
 
-          // Build frequency config
+          // Build frequency config (only meaningful for recurring jobs)
           const frequencyConfig: FrequencyConfig | null =
-            min_interval_hours != null || max_per_day != null
+            recurring && (min_interval_hours != null || max_per_day != null)
               ? {
                   ...(min_interval_hours != null && { minIntervalHours: min_interval_hours }),
                   ...(max_per_day != null && { maxPerDay: max_per_day }),

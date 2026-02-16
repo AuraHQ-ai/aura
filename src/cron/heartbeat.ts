@@ -269,7 +269,7 @@ async function executeJob(
   try {
     const planTopic = parseContinuationTag(job.description);
     const isContinuation = planTopic !== null;
-    const isRecurring = !!job.cronSchedule || !!job.frequencyConfig;
+    const isRecurring = !!job.cronSchedule;
 
     let prompt: string;
     let systemPrompt: string;

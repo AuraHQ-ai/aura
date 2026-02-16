@@ -31,7 +31,8 @@ BEGIN
       "created_at",
       NOW()
     FROM "scheduled_actions"
-    WHERE "status" = 'pending';
+    WHERE "status" = 'pending'
+    ON CONFLICT ("name") DO NOTHING;
   END IF;
 END $$;--> statement-breakpoint
 
