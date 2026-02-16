@@ -39,14 +39,20 @@ export async function assemblePrompt(
   ]);
 
   // Format conversation context from live Slack data (already fetched by pipeline).
-  // Only use channel-history fallback for DMs and threaded messages; for
-  // non-threaded channel messages the channel history would be mislabeled
-  // as "thread context" in the system prompt.
-  const useChannelFallback = context.isDm || !!context.threadTs;
+  // Include channel-history fallback for DMs, threaded messages, and when Aura
+  // is recently active in the channel (Tier 3) — otherwise the response LLM
+  // would have no conversation context despite the shouldRespond gate seeing it.
+  const useChannelFallback =
+    context.isDm || !!context.threadTs || conversation.auraRecentlyActive;
   const threadContext = formatConversationContext(conversation, useChannelFallback);
 
   // Determine channel context string
   const channelContext = context.isDm ? "DM" : context.channelId;
+
+  // The context is "channel history" (not a thread) when there's no thread
+  // data and we fell back to recent channel messages.
+  const isChannelHistory =
+    !conversation.thread && !!threadContext && !context.isDm;
 
   // Build the system prompt (async: queries skill index from DB)
   const systemPrompt = await buildSystemPrompt({
@@ -56,6 +62,7 @@ export async function assemblePrompt(
     channelType: context.channelType,
     userTimezone: userProfile?.timezone || undefined,
     threadContext,
+    isChannelHistory,
   });
 
   logger.debug(`Assembled prompt in ${Date.now() - start}ms`, {

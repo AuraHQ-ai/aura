@@ -95,10 +95,13 @@ export interface ShouldRespondResult {
 }
 
 /**
- * Determine if Aura should respond to this message.
+ * Determine if Aura should respond to this message (Tiers 2–3 only).
  *
- * Three tiers:
- * 1. Deterministic YES: DMs, explicit @mention, addressed by name
+ * Tier 1 (DMs, explicit @mention, addressed by name) is handled inline
+ * by the pipeline before this function is called — see `runPipeline` in
+ * `index.ts`. This function is only invoked when Tier 1 did NOT match.
+ *
+ * Tiers handled here:
  * 2. LLM gate: Aura is a thread participant or it's her thread
  * 3. LLM gate: Aura posted recently in the channel (non-threaded, within 1h)
  * 4. Default: don't respond
@@ -107,11 +110,6 @@ export async function shouldRespond(
   context: MessageContext,
   conversation: ConversationContext,
 ): Promise<ShouldRespondResult> {
-  // Tier 1: Always respond (deterministic, instant)
-  if (context.isDm) return { respond: true, reason: "dm" };
-  if (context.isMentioned) return { respond: true, reason: "mentioned" };
-  if (context.isAddressedByName) return { respond: true, reason: "addressed_by_name" };
-
   // Tier 2: Aura is a thread participant or it's her thread
   if (conversation.isAuraParticipant || conversation.isAuraThread) {
     const shouldReply = await llmShouldRespond(context, conversation, true);
@@ -214,11 +212,15 @@ async function llmShouldRespond(
 
     return shouldReply;
   } catch (error: any) {
-    logger.error("LLM shouldRespond gate failed — defaulting to RESPOND", {
+    // Tier 2 (participant): fail open — better to over-respond than miss.
+    // Tier 3 (recently active): fail closed — don't intrude on unrelated conversations.
+    const fallback = isParticipant;
+    logger.error("LLM shouldRespond gate failed", {
       error: error.message,
+      fallback: fallback ? "RESPOND" : "SKIP",
+      isParticipant,
     });
-    // Fail open: respond rather than silently ignore
-    return true;
+    return fallback;
   }
 }
 
