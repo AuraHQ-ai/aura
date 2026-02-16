@@ -62,6 +62,44 @@ function isSafeBigQueryIdentifier(id: string): boolean {
 const MAX_RESULT_CHARS = 8000;
 
 /**
+ * Extract the first dataset reference from a SQL query so we can resolve its
+ * location. Handles backtick-quoted `project.dataset.table`,
+ * `dataset.table`, and unquoted dataset.table references after FROM / JOIN.
+ * Returns the dataset ID or null if none found.
+ */
+function extractDatasetFromSQL(sql: string): string | null {
+  // Match backtick-quoted references: `project.dataset.table` or `dataset.table`
+  const backtickMatch = sql.match(
+    /(?:FROM|JOIN)\s+`(?:[a-zA-Z0-9_-]+\.)?([a-zA-Z0-9_-]+)\.[a-zA-Z0-9_-]+`/i,
+  );
+  if (backtickMatch) return backtickMatch[1];
+
+  // Match unquoted references: dataset.table (no project prefix)
+  const unquotedMatch = sql.match(
+    /(?:FROM|JOIN)\s+([a-zA-Z0-9_-]+)\.[a-zA-Z0-9_-]+/i,
+  );
+  if (unquotedMatch) return unquotedMatch[1];
+
+  return null;
+}
+
+/**
+ * Resolve the BigQuery location for a dataset. Returns undefined if the
+ * dataset cannot be found (falls back to default location behavior).
+ */
+async function resolveDatasetLocation(
+  client: NonNullable<Awaited<ReturnType<typeof getBigQueryClient>>>,
+  datasetId: string,
+): Promise<string | undefined> {
+  try {
+    const [metadata] = await client.dataset(datasetId).getMetadata();
+    return metadata.location ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Create BigQuery tools for the AI SDK.
  * All tools are read-only. DML/DDL is rejected.
  */
@@ -189,6 +227,8 @@ export function createBigQueryTools() {
               : null,
           };
 
+          const location: string | undefined = metadata.location ?? undefined;
+
           let samples: any[] = [];
           if (sample_rows > 0) {
             try {
@@ -196,6 +236,7 @@ export function createBigQueryTools() {
                 query: `SELECT * FROM \`${dataset}.${table}\` LIMIT ${sample_rows}`,
                 useLegacySql: false,
                 maximumBytesBilled: String(1e9),
+                location,
               });
               samples = rows;
             } catch (sampleError: any) {
@@ -292,11 +333,18 @@ export function createBigQueryTools() {
         const finalSql = hasLimit ? sql : `${sql.replace(/;\s*$/, "")} LIMIT ${max_rows}`;
 
         try {
+          // Resolve dataset location so the query job runs in the right region
+          const datasetId = extractDatasetFromSQL(finalSql);
+          const location = datasetId
+            ? await resolveDatasetLocation(client, datasetId)
+            : undefined;
+
           const [rows, queryJob] = await client.query({
             query: finalSql,
             useLegacySql: false,
             maximumBytesBilled: String(1e9),
             maxResults: max_rows,
+            location,
           });
 
           const jobMeta = (queryJob as any)?.statistics?.query ?? {};
