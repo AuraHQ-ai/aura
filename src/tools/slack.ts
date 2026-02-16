@@ -1130,11 +1130,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             itemCount: result.items?.length || 0,
           });
 
+          const items = (result.items || []).map((item: any) => ({
+            ...item,
+            thread_channel_id: item.message?.channel_id || null,
+            thread_ts: item.message?.ts || null,
+          }));
+
           return {
             ok: true,
             list_id,
-            items: result.items || [],
-            count: result.items?.length || 0,
+            items,
+            count: items.length,
           };
         } catch (error: any) {
           logger.error("list_slack_list_items tool failed", {
@@ -1165,7 +1171,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           await throttle();
           const result = await (client as any).apiCall("slackLists.items.info", {
             list_id,
-            item_id,
+            id: item_id,
           });
 
           if (!result.ok) {
