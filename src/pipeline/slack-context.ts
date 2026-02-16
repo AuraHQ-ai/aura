@@ -83,14 +83,28 @@ export async function fetchConversationContext(
   try {
     if (threadTs) {
       // ── Threaded message: fetch the full thread ──────────────────────────
-      await throttle();
-      const repliesResult = await client.conversations.replies({
-        channel: channelId,
-        ts: threadTs,
-        limit: 20,
-      });
+      // conversations.replies returns messages oldest-first. We paginate
+      // through all pages to ensure we have the complete thread, including
+      // the most recent messages needed for context and participation checks.
+      const rawMessages: NonNullable<
+        Awaited<ReturnType<typeof client.conversations.replies>>["messages"]
+      > = [];
+      let cursor: string | undefined;
+      const MAX_PAGES = 10; // Safety cap: 10 × 200 = 2000 messages max
+      let pages = 0;
+      do {
+        await throttle();
+        const repliesResult = await client.conversations.replies({
+          channel: channelId,
+          ts: threadTs,
+          limit: 200,
+          cursor,
+        });
+        rawMessages.push(...(repliesResult.messages || []));
+        cursor = repliesResult.response_metadata?.next_cursor || undefined;
+        pages++;
+      } while (cursor && pages < MAX_PAGES);
 
-      const rawMessages = repliesResult.messages || [];
       const threadMessages: SlackThreadMessage[] = [];
 
       for (const msg of rawMessages) {
