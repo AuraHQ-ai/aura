@@ -32,7 +32,8 @@ function validateReadOnlySQL(sql: string): string | null {
   // Reject multi-statement scripts (semicolons not inside string literals)
   // Strip string literals first to avoid false positives
   const withoutStrings = sql.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
-  if (withoutStrings.includes(";")) {
+  // Allow a single trailing semicolon (common in normal SQL) before checking
+  if (withoutStrings.replace(/;\s*$/, "").includes(";")) {
     return "Multi-statement queries are not allowed. Submit one SELECT at a time.";
   }
 
@@ -46,6 +47,15 @@ function validateReadOnlySQL(sql: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * Validate that a string is a safe BigQuery identifier (dataset or table name).
+ * Only allows alphanumeric characters, underscores, and hyphens.
+ */
+const SAFE_IDENTIFIER_RE = /^[a-zA-Z0-9_-]+$/;
+function isSafeBigQueryIdentifier(id: string): boolean {
+  return SAFE_IDENTIFIER_RE.test(id);
 }
 
 /** Max result payload size to avoid token bloat. */
@@ -145,6 +155,14 @@ export function createBigQueryTools() {
             ok: false,
             error:
               "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
+          };
+        }
+
+        if (!isSafeBigQueryIdentifier(dataset) || !isSafeBigQueryIdentifier(table)) {
+          return {
+            ok: false,
+            error:
+              "Invalid dataset or table name. Only alphanumeric characters, underscores, and hyphens are allowed.",
           };
         }
 
