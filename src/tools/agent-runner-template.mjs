@@ -53,6 +53,14 @@ async function main() {
     process.exit(1);
   }
 
+  // ── Set API keys from config (primary source on resumed sandboxes) ───
+  if (config.anthropic_api_key && !process.env.ANTHROPIC_API_KEY) {
+    process.env.ANTHROPIC_API_KEY = config.anthropic_api_key;
+  }
+  if (config.github_token && !process.env.GITHUB_TOKEN) {
+    process.env.GITHUB_TOKEN = config.github_token;
+  }
+
   // ── Validate env ─────────────────────────────────────────────────────
   if (!process.env.ANTHROPIC_API_KEY) {
     output({ ok: false, error: "ANTHROPIC_API_KEY not set in sandbox environment" });
