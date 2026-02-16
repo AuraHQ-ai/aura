@@ -513,43 +513,41 @@ export function createNoteTools(context?: ScheduleContext) {
           const noteContent = `## Continuations: ${newDepth}\n\n## Progress\n${progress}\n\n## Next Steps\n${next_steps}\n\n## Context\n${ctx}`;
           const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-          // Atomically upsert the plan note AND schedule continuation
+          // Upsert the plan note and schedule continuation
           const executeAt = new Date(
             Date.now() + continue_in_minutes * 60 * 1000,
           );
           const description = `[CONTINUE:${topic}] ${next_steps}`;
 
-          await db.transaction(async (tx) => {
-            // 1. Upsert the plan note
-            await tx
-              .insert(notes)
-              .values({
-                topic,
+          // 1. Upsert the plan note
+          await db
+            .insert(notes)
+            .values({
+              topic,
+              content: noteContent,
+              category: "plan",
+              expiresAt: sevenDays,
+              updatedAt: new Date(),
+            })
+            .onConflictDoUpdate({
+              target: notes.topic,
+              set: {
                 content: noteContent,
                 category: "plan",
                 expiresAt: sevenDays,
                 updatedAt: new Date(),
-              })
-              .onConflictDoUpdate({
-                target: notes.topic,
-                set: {
-                  content: noteContent,
-                  category: "plan",
-                  expiresAt: sevenDays,
-                  updatedAt: new Date(),
-                },
-              });
-
-            // 2. Insert a continuation job with channelId + threadTs for routing
-            await tx.insert(jobs).values({
-              name: `continue-${topic}-${Date.now().toString(36)}`,
-              description,
-              executeAt,
-              channelId: context?.channelId || "",
-              threadTs: context?.threadTs || null,
-              requestedBy: context?.userId || "aura",
-              priority: "high",
+              },
             });
+
+          // 2. Insert a continuation job with channelId + threadTs for routing
+          await db.insert(jobs).values({
+            name: `continue-${topic}-${Date.now().toString(36)}`,
+            description,
+            executeAt,
+            channelId: context?.channelId || "",
+            threadTs: context?.threadTs || null,
+            requestedBy: context?.userId || "aura",
+            priority: "high",
           });
 
           logger.info("checkpoint_plan tool called", {

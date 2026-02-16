@@ -36,5 +36,10 @@ BEGIN
 END $$;--> statement-breakpoint
 
 -- Step 3: Drop the old table
-ALTER TABLE "scheduled_actions" DISABLE ROW LEVEL SECURITY;--> statement-breakpoint
-DROP TABLE IF EXISTS "scheduled_actions" CASCADE;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'scheduled_actions') THEN
+    ALTER TABLE "scheduled_actions" DISABLE ROW LEVEL SECURITY;
+    DROP TABLE "scheduled_actions" CASCADE;
+  END IF;
+END $$;
