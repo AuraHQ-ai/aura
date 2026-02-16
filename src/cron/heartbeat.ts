@@ -146,10 +146,25 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     const pendingJobs = await db
       .select()
       .from(jobs)
-      .where(and(eq(jobs.status, "pending"), eq(jobs.enabled, 1)))
+      .where(
+        and(
+          eq(jobs.status, "pending"),
+          eq(jobs.enabled, 1),
+          or(
+            // One-shot/continuation: due when executeAt <= now
+            lte(jobs.executeAt, now),
+            // Recurring: no executeAt, has cron or frequency (needs app-side eval)
+            and(
+              isNull(jobs.executeAt),
+              sql`(${jobs.cronSchedule} IS NOT NULL AND ${jobs.cronSchedule} != '' OR ${jobs.frequencyConfig} IS NOT NULL)`,
+            ),
+          ),
+        ),
+      )
       .orderBy(
         sql`CASE WHEN ${jobs.priority} = 'high' THEN 0 WHEN ${jobs.priority} = 'normal' THEN 1 ELSE 2 END`,
         sql`${jobs.lastExecutedAt} ASC NULLS FIRST`,
+        sql`${jobs.executeAt} ASC NULLS LAST`,
       );
 
     // ── 2. Filter to due jobs ────────────────────────────────────────────
@@ -160,17 +175,14 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       if (dueJobs.length >= MAX_JOBS_PER_SWEEP) break;
 
       if (job.executeAt) {
-        // One-shot or continuation: due when executeAt <= now
-        if (job.executeAt <= now) {
-          dueJobs.push(job);
-        }
+        // One-shot or continuation: already filtered by DB (executeAt <= now)
+        dueJobs.push(job);
       } else if (job.cronSchedule || job.frequencyConfig) {
         // Recurring: evaluate cron + frequency guards
         if (isRecurringJobDue(job)) {
           dueJobs.push(job);
         }
       }
-      // Jobs with neither executeAt nor cron/frequency are skipped
     }
 
     if (dueJobs.length > 0) {

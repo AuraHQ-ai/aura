@@ -361,7 +361,14 @@ export function createJobTools(
               message: `Recurring job "${job.name}" disabled. Use create_job with the same name to re-enable.`,
             };
           } else {
-            // One-shot: mark cancelled
+            // One-shot: only cancel if still pending
+            if (job.status !== "pending") {
+              return {
+                ok: false,
+                error: `Job "${job.name}" is already ${job.status} and cannot be cancelled.`,
+              };
+            }
+
             await db
               .update(jobs)
               .set({ status: "cancelled", updatedAt: new Date() })
