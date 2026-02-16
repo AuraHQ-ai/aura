@@ -177,6 +177,17 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             jobName: job.name,
             error: error.message,
           });
+
+          // Rollback lastExecutedAt so the job remains eligible for retry
+          // on the next heartbeat instead of being treated as completed.
+          await db
+            .update(jobs)
+            .set({
+              lastExecutedAt: job.lastExecutedAt ?? null,
+              updatedAt: new Date(),
+            })
+            .where(eq(jobs.id, job.id));
+
           jobsFailed++;
         }
       }

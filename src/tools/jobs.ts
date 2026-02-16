@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
+import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs } from "../db/schema.js";
 import type { FrequencyConfig } from "../db/schema.js";
@@ -75,6 +76,18 @@ export function createJobTools(client: WebClient) {
               };
             }
             channelId = channel.id;
+          }
+
+          // Validate cron expression before saving
+          if (cron_schedule) {
+            try {
+              CronExpressionParser.parse(cron_schedule);
+            } catch {
+              return {
+                ok: false,
+                error: `Invalid cron expression "${cron_schedule}". Use standard 5-field cron syntax, e.g. '0 9 * * 1-5'.`,
+              };
+            }
           }
 
           const frequencyConfig: FrequencyConfig | null =
