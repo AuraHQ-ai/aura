@@ -20,8 +20,8 @@ const MAX_JOBS_PER_SWEEP = 10;
 /** Max retries before marking as failed */
 const MAX_RETRIES = 3;
 
-/** Retry delay in ms (10 minutes) */
-const RETRY_DELAY_MS = 10 * 60 * 1000;
+/** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
+const RETRY_DELAY_MS = 30 * 60 * 1000;
 
 // ── System Prompts ───────────────────────────────────────────────────────────
 
