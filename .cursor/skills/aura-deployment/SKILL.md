@@ -81,6 +81,7 @@ npx --yes vercel@50.13.2 inspect <deployment-url> --logs --scope real-advisor
 | `SLACK_USER_TOKEN` | User token for search (xoxp-...) |
 | `CRON_SECRET` | Protects cron endpoints |
 | `TAVILY_API_KEY` | Web search API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude Agent SDK (self-patching via patch_own_code) |
 
 ## Slack App Configuration
 
