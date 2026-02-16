@@ -54,8 +54,8 @@ export async function assemblePrompt(
   // Determine channel context string
   const channelContext = context.isDm ? "DM" : context.channelId;
 
-  // Build the system prompt
-  const systemPrompt = buildSystemPrompt({
+  // Build the system prompt (async: queries skill index from DB)
+  const systemPrompt = await buildSystemPrompt({
     memories,
     userProfile,
     channelContext,

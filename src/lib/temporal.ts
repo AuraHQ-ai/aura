@@ -1,8 +1,9 @@
 /**
  * Temporal awareness helpers (FR-6).
  *
- * Provides current-time context for the system prompt and
- * relative-time formatting for memory references.
+ * Provides current-time context for the system prompt,
+ * relative-time formatting for memory references,
+ * and relative-time parsing for scheduling.
  */
 
 const MONTHS = [
@@ -73,4 +74,34 @@ export function relativeTime(date: Date, now?: Date): string {
   }
 
   return `back in ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+}
+
+/**
+ * Parse a relative time string into milliseconds.
+ * Supports: "30 minutes", "2 hours", "1 day", "3 days", "1 week", "tomorrow"
+ */
+export function parseRelativeTime(input: string): number | null {
+  const cleaned = input.trim().toLowerCase();
+
+  if (cleaned === "tomorrow") {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    return tomorrow.getTime() - Date.now();
+  }
+
+  const match = cleaned.match(
+    /^(\d+)\s*(min(?:ute)?s?|h(?:our)?s?|d(?:ay)?s?|w(?:eek)?s?)$/,
+  );
+  if (!match) return null;
+
+  const num = parseInt(match[1]);
+  const unit = match[2];
+
+  if (unit.startsWith("min")) return num * 60 * 1000;
+  if (unit.startsWith("h")) return num * 60 * 60 * 1000;
+  if (unit.startsWith("d")) return num * 24 * 60 * 60 * 1000;
+  if (unit.startsWith("w")) return num * 7 * 24 * 60 * 60 * 1000;
+
+  return null;
 }

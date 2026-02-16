@@ -165,7 +165,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       systemPrompt,
       userMessage: messageText,
       slackClient: client,
-      context: { userId: context.userId, channelId: context.channelId },
+      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs },
       images,
       channelId: context.channelId,
       threadTs: replyThreadTs,

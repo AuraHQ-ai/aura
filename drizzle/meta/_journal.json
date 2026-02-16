@@ -29,6 +29,27 @@
       "when": 1771143783374,
       "tag": "0003_warm_shriek",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771250921653,
+      "tag": "0004_free_skullbuster",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1771253205218,
+      "tag": "0005_past_lester",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1771256910923,
+      "tag": "0006_volatile_cannonball",
+      "breakpoints": true
     }
   ]
 }
