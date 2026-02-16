@@ -74,9 +74,9 @@ function extractDatasetFromSQL(sql: string): string | null {
   );
   if (backtickMatch) return backtickMatch[1];
 
-  // Match unquoted references: dataset.table (no project prefix)
+  // Match unquoted references: project.dataset.table or dataset.table
   const unquotedMatch = sql.match(
-    /(?:FROM|JOIN)\s+([a-zA-Z0-9_-]+)\.[a-zA-Z0-9_-]+/i,
+    /(?:FROM|JOIN)\s+(?:[a-zA-Z0-9_-]+\.)?([a-zA-Z0-9_-]+)\.[a-zA-Z0-9_-]+/i,
   );
   if (unquotedMatch) return unquotedMatch[1];
 
@@ -339,20 +339,20 @@ export function createBigQueryTools() {
             ? await resolveDatasetLocation(client, datasetId)
             : undefined;
 
-          const [rows, queryJob] = await client.query({
+          const queryResult = await client.query({
             query: finalSql,
             useLegacySql: false,
             maximumBytesBilled: String(1e9),
             maxResults: max_rows,
             location,
           });
-
-          const jobMeta = (queryJob as any)?.statistics?.query ?? {};
+          const rows = queryResult[0];
+          const responseMeta = (queryResult as any)[2];
           const columns =
-            jobMeta?.schema?.fields?.map((f: any) => f.name) ??
+            responseMeta?.schema?.fields?.map((f: any) => f.name) ??
             (rows.length > 0 ? Object.keys(rows[0]) : []);
           const totalRows = rows.length;
-          const bytesProcessed = jobMeta?.totalBytesProcessed ?? null;
+          const bytesProcessed = responseMeta?.totalBytesProcessed ?? null;
 
           logger.info("execute_query called", {
             sqlLength: sql.length,
