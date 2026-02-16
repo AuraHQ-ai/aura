@@ -6,36 +6,7 @@ import { db } from "../db/client.js";
 import { jobs } from "../db/schema.js";
 import type { FrequencyConfig } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
-
-// ── Channel Resolution ───────────────────────────────────────────────────────
-
-async function resolveChannelByName(
-  client: WebClient,
-  name: string,
-): Promise<{ id: string; name: string } | null> {
-  const cleanName = name.replace(/^#/, "").toLowerCase();
-  let cursor: string | undefined;
-
-  do {
-    const result = await client.conversations.list({
-      types: "public_channel,private_channel",
-      exclude_archived: true,
-      limit: 200,
-      cursor,
-    });
-
-    const match = result.channels?.find(
-      (ch) => ch.name?.toLowerCase() === cleanName,
-    );
-    if (match && match.id && match.name) {
-      return { id: match.id, name: match.name };
-    }
-
-    cursor = result.response_metadata?.next_cursor || undefined;
-  } while (cursor);
-
-  return null;
-}
+import { resolveChannelByName } from "./schedule.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
@@ -114,6 +85,25 @@ export function createJobTools(client: WebClient) {
                 }
               : null;
 
+          // Build update set dynamically so omitted optional fields
+          // preserve existing values rather than being wiped to null.
+          const updateSet: Record<string, unknown> = {
+            description,
+            updatedAt: new Date(),
+          };
+          if (playbook !== undefined) {
+            updateSet.playbook = playbook || null;
+          }
+          if (cron_schedule !== undefined) {
+            updateSet.cronSchedule = cron_schedule || null;
+          }
+          if (frequencyConfig !== null) {
+            updateSet.frequencyConfig = frequencyConfig;
+          }
+          if (channel_name !== undefined) {
+            updateSet.channelId = channelId;
+          }
+
           await db
             .insert(jobs)
             .values({
@@ -127,14 +117,7 @@ export function createJobTools(client: WebClient) {
             })
             .onConflictDoUpdate({
               target: jobs.name,
-              set: {
-                description,
-                playbook: playbook || null,
-                cronSchedule: cron_schedule || null,
-                frequencyConfig,
-                channelId,
-                updatedAt: new Date(),
-              },
+              set: updateSet,
             });
 
           logger.info("create_job tool called", { name, description: description.substring(0, 80) });

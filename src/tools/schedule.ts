@@ -9,7 +9,7 @@ import { parseRelativeTime } from "../lib/temporal.js";
 
 // ── Channel Resolution (lightweight, uses WebClient) ─────────────────────────
 
-async function resolveChannelByName(
+export async function resolveChannelByName(
   client: WebClient,
   name: string,
 ): Promise<{ id: string; name: string } | null> {
