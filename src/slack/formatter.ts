@@ -30,8 +30,9 @@ function wrapTablesInCodeBlocks(text: string): string {
   let inCodeBlock = false;
 
   while (i < lines.length) {
-    // Track code block boundaries
-    if (lines[i].trimStart().startsWith("```")) {
+    // Track code block boundaries (backtick and tilde fences)
+    const trimmedLine = lines[i].trimStart();
+    if (trimmedLine.startsWith("```") || trimmedLine.startsWith("~~~")) {
       inCodeBlock = !inCodeBlock;
       result.push(lines[i]);
       i++;
@@ -150,13 +151,14 @@ export function markdownToSlackMrkdwn(markdown: string): string {
 
   // Split into code-block and non-code-block segments so markdown
   // conversions don't modify content inside code fences.
-  const segments = text.split(/(```[\s\S]*?```)/g);
+  // Handles both backtick (```) and tilde (~~~) fences, with optional leading indentation.
+  const segments = text.split(/([ \t]*(?:```|~~~)[\s\S]*?(?:```|~~~))/g);
 
   return segments
     .map((segment) => {
-      if (segment.startsWith("```")) {
+      if (/^\s*(?:```|~~~)/.test(segment)) {
         // Only strip language tags from code blocks
-        return segment.replace(/```[a-zA-Z]*\n/, "```\n");
+        return segment.replace(/(```|~~~)[a-zA-Z]*\n/, "$1\n");
       }
       return convertMarkdownSegment(segment);
     })
