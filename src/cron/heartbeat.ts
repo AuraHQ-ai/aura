@@ -73,8 +73,11 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
 
   if (job.cronSchedule) {
     try {
+      // Offset by 1 s so that prev() includes the current boundary tick.
+      // Without this, prev() is exclusive of currentDate and misses the
+      // exact scheduled second, causing jobs to skip their on-time tick.
       const cron = CronExpressionParser.parse(job.cronSchedule, {
-        currentDate: now,
+        currentDate: new Date(now.getTime() + 1000),
         tz: job.timezone || undefined,
       });
       const lastCronTick = cron.prev().toDate();

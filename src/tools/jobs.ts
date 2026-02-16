@@ -194,7 +194,7 @@ export function createJobTools(
           };
           if (playbook !== undefined) updateSet.playbook = playbook || null;
           if (recurring !== undefined) updateSet.cronSchedule = recurring || null;
-          if (frequencyConfig !== null) updateSet.frequencyConfig = frequencyConfig;
+          updateSet.frequencyConfig = frequencyConfig;
           if (channel_name !== undefined) updateSet.channelId = channelId;
           if (executeAt) updateSet.executeAt = executeAt;
           updateSet.timezone = timezone;
