@@ -109,7 +109,7 @@ export async function fetchConversationContext(
 
       for (const msg of rawMessages) {
         const userId = msg.user || msg.bot_id || "unknown";
-        const isBot = userId === botUserId;
+        const isBot = msg.user === botUserId || (!msg.user && !!msg.bot_id);
         const displayName = isBot
           ? "Aura"
           : await resolveDisplayName(client, userId);
@@ -148,7 +148,7 @@ export async function fetchConversationContext(
 
     for (const msg of rawHistory) {
       const userId = msg.user || msg.bot_id || "unknown";
-      const isBot = userId === botUserId;
+      const isBot = msg.user === botUserId || (!msg.user && !!msg.bot_id);
       const displayName = isBot
         ? "Aura"
         : await resolveDisplayName(client, userId);
@@ -201,7 +201,15 @@ export function formatConversationContext(
 ): string | undefined {
   // Prefer thread context if available
   if (conversation.thread && conversation.thread.length > 0) {
-    const formatted = conversation.thread
+    // Cap thread context to avoid inflating the system prompt for long threads.
+    // Keep the parent message (first) plus the most recent messages.
+    const MAX_THREAD_MESSAGES = 50;
+    const thread = conversation.thread;
+    const capped =
+      thread.length <= MAX_THREAD_MESSAGES
+        ? thread
+        : [thread[0], ...thread.slice(-MAX_THREAD_MESSAGES + 1)];
+    const formatted = capped
       .map((m) => `${m.displayName}: ${m.text}`)
       .join("\n\n");
     return formatted;
