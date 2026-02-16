@@ -175,7 +175,10 @@ async function llmShouldRespond(
 ): Promise<boolean> {
   try {
     // Build a concise view of the last few messages
-    const messages = conversation.thread || conversation.recentMessages;
+    const messages =
+      conversation.thread && conversation.thread.length > 0
+        ? conversation.thread
+        : conversation.recentMessages;
     const recent = messages.slice(-5);
     const conversationText = recent
       .map((m: SlackThreadMessage) => `[${m.displayName}]: ${m.text}`)

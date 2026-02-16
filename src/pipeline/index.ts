@@ -10,6 +10,7 @@ import { generateResponse } from "./respond.js";
 import {
   fetchConversationContext,
   resolveDisplayName,
+  type ConversationContext,
 } from "./slack-context.js";
 import { storeMessage } from "../memory/store.js";
 import { extractMemories } from "../memory/extract.js";
@@ -66,17 +67,29 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // 1b. Resolve Slack entity references (<@U...>, <#C...>) to readable names
   context.text = await resolveSlackEntities(client, context.text);
 
-  // 1c. Fetch live conversation context from Slack API (used by both
-  //     shouldRespond and assemblePrompt — fetched once, reused)
-  const conversation = await fetchConversationContext(
-    client,
-    context.channelId,
-    botUserId,
-    context.threadTs,
-  );
-
   // 2. Should we respond?
-  const decision = await shouldRespond(context, conversation);
+  // Tier 1 checks are deterministic and need no API calls. Only fetch
+  // conversation context from the Slack API when Tiers 2–3 need it.
+  let conversation: ConversationContext | undefined;
+  let decision: { respond: boolean; reason: string };
+
+  if (context.isDm) {
+    decision = { respond: true, reason: "dm" };
+  } else if (context.isMentioned) {
+    decision = { respond: true, reason: "mentioned" };
+  } else if (context.isAddressedByName) {
+    decision = { respond: true, reason: "addressed_by_name" };
+  } else {
+    // Tiers 2–3 need live conversation context from the Slack API
+    conversation = await fetchConversationContext(
+      client,
+      context.channelId,
+      botUserId,
+      context.threadTs,
+    );
+    decision = await shouldRespond(context, conversation);
+  }
+
   if (!decision.respond) {
     logger.debug("Decided not to respond", {
       reason: decision.reason,
@@ -162,6 +175,15 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     }
 
     // 4. Assemble prompt (memories + profile + live Slack context)
+    // Fetch conversation context now if it wasn't needed earlier (Tier 1 path)
+    if (!conversation) {
+      conversation = await fetchConversationContext(
+        client,
+        context.channelId,
+        botUserId,
+        context.threadTs,
+      );
+    }
     const retrievalStart = Date.now();
     const { systemPrompt, memories } = await assemblePrompt(
       { ...context, text: messageText },
