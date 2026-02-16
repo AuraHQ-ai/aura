@@ -2,7 +2,6 @@ import { tool } from "ai";
 import { z } from "zod";
 import {
   getOrCreateSandbox,
-  pauseSandbox,
   truncateOutput,
 } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
@@ -67,9 +66,6 @@ export function createSandboxTools() {
             stderrLength: (result.stderr || "").length,
           });
 
-          // Pause sandbox after execution to save credits
-          await pauseSandbox();
-
           return {
             ok: true,
             exit_code: result.exitCode,
@@ -81,9 +77,6 @@ export function createSandboxTools() {
             command: command.substring(0, 100),
             error: error.message,
           });
-
-          // Try to pause even on error
-          await pauseSandbox().catch(() => {});
 
           if (error.message?.includes("timed out")) {
             return {
@@ -127,8 +120,6 @@ export function createSandboxTools() {
             length: content.length,
           });
 
-          await pauseSandbox();
-
           return {
             ok: true,
             path,
@@ -141,7 +132,6 @@ export function createSandboxTools() {
             path,
             error: error.message,
           });
-          await pauseSandbox().catch(() => {});
 
           return {
             ok: false,
@@ -180,8 +170,6 @@ export function createSandboxTools() {
             length: content.length,
           });
 
-          await pauseSandbox();
-
           return {
             ok: true,
             message: `File written to ${path} (${content.length} bytes)`,
@@ -191,7 +179,6 @@ export function createSandboxTools() {
             path,
             error: error.message,
           });
-          await pauseSandbox().catch(() => {});
 
           return {
             ok: false,
