@@ -279,7 +279,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
   return {
     list_channels: tool({
       description:
-        "List public and private channels in the Slack workspace that Aura has access to. Use this to discover what channels exist before posting or joining.",
+        "List Slack channels that Aura is currently a member of. Important: this only shows channels Aura has already joined, NOT all public channels in the workspace. To join a channel not shown here, use join_channel with the exact channel name or ID.",
       inputSchema: z.object({
         limit: z
           .number()
@@ -421,11 +421,11 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     join_channel: tool({
       description:
-        "Join a public Slack channel by name. Aura must join a channel before she can read its history or post messages there. Only works for public channels.",
+        "Join a public Slack channel by name or ID. Aura must join a channel before she can read its history or post messages there. Only works for public channels. This tool can find and join channels that don't appear in list_channels results, since list_channels only shows channels Aura is already in.",
       inputSchema: z.object({
         channel_name: z
           .string()
-          .describe("The name of the channel to join, e.g. 'general' or '#general'"),
+          .describe("The name or ID of the channel to join, e.g. 'general', '#general', or 'C0BNVKS77'"),
       }),
       execute: async ({ channel_name }) => {
         try {
