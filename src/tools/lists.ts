@@ -5,6 +5,114 @@ import { logger } from "../lib/logger.js";
 import { throttle } from "./rate-limit.js";
 
 /**
+ * Convert the LLM-facing field format (column_id -> typed value) into
+ * the Slack API's `cells` array format.
+ *
+ * The LLM passes fields like:
+ *   { "Col088NN1RAUV": { "select": ["in_progress"] }, "Col088B1KQX5M": { "rich_text": [...] } }
+ *
+ * The API expects `cells`:
+ *   [{ column_id: "Col088NN1RAUV", row_id: "Rec...", select: ["in_progress"] }, ...]
+ *
+ * We also accept shorthand for common types:
+ *   { "Col088NN1RAUV": ["in_progress"] }  → select (array of strings)
+ *   { "Col088NN1RAUV": "some text" }       → rich_text (auto-wrapped)
+ */
+function buildCells(
+  fields: Record<string, any>,
+  rowId: string,
+): any[] {
+  return Object.entries(fields).map(([columnId, value]) => {
+    const cell: any = { column_id: columnId, row_id: rowId };
+
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      // Already typed: { rich_text: [...], select: [...], user: [...], date: [...] }
+      // Merge the typed keys directly into the cell
+      Object.assign(cell, value);
+    } else if (Array.isArray(value)) {
+      // Shorthand array — detect type from content
+      if (value.length > 0 && typeof value[0] === "object" && value[0].type === "rich_text") {
+        cell.rich_text = value;
+      } else if (value.length > 0 && typeof value[0] === "string") {
+        // Could be select values or user IDs — check if they look like user IDs (U/W prefix)
+        if (/^[UW][A-Z0-9]+$/.test(value[0])) {
+          cell.user = value;
+        } else {
+          cell.select = value;
+        }
+      } else if (value.length > 0 && typeof value[0] === "number") {
+        cell.timestamp = value;
+      } else {
+        // Fall through — pass as-is and let API validate
+        cell.value = value;
+      }
+    } else if (typeof value === "string") {
+      // Plain string → wrap in rich_text block
+      cell.rich_text = [
+        {
+          type: "rich_text",
+          elements: [
+            {
+              type: "rich_text_section",
+              elements: [{ type: "text", text: value }],
+            },
+          ],
+        },
+      ];
+    } else {
+      // Number, boolean, etc. — pass as value
+      cell.value = value;
+    }
+
+    return cell;
+  });
+}
+
+/**
+ * Convert the LLM-facing field format into the `initial_fields` array
+ * for slackLists.items.create. Same typed structure as cells but without row_id.
+ */
+function buildInitialFields(fields: Record<string, any>): any[] {
+  return Object.entries(fields).map(([columnId, value]) => {
+    const field: any = { column_id: columnId };
+
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      Object.assign(field, value);
+    } else if (Array.isArray(value)) {
+      if (value.length > 0 && typeof value[0] === "object" && value[0].type === "rich_text") {
+        field.rich_text = value;
+      } else if (value.length > 0 && typeof value[0] === "string") {
+        if (/^[UW][A-Z0-9]+$/.test(value[0])) {
+          field.user = value;
+        } else {
+          field.select = value;
+        }
+      } else if (value.length > 0 && typeof value[0] === "number") {
+        field.timestamp = value;
+      } else {
+        field.value = value;
+      }
+    } else if (typeof value === "string") {
+      field.rich_text = [
+        {
+          type: "rich_text",
+          elements: [
+            {
+              type: "rich_text_section",
+              elements: [{ type: "text", text: value }],
+            },
+          ],
+        },
+      ];
+    } else {
+      field.value = value;
+    }
+
+    return field;
+  });
+}
+
+/**
  * Create Slack Lists write tools.
  * Read tools (list_slack_list_items, get_slack_list_item) remain in slack.ts.
  */
@@ -29,7 +137,7 @@ export function createListWriteTools(client: WebClient) {
           await throttle();
           const params: any = { list_id };
           if (fields) {
-            params.initial_fields = fields;
+            params.initial_fields = buildInitialFields(fields);
           }
 
           const result = await (client as any).apiCall("slackLists.items.create", params);
@@ -67,10 +175,11 @@ export function createListWriteTools(client: WebClient) {
         try {
           await throttle();
 
+          const cells = buildCells(fields, item_id);
+
           const result = await (client as any).apiCall("slackLists.items.update", {
             list_id,
-            item_id,
-            columns: fields,
+            cells,
           });
 
           if (!result.ok) {
@@ -79,7 +188,7 @@ export function createListWriteTools(client: WebClient) {
               item_id,
               error: result.error,
               response_metadata: result.response_metadata,
-              fields_keys: Object.keys(fields),
+              cells_count: cells.length,
             });
             return {
               ok: false,

@@ -1163,7 +1163,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           await throttle();
           const result = await (client as any).apiCall("slackLists.items.info", {
             list_id,
-            item_id,
+            id: item_id,
           });
 
           if (!result.ok) {
