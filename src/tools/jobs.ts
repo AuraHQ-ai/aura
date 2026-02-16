@@ -164,6 +164,25 @@ export function createJobTools(
             executeAt = interval.next().toDate();
           }
 
+          // If re-enabling an existing recurring job by name, inherit its stored cron schedule
+          if (!executeAt && !recurring && name) {
+            const existing = await db
+              .select({ cronSchedule: jobs.cronSchedule, timezone: jobs.timezone })
+              .from(jobs)
+              .where(eq(jobs.name, name))
+              .limit(1);
+
+            if (existing.length > 0 && existing[0].cronSchedule) {
+              recurring = existing[0].cronSchedule;
+              const tz = timezone || existing[0].timezone || "UTC";
+              const interval = CronExpressionParser.parse(recurring, {
+                currentDate: new Date(),
+                tz,
+              });
+              executeAt = interval.next().toDate();
+            }
+          }
+
           if (!executeAt && !recurring) {
             return {
               ok: false,
