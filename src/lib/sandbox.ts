@@ -48,6 +48,9 @@ export async function getOrCreateSandbox(): Promise<any> {
     envs.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
     envs.GH_TOKEN = process.env.GITHUB_TOKEN;
   }
+  if (process.env.ANTHROPIC_API_KEY) {
+    envs.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  }
 
   // Try to resume a previously paused sandbox
   const savedId = await getSetting(SANDBOX_NOTE_KEY);
