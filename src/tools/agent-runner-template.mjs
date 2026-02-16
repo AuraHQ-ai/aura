@@ -15,7 +15,6 @@ import { readFileSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 
 const REPO_DIR = "/home/user/aura";
-const REPO_URL = `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/realadvisor/aura.git`;
 
 function run(cmd, opts = {}) {
   return execSync(cmd, {
@@ -41,7 +40,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { prompt, branch_name, pr_title, pr_body } = config;
+  const { prompt, branch_name, pr_title, pr_body, anthropic_api_key, github_token } = config;
 
   if (!prompt || !branch_name || !pr_title) {
     output({ ok: false, error: "Missing required config: prompt, branch_name, pr_title" });
@@ -53,13 +52,25 @@ async function main() {
     process.exit(1);
   }
 
-  // ── Validate env ─────────────────────────────────────────────────────
+  // ── Resolve API keys: config (injected by tool) > env var > fail ────
+  // Config-based injection is the primary path because env vars set via
+  // `export` in one sandbox.commands.run() call don't persist to subsequent calls.
+  if (anthropic_api_key) {
+    process.env.ANTHROPIC_API_KEY = anthropic_api_key;
+  }
+  if (github_token) {
+    process.env.GITHUB_TOKEN = github_token;
+    process.env.GH_TOKEN = github_token;
+  }
+
+  const REPO_URL = `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/realadvisor/aura.git`;
+
   if (!process.env.ANTHROPIC_API_KEY) {
-    output({ ok: false, error: "ANTHROPIC_API_KEY not set in sandbox environment" });
+    output({ ok: false, error: "ANTHROPIC_API_KEY not available (not in config or environment)" });
     process.exit(1);
   }
   if (!process.env.GITHUB_TOKEN) {
-    output({ ok: false, error: "GITHUB_TOKEN not set in sandbox environment" });
+    output({ ok: false, error: "GITHUB_TOKEN not available (not in config or environment)" });
     process.exit(1);
   }
 
