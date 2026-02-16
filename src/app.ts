@@ -27,25 +27,28 @@ const slackClient = new WebClient(botToken);
 
 // ── Channel Membership Cache ─────────────────────────────────────────────────
 
-/** Per-invocation cache for channel membership checks. */
-const membershipCache = new Map<string, boolean>();
+/** Cache for channel membership checks with TTL to avoid staleness across warm starts. */
+const MEMBERSHIP_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const membershipCache = new Map<string, { value: boolean; ts: number }>();
 
 async function checkChannelMembership(
   client: WebClient,
   channelId: string,
 ): Promise<boolean> {
   const cached = membershipCache.get(channelId);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined && Date.now() - cached.ts < MEMBERSHIP_CACHE_TTL_MS)
+    return cached.value;
 
   try {
     await throttle();
     const result = await client.conversations.info({ channel: channelId });
     const isMember = !!(result.channel as any)?.is_member;
-    membershipCache.set(channelId, isMember);
+    membershipCache.set(channelId, { value: isMember, ts: Date.now() });
     return isMember;
   } catch {
-    // If we can't check, assume member (safer: avoids double processing)
-    return true;
+    // If we can't check, assume NOT a member so app_mention is processed
+    // (worst case: harmless double-processing instead of silently dropping the message)
+    return false;
   }
 }
 

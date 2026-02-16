@@ -7,7 +7,10 @@ import {
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
 import { generateResponse } from "./respond.js";
-import { fetchConversationContext } from "./slack-context.js";
+import {
+  fetchConversationContext,
+  resolveDisplayName,
+} from "./slack-context.js";
 import { storeMessage } from "../memory/store.js";
 import { extractMemories } from "../memory/extract.js";
 import {
@@ -428,29 +431,3 @@ async function runBackgroundTasks(params: {
   }
 }
 
-/**
- * Resolve a Slack user's display name.
- * Cached per function invocation (Vercel serverless).
- */
-const displayNameCache = new Map<string, string>();
-
-async function resolveDisplayName(
-  client: WebClient,
-  userId: string,
-): Promise<string> {
-  const cached = displayNameCache.get(userId);
-  if (cached) return cached;
-
-  try {
-    const result = await client.users.info({ user: userId });
-    const name =
-      result.user?.profile?.display_name ||
-      result.user?.real_name ||
-      result.user?.name ||
-      userId;
-    displayNameCache.set(userId, name);
-    return name;
-  } catch {
-    return userId;
-  }
-}

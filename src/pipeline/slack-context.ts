@@ -34,7 +34,7 @@ export interface ConversationContext {
 
 const userDisplayNameCache = new Map<string, string>();
 
-async function resolveDisplayName(
+export async function resolveDisplayName(
   client: WebClient,
   userId: string,
 ): Promise<string> {
@@ -95,7 +95,7 @@ export async function fetchConversationContext(
 
       for (const msg of rawMessages) {
         const userId = msg.user || msg.bot_id || "unknown";
-        const isBot = userId === botUserId || !!msg.bot_id;
+        const isBot = userId === botUserId;
         const displayName = isBot
           ? "Aura"
           : await resolveDisplayName(client, userId);
@@ -134,7 +134,7 @@ export async function fetchConversationContext(
 
     for (const msg of rawHistory) {
       const userId = msg.user || msg.bot_id || "unknown";
-      const isBot = userId === botUserId || !!msg.bot_id;
+      const isBot = userId === botUserId;
       const displayName = isBot
         ? "Aura"
         : await resolveDisplayName(client, userId);
