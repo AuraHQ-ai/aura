@@ -11,7 +11,7 @@
  *   { ok, pr_url?, summary?, cost_usd?, error?, agent_output? }
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 
 const REPO_DIR = "/home/user/aura";
@@ -25,10 +25,6 @@ function run(cmd, opts = {}) {
     stdio: opts.stdio || ["pipe", "pipe", "pipe"],
     ...opts,
   }).trim();
-}
-
-function shellEscape(s) {
-  return "'" + String(s).replace(/'/g, "'\\''") + "'";
 }
 
 function output(result) {
@@ -71,13 +67,11 @@ async function main() {
   try {
     try {
       run(`git rev-parse --git-dir`, { cwd: REPO_DIR });
-      // Repo exists -- fetch latest and reset to main
       run(`git fetch origin`);
       run(`git checkout main`);
       run(`git reset --hard origin/main`);
       run(`git clean -fd`);
     } catch {
-      // No repo -- fresh clone
       run(`git clone ${REPO_URL} ${REPO_DIR}`, { cwd: "/home/user" });
     }
   } catch (e) {
@@ -85,11 +79,20 @@ async function main() {
     process.exit(1);
   }
 
+  // ── Configure git identity ───────────────────────────────────────────
+  try {
+    run(`git config user.name "Aura"`);
+    run(`git config user.email "aura@realadvisor.com"`);
+  } catch (e) {
+    output({ ok: false, error: `Git config failed: ${e.message}` });
+    process.exit(1);
+  }
+
   // ── Create branch ────────────────────────────────────────────────────
   try {
     // Delete local branch if it exists from a previous run
-    try { run(`git branch -D ${shellEscape(branch_name)}`); } catch { /* ignore */ }
-    run(`git checkout -b ${shellEscape(branch_name)}`);
+    try { run(`git branch -D ${branch_name}`); } catch { /* ignore */ }
+    run(`git checkout -b ${branch_name}`);
   } catch (e) {
     output({ ok: false, error: `Branch creation failed: ${e.message}` });
     process.exit(1);
@@ -115,10 +118,10 @@ async function main() {
   let agentMessages = [];
 
   try {
-    const { query } = await import("/home/user/node_modules/@anthropic-ai/claude-agent-sdk/index.js");
+    const { query } = await import("@anthropic-ai/claude-agent-sdk");
 
     const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), 270_000); // 4.5 min -- sandbox backstop is 5 min
+    const timeout = setTimeout(() => abortController.abort(), 270_000);
 
     const systemPrompt = [
       "You are editing the Aura codebase (github.com/realadvisor/aura).",
@@ -134,6 +137,7 @@ async function main() {
       options: {
         cwd: REPO_DIR,
         systemPrompt,
+        tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
         allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
@@ -187,9 +191,12 @@ async function main() {
   // ── Commit and push ──────────────────────────────────────────────────
   try {
     run(`git add -A`);
+
     const commitMsg = `${pr_title}\n\nAutomated patch by Aura via Claude Agent SDK.`;
-    run(`git commit -m ${shellEscape(commitMsg)}`);
-    run(`git push origin ${shellEscape(branch_name)} --force`, { timeout: 60_000 });
+    writeFileSync("/tmp/commit-msg.txt", commitMsg);
+    run(`git commit -F /tmp/commit-msg.txt`);
+
+    run(`git push origin ${branch_name} --force`, { timeout: 60_000 });
   } catch (e) {
     output({
       ok: false,
@@ -217,15 +224,17 @@ async function main() {
       `Cost: $${(agentResult?.total_cost_usd || 0).toFixed(4)}`,
     ].join("\n");
 
+    writeFileSync("/tmp/pr-title.txt", pr_title);
+    writeFileSync("/tmp/pr-body.txt", body);
+
     prUrl = run(
-      `gh pr create --title ${shellEscape(pr_title)} --body ${shellEscape(body)} --base main --head ${shellEscape(branch_name)}`,
+      `gh pr create --title "$(cat /tmp/pr-title.txt)" --body-file /tmp/pr-body.txt --base main --head ${branch_name}`,
       { timeout: 30_000 },
     );
   } catch (e) {
-    // PR might already exist if re-running
     if (e.message?.includes("already exists")) {
       try {
-        prUrl = run(`gh pr view ${shellEscape(branch_name)} --json url -q .url`);
+        prUrl = run(`gh pr view ${branch_name} --json url -q .url`);
       } catch {
         prUrl = "(PR exists but could not retrieve URL)";
       }

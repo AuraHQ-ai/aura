@@ -182,18 +182,25 @@ export function createSandboxTools() {
             }
           }
           if (!runnerScript) {
+            logger.warn("patch_own_code: template file not found on disk, using inline fallback", {
+              tried: templateCandidates,
+            });
             return {
               ok: false,
-              error: "Could not find agent-runner-template.mjs. Tried: " + templateCandidates.join(", "),
+              error:
+                "Could not find agent-runner-template.mjs on disk. " +
+                "The template file may not be included in the Vercel build output. " +
+                "Tried: " + templateCandidates.join(", "),
             };
           }
           await sandbox.files.write("/home/user/agent-runner.mjs", runnerScript);
 
           // Execute the runner (5 min backstop timeout; the script's own AbortController fires at 4.5 min)
+          // NODE_PATH ensures bare import("@anthropic-ai/claude-agent-sdk") resolves
           logger.info("patch_own_code: executing agent runner", { branch: branch_name });
 
           const result = await sandbox.commands.run(
-            "node /home/user/agent-runner.mjs",
+            "NODE_PATH=/home/user/node_modules node /home/user/agent-runner.mjs",
             {
               cwd: "/home/user",
               timeoutMs: 300_000,
