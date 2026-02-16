@@ -229,12 +229,28 @@ export async function generateResponse(
     const { cleaned, flaggedWords, modifications } =
       postProcessResponse(finalText);
 
-    // Format for Slack
-    const formatted = formatForSlack(cleaned);
+    // Format for Slack (may return multiple chunks if very long)
+    const chunks = formatForSlack(cleaned);
+    const formatted = chunks.join("\n\n");
 
-    // Final update with the post-processed version
-    if (formatted.trim().length > 0) {
-      await updateMessage(formatted);
+    if (messageTs && chunks.length > 0 && chunks[0].trim().length > 0) {
+      // Update the existing placeholder with the first chunk
+      await updateMessage(chunks[0]);
+
+      // Post any overflow chunks as follow-up messages in the same thread
+      for (let i = 1; i < chunks.length; i++) {
+        try {
+          await slackClient.chat.postMessage({
+            channel: channelId,
+            text: chunks[i],
+            thread_ts: threadTs ?? messageTs,
+          });
+        } catch (err: any) {
+          logger.error(`Failed to post continuation message ${i + 1}/${chunks.length}`, {
+            error: err.message,
+          });
+        }
+      }
     } else if (messageTs) {
       // If the response is empty (tool-only), delete the placeholder
       try {
@@ -252,6 +268,7 @@ export async function generateResponse(
     logger.info(`LLM stream completed in ${llmMs}ms`, {
       rawLength: finalText.length,
       cleanedLength: cleaned.length,
+      chunkCount: chunks.length,
       modifications,
       flaggedWords,
       usage: { inputTokens, outputTokens, totalTokens },
