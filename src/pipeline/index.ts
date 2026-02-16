@@ -22,6 +22,7 @@ import {
 import { downloadEventImages, type SlackImage } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
+import { pauseSandbox } from "../lib/sandbox.js";
 import type { KnownEventFromType } from "@slack/bolt";
 
 /** Maximum message length we'll process (characters). Slack max is ~40k. */
@@ -171,6 +172,15 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     });
     const llmMs = Date.now() - llmStart;
 
+    // Pause sandbox once after all tool calls are complete for this turn.
+    // This avoids the e2b multi-resume bug (e2b-dev/E2B#884) that causes
+    // filesystem state loss when pausing/resuming after every individual tool call.
+    await pauseSandbox().catch((err: any) => {
+      logger.warn("Failed to pause sandbox after response", {
+        error: err.message,
+      });
+    });
+
     // Response is already posted to Slack via streaming updates
 
     const totalMs = Date.now() - pipelineStart;
@@ -228,6 +238,9 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       channelId: context.channelId,
       channelType: context.channelType,
     });
+
+    // Pause sandbox on error path too
+    await pauseSandbox().catch(() => {});
 
     // Try to send a graceful error message
     try {
