@@ -905,6 +905,184 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       },
     }),
 
+    read_dm_history: tool({
+      description:
+        "Read recent messages from a direct message conversation with a specific user. Use this to check past DM conversations, follow up on earlier messages, or recall what was discussed in a DM.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, username, or user ID of the person whose DM history to read, e.g. 'Joan' or '@joan' or 'U066V1AN6'",
+          ),
+        limit: z
+          .number()
+          .min(1)
+          .max(50)
+          .default(20)
+          .describe("Number of recent messages to fetch (max 50)"),
+      }),
+      execute: async ({ user_name, limit }) => {
+        try {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
+            return {
+              ok: false,
+              error: `Could not find a user named "${user_name}". Use list_users or search_users to find the right name.`,
+            };
+          }
+
+          // Open/find the DM channel
+          await throttle();
+          const dmResult = await client.conversations.open({
+            users: user.id,
+          });
+
+          const dmChannelId = dmResult.channel?.id;
+          if (!dmChannelId) {
+            return {
+              ok: false,
+              error: `Failed to open a DM channel with ${user.name}.`,
+            };
+          }
+
+          // Fetch conversation history
+          await throttle();
+          const result = await client.conversations.history({
+            channel: dmChannelId,
+            limit,
+          });
+
+          // Resolve user IDs to display names
+          const messages = await Promise.all(
+            (result.messages || []).map(async (msg) => {
+              const userName = msg.user
+                ? await resolveUserById(client, msg.user)
+                : "unknown";
+              return {
+                user: userName,
+                text: msg.text || "",
+                timestamp: msg.ts || "",
+                reactions:
+                  (msg as any).reactions?.map((r: any) => ({
+                    name: r.name,
+                    count: r.count,
+                  })) || [],
+              };
+            }),
+          );
+
+          // Reverse so oldest is first (conversations.history returns newest first)
+          messages.reverse();
+
+          logger.info("read_dm_history tool called", {
+            user: user.name,
+            userId: user.id,
+            dmChannelId,
+            messageCount: messages.length,
+          });
+
+          return {
+            ok: true,
+            user: user.name,
+            user_id: user.id,
+            dm_channel_id: dmChannelId,
+            messages,
+            count: messages.length,
+          };
+        } catch (error: any) {
+          logger.error("read_dm_history tool failed", {
+            user_name,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read DM history with ${user_name}: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    list_dm_conversations: tool({
+      description:
+        "List recent DM conversations Aura has had. Returns the list of users Aura has open DM channels with, sorted by most recent activity. Use this to see who you've been talking to, find conversations to follow up on, or enumerate your DM activity.",
+      inputSchema: z.object({
+        limit: z
+          .number()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe("Maximum number of DM conversations to return (max 100)"),
+      }),
+      execute: async ({ limit }) => {
+        try {
+          const conversations: Array<{
+            user_name: string;
+            user_id: string;
+            dm_channel_id: string;
+            last_message_preview: string;
+            last_activity_ts: string;
+          }> = [];
+
+          let cursor: string | undefined;
+          let fetched = 0;
+
+          do {
+            await throttle();
+            const result = await client.conversations.list({
+              types: "im",
+              exclude_archived: true,
+              limit: Math.min(200, limit - fetched),
+              cursor,
+            });
+
+            for (const ch of result.channels || []) {
+              if (!ch.id || !ch.user) continue;
+
+              const userName = await resolveUserById(client, ch.user);
+              conversations.push({
+                user_name: userName,
+                user_id: ch.user,
+                dm_channel_id: ch.id,
+                last_message_preview: "",
+                last_activity_ts: (ch as any).updated
+                  ? String((ch as any).updated)
+                  : "",
+              });
+
+              fetched++;
+              if (fetched >= limit) break;
+            }
+
+            cursor = result.response_metadata?.next_cursor || undefined;
+          } while (cursor && fetched < limit);
+
+          // Sort by last activity (most recent first)
+          conversations.sort(
+            (a, b) =>
+              Number(b.last_activity_ts) - Number(a.last_activity_ts),
+          );
+
+          logger.info("list_dm_conversations tool called", {
+            count: conversations.length,
+          });
+
+          return {
+            ok: true,
+            conversations,
+            count: conversations.length,
+          };
+        } catch (error: any) {
+          logger.error("list_dm_conversations tool failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to list DM conversations: ${error.message}`,
+          };
+        }
+      },
+    }),
+
     // ── Slack Lists Tools ──────────────────────────────────────────────────
 
     list_slack_list_items: tool({
