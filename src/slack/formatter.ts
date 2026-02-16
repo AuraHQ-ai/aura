@@ -42,32 +42,74 @@ export function markdownToSlackMrkdwn(markdown: string): string {
 }
 
 /**
- * Truncate a message to Slack's character limit (4000 chars for regular messages).
- * If truncated, appends an ellipsis.
+ * Slack's actual message size limit is ~40,000 characters for both
+ * chat.postMessage and chat.update. We use 39,000 as a safe ceiling
+ * to leave room for any metadata or encoding overhead.
  */
-export function truncateForSlack(
+const SLACK_MAX_LENGTH = 39_000;
+
+/**
+ * Split a long message into multiple Slack-safe chunks.
+ *
+ * Prefers splitting at double-newlines (paragraph boundaries), then single
+ * newlines, then sentence ends. Each chunk is guaranteed to be within
+ * SLACK_MAX_LENGTH. In practice, LLM responses rarely exceed 39k, so this
+ * usually returns a single-element array.
+ */
+export function splitForSlack(
   text: string,
-  maxLength = 3900,
-): string {
-  if (text.length <= maxLength) return text;
+  maxLength = SLACK_MAX_LENGTH,
+): string[] {
+  if (text.length <= maxLength) return [text];
 
-  // Try to truncate at a sentence or paragraph boundary
-  const truncated = text.substring(0, maxLength);
-  const lastNewline = truncated.lastIndexOf("\n");
-  const lastPeriod = truncated.lastIndexOf(". ");
+  const chunks: string[] = [];
+  let remaining = text;
 
-  const cutPoint = Math.max(lastNewline, lastPeriod);
-  if (cutPoint > maxLength * 0.7) {
-    return truncated.substring(0, cutPoint + 1) + "\n\n...";
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLength) {
+      chunks.push(remaining);
+      break;
+    }
+
+    const window = remaining.substring(0, maxLength);
+
+    // Try paragraph boundary first (\n\n)
+    let cutPoint = window.lastIndexOf("\n\n");
+    if (cutPoint > maxLength * 0.5) {
+      chunks.push(remaining.substring(0, cutPoint).trimEnd());
+      remaining = remaining.substring(cutPoint).trimStart();
+      continue;
+    }
+
+    // Try single newline
+    cutPoint = window.lastIndexOf("\n");
+    if (cutPoint > maxLength * 0.5) {
+      chunks.push(remaining.substring(0, cutPoint).trimEnd());
+      remaining = remaining.substring(cutPoint).trimStart();
+      continue;
+    }
+
+    // Try sentence end
+    cutPoint = window.lastIndexOf(". ");
+    if (cutPoint > maxLength * 0.3) {
+      chunks.push(remaining.substring(0, cutPoint + 1));
+      remaining = remaining.substring(cutPoint + 2).trimStart();
+      continue;
+    }
+
+    // Hard cut as last resort
+    chunks.push(remaining.substring(0, maxLength));
+    remaining = remaining.substring(maxLength);
   }
 
-  return truncated + "...";
+  return chunks.filter((c) => c.length > 0);
 }
 
 /**
  * Format the LLM response for posting to Slack.
+ * Returns one or more message chunks, each within Slack's size limit.
  */
-export function formatForSlack(llmOutput: string): string {
+export function formatForSlack(llmOutput: string): string[] {
   const mrkdwn = markdownToSlackMrkdwn(llmOutput);
-  return truncateForSlack(mrkdwn);
+  return splitForSlack(mrkdwn);
 }
