@@ -38,8 +38,7 @@ alwaysApply: true
 
 - **Tools**: Use AI SDK `tool()` with `inputSchema` (Zod) and `execute`. Group in `src/tools/`.
 - **Cron jobs**: Hono sub-apps in `src/cron/`, entry points in `api/cron/`, schedule in `vercel.json`.
-- **Rate limiting**: All Slack API calls go through the `throttle()` function in `src/tools/slack.ts`.
-- **Caching**: Channel and user lists are cached per invocation to avoid rate limits.
+- **Caching**: Channel and user lists are cached per invocation to avoid redundant API calls.
 - **Models**: Resolve dynamically via `getMainModel()` / `getFastModel()` / `getEmbeddingModel()` (DB first, then env var, then default).
 - **System prompt**: All personality, tools, and self-awareness in `src/personality/system-prompt.ts`.
 

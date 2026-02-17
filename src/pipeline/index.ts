@@ -28,13 +28,13 @@ import { downloadEventImages, type SlackImage } from "../lib/files.js";
 import { pauseSandbox } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
-import type { KnownEventFromType } from "@slack/bolt";
+import type { SlackEvent } from "./context.js";
 
 /** Maximum message length we'll process (characters). Slack max is ~40k. */
 const MAX_MESSAGE_LENGTH = 8000;
 
 interface PipelineOptions {
-  event: KnownEventFromType<"message"> | KnownEventFromType<"app_mention">;
+  event: SlackEvent;
   client: WebClient;
   botUserId: string;
   /** Slack team ID (from event body) — needed for chatStream in channels */
@@ -123,13 +123,11 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
 
   // Determine thread_ts for replies:
   // - In threads: always reply in the thread
-  // - In DMs (top-level): omit thread_ts so replies appear inline
   // - In channels (top-level): reply in a thread under the user's message
-  const replyThreadTs = context.threadTs
-    ? context.threadTs
-    : context.isDm
-      ? undefined
-      : context.messageTs;
+  // - In DMs (top-level): chatStream requires a thread_ts, so we thread
+  //   under the user's message. For non-streaming paths (transparency
+  //   commands, empty mentions), we still use undefined to reply inline.
+  const replyThreadTs = context.threadTs ?? context.messageTs;
 
   try {
     // ── Edge case: empty or near-empty message (but allow image-only) ───

@@ -26,26 +26,13 @@ const slackClient = new WebClient(botToken);
 
 // ── Channel Membership Cache ─────────────────────────────────────────────────
 
-/** Cache for channel membership checks with TTL to avoid staleness across warm starts. */
-const MEMBERSHIP_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const membershipCache = new Map<string, { value: boolean; ts: number }>();
+/** Per-invocation cache for channel membership checks. */
+const membershipCache = new Map<string, boolean>();
 
-/**
- * Synchronously check the membership cache. Returns the cached value if fresh,
- * or `undefined` on a cache miss. This MUST NOT await anything so it can be
- * used on the Slack acknowledgement path (3-second deadline).
- */
 function getCachedMembership(channelId: string): boolean | undefined {
-  const cached = membershipCache.get(channelId);
-  if (cached !== undefined && Date.now() - cached.ts < MEMBERSHIP_CACHE_TTL_MS)
-    return cached.value;
-  return undefined;
+  return membershipCache.get(channelId);
 }
 
-/**
- * Refresh the membership cache for a channel in the background.
- * Calls the Slack API and updates the cache.
- */
 async function refreshMembershipCache(
   client: WebClient,
   channelId: string,
@@ -53,7 +40,7 @@ async function refreshMembershipCache(
   try {
     const result = await client.conversations.info({ channel: channelId });
     const isMember = !!(result.channel as any)?.is_member;
-    membershipCache.set(channelId, { value: isMember, ts: Date.now() });
+    membershipCache.set(channelId, isMember);
   } catch {
     // Non-critical — the cache will be retried on the next event
   }
