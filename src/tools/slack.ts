@@ -300,7 +300,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       });
       for (const msg of (historyResult.messages || []) as any[]) {
         const recordId = msg.slack_list?.list_record_id;
-        if (recordId && msg.ts && !result.has(recordId)) {
+        if (recordId && msg.ts) {
           result.set(recordId, { channelId: listChannelId, threadTs: msg.ts });
         }
       }
