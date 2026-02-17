@@ -77,7 +77,8 @@ export function createListWriteTools(client: WebClient) {
         "Update fields on an existing item (row) in a Slack List. Use this to change title, status, assignee, severity, etc. " +
         "IMPORTANT: First call get_slack_list_item to see the exact column IDs and value formats. " +
         "Values can be: a string (for text fields), an array of strings (for select/status fields like [\"done\"]), " +
-        "an array of user IDs (for user fields like [\"U01234\"]), or a typed object like {select: [\"done\"]} for explicit control.",
+        "an array of user IDs (for user fields like [\"U01234\"]), or a typed object like {select: [\"done\"]} for explicit control. " +
+        "Date fields MUST use typed objects: {date: [\"2025-09-20\"]}.",
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         item_id: z.string().describe("The ID of the item/row to update"),
@@ -86,7 +87,7 @@ export function createListWriteTools(client: WebClient) {
           .describe(
             "Column values to update as a flat object: { column_id: value, ... }. " +
               "Simple formats: string for text, [\"value\"] for select/status, [\"U01234\"] for users. " +
-              "Or use typed objects: {select: [\"done\"]}, {rich_text: [...]}, {user: [\"U01234\"]}.",
+              "Or use typed objects: {select: [\"done\"]}, {rich_text: [...]}, {user: [\"U01234\"]}, {date: [\"2025-09-20\"]}.",
           ),
       }),
       execute: async ({ list_id, item_id, fields }) => {
@@ -142,6 +143,10 @@ export function createListWriteTools(client: WebClient) {
               if (value.length > 0 && typeof value[0] === "string") {
                 if (value.every((v: string) => /^[UW][A-Z0-9]{8,}$/.test(v))) {
                   return { ...base, user: value };
+                }
+                // ISO date strings (YYYY-MM-DD) → date
+                if (value.every((v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v))) {
+                  return { ...base, date: value };
                 }
                 // Default: treat string arrays as select values
                 return { ...base, select: value };
