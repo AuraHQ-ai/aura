@@ -144,11 +144,8 @@ export function createListWriteTools(client: WebClient) {
                 if (value.every((v: string) => /^[UW][A-Z0-9]{8,}$/.test(v))) {
                   return { ...base, user: value };
                 }
-                // ISO date strings (YYYY-MM-DD) → date
-                if (value.every((v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v))) {
-                  return { ...base, date: value };
-                }
                 // Default: treat string arrays as select values
+                // (Date fields are handled via typed objects above, per tool description)
                 return { ...base, select: value };
               }
             }
