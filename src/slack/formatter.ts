@@ -42,11 +42,12 @@ export function markdownToSlackMrkdwn(markdown: string): string {
 }
 
 /**
- * Slack's actual message size limit is ~40,000 characters for both
- * chat.postMessage and chat.update. We use 39,000 as a safe ceiling
- * to leave room for any metadata or encoding overhead.
+ * Slack's text-only message limit (no blocks) is ~4,000 characters.
+ * Beyond that, chat.postMessage and chat.update return "msg_too_long".
+ * The 40k limit only applies when using blocks.
+ * We use 3,900 as a safe ceiling to leave room for encoding overhead.
  */
-const SLACK_MAX_LENGTH = 39_000;
+const SLACK_MAX_LENGTH = 3_900;
 
 /**
  * Split a long message into multiple Slack-safe chunks.

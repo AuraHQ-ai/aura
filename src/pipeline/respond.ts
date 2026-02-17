@@ -36,6 +36,9 @@ const TOOL_STATUS: Record<string, string> = {
   edit_canvas: "_Editing a canvas..._",
   add_reaction: "_Reacting..._",
   set_my_status: "_Updating status..._",
+  run_command: "_Running a command in the sandbox..._",
+  patch_own_code: "_Dispatching a coding agent to fix my own code... (this may take a few minutes)_",
+  read_own_source: "_Reading my own source code..._",
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -69,9 +72,16 @@ export interface LLMResponse {
   };
 }
 
-// ── Debounce Helper ──────────────────────────────────────────────────────────
+// ── Streaming Constants ──────────────────────────────────────────────────────
 
 const UPDATE_INTERVAL_MS = 1500;
+
+/**
+ * Slack's text-only (no blocks) limit is ~4,000 chars. During streaming we
+ * truncate the live preview to this limit. The final update uses formatForSlack
+ * which properly chunks the full response into multiple messages.
+ */
+const STREAMING_MAX_LENGTH = 3_900;
 
 // ── Main Function ────────────────────────────────────────────────────────────
 
@@ -106,20 +116,34 @@ export async function generateResponse(
     });
   }
 
-  // Helper to update the placeholder message
+  // Helper to update the placeholder message.
+  // Truncates to STREAMING_MAX_LENGTH during streaming to avoid Slack's
+  // "msg_too_long" error on text-only messages (limit ~4k chars).
   const updateMessage = async (text: string) => {
     if (!messageTs) return;
+
+    let safeText = text;
+    if (text.length > STREAMING_MAX_LENGTH) {
+      const truncated = text.substring(0, STREAMING_MAX_LENGTH);
+      const lastNewline = truncated.lastIndexOf("\n");
+      safeText =
+        (lastNewline > STREAMING_MAX_LENGTH * 0.5
+          ? truncated.substring(0, lastNewline)
+          : truncated) + "\n\n_...still typing..._";
+    }
+
     try {
       await slackClient.chat.update({
         channel: channelId,
         ts: messageTs,
-        text,
+        text: safeText,
       });
     } catch (err: any) {
       // Log but don't throw — update failures shouldn't kill the stream
       logger.warn("chat.update failed", {
         error: err?.data?.error || err.message || "unknown",
         retryAfter: err?.data?.headers?.["retry-after"],
+        textLength: safeText.length,
       });
     }
   };
