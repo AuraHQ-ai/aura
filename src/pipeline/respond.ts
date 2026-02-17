@@ -90,6 +90,12 @@ export async function generateResponse(
   const hasImages = options.images && options.images.length > 0;
 
   // ── Start native Slack stream ───────────────────────────────────────
+  // thread_ts is required by chat.startStream — the caller must always
+  // provide it (even for DMs, use the user's message ts).
+  if (!threadTs) {
+    throw new Error("threadTs is required for chatStream (chat.startStream requires thread_ts)");
+  }
+
   const streamParams: Record<string, any> = {
     channel: channelId,
     thread_ts: threadTs,

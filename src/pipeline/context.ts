@@ -1,9 +1,37 @@
-import type { KnownEventFromType, SlackEventMiddlewareArgs } from "@slack/bolt";
 import type { WebClient } from "@slack/web-api";
 import { generateText } from "ai";
 import { getFastModel } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
+
+// ── Slack Event Types ────────────────────────────────────────────────────────
+// Minimal local types — replaces the @slack/bolt dependency that was only used
+// for these type imports.
+
+export interface SlackMessageEvent {
+  type: "message";
+  channel: string;
+  ts: string;
+  text?: string;
+  user?: string;
+  bot_id?: string;
+  thread_ts?: string;
+  channel_type?: string;
+  subtype?: string;
+  files?: Array<Record<string, unknown>>;
+}
+
+export interface SlackAppMentionEvent {
+  type: "app_mention";
+  channel: string;
+  ts: string;
+  text: string;
+  user: string;
+  thread_ts?: string;
+  channel_type?: string;
+}
+
+export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
 export type ChannelType = "dm" | "public_channel" | "private_channel";
 
@@ -32,7 +60,7 @@ export interface MessageContext {
  * Parse a Slack message event into a structured context object.
  */
 export function buildMessageContext(
-  event: KnownEventFromType<"message"> | KnownEventFromType<"app_mention">,
+  event: SlackEvent,
   botUserId: string,
 ): MessageContext | null {
   // Skip bot messages, message_changed, etc. -- but allow file_share (image uploads)
@@ -225,7 +253,7 @@ async function llmShouldRespond(
 }
 
 function resolveChannelType(
-  event: KnownEventFromType<"message"> | KnownEventFromType<"app_mention">,
+  event: SlackEvent,
 ): ChannelType {
   if ("channel_type" in event) {
     const ct = (event as any).channel_type;
