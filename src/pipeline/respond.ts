@@ -198,6 +198,7 @@ export async function generateResponse(
   let accumulatedText = "";
   let lastUpdateMs = 0;
   let currentToolStatus = "";
+  let lastChunkWasToolResult = false;
 
   try {
     const result = streamText(streamOptions);
@@ -232,10 +233,21 @@ export async function generateResponse(
           currentToolStatus = "";
           if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
+          lastChunkWasToolResult = true;
           break;
         }
 
         case "text-delta": {
+          // If text resumes after a tool result, ensure proper separation
+          if (lastChunkWasToolResult && accumulatedText.length > 0) {
+            const endsWithWhitespace = /\s$/.test(accumulatedText);
+            const startsWithWhitespace = /^\s/.test(chunk.text);
+            if (!endsWithWhitespace && !startsWithWhitespace) {
+              accumulatedText += "\n\n";
+            }
+          }
+          lastChunkWasToolResult = false;
+
           accumulatedText += chunk.text;
 
           // Debounced update: only update Slack every 1.5s
