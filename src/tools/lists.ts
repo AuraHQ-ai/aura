@@ -126,9 +126,9 @@ export function createListWriteTools(client: WebClient) {
               };
             }
 
-            // Number → timestamp
+            // Number → pass through as number type
             if (typeof value === "number") {
-              return { ...base, timestamp: [value] };
+              return { ...base, number: value };
             }
 
             // Array handling
@@ -140,7 +140,7 @@ export function createListWriteTools(client: WebClient) {
               // Array of strings — could be select or user IDs
               // User IDs start with U or W followed by alphanumeric
               if (value.length > 0 && typeof value[0] === "string") {
-                if (value.every((v: string) => /^[UW][A-Z0-9]+$/.test(v))) {
+                if (value.every((v: string) => /^[UW][A-Z0-9]{8,}$/.test(v))) {
                   return { ...base, user: value };
                 }
                 // Default: treat string arrays as select values
