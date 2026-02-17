@@ -40,10 +40,9 @@ export function createMyTools() {
 2. Use `inputSchema` (NOT `parameters`) -- AI SDK v6
 3. Return `{ ok: true, ... }` on success, `{ ok: false, error: "..." }` on failure
 4. Log with `logger.info` / `logger.error`
-5. Add `await throttle()` before any Slack API calls
-6. **If using an external SDK (e2b, tavily, etc.): use dynamic `import()` NEVER static `import`** -- static imports of ESM-only packages crash the entire Vercel function
-7. **If the tool needs an API key, check it exists** and return a graceful error if missing (don't crash)
-8. Spread into `createSlackTools` in `src/tools/slack.ts`
-9. Add to the tools list in `src/personality/system-prompt.ts`
-10. Add usage guidance in the system prompt
-11. Document any new Slack scopes or env vars needed in README
+5. **If using an external SDK (e2b, tavily, etc.): use dynamic `import()` NEVER static `import`** -- static imports of ESM-only packages crash the entire Vercel function
+6. **If the tool needs an API key, check it exists** and return a graceful error if missing (don't crash)
+7. Spread into `createSlackTools` in `src/tools/slack.ts`
+8. Add to the tools list in `src/personality/system-prompt.ts`
+9. Add usage guidance in the system prompt
+10. Document any new Slack scopes or env vars needed in README
