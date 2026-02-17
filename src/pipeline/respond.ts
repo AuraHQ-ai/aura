@@ -1,7 +1,6 @@
 import { streamText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
 import { getMainModel } from "../lib/ai.js";
-import { postProcessResponse } from "../personality/anti-patterns.js";
 import { createSlackTools } from "../tools/slack.js";
 import type { SlackImage } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
@@ -60,12 +59,6 @@ interface RespondOptions {
 export interface LLMResponse {
   /** The raw LLM output */
   raw: string;
-  /** Post-processed text */
-  formatted: string;
-  /** Any anti-pattern modifications made */
-  modifications: string[];
-  /** Flagged words found */
-  flaggedWords: string[];
   /** Whether the response was already posted to Slack via streaming */
   alreadyPosted: boolean;
   /** Token usage */
@@ -219,7 +212,6 @@ export async function generateResponse(
     const usage = await result.usage;
 
     const finalText = accumulatedText;
-    const { cleaned, flaggedWords, modifications } = postProcessResponse(finalText);
 
     // Stop the stream — finalizes the message on Slack's side
     await streamer.stop();
@@ -230,17 +222,11 @@ export async function generateResponse(
 
     logger.info(`LLM stream completed in ${llmMs}ms`, {
       rawLength: finalText.length,
-      cleanedLength: cleaned.length,
-      modifications,
-      flaggedWords,
       usage: { inputTokens, outputTokens, totalTokens },
     });
 
     return {
       raw: finalText,
-      formatted: cleaned,
-      modifications,
-      flaggedWords,
       alreadyPosted: true,
       usage: { inputTokens, outputTokens, totalTokens },
     };
