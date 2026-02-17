@@ -16,13 +16,15 @@ const MAX_REQUESTS_PER_WINDOW = 30;
 
 // ── Upstash Redis (shared across instances) ──────────────────────────────────
 
-let upstashLimiter: any | null = null;
-let upstashInitAttempted = false;
+let upstashInitPromise: Promise<any | null> | null = null;
 
-async function getUpstashLimiter(): Promise<any | null> {
-  if (upstashInitAttempted) return upstashLimiter;
-  upstashInitAttempted = true;
+function getUpstashLimiter(): Promise<any | null> {
+  if (upstashInitPromise) return upstashInitPromise;
+  upstashInitPromise = initUpstashLimiter();
+  return upstashInitPromise;
+}
 
+async function initUpstashLimiter(): Promise<any | null> {
   // Support both Vercel KV naming (KV_REST_API_URL/TOKEN) and standalone Upstash naming
   const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -38,7 +40,7 @@ async function getUpstashLimiter(): Promise<any | null> {
 
     const redis = new Redis({ url, token });
 
-    upstashLimiter = new Ratelimit({
+    const limiter = new Ratelimit({
       redis,
       limiter: Ratelimit.slidingWindow(MAX_REQUESTS_PER_WINDOW, "60 s"),
       prefix: "aura:slack-api",
@@ -50,7 +52,7 @@ async function getUpstashLimiter(): Promise<any | null> {
       window: "60s",
     });
 
-    return upstashLimiter;
+    return limiter;
   } catch (err: any) {
     logger.warn("Failed to initialize Upstash rate limiter — falling back to in-memory", {
       error: err.message,
@@ -77,12 +79,13 @@ async function throttleUpstash(limiter: any): Promise<void> {
   });
   await new Promise((resolve) => setTimeout(resolve, waitMs));
 
-  // Retry once after waiting (if still limited, let the Slack 429 handler deal with it)
+  // Retry once after waiting
   const retry = await limiter.limit("global");
   if (!retry.success) {
     logger.warn("Upstash rate limit: still limited after wait", {
       remaining: retry.remaining,
     });
+    throw new Error("Upstash rate limit: still limited after retry");
   }
 }
 
@@ -174,7 +177,7 @@ export async function throttle(): Promise<void> {
   try {
     const limiter = await getUpstashLimiter();
     if (limiter) {
-      return throttleUpstash(limiter);
+      return await throttleUpstash(limiter);
     }
   } catch (err: any) {
     // If Upstash fails at runtime, fall through to in-memory
