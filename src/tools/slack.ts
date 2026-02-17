@@ -1232,6 +1232,26 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             },
           );
 
+          // TEMP: debugging list item thread resolution - remove after investigation
+          logger.info("FULL slackLists.items.info result", {
+            fullResult: JSON.stringify(result).substring(0, 5000),
+            topLevelKeys: Object.keys(result),
+            listKeys: result.list ? Object.keys(result.list) : "no list key",
+            listMetadataKeys: result.list?.list_metadata
+              ? Object.keys(result.list.list_metadata)
+              : "no list_metadata",
+            recordsInfo: result.list?.list_metadata?.records
+              ? {
+                  firstRecordKeys: Object.keys(result.list.list_metadata.records[0] || {}),
+                  threadFields: {
+                    message: result.list.list_metadata.records[0]?.message,
+                    thread_channel_id: result.list.list_metadata.records[0]?.thread_channel_id,
+                    thread_ts: result.list.list_metadata.records[0]?.thread_ts,
+                  }
+                }
+              : "no records array",
+          });
+
           if (!result.ok) {
             return {
               ok: false,
@@ -1244,12 +1264,37 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             item_id,
           });
 
-          const raw = result.record || result.item;
+          // Try EVERY possible path to find the record
+          const raw = result.record 
+            || result.item 
+            || result.list?.list_metadata?.records?.[0]
+            || (result.list?.list_metadata?.records && result.list.list_metadata.records.find((r: any) => r.id === item_id));
+          
+          // TEMP DEBUG: dump all possible paths
+          const debugPaths = {
+            hasRecord: !!result.record,
+            hasItem: !!result.item,
+            hasListMetaRecords: !!result.list?.list_metadata?.records,
+            recordCount: result.list?.list_metadata?.records?.length,
+            firstRecordAllKeys: result.list?.list_metadata?.records?.[0] ? Object.keys(result.list.list_metadata.records[0]) : 'none',
+            rawAllKeys: raw ? Object.keys(raw) : 'none',
+            // Check for any thread/conversation/channel related fields
+            rawThread: raw?.thread_channel_id,
+            rawThreadTs: raw?.thread_ts,
+            rawConversation: raw?.conversation,
+            rawConversationId: raw?.conversation_id,
+            rawChannelId: raw?.channel_id,
+            rawMessage: raw?.message,
+            rawTs: raw?.ts,
+          };
+          logger.info("DEBUG_PATHS for list item", debugPaths);
+
           const item = raw
             ? {
                 ...raw,
-                thread_channel_id: raw.message?.channel_id || null,
-                thread_ts: raw.message?.ts || null,
+                _debug_paths: debugPaths,
+                thread_channel_id: raw.thread_channel_id || raw.message?.channel_id || null,
+                thread_ts: raw.thread_ts || raw.message?.ts || null,
               }
             : null;
 
