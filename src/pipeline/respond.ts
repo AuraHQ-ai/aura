@@ -36,6 +36,9 @@ const TOOL_STATUS: Record<string, string> = {
   edit_canvas: "_Editing a canvas..._",
   add_reaction: "_Reacting..._",
   set_my_status: "_Updating status..._",
+  run_command: "_Running a command in the sandbox..._",
+  patch_own_code: "_Dispatching a coding agent to fix my own code... (this may take a few minutes)_",
+  read_own_source: "_Reading my own source code..._",
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
