@@ -60,7 +60,10 @@ async function getUpstashLimiter(): Promise<any | null> {
 }
 
 async function throttleUpstash(limiter: any): Promise<void> {
-  const { success, remaining, reset } = await limiter.limit("global");
+  // Use blockUntilReady to avoid double-counting tokens with the sliding window algorithm.
+  // limiter.limit() counts denied requests as consuming a token, so a manual limit+retry
+  // would consume two tokens per call under load.
+  const { success, remaining, reset } = await limiter.blockUntilReady("global", RATE_LIMIT_WINDOW_MS);
 
   if (success) {
     if (remaining <= 5) {
@@ -69,21 +72,10 @@ async function throttleUpstash(limiter: any): Promise<void> {
     return;
   }
 
-  // Rate limited — wait until the window resets, then retry
-  const waitMs = Math.max(reset - Date.now(), 100);
-  logger.info(`Upstash rate limit hit — waiting ${waitMs}ms`, {
+  // blockUntilReady timed out — let the Slack 429 handler deal with it
+  logger.warn("Upstash rate limit: still limited after blockUntilReady", {
     remaining,
-    resetMs: reset,
   });
-  await new Promise((resolve) => setTimeout(resolve, waitMs));
-
-  // Retry once after waiting (if still limited, let the Slack 429 handler deal with it)
-  const retry = await limiter.limit("global");
-  if (!retry.success) {
-    logger.warn("Upstash rate limit: still limited after wait", {
-      remaining: retry.remaining,
-    });
-  }
 }
 
 // ── In-Memory FIFO Fallback (local dev / Upstash not configured) ─────────────
@@ -174,7 +166,7 @@ export async function throttle(): Promise<void> {
   try {
     const limiter = await getUpstashLimiter();
     if (limiter) {
-      return throttleUpstash(limiter);
+      return await throttleUpstash(limiter);
     }
   } catch (err: any) {
     // If Upstash fails at runtime, fall through to in-memory

@@ -331,6 +331,7 @@ export async function generateResponse(
         // Got partial text before the error — show what we have
         await updateMessage(
           accumulatedText + "\n\n_...interrupted. Something went wrong._",
+          true,
         );
       } else {
         // Aborted during tool calls before any text was generated
