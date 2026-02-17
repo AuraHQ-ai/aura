@@ -168,7 +168,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       recordPipelineMetrics({
         totalMs: Date.now() - pipelineStart,
         memoriesUsed: 0,
-        modifications: [],
         channelType: context.channelType,
         userId: context.userId,
         isTransparencyCommand: true,
@@ -240,7 +239,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       inputTokens: response.usage?.inputTokens,
       outputTokens: response.usage?.outputTokens,
       totalTokens: response.usage?.totalTokens,
-      modifications: response.modifications,
       channelType: context.channelType,
       userId: context.userId,
       isTransparencyCommand: false,
@@ -252,7 +250,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       memoriesUsed: memories.length,
       llmMs,
       retrievalMs,
-      modifications: response.modifications,
     });
 
     // 7. Background tasks (via waitUntil so they don't block the response)

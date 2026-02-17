@@ -21,8 +21,6 @@ interface PipelineMetrics {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
-  /** Anti-pattern modifications made */
-  modifications: string[];
   /** Channel type */
   channelType: string;
   /** User ID (hashed in production) */
