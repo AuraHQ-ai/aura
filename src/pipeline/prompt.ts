@@ -6,6 +6,7 @@ import type { ConversationContext } from "./slack-context.js";
 import { formatConversationContext } from "./slack-context.js";
 import type { Memory, UserProfile } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
+import { getSetting } from "../lib/settings.js";
 
 export interface AssembledPrompt {
   systemPrompt: string;
@@ -54,6 +55,12 @@ export async function assemblePrompt(
   const isChannelHistory =
     !conversation.thread && !!threadContext && !context.isDm;
 
+  // Resolve active model ID for self-awareness in system prompt
+  const modelId =
+    (await getSetting("model_main")) ||
+    process.env.MODEL_MAIN ||
+    "anthropic/claude-sonnet-4-20250514";
+
   // Build the system prompt (async: queries skill index from DB)
   const systemPrompt = await buildSystemPrompt({
     memories,
@@ -63,6 +70,7 @@ export async function assemblePrompt(
     userTimezone: userProfile?.timezone || undefined,
     threadContext,
     isChannelHistory,
+    modelId,
   });
 
   logger.debug(`Assembled prompt in ${Date.now() - start}ms`, {
