@@ -12,6 +12,7 @@ interface ModelOption {
 
 const MAIN_MODELS: ModelOption[] = [
   { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { value: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
   { value: "anthropic/claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
   { value: "openai/gpt-5.2", label: "GPT-5.2" },
