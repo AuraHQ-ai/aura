@@ -15,6 +15,7 @@ const MAIN_MODELS: ModelOption[] = [
   { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { value: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
   { value: "anthropic/claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+  { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
   { value: "openai/gpt-5.2", label: "GPT-5.2" },
   { value: "openai/gpt-5.1-thinking", label: "GPT-5.1 Thinking" },
   { value: "openai/gpt-4o", label: "GPT-4o" },
