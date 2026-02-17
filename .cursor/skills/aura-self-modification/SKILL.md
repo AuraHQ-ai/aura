@@ -55,6 +55,21 @@ run_command("git clone https://x-access-token:$GITHUB_TOKEN@github.com/realadvis
 - `src/app.ts` -- Hono routes, events, interactions
 - `src/db/schema.ts` -- database schema
 
+## Debugging API Integrations
+
+When Aura's tools return unexpected results (e.g. null fields, missing data), **don't trust the typed SDK or Aura's wrapper code** -- call the API directly with curl using tokens from `.env`:
+
+```bash
+source .env && curl -s -X POST 'https://slack.com/api/conversations.history' \
+  -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"C088REN54FM","limit":5}' | python3 -m json.tool
+```
+
+This technique revealed that Slack list channel messages contain `slack_list.list_record_id` -- a field invisible to the typed SDK that provides a deterministic record-to-thread mapping. The raw JSON is the source of truth; SDK types and existing code can both be wrong about what's available.
+
+Pipe through `python3 -m json.tool` for pretty printing, or use `python3 -c "import json,sys; ..."` for custom field extraction.
+
 ## Rules
 
 - Never push to main -- always branches + PRs
