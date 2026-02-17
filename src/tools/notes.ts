@@ -4,6 +4,7 @@ import { eq, and, gt, or, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes, jobs } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
+import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime } from "../lib/temporal.js";
 
@@ -80,6 +81,14 @@ export function createNoteTools(context?: ScheduleContext) {
       }),
       execute: async ({ topic, content, category, expires_in }) => {
         try {
+          if (
+            topic === "self-directive" &&
+            !isAdmin(context?.userId) &&
+            context?.userId !== "aura"
+          ) {
+            return { ok: false, error: "Only admins can edit the self-directive." };
+          }
+
           let expiresAt: Date | null = null;
           if (expires_in) {
             const ms = parseRelativeTime(expires_in);
@@ -281,6 +290,14 @@ export function createNoteTools(context?: ScheduleContext) {
         line,
       }) => {
         try {
+          if (
+            topic === "self-directive" &&
+            !isAdmin(context?.userId) &&
+            context?.userId !== "aura"
+          ) {
+            return { ok: false, error: "Only admins can edit the self-directive." };
+          }
+
           const note = await getNoteByTopic(topic);
           if (!note) {
             return {
@@ -388,6 +405,14 @@ export function createNoteTools(context?: ScheduleContext) {
       }),
       execute: async ({ topic }) => {
         try {
+          if (
+            topic === "self-directive" &&
+            !isAdmin(context?.userId) &&
+            context?.userId !== "aura"
+          ) {
+            return { ok: false, error: "Only admins can delete the self-directive." };
+          }
+
           const note = await getNoteByTopic(topic);
           if (!note) {
             return {
