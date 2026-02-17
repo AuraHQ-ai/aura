@@ -1224,9 +1224,16 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             }
           }
 
+          // Sort items by date_created so greedy matching assigns closest messages first
+          const sortedItems = [...itemsRaw].sort((a: any, b: any) => {
+            const aCreated = typeof a.date_created === 'number' ? a.date_created : parseInt(a.date_created || '0');
+            const bCreated = typeof b.date_created === 'number' ? b.date_created : parseInt(b.date_created || '0');
+            return aCreated - bCreated;
+          });
+
           // Match each item to the closest message within ±2s, consuming matches to avoid duplicates
           const usedTs = new Set<string>();
-          const items = itemsRaw.map((item: any) => {
+          const items = sortedItems.map((item: any) => {
             let threadTs: string | null = null;
             if (item.date_created && messages.length > 0) {
               const created = typeof item.date_created === 'number' ? item.date_created : parseInt(item.date_created);
@@ -1321,13 +1328,15 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                   latest: String(created + 5),
                   limit: 10,
                 });
+                let bestDiff = Infinity;
                 for (const msg of historyResult.messages || []) {
                   if (msg.ts) {
                     const msgSec = Math.floor(parseFloat(msg.ts));
-                    if (Math.abs(msgSec - created) <= 2) {
+                    const diff = Math.abs(msgSec - created);
+                    if (diff <= 2 && diff < bestDiff) {
+                      bestDiff = diff;
                       threadChannelId = listChannelId;
                       threadTs = msg.ts;
-                      break;
                     }
                   }
                 }
