@@ -37,6 +37,8 @@ interface PipelineOptions {
   event: KnownEventFromType<"message"> | KnownEventFromType<"app_mention">;
   client: WebClient;
   botUserId: string;
+  /** Slack team ID (from event body) — needed for chatStream in channels */
+  teamId?: string;
   /** Vercel waitUntil for background tasks */
   waitUntil?: (promise: Promise<unknown>) => void;
 }
@@ -54,7 +56,7 @@ interface PipelineOptions {
  * 7. Background: store messages, extract memories, update profile
  */
 export async function runPipeline(options: PipelineOptions): Promise<void> {
-  const { event, client, botUserId, waitUntil } = options;
+  const { event, client, botUserId, teamId, waitUntil } = options;
   const pipelineStart = Date.now();
 
   // 1. Parse context
@@ -166,7 +168,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       recordPipelineMetrics({
         totalMs: Date.now() - pipelineStart,
         memoriesUsed: 0,
-        modifications: [],
         channelType: context.channelType,
         userId: context.userId,
         isTransparencyCommand: true,
@@ -211,6 +212,8 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       images,
       channelId: context.channelId,
       threadTs: replyThreadTs,
+      teamId,
+      recipientUserId: context.userId,
     });
     const llmMs = Date.now() - llmStart;
 
@@ -236,7 +239,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       inputTokens: response.usage?.inputTokens,
       outputTokens: response.usage?.outputTokens,
       totalTokens: response.usage?.totalTokens,
-      modifications: response.modifications,
       channelType: context.channelType,
       userId: context.userId,
       isTransparencyCommand: false,
@@ -248,7 +250,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       memoriesUsed: memories.length,
       llmMs,
       retrievalMs,
-      modifications: response.modifications,
     });
 
     // 7. Background tasks (via waitUntil so they don't block the response)
