@@ -6,7 +6,7 @@ import type { ConversationContext } from "./slack-context.js";
 import { formatConversationContext } from "./slack-context.js";
 import type { Memory, UserProfile } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
-import { getSetting } from "../lib/settings.js";
+import { getMainModelId } from "../lib/ai.js";
 
 export interface AssembledPrompt {
   systemPrompt: string;
@@ -56,10 +56,7 @@ export async function assemblePrompt(
     !conversation.thread && !!threadContext && !context.isDm;
 
   // Resolve active model ID for self-awareness in system prompt
-  const modelId =
-    (await getSetting("model_main")) ||
-    process.env.MODEL_MAIN ||
-    "anthropic/claude-sonnet-4-20250514";
+  const modelId = await getMainModelId();
 
   // Build the system prompt (async: queries skill index from DB)
   const systemPrompt = await buildSystemPrompt({

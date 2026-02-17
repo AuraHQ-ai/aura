@@ -12,15 +12,24 @@ import { getSetting } from "./settings.js";
  * For local development, set VERCEL_AI_GATEWAY_API_KEY in .env.
  */
 
+/** Default main model ID used across the codebase. */
+export const DEFAULT_MAIN_MODEL = "anthropic/claude-sonnet-4-20250514";
+
+/**
+ * Resolve the main model ID string (no gateway wrapping).
+ * Priority: DB setting > env var > default
+ */
+export async function getMainModelId(): Promise<string> {
+  const override = await getSetting("model_main");
+  return override || process.env.MODEL_MAIN || DEFAULT_MAIN_MODEL;
+}
+
 /**
  * Get the main conversation model.
  * Priority: DB setting > env var > default
  */
 export async function getMainModel() {
-  const override = await getSetting("model_main");
-  return gateway(
-    override || process.env.MODEL_MAIN || "anthropic/claude-sonnet-4-20250514",
-  );
+  return gateway(await getMainModelId());
 }
 
 /**
