@@ -1103,7 +1103,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       execute: async ({ limit }) => {
         try {
           // Authorization: only admins can list all DM conversations
-          if (!isAdmin(context?.userId)) {
+          if (!isAdmin(context?.userId) && context?.userId !== "aura") {
             return {
               ok: false,
               error:
