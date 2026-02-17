@@ -16,12 +16,37 @@ const MAX_REQUESTS_PER_WINDOW = 30;
 
 // ── Upstash Redis (shared across instances) ──────────────────────────────────
 
+class UpstashRateLimitContention extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpstashRateLimitContention";
+  }
+}
+
 let upstashInitPromise: Promise<any | null> | null = null;
 
 function getUpstashLimiter(): Promise<any | null> {
+  // If env vars aren't configured, this is permanent — no need to cache or retry
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) {
+    return Promise.resolve(null);
+  }
+
   if (upstashInitPromise) return upstashInitPromise;
-  upstashInitPromise = initUpstashLimiter();
-  return upstashInitPromise;
+
+  const promise = initUpstashLimiter();
+  upstashInitPromise = promise;
+
+  // If init fails transiently (returns null despite env vars being present),
+  // clear the cache so the next call retries initialization
+  promise.then((result) => {
+    if (result === null) {
+      upstashInitPromise = null;
+    }
+  });
+
+  return promise;
 }
 
 async function initUpstashLimiter(): Promise<any | null> {
@@ -62,31 +87,32 @@ async function initUpstashLimiter(): Promise<any | null> {
 }
 
 async function throttleUpstash(limiter: any): Promise<void> {
-  const { success, remaining, reset } = await limiter.limit("global");
+  const maxAttempts = 5;
 
-  if (success) {
-    if (remaining <= 5) {
-      logger.debug("Upstash rate limit: running low", { remaining, resetMs: reset });
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const { success, remaining, reset } = await limiter.limit("global");
+
+    if (success) {
+      if (remaining <= 5) {
+        logger.debug("Upstash rate limit: running low", { remaining, resetMs: reset });
+      }
+      return;
     }
-    return;
-  }
 
-  // Rate limited — wait until the window resets, then retry
-  const waitMs = Math.max(reset - Date.now(), 100);
-  logger.info(`Upstash rate limit hit — waiting ${waitMs}ms`, {
-    remaining,
-    resetMs: reset,
-  });
-  await new Promise((resolve) => setTimeout(resolve, waitMs));
-
-  // Retry once after waiting
-  const retry = await limiter.limit("global");
-  if (!retry.success) {
-    logger.warn("Upstash rate limit: still limited after wait", {
-      remaining: retry.remaining,
+    // Rate limited — wait until the window resets, then retry
+    const waitMs = Math.max(reset - Date.now(), 100);
+    logger.info(`Upstash rate limit hit — waiting ${waitMs}ms (attempt ${attempt}/${maxAttempts})`, {
+      remaining,
+      resetMs: reset,
     });
-    throw new Error("Upstash rate limit: still limited after retry");
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
+
+  // Exhausted all retries — this is real contention under the shared limiter.
+  // Must NOT fall through to in-memory (would bypass global coordination).
+  throw new UpstashRateLimitContention(
+    `Upstash rate limit: still limited after ${maxAttempts} attempts`,
+  );
 }
 
 // ── In-Memory FIFO Fallback (local dev / Upstash not configured) ─────────────
@@ -180,7 +206,12 @@ export async function throttle(): Promise<void> {
       return await throttleUpstash(limiter);
     }
   } catch (err: any) {
-    // If Upstash fails at runtime, fall through to in-memory
+    // Rate-limit contention under the shared limiter must NOT fall back
+    // to in-memory — that would bypass the global rate limit
+    if (err instanceof UpstashRateLimitContention) {
+      throw err;
+    }
+    // Infrastructure failures (Redis down, network error) fall through to in-memory
     logger.warn("Upstash throttle failed — falling back to in-memory", {
       error: err.message,
     });
