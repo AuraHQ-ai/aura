@@ -1187,71 +1187,49 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             itemCount: result.items?.length || 0,
           });
 
-          // Derive the list's conversation channel ID
+          // Derive the list's conversation channel ID (F prefix → C prefix)
           const listChannelId = list_id.startsWith('F') ? 'C' + list_id.slice(1) : null;
-
-          // Compute time range from items' date_created for bounded history query
           const itemsRaw = result.items || [];
-          let minCreated = Infinity;
-          let maxCreated = -Infinity;
-          for (const item of itemsRaw) {
-            if (item.date_created) {
-              const created = typeof item.date_created === 'number' ? item.date_created : parseInt(item.date_created);
-              if (created < minCreated) minCreated = created;
-              if (created > maxCreated) maxCreated = created;
-            }
-          }
 
-          // Fetch channel history within a time window around the items
-          let messages: Array<{ ts: string; sec: number }> = [];
-          if (listChannelId && minCreated !== Infinity) {
+          // Build record_id → thread_ts map from the list channel's root messages.
+          // Each Slackbot "list_record_comment" message has a slack_list.list_record_id
+          // field that directly identifies which record it belongs to.
+          const recordThreadMap = new Map<string, string>();
+          if (listChannelId && itemsRaw.length > 0) {
             try {
-              await throttle();
-              const historyResult = await client.conversations.history({
-                channel: listChannelId,
-                oldest: String(minCreated - 5),
-                latest: String(maxCreated + 5),
-                limit: 200,
-              });
-              for (const msg of historyResult.messages || []) {
-                if (msg.ts) {
-                  messages.push({ ts: msg.ts, sec: Math.floor(parseFloat(msg.ts)) });
+              // Compute time range for bounded history query
+              let minCreated = Infinity;
+              let maxCreated = -Infinity;
+              for (const item of itemsRaw) {
+                if (item.date_created) {
+                  const created = typeof item.date_created === 'number' ? item.date_created : parseInt(item.date_created);
+                  if (created < minCreated) minCreated = created;
+                  if (created > maxCreated) maxCreated = created;
+                }
+              }
+              if (minCreated !== Infinity) {
+                await throttle();
+                const historyResult = await client.conversations.history({
+                  channel: listChannelId,
+                  oldest: String(minCreated - 5),
+                  latest: String(maxCreated + 5),
+                  limit: 200,
+                });
+                for (const msg of (historyResult.messages || []) as any[]) {
+                  const recordId = msg.slack_list?.list_record_id;
+                  if (recordId && msg.ts) {
+                    recordThreadMap.set(recordId, msg.ts);
+                  }
                 }
               }
             } catch (e) {
-              // Gracefully degrade — thread info just won't be available
               logger.warn("Could not read list channel history for thread resolution", { listChannelId, error: e });
             }
           }
 
-          // Sort items by date_created so greedy matching assigns closest messages first
-          const sortedItems = [...itemsRaw].sort((a: any, b: any) => {
-            const aCreated = typeof a.date_created === 'number' ? a.date_created : parseInt(a.date_created || '0');
-            const bCreated = typeof b.date_created === 'number' ? b.date_created : parseInt(b.date_created || '0');
-            return aCreated - bCreated;
-          });
-
-          // Match each item to the closest message within ±2s, consuming matches to avoid duplicates
-          const usedTs = new Set<string>();
-          const items = sortedItems.map((item: any) => {
-            let threadTs: string | null = null;
-            if (item.date_created && messages.length > 0) {
-              const created = typeof item.date_created === 'number' ? item.date_created : parseInt(item.date_created);
-              let bestTs: string | null = null;
-              let bestDiff = Infinity;
-              for (const msg of messages) {
-                if (usedTs.has(msg.ts)) continue;
-                const diff = Math.abs(msg.sec - created);
-                if (diff <= 2 && diff < bestDiff) {
-                  bestDiff = diff;
-                  bestTs = msg.ts;
-                }
-              }
-              if (bestTs) {
-                usedTs.add(bestTs);
-                threadTs = bestTs;
-              }
-            }
+          // Attach thread info to each item using the deterministic record_id mapping
+          const items = itemsRaw.map((item: any) => {
+            const threadTs = recordThreadMap.get(item.id) || null;
             return {
               ...item,
               thread_channel_id: threadTs ? listChannelId : null,
@@ -1312,32 +1290,28 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           const raw = result.record || result.item;
 
-          // Resolve thread info for this item
+          // Resolve thread info using the list channel's slack_list.list_record_id field
           let threadChannelId: string | null = null;
           let threadTs: string | null = null;
-          if (raw?.date_created) {
+          if (raw?.id) {
             const listChannelId = list_id.startsWith('F') ? 'C' + list_id.slice(1) : null;
             if (listChannelId) {
               try {
                 await throttle();
-                const created = typeof raw.date_created === 'number' ? raw.date_created : parseInt(raw.date_created);
+                const created = raw.date_created
+                  ? (typeof raw.date_created === 'number' ? raw.date_created : parseInt(raw.date_created))
+                  : undefined;
                 // Fetch a small window of history around the item's creation time
                 const historyResult = await client.conversations.history({
                   channel: listChannelId,
-                  oldest: String(created - 5),
-                  latest: String(created + 5),
+                  ...(created ? { oldest: String(created - 5), latest: String(created + 5) } : {}),
                   limit: 10,
                 });
-                let bestDiff = Infinity;
-                for (const msg of historyResult.messages || []) {
-                  if (msg.ts) {
-                    const msgSec = Math.floor(parseFloat(msg.ts));
-                    const diff = Math.abs(msgSec - created);
-                    if (diff <= 2 && diff < bestDiff) {
-                      bestDiff = diff;
-                      threadChannelId = listChannelId;
-                      threadTs = msg.ts;
-                    }
+                for (const msg of (historyResult.messages || []) as any[]) {
+                  if (msg.slack_list?.list_record_id === raw.id && msg.ts) {
+                    threadChannelId = listChannelId;
+                    threadTs = msg.ts;
+                    break;
                   }
                 }
               } catch (e) {
