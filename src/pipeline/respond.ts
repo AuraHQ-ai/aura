@@ -36,6 +36,9 @@ const TOOL_STATUS: Record<string, string> = {
   edit_canvas: "_Editing a canvas..._",
   add_reaction: "_Reacting..._",
   set_my_status: "_Updating status..._",
+  run_command: "_Running a command in the sandbox..._",
+  patch_own_code: "_Dispatching a coding agent to fix my own code... (this may take a few minutes)_",
+  read_own_source: "_Reading my own source code..._",
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -69,9 +72,16 @@ export interface LLMResponse {
   };
 }
 
-// ── Debounce Helper ──────────────────────────────────────────────────────────
+// ── Streaming Constants ──────────────────────────────────────────────────────
 
 const UPDATE_INTERVAL_MS = 1500;
+
+/**
+ * Slack's chat.update with text-only (no blocks) rejects messages over ~4000
+ * characters with "msg_too_long". During streaming we truncate the preview to
+ * this limit; the full response is properly chunked in the final update.
+ */
+const STREAMING_MAX_LENGTH = 3900;
 
 // ── Main Function ────────────────────────────────────────────────────────────
 
@@ -106,20 +116,34 @@ export async function generateResponse(
     });
   }
 
-  // Helper to update the placeholder message
-  const updateMessage = async (text: string) => {
+  // Helper to update the placeholder message.
+  // isFinal=true bypasses the streaming truncation (final update uses formatForSlack chunking).
+  const updateMessage = async (text: string, isFinal = false) => {
     if (!messageTs) return;
+
+    let safeText = text;
+    if (!isFinal && text.length > STREAMING_MAX_LENGTH) {
+      // Truncate at a newline boundary for cleaner display
+      const truncated = text.substring(0, STREAMING_MAX_LENGTH);
+      const lastNewline = truncated.lastIndexOf("\n");
+      safeText =
+        (lastNewline > STREAMING_MAX_LENGTH * 0.5
+          ? truncated.substring(0, lastNewline)
+          : truncated) + "\n\n_...still typing..._";
+    }
+
     try {
       await slackClient.chat.update({
         channel: channelId,
         ts: messageTs,
-        text,
+        text: safeText,
       });
     } catch (err: any) {
       // Log but don't throw — update failures shouldn't kill the stream
       logger.warn("chat.update failed", {
         error: err?.data?.error || err.message || "unknown",
         retryAfter: err?.data?.headers?.["retry-after"],
+        textLength: safeText.length,
       });
     }
   };
@@ -249,8 +273,8 @@ export async function generateResponse(
     const formatted = chunks.join("\n\n");
 
     if (messageTs && chunks.length > 0 && chunks[0].trim().length > 0) {
-      // Update the existing placeholder with the first chunk
-      await updateMessage(chunks[0]);
+      // Update the existing placeholder with the first chunk (already sized by formatForSlack)
+      await updateMessage(chunks[0], true);
 
       // Post any overflow chunks as follow-up messages in the same thread
       for (let i = 1; i < chunks.length; i++) {
