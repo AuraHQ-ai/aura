@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
+import { isAdmin } from "../lib/permissions.js";
 import { createNoteTools } from "./notes.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
@@ -1102,19 +1103,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       execute: async ({ limit }) => {
         try {
           // Authorization: only admins can list all DM conversations
-          const requesterId = context?.userId;
-          if (requesterId) {
-            const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
-              .split(",")
-              .map((id) => id.trim())
-              .filter(Boolean);
-            if (!adminIds.includes(requesterId)) {
-              return {
-                ok: false,
-                error:
-                  "Only admins can list all DM conversations. Use read_dm_history to check your own DM with Aura.",
-              };
-            }
+          if (!isAdmin(context?.userId)) {
+            return {
+              ok: false,
+              error:
+                "Only admins can list all DM conversations. Use read_dm_history to check your own DM with Aura.",
+            };
           }
 
           // Pre-load user list to avoid N+1 API calls for name resolution
@@ -1953,7 +1947,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createWebTools(),
 
     // ── Sandbox Tools ────────────────────────────────────────────────────
-    ...createSandboxTools(),
+    ...createSandboxTools(context),
 
     // ── BigQuery Tools ────────────────────────────────────────────────────
     ...createBigQueryTools(),
