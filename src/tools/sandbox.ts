@@ -7,7 +7,9 @@ import {
   getOrCreateSandbox,
   truncateOutput,
 } from "../lib/sandbox.js";
+import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
+import type { ScheduleContext } from "../db/schema.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -18,7 +20,7 @@ const __dirname = dirname(__filename);
  * run_command is the universal primitive — use cat/head/tail for reading files,
  * heredocs for writing, git/rg/grep for search, etc.
  */
-export function createSandboxTools() {
+export function createSandboxTools(context?: ScheduleContext) {
   return {
     run_command: tool({
       description:
@@ -43,6 +45,13 @@ export function createSandboxTools() {
           .describe("Command timeout in seconds (max 300)"),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
+        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          return {
+            ok: false,
+            error: "Only admins can run sandbox commands.",
+          };
+        }
+
         if (!process.env.E2B_API_KEY) {
           return {
             ok: false,
@@ -130,6 +139,13 @@ export function createSandboxTools() {
           ),
       }),
       execute: async ({ prompt, branch_name, pr_title, pr_body }) => {
+        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          return {
+            ok: false,
+            error: "Only admins can modify Aura's source code.",
+          };
+        }
+
         if (!process.env.E2B_API_KEY) {
           return {
             ok: false,

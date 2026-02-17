@@ -6,6 +6,7 @@ import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs } from "../db/schema.js";
 import type { FrequencyConfig, ScheduleContext } from "../db/schema.js";
+import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime } from "../lib/temporal.js";
 
@@ -202,6 +203,28 @@ export function createJobTools(
           // Auto-generate name for one-shots if not provided
           const jobName = name || `job-${Date.now().toString(36)}`;
           const requestedBy = context?.userId || "aura";
+
+          // Per-user job limit for non-admins (also exempt "aura" identity used by heartbeat)
+          const MAX_JOBS_PER_USER = 5;
+          if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+            const activeCount = await db
+              .select({ count: sql<number>`count(*)::int` })
+              .from(jobs)
+              .where(
+                and(
+                  eq(jobs.requestedBy, requestedBy),
+                  eq(jobs.status, "pending"),
+                  eq(jobs.enabled, 1),
+                  ne(jobs.name, jobName),
+                ),
+              );
+            if ((activeCount[0]?.count ?? 0) >= MAX_JOBS_PER_USER) {
+              return {
+                ok: false,
+                error: `You have ${MAX_JOBS_PER_USER} active jobs already. Cancel some before creating new ones, or ask an admin.`,
+              };
+            }
+          }
 
           // Build update set for upsert (only update fields that were provided)
           const updateSet: Record<string, unknown> = {
