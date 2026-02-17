@@ -16,13 +16,6 @@ const MAX_REQUESTS_PER_WINDOW = 30;
 
 // ── Upstash Redis (shared across instances) ──────────────────────────────────
 
-class UpstashRateLimitContention extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "UpstashRateLimitContention";
-  }
-}
-
 let upstashInitPromise: Promise<any | null> | null = null;
 
 function getUpstashLimiter(): Promise<any | null> {
@@ -87,9 +80,7 @@ async function initUpstashLimiter(): Promise<any | null> {
 }
 
 async function throttleUpstash(limiter: any): Promise<void> {
-  const maxAttempts = 5;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; ; attempt++) {
     const { success, remaining, reset } = await limiter.limit("global");
 
     if (success) {
@@ -101,18 +92,12 @@ async function throttleUpstash(limiter: any): Promise<void> {
 
     // Rate limited — wait until the window resets, then retry
     const waitMs = Math.max(reset - Date.now(), 100);
-    logger.info(`Upstash rate limit hit — waiting ${waitMs}ms (attempt ${attempt}/${maxAttempts})`, {
+    logger.info(`Upstash rate limit hit — waiting ${waitMs}ms (attempt ${attempt})`, {
       remaining,
       resetMs: reset,
     });
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
-
-  // Exhausted all retries — this is real contention under the shared limiter.
-  // Must NOT fall through to in-memory (would bypass global coordination).
-  throw new UpstashRateLimitContention(
-    `Upstash rate limit: still limited after ${maxAttempts} attempts`,
-  );
 }
 
 // ── In-Memory FIFO Fallback (local dev / Upstash not configured) ─────────────
@@ -206,11 +191,6 @@ export async function throttle(): Promise<void> {
       return await throttleUpstash(limiter);
     }
   } catch (err: any) {
-    // Rate-limit contention under the shared limiter must NOT fall back
-    // to in-memory — that would bypass the global rate limit
-    if (err instanceof UpstashRateLimitContention) {
-      throw err;
-    }
     // Infrastructure failures (Redis down, network error) fall through to in-memory
     logger.warn("Upstash throttle failed — falling back to in-memory", {
       error: err.message,
