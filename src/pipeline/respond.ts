@@ -328,11 +328,20 @@ export async function generateResponse(
     // If we have a placeholder, update it with an error/interruption message
     if (messageTs) {
       if (accumulatedText) {
-        // Got partial text before the error — show what we have
-        await updateMessage(
-          accumulatedText + "\n\n_...interrupted. Something went wrong._",
-          true,
-        );
+        // Got partial text before the error — show what we have.
+        // Truncate to fit within Slack's limit (same as streaming updates).
+        const errorSuffix = "\n\n_...interrupted. Something went wrong._";
+        const maxTextLen = STREAMING_MAX_LENGTH - errorSuffix.length;
+        let partialText = accumulatedText;
+        if (partialText.length > maxTextLen) {
+          const truncated = partialText.substring(0, maxTextLen);
+          const lastNewline = truncated.lastIndexOf("\n");
+          partialText =
+            lastNewline > maxTextLen * 0.5
+              ? truncated.substring(0, lastNewline)
+              : truncated;
+        }
+        await updateMessage(partialText + errorSuffix, true);
       } else {
         // Aborted during tool calls before any text was generated
         await updateMessage(
