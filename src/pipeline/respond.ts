@@ -115,8 +115,12 @@ export async function generateResponse(
         ts: messageTs,
         text,
       });
-    } catch {
-      // Swallow update errors (rate limits, etc.)
+    } catch (err: any) {
+      // Log but don't throw — update failures shouldn't kill the stream
+      logger.warn("chat.update failed", {
+        error: err?.data?.error || err.message || "unknown",
+        retryAfter: err?.data?.headers?.["retry-after"],
+      });
     }
   };
 
@@ -132,6 +136,9 @@ export async function generateResponse(
     }, 180_000);
   };
   resetTimer(); // start the initial timer
+
+  // Keepalive interval during long tool calls (patch_own_code can take 3-10 min)
+  let toolKeepAlive: ReturnType<typeof setInterval> | null = null;
 
   // ── Build stream options ─────────────────────────────────────────────
   const streamOptions: any = {
@@ -188,12 +195,19 @@ export async function generateResponse(
 
           await updateMessage(statusText);
           lastUpdateMs = Date.now();
+
+          // Keep resetting inactivity timer during long tool execution
+          // (patch_own_code can take 3-10 minutes)
+          if (toolKeepAlive) clearInterval(toolKeepAlive);
+          toolKeepAlive = setInterval(() => resetTimer(), 60_000);
           break;
         }
 
         case "tool-result": {
-          // Clear the tool status after tool completes
+          // Clear the tool status and keepalive after tool completes
           currentToolStatus = "";
+          if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+          resetTimer();
           break;
         }
 
@@ -213,6 +227,7 @@ export async function generateResponse(
 
     // ── Final update ─────────────────────────────────────────────────────
     clearTimeout(inactivityTimer);
+    if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
 
     const llmMs = Date.now() - start;
 
@@ -284,6 +299,7 @@ export async function generateResponse(
     };
   } catch (error: any) {
     clearTimeout(inactivityTimer);
+    if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
 
     // If we have a placeholder, update it with an error/interruption message
     if (messageTs) {
