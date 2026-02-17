@@ -1,5 +1,5 @@
 import type { WebClient } from "@slack/web-api";
-import { throttle } from "../tools/rate-limit.js";
+
 import { logger } from "../lib/logger.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -93,7 +93,6 @@ export async function fetchConversationContext(
       const MAX_PAGES = 10; // Safety cap: 10 × 200 = 2000 messages max
       let pages = 0;
       do {
-        await throttle();
         const repliesResult = await client.conversations.replies({
           channel: channelId,
           ts: threadTs,
@@ -137,7 +136,6 @@ export async function fetchConversationContext(
     }
 
     // ── Always fetch recent channel/DM messages for broader context ──────
-    await throttle();
     const historyResult = await client.conversations.history({
       channel: channelId,
       limit: 15,

@@ -10,7 +10,6 @@ import { createSandboxTools } from "./sandbox.js";
 import { createWebTools } from "./web.js";
 import { createBigQueryTools } from "./bigquery.js";
 import type { ScheduleContext } from "../db/schema.js";
-import { throttle } from "./rate-limit.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
 
@@ -26,7 +25,6 @@ async function getChannelList(
   let cursor: string | undefined;
 
   do {
-    await throttle();
     const result = await client.conversations.list({
       types: "public_channel,private_channel",
       exclude_archived: true,
@@ -68,7 +66,6 @@ async function getUserList(
   let cursor: string | undefined;
 
   do {
-    await throttle();
     const result = await client.users.list({ limit: 200, cursor });
 
     for (const u of result.members || []) {
@@ -111,7 +108,6 @@ async function searchPublicChannelByName(
 
     let cursor: string | undefined;
     do {
-      await throttle();
       const result = await userClient.conversations.list({
         types: "public_channel",
         exclude_archived: true,
@@ -247,7 +243,6 @@ async function resolveUserById(
   if (cached) return cached;
 
   try {
-    await throttle();
     const result = await client.users.info({ user: userId });
     const name =
       result.user?.profile?.display_name ||
@@ -292,7 +287,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }
       if (minCreated === Infinity) return result;
 
-      await throttle();
       const historyResult = await client.conversations.history({
         channel: listChannelId,
         oldest: String(minCreated - 5),
@@ -343,7 +337,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               let cursor: string | undefined;
               const collected: typeof allChannels = [];
               do {
-                await throttle();
                 const result = await userClient.conversations.list({
                   types: "public_channel",
                   exclude_archived: true,
@@ -373,7 +366,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               const botPrivateChannels: typeof allChannels = [];
               let botCursor: string | undefined;
               do {
-                await throttle();
                 const botResult = await client.conversations.list({
                   types: "public_channel,private_channel",
                   exclude_archived: true,
@@ -429,7 +421,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           if (allChannels.length === 0) {
             // No user token, or user token failed — fall back to bot-only listing
-            await throttle();
             const result = await client.conversations.list({
               types: "public_channel,private_channel",
               exclude_archived: true,
@@ -486,7 +477,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          await throttle();
           await client.conversations.join({ channel: channel.id });
 
           // Invalidate cache so subsequent calls see the newly joined channel
@@ -549,7 +539,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          await throttle();
           const result = await client.conversations.history({
             channel: channel.id,
             limit,
@@ -634,7 +623,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          await throttle();
           const result = await client.chat.postMessage({
             channel: channel.id,
             text: message,
@@ -734,7 +722,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          await throttle();
           const result = await client.users.info({ user: user.id });
           const u = result.user;
 
@@ -862,7 +849,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const { WebClient } = await import("@slack/web-api");
           const searchClient = new WebClient(userToken);
 
-          await throttle();
           const result = await searchClient.search.messages({
             query,
             count,
@@ -928,7 +914,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           }
 
           // Open a DM conversation
-          await throttle();
           const dmResult = await client.conversations.open({
             users: user.id,
           });
@@ -941,7 +926,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          await throttle();
           const result = await client.chat.postMessage({
             channel: dmChannelId,
             text: message,
@@ -1003,7 +987,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           let imCursor: string | undefined;
 
           do {
-            await throttle();
             const imResult = await client.conversations.list({
               types: "im",
               limit: 200,
@@ -1033,7 +1016,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           }
 
           // Fetch conversation history
-          await throttle();
           const result = await client.conversations.history({
             channel: dmChannelId,
             limit,
@@ -1133,7 +1115,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           let fetched = 0;
 
           do {
-            await throttle();
             const result = await client.conversations.list({
               types: "im",
               exclude_archived: true,
@@ -1203,7 +1184,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ list_id, limit }) => {
         try {
-          await throttle();
           const result = await (client as any).apiCall(
             "slackLists.items.list",
             {
@@ -1266,7 +1246,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ list_id, item_id }) => {
         try {
-          await throttle();
           const result = await (client as any).apiCall(
             "slackLists.items.info",
             {
@@ -1336,7 +1315,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ canvas_id }) => {
         try {
-          await throttle();
           const result = await (client as any).apiCall(
             "canvases.sections.lookup",
             {
@@ -1400,7 +1378,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             }
           }
 
-          await throttle();
           const result = await (client as any).apiCall(
             "canvases.create",
             params,
@@ -1490,7 +1467,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             ];
           }
 
-          await throttle();
           const result = await (client as any).apiCall("canvases.edit", {
             canvas_id,
             changes,
@@ -1545,7 +1521,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          await throttle();
           await client.chat.update({
             channel: channel.id,
             ts: message_ts,
@@ -1582,7 +1557,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          await throttle();
           await client.chat.delete({ channel: channel.id, ts: message_ts });
           logger.info("delete_message tool called", {
             channel: channel.name,
@@ -1618,7 +1592,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          await throttle();
           const result = await client.chat.postMessage({
             channel: channel.id,
             text: message,
@@ -1668,7 +1641,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          await throttle();
           await client.reactions.add({
             channel: channel.id,
             timestamp: message_ts,
@@ -1708,7 +1680,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          await throttle();
           await client.reactions.remove({
             channel: channel.id,
             timestamp: message_ts,
@@ -1749,7 +1720,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ channel_name, is_private }) => {
         try {
-          await throttle();
           const result = await client.conversations.create({
             name: channel_name.toLowerCase().replace(/[^a-z0-9_-]/g, "-"),
             is_private,
@@ -1798,7 +1768,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          await throttle();
           await client.conversations.setTopic({ channel: channel.id, topic });
           logger.info("set_channel_topic tool called", {
             channel: channel.name,
@@ -1836,7 +1805,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const user = await resolveUserByName(client, user_name);
           if (!user)
             return { ok: false, error: `User "${user_name}" not found.` };
-          await throttle();
           await client.conversations.invite({
             channel: channel.id,
             users: user.id,
@@ -1878,7 +1846,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          await throttle();
           await client.conversations.leave({ channel: channel.id });
           channelCache = null; // invalidate
           logger.info("leave_channel tool called", { channel: channel.name });
@@ -1917,7 +1884,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             profile.status_expiration =
               Math.floor(Date.now() / 1000) + expiration_minutes * 60;
           }
-          await throttle();
           await client.users.profile.set({ profile });
           logger.info("set_my_status tool called", {
             status_text,

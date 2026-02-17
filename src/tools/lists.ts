@@ -2,7 +2,6 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { throttle } from "./rate-limit.js";
 
 /**
  * Create Slack Lists write tools.
@@ -26,7 +25,6 @@ export function createListWriteTools(client: WebClient) {
       }),
       execute: async ({ list_id, fields }) => {
         try {
-          await throttle();
           const params: any = { list_id };
           if (fields) {
             params.initial_fields = fields;
@@ -89,7 +87,6 @@ export function createListWriteTools(client: WebClient) {
       }),
       execute: async ({ list_id, item_id, fields }) => {
         try {
-          await throttle();
 
           const cells = Object.entries(fields).map(([column_id, value]) => ({
             ...(typeof value === "object" &&
@@ -153,7 +150,6 @@ export function createListWriteTools(client: WebClient) {
       }),
       execute: async ({ list_id, item_id }) => {
         try {
-          await throttle();
           const result = await (client as any).apiCall(
             "slackLists.items.delete",
             {
