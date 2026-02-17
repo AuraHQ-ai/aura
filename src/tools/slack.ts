@@ -1190,18 +1190,32 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           // Derive the list's conversation channel ID
           const listChannelId = list_id.startsWith('F') ? 'C' + list_id.slice(1) : null;
 
-          // Build timestamp lookup from list channel history
-          let tsLookup: Map<number, string> = new Map();
-          if (listChannelId) {
+          // Compute time range from items' date_created for bounded history query
+          const itemsRaw = result.items || [];
+          let minCreated = Infinity;
+          let maxCreated = -Infinity;
+          for (const item of itemsRaw) {
+            if (item.date_created) {
+              const created = typeof item.date_created === 'number' ? item.date_created : parseInt(item.date_created);
+              if (created < minCreated) minCreated = created;
+              if (created > maxCreated) maxCreated = created;
+            }
+          }
+
+          // Fetch channel history within a time window around the items
+          let messages: Array<{ ts: string; sec: number }> = [];
+          if (listChannelId && minCreated !== Infinity) {
             try {
               await throttle();
               const historyResult = await client.conversations.history({
                 channel: listChannelId,
+                oldest: String(minCreated - 5),
+                latest: String(maxCreated + 5),
                 limit: 200,
               });
               for (const msg of historyResult.messages || []) {
                 if (msg.ts) {
-                  tsLookup.set(Math.floor(parseFloat(msg.ts)), msg.ts);
+                  messages.push({ ts: msg.ts, sec: Math.floor(parseFloat(msg.ts)) });
                 }
               }
             } catch (e) {
@@ -1210,12 +1224,26 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             }
           }
 
-          const items = (result.items || []).map((item: any) => {
+          // Match each item to the closest message within ±2s, consuming matches to avoid duplicates
+          const usedTs = new Set<string>();
+          const items = itemsRaw.map((item: any) => {
             let threadTs: string | null = null;
-            if (item.date_created && tsLookup.size > 0) {
-              // Try exact second match, then ±1s, then ±2s
+            if (item.date_created && messages.length > 0) {
               const created = typeof item.date_created === 'number' ? item.date_created : parseInt(item.date_created);
-              threadTs = tsLookup.get(created) || tsLookup.get(created + 1) || tsLookup.get(created - 1) || tsLookup.get(created + 2) || tsLookup.get(created - 2) || null;
+              let bestTs: string | null = null;
+              let bestDiff = Infinity;
+              for (const msg of messages) {
+                if (usedTs.has(msg.ts)) continue;
+                const diff = Math.abs(msg.sec - created);
+                if (diff <= 2 && diff < bestDiff) {
+                  bestDiff = diff;
+                  bestTs = msg.ts;
+                }
+              }
+              if (bestTs) {
+                usedTs.add(bestTs);
+                threadTs = bestTs;
+              }
             }
             return {
               ...item,
