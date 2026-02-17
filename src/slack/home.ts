@@ -1,5 +1,6 @@
 import type { WebClient } from "@slack/web-api";
 import { getAllSettings } from "../lib/settings.js";
+import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
@@ -45,20 +46,6 @@ const DEFAULTS: Record<string, string> = {
   model_fast: process.env.MODEL_FAST || "anthropic/claude-haiku-4-5",
   model_embedding: process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
 };
-
-// ── Admin Check ──────────────────────────────────────────────────────────────
-
-function isAdmin(userId: string): boolean {
-  const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-
-  // If no admins configured, nobody can change settings
-  if (adminIds.length === 0) return false;
-
-  return adminIds.includes(userId);
-}
 
 // ── Block Kit Helpers ────────────────────────────────────────────────────────
 
@@ -215,4 +202,4 @@ export const ACTION_TO_SETTING: Record<string, string> = {
   select_model_embedding: "model_embedding",
 };
 
-export { isAdmin };
+export { isAdmin } from "../lib/permissions.js";

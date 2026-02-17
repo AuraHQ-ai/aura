@@ -7,7 +7,7 @@ alwaysApply: true
 
 ## Deployment
 
-- **Push to `main` to deploy.** Vercel auto-deploys from GitHub. No manual `vercel --prod` needed for code changes.
+- **NEVER push directly to `main`.** Vercel auto-deploys from `main`, so any push goes straight to production. Always create a feature branch, push it, and open a PR. Merging the PR triggers the deploy.
 - **Use `npx --yes vercel@50.13.2` for CLI operations** (the project doesn't have Vercel CLI installed globally). Always use `--scope real-advisor`.
 - **Migrations run automatically** via the `vercel-build` script (`tsc && tsx src/db/migrate.ts`). No separate migration step needed.
 - **Production URL**: `https://aura-alpha-five.vercel.app`
@@ -65,7 +65,7 @@ alwaysApply: true
 - `GITHUB_TOKEN` is a PAT scoped to `realadvisor/aura` (contents + PRs)
 - Passed to E2B sandbox via `envs` for git/gh CLI operations
 - Aura can read her own code via `read_own_source` tool (GitHub API, no sandbox needed)
-- NEVER push to main -- always use branches + PRs
+- **NEVER push to `main`** -- always create a feature branch and open a PR (see Deployment section)
 - For self-edits to `system-prompt.ts`, flag as "self-edit" in the PR
 
 ## TypeScript
