@@ -477,6 +477,14 @@ export function createNoteTools(context?: ScheduleContext) {
         continue_in_minutes,
       }) => {
         try {
+          if (
+            topic === "self-directive" &&
+            !isAdmin(context?.userId) &&
+            context?.userId !== "aura"
+          ) {
+            return { ok: false, error: "Only admins can edit the self-directive." };
+          }
+
           // Reject topics containing ']' — they break the [CONTINUE:topic] tag parser
           if (topic.includes("]")) {
             return {
