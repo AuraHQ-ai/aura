@@ -1187,11 +1187,42 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             itemCount: result.items?.length || 0,
           });
 
-          const items = (result.items || []).map((item: any) => ({
-            ...item,
-            thread_channel_id: item.message?.channel_id || null,
-            thread_ts: item.message?.ts || null,
-          }));
+          // Derive the list's conversation channel ID
+          const listChannelId = list_id.startsWith('F') ? 'C' + list_id.slice(1) : null;
+
+          // Build timestamp lookup from list channel history
+          let tsLookup: Map<number, string> = new Map();
+          if (listChannelId) {
+            try {
+              await throttle();
+              const historyResult = await client.conversations.history({
+                channel: listChannelId,
+                limit: 200,
+              });
+              for (const msg of historyResult.messages || []) {
+                if (msg.ts) {
+                  tsLookup.set(Math.floor(parseFloat(msg.ts)), msg.ts);
+                }
+              }
+            } catch (e) {
+              // Gracefully degrade — thread info just won't be available
+              logger.warn("Could not read list channel history for thread resolution", { listChannelId, error: e });
+            }
+          }
+
+          const items = (result.items || []).map((item: any) => {
+            let threadTs: string | null = null;
+            if (item.date_created && tsLookup.size > 0) {
+              // Try exact second match, then ±1s, then ±2s
+              const created = typeof item.date_created === 'number' ? item.date_created : parseInt(item.date_created);
+              threadTs = tsLookup.get(created) || tsLookup.get(created + 1) || tsLookup.get(created - 1) || tsLookup.get(created + 2) || tsLookup.get(created - 2) || null;
+            }
+            return {
+              ...item,
+              thread_channel_id: threadTs ? listChannelId : null,
+              thread_ts: threadTs,
+            };
+          });
 
           return {
             ok: true,
@@ -1245,11 +1276,44 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           });
 
           const raw = result.record || result.item;
+
+          // Resolve thread info for this item
+          let threadChannelId: string | null = null;
+          let threadTs: string | null = null;
+          if (raw?.date_created) {
+            const listChannelId = list_id.startsWith('F') ? 'C' + list_id.slice(1) : null;
+            if (listChannelId) {
+              try {
+                await throttle();
+                const created = typeof raw.date_created === 'number' ? raw.date_created : parseInt(raw.date_created);
+                // Fetch a small window of history around the item's creation time
+                const historyResult = await client.conversations.history({
+                  channel: listChannelId,
+                  oldest: String(created - 5),
+                  latest: String(created + 5),
+                  limit: 10,
+                });
+                for (const msg of historyResult.messages || []) {
+                  if (msg.ts) {
+                    const msgSec = Math.floor(parseFloat(msg.ts));
+                    if (Math.abs(msgSec - created) <= 2) {
+                      threadChannelId = listChannelId;
+                      threadTs = msg.ts;
+                      break;
+                    }
+                  }
+                }
+              } catch (e) {
+                logger.warn("Could not resolve thread for list item", { list_id, item_id, error: e });
+              }
+            }
+          }
+
           const item = raw
             ? {
                 ...raw,
-                thread_channel_id: raw.message?.channel_id || null,
-                thread_ts: raw.message?.ts || null,
+                thread_channel_id: threadChannelId,
+                thread_ts: threadTs,
               }
             : null;
 
