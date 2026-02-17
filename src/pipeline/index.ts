@@ -124,10 +124,16 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // Determine thread_ts for replies:
   // - In threads: always reply in the thread
   // - In channels (top-level): reply in a thread under the user's message
-  // - In DMs (top-level): chatStream requires a thread_ts, so we thread
-  //   under the user's message. For non-streaming paths (transparency
-  //   commands, empty mentions), we still use undefined to reply inline.
-  const replyThreadTs = context.threadTs ?? context.messageTs;
+  // - In DMs (top-level): omit thread_ts so replies appear inline
+  const replyThreadTs = context.threadTs
+    ? context.threadTs
+    : context.isDm
+      ? undefined
+      : context.messageTs;
+
+  // chatStream (used by generateResponse) requires a thread_ts even in DMs,
+  // so we always fall back to the user's message timestamp for streaming.
+  const streamThreadTs = context.threadTs ?? context.messageTs;
 
   try {
     // ── Edge case: empty or near-empty message (but allow image-only) ───
@@ -206,10 +212,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       systemPrompt,
       userMessage: messageText,
       slackClient: client,
-      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs },
+      context: { userId: context.userId, channelId: context.channelId, threadTs: streamThreadTs },
       images,
       channelId: context.channelId,
-      threadTs: replyThreadTs,
+      threadTs: streamThreadTs,
       teamId,
       recipientUserId: context.userId,
     });
