@@ -267,6 +267,49 @@ async function resolveUserById(
  * Each tool receives the WebClient via closure.
  */
 export function createSlackTools(client: WebClient, context?: ScheduleContext) {
+  // Resolve thread coordinates for Slack List items.
+  // List channels use the list ID with a C prefix (F088... → C088...).
+  // Each root message in the channel has a slack_list.list_record_id field
+  // that maps directly to a record ID — no fuzzy timestamp matching needed.
+  async function resolveListItemThreads(
+    listId: string,
+    items: Array<{ id: string; date_created?: number | string }>,
+  ): Promise<Map<string, { channelId: string; threadTs: string }>> {
+    const result = new Map<string, { channelId: string; threadTs: string }>();
+    const listChannelId = listId.startsWith('F') ? 'C' + listId.slice(1) : null;
+    if (!listChannelId || items.length === 0) return result;
+
+    try {
+      let minCreated = Infinity;
+      let maxCreated = -Infinity;
+      for (const item of items) {
+        if (item.date_created != null) {
+          const created = typeof item.date_created === 'number' ? item.date_created : parseInt(item.date_created);
+          if (created < minCreated) minCreated = created;
+          if (created > maxCreated) maxCreated = created;
+        }
+      }
+      if (minCreated === Infinity) return result;
+
+      await throttle();
+      const historyResult = await client.conversations.history({
+        channel: listChannelId,
+        oldest: String(minCreated - 5),
+        latest: String(maxCreated + 5),
+        limit: Math.max(items.length * 2, 10),
+      });
+      for (const msg of (historyResult.messages || []) as any[]) {
+        const recordId = msg.slack_list?.list_record_id;
+        if (recordId && msg.ts && !result.has(recordId)) {
+          result.set(recordId, { channelId: listChannelId, threadTs: msg.ts });
+        }
+      }
+    } catch (e) {
+      logger.warn("Could not resolve list item threads", { listId, error: e });
+    }
+    return result;
+  }
+
   return {
     list_channels: tool({
       description:
@@ -1187,11 +1230,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             itemCount: result.items?.length || 0,
           });
 
-          const items = (result.items || []).map((item: any) => ({
-            ...item,
-            thread_channel_id: item.message?.channel_id || null,
-            thread_ts: item.message?.ts || null,
-          }));
+          const itemsRaw = result.items || [];
+          const threadMap = await resolveListItemThreads(list_id, itemsRaw);
+
+          const items = itemsRaw.map((item: any) => {
+            const thread = threadMap.get(item.id);
+            return {
+              ...item,
+              thread_channel_id: thread?.channelId ?? null,
+              thread_ts: thread?.threadTs ?? null,
+            };
+          });
 
           return {
             ok: true,
@@ -1245,11 +1294,23 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           });
 
           const raw = result.record || result.item;
+
+          let threadChannelId: string | null = null;
+          let threadTs: string | null = null;
+          if (raw?.id) {
+            const threadMap = await resolveListItemThreads(list_id, [raw]);
+            const thread = threadMap.get(raw.id);
+            if (thread) {
+              threadChannelId = thread.channelId;
+              threadTs = thread.threadTs;
+            }
+          }
+
           const item = raw
             ? {
                 ...raw,
-                thread_channel_id: raw.message?.channel_id || null,
-                thread_ts: raw.message?.ts || null,
+                thread_channel_id: threadChannelId,
+                thread_ts: threadTs,
               }
             : null;
 
