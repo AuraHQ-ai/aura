@@ -9,10 +9,6 @@ import {
 } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
 
-// patch_own_code smoke test - 2026-02-17
-// This comment proves the Claude Code agent can run end-to-end without being killed by the inactivity timeout.
-// Safe to remove.
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
