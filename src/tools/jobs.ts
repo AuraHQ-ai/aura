@@ -204,9 +204,9 @@ export function createJobTools(
           const jobName = name || `job-${Date.now().toString(36)}`;
           const requestedBy = context?.userId || "aura";
 
-          // Per-user job limit for non-admins
+          // Per-user job limit for non-admins (also exempt "aura" identity used by heartbeat)
           const MAX_JOBS_PER_USER = 5;
-          if (!isAdmin(context?.userId)) {
+          if (!isAdmin(context?.userId) && context?.userId !== "aura") {
             const activeCount = await db
               .select({ count: sql<number>`count(*)::int` })
               .from(jobs)
@@ -215,6 +215,7 @@ export function createJobTools(
                   eq(jobs.requestedBy, requestedBy),
                   eq(jobs.status, "pending"),
                   eq(jobs.enabled, 1),
+                  ne(jobs.name, jobName),
                 ),
               );
             if ((activeCount[0]?.count ?? 0) >= MAX_JOBS_PER_USER) {
