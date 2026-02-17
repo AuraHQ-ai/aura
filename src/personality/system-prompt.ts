@@ -21,6 +21,8 @@ interface SystemPromptContext {
   threadContext?: string;
   /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
   isChannelHistory?: boolean;
+  /** Active model ID, e.g. "anthropic/claude-sonnet-4-6" */
+  modelId?: string;
 }
 
 /**
@@ -396,7 +398,7 @@ export async function buildSystemPrompt(
 
   // Temporal awareness
   parts.push(
-    `\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`,
+    `\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}${context.modelId ? `\nActive model: \`${context.modelId}\`` : ''}`,
   );
 
   // Channel context
