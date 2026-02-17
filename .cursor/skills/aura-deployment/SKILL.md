@@ -92,6 +92,28 @@ Production URLs:
 
 After adding new scopes or events, reinstall the app at api.slack.com/apps.
 
+## Direct API Investigation (POWERFUL)
+
+When debugging Slack/GitHub integration issues, **call APIs directly with curl** using tokens from `.env` to see raw responses. This bypasses Aura's code and reveals undocumented fields, hidden metadata, and the true API response shape.
+
+**Slack API** (source `.env` first for tokens):
+```bash
+source .env && curl -s -X POST 'https://slack.com/api/<METHOD>' \
+  -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"C...","limit":5}' | python3 -m json.tool
+```
+
+Use `$SLACK_USER_TOKEN` (xoxp-) for user-scoped methods (e.g. `search.messages`). Use `$SLACK_BOT_TOKEN` (xoxb-) for most other methods.
+
+**GitHub API**:
+```bash
+source .env && curl -s -H "Authorization: token $GITHUB_TOKEN" \
+  'https://api.github.com/repos/realadvisor/aura/pulls' | python3 -m json.tool
+```
+
+**Key lesson**: Slack's typed SDK and Aura's wrapper code can hide fields from the raw response. For example, `conversations.history` on a list channel returns `msg.slack_list.list_record_id` -- a direct record-to-thread mapping that the SDK types don't expose. Always check the raw JSON when something "doesn't exist" in the API.
+
 ## Quick Health Check
 
 ```bash
