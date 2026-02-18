@@ -161,6 +161,11 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         channel_id: context.channelId,
         thread_ts: replyThreadTs,
         status: "Thinking...",
+        loading_messages: [
+          "Gathering context...",
+          "Searching memories...",
+          "Pulling it together...",
+        ],
       });
     } catch {
       // Non-fatal: scope may not be configured or channel type unsupported
@@ -279,6 +284,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       context: { ...context, text: messageText },
       response: response.raw,
       displayName,
+      client,
     });
 
     if (waitUntil) {
@@ -427,8 +433,9 @@ async function runBackgroundTasks(params: {
   context: MessageContext;
   response: string;
   displayName: string;
+  client: InstanceType<typeof import("@slack/web-api").WebClient>;
 }): Promise<void> {
-  const { context, response, displayName } = params;
+  const { context, response, displayName, client } = params;
 
   try {
     // Store the user's message
@@ -463,6 +470,24 @@ async function runBackgroundTasks(params: {
       sourceMessageId: userMessageId || undefined,
       displayName,
     });
+
+    // Set thread title for DM History tab (only for DMs, first message in thread)
+    if (context.isDm && !context.threadTs) {
+      try {
+        const { getFastModel } = await import("../lib/ai.js");
+        const { generateText } = await import("ai");
+        const fastModel = await getFastModel();
+        const { text: title } = await generateText({
+          model: fastModel,
+          prompt: `Summarize this message in 3-6 words for a thread title. No quotes, no punctuation at the end. Message: "${context.text.slice(0, 200)}"`,
+        });
+        await client.assistant.threads.setTitle({
+          channel_id: context.channelId,
+          thread_ts: context.messageTs,
+          title: title.slice(0, 100),
+        });
+      } catch {}
+    }
 
     // Record interaction and potentially update profile
     await recordInteraction(context.userId);
