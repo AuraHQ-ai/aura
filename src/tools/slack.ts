@@ -89,6 +89,9 @@ async function getUserList(
 /** Cache for user ID -> display name lookups. */
 const userIdNameCache = new Map<string, string>();
 
+/** Cache for channel ID -> name lookups. */
+const channelIdNameCache = new Map<string, string>();
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -158,9 +161,10 @@ export async function resolveChannelByName(
     return { id, name: displayName || id };
   }
 
-  // If it looks like a raw channel ID
+  // If it looks like a raw channel ID, resolve the actual name
   if (/^C[A-Z0-9]+$/.test(cleaned)) {
-    return { id: cleaned, name: cleaned };
+    const resolved = await resolveChannelById(client, cleaned);
+    return resolved ? { id: resolved.id, name: resolved.name } : { id: cleaned, name: cleaned };
   }
 
   // Name-based lookup via bot's cache (channels bot is already in)
@@ -254,6 +258,63 @@ async function resolveUserById(
     return name;
   } catch {
     return userId;
+  }
+}
+
+/**
+ * Resolve a Slack channel ID to its name and metadata.
+ * Caches results for the duration of the invocation.
+ * Uses bot token first, falls back to user token for channels the bot isn't in.
+ */
+async function resolveChannelById(
+  client: WebClient,
+  channelId: string,
+): Promise<{ id: string; name: string; is_private: boolean; topic: string; purpose: string; num_members: number } | null> {
+  const cachedName = channelIdNameCache.get(channelId);
+  if (cachedName) return { id: channelId, name: cachedName, is_private: false, topic: "", purpose: "", num_members: 0 };
+
+  try {
+    const result = await client.conversations.info({ channel: channelId });
+    const ch = result.channel as any;
+    if (ch) {
+      const name = ch.name || channelId;
+      channelIdNameCache.set(channelId, name);
+      return {
+        id: channelId,
+        name,
+        is_private: ch.is_private || false,
+        topic: ch.topic?.value || "",
+        purpose: ch.purpose?.value || "",
+        num_members: ch.num_members || 0,
+      };
+    }
+    return null;
+  } catch {
+    // Bot can't see it — try user token
+    const userToken = process.env.SLACK_USER_TOKEN;
+    if (!userToken) return null;
+
+    try {
+      const { WebClient } = await import("@slack/web-api");
+      const userClient = new WebClient(userToken);
+      const result = await userClient.conversations.info({ channel: channelId });
+      const ch = result.channel as any;
+      if (ch) {
+        const name = ch.name || channelId;
+        channelIdNameCache.set(channelId, name);
+        return {
+          id: channelId,
+          name,
+          is_private: ch.is_private || false,
+          topic: ch.topic?.value || "",
+          purpose: ch.purpose?.value || "",
+          num_members: ch.num_members || 0,
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -452,6 +513,129 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             ok: false,
             error: `Failed to list channels: ${error.message}`,
           };
+        }
+      },
+    }),
+
+    get_channel_info: tool({
+      description:
+        "Get detailed information about a Slack channel by name or ID. Returns the channel name, topic, purpose, privacy status, and member count. Works for any channel — not just ones Aura has joined. Use this to resolve a channel ID (like C0BNVKS77) to its human-readable name.",
+      inputSchema: z.object({
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general', '#general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
+      }),
+      execute: async ({ channel: channelInput }) => {
+        try {
+          const cleaned = channelInput.replace(/^#/, "").trim();
+
+          // If it looks like a channel ID, resolve directly
+          if (/^C[A-Z0-9]+$/.test(cleaned)) {
+            const info = await resolveChannelById(client, cleaned);
+            if (!info) {
+              return {
+                ok: false,
+                error: `Could not find channel with ID "${cleaned}". The channel may not exist or may not be accessible.`,
+              };
+            }
+            logger.info("get_channel_info tool called", { channel: cleaned, name: info.name });
+            return { ok: true, channel: info };
+          }
+
+          // Name-based: resolve name to ID, then get full info
+          const resolved = await resolveChannelByName(client, cleaned, { fallbackToUserToken: true });
+          if (!resolved) {
+            return {
+              ok: false,
+              error: `Could not find a channel named "${cleaned}". Use list_channels to see available channels, or try join_channel if it's a public channel.`,
+            };
+          }
+
+          const info = await resolveChannelById(client, resolved.id);
+          if (!info) {
+            return { ok: true, channel: { id: resolved.id, name: resolved.name, is_private: false, topic: "", purpose: "", num_members: 0 } };
+          }
+
+          logger.info("get_channel_info tool called", { channel: channelInput, name: info.name });
+          return { ok: true, channel: info };
+        } catch (error: any) {
+          logger.error("get_channel_info tool failed", { channel: channelInput, error: error.message });
+          return { ok: false, error: `Failed to get channel info: ${error.message}` };
+        }
+      },
+    }),
+
+    search_channels: tool({
+      description:
+        "Search for Slack channels by partial name match. Returns matching channels from both joined and public channels. Useful when you don't know the exact channel name.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe("Partial channel name to search for, e.g. 'road' or 'dev'"),
+      }),
+      execute: async ({ query }) => {
+        try {
+          const q = query.toLowerCase();
+          const results: Array<{ id: string; name: string; topic: string; is_member: boolean }> = [];
+          const seenIds = new Set<string>();
+
+          // Search bot's channel cache first
+          const botChannels = await getChannelList(client);
+          for (const ch of botChannels) {
+            if (ch.name.toLowerCase().includes(q)) {
+              results.push({ id: ch.id, name: ch.name, topic: "", is_member: true });
+              seenIds.add(ch.id);
+            }
+          }
+
+          // Search all public channels via user token for broader coverage
+          const userToken = process.env.SLACK_USER_TOKEN;
+          if (userToken) {
+            try {
+              const { WebClient } = await import("@slack/web-api");
+              const userClient = new WebClient(userToken);
+              let cursor: string | undefined;
+
+              do {
+                const result = await userClient.conversations.list({
+                  types: "public_channel",
+                  exclude_archived: true,
+                  limit: 200,
+                  cursor,
+                });
+
+                for (const ch of result.channels || []) {
+                  if (ch.id && ch.name && ch.name.toLowerCase().includes(q) && !seenIds.has(ch.id)) {
+                    results.push({
+                      id: ch.id,
+                      name: ch.name,
+                      topic: ch.topic?.value || "",
+                      is_member: false,
+                    });
+                    seenIds.add(ch.id);
+                  }
+                }
+
+                cursor = result.response_metadata?.next_cursor || undefined;
+              } while (cursor);
+            } catch (e: any) {
+              logger.warn("search_channels user token fallback failed", { error: e.message });
+            }
+          }
+
+          logger.info("search_channels tool called", { query, matchCount: results.length });
+
+          return {
+            ok: true,
+            query,
+            results,
+            count: results.length,
+          };
+        } catch (error: any) {
+          logger.error("search_channels tool failed", { query, error: error.message });
+          return { ok: false, error: `Failed to search channels: ${error.message}` };
         }
       },
     }),
