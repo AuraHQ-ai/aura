@@ -73,7 +73,8 @@ const TOOL_STATUS: Record<string, string> = {
 
 // ── Task Card Helpers ────────────────────────────────────────────────────────
 
-function truncate(s: string, max: number): string {
+function truncate(s: string | undefined, max: number): string | undefined {
+  if (!s) return undefined;
   return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }
 
@@ -270,7 +271,7 @@ export async function generateResponse(
 
         case "tool-call": {
           const title = TOOL_STATUS[chunk.toolName] || "Working on it...";
-          const details = getToolDetails(chunk.toolName, (chunk as any).args ?? {});
+          const details = getToolDetails(chunk.toolName, (chunk as any).input ?? {});
           await streamer.append({
             chunks: [{
               type: "task_update",
