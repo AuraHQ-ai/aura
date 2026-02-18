@@ -517,6 +517,10 @@ export async function generateResponse(
 
     const finalText = accumulatedText;
 
+    const inputTokens = usage.inputTokens ?? 0;
+    const outputTokens = usage.outputTokens ?? 0;
+    const totalTokens = inputTokens + outputTokens;
+
     if (streamingFailed) {
       // Fallback: post the complete response via chat.postMessage.
       // When blocks are present, Slack only renders blocks — text is just a
@@ -545,6 +549,7 @@ export async function generateResponse(
       logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
         rawLength: finalText.length,
         channelId,
+        usage: { inputTokens, outputTokens, totalTokens },
       });
     } else {
       // Happy path: finalize the stream on Slack's side.
@@ -558,17 +563,9 @@ export async function generateResponse(
 
       logger.info(`LLM stream completed in ${llmMs}ms`, {
         rawLength: finalText.length,
-        usage: {
-          inputTokens: usage.inputTokens ?? 0,
-          outputTokens: usage.outputTokens ?? 0,
-          totalTokens: (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
-        },
+        usage: { inputTokens, outputTokens, totalTokens },
       });
     }
-
-    const inputTokens = usage.inputTokens ?? 0;
-    const outputTokens = usage.outputTokens ?? 0;
-    const totalTokens = inputTokens + outputTokens;
 
     return {
       raw: finalText,
