@@ -36,6 +36,18 @@ export function createMyTools() {
 
 ## Checklist for new tools
 
+### Step 0 -- Do you even need a new tool?
+
+Before writing any code, **check if the platform SDK already provides what you need**. Read the docs, search GitHub for examples. Most "tools" that went wrong in this codebase were reimplementations of existing SDK features. A new tool is only justified when:
+
+- The LLM needs to call something that no existing tool covers
+- The existing `run_command` primitive can't handle it (most things it can)
+- You've verified the platform SDK doesn't already do it
+
+Prefer **fewer, better primitives** over specialized one-shot tools. If the use case can be handled by `run_command` + a skill/rule that teaches the LLM how, that's better than a rigid hardcoded tool.
+
+### Steps 1-9 -- If you do need a new tool
+
 1. Create tool in `src/tools/` (new file or existing)
 2. Use `inputSchema` (NOT `parameters`) -- AI SDK v6
 3. Return `{ ok: true, ... }` on success, `{ ok: false, error: "..." }` on failure

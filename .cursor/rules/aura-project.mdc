@@ -5,6 +5,29 @@ alwaysApply: true
 
 # Aura Project Conventions
 
+## Platform-First Development -- READ THIS FIRST
+
+Before building anything, **read the platform's documentation and search for existing solutions.** The vast majority of anti-patterns in this codebase came from reimplementing things the platform SDK already provides (Slack's `chatStream` vs manual message polling, E2B's per-command `envs` vs `.bashrc` hacks, Claude Code vs custom agent runner scripts).
+
+**The workflow for any new feature or integration:**
+
+1. **Read the SDK/library docs** for the platform you're integrating with. Check the `@docs` references in Cursor (e.g. `@Slack API`, `@AI-SDK`, `@E2B`). If the docs aren't indexed, fetch the relevant pages with WebFetch first.
+2. **Search GitHub for real-world examples** — look at how other projects use the same SDK. Prefer official examples from the SDK vendor (e.g. `github.com/e2b-dev/e2b-cookbook`, `github.com/vercel/ai/examples`, `github.com/slackapi/bolt-js/examples`).
+3. **Only build what's missing.** If the platform provides a feature (streaming, rate limiting, env injection, formatting), use it. Don't wrap it, don't rebuild it, don't "enhance" it with custom infrastructure.
+4. **When you do build**, follow the patterns from official examples. Don't invent new patterns when the vendor has documented ones.
+
+**Specific platform notes:**
+- **Slack Web API (`@slack/web-api`)**: Use `chatStream` for streaming responses (not `postMessage` + `chat.update` polling). The SDK handles rate-limit retries internally — don't build a custom rate limiter. Use `markdown_text` in stream appends — Slack handles formatting.
+- **E2B Sandboxes**: Always pass `envs` per-command via `commands.run(cmd, { envs })`. Don't rely on env vars persisting across pause/resume cycles. Use `getSandboxEnvs()` from `src/lib/sandbox.ts`.
+- **AI SDK v6**: Uses `inputSchema` (not `parameters`), `stopWhen: stepCountIs(N)` (not `maxSteps`). Check `https://v6.ai-sdk.dev/llms.txt` for the full API reference.
+- **Vercel**: Serverless = stateless. In-memory caches only last one request. Don't build TTL/expiry logic for caches that die with the process.
+
+**Red flags that you're about to over-engineer:**
+- Writing more than ~20 lines to wrap a single SDK call
+- Adding a new dependency to solve a problem the existing SDK already handles
+- Building a "fallback" for something you haven't verified is broken
+- Creating a rigid tool when a general primitive + knowledge (skill/rule) would work
+
 ## Deployment
 
 - **NEVER push directly to `main`.** Vercel auto-deploys from `main`, so any push goes straight to production. Always create a feature branch, push it, and open a PR. Merging the PR triggers the deploy.
