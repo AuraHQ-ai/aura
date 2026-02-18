@@ -57,6 +57,13 @@
       "when": 1771409947025,
       "tag": "0007_fuzzy_harry_osborn",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1771456188641,
+      "tag": "0008_add_unaccent_extension",
+      "breakpoints": true
     }
   ]
 }
