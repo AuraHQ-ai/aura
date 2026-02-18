@@ -523,6 +523,7 @@ export async function generateResponse(
         channel: channelId,
         text: finalText || "_I processed your request but had nothing to say._",
         thread_ts: threadTs,
+        ...(pendingTableBlock && { blocks: [pendingTableBlock as any] }),
       });
 
       logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
