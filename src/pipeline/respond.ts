@@ -527,16 +527,16 @@ export async function generateResponse(
       // notification fallback. Include the LLM text as section blocks so it
       // remains visible alongside the table.
       const blocks: any[] = [];
-      if (pendingTableBlock) {
-        if (finalText) {
-          for (let i = 0; i < finalText.length; i += 3000) {
-            blocks.push({
-              type: "section",
-              text: { type: "mrkdwn", text: finalText.slice(i, i + 3000) },
-              expand: true,
-            });
-          }
+      if (finalText) {
+        for (let i = 0; i < finalText.length; i += 3000) {
+          blocks.push({
+            type: "section",
+            text: { type: "mrkdwn", text: finalText.slice(i, i + 3000) },
+            expand: true,
+          });
         }
+      }
+      if (pendingTableBlock) {
         blocks.push(pendingTableBlock);
       }
 

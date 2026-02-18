@@ -284,6 +284,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       context: { ...context, text: messageText },
       response: response.raw,
       displayName,
+      client,
     });
 
     if (waitUntil) {
@@ -432,8 +433,9 @@ async function runBackgroundTasks(params: {
   context: MessageContext;
   response: string;
   displayName: string;
+  client: InstanceType<typeof import("@slack/web-api").WebClient>;
 }): Promise<void> {
-  const { context, response, displayName } = params;
+  const { context, response, displayName, client } = params;
 
   try {
     // Store the user's message
@@ -479,9 +481,7 @@ async function runBackgroundTasks(params: {
           model: fastModel,
           prompt: `Summarize this message in 3-6 words for a thread title. No quotes, no punctuation at the end. Message: "${context.text.slice(0, 200)}"`,
         });
-        const { WebClient } = await import("@slack/web-api");
-        const titleClient = new WebClient(process.env.SLACK_BOT_TOKEN);
-        await titleClient.assistant.threads.setTitle({
+        await client.assistant.threads.setTitle({
           channel_id: context.channelId,
           thread_ts: context.messageTs,
           title: title.slice(0, 100),
