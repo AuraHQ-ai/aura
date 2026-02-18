@@ -518,12 +518,28 @@ export async function generateResponse(
     const finalText = accumulatedText;
 
     if (streamingFailed) {
-      // Fallback: post the complete response via chat.postMessage
+      // Fallback: post the complete response via chat.postMessage.
+      // When blocks are present, Slack only renders blocks — text is just a
+      // notification fallback. Include the LLM text as section blocks so it
+      // remains visible alongside the table.
+      const blocks: any[] = [];
+      if (pendingTableBlock) {
+        if (finalText) {
+          for (let i = 0; i < finalText.length; i += 3000) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: finalText.slice(i, i + 3000) },
+            });
+          }
+        }
+        blocks.push(pendingTableBlock);
+      }
+
       await slackClient.chat.postMessage({
         channel: channelId,
         text: finalText || "_I processed your request but had nothing to say._",
         thread_ts: threadTs,
-        ...(pendingTableBlock && { blocks: [pendingTableBlock as any] }),
+        ...(blocks.length > 0 && { blocks }),
       });
 
       logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
