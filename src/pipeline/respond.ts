@@ -86,7 +86,7 @@ function getToolDetails(toolName: string, args: Record<string, any>): string | u
     case "web_search": return args.query;
     case "search_messages": return args.query;
     case "read_url": return args.url;
-    case "inspect_table": return `${args.dataset}.${args.table}`;
+    case "inspect_table": return args.dataset && args.table ? `${args.dataset}.${args.table}` : args.dataset ?? args.table;
     case "list_tables": return args.dataset;
     case "read_channel_history": return args.channel;
     case "read_note": case "save_note": case "edit_note": return args.topic;
