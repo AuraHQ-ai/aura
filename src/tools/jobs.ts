@@ -9,36 +9,7 @@ import type { FrequencyConfig, ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime } from "../lib/temporal.js";
-
-// ── Channel Resolution ───────────────────────────────────────────────────────
-
-export async function resolveChannelByName(
-  client: WebClient,
-  name: string,
-): Promise<{ id: string; name: string } | null> {
-  const cleanName = name.replace(/^#/, "").toLowerCase();
-  let cursor: string | undefined;
-
-  do {
-    const result = await client.conversations.list({
-      types: "public_channel,private_channel",
-      exclude_archived: true,
-      limit: 200,
-      cursor,
-    });
-
-    const match = result.channels?.find(
-      (ch) => ch.name?.toLowerCase() === cleanName,
-    );
-    if (match && match.id && match.name) {
-      return { id: match.id, name: match.name };
-    }
-
-    cursor = result.response_metadata?.next_cursor || undefined;
-  } while (cursor);
-
-  return null;
-}
+import { resolveChannelByName } from "./slack.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 

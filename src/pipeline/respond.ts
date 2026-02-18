@@ -1,4 +1,4 @@
-import { streamText, stepCountIs } from "ai";
+import { streamText, generateText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
 import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
@@ -373,6 +373,55 @@ export async function generateResponse(
   } catch (error: any) {
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+
+    // ── Fallback: non-streaming for unsupported channel types ────────────
+    if (error?.message?.includes("channel_type_not_supported")) {
+      logger.warn("chatStream not supported in this channel type — falling back to generateText + postMessage", {
+        channelId,
+        errorMessage: error.message,
+      });
+
+      // Clean up the dead streamer
+      try { await streamer.stop(); } catch { /* already dead */ }
+
+      const generateOptions: any = {
+        model,
+        system: options.systemPrompt,
+        tools: createSlackTools(options.slackClient, options.context),
+        stopWhen: stepCountIs(25),
+        abortSignal: AbortSignal.timeout(180_000),
+      };
+
+      if (hasImages) {
+        generateOptions.messages = streamOptions.messages;
+      } else {
+        generateOptions.prompt = options.userMessage;
+      }
+
+      const genResult = await generateText(generateOptions);
+      const text = genResult.text ?? "";
+
+      await slackClient.chat.postMessage({
+        channel: channelId,
+        thread_ts: threadTs,
+        text,
+      });
+
+      const inputTokens = genResult.usage?.inputTokens ?? 0;
+      const outputTokens = genResult.usage?.outputTokens ?? 0;
+      const totalTokens = inputTokens + outputTokens;
+
+      logger.info("generateText fallback completed", {
+        rawLength: text.length,
+        usage: { inputTokens, outputTokens, totalTokens },
+      });
+
+      return {
+        raw: text,
+        alreadyPosted: true,
+        usage: { inputTokens, outputTokens, totalTokens },
+      };
+    }
 
     // Finalize the stream with an error message
     try {
