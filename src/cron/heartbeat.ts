@@ -219,6 +219,17 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             jobName: job.name,
             error: error.message,
           });
+          try {
+            await db
+              .update(jobs)
+              .set({ lockedAt: null })
+              .where(eq(jobs.id, job.id));
+          } catch (releaseError: any) {
+            logger.error("Heartbeat: failed to release lock in outer catch", {
+              jobId: job.id,
+              error: releaseError.message,
+            });
+          }
           failed++;
         }
       }
@@ -287,6 +298,7 @@ async function claimJob(jobId: string): Promise<boolean> {
     .where(
       and(
         eq(jobs.id, jobId),
+        eq(jobs.status, "pending"),
         or(
           isNull(jobs.lockedAt),
           sql`${jobs.lockedAt} < NOW() - ${STALE_LOCK_MS / 60000} * INTERVAL '1 minute'`,
