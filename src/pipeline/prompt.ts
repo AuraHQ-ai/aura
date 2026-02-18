@@ -1,7 +1,9 @@
+import type { WebClient } from "@slack/web-api";
 import { buildSystemPrompt } from "../personality/system-prompt.js";
 import { retrieveMemories } from "../memory/retrieve.js";
 import { getProfile } from "../users/profiles.js";
 import type { MessageContext } from "./context.js";
+import { resolveChannelName } from "./context.js";
 import type { ConversationContext } from "./slack-context.js";
 import { formatConversationContext } from "./slack-context.js";
 import type { Memory, UserProfile } from "../db/schema.js";
@@ -26,6 +28,7 @@ export interface AssembledPrompt {
 export async function assemblePrompt(
   context: MessageContext,
   conversation: ConversationContext,
+  client?: WebClient,
 ): Promise<AssembledPrompt> {
   const start = Date.now();
 
@@ -47,8 +50,16 @@ export async function assemblePrompt(
     context.isDm || !!context.threadTs || conversation.auraRecentlyActive;
   const threadContext = formatConversationContext(conversation, useChannelFallback);
 
-  // Determine channel context string
-  const channelContext = context.isDm ? "DM" : context.channelId;
+  // Resolve channel ID to human-readable name (e.g. C0BNVKS77 -> #dev)
+  let channelContext: string;
+  if (context.isDm) {
+    channelContext = "DM";
+  } else if (client) {
+    const name = await resolveChannelName(client, context.channelId);
+    channelContext = name !== context.channelId ? `#${name} (${context.channelId})` : context.channelId;
+  } else {
+    channelContext = context.channelId;
+  }
 
   // The context is "channel history" (not a thread) when there's no thread
   // data and we fell back to recent channel messages.

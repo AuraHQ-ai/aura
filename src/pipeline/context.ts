@@ -307,7 +307,7 @@ export async function resolveSlackEntities(
         // Label already provided by Slack
         resolved = resolved.replace(fullMatch, `#${label} (${id})`);
       } else {
-        const name = await resolveChannelId(client, id);
+        const name = await resolveChannelName(client, id);
         resolved = resolved.replace(fullMatch, `#${name} (${id})`);
       }
     }
@@ -337,7 +337,7 @@ async function resolveUserId(
   }
 }
 
-async function resolveChannelId(
+export async function resolveChannelName(
   client: WebClient,
   channelId: string,
 ): Promise<string> {
