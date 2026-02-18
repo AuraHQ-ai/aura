@@ -54,6 +54,13 @@ export function createTableTools() {
           }
         }
 
+        if (column_alignments && column_alignments.length !== colCount) {
+          return {
+            ok: false,
+            error: `column_alignments has ${column_alignments.length} entries but there are ${colCount} columns. Length must match column count.`,
+          };
+        }
+
         const tableBlock = {
           type: "table" as const,
           rows: rows.map((row) =>
