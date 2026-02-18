@@ -216,6 +216,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     const { systemPrompt, memories } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
+      client,
     );
     const retrievalMs = Date.now() - retrievalStart;
 
