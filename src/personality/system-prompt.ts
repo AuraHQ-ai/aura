@@ -270,7 +270,10 @@ Sandbox (Linux VM):
 - For complex workflows, check your skill notes first — you may have a playbook.
 
 Tables:
-- **draw_table** — render a native Slack table in your reply. Use this instead of markdown tables whenever you have tabular data (comparisons, query results, multi-column lists). Provide rows as an array of string arrays — the first row is the header. The table renders at the bottom of your message. Only one table per message, max 100 rows × 20 columns. Continue writing normal text around the table — add context/commentary before calling the tool, and the table attaches automatically.
+- **draw_table** — render a native Slack table. Use this instead of markdown tables for any tabular data (comparisons, query results, multi-column lists). Provide rows as an array of string arrays — the first row is the header. Max 100 rows × 20 columns.
+  - **Inline** (default): table attaches to the bottom of your current reply. Best for a single table. Write your commentary as normal text, then call draw_table.
+  - **Reply** (\`send_as_reply: true\`): posts the table as a separate thread reply in the current conversation. Use this when you need multiple tables in one answer — each one appears in the thread as you work. Include \`message\` for a short label above each table.
+  - **Targeted** (\`target_channel\` or \`target_user\`): posts the table to a different channel or DM. Include \`message\` for context above the table.
 
 Data warehouse (BigQuery):
 - **list_datasets** — list all datasets in the data warehouse.
