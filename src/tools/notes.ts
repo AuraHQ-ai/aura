@@ -469,7 +469,7 @@ export function createNoteTools(context?: ScheduleContext) {
           try {
             const results = await db.execute(sql`
               SELECT topic, category, updated_at,
-                ts_headline('english', content,
+                ts_headline('english', unaccent(content),
                   websearch_to_tsquery('english', unaccent(${trimmed})),
                   'StartSel=>>>, StopSel=<<<, MaxWords=35, MinWords=15'
                 ) as snippet,
@@ -485,7 +485,10 @@ export function createNoteTools(context?: ScheduleContext) {
               LIMIT ${limit}
             `);
             rows = (results as any).rows ?? results;
-          } catch {
+          } catch (err) {
+            logger.warn("tsvector search failed, falling back to ILIKE", {
+              error: err instanceof Error ? err.message : String(err),
+            });
             // Fallback: ILIKE (works without unaccent extension)
             const escaped = trimmed.replace(/[\\%_]/g, "\\$&");
             const pattern = `%${escaped.toLowerCase()}%`;
