@@ -24,7 +24,7 @@ export function createTableTools() {
         rows: z
           .array(z.array(z.string().describe("Cell text")))
           .min(2, "Need at least a header row and one data row")
-          .max(101, "Max 100 data rows + 1 header row")
+          .max(100, "Max 100 rows including header")
           .describe(
             "Array of rows. The FIRST row is the header row. Each row is an array of cell strings. All rows must have the same number of columns (max 20).",
           ),
