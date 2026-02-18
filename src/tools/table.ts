@@ -24,7 +24,7 @@ export function createTableTools() {
         rows: z
           .array(z.array(z.string().describe("Cell text")))
           .min(2, "Need at least a header row and one data row")
-          .max(100, "Max 100 rows including header")
+          .max(101, "Max 100 data rows + 1 header row")
           .describe(
             "Array of rows. The FIRST row is the header row. Each row is an array of cell strings. All rows must have the same number of columns (max 20).",
           ),
@@ -52,13 +52,6 @@ export function createTableTools() {
               error: `Row ${i} has ${rows[i].length} columns but header has ${colCount}. All rows must have the same number of columns.`,
             };
           }
-        }
-
-        if (column_alignments && column_alignments.length !== colCount) {
-          return {
-            ok: false,
-            error: `column_alignments has ${column_alignments.length} entries but there are ${colCount} columns. Length must match column count.`,
-          };
         }
 
         const tableBlock = {
