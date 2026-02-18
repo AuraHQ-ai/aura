@@ -152,6 +152,20 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       return;
     }
 
+    // Set assistant thread status — triggers the shimmer animation on
+    // Aura's name and shows a loading indicator while processing.
+    // Requires the `assistant:write` scope (enabled via Agents & AI Apps
+    // toggle in Slack app settings). Status auto-clears on reply.
+    try {
+      await client.assistant.threads.setStatus({
+        channel_id: context.channelId,
+        thread_ts: replyThreadTs,
+        status: "Thinking...",
+      });
+    } catch {
+      // Non-fatal: scope may not be configured or channel type unsupported
+    }
+
     // ── Edge case: extremely long message ────────────────────────────────
     let messageText = context.text || (hasFiles ? "What do you see in this image?" : "");
     if (messageText.length > MAX_MESSAGE_LENGTH) {
