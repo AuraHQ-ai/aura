@@ -487,7 +487,7 @@ export function createNoteTools(context?: ScheduleContext) {
             rows = (results as any).rows ?? results;
           } catch {
             // Fallback: ILIKE (works without unaccent extension)
-            const escaped = trimmed.replace(/[%_]/g, "\\$&");
+            const escaped = trimmed.replace(/[\\%_]/g, "\\$&");
             const pattern = `%${escaped.toLowerCase()}%`;
             const results = await db.execute(sql`
               SELECT topic, category, updated_at,
