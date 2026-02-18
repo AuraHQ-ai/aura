@@ -1182,14 +1182,21 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .max(100)
           .default(50)
           .describe("Maximum number of items to return"),
+        cursor: z
+          .string()
+          .optional()
+          .describe(
+            "Pagination cursor from a previous response's next_cursor field",
+          ),
       }),
-      execute: async ({ list_id, limit }) => {
+      execute: async ({ list_id, limit, cursor }) => {
         try {
           const result = await (client as any).apiCall(
             "slackLists.items.list",
             {
               list_id,
               limit,
+              ...(cursor ? { cursor } : {}),
             },
           );
 
@@ -1222,6 +1229,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             list_id,
             items,
             count: items.length,
+            next_cursor: result.response_metadata?.next_cursor || null,
           };
         } catch (error: any) {
           logger.error("list_slack_list_items tool failed", {
