@@ -101,6 +101,33 @@ export async function getOrCreateSandbox(): Promise<any> {
   cachedSandbox = sandbox;
   logger.info("E2B sandbox created", { sandboxId: sandbox.sandboxId });
 
+  // Install Claude Code if not already present (persists across pause/resume)
+  try {
+    const check = await sandbox.commands.run("which claude", {
+      timeoutMs: 5_000,
+      envs,
+    });
+    if (check.exitCode !== 0) {
+      logger.info("Installing Claude Code in sandbox");
+      const installResult = await sandbox.commands.run(
+        "npm install -g @anthropic-ai/claude-code",
+        { timeoutMs: 120_000, envs },
+      );
+      if (installResult.exitCode !== 0) {
+        logger.warn("Claude Code install failed", {
+          exitCode: installResult.exitCode,
+          stderr: installResult.stderr,
+        });
+      } else {
+        logger.info("Claude Code installed in sandbox");
+      }
+    }
+  } catch (error: any) {
+    logger.warn("Failed to install Claude Code in sandbox", {
+      error: error.message,
+    });
+  }
+
   return sandbox;
 }
 

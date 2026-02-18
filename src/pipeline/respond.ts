@@ -37,7 +37,6 @@ const TOOL_STATUS: Record<string, string> = {
   add_reaction: "Reacting...",
   set_my_status: "Updating status...",
   run_command: "Running a command in the sandbox...",
-  patch_own_code: "Dispatching a coding agent (this may take a few minutes)...",
   read_own_source: "Reading my own source code...",
   draw_table: "Drawing a table...",
 };
@@ -123,7 +122,7 @@ export async function generateResponse(
   };
   resetTimer();
 
-  // Keepalive interval during long tool calls (patch_own_code can take 3-10 min)
+  // Keepalive interval during long tool calls (e.g. Claude Code via run_command)
   let toolKeepAlive: ReturnType<typeof setInterval> | null = null;
 
   // ── Build stream options ─────────────────────────────────────────────
