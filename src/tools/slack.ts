@@ -1976,6 +1976,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
           await client.conversations.setTopic({ channel: channel.id, topic });
+          channelIdNameCache.delete(channel.id);
           logger.info("set_channel_topic tool called", {
             channel: channel.name,
           });
