@@ -274,7 +274,7 @@ async function resolveChannelById(
   if (cached) return { ...cached };
 
   try {
-    const result = await client.conversations.info({ channel: channelId });
+    const result = await client.conversations.info({ channel: channelId, include_num_members: true });
     const ch = result.channel as any;
     if (ch) {
       const entry = {
@@ -297,7 +297,7 @@ async function resolveChannelById(
     try {
       const { WebClient } = await import("@slack/web-api");
       const userClient = new WebClient(userToken);
-      const result = await userClient.conversations.info({ channel: channelId });
+      const result = await userClient.conversations.info({ channel: channelId, include_num_members: true });
       const ch = result.channel as any;
       if (ch) {
         const entry = {
@@ -583,12 +583,15 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           // Search bot's channel cache first, resolving full metadata for topic
           const botChannels = await getChannelList(client);
-          for (const ch of botChannels) {
-            if (ch.name.toLowerCase().includes(q)) {
-              const info = await resolveChannelById(client, ch.id);
-              results.push({ id: ch.id, name: ch.name, topic: info?.topic || "", is_member: true });
-              seenIds.add(ch.id);
-            }
+          const matchingBotChannels = botChannels.filter((ch) => ch.name.toLowerCase().includes(q));
+          const resolvedInfos = await Promise.all(
+            matchingBotChannels.map((ch) => resolveChannelById(client, ch.id)),
+          );
+          for (let i = 0; i < matchingBotChannels.length; i++) {
+            const ch = matchingBotChannels[i];
+            const info = resolvedInfos[i];
+            results.push({ id: ch.id, name: ch.name, topic: info?.topic || "", is_member: true });
+            seenIds.add(ch.id);
           }
 
           // Search all public channels via user token for broader coverage
