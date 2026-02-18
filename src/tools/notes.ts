@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { eq, and, gt, or, isNull } from "drizzle-orm";
+import { eq, and, gt, or, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes, jobs } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
@@ -437,6 +437,95 @@ export function createNoteTools(context?: ScheduleContext) {
           return {
             ok: false,
             error: `Failed to delete note: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    // ── Full-text Search ────────────────────────────────────────────────────
+
+    search_notes: tool({
+      description:
+        "Full-text search across all notes content. Returns matching notes with topic, category, and a snippet showing the match in context. Use when you need to find which notes mention a specific term.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe("Search term or phrase to find across all notes"),
+        limit: z
+          .number()
+          .optional()
+          .default(10)
+          .describe("Max results to return (default 10)"),
+      }),
+      execute: async ({ query, limit }) => {
+        try {
+          const trimmed = query.trim();
+          if (!trimmed) {
+            return { ok: false, error: "Query cannot be empty." };
+          }
+
+          const tsQuery = trimmed
+            .split(/\s+/)
+            .filter(Boolean)
+            .join(" & ");
+
+          // Try tsvector search with unaccent first, fall back to ILIKE
+          let rows: any[];
+          try {
+            const results = await db.execute(sql`
+              SELECT topic, category, updated_at,
+                ts_headline('english', content,
+                  to_tsquery('english', unaccent(${tsQuery})),
+                  'StartSel=>>>, StopSel=<<<, MaxWords=35, MinWords=15'
+                ) as snippet,
+                ts_rank(
+                  to_tsvector('english', unaccent(content)),
+                  to_tsquery('english', unaccent(${tsQuery}))
+                ) as rank
+              FROM notes
+              WHERE to_tsvector('english', unaccent(content))
+                @@ to_tsquery('english', unaccent(${tsQuery}))
+                AND (expires_at IS NULL OR expires_at > now())
+              ORDER BY rank DESC
+              LIMIT ${limit}
+            `);
+            rows = (results as any).rows ?? results;
+          } catch {
+            // Fallback: ILIKE (works without unaccent extension)
+            const pattern = `%${trimmed.toLowerCase()}%`;
+            const results = await db.execute(sql`
+              SELECT topic, category, updated_at,
+                substring(content from greatest(1, position(lower(${trimmed}) in lower(content)) - 100)
+                  for 200) as snippet
+              FROM notes
+              WHERE lower(content) LIKE ${pattern}
+                AND (expires_at IS NULL OR expires_at > now())
+              ORDER BY updated_at DESC
+              LIMIT ${limit}
+            `);
+            rows = (results as any).rows ?? results;
+          }
+
+          logger.info("search_notes tool called", {
+            query: trimmed,
+            resultCount: rows.length,
+          });
+
+          return {
+            ok: true,
+            results: rows.map((r: any) => ({
+              topic: r.topic,
+              category: r.category,
+              snippet: r.snippet,
+              updated_at: r.updated_at,
+            })),
+            count: rows.length,
+          };
+        } catch (error: any) {
+          logger.error("search_notes tool failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to search notes: ${error.message}`,
           };
         }
       },
