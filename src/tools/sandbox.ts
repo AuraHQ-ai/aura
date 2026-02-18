@@ -15,7 +15,10 @@ import type { ScheduleContext } from "../db/schema.js";
  * run_command is the universal primitive — use cat/head/tail for reading files,
  * heredocs for writing, git/rg/grep for search, etc.
  */
-export function createSandboxTools(context?: ScheduleContext) {
+export function createSandboxTools(
+  context?: ScheduleContext,
+  opts?: { onStreamOutput?: (text: string) => void },
+) {
   return {
     run_command: tool({
       description:
@@ -35,9 +38,9 @@ export function createSandboxTools(context?: ScheduleContext) {
         timeout_seconds: z
           .number()
           .min(1)
-          .max(300)
+          .max(780)
           .default(120)
-          .describe("Command timeout in seconds (max 300)"),
+          .describe("Command timeout in seconds (max 780). Use 600 for Claude Code tasks."),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
         if (!isAdmin(context?.userId) && context?.userId !== "aura") {
@@ -64,11 +67,37 @@ export function createSandboxTools(context?: ScheduleContext) {
             workdir,
           });
 
+          const onStreamOutput = opts?.onStreamOutput;
+          let buf = "";
+          let timer: ReturnType<typeof setTimeout> | null = null;
+          let didStream = false;
+          const startedAt = Date.now();
+          const GRACE_MS = 1000;
+          const BATCH_MS = 1000;
+
+          const flush = () => {
+            if (buf && onStreamOutput && Date.now() - startedAt > GRACE_MS) {
+              onStreamOutput(buf);
+              didStream = true;
+            }
+            buf = "";
+            timer = null;
+          };
+
           const result = await sandbox.commands.run(command, {
             cwd: workdir || "/home/user",
             timeoutMs: timeout_seconds * 1000,
             envs,
+            onStdout: onStreamOutput
+              ? (data: string) => {
+                  buf += data;
+                  if (!timer) timer = setTimeout(flush, BATCH_MS);
+                }
+              : undefined,
           });
+
+          if (timer) clearTimeout(timer);
+          flush();
 
           const stdout = truncateOutput(result.stdout || "", 4000);
           const stderr = truncateOutput(result.stderr || "", 2000);
@@ -78,6 +107,7 @@ export function createSandboxTools(context?: ScheduleContext) {
             exitCode: result.exitCode,
             stdoutLength: (result.stdout || "").length,
             stderrLength: (result.stderr || "").length,
+            didStream,
           });
 
           return {
@@ -85,6 +115,7 @@ export function createSandboxTools(context?: ScheduleContext) {
             exit_code: result.exitCode,
             stdout,
             stderr: stderr || undefined,
+            ...(didStream ? { _streamed_to_user: true as const } : {}),
           };
         } catch (error: any) {
           logger.error("run_command tool failed", {
