@@ -4,6 +4,7 @@ import {
   getOrCreateSandbox,
   getSandboxEnvs,
   truncateOutput,
+  DEFAULT_TIMEOUT_MS,
 } from "../lib/sandbox.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -72,6 +73,11 @@ export function createSandboxTools(
         try {
           const sandbox = await getOrCreateSandbox();
           const envs = getSandboxEnvs();
+
+          const requiredMs = timeout_seconds * 1000 + 60_000;
+          if (requiredMs > DEFAULT_TIMEOUT_MS) {
+            await sandbox.setTimeout(requiredMs);
+          }
 
           logger.info("run_command tool: executing", {
             command: command.substring(0, 100),
