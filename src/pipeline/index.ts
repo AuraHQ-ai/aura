@@ -12,7 +12,7 @@ import {
   resolveDisplayName,
   type ConversationContext,
 } from "./slack-context.js";
-import { storeMessage } from "../memory/store.js";
+import { storeMessage, claimEvent } from "../memory/store.js";
 import { extractMemories } from "../memory/extract.js";
 import {
   getKnowledgeAboutUser,
@@ -63,6 +63,16 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   const context = buildMessageContext(event, botUserId);
   if (!context) {
     logger.debug("Skipped event — no valid context");
+    return;
+  }
+
+  // 1a. Dedup: atomically claim this event; skip if another handler got there first
+  const claimed = await claimEvent(context.messageTs, context.channelId);
+  if (!claimed) {
+    logger.debug("Skipping duplicate event", {
+      ts: context.messageTs,
+      channelId: context.channelId,
+    });
     return;
   }
 
