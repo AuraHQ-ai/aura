@@ -63,6 +63,12 @@ export function createSandboxTools(
         let timer: ReturnType<typeof setTimeout> | null = null;
         let didStream = false;
 
+        // Periodically signal activity so the caller's inactivity timer
+        // doesn't fire during long-running commands that produce no output.
+        const keepAlive = opts?.onActivity
+          ? setInterval(() => { opts.onActivity!(); }, 60_000)
+          : null;
+
         try {
           const sandbox = await getOrCreateSandbox();
           const envs = getSandboxEnvs();
@@ -99,6 +105,7 @@ export function createSandboxTools(
               : undefined,
           });
 
+          if (keepAlive) clearInterval(keepAlive);
           if (timer) clearTimeout(timer);
           flush();
 
@@ -121,6 +128,7 @@ export function createSandboxTools(
             ...(didStream ? { _streamed_to_user: true as const } : {}),
           };
         } catch (error: any) {
+          if (keepAlive) clearInterval(keepAlive);
           if (timer) { clearTimeout(timer); timer = null; }
           buf = "";
 
