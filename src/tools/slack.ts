@@ -143,7 +143,7 @@ async function searchPublicChannelByName(
  * falls back to searching all public channels via the user token.
  * This is needed for join_channel — the bot can't see channels it hasn't joined.
  */
-async function resolveChannelByName(
+export async function resolveChannelByName(
   client: WebClient,
   name: string,
   options?: { fallbackToUserToken?: boolean },
@@ -192,7 +192,7 @@ async function resolveChannelByName(
  * Resolve a user display name, username, or ID to a user object.
  * Accepts: "jonas", "@jonas", "U066V1AN6", "jonas (U066V1AN6)"
  */
-async function resolveUserByName(
+export async function resolveUserByName(
   client: WebClient,
   name: string,
 ): Promise<{ id: string; name: string } | null> {
@@ -1920,6 +1920,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createBigQueryTools(),
 
     // ── Table Tools (native Slack table blocks) ──────────────────────────
-    ...createTableTools(),
+    ...createTableTools(client, context),
   };
 }
