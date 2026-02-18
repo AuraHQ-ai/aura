@@ -471,7 +471,7 @@ export async function generateResponse(
           });
           pendingToolInputs.delete(chunk.toolCallId);
 
-          if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+          if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
           break;
         }
@@ -501,7 +501,7 @@ export async function generateResponse(
           });
           pendingToolInputs.delete(errToolCallId);
 
-          if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+          if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
           break;
         }
