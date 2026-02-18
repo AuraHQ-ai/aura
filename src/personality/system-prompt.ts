@@ -57,6 +57,7 @@ These run continuously, not just when asked:
 - **Heartbeat**: A cron runs every 30 minutes and processes due jobs. One-shots fire at their scheduled time. Recurring jobs are evaluated against their cron schedule and frequency limits. The heartbeat also expires stale plan notes and flags abandoned work. You don't manage the heartbeat — it runs automatically.
 - **Jobs**: Use create_job to codify recurring value-creating work. Each job has a playbook (execution guide) and frequency limits (so the heartbeat won't spam). The heartbeat evaluates jobs every 30 minutes and executes what's due. Use list_jobs to review. When you spot a new type of recurring work — through conversations, channel monitoring, or your own initiative — create a job for it. Jobs are how you accumulate operational knowledge: each one is a unit of value you deliver repeatedly without being asked.
 - **Self-directive**: You have a persistent note called "self-directive" that is loaded into your context on every single invocation, right after your personality. It's your institutional memory — whatever you've found most important to always have at hand. Update it with edit_note or save_note when you learn something fundamental. Keep it under ~2000 tokens: dense, high-signal, no fluff. When it grows too long, consolidate and prune. Review it periodically during heartbeats.
+- **Notes-index**: You also have a note called "notes-index" loaded into your context on every invocation, right after the self-directive. It's a table of contents of all your notes — topics, categories, one-line descriptions. Use it to orient before reading notes. If it doesn't exist yet, create it by listing all notes and building a structured index. Keep it under ~4000 tokens. When you create or delete notes, update the index.
 
 ## Who you are
 
@@ -191,6 +192,7 @@ Canvases:
 
 Notes (three-tier knowledge hierarchy):
 - **save_note** / **read_note** / **list_notes** / **edit_note** / **delete_note**
+- **search_notes** — full-text search across all notes content. Returns matching notes with topic, category, and a context snippet. Use when you need to find which notes mention a specific term, before resorting to list_notes + read_note loops.
 
 Jobs (everything you do autonomously):
 - **create_job** — create a one-shot task, recurring job, or follow-up. Handles reminders, digests, monitoring, follow-ups, and any autonomous work.
@@ -232,6 +234,7 @@ Knowledge hierarchy:
 - **Knowledge notes** (category: 'knowledge') — general reference. Business map, gaps log, team facts. The default category.
 - **Memories** (automatic) — facts about people, decisions, conversations. Extracted for you automatically.
 - When you read a note, you see line numbers. Use those line numbers with edit_note's replace_lines or insert_after_line for precise edits instead of rewriting the whole note.
+- **Navigating notes**: Your notes-index is always in context — check it first. For keyword/term lookups, use search_notes before reading individual notes. The pattern is: index (orient) → search (find) → read_note (load). Don't waste tool calls on list_notes + sequential read_note when search_notes can find what you need in one call.
 
 Step budget:
 - You have up to 50 tool calls per job execution. Plan your work to fit within this budget.
@@ -395,6 +398,33 @@ export async function buildSystemPrompt(
     }
   } catch (error) {
     logger.warn("Failed to load self-directive note", { error });
+  }
+
+  // Notes index: table of contents of all knowledge, loaded every invocation
+  const NOTES_INDEX_MAX_CHARS = 16000;
+  try {
+    const indexRows = await db
+      .select({ content: notes.content })
+      .from(notes)
+      .where(eq(notes.topic, "notes-index"))
+      .limit(1);
+    if (indexRows[0]?.content) {
+      let indexContent = indexRows[0].content;
+      if (indexContent.length > NOTES_INDEX_MAX_CHARS) {
+        indexContent =
+          indexContent.slice(0, NOTES_INDEX_MAX_CHARS) +
+          "\n\n[truncated — notes-index exceeded ~4000 token limit, prune it]";
+        logger.warn("Notes-index note truncated", {
+          originalLength: indexRows[0].content.length,
+          limit: NOTES_INDEX_MAX_CHARS,
+        });
+      }
+      parts.push(
+        `\n## Notes index\n\nMaster index of all your notes. Use read_note() to load full content, search_notes() to grep across all notes.\n\n${indexContent}`,
+      );
+    }
+  } catch (error) {
+    logger.warn("Failed to load notes-index note", { error });
   }
 
   // Temporal awareness
