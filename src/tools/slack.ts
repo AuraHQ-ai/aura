@@ -9,6 +9,7 @@ import { createListWriteTools } from "./lists.js";
 import { createSandboxTools } from "./sandbox.js";
 import { createWebTools } from "./web.js";
 import { createBigQueryTools } from "./bigquery.js";
+import { createTableTools } from "./table.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
@@ -1917,5 +1918,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── BigQuery Tools ────────────────────────────────────────────────────
     ...createBigQueryTools(),
+
+    // ── Table Tools (native Slack table blocks) ──────────────────────────
+    ...createTableTools(),
   };
 }

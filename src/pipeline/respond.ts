@@ -4,6 +4,7 @@ import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import type { SlackImage } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
+import { TABLE_BLOCK_KEY } from "../tools/table.js";
 
 // ── Tool Status Messages ─────────────────────────────────────────────────────
 // Plain text titles for native Slack task cards (no markdown formatting).
@@ -38,6 +39,7 @@ const TOOL_STATUS: Record<string, string> = {
   run_command: "Running a command in the sandbox...",
   patch_own_code: "Dispatching a coding agent (this may take a few minutes)...",
   read_own_source: "Reading my own source code...",
+  draw_table: "Drawing a table...",
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -156,6 +158,7 @@ export async function generateResponse(
 
   // ── Stream and send to Slack ────────────────────────────────────────
   let accumulatedText = "";
+  let pendingTableBlock: Record<string, any> | null = null;
 
   try {
     const result = streamText(streamOptions);
@@ -194,6 +197,14 @@ export async function generateResponse(
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
 
+          // Capture native Slack table block from draw_table tool
+          if (
+            output && typeof output === "object" &&
+            TABLE_BLOCK_KEY in output && output[TABLE_BLOCK_KEY]
+          ) {
+            pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
+          }
+
           await streamer.append({
             chunks: [{
               type: "task_update",
@@ -219,8 +230,11 @@ export async function generateResponse(
 
     const finalText = accumulatedText;
 
-    // Stop the stream — finalizes the message on Slack's side
-    await streamer.stop();
+    // Stop the stream — finalizes the message on Slack's side.
+    // If draw_table was called, inject the table block via `blocks`.
+    await streamer.stop(
+      pendingTableBlock ? { blocks: [pendingTableBlock as any] } : undefined,
+    );
 
     const inputTokens = usage.inputTokens ?? 0;
     const outputTokens = usage.outputTokens ?? 0;
