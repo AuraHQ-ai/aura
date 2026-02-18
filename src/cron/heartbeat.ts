@@ -23,6 +23,9 @@ const MAX_RETRIES = 3;
 /** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
 const RETRY_DELAY_MS = 30 * 60 * 1000;
 
+/** Stale lock timeout in ms (10 minutes — crash recovery) */
+const STALE_LOCK_MS = 10 * 60 * 1000;
+
 // ── System Prompts ───────────────────────────────────────────────────────────
 
 const JOB_SYSTEM_PROMPT = `You are Aura executing a job autonomously. You have full access to your tools.
@@ -151,15 +154,24 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       .from(jobs)
       .where(
         and(
-          eq(jobs.status, "pending"),
           eq(jobs.enabled, 1),
           or(
-            // One-shot/continuation: due when executeAt <= now
-            lte(jobs.executeAt, now),
-            // Recurring: no executeAt, has cron or frequency (needs app-side eval)
+            // Normal pending unlocked jobs
             and(
-              isNull(jobs.executeAt),
-              sql`(${jobs.cronSchedule} IS NOT NULL AND ${jobs.cronSchedule} != '' OR ${jobs.frequencyConfig} IS NOT NULL)`,
+              eq(jobs.status, "pending"),
+              isNull(jobs.lockedAt),
+              or(
+                lte(jobs.executeAt, now),
+                and(
+                  isNull(jobs.executeAt),
+                  sql`(${jobs.cronSchedule} IS NOT NULL AND ${jobs.cronSchedule} != '' OR ${jobs.frequencyConfig} IS NOT NULL)`,
+                ),
+              ),
+            ),
+            // Stale locked jobs (executor crashed)
+            and(
+              eq(jobs.status, "pending"),
+              sql`${jobs.lockedAt} IS NOT NULL AND ${jobs.lockedAt} < NOW() - INTERVAL '10 minutes'`,
             ),
           ),
         ),
@@ -195,6 +207,11 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
       for (const job of dueJobs) {
         try {
+          const claimed = await claimJob(job.id);
+          if (!claimed) {
+            logger.info("Heartbeat: job already claimed by another instance", { jobName: job.name });
+            continue;
+          }
           await executeJob(job, skillIndex);
           executed++;
         } catch (error: any) {
@@ -260,6 +277,32 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     return c.json({ error: "Heartbeat failed" }, 500);
   }
 });
+
+// ── Distributed Lock Helpers ─────────────────────────────────────────────────
+
+async function claimJob(jobId: string): Promise<boolean> {
+  const result = await db
+    .update(jobs)
+    .set({ lockedAt: new Date() })
+    .where(
+      and(
+        eq(jobs.id, jobId),
+        or(
+          isNull(jobs.lockedAt),
+          sql`${jobs.lockedAt} < NOW() - INTERVAL '10 minutes'`,
+        ),
+      ),
+    )
+    .returning({ id: jobs.id });
+  return result.length > 0;
+}
+
+async function releaseLock(jobId: string): Promise<void> {
+  await db
+    .update(jobs)
+    .set({ lockedAt: null })
+    .where(eq(jobs.id, jobId));
+}
 
 // ── Job Execution ────────────────────────────────────────────────────────────
 
@@ -336,6 +379,7 @@ async function executeJob(
         .update(jobs)
         .set({
           executeAt: null,
+          lockedAt: null,
           retries: 0,
           lastExecutedAt: now,
           executionCount: sql`${jobs.executionCount} + 1`,
@@ -355,6 +399,7 @@ async function executeJob(
         .update(jobs)
         .set({
           status: "completed",
+          lockedAt: null,
           result,
           lastExecutedAt: now,
           executionCount: sql`${jobs.executionCount} + 1`,
@@ -375,7 +420,7 @@ async function executeJob(
       const retryAt = new Date(Date.now() + RETRY_DELAY_MS);
       await db
         .update(jobs)
-        .set({ executeAt: retryAt, retries: newRetries, updatedAt: new Date() })
+        .set({ executeAt: retryAt, lockedAt: null, retries: newRetries, updatedAt: new Date() })
         .where(eq(jobs.id, jobId));
 
       logger.warn("Heartbeat: job retrying", {
@@ -388,6 +433,7 @@ async function executeJob(
         .update(jobs)
         .set({
           status: "failed",
+          lockedAt: null,
           result: `Failed after ${MAX_RETRIES} retries: ${error.message}`,
           retries: newRetries,
           updatedAt: new Date(),

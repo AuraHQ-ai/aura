@@ -50,6 +50,13 @@
       "when": 1771256910923,
       "tag": "0006_volatile_cannonball",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1739872800000,
+      "tag": "0007_heartbeat_lock",
+      "breakpoints": true
     }
   ]
 }

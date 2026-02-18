@@ -212,6 +212,7 @@ export const jobs = pgTable(
     requestedBy: text("requested_by").notNull().default("aura"),
     priority: text("priority").notNull().default("normal"),
     status: text("status").notNull().default("pending"),
+    lockedAt: timestamptz("locked_at"),
     timezone: text("timezone").notNull().default("UTC"),
     result: text("result"),
     retries: integer("retries").notNull().default(0),
