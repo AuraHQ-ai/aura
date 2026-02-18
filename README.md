@@ -120,6 +120,9 @@ Go to **OAuth & Permissions** in the sidebar. Under **Bot Token Scopes**, add:
 | `canvases:read` | Read Canvas content |
 | `canvases:write` | Create/edit Canvases |
 | `users.profile:write` | Set bot's own status |
+| `assistant:write` | Loading shimmer & status indicators (auto-added by Agents & AI Apps toggle) |
+
+> **Agents & AI Apps**: In the Slack app sidebar, find **Agents & AI Apps** and toggle it **on**. This auto-adds the `assistant:write` scope and enables the loading shimmer on Aura's name while she's thinking.
 
 Optional (for message search):
 
