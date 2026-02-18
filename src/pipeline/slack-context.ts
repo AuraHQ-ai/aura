@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 
 import { logger } from "../lib/logger.js";
+import { TOOL_IO_EVENT_TYPE } from "./respond.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,6 +12,13 @@ export interface ToolCallSummary {
   details?: string;
   /** Tool result summary (e.g., "42 rows", error message) */
   output?: string;
+}
+
+export interface ToolIORecord {
+  name: string;
+  input: string;
+  output: string;
+  is_error: boolean;
 }
 
 export interface SlackThreadMessage {
@@ -26,6 +34,8 @@ export interface SlackThreadMessage {
   isBot: boolean;
   /** Extracted task card data from bot messages (tool call history) */
   toolCalls?: ToolCallSummary[];
+  /** Rich tool I/O from Slack message metadata (persisted between turns) */
+  toolIO?: ToolIORecord[];
 }
 
 export interface ConversationContext {
@@ -97,6 +107,22 @@ function extractToolCalls(blocks: any[] | undefined): ToolCallSummary[] {
   return calls;
 }
 
+// ── Metadata Extraction ──────────────────────────────────────────────────────
+
+/** Extract ToolIORecord entries from Slack message metadata. */
+function extractToolIO(msg: any): ToolIORecord[] | undefined {
+  const meta = msg.metadata;
+  if (!meta || meta.event_type !== TOOL_IO_EVENT_TYPE) return undefined;
+  const toolCalls = meta.event_payload?.tool_calls;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return undefined;
+  return toolCalls.map((tc: any) => ({
+    name: String(tc.name ?? "unknown"),
+    input: String(tc.input ?? "{}"),
+    output: String(tc.output ?? ""),
+    is_error: !!tc.is_error,
+  }));
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 /**
@@ -140,6 +166,7 @@ export async function fetchConversationContext(
           ts: threadTs,
           limit: 200,
           cursor,
+          include_all_metadata: true,
         });
         rawMessages.push(...(repliesResult.messages || []));
         cursor = repliesResult.response_metadata?.next_cursor || undefined;
@@ -155,6 +182,7 @@ export async function fetchConversationContext(
           ? "Aura"
           : await resolveDisplayName(client, userId);
         const toolCalls = isBot ? extractToolCalls((msg as any).blocks) : undefined;
+        const toolIO = isBot ? extractToolIO(msg) : undefined;
 
         threadMessages.push({
           user: userId,
@@ -163,6 +191,7 @@ export async function fetchConversationContext(
           ts: msg.ts || "",
           isBot,
           ...(toolCalls?.length && { toolCalls }),
+          ...(toolIO?.length && { toolIO }),
         });
       }
 
@@ -183,6 +212,7 @@ export async function fetchConversationContext(
     const historyResult = await client.conversations.history({
       channel: channelId,
       limit: 15,
+      include_all_metadata: true,
     });
 
     const rawHistory = historyResult.messages || [];
@@ -195,6 +225,7 @@ export async function fetchConversationContext(
         ? "Aura"
         : await resolveDisplayName(client, userId);
       const toolCalls = isBot ? extractToolCalls((msg as any).blocks) : undefined;
+      const toolIO = isBot ? extractToolIO(msg) : undefined;
 
       result.recentMessages.push({
         user: userId,
@@ -203,6 +234,7 @@ export async function fetchConversationContext(
         ts: msg.ts || "",
         isBot,
         ...(toolCalls?.length && { toolCalls }),
+        ...(toolIO?.length && { toolIO }),
       });
 
       // Check if Aura posted in the channel within the last hour
@@ -228,6 +260,15 @@ export async function fetchConversationContext(
 
 // ── Formatting ───────────────────────────────────────────────────────────────
 
+/** Format rich tool I/O records into a structured block for context. */
+function formatToolIO(records: ToolIORecord[]): string {
+  const parts = records.map((r) => {
+    const error = r.is_error ? " [ERROR]" : "";
+    return `  - ${r.name}${error}\n    Input: ${r.input}\n    Output: ${r.output}`;
+  });
+  return `\n[Tool I/O]\n${parts.join("\n")}`;
+}
+
 /** Format tool calls into a compact one-line summary appended to a message. */
 function formatToolCalls(toolCalls: ToolCallSummary[]): string {
   const meaningful = toolCalls.filter((tc) => tc.details || tc.output);
@@ -242,9 +283,10 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
   return `\n[Tools: ${parts.join(" | ")}]`;
 }
 
-/** Format a single message, appending tool call summaries for bot messages. */
+/** Format a single message, preferring rich tool I/O over task_card summaries. */
 function formatMessage(m: SlackThreadMessage): string {
   const base = `${m.displayName}: ${m.text}`;
+  if (m.toolIO?.length) return base + formatToolIO(m.toolIO);
   if (m.toolCalls?.length) return base + formatToolCalls(m.toolCalls);
   return base;
 }

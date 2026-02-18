@@ -6,6 +6,103 @@ import type { SlackImage } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
 
+// ── Tool I/O Persistence ─────────────────────────────────────────────────────
+// Accumulated during streaming and attached as invisible Slack message metadata
+// so that follow-up turns can see actual tool inputs and outputs.
+
+export const TOOL_IO_EVENT_TYPE = "aura_tool_io";
+
+/** Max bytes for serialized tool I/O metadata (Slack limit is 16 KB). */
+const METADATA_BUDGET = 8_000;
+
+interface ToolCallRecord {
+  /** Tool name */
+  name: string;
+  /** JSON-serialized input args */
+  input: string;
+  /** JSON-serialized (and truncated) output */
+  output: string;
+  /** Whether the tool errored */
+  is_error: boolean;
+}
+
+/** Truncate a string to fit within a byte budget, appending "…" if cut. */
+function truncateToBytes(s: string, maxBytes: number): string {
+  if (Buffer.byteLength(s, "utf8") <= maxBytes) return s;
+  const buf = Buffer.from(s, "utf8");
+  let end = maxBytes - 3;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return buf.subarray(0, end).toString("utf8") + "…";
+}
+
+/** Serialize tool output with per-tool truncation. */
+function serializeToolOutput(toolName: string, output: any): string {
+  if (output == null) return "";
+  if (typeof output !== "object") return String(output);
+
+  switch (toolName) {
+    case "execute_query": {
+      if (output.rows && Array.isArray(output.rows)) {
+        const capped = { ...output, rows: output.rows.slice(0, 50) };
+        if (output.rows.length > 50) capped._truncated = true;
+        return truncateToBytes(JSON.stringify(capped), 3000);
+      }
+      return truncateToBytes(JSON.stringify(output), 3000);
+    }
+    case "run_command":
+      return truncateToBytes(JSON.stringify(output), 2000);
+    case "web_search":
+    case "read_url":
+      return truncateToBytes(JSON.stringify(output), 2000);
+    default:
+      return truncateToBytes(JSON.stringify(output), 1500);
+  }
+}
+
+/** Build Slack message metadata from accumulated tool call records. */
+function buildToolMetadata(
+  records: ToolCallRecord[],
+): { event_type: string; event_payload: Record<string, any> } | null {
+  if (records.length === 0) return null;
+
+  const payload: Record<string, any> = {
+    tool_calls: records.map((r) => ({
+      name: r.name,
+      input: r.input,
+      output: r.output,
+      is_error: r.is_error,
+    })),
+  };
+
+  let serialized = JSON.stringify(payload);
+  if (Buffer.byteLength(serialized, "utf8") <= METADATA_BUDGET) {
+    return { event_type: TOOL_IO_EVENT_TYPE, event_payload: payload };
+  }
+
+  // Dynamically compute per-field budget based on record count so the
+  // total stays within METADATA_BUDGET regardless of how many records exist.
+  const perRecordOverhead = 70; // JSON keys, quotes, braces, commas
+  const perFieldBudget = Math.max(
+    50,
+    Math.floor((METADATA_BUDGET / records.length - perRecordOverhead) / 2),
+  );
+
+  let trimmed = records.map((r) => ({
+    name: r.name,
+    input: truncateToBytes(r.input, perFieldBudget),
+    output: truncateToBytes(r.output, perFieldBudget),
+    is_error: r.is_error,
+  }));
+
+  serialized = JSON.stringify({ tool_calls: trimmed });
+  while (Buffer.byteLength(serialized, "utf8") > METADATA_BUDGET && trimmed.length > 1) {
+    trimmed = trimmed.slice(1);
+    serialized = JSON.stringify({ tool_calls: trimmed });
+  }
+
+  return { event_type: TOOL_IO_EVENT_TYPE, event_payload: { tool_calls: trimmed } };
+}
+
 // ── Tool Status Messages ─────────────────────────────────────────────────────
 // Plain text titles for native Slack task cards (no markdown formatting).
 
@@ -254,6 +351,8 @@ export async function generateResponse(
   // ── Stream and send to Slack ────────────────────────────────────────
   let accumulatedText = "";
   let pendingTableBlock: Record<string, any> | null = null;
+  const toolCallRecords: ToolCallRecord[] = [];
+  const pendingToolInputs = new Map<string, { name: string; input: string }>();
 
   try {
     const result = streamText(streamOptions);
@@ -271,7 +370,8 @@ export async function generateResponse(
 
         case "tool-call": {
           const title = TOOL_STATUS[chunk.toolName] || "Working on it...";
-          const details = getToolDetails(chunk.toolName, (chunk as any).input ?? {});
+          const inputArgs = (chunk as any).input ?? {};
+          const details = getToolDetails(chunk.toolName, inputArgs);
           await streamer.append({
             chunks: [{
               type: "task_update",
@@ -280,6 +380,11 @@ export async function generateResponse(
               status: "in_progress",
               ...(details && { details }),
             }],
+          });
+
+          pendingToolInputs.set(chunk.toolCallId, {
+            name: chunk.toolName,
+            input: truncateToBytes(JSON.stringify(inputArgs), 1500),
           });
 
           // Keep resetting inactivity timer during long tool execution
@@ -316,24 +421,45 @@ export async function generateResponse(
             }],
           });
 
+          const pending = pendingToolInputs.get(chunk.toolCallId);
+          toolCallRecords.push({
+            name: chunk.toolName,
+            input: pending?.input ?? "{}",
+            output: serializeToolOutput(chunk.toolName, output),
+            is_error: !!isError,
+          });
+          pendingToolInputs.delete(chunk.toolCallId);
+
           if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
           break;
         }
 
         case "tool-error": {
-          const title = TOOL_STATUS[(chunk as any).toolName] || "Failed";
+          const errToolName = (chunk as any).toolName;
+          const errToolCallId = (chunk as any).toolCallId;
+          const title = TOOL_STATUS[errToolName] || "Failed";
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
           await streamer.append({
             chunks: [{
               type: "task_update",
-              id: (chunk as any).toolCallId,
+              id: errToolCallId,
               title,
               status: "error",
               output: truncate(errorMsg, 200),
             }],
           });
+
+          const pending = pendingToolInputs.get(errToolCallId);
+          toolCallRecords.push({
+            name: errToolName || "unknown",
+            input: pending?.input ?? "{}",
+            output: truncateToBytes(JSON.stringify({ error: errorMsg }), 1500),
+            is_error: true,
+          });
+          pendingToolInputs.delete(errToolCallId);
+
           if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
           break;
@@ -351,10 +477,13 @@ export async function generateResponse(
     const finalText = accumulatedText;
 
     // Stop the stream — finalizes the message on Slack's side.
-    // If draw_table was called, inject the table block via `blocks`.
-    await streamer.stop(
-      pendingTableBlock ? { blocks: [pendingTableBlock as any] } : undefined,
-    );
+    // Attach tool I/O metadata (invisible to users) for follow-up context,
+    // and inject table blocks from draw_table if present.
+    const toolMeta = buildToolMetadata(toolCallRecords);
+    const stopArgs: Record<string, any> = {};
+    if (pendingTableBlock) stopArgs.blocks = [pendingTableBlock];
+    if (toolMeta) stopArgs.metadata = toolMeta;
+    await streamer.stop(Object.keys(stopArgs).length > 0 ? stopArgs : undefined);
 
     const inputTokens = usage.inputTokens ?? 0;
     const outputTokens = usage.outputTokens ?? 0;
