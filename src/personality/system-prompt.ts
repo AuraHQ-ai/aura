@@ -269,6 +269,9 @@ Sandbox (Linux VM):
 - Output is truncated. Use head, tail, grep to filter. Break complex tasks into smaller commands.
 - For complex workflows, check your skill notes first — you may have a playbook.
 
+Tables:
+- **draw_table** — render a native Slack table in your reply. Use this instead of markdown tables whenever you have tabular data (comparisons, query results, multi-column lists). Provide rows as an array of string arrays — the first row is the header. The table renders at the bottom of your message. Only one table per message, max 100 rows × 20 columns. Continue writing normal text around the table — add context/commentary before calling the tool, and the table attaches automatically.
+
 Data warehouse (BigQuery):
 - **list_datasets** — list all datasets in the data warehouse.
 - **list_tables** — list tables in a dataset (with types, row counts).
