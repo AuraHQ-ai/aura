@@ -533,18 +533,29 @@ export async function generateResponse(
             blocks.push({
               type: "section",
               text: { type: "mrkdwn", text: finalText.slice(i, i + 3000) },
+              expand: true,
             });
           }
         }
         blocks.push(pendingTableBlock);
       }
 
+      blocks.push({
+        type: "context_actions",
+        elements: [{
+          type: "feedback_buttons",
+          action_id: "aura_feedback",
+          positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
+          negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
+        }],
+      });
+
       const toolMeta = buildToolMetadata(toolCallRecords);
       await slackClient.chat.postMessage({
         channel: channelId,
         text: finalText || "_I processed your request but had nothing to say._",
         thread_ts: threadTs,
-        ...(blocks.length > 0 && { blocks }),
+        blocks,
         ...(toolMeta && { metadata: toolMeta }),
       });
 
@@ -557,11 +568,23 @@ export async function generateResponse(
       // Happy path: finalize the stream on Slack's side.
       // Attach tool I/O metadata (invisible to users) for follow-up context,
       // and inject table blocks from draw_table if present.
+      const feedbackBlock = {
+        type: "context_actions",
+        elements: [{
+          type: "feedback_buttons",
+          action_id: "aura_feedback",
+          positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
+          negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
+        }],
+      };
+
       const toolMeta = buildToolMetadata(toolCallRecords);
-      const stopArgs: Record<string, any> = {};
-      if (pendingTableBlock) stopArgs.blocks = [pendingTableBlock];
+      const stopBlocks: any[] = [];
+      if (pendingTableBlock) stopBlocks.push(pendingTableBlock);
+      stopBlocks.push(feedbackBlock);
+      const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
-      await streamer.stop(Object.keys(stopArgs).length > 0 ? stopArgs : undefined);
+      await streamer.stop(stopArgs);
 
       logger.info(`LLM stream completed in ${llmMs}ms`, {
         rawLength: finalText.length,

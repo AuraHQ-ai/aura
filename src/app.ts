@@ -171,6 +171,33 @@ app.post("/api/slack/events", async (c) => {
       return c.json({ ok: true });
     }
 
+    // Handle assistant thread started — set suggested prompts in split-view
+    if (event.type === "assistant_thread_started") {
+      const threadStartPromise = (async () => {
+        try {
+          const channelId = event.assistant_thread?.channel_id;
+          const threadTs = event.assistant_thread?.thread_ts;
+          if (!channelId || !threadTs) return;
+
+          await slackClient.assistant.threads.setSuggestedPrompts({
+            channel_id: channelId,
+            thread_ts: threadTs,
+            title: "How can I help?",
+            prompts: [
+              { title: "Catch me up", message: "What happened in my channels while I was away?" },
+              { title: "Run a query", message: "Show me this week's key metrics from BigQuery" },
+              { title: "Search Slack", message: "Find recent messages about..." },
+              { title: "What do you know?", message: "What do you know about me?" },
+            ],
+          });
+        } catch (err) {
+          recordError("assistant_thread_started", err);
+        }
+      })();
+      waitUntil(threadStartPromise);
+      return c.json({ ok: true });
+    }
+
     // Handle App Home opened
     if (event.type === "app_home_opened") {
       const homePromise = publishHomeTab(slackClient, event.user).catch(
@@ -240,16 +267,28 @@ app.post("/api/slack/interactions", async (c) => {
     return c.json({ error: "Invalid payload JSON" }, 400);
   }
 
-  // Handle block_actions (dropdown changes)
+  // Handle block_actions
   if (payload.type === "block_actions" && payload.actions) {
     const userId = payload.user?.id;
 
-    if (!userId || !isAdmin(userId)) {
-      logger.warn("Non-admin attempted settings change", { userId });
-      return c.json({ ok: true });
-    }
-
     for (const action of payload.actions) {
+      // Feedback buttons — any user can submit
+      if (action.action_id === "aura_feedback") {
+        logger.info("Response feedback received", {
+          userId,
+          feedback: action.value,
+          messageTs: payload.message?.ts,
+          channelId: payload.channel?.id,
+        });
+        continue;
+      }
+
+      // Admin-only settings changes
+      if (!userId || !isAdmin(userId)) {
+        logger.warn("Non-admin attempted settings change", { userId });
+        continue;
+      }
+
       const settingKey = ACTION_TO_SETTING[action.action_id];
       if (settingKey && action.selected_option?.value) {
         const newValue = action.selected_option.value;
@@ -257,7 +296,6 @@ app.post("/api/slack/interactions", async (c) => {
         const savePromise = (async () => {
           try {
             await setSetting(settingKey, newValue, userId);
-            // Refresh the home tab to confirm the change
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.save", err, { userId, settingKey });
