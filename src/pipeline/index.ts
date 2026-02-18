@@ -302,6 +302,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     logger.error("Pipeline error", {
       errorName,
       errorMessage,
+      slackErrorCode: error?.data?.error,
       userId: context.userId,
       channelId: context.channelId,
       channelType: context.channelType,
