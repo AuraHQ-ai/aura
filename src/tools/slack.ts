@@ -89,8 +89,8 @@ async function getUserList(
 /** Cache for user ID -> display name lookups. */
 const userIdNameCache = new Map<string, string>();
 
-/** Cache for channel ID -> name lookups. */
-const channelIdNameCache = new Map<string, string>();
+/** Cache for channel ID -> full metadata lookups. */
+const channelIdNameCache = new Map<string, { id: string; name: string; is_private: boolean; topic: string; purpose: string; num_members: number }>();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -154,7 +154,7 @@ export async function resolveChannelByName(
   const cleaned = name.replace(/^#/, "").trim();
 
   // Extract parenthetical ID if present: "dev (C0BNVKS77)" -> use ID
-  const idInParens = cleaned.match(/\(?(C[A-Z0-9]+)\)?/);
+  const idInParens = cleaned.match(/\((C[A-Z0-9]+)\)/);
   if (idInParens) {
     const id = idInParens[1];
     const displayName = cleaned.replace(/\s*\(?C[A-Z0-9]+\)?/, "").trim();
@@ -270,23 +270,23 @@ async function resolveChannelById(
   client: WebClient,
   channelId: string,
 ): Promise<{ id: string; name: string; is_private: boolean; topic: string; purpose: string; num_members: number } | null> {
-  const cachedName = channelIdNameCache.get(channelId);
-  if (cachedName) return { id: channelId, name: cachedName, is_private: false, topic: "", purpose: "", num_members: 0 };
+  const cached = channelIdNameCache.get(channelId);
+  if (cached) return { ...cached };
 
   try {
     const result = await client.conversations.info({ channel: channelId });
     const ch = result.channel as any;
     if (ch) {
-      const name = ch.name || channelId;
-      channelIdNameCache.set(channelId, name);
-      return {
+      const entry = {
         id: channelId,
-        name,
+        name: ch.name || channelId,
         is_private: ch.is_private || false,
         topic: ch.topic?.value || "",
         purpose: ch.purpose?.value || "",
         num_members: ch.num_members || 0,
       };
+      channelIdNameCache.set(channelId, entry);
+      return { ...entry };
     }
     return null;
   } catch {
@@ -300,16 +300,16 @@ async function resolveChannelById(
       const result = await userClient.conversations.info({ channel: channelId });
       const ch = result.channel as any;
       if (ch) {
-        const name = ch.name || channelId;
-        channelIdNameCache.set(channelId, name);
-        return {
+        const entry = {
           id: channelId,
-          name,
+          name: ch.name || channelId,
           is_private: ch.is_private || false,
           topic: ch.topic?.value || "",
           purpose: ch.purpose?.value || "",
           num_members: ch.num_members || 0,
         };
+        channelIdNameCache.set(channelId, entry);
+        return { ...entry };
       }
       return null;
     } catch {
@@ -581,11 +581,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const results: Array<{ id: string; name: string; topic: string; is_member: boolean }> = [];
           const seenIds = new Set<string>();
 
-          // Search bot's channel cache first
+          // Search bot's channel cache first, resolving full metadata for topic
           const botChannels = await getChannelList(client);
           for (const ch of botChannels) {
             if (ch.name.toLowerCase().includes(q)) {
-              results.push({ id: ch.id, name: ch.name, topic: "", is_member: true });
+              const info = await resolveChannelById(client, ch.id);
+              results.push({ id: ch.id, name: ch.name, topic: info?.topic || "", is_member: true });
               seenIds.add(ch.id);
             }
           }
