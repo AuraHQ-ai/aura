@@ -4,7 +4,6 @@ import {
   getOrCreateSandbox,
   getSandboxEnvs,
   truncateOutput,
-  DEFAULT_TIMEOUT_MS,
 } from "../lib/sandbox.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -16,10 +15,7 @@ import type { ScheduleContext } from "../db/schema.js";
  * run_command is the universal primitive — use cat/head/tail for reading files,
  * heredocs for writing, git/rg/grep for search, etc.
  */
-export function createSandboxTools(
-  context?: ScheduleContext,
-  opts?: { onStreamOutput?: (text: string) => void; onActivity?: () => void },
-) {
+export function createSandboxTools(context?: ScheduleContext) {
   return {
     run_command: tool({
       description:
@@ -39,9 +35,9 @@ export function createSandboxTools(
         timeout_seconds: z
           .number()
           .min(1)
-          .max(780)
+          .max(300)
           .default(120)
-          .describe("Command timeout in seconds (max 780). Use 600 for Claude Code tasks."),
+          .describe("Command timeout in seconds (max 300)"),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
         if (!isAdmin(context?.userId) && context?.userId !== "aura") {
@@ -59,61 +55,20 @@ export function createSandboxTools(
           };
         }
 
-        const onStreamOutput = opts?.onStreamOutput;
-        let buf = "";
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        let didStream = false;
-
-        // Periodically signal activity so the caller's inactivity timer
-        // doesn't fire during long-running commands that produce no output.
-        const keepAlive = opts?.onActivity
-          ? setInterval(() => { opts.onActivity!(); }, 60_000)
-          : null;
-
         try {
           const sandbox = await getOrCreateSandbox();
           const envs = getSandboxEnvs();
-
-          const requiredMs = timeout_seconds * 1000 + 60_000;
-          if (requiredMs > DEFAULT_TIMEOUT_MS) {
-            await sandbox.setTimeout(requiredMs);
-          }
 
           logger.info("run_command tool: executing", {
             command: command.substring(0, 100),
             workdir,
           });
-          const startedAt = Date.now();
-          const GRACE_MS = 1000;
-          const BATCH_MS = 1000;
-
-          const flush = () => {
-            if (buf && onStreamOutput && Date.now() - startedAt > GRACE_MS) {
-              onStreamOutput(buf);
-              didStream = true;
-            }
-            buf = "";
-            timer = null;
-          };
 
           const result = await sandbox.commands.run(command, {
             cwd: workdir || "/home/user",
             timeoutMs: timeout_seconds * 1000,
             envs,
-            onStdout: onStreamOutput
-              ? (data: string) => {
-                  buf += data;
-                  if (!timer) timer = setTimeout(flush, BATCH_MS);
-                }
-              : undefined,
-            onStderr: opts?.onActivity
-              ? () => { opts.onActivity!(); }
-              : undefined,
           });
-
-          if (keepAlive) clearInterval(keepAlive);
-          if (timer) clearTimeout(timer);
-          flush();
 
           const stdout = truncateOutput(result.stdout || "", 4000);
           const stderr = truncateOutput(result.stderr || "", 2000);
@@ -123,7 +78,6 @@ export function createSandboxTools(
             exitCode: result.exitCode,
             stdoutLength: (result.stdout || "").length,
             stderrLength: (result.stderr || "").length,
-            didStream,
           });
 
           return {
@@ -131,13 +85,8 @@ export function createSandboxTools(
             exit_code: result.exitCode,
             stdout,
             stderr: stderr || undefined,
-            ...(didStream ? { _streamed_to_user: true as const } : {}),
           };
         } catch (error: any) {
-          if (keepAlive) clearInterval(keepAlive);
-          if (timer) { clearTimeout(timer); timer = null; }
-          buf = "";
-
           logger.error("run_command tool failed", {
             command: command.substring(0, 100),
             error: error.message,
