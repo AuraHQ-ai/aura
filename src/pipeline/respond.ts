@@ -74,18 +74,33 @@ function buildToolMetadata(
     })),
   };
 
-  const serialized = JSON.stringify(payload);
-  if (Buffer.byteLength(serialized, "utf8") > METADATA_BUDGET) {
-    const trimmed = records.map((r) => ({
-      name: r.name,
-      input: truncateToBytes(r.input, 400),
-      output: truncateToBytes(r.output, 400),
-      is_error: r.is_error,
-    }));
-    return { event_type: TOOL_IO_EVENT_TYPE, event_payload: { tool_calls: trimmed } };
+  let serialized = JSON.stringify(payload);
+  if (Buffer.byteLength(serialized, "utf8") <= METADATA_BUDGET) {
+    return { event_type: TOOL_IO_EVENT_TYPE, event_payload: payload };
   }
 
-  return { event_type: TOOL_IO_EVENT_TYPE, event_payload: payload };
+  // Dynamically compute per-field budget based on record count so the
+  // total stays within METADATA_BUDGET regardless of how many records exist.
+  const perRecordOverhead = 70; // JSON keys, quotes, braces, commas
+  const perFieldBudget = Math.max(
+    50,
+    Math.floor((METADATA_BUDGET / records.length - perRecordOverhead) / 2),
+  );
+
+  let trimmed = records.map((r) => ({
+    name: r.name,
+    input: truncateToBytes(r.input, perFieldBudget),
+    output: truncateToBytes(r.output, perFieldBudget),
+    is_error: r.is_error,
+  }));
+
+  serialized = JSON.stringify({ tool_calls: trimmed });
+  while (Buffer.byteLength(serialized, "utf8") > METADATA_BUDGET && trimmed.length > 1) {
+    trimmed = trimmed.slice(1);
+    serialized = JSON.stringify({ tool_calls: trimmed });
+  }
+
+  return { event_type: TOOL_IO_EVENT_TYPE, event_payload: { tool_calls: trimmed } };
 }
 
 // ── Tool Status Messages ─────────────────────────────────────────────────────
@@ -440,7 +455,7 @@ export async function generateResponse(
           toolCallRecords.push({
             name: errToolName || "unknown",
             input: pending?.input ?? "{}",
-            output: JSON.stringify({ error: errorMsg }),
+            output: truncateToBytes(JSON.stringify({ error: errorMsg }), 1500),
             is_error: true,
           });
           pendingToolInputs.delete(errToolCallId);
