@@ -982,7 +982,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Only return messages before this Unix timestamp (exclusive, seconds with optional decimals). E.g. '1719007200' for a specific epoch time.",
+            "Only return messages before this Unix timestamp (inclusive, seconds with optional decimals). E.g. '1719007200' for a specific epoch time.",
           ),
       }),
       execute: async ({ user_name, limit, oldest_ts, latest_ts }) => {
@@ -1035,6 +1035,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
           if (oldest_ts) historyParams.oldest = oldest_ts;
           if (latest_ts) historyParams.latest = latest_ts;
+          if (oldest_ts || latest_ts) historyParams.inclusive = true;
 
           const result = await client.conversations.history(historyParams as any);
 
