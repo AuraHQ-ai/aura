@@ -74,7 +74,9 @@ export function createListWriteTools(client: WebClient) {
       description:
         "Update fields on an existing item (row) in a Slack List. Use this to change title, status, assignee, severity, etc. " +
         "IMPORTANT: First call get_slack_list_item to see the exact column IDs and value formats. " +
-        "Pass each field value in the EXACT same format returned by get_slack_list_item (e.g. rich text arrays, status objects, user arrays).",
+        "Values can be: a string (for text fields), an array of strings (for select/status fields like [\"done\"]), " +
+        "an array of user IDs (for user fields like [\"U01234\"]), or a typed object like {select: [\"done\"]} for explicit control. " +
+        "Date fields MUST use typed objects: {date: [\"2025-09-20\"]}.",
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         item_id: z.string().describe("The ID of the item/row to update"),
@@ -82,21 +84,72 @@ export function createListWriteTools(client: WebClient) {
           .record(z.any())
           .describe(
             "Column values to update as a flat object: { column_id: value, ... }. " +
-              "Values must use the same format as returned by get_slack_list_item.",
+              "Simple formats: string for text, [\"value\"] for select/status, [\"U01234\"] for users. " +
+              "Or use typed objects: {select: [\"done\"]}, {rich_text: [...]}, {user: [\"U01234\"]}, {date: [\"2025-09-20\"]}.",
           ),
       }),
       execute: async ({ list_id, item_id, fields }) => {
         try {
 
-          const cells = Object.entries(fields).map(([column_id, value]) => ({
-            ...(typeof value === "object" &&
-            value !== null &&
-            !Array.isArray(value)
-              ? value
-              : { value }),
-            row_id: item_id,
-            column_id,
-          }));
+          const TYPED_KEYS = new Set(["select", "rich_text", "user", "date", "timestamp", "number", "attachment"]);
+
+          const cells = Object.entries(fields).map(([column_id, value]) => {
+            const base = { column_id, row_id: item_id };
+
+            // Already a typed object with the right Slack API keys — pass through
+            if (
+              typeof value === "object" &&
+              value !== null &&
+              !Array.isArray(value) &&
+              Object.keys(value).some((k) => TYPED_KEYS.has(k))
+            ) {
+              return { ...value, ...base };
+            }
+
+            // String → rich_text
+            if (typeof value === "string") {
+              return {
+                ...base,
+                rich_text: [
+                  {
+                    type: "rich_text",
+                    elements: [
+                      {
+                        type: "rich_text_section",
+                        elements: [{ type: "text", text: value }],
+                      },
+                    ],
+                  },
+                ],
+              };
+            }
+
+            // Number → pass through as number type
+            if (typeof value === "number") {
+              return { ...base, number: value };
+            }
+
+            // Array handling
+            if (Array.isArray(value)) {
+              // Array of rich_text blocks (first element has type: "rich_text")
+              if (value.length > 0 && value[0]?.type === "rich_text") {
+                return { ...base, rich_text: value };
+              }
+              // Array of strings — could be select or user IDs
+              // User IDs start with U or W followed by alphanumeric
+              if (value.length > 0 && typeof value[0] === "string") {
+                if (value.every((v: string) => /^[UW][A-Z0-9]{8,}$/.test(v))) {
+                  return { ...base, user: value };
+                }
+                // Default: treat string arrays as select values
+                // (Date fields are handled via typed objects above, per tool description)
+                return { ...base, select: value };
+              }
+            }
+
+            // Fallback: pass value as-is (may fail, but at least we tried the smart path)
+            return { ...base, value };
+          });
 
           const result = await (client as any).apiCall(
             "slackLists.items.update",
