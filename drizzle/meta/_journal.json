@@ -50,6 +50,13 @@
       "when": 1771256910923,
       "tag": "0006_volatile_cannonball",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1771409947025,
+      "tag": "0007_fuzzy_harry_osborn",
+      "breakpoints": true
     }
   ]
 }

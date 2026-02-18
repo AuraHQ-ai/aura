@@ -1,7 +1,21 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { messages, memories, type NewMessage, type NewMemory } from "../db/schema.js";
+import { messages, memories, eventLocks, type NewMessage, type NewMemory } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
+
+/**
+ * Atomically claim an event for processing using the event_locks table.
+ * Returns true if this caller claimed the event, false if it was already claimed.
+ * Safe against race conditions — uses INSERT ... ON CONFLICT DO NOTHING RETURNING id.
+ */
+export async function claimEvent(eventTs: string, channelId: string): Promise<boolean> {
+  const result = await db
+    .insert(eventLocks)
+    .values({ eventTs, channelId })
+    .onConflictDoNothing()
+    .returning({ id: eventLocks.id });
+  return result.length > 0;
+}
 
 /**
  * Store a raw message (user or assistant) to the messages table.
