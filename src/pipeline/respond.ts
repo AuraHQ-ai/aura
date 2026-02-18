@@ -268,6 +268,7 @@ export async function generateResponse(
         system: options.systemPrompt,
         tools: createSlackTools(options.slackClient, options.context),
         maxSteps: 25,
+        abortSignal: AbortSignal.timeout(180_000),
       };
 
       if (hasImages) {
