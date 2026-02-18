@@ -4,6 +4,15 @@ import { logger } from "../lib/logger.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+export interface ToolCallSummary {
+  title: string;
+  status: string;
+  /** Tool input context (e.g., the SQL query, search term, command) */
+  details?: string;
+  /** Tool result summary (e.g., "42 rows", error message) */
+  output?: string;
+}
+
 export interface SlackThreadMessage {
   /** Slack user ID */
   user: string;
@@ -15,6 +24,8 @@ export interface SlackThreadMessage {
   ts: string;
   /** Whether this message is from the bot */
   isBot: boolean;
+  /** Extracted task card data from bot messages (tool call history) */
+  toolCalls?: ToolCallSummary[];
 }
 
 export interface ConversationContext {
@@ -53,6 +64,37 @@ export async function resolveDisplayName(
   } catch {
     return userId;
   }
+}
+
+// ── Task Card Extraction ─────────────────────────────────────────────────────
+
+/** Extract plain text from a rich_text object (used in task_card details/output). */
+function extractRichText(richText: any): string | undefined {
+  if (!richText?.elements) return undefined;
+  const parts: string[] = [];
+  for (const section of richText.elements) {
+    if (!section.elements) continue;
+    for (const el of section.elements) {
+      if (el.type === "text" && el.text) parts.push(el.text);
+    }
+  }
+  return parts.length > 0 ? parts.join("") : undefined;
+}
+
+/** Extract ToolCallSummary entries from task_card blocks on a message. */
+function extractToolCalls(blocks: any[] | undefined): ToolCallSummary[] {
+  if (!blocks) return [];
+  const calls: ToolCallSummary[] = [];
+  for (const block of blocks) {
+    if (block.type !== "task_card") continue;
+    calls.push({
+      title: block.title || "Unknown",
+      status: block.status || "complete",
+      details: extractRichText(block.details),
+      output: extractRichText(block.output),
+    });
+  }
+  return calls;
 }
 
 // ── Main entry point ─────────────────────────────────────────────────────────
@@ -112,6 +154,7 @@ export async function fetchConversationContext(
         const displayName = isBot
           ? "Aura"
           : await resolveDisplayName(client, userId);
+        const toolCalls = isBot ? extractToolCalls((msg as any).blocks) : undefined;
 
         threadMessages.push({
           user: userId,
@@ -119,6 +162,7 @@ export async function fetchConversationContext(
           text: msg.text || "",
           ts: msg.ts || "",
           isBot,
+          ...(toolCalls?.length && { toolCalls }),
         });
       }
 
@@ -150,6 +194,7 @@ export async function fetchConversationContext(
       const displayName = isBot
         ? "Aura"
         : await resolveDisplayName(client, userId);
+      const toolCalls = isBot ? extractToolCalls((msg as any).blocks) : undefined;
 
       result.recentMessages.push({
         user: userId,
@@ -157,6 +202,7 @@ export async function fetchConversationContext(
         text: msg.text || "",
         ts: msg.ts || "",
         isBot,
+        ...(toolCalls?.length && { toolCalls }),
       });
 
       // Check if Aura posted in the channel within the last hour
@@ -181,6 +227,27 @@ export async function fetchConversationContext(
 }
 
 // ── Formatting ───────────────────────────────────────────────────────────────
+
+/** Format tool calls into a compact one-line summary appended to a message. */
+function formatToolCalls(toolCalls: ToolCallSummary[]): string {
+  const meaningful = toolCalls.filter((tc) => tc.details || tc.output);
+  if (meaningful.length === 0) return "";
+  const parts = meaningful.map((tc) => {
+    const label = tc.title.replace(/\.\.\.$/,"");
+    const detail = tc.details ? `(${tc.details})` : "";
+    const result = tc.output ? ` -> ${tc.output}` : "";
+    const error = tc.status === "error" ? " [ERROR]" : "";
+    return `${label}${detail}${result}${error}`;
+  });
+  return `\n[Tools: ${parts.join(" | ")}]`;
+}
+
+/** Format a single message, appending tool call summaries for bot messages. */
+function formatMessage(m: SlackThreadMessage): string {
+  const base = `${m.displayName}: ${m.text}`;
+  if (m.toolCalls?.length) return base + formatToolCalls(m.toolCalls);
+  return base;
+}
 
 /**
  * Format ConversationContext into a string for the system prompt.
@@ -208,7 +275,7 @@ export function formatConversationContext(
         ? thread
         : [thread[0], ...thread.slice(-MAX_THREAD_MESSAGES + 1)];
     const formatted = capped
-      .map((m) => `${m.displayName}: ${m.text}`)
+      .map(formatMessage)
       .join("\n\n");
     return formatted;
   }
@@ -216,7 +283,7 @@ export function formatConversationContext(
   // Fall back to recent channel/DM messages only when appropriate
   if (includeChannelFallback && conversation.recentMessages.length > 0) {
     const formatted = conversation.recentMessages
-      .map((m) => `${m.displayName}: ${m.text}`)
+      .map(formatMessage)
       .join("\n\n");
     return formatted;
   }
