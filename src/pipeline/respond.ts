@@ -1,4 +1,4 @@
-import { streamText, generateText, stepCountIs } from "ai";
+import { streamText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
 import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
@@ -263,6 +263,22 @@ export interface LLMResponse {
   };
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Detect Slack's `channel_type_not_supported` error, which is thrown when
+ * `chat.startStream` is called on a channel type that doesn't support
+ * streaming (e.g. Slack List internal channels).
+ */
+function isStreamingUnsupported(error: any): boolean {
+  const msg = error?.message || "";
+  const code = error?.data?.error || "";
+  return (
+    msg.includes("channel_type_not_supported") ||
+    code === "channel_type_not_supported"
+  );
+}
+
 // ── Main Function ────────────────────────────────────────────────────────────
 
 /**
@@ -273,6 +289,9 @@ export interface LLMResponse {
  * built-in buffering and rate limit handling.
  *
  * Tool calls are displayed as native Slack task cards in timeline mode.
+ *
+ * Falls back to chat.postMessage for channels that don't support streaming
+ * (e.g. Slack List item comment threads).
  */
 export async function generateResponse(
   options: RespondOptions,
@@ -301,6 +320,29 @@ export async function generateResponse(
   if (options.recipientUserId) streamParams.recipient_user_id = options.recipientUserId;
 
   const streamer = slackClient.chatStream(streamParams as any);
+
+  // ── Streaming fallback ──────────────────────────────────────────────
+  // Some channel types (e.g. Slack List internal channels) don't support
+  // chat.startStream. When we detect this, we flip to buffer-only mode
+  // and post the final result via chat.postMessage.
+  let streamingFailed = false;
+
+  async function tryStreamAppend(payload: any): Promise<void> {
+    if (streamingFailed) return;
+    try {
+      await streamer.append(payload);
+    } catch (err: any) {
+      if (isStreamingUnsupported(err)) {
+        streamingFailed = true;
+        logger.warn(
+          "chatStream not supported for this channel, falling back to postMessage",
+          { channelId },
+        );
+      } else {
+        throw err;
+      }
+    }
+  }
 
   // ── Inactivity timeout ───────────────────────────────────────────────
   const abortController = new AbortController();
@@ -363,8 +405,7 @@ export async function generateResponse(
       switch (chunk.type) {
         case "text-delta": {
           accumulatedText += chunk.text;
-          // SDK buffers internally (default 256 chars) — no manual debouncing
-          await streamer.append({ markdown_text: chunk.text });
+          await tryStreamAppend({ markdown_text: chunk.text });
           break;
         }
 
@@ -372,7 +413,7 @@ export async function generateResponse(
           const title = TOOL_STATUS[chunk.toolName] || "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
           const details = getToolDetails(chunk.toolName, inputArgs);
-          await streamer.append({
+          await tryStreamAppend({
             chunks: [{
               type: "task_update",
               id: chunk.toolCallId,
@@ -410,7 +451,7 @@ export async function generateResponse(
           const taskOutput = getToolOutput(chunk.toolName, output);
           const sources = getToolSources(chunk.toolName, output);
 
-          await streamer.append({
+          await tryStreamAppend({
             chunks: [{
               type: "task_update",
               id: chunk.toolCallId,
@@ -441,7 +482,7 @@ export async function generateResponse(
           const title = TOOL_STATUS[errToolName] || "Failed";
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
-          await streamer.append({
+          await tryStreamAppend({
             chunks: [{
               type: "task_update",
               id: errToolCallId,
@@ -467,7 +508,7 @@ export async function generateResponse(
       }
     }
 
-    // ── Finalize stream ───────────────────────────────────────────────────
+    // ── Finalize ──────────────────────────────────────────────────────────
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
 
@@ -476,23 +517,57 @@ export async function generateResponse(
 
     const finalText = accumulatedText;
 
-    // Stop the stream — finalizes the message on Slack's side.
-    // Attach tool I/O metadata (invisible to users) for follow-up context,
-    // and inject table blocks from draw_table if present.
-    const toolMeta = buildToolMetadata(toolCallRecords);
-    const stopArgs: Record<string, any> = {};
-    if (pendingTableBlock) stopArgs.blocks = [pendingTableBlock];
-    if (toolMeta) stopArgs.metadata = toolMeta;
-    await streamer.stop(Object.keys(stopArgs).length > 0 ? stopArgs : undefined);
-
     const inputTokens = usage.inputTokens ?? 0;
     const outputTokens = usage.outputTokens ?? 0;
     const totalTokens = inputTokens + outputTokens;
 
-    logger.info(`LLM stream completed in ${llmMs}ms`, {
-      rawLength: finalText.length,
-      usage: { inputTokens, outputTokens, totalTokens },
-    });
+    if (streamingFailed) {
+      // Fallback: post the complete response via chat.postMessage.
+      // When blocks are present, Slack only renders blocks — text is just a
+      // notification fallback. Include the LLM text as section blocks so it
+      // remains visible alongside the table.
+      const blocks: any[] = [];
+      if (pendingTableBlock) {
+        if (finalText) {
+          for (let i = 0; i < finalText.length; i += 3000) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: finalText.slice(i, i + 3000) },
+            });
+          }
+        }
+        blocks.push(pendingTableBlock);
+      }
+
+      const toolMeta = buildToolMetadata(toolCallRecords);
+      await slackClient.chat.postMessage({
+        channel: channelId,
+        text: finalText || "_I processed your request but had nothing to say._",
+        thread_ts: threadTs,
+        ...(blocks.length > 0 && { blocks }),
+        ...(toolMeta && { metadata: toolMeta }),
+      });
+
+      logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
+        rawLength: finalText.length,
+        channelId,
+        usage: { inputTokens, outputTokens, totalTokens },
+      });
+    } else {
+      // Happy path: finalize the stream on Slack's side.
+      // Attach tool I/O metadata (invisible to users) for follow-up context,
+      // and inject table blocks from draw_table if present.
+      const toolMeta = buildToolMetadata(toolCallRecords);
+      const stopArgs: Record<string, any> = {};
+      if (pendingTableBlock) stopArgs.blocks = [pendingTableBlock];
+      if (toolMeta) stopArgs.metadata = toolMeta;
+      await streamer.stop(Object.keys(stopArgs).length > 0 ? stopArgs : undefined);
+
+      logger.info(`LLM stream completed in ${llmMs}ms`, {
+        rawLength: finalText.length,
+        usage: { inputTokens, outputTokens, totalTokens },
+      });
+    }
 
     return {
       raw: finalText,
@@ -503,66 +578,19 @@ export async function generateResponse(
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
 
-    // ── Fallback: non-streaming for unsupported channel types ────────────
-    if (error?.message?.includes("channel_type_not_supported")) {
-      logger.warn("chatStream not supported in this channel type — falling back to generateText + postMessage", {
-        channelId,
-        errorMessage: error.message,
-      });
+    // If streaming was never established, don't try to stop it
+    if (!streamingFailed) {
+      try {
+        const errorText = accumulatedText
+          ? "\n\n_...interrupted. Something went wrong._"
+          : "_Sorry, I got interrupted before I could finish. Try again?_";
 
-      // Clean up the dead streamer
-      try { await streamer.stop(); } catch { /* already dead */ }
-
-      const generateOptions: any = {
-        model,
-        system: options.systemPrompt,
-        tools: createSlackTools(options.slackClient, options.context),
-        stopWhen: stepCountIs(25),
-        abortSignal: AbortSignal.timeout(180_000),
-      };
-
-      if (hasImages) {
-        generateOptions.messages = streamOptions.messages;
-      } else {
-        generateOptions.prompt = options.userMessage;
+        await streamer.stop({
+          chunks: [{ type: "markdown_text", text: errorText }],
+        });
+      } catch {
+        // Stream may already be closed — nothing we can do
       }
-
-      const genResult = await generateText(generateOptions);
-      const text = genResult.text ?? "";
-
-      await slackClient.chat.postMessage({
-        channel: channelId,
-        thread_ts: threadTs,
-        text,
-      });
-
-      const inputTokens = genResult.usage?.inputTokens ?? 0;
-      const outputTokens = genResult.usage?.outputTokens ?? 0;
-      const totalTokens = inputTokens + outputTokens;
-
-      logger.info("generateText fallback completed", {
-        rawLength: text.length,
-        usage: { inputTokens, outputTokens, totalTokens },
-      });
-
-      return {
-        raw: text,
-        alreadyPosted: true,
-        usage: { inputTokens, outputTokens, totalTokens },
-      };
-    }
-
-    // Finalize the stream with an error message
-    try {
-      const errorText = accumulatedText
-        ? "\n\n_...interrupted. Something went wrong._"
-        : "_Sorry, I got interrupted before I could finish. Try again?_";
-
-      await streamer.stop({
-        chunks: [{ type: "markdown_text", text: errorText }],
-      });
-    } catch {
-      // Stream may already be closed — nothing we can do
     }
 
     throw error;
