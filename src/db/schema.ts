@@ -231,6 +231,26 @@ export const jobs = pgTable(
   ],
 );
 
+// ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
+
+export const eventLocks = pgTable(
+  "event_locks",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    eventTs: text("event_ts").notNull(),
+    channelId: text("channel_id").notNull(),
+    claimedAt: timestamptz("claimed_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("event_locks_event_ts_channel_id_idx").on(
+      table.eventTs,
+      table.channelId,
+    ),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -245,6 +265,8 @@ export type Setting = typeof settings.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
+export type EventLock = typeof eventLocks.$inferSelect;
+export type NewEventLock = typeof eventLocks.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
