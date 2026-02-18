@@ -266,7 +266,7 @@ async function resolveUserById(
  * Caches results for the duration of the invocation.
  * Uses bot token first, falls back to user token for channels the bot isn't in.
  */
-async function resolveChannelById(
+export async function resolveChannelById(
   client: WebClient,
   channelId: string,
 ): Promise<{ id: string; name: string; is_private: boolean; topic: string; purpose: string; num_members: number } | null> {
@@ -574,8 +574,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         query: z
           .string()
           .describe("Partial channel name to search for, e.g. 'road' or 'dev'"),
+        limit: z
+          .number()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe("Maximum number of results to return"),
       }),
-      execute: async ({ query }) => {
+      execute: async ({ query, limit }) => {
         try {
           const q = query.toLowerCase();
           const results: Array<{ id: string; name: string; topic: string; is_member: boolean }> = [];
@@ -583,7 +589,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           // Search bot's channel cache first, resolving full metadata for topic
           const botChannels = await getChannelList(client);
-          const matchingBotChannels = botChannels.filter((ch) => ch.name.toLowerCase().includes(q));
+          const matchingBotChannels = botChannels
+            .filter((ch) => ch.name.toLowerCase().includes(q))
+            .slice(0, limit);
           const resolvedInfos = await Promise.all(
             matchingBotChannels.map((ch) => resolveChannelById(client, ch.id)),
           );
@@ -596,7 +604,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           // Search all public channels via user token for broader coverage
           const userToken = process.env.SLACK_USER_TOKEN;
-          if (userToken) {
+          if (userToken && results.length < limit) {
             try {
               const { WebClient } = await import("@slack/web-api");
               const userClient = new WebClient(userToken);
@@ -611,6 +619,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 });
 
                 for (const ch of result.channels || []) {
+                  if (results.length >= limit) break;
                   if (ch.id && ch.name && ch.name.toLowerCase().includes(q) && !seenIds.has(ch.id)) {
                     results.push({
                       id: ch.id,
@@ -623,19 +632,20 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 }
 
                 cursor = result.response_metadata?.next_cursor || undefined;
-              } while (cursor);
+              } while (cursor && results.length < limit);
             } catch (e: any) {
               logger.warn("search_channels user token fallback failed", { error: e.message });
             }
           }
 
-          logger.info("search_channels tool called", { query, matchCount: results.length });
+          const capped = results.slice(0, limit);
+          logger.info("search_channels tool called", { query, matchCount: capped.length });
 
           return {
             ok: true,
             query,
-            results,
-            count: results.length,
+            results: capped,
+            count: capped.length,
           };
         } catch (error: any) {
           logger.error("search_channels tool failed", { query, error: error.message });
