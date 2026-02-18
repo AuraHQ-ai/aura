@@ -539,11 +539,13 @@ export async function generateResponse(
         blocks.push(pendingTableBlock);
       }
 
+      const toolMeta = buildToolMetadata(toolCallRecords);
       await slackClient.chat.postMessage({
         channel: channelId,
         text: finalText || "_I processed your request but had nothing to say._",
         thread_ts: threadTs,
         ...(blocks.length > 0 && { blocks }),
+        ...(toolMeta && { metadata: toolMeta }),
       });
 
       logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
