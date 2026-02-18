@@ -49,6 +49,8 @@ export interface ConversationContext {
   isAuraThread: boolean;
   /** Whether Aura posted recently in the channel (within 1h, for non-threaded context). */
   auraRecentlyActive: boolean;
+  /** Channel the user is viewing in the split-view pane (from assistant_thread_started metadata). */
+  viewingChannelId?: string;
 }
 
 // ── Per-invocation caches ────────────────────────────────────────────────────
@@ -172,6 +174,9 @@ export async function fetchConversationContext(
         cursor = repliesResult.response_metadata?.next_cursor || undefined;
         pages++;
       } while (cursor && pages < MAX_PAGES);
+
+      const ctxMsg = rawMessages.find((m: any) => m.metadata?.event_type === "aura_thread_context");
+      if (ctxMsg) result.viewingChannelId = (ctxMsg as any).metadata.event_payload?.channel_id;
 
       const threadMessages: SlackThreadMessage[] = [];
 

@@ -47,8 +47,9 @@ export async function assemblePrompt(
     context.isDm || !!context.threadTs || conversation.auraRecentlyActive;
   const threadContext = formatConversationContext(conversation, useChannelFallback);
 
-  // Determine channel context string
-  const channelContext = context.isDm ? "DM" : context.channelId;
+  const channelContext = context.isDm
+    ? (conversation.viewingChannelId ? `DM (user is viewing <#${conversation.viewingChannelId}>)` : "DM")
+    : context.channelId;
 
   // The context is "channel history" (not a thread) when there's no thread
   // data and we fell back to recent channel messages.

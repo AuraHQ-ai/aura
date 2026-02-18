@@ -177,7 +177,17 @@ app.post("/api/slack/events", async (c) => {
         try {
           const channelId = event.assistant_thread?.channel_id;
           const threadTs = event.assistant_thread?.thread_ts;
+          const viewingChannelId = event.assistant_thread?.context?.channel_id;
           if (!channelId || !threadTs) return;
+
+          await slackClient.chat.postMessage({
+            channel: channelId,
+            thread_ts: threadTs,
+            text: "Hey! What can I help with?",
+            ...(viewingChannelId && {
+              metadata: { event_type: "aura_thread_context", event_payload: { channel_id: viewingChannelId } },
+            }),
+          });
 
           await slackClient.assistant.threads.setSuggestedPrompts({
             channel_id: channelId,
