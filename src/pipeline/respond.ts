@@ -370,7 +370,7 @@ export async function generateResponse(
   const streamOptions: any = {
     model,
     system: options.systemPrompt,
-    tools: createSlackTools(options.slackClient, options.context, { onStreamOutput }),
+    tools: createSlackTools(options.slackClient, options.context, { onStreamOutput, onActivity: resetTimer }),
     stopWhen: stepCountIs(25),
     abortSignal: abortController.signal,
   };

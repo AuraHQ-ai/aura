@@ -17,7 +17,7 @@ import type { ScheduleContext } from "../db/schema.js";
  */
 export function createSandboxTools(
   context?: ScheduleContext,
-  opts?: { onStreamOutput?: (text: string) => void },
+  opts?: { onStreamOutput?: (text: string) => void; onActivity?: () => void },
 ) {
   return {
     run_command: tool({
@@ -58,6 +58,11 @@ export function createSandboxTools(
           };
         }
 
+        const onStreamOutput = opts?.onStreamOutput;
+        let buf = "";
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let didStream = false;
+
         try {
           const sandbox = await getOrCreateSandbox();
           const envs = getSandboxEnvs();
@@ -66,11 +71,6 @@ export function createSandboxTools(
             command: command.substring(0, 100),
             workdir,
           });
-
-          const onStreamOutput = opts?.onStreamOutput;
-          let buf = "";
-          let timer: ReturnType<typeof setTimeout> | null = null;
-          let didStream = false;
           const startedAt = Date.now();
           const GRACE_MS = 1000;
           const BATCH_MS = 1000;
@@ -93,6 +93,9 @@ export function createSandboxTools(
                   buf += data;
                   if (!timer) timer = setTimeout(flush, BATCH_MS);
                 }
+              : undefined,
+            onStderr: opts?.onActivity
+              ? () => { opts.onActivity!(); }
               : undefined,
           });
 
@@ -118,6 +121,9 @@ export function createSandboxTools(
             ...(didStream ? { _streamed_to_user: true as const } : {}),
           };
         } catch (error: any) {
+          if (timer) { clearTimeout(timer); timer = null; }
+          buf = "";
+
           logger.error("run_command tool failed", {
             command: command.substring(0, 100),
             error: error.message,
