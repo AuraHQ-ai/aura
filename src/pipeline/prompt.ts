@@ -26,6 +26,7 @@ export interface AssembledPrompt {
 export async function assemblePrompt(
   context: MessageContext,
   conversation: ConversationContext,
+  opts?: { viewingChannel?: string },
 ): Promise<AssembledPrompt> {
   const start = Date.now();
 
@@ -47,8 +48,13 @@ export async function assemblePrompt(
     context.isDm || !!context.threadTs || conversation.auraRecentlyActive;
   const threadContext = formatConversationContext(conversation, useChannelFallback);
 
-  // Determine channel context string
-  const channelContext = context.isDm ? "DM" : context.channelId;
+  // Determine channel context string.
+  // When the user opens the split-view pane from a channel, we know which
+  // channel they're viewing (saved by the assistant_thread_started handler).
+  let channelContext = context.isDm ? "DM" : context.channelId;
+  if (context.isDm && opts?.viewingChannel) {
+    channelContext = `DM (user is currently viewing ${opts.viewingChannel})`;
+  }
 
   // The context is "channel history" (not a thread) when there's no thread
   // data and we fell back to recent channel messages.

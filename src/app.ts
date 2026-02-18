@@ -171,30 +171,70 @@ app.post("/api/slack/events", async (c) => {
       return c.json({ ok: true });
     }
 
-    // Handle assistant thread started — set suggested prompts in split-view
+    // Handle assistant thread started — save viewing context + set suggested prompts
     if (event.type === "assistant_thread_started") {
       const threadStartPromise = (async () => {
         try {
           const channelId = event.assistant_thread?.channel_id;
           const threadTs = event.assistant_thread?.thread_ts;
+          const viewingChannelId = event.assistant_thread?.context?.channel_id;
           if (!channelId || !threadTs) return;
+
+          // Persist which channel the user is viewing so the pipeline can
+          // include it in the prompt (the message.im event doesn't carry this).
+          if (viewingChannelId) {
+            await setSetting(
+              `assistant_ctx:${channelId}:${threadTs}`,
+              viewingChannelId,
+            );
+          }
+
+          const prompts = viewingChannelId
+            ? [
+                { title: "Summarize this channel", message: "Summarize the recent activity in this channel" },
+                { title: "Catch me up", message: "What happened in my channels while I was away?" },
+                { title: "Run a query", message: "Show me this week's key metrics from BigQuery" },
+                { title: "Search Slack", message: "Find recent messages about..." },
+              ]
+            : [
+                { title: "Catch me up", message: "What happened in my channels while I was away?" },
+                { title: "Run a query", message: "Show me this week's key metrics from BigQuery" },
+                { title: "Search Slack", message: "Find recent messages about..." },
+                { title: "What do you know?", message: "What do you know about me?" },
+              ];
 
           await slackClient.assistant.threads.setSuggestedPrompts({
             channel_id: channelId,
             thread_ts: threadTs,
             title: "How can I help?",
-            prompts: [
-              { title: "Catch me up", message: "What happened in my channels while I was away?" },
-              { title: "Run a query", message: "Show me this week's key metrics from BigQuery" },
-              { title: "Search Slack", message: "Find recent messages about..." },
-              { title: "What do you know?", message: "What do you know about me?" },
-            ],
+            prompts,
           });
         } catch (err) {
           recordError("assistant_thread_started", err);
         }
       })();
       waitUntil(threadStartPromise);
+      return c.json({ ok: true });
+    }
+
+    // Handle assistant thread context changed — user switched channels while pane is open
+    if (event.type === "assistant_thread_context_changed") {
+      const ctxChangePromise = (async () => {
+        try {
+          const channelId = event.assistant_thread?.channel_id;
+          const threadTs = event.assistant_thread?.thread_ts;
+          const viewingChannelId = event.assistant_thread?.context?.channel_id;
+          if (!channelId || !threadTs || !viewingChannelId) return;
+
+          await setSetting(
+            `assistant_ctx:${channelId}:${threadTs}`,
+            viewingChannelId,
+          );
+        } catch (err) {
+          recordError("assistant_thread_context_changed", err);
+        }
+      })();
+      waitUntil(ctxChangePromise);
       return c.json({ ok: true });
     }
 

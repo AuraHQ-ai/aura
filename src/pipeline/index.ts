@@ -14,6 +14,7 @@ import {
 } from "./slack-context.js";
 import { storeMessage, claimEvent } from "../memory/store.js";
 import { extractMemories } from "../memory/extract.js";
+import { getSetting } from "../lib/settings.js";
 import {
   getKnowledgeAboutUser,
   formatKnowledgeSummary,
@@ -212,10 +213,24 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         context.threadTs,
       );
     }
+    // Look up which channel the user is viewing (split-view pane context)
+    let viewingChannel: string | undefined;
+    if (context.isDm) {
+      try {
+        const ctxKey = `assistant_ctx:${context.channelId}:${replyThreadTs}`;
+        const viewingChannelId = await getSetting(ctxKey);
+        if (viewingChannelId) {
+          const info = await client.conversations.info({ channel: viewingChannelId });
+          viewingChannel = `#${info.channel?.name || viewingChannelId}`;
+        }
+      } catch {}
+    }
+
     const retrievalStart = Date.now();
     const { systemPrompt, memories } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
+      viewingChannel ? { viewingChannel } : undefined,
     );
     const retrievalMs = Date.now() - retrievalStart;
 
