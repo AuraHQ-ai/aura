@@ -18,6 +18,29 @@ async function loadE2B() {
 }
 
 /**
+ * Build the env vars map from the current Vercel process environment.
+ * Callers should pass this to every `commands.run({ envs })` call so
+ * env vars are always fresh — regardless of whether the sandbox was
+ * just created or resumed from a paused state.
+ *
+ * E2B's `Sandbox.connect()` does NOT restore the `envs` that were
+ * passed at creation time, and persistence across pause/resume is
+ * unreliable (see e2b-dev/E2B#884). Per-command `envs` is the only
+ * mechanism that works consistently.
+ */
+export function getSandboxEnvs(): Record<string, string> {
+  const envs: Record<string, string> = {};
+  if (process.env.GITHUB_TOKEN) {
+    envs.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+    envs.GH_TOKEN = process.env.GITHUB_TOKEN;
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    envs.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  }
+  return envs;
+}
+
+/**
  * Get or create a sandbox. Tries to resume a previously paused sandbox,
  * creates a new one if none exists or resume fails.
  */
@@ -41,16 +64,7 @@ export async function getOrCreateSandbox(): Promise<any> {
   }
 
   const Sandbox = await loadE2B();
-
-  // Env vars to inject into the sandbox
-  const envs: Record<string, string> = {};
-  if (process.env.GITHUB_TOKEN) {
-    envs.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-    envs.GH_TOKEN = process.env.GITHUB_TOKEN;
-  }
-  if (process.env.ANTHROPIC_API_KEY) {
-    envs.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  }
+  const envs = getSandboxEnvs();
 
   // Try to resume a previously paused sandbox
   const savedId = await getSetting(SANDBOX_NOTE_KEY);
@@ -61,29 +75,8 @@ export async function getOrCreateSandbox(): Promise<any> {
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
 
-      // Inject env vars into resumed sandbox (connect() doesn't support envs)
-      if (Object.keys(envs).length > 0) {
-        const exports = Object.entries(envs)
-          .map(([k, v]) => `export ${k}="${v}"`)
-          .join(" && ");
-        await sandbox.commands.run(`${exports} && echo 'env set'`, {
-          cwd: "/home/user",
-          timeoutMs: 5000,
-        });
-
-        // Also write to .bashrc so env persists across commands
-        const bashrcLines = Object.entries(envs)
-          .map(([k, v]) => `export ${k}="${v}"`)
-          .join("\n");
-        await sandbox.files.write("/home/user/.env_injected", bashrcLines);
-        await sandbox.commands.run(
-          'grep -q env_injected /home/user/.bashrc || echo "source /home/user/.env_injected" >> /home/user/.bashrc',
-          { cwd: "/home/user", timeoutMs: 5000 },
-        );
-      }
-
       cachedSandbox = sandbox;
-      logger.info("E2B sandbox resumed with env vars", { sandboxId: savedId });
+      logger.info("E2B sandbox resumed", { sandboxId: savedId });
       return sandbox;
     } catch (error: any) {
       logger.warn("Failed to resume sandbox, creating new one", {
@@ -93,7 +86,7 @@ export async function getOrCreateSandbox(): Promise<any> {
     }
   }
 
-  // Create a new sandbox
+  // Create a new sandbox (pass envs as a convenience for manual processes)
   const templateId = process.env.E2B_TEMPLATE_ID || undefined;
   logger.info("Creating new E2B sandbox", { templateId: templateId || "default" });
 

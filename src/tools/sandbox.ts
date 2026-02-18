@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import {
   getOrCreateSandbox,
+  getSandboxEnvs,
   truncateOutput,
 } from "../lib/sandbox.js";
 import { isAdmin } from "../lib/permissions.js";
@@ -62,6 +63,7 @@ export function createSandboxTools(context?: ScheduleContext) {
 
         try {
           const sandbox = await getOrCreateSandbox();
+          const envs = getSandboxEnvs();
 
           logger.info("run_command tool: executing", {
             command: command.substring(0, 100),
@@ -71,6 +73,7 @@ export function createSandboxTools(context?: ScheduleContext) {
           const result = await sandbox.commands.run(command, {
             cwd: workdir || "/home/user",
             timeoutMs: timeout_seconds * 1000,
+            envs,
           });
 
           const stdout = truncateOutput(result.stdout || "", 4000);
@@ -225,10 +228,11 @@ export function createSandboxTools(context?: ScheduleContext) {
           logger.info("patch_own_code: executing agent runner", { branch: branch_name });
 
           const result = await sandbox.commands.run(
-            "source /home/user/.env_injected 2>/dev/null; NODE_PATH=/home/user/node_modules node /home/user/agent-runner.mjs",
+            "NODE_PATH=/home/user/node_modules node /home/user/agent-runner.mjs",
             {
               cwd: "/home/user",
               timeoutMs: 300_000,
+              envs: getSandboxEnvs(),
             },
           );
 
