@@ -3,6 +3,7 @@ import { generateText } from "ai";
 import { getFastModel } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
+import { resolveChannelById } from "../tools/slack.js";
 
 // ── Slack Event Types ────────────────────────────────────────────────────────
 // Minimal local types — replaces the @slack/bolt dependency that was only used
@@ -269,9 +270,6 @@ function resolveChannelType(
 /** Per-invocation cache for user ID -> name lookups */
 const userNameCache = new Map<string, string>();
 
-/** Per-invocation cache for channel ID -> name lookups */
-const channelNameCache = new Map<string, string>();
-
 /**
  * Resolve Slack entity references in message text to human-readable format.
  *
@@ -307,7 +305,7 @@ export async function resolveSlackEntities(
         // Label already provided by Slack
         resolved = resolved.replace(fullMatch, `#${label} (${id})`);
       } else {
-        const name = await resolveChannelId(client, id);
+        const name = await resolveChannelName(client, id);
         resolved = resolved.replace(fullMatch, `#${name} (${id})`);
       }
     }
@@ -337,18 +335,13 @@ async function resolveUserId(
   }
 }
 
-async function resolveChannelId(
+export async function resolveChannelName(
   client: WebClient,
   channelId: string,
 ): Promise<string> {
-  const cached = channelNameCache.get(channelId);
-  if (cached) return cached;
-
   try {
-    const result = await client.conversations.info({ channel: channelId });
-    const name = (result.channel as any)?.name || channelId;
-    channelNameCache.set(channelId, name);
-    return name;
+    const info = await resolveChannelById(client, channelId);
+    return info?.name || channelId;
   } catch {
     return channelId;
   }

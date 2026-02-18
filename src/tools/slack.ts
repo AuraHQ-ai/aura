@@ -89,6 +89,9 @@ async function getUserList(
 /** Cache for user ID -> display name lookups. */
 const userIdNameCache = new Map<string, string>();
 
+/** Cache for channel ID -> full metadata lookups. */
+const channelIdNameCache = new Map<string, { id: string; name: string; is_private: boolean; topic: string; purpose: string; num_members: number }>();
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -151,16 +154,17 @@ export async function resolveChannelByName(
   const cleaned = name.replace(/^#/, "").trim();
 
   // Extract parenthetical ID if present: "dev (C0BNVKS77)" -> use ID
-  const idInParens = cleaned.match(/\(?(C[A-Z0-9]+)\)?/);
+  const idInParens = cleaned.match(/\((C[A-Z0-9]+)\)/);
   if (idInParens) {
     const id = idInParens[1];
     const displayName = cleaned.replace(/\s*\(?C[A-Z0-9]+\)?/, "").trim();
     return { id, name: displayName || id };
   }
 
-  // If it looks like a raw channel ID
+  // If it looks like a raw channel ID, resolve the actual name
   if (/^C[A-Z0-9]+$/.test(cleaned)) {
-    return { id: cleaned, name: cleaned };
+    const resolved = await resolveChannelById(client, cleaned);
+    return resolved ? { id: resolved.id, name: resolved.name } : { id: cleaned, name: cleaned };
   }
 
   // Name-based lookup via bot's cache (channels bot is already in)
@@ -254,6 +258,63 @@ async function resolveUserById(
     return name;
   } catch {
     return userId;
+  }
+}
+
+/**
+ * Resolve a Slack channel ID to its name and metadata.
+ * Caches results for the duration of the invocation.
+ * Uses bot token first, falls back to user token for channels the bot isn't in.
+ */
+export async function resolveChannelById(
+  client: WebClient,
+  channelId: string,
+): Promise<{ id: string; name: string; is_private: boolean; topic: string; purpose: string; num_members: number } | null> {
+  const cached = channelIdNameCache.get(channelId);
+  if (cached) return { ...cached };
+
+  try {
+    const result = await client.conversations.info({ channel: channelId, include_num_members: true });
+    const ch = result.channel as any;
+    if (ch) {
+      const entry = {
+        id: channelId,
+        name: ch.name || channelId,
+        is_private: ch.is_private || false,
+        topic: ch.topic?.value || "",
+        purpose: ch.purpose?.value || "",
+        num_members: ch.num_members || 0,
+      };
+      channelIdNameCache.set(channelId, entry);
+      return { ...entry };
+    }
+    return null;
+  } catch {
+    // Bot can't see it — try user token
+    const userToken = process.env.SLACK_USER_TOKEN;
+    if (!userToken) return null;
+
+    try {
+      const { WebClient } = await import("@slack/web-api");
+      const userClient = new WebClient(userToken);
+      const result = await userClient.conversations.info({ channel: channelId, include_num_members: true });
+      const ch = result.channel as any;
+      if (ch) {
+        const entry = {
+          id: channelId,
+          name: ch.name || channelId,
+          is_private: ch.is_private || false,
+          topic: ch.topic?.value || "",
+          purpose: ch.purpose?.value || "",
+          num_members: ch.num_members || 0,
+        };
+        channelIdNameCache.set(channelId, entry);
+        return { ...entry };
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -452,6 +513,143 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             ok: false,
             error: `Failed to list channels: ${error.message}`,
           };
+        }
+      },
+    }),
+
+    get_channel_info: tool({
+      description:
+        "Get detailed information about a Slack channel by name or ID. Returns the channel name, topic, purpose, privacy status, and member count. Works for any channel — not just ones Aura has joined. Use this to resolve a channel ID (like C0BNVKS77) to its human-readable name.",
+      inputSchema: z.object({
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general', '#general') or channel ID (e.g. 'C0BNVKS77')",
+          ),
+      }),
+      execute: async ({ channel: channelInput }) => {
+        try {
+          const cleaned = channelInput.replace(/^#/, "").trim();
+
+          // If it looks like a channel ID, resolve directly
+          if (/^C[A-Z0-9]+$/.test(cleaned)) {
+            const info = await resolveChannelById(client, cleaned);
+            if (!info) {
+              return {
+                ok: false,
+                error: `Could not find channel with ID "${cleaned}". The channel may not exist or may not be accessible.`,
+              };
+            }
+            logger.info("get_channel_info tool called", { channel: cleaned, name: info.name });
+            return { ok: true, channel: info };
+          }
+
+          // Name-based: resolve name to ID, then get full info
+          const resolved = await resolveChannelByName(client, cleaned, { fallbackToUserToken: true });
+          if (!resolved) {
+            return {
+              ok: false,
+              error: `Could not find a channel named "${cleaned}". Use list_channels to see available channels, or try join_channel if it's a public channel.`,
+            };
+          }
+
+          const info = await resolveChannelById(client, resolved.id);
+          if (!info) {
+            return { ok: true, channel: { id: resolved.id, name: resolved.name, is_private: false, topic: "", purpose: "", num_members: 0 } };
+          }
+
+          logger.info("get_channel_info tool called", { channel: channelInput, name: info.name });
+          return { ok: true, channel: info };
+        } catch (error: any) {
+          logger.error("get_channel_info tool failed", { channel: channelInput, error: error.message });
+          return { ok: false, error: `Failed to get channel info: ${error.message}` };
+        }
+      },
+    }),
+
+    search_channels: tool({
+      description:
+        "Search for Slack channels by partial name match. Returns matching channels from both joined and public channels. Useful when you don't know the exact channel name.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe("Partial channel name to search for, e.g. 'road' or 'dev'"),
+        limit: z
+          .number()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe("Maximum number of results to return"),
+      }),
+      execute: async ({ query, limit }) => {
+        try {
+          const q = query.toLowerCase();
+          const results: Array<{ id: string; name: string; topic: string; is_member: boolean }> = [];
+          const seenIds = new Set<string>();
+
+          // Search bot's channel cache first, resolving full metadata for topic
+          const botChannels = await getChannelList(client);
+          const matchingBotChannels = botChannels
+            .filter((ch) => ch.name.toLowerCase().includes(q))
+            .slice(0, limit);
+          const resolvedInfos = await Promise.all(
+            matchingBotChannels.map((ch) => resolveChannelById(client, ch.id)),
+          );
+          for (let i = 0; i < matchingBotChannels.length; i++) {
+            const ch = matchingBotChannels[i];
+            const info = resolvedInfos[i];
+            results.push({ id: ch.id, name: ch.name, topic: info?.topic || "", is_member: true });
+            seenIds.add(ch.id);
+          }
+
+          // Search all public channels via user token for broader coverage
+          const userToken = process.env.SLACK_USER_TOKEN;
+          if (userToken && results.length < limit) {
+            try {
+              const { WebClient } = await import("@slack/web-api");
+              const userClient = new WebClient(userToken);
+              let cursor: string | undefined;
+
+              do {
+                const result = await userClient.conversations.list({
+                  types: "public_channel",
+                  exclude_archived: true,
+                  limit: 200,
+                  cursor,
+                });
+
+                for (const ch of result.channels || []) {
+                  if (results.length >= limit) break;
+                  if (ch.id && ch.name && ch.name.toLowerCase().includes(q) && !seenIds.has(ch.id)) {
+                    results.push({
+                      id: ch.id,
+                      name: ch.name,
+                      topic: ch.topic?.value || "",
+                      is_member: false,
+                    });
+                    seenIds.add(ch.id);
+                  }
+                }
+
+                cursor = result.response_metadata?.next_cursor || undefined;
+              } while (cursor && results.length < limit);
+            } catch (e: any) {
+              logger.warn("search_channels user token fallback failed", { error: e.message });
+            }
+          }
+
+          const capped = results.slice(0, limit);
+          logger.info("search_channels tool called", { query, matchCount: capped.length });
+
+          return {
+            ok: true,
+            query,
+            results: capped,
+            count: capped.length,
+          };
+        } catch (error: any) {
+          logger.error("search_channels tool failed", { query, error: error.message });
+          return { ok: false, error: `Failed to search channels: ${error.message}` };
         }
       },
     }),
@@ -1778,6 +1976,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
           await client.conversations.setTopic({ channel: channel.id, topic });
+          channelIdNameCache.delete(channel.id);
           logger.info("set_channel_topic tool called", {
             channel: channel.name,
           });
