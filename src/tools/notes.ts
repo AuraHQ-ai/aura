@@ -464,27 +464,22 @@ export function createNoteTools(context?: ScheduleContext) {
             return { ok: false, error: "Query cannot be empty." };
           }
 
-          const tsQuery = trimmed
-            .split(/\s+/)
-            .filter(Boolean)
-            .join(" & ");
-
           // Try tsvector search with unaccent first, fall back to ILIKE
           let rows: any[];
           try {
             const results = await db.execute(sql`
               SELECT topic, category, updated_at,
                 ts_headline('english', content,
-                  to_tsquery('english', unaccent(${tsQuery})),
+                  websearch_to_tsquery('english', unaccent(${trimmed})),
                   'StartSel=>>>, StopSel=<<<, MaxWords=35, MinWords=15'
                 ) as snippet,
                 ts_rank(
                   to_tsvector('english', unaccent(content)),
-                  to_tsquery('english', unaccent(${tsQuery}))
+                  websearch_to_tsquery('english', unaccent(${trimmed}))
                 ) as rank
               FROM notes
               WHERE to_tsvector('english', unaccent(content))
-                @@ to_tsquery('english', unaccent(${tsQuery}))
+                @@ websearch_to_tsquery('english', unaccent(${trimmed}))
                 AND (expires_at IS NULL OR expires_at > now())
               ORDER BY rank DESC
               LIMIT ${limit}
@@ -492,13 +487,14 @@ export function createNoteTools(context?: ScheduleContext) {
             rows = (results as any).rows ?? results;
           } catch {
             // Fallback: ILIKE (works without unaccent extension)
-            const pattern = `%${trimmed.toLowerCase()}%`;
+            const escaped = trimmed.replace(/[%_]/g, "\\$&");
+            const pattern = `%${escaped.toLowerCase()}%`;
             const results = await db.execute(sql`
               SELECT topic, category, updated_at,
                 substring(content from greatest(1, position(lower(${trimmed}) in lower(content)) - 100)
                   for 200) as snippet
               FROM notes
-              WHERE lower(content) LIKE ${pattern}
+              WHERE lower(content) LIKE ${pattern} ESCAPE '\\'
                 AND (expires_at IS NULL OR expires_at > now())
               ORDER BY updated_at DESC
               LIMIT ${limit}
