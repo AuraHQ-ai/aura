@@ -263,7 +263,11 @@ async function resolveUserById(
  * Create Slack tools for the AI SDK.
  * Each tool receives the WebClient via closure.
  */
-export function createSlackTools(client: WebClient, context?: ScheduleContext) {
+export function createSlackTools(
+  client: WebClient,
+  context?: ScheduleContext,
+  opts?: { onStreamOutput?: (text: string) => void; onActivity?: () => void },
+) {
   // Resolve thread coordinates for Slack List items.
   // List channels use the list ID with a C prefix (F088... → C088...).
   // Each root message in the channel has a slack_list.list_record_id field
@@ -1922,7 +1926,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createWebTools(),
 
     // ── Sandbox Tools ────────────────────────────────────────────────────
-    ...createSandboxTools(context),
+    ...createSandboxTools(context, { onStreamOutput: opts?.onStreamOutput, onActivity: opts?.onActivity }),
 
     // ── BigQuery Tools ────────────────────────────────────────────────────
     ...createBigQueryTools(),

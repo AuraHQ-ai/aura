@@ -357,14 +357,20 @@ export async function generateResponse(
   };
   resetTimer();
 
-  // Keepalive interval during long tool calls (e.g. Claude Code via run_command)
-  let toolKeepAlive: ReturnType<typeof setInterval> | null = null;
+  // ── Sandbox stdout streaming callback ────────────────────────────────
+  // Piped into run_command's onStdout — resets the inactivity timer (real
+  // proof of activity, replacing the old blind keepalive) and appends
+  // the output to the Slack stream so the user sees it in real-time.
+  const onStreamOutput = (text: string) => {
+    resetTimer();
+    tryStreamAppend({ markdown_text: text }).catch(() => {});
+  };
 
   // ── Build stream options ─────────────────────────────────────────────
   const streamOptions: any = {
     model,
     system: options.systemPrompt,
-    tools: createSlackTools(options.slackClient, options.context),
+    tools: createSlackTools(options.slackClient, options.context, { onStreamOutput, onActivity: resetTimer }),
     stopWhen: stepCountIs(25),
     abortSignal: abortController.signal,
   };
@@ -402,6 +408,23 @@ export async function generateResponse(
     for await (const chunk of result.fullStream) {
       resetTimer();
 
+      // Show task card immediately when the LLM starts generating tool
+      // arguments (before args are complete). The typed union doesn't include
+      // this event yet, so we check before entering the switch.
+      if ((chunk as any).type === "tool-call-streaming-start") {
+        const c = chunk as any;
+        const title = TOOL_STATUS[c.toolName] || "Working on it...";
+        await tryStreamAppend({
+          chunks: [{
+            type: "task_update",
+            id: c.toolCallId,
+            title,
+            status: "in_progress",
+          }],
+        });
+        continue;
+      }
+
       switch (chunk.type) {
         case "text-delta": {
           accumulatedText += chunk.text;
@@ -427,10 +450,6 @@ export async function generateResponse(
             name: chunk.toolName,
             input: truncateToBytes(JSON.stringify(inputArgs), 1500),
           });
-
-          // Keep resetting inactivity timer during long tool execution
-          if (toolKeepAlive) clearInterval(toolKeepAlive);
-          toolKeepAlive = setInterval(() => resetTimer(), 60_000);
           break;
         }
 
@@ -470,8 +489,6 @@ export async function generateResponse(
             is_error: !!isError,
           });
           pendingToolInputs.delete(chunk.toolCallId);
-
-          if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
           break;
         }
@@ -500,8 +517,6 @@ export async function generateResponse(
             is_error: true,
           });
           pendingToolInputs.delete(errToolCallId);
-
-          if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
           break;
         }
@@ -510,7 +525,6 @@ export async function generateResponse(
 
     // ── Finalize ──────────────────────────────────────────────────────────
     clearTimeout(inactivityTimer);
-    if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
 
     const llmMs = Date.now() - start;
     const usage = await result.usage;
@@ -576,7 +590,6 @@ export async function generateResponse(
     };
   } catch (error: any) {
     clearTimeout(inactivityTimer);
-    if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
 
     // If streaming was never established, don't try to stop it
     if (!streamingFailed) {

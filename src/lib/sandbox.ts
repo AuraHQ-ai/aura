@@ -2,7 +2,7 @@ import { getSetting, setSetting } from "./settings.js";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Per-invocation cache -- reuse the same sandbox within a single request */
 let cachedSandbox: any | null = null;
