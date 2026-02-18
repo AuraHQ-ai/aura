@@ -279,6 +279,12 @@ function isStreamingUnsupported(error: any): boolean {
   );
 }
 
+function isInvalidBlocks(error: any): boolean {
+  const msg = error?.message || "";
+  const code = error?.data?.error || "";
+  return msg.includes("invalid_blocks") || code === "invalid_blocks";
+}
+
 // ── Main Function ────────────────────────────────────────────────────────────
 
 /**
@@ -338,6 +344,13 @@ export async function generateResponse(
           "chatStream not supported for this channel, falling back to postMessage",
           { channelId },
         );
+      } else if (isInvalidBlocks(err)) {
+        streamingFailed = true;
+        logger.warn("chatStream append returned invalid_blocks, falling back to postMessage", {
+          channelId,
+          slackError: err?.data?.error,
+          payloadKeys: Object.keys(payload),
+        });
       } else {
         throw err;
       }
@@ -551,13 +564,32 @@ export async function generateResponse(
       });
 
       const toolMeta = buildToolMetadata(toolCallRecords);
-      await slackClient.chat.postMessage({
-        channel: channelId,
-        text: finalText || "_I processed your request but had nothing to say._",
-        thread_ts: threadTs,
-        blocks,
-        ...(toolMeta && { metadata: toolMeta }),
-      });
+      const fallbackText = finalText || "_I processed your request but had nothing to say._";
+
+      try {
+        await slackClient.chat.postMessage({
+          channel: channelId,
+          text: fallbackText,
+          thread_ts: threadTs,
+          blocks,
+          ...(toolMeta && { metadata: toolMeta }),
+        });
+      } catch (postErr: any) {
+        if (isInvalidBlocks(postErr)) {
+          logger.warn("Fallback postMessage rejected blocks, retrying as plain text", {
+            channelId,
+            slackError: postErr?.data?.error,
+            blockTypes: blocks.map((b: any) => b.type),
+          });
+          await slackClient.chat.postMessage({
+            channel: channelId,
+            text: fallbackText,
+            thread_ts: threadTs,
+          });
+        } else {
+          throw postErr;
+        }
+      }
 
       logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
         rawLength: finalText.length,
@@ -584,7 +616,25 @@ export async function generateResponse(
       stopBlocks.push(feedbackBlock);
       const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
-      await streamer.stop(stopArgs);
+
+      try {
+        await streamer.stop(stopArgs);
+      } catch (stopErr: any) {
+        if (isInvalidBlocks(stopErr)) {
+          logger.warn("streamer.stop() rejected blocks, retrying without them", {
+            channelId,
+            slackError: stopErr?.data?.error,
+            blockTypes: stopBlocks.map((b: any) => b.type),
+          });
+          try {
+            await streamer.stop();
+          } catch {
+            // Stream may already be finalized — nothing we can do
+          }
+        } else {
+          throw stopErr;
+        }
+      }
 
       logger.info(`LLM stream completed in ${llmMs}ms`, {
         rawLength: finalText.length,
