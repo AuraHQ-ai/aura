@@ -1157,7 +1157,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     read_dm_history: tool({
       description:
-        "Read recent messages from a direct message conversation with a specific user. Use this to check past DM conversations, follow up on earlier messages, or recall what was discussed in a DM.",
+        "Read messages from a direct message conversation with a specific user. Supports optional time-window filtering via oldest_ts/latest_ts (Unix epoch seconds) so you can fetch only messages within a specific period (e.g. a single CET day). Use this to check past DM conversations, follow up on earlier messages, or compute per-user message counts for a time range.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -1167,11 +1167,29 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         limit: z
           .number()
           .min(1)
-          .max(50)
+          .max(200)
           .default(20)
-          .describe("Number of recent messages to fetch (max 50)"),
+          .describe("Maximum number of messages to fetch (max 200). Acts as a safety cap when combined with time-window params."),
+        oldest_ts: z
+          .string()
+          .optional()
+          .describe(
+            "Only return messages after this Unix timestamp (inclusive, seconds with optional decimals). E.g. '1718920800' for a specific epoch time.",
+          ),
+        latest_ts: z
+          .string()
+          .optional()
+          .describe(
+            "Only return messages before this Unix timestamp (inclusive, seconds with optional decimals). E.g. '1719007200' for a specific epoch time.",
+          ),
+        cursor: z
+          .string()
+          .optional()
+          .describe(
+            "Pagination cursor from a previous response's next_cursor field. Omit to start from the beginning.",
+          ),
       }),
-      execute: async ({ user_name, limit }) => {
+      execute: async ({ user_name, limit, oldest_ts, latest_ts, cursor: inputCursor }) => {
         try {
           const user = await resolveUserByName(client, user_name);
           if (!user) {
@@ -1214,11 +1232,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          // Fetch conversation history
-          const result = await client.conversations.history({
+          // Fetch conversation history with optional time-window
+          const historyParams: Record<string, unknown> = {
             channel: dmChannelId,
             limit,
-          });
+          };
+          if (oldest_ts) historyParams.oldest = oldest_ts;
+          if (latest_ts) historyParams.latest = latest_ts;
+          if (oldest_ts || latest_ts) historyParams.inclusive = true;
+          if (inputCursor) historyParams.cursor = inputCursor;
+
+          const result = await client.conversations.history(historyParams as any);
 
           // Resolve user IDs to display names
           const messages = await Promise.all(
@@ -1228,6 +1252,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 : "unknown";
               return {
                 user: userName,
+                user_id: msg.user || "",
                 text: msg.text || "",
                 timestamp: msg.ts || "",
                 reactions:
@@ -1239,15 +1264,16 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             }),
           );
 
-          // Reverse so oldest is first (conversations.history returns newest first)
-          messages.reverse();
-
           logger.info("read_dm_history tool called", {
             user: user.name,
             userId: user.id,
             dmChannelId,
             messageCount: messages.length,
+            oldest_ts,
+            latest_ts,
           });
+
+          const nextCursor = result.response_metadata?.next_cursor || null;
 
           return {
             ok: true,
@@ -1256,6 +1282,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             dm_channel_id: dmChannelId,
             messages,
             count: messages.length,
+            has_more: result.has_more || false,
+            next_cursor: nextCursor,
           };
         } catch (error: any) {
           logger.error("read_dm_history tool failed", {
@@ -1272,16 +1300,22 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     list_dm_conversations: tool({
       description:
-        "List DM conversations Aura has had. Returns the list of users Aura has open DM channels with. Use this to see who you've been talking to, find conversations to follow up on, or enumerate your DM activity. Admin-only.",
+        "List DM conversations Aura has had. Returns the list of users Aura has open DM channels with. Supports cursor pagination — pass the returned next_cursor to fetch subsequent pages and enumerate ALL DM channels. Admin-only.",
       inputSchema: z.object({
         limit: z
           .number()
           .min(1)
-          .max(100)
+          .max(200)
           .default(20)
-          .describe("Maximum number of DM conversations to return (max 100)"),
+          .describe("Maximum number of DM conversations to return per page (max 200)"),
+        cursor: z
+          .string()
+          .optional()
+          .describe(
+            "Pagination cursor from a previous response's next_cursor field. Omit to start from the beginning.",
+          ),
       }),
-      execute: async ({ limit }) => {
+      execute: async ({ limit, cursor: inputCursor }) => {
         try {
           // Authorization: only admins can list all DM conversations
           if (!isAdmin(context?.userId) && context?.userId !== "aura") {
@@ -1302,6 +1336,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             );
           }
 
+          const result = await client.conversations.list({
+            types: "im",
+            exclude_archived: true,
+            limit,
+            ...(inputCursor ? { cursor: inputCursor } : {}),
+          });
+
           const conversations: Array<{
             user_name: string;
             user_id: string;
@@ -1310,48 +1351,35 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             last_activity_ts: string;
           }> = [];
 
-          let cursor: string | undefined;
-          let fetched = 0;
+          for (const ch of result.channels || []) {
+            if (!ch.id || !ch.user) continue;
 
-          do {
-            const result = await client.conversations.list({
-              types: "im",
-              exclude_archived: true,
-              limit: Math.min(200, limit - fetched),
-              cursor,
+            const userName = userNameMap.get(ch.user) || ch.user;
+            const updated = (ch as any).updated;
+            conversations.push({
+              user_name: userName,
+              user_id: ch.user,
+              dm_channel_id: ch.id,
+              last_message_preview: "",
+              last_activity_ts:
+                typeof updated === "number" && updated > 0
+                  ? String(updated)
+                  : "",
             });
+          }
 
-            for (const ch of result.channels || []) {
-              if (!ch.id || !ch.user) continue;
-
-              const userName = userNameMap.get(ch.user) || ch.user;
-              const updated = (ch as any).updated;
-              conversations.push({
-                user_name: userName,
-                user_id: ch.user,
-                dm_channel_id: ch.id,
-                last_message_preview: "",
-                last_activity_ts:
-                  typeof updated === "number" && updated > 0
-                    ? String(updated)
-                    : "",
-              });
-
-              fetched++;
-              if (fetched >= limit) break;
-            }
-
-            cursor = result.response_metadata?.next_cursor || undefined;
-          } while (cursor && fetched < limit);
+          const nextCursor = result.response_metadata?.next_cursor || null;
 
           logger.info("list_dm_conversations tool called", {
             count: conversations.length,
+            has_more: !!nextCursor,
           });
 
           return {
             ok: true,
             conversations,
             count: conversations.length,
+            next_cursor: nextCursor,
           };
         } catch (error: any) {
           logger.error("list_dm_conversations tool failed", {
