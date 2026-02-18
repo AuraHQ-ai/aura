@@ -984,8 +984,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .describe(
             "Only return messages before this Unix timestamp (inclusive, seconds with optional decimals). E.g. '1719007200' for a specific epoch time.",
           ),
+        cursor: z
+          .string()
+          .optional()
+          .describe(
+            "Pagination cursor from a previous response's next_cursor field. Omit to start from the beginning.",
+          ),
       }),
-      execute: async ({ user_name, limit, oldest_ts, latest_ts }) => {
+      execute: async ({ user_name, limit, oldest_ts, latest_ts, cursor: inputCursor }) => {
         try {
           const user = await resolveUserByName(client, user_name);
           if (!user) {
@@ -1036,6 +1042,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           if (oldest_ts) historyParams.oldest = oldest_ts;
           if (latest_ts) historyParams.latest = latest_ts;
           if (oldest_ts || latest_ts) historyParams.inclusive = true;
+          if (inputCursor) historyParams.cursor = inputCursor;
 
           const result = await client.conversations.history(historyParams as any);
 
@@ -1071,6 +1078,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             latest_ts,
           });
 
+          const nextCursor = result.response_metadata?.next_cursor || null;
+
           return {
             ok: true,
             user: user.name,
@@ -1079,6 +1088,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             messages,
             count: messages.length,
             has_more: result.has_more || false,
+            next_cursor: nextCursor,
           };
         } catch (error: any) {
           logger.error("read_dm_history tool failed", {
