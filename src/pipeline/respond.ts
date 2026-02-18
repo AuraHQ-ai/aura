@@ -521,6 +521,16 @@ export async function generateResponse(
     const outputTokens = usage.outputTokens ?? 0;
     const totalTokens = inputTokens + outputTokens;
 
+    const feedbackBlock = {
+      type: "context_actions",
+      elements: [{
+        type: "feedback_buttons",
+        action_id: "aura_feedback",
+        positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
+        negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
+      }],
+    };
+
     if (streamingFailed) {
       // Fallback: post the complete response via chat.postMessage.
       // When blocks are present, Slack only renders blocks — text is just a
@@ -540,15 +550,7 @@ export async function generateResponse(
         blocks.push(pendingTableBlock);
       }
 
-      blocks.push({
-        type: "context_actions",
-        elements: [{
-          type: "feedback_buttons",
-          action_id: "aura_feedback",
-          positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
-          negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
-        }],
-      });
+      blocks.push(feedbackBlock);
 
       const toolMeta = buildToolMetadata(toolCallRecords);
       await slackClient.chat.postMessage({
@@ -568,16 +570,6 @@ export async function generateResponse(
       // Happy path: finalize the stream on Slack's side.
       // Attach tool I/O metadata (invisible to users) for follow-up context,
       // and inject table blocks from draw_table if present.
-      const feedbackBlock = {
-        type: "context_actions",
-        elements: [{
-          type: "feedback_buttons",
-          action_id: "aura_feedback",
-          positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
-          negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
-        }],
-      };
-
       const toolMeta = buildToolMetadata(toolCallRecords);
       const stopBlocks: any[] = [];
       if (pendingTableBlock) stopBlocks.push(pendingTableBlock);
