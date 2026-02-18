@@ -171,7 +171,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             // Stale locked jobs (executor crashed)
             and(
               eq(jobs.status, "pending"),
-              sql`${jobs.lockedAt} IS NOT NULL AND ${jobs.lockedAt} < NOW() - INTERVAL '10 minutes'`,
+              sql`${jobs.lockedAt} IS NOT NULL AND ${jobs.lockedAt} < NOW() - ${STALE_LOCK_MS / 60000} * INTERVAL '1 minute'`,
             ),
           ),
         ),
@@ -283,25 +283,18 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 async function claimJob(jobId: string): Promise<boolean> {
   const result = await db
     .update(jobs)
-    .set({ lockedAt: new Date() })
+    .set({ lockedAt: sql`NOW()` })
     .where(
       and(
         eq(jobs.id, jobId),
         or(
           isNull(jobs.lockedAt),
-          sql`${jobs.lockedAt} < NOW() - INTERVAL '10 minutes'`,
+          sql`${jobs.lockedAt} < NOW() - ${STALE_LOCK_MS / 60000} * INTERVAL '1 minute'`,
         ),
       ),
     )
     .returning({ id: jobs.id });
   return result.length > 0;
-}
-
-async function releaseLock(jobId: string): Promise<void> {
-  await db
-    .update(jobs)
-    .set({ lockedAt: null })
-    .where(eq(jobs.id, jobId));
 }
 
 // ── Job Execution ────────────────────────────────────────────────────────────
