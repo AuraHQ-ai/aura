@@ -1066,9 +1066,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             }),
           );
 
-          // Reverse so oldest is first (conversations.history returns newest first)
-          messages.reverse();
-
           logger.info("read_dm_history tool called", {
             user: user.name,
             userId: user.id,
