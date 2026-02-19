@@ -507,6 +507,13 @@ export async function generateResponse(
               await tryStreamAppend({ markdown_text: before });
             }
 
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length - remaining.length - before.length;
+              break;
+            }
+
+            if (!remaining) break;
+
             logger.info("Splitting stream for continuation message", {
               currentStreamLength,
               totalAccumulated: accumulatedText.length,
@@ -649,6 +656,9 @@ export async function generateResponse(
     const totalTokens = inputTokens + outputTokens;
 
     if (streamingFailed) {
+      // Stop the current streamer to avoid leaving an orphaned stream on Slack
+      try { await streamer.stop(); } catch { /* stream may already be broken */ }
+
       // Fallback: post the unsent portion via chat.postMessage.
       // If a continuation split partially succeeded, only post text that
       // wasn't already streamed (fallbackStartIdx marks the boundary).
