@@ -179,7 +179,7 @@ Aura uses three models, all routed through [Vercel AI Gateway](https://sdk.verce
 |---|---|---|---|
 | Main | `MODEL_MAIN` | Conversation responses | `anthropic/claude-opus-4-6`, `openai/gpt-5.2`, `google/gemini-3-pro-preview` |
 | Fast | `MODEL_FAST` | Memory extraction, profile updates | `anthropic/claude-haiku-4-5`, `openai/gpt-5.1-instant`, `google/gemini-3-flash` |
-| Embedding | `MODEL_EMBEDDING` | Vectorizing memories and queries | `openai/text-embedding-3-small` |
+| Embedding | `MODEL_EMBEDDING` | Vectorizing memories and queries | `openai/text-embedding-3-large` |
 
 No API keys to manage -- Vercel AI Gateway handles provider access and billing.
 
@@ -206,7 +206,7 @@ Go to your Vercel project dashboard -> **Settings** -> **Environment Variables**
 | `AURA_ADMIN_USER_IDS` | Recommended | Comma-separated Slack user IDs that can change settings |
 | `MODEL_MAIN` | No | Main model (default: `anthropic/claude-sonnet-4-20250514`) |
 | `MODEL_FAST` | No | Fast model (default: `anthropic/claude-haiku-4-5`) |
-| `MODEL_EMBEDDING` | No | Embedding model (default: `openai/text-embedding-3-small`) |
+| `MODEL_EMBEDDING` | No | Embedding model (default: `openai/text-embedding-3-large`) |
 | `CRON_SECRET` | Recommended | Protects cron endpoints |
 | `SLACK_USER_TOKEN` | No | User token for message search (`xoxp-...`) |
 | `TAVILY_API_KEY` | No | Web search API key (free tier: 1000/month) |
@@ -426,7 +426,7 @@ After every exchange, a fast-model LLM call extracts structured memories:
 - **Sentiments** -- "Joan seemed frustrated about deploys"
 - **Open threads** -- "Joan asked about API docs, no answer yet"
 
-Each memory is embedded as a 1536-dimensional vector for semantic retrieval.
+Each memory is embedded as a 3072-dimensional vector for semantic retrieval.
 
 ### Privacy
 
@@ -451,7 +451,7 @@ Change via the **App Home tab** in Slack (instant, no redeploy), or via env vars
 
 Available models include Claude Opus 4.6, GPT-5.2, Gemini 3 Pro, and many more -- see the App Home dropdowns for the full catalog.
 
-**Note on embedding dimensions:** The database schema uses 1536-dimensional vectors (matching `openai/text-embedding-3-small`). If you switch to an embedding model with different dimensions, you'll need to update the vector size in `src/db/schema.ts` and re-run the migration.
+**Note on embedding dimensions:** The database schema uses 3072-dimensional vectors (matching `openai/text-embedding-3-large`). If you switch to an embedding model with different dimensions, you'll need to update the vector size in `src/db/schema.ts` and re-run the migration.
 
 ---
 
