@@ -285,6 +285,17 @@ function isInvalidBlocks(error: any): boolean {
   return msg.includes("invalid_blocks") || code === "invalid_blocks";
 }
 
+function isUnsupportedFileError(error: any): boolean {
+  const msg = error?.message || error?.toString() || "";
+  const name = error?.name || "";
+  return (
+    name === "AI_UnsupportedFunctionalityError" ||
+    msg.includes("UnsupportedFunctionality") ||
+    msg.includes("unsupported file") ||
+    msg.includes("unsupported mime")
+  );
+}
+
 // ── Main Function ────────────────────────────────────────────────────────────
 
 /**
@@ -659,6 +670,73 @@ export async function generateResponse(
         });
       } catch {
         // Stream may already be closed — nothing we can do
+      }
+    }
+
+    if (hasFiles && isUnsupportedFileError(error)) {
+      logger.warn("LLM call failed due to unsupported file type, retrying without file parts", {
+        channelId,
+        error: error.message,
+      });
+
+      const fileNames = options.files!
+        .filter((f) => f.type === "file")
+        .map((f) => (f as any).filename || "unknown")
+        .join(", ");
+
+      const retryPrompt = fileNames
+        ? `${options.userMessage}\n\n[Some attached files could not be processed: ${fileNames}]`
+        : options.userMessage;
+
+      const retryOptions: any = {
+        model,
+        system: options.systemPrompt,
+        tools: streamOptions.tools,
+        stopWhen: stepCountIs(25),
+        prompt: retryPrompt,
+      };
+
+      try {
+        const retryResult = streamText(retryOptions);
+        let retryText = "";
+
+        for await (const chunk of retryResult.fullStream) {
+          if (chunk.type === "text-delta") {
+            retryText += chunk.text;
+            await tryStreamAppend({ markdown_text: chunk.text });
+          }
+        }
+
+        const retryUsage = await retryResult.usage;
+        const retryInputTokens = retryUsage.inputTokens ?? 0;
+        const retryOutputTokens = retryUsage.outputTokens ?? 0;
+
+        if (!streamingFailed) {
+          try { await streamer.stop(); } catch { /* already closed */ }
+        } else {
+          const fallbackText = retryText || "_I processed your request but had nothing to say._";
+          await slackClient.chat.postMessage({
+            channel: channelId,
+            text: fallbackText,
+            thread_ts: threadTs,
+          });
+        }
+
+        return {
+          raw: retryText,
+          alreadyPosted: true,
+          usage: {
+            inputTokens: retryInputTokens,
+            outputTokens: retryOutputTokens,
+            totalTokens: retryInputTokens + retryOutputTokens,
+          },
+        };
+      } catch (retryError) {
+        logger.error("Retry without files also failed", {
+          channelId,
+          error: retryError instanceof Error ? retryError.message : String(retryError),
+        });
+        throw retryError;
       }
     }
 
