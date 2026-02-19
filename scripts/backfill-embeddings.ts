@@ -93,7 +93,7 @@ async function backfillTable(
     batchNumber++;
 
     const rows = (await sql`
-      SELECT id, content FROM ${sql(tableName)}
+      SELECT id, content FROM ${sql.unsafe(tableName)}
       WHERE embedding IS NULL
       ORDER BY id
       LIMIT ${BATCH_SIZE}
