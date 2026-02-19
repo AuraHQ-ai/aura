@@ -24,6 +24,7 @@ const AUDIO_MIME_TYPES = new Set([
 const GATEWAY_SUPPORTED_FILE_TYPES = new Set([
   "application/pdf",
   "text/csv",
+  "application/csv",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.ms-excel",
@@ -39,7 +40,6 @@ const TEXT_MIME_TYPES = new Set([
   "application/javascript",
   "application/x-javascript",
   "application/typescript",
-  "application/csv",
   "application/x-yaml",
   "application/yaml",
   "application/sql",

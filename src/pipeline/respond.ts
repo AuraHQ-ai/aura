@@ -682,8 +682,6 @@ export async function generateResponse(
       const retryOptions: any = {
         model,
         system: options.systemPrompt,
-        tools: streamOptions.tools,
-        stopWhen: stepCountIs(25),
         prompt: retryPrompt,
         abortSignal: retryAbortController.signal,
       };
