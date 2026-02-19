@@ -21,7 +21,11 @@ export const channelTypeEnum = pgEnum("channel_type", [
   "private_channel",
 ]);
 
-export const messageRoleEnum = pgEnum("message_role", ["user", "assistant"]);
+export const messageRoleEnum = pgEnum("message_role", [
+  "user",
+  "assistant",
+  "tool",
+]);
 
 export const memoryTypeEnum = pgEnum("memory_type", [
   "fact",
