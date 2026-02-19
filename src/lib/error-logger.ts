@@ -150,9 +150,9 @@ async function postToSlack(params: LogErrorParams): Promise<void> {
     text += `\n_(\`${code}\` occurred ${slackState.batchedCount} more time${slackState.batchedCount === 1 ? "" : "s"} since last report)_`;
   }
 
+  slackWindows.set(code, { lastPostTime: now, batchedCount: 0 });
   try {
     await slack.chat.postMessage({ channel: channelId, text });
-    slackWindows.set(code, { lastPostTime: now, batchedCount: 0 });
   } catch {
     logger.warn("Failed to post error to #aura-errors");
   }
@@ -184,5 +184,7 @@ export function logError(params: LogErrorParams): void {
       .catch(() => {});
   }
 
-  postToSlack(params).catch(() => {});
+  if (!globalCircuitOpen) {
+    postToSlack(params).catch(() => {});
+  }
 }
