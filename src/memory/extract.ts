@@ -4,7 +4,130 @@ import { getFastModel } from "../lib/ai.js";
 import { embedTexts } from "../lib/embeddings.js";
 import { storeMemories } from "./store.js";
 import { logger } from "../lib/logger.js";
+import { getUserList } from "../tools/slack.js";
 import type { NewMemory } from "../db/schema.js";
+
+// ── User ID Normalization ───────────────────────────────────────────────────
+
+const SLACK_USER_ID_RE = /^[UW][A-Z0-9]+$/;
+
+/** Cached in-flight promise so concurrent callers share one API round-trip. */
+let userLookupPromise: Promise<Map<string, string>> | null = null;
+
+/**
+ * Build a case-insensitive lookup from display names, real names, and
+ * usernames to canonical Slack user IDs.  Unambiguous first-name lookups
+ * are included as a convenience (the LLM often emits just "Joan").
+ */
+async function buildUserLookup(): Promise<Map<string, string>> {
+  if (userLookupPromise) return userLookupPromise;
+  userLookupPromise = buildUserLookupInner();
+  return userLookupPromise;
+}
+
+async function buildUserLookupInner(): Promise<Map<string, string>> {
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  if (!botToken) {
+    logger.warn("SLACK_BOT_TOKEN not set — skipping user ID normalization");
+    return new Map();
+  }
+
+  try {
+    const { WebClient } = await import("@slack/web-api");
+    const client = new WebClient(botToken);
+
+    const users = await getUserList(client);
+
+    const lookup = new Map<string, string>();
+    const firstNameUsers = new Map<string, Set<string>>();
+
+    for (const u of users) {
+      const names = [u.displayName, u.realName, u.username].filter(Boolean);
+
+      for (const raw of names) {
+        const lower = raw.toLowerCase().trim();
+        if (!lower) continue;
+
+        if (!lookup.has(lower)) lookup.set(lower, u.id);
+
+        const underscored = lower.replace(/\s+/g, "_");
+        if (underscored !== lower && !lookup.has(underscored)) {
+          lookup.set(underscored, u.id);
+        }
+
+        const spaced = lower.replace(/_/g, " ");
+        if (spaced !== lower && !lookup.has(spaced)) {
+          lookup.set(spaced, u.id);
+        }
+      }
+
+      for (const raw of [u.realName, u.displayName]) {
+        if (!raw) continue;
+        const first = raw.split(/\s+/)[0]?.toLowerCase().trim();
+        if (!first) continue;
+        let ids = firstNameUsers.get(first);
+        if (!ids) { ids = new Set(); firstNameUsers.set(first, ids); }
+        ids.add(u.id);
+      }
+    }
+
+    for (const [firstName, ids] of firstNameUsers) {
+      if (ids.size === 1 && !lookup.has(firstName)) {
+        lookup.set(firstName, [...ids][0]);
+      }
+    }
+
+    return lookup;
+  } catch (error) {
+    logger.warn("Failed to build user lookup — skipping user ID normalization", {
+      error: String(error),
+    });
+    userLookupPromise = null;
+    return new Map();
+  }
+}
+
+/**
+ * Normalize an array of user references (names, IDs, @-mentions) to
+ * canonical Slack user IDs.  Unresolvable references are kept as-is.
+ */
+async function normalizeUserReferences(refs: string[]): Promise<string[]> {
+  if (refs.length === 0) return refs;
+  if (refs.every((r) => SLACK_USER_ID_RE.test(r))) return refs;
+
+  const lookup = await buildUserLookup();
+  if (lookup.size === 0) return refs;
+
+  return refs.map((ref) => {
+    if (SLACK_USER_ID_RE.test(ref)) return ref;
+
+    // Strip Slack mention markup: <@U12345> → U12345
+    const mentionMatch = ref.match(/^<@([UW][A-Z0-9]+)>$/);
+    if (mentionMatch) return mentionMatch[1];
+
+    const lower = ref.toLowerCase().trim().replace(/^@/, "");
+
+    const direct = lookup.get(lower);
+    if (direct) return direct;
+
+    const withSpaces = lower.replace(/_/g, " ");
+    if (withSpaces !== lower) {
+      const spaced = lookup.get(withSpaces);
+      if (spaced) return spaced;
+    }
+
+    const withUnderscores = lower.replace(/\s+/g, "_");
+    if (withUnderscores !== lower) {
+      const underscored = lookup.get(withUnderscores);
+      if (underscored) return underscored;
+    }
+
+    logger.warn("Could not resolve user reference to Slack ID — keeping as-is", {
+      userRef: ref,
+    });
+    return ref;
+  });
+}
 
 /**
  * Schema for LLM-extracted memories.
@@ -86,12 +209,20 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       return;
     }
 
+    // Normalize user references to canonical Slack user IDs
+    const normalizedMemories = await Promise.all(
+      object.memories.map(async (m) => ({
+        ...m,
+        relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
+      })),
+    );
+
     // Embed all extracted memories in a single batch
-    const memoryTexts = object.memories.map((m) => m.content);
+    const memoryTexts = normalizedMemories.map((m) => m.content);
     const embeddings = await embedTexts(memoryTexts);
 
     // Prepare memories for storage
-    const newMemories: NewMemory[] = object.memories.map((m, i) => ({
+    const newMemories: NewMemory[] = normalizedMemories.map((m, i) => ({
       content: m.content,
       type: m.type,
       sourceMessageId: context.sourceMessageId || undefined,
