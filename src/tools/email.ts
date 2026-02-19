@@ -350,18 +350,20 @@ export function createEmailTools() {
             resultCount: users.length,
           });
 
+          const activeUsers = users
+            .filter((u) => !u.suspended)
+            .map((u) => ({
+              email: u.email,
+              name: u.name,
+              title: u.title || undefined,
+              department: u.department || undefined,
+              isAdmin: u.isAdmin,
+            }));
+
           return {
             ok: true,
-            count: users.length,
-            users: users
-              .filter((u) => !u.suspended)
-              .map((u) => ({
-                email: u.email,
-                name: u.name,
-                title: u.title || undefined,
-                department: u.department || undefined,
-                isAdmin: u.isAdmin,
-              })),
+            count: activeUsers.length,
+            users: activeUsers,
           };
         } catch (error: any) {
           logger.error("list_workspace_users failed", {

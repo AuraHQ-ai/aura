@@ -168,11 +168,12 @@ export async function searchDirectoryUser(
 
   // Search by name or email prefix
   // The Directory API supports queries like: name:'John' email:'john@'
+  const escaped = query.replace(/'/g, "\\'");
   const params = new URLSearchParams({
     customer: "my_customer",
     maxResults: "10",
     projection: "full",
-    query: `name:'${query}' email:'${query}'`,
+    query: `name:'${escaped}' email:'${escaped}'`,
   });
 
   const resp = await fetch(
@@ -180,13 +181,21 @@ export async function searchDirectoryUser(
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
-  if (!resp.ok) {
+  let combinedResults: DirectoryUser[] | null = null;
+  if (resp.ok) {
+    const data = (await resp.json()) as {
+      users?: Record<string, unknown>[];
+    };
+    combinedResults = data.users?.map(parseUser) || [];
+  }
+
+  if (!combinedResults || combinedResults.length === 0) {
     // Try with just name query (OR doesn't work, need separate call)
     const nameParams = new URLSearchParams({
       customer: "my_customer",
       maxResults: "10",
       projection: "full",
-      query: `name:'${query}'`,
+      query: `name:'${escaped}'`,
     });
 
     const nameResp = await fetch(
@@ -201,7 +210,7 @@ export async function searchDirectoryUser(
         body,
         query,
       });
-      return null;
+      return combinedResults || null;
     }
 
     const nameData = (await nameResp.json()) as {
@@ -210,37 +219,5 @@ export async function searchDirectoryUser(
     return nameData.users?.map(parseUser) || [];
   }
 
-  const data = (await resp.json()) as {
-    users?: Record<string, unknown>[];
-  };
-  return data.users?.map(parseUser) || [];
-}
-
-/**
- * Get a specific user by email.
- */
-export async function getDirectoryUser(
-  email: string
-): Promise<DirectoryUser | null> {
-  const token = await getAccessToken();
-  if (!token) return null;
-
-  const resp = await fetch(
-    `https://admin.googleapis.com/admin/directory/v1/users/${encodeURIComponent(email)}?projection=full`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!resp.ok) {
-    if (resp.status === 404) return null;
-    const body = await resp.text();
-    logger.error("Directory API get user failed", {
-      status: resp.status,
-      body,
-      email,
-    });
-    return null;
-  }
-
-  const user = (await resp.json()) as Record<string, unknown>;
-  return parseUser(user);
+  return combinedResults;
 }
