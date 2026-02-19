@@ -251,22 +251,30 @@ export function createConversationSearchTools() {
                 ) as MessageRow[];
 
                 const matchIds = new Set(thread.messages.map((m) => m.id));
+                const contextIds = new Set(contextRows.map((r) => r.id));
+                const contextMessages = contextRows.map((r) => ({
+                  id: r.id,
+                  user_id: r.user_id,
+                  role: r.role,
+                  content: truncate(r.content, MAX_CONTENT_LENGTH),
+                  timestamp:
+                    typeof r.created_at === "string"
+                      ? r.created_at
+                      : new Date(r.created_at).toISOString(),
+                  channel_id: r.channel_id,
+                  channel_type: r.channel_type,
+                  ...(matchIds.has(r.id) ? { matched: true } : {}),
+                }));
+                const missingMatches = thread.messages
+                  .filter((m) => !contextIds.has(m.id))
+                  .map((m) => ({ ...m, matched: true }));
+                const allMessages = [...contextMessages, ...missingMatches].sort(
+                  (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+                );
                 const fullThread: ThreadGroup = {
                   thread_ts: thread.thread_ts,
                   channel_id: thread.channel_id,
-                  messages: contextRows.map((r) => ({
-                    id: r.id,
-                    user_id: r.user_id,
-                    role: r.role,
-                    content: truncate(r.content, MAX_CONTENT_LENGTH),
-                    timestamp:
-                      typeof r.created_at === "string"
-                        ? r.created_at
-                        : new Date(r.created_at).toISOString(),
-                    channel_id: r.channel_id,
-                    channel_type: r.channel_type,
-                    ...(matchIds.has(r.id) ? { matched: true } : {}),
-                  })) as ThreadGroup["messages"],
+                  messages: allMessages as ThreadGroup["messages"],
                 };
                 threadContexts.push(fullThread);
               } catch {
