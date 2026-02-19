@@ -31,22 +31,22 @@ Before building anything, **read the platform's documentation and search for exi
 ## Deployment
 
 - **NEVER push directly to `main`.** Vercel auto-deploys from `main`, so any push goes straight to production. Always create a feature branch, push it, and open a PR. Merging the PR triggers the deploy.
-- **Use `npx --yes vercel@50.13.2` for CLI operations** (the project doesn't have Vercel CLI installed globally). Always use `--scope real-advisor`.
+- **Use `npx --yes vercel@50.13.2` for CLI operations** (the project doesn't have Vercel CLI installed globally). Always use `--scope realadvisor`.
 - **Migrations run automatically** via the `vercel-build` script (`tsc && tsx src/db/migrate.ts`). No separate migration step needed.
 - **Production URL**: `https://aura-alpha-five.vercel.app`
 
 ## Environment Variables
 
-- **Add env vars via CLI**: `printf '%s' 'value' | npx --yes vercel@50.13.2 env add VAR_NAME production --scope real-advisor`
+- **Add env vars via CLI**: `printf '%s' 'value' | npx --yes vercel@50.13.2 env add VAR_NAME production --scope realadvisor`
 - **Always use `printf '%s'`** to pipe values -- never `echo` (it adds trailing newlines that break Vercel).
-- **After adding env vars**, trigger a redeploy: either push a commit or run `npx --yes vercel@50.13.2 --prod --scope real-advisor`.
-- **List env vars**: `npx --yes vercel@50.13.2 env ls --scope real-advisor`
+- **After adding env vars**, trigger a redeploy: either push a commit or run `npx --yes vercel@50.13.2 --prod --scope realadvisor`.
+- **List env vars**: `npx --yes vercel@50.13.2 env ls --scope realadvisor`
 
 ## Vercel Logs
 
-- **Stream runtime logs**: `npx --yes vercel@50.13.2 logs aura-alpha-five.vercel.app --scope real-advisor`
+- **Stream runtime logs**: `npx --yes vercel@50.13.2 logs aura-alpha-five.vercel.app --scope realadvisor`
 - Logs stream in real-time. Run in background with a timeout to capture output.
-- Build logs are separate: `npx --yes vercel@50.13.2 inspect <deployment-url> --logs --scope real-advisor`
+- Build logs are separate: `npx --yes vercel@50.13.2 inspect <deployment-url> --logs --scope realadvisor`
 
 ## Slack App
 
