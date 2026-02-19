@@ -70,12 +70,18 @@ async function isPrivateUrl(url: string): Promise<boolean> {
   }
 
   if (family === 6) {
-    // IPv6 private ranges
-    if (address === "::1") return true;                          // loopback
-    if (address.toLowerCase().startsWith("fe80:")) return true; // link-local (fe80::/10)
-    if (address.toLowerCase().startsWith("fc") ||
-        address.toLowerCase().startsWith("fd")) return true;    // ULA (fc00::/7)
-    return false;
+    // IPv4-mapped IPv6 (::ffff:x.x.x.x) — extract and validate as IPv4
+    const v4Mapped = address.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
+    if (v4Mapped) {
+      address = v4Mapped[1];
+    } else {
+      if (address === "::1") return true;                          // loopback
+      const firstWord = parseInt(address.split(":")[0], 16);
+      if (firstWord >= 0xfe80 && firstWord <= 0xfebf) return true; // link-local (fe80::/10)
+      if (address.toLowerCase().startsWith("fc") ||
+          address.toLowerCase().startsWith("fd")) return true;     // ULA (fc00::/7)
+      return false;
+    }
   }
 
   // IPv4: parse octets and check private ranges
@@ -203,13 +209,33 @@ export function createWebTools() {
             }
           }
 
-          // Fallback: raw fetch + HTML stripping
-          const response = await fetch(url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (compatible; AuraBot/1.0)",
-            },
-            signal: AbortSignal.timeout(10000),
-          });
+          // Fallback: raw fetch + HTML stripping (manual redirect to re-validate each hop)
+          let currentUrl = url;
+          let response!: Response;
+          for (let r = 0; r < 10; r++) {
+            response = await fetch(currentUrl, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (compatible; AuraBot/1.0)",
+              },
+              signal: AbortSignal.timeout(10000),
+              redirect: "manual",
+            });
+            if (response.status >= 300 && response.status < 400) {
+              const location = response.headers.get("location");
+              if (!location) break;
+              currentUrl = new URL(location, currentUrl).toString();
+              if (await isPrivateUrl(currentUrl)) {
+                logger.warn("read_url SSRF blocked (redirect)", { url, redirectTo: currentUrl });
+                return {
+                  ok: false,
+                  error: "Blocked: redirect resolves to a private/internal network address",
+                  url,
+                };
+              }
+              continue;
+            }
+            break;
+          }
 
           if (!response.ok) {
             return {
