@@ -1,8 +1,7 @@
-import { sql, desc, and, or, arrayContains } from "drizzle-orm";
+import { sql, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { memories, type Memory } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
-import { filterMemoriesByPrivacy } from "../lib/privacy.js";
 import { logger } from "../lib/logger.js";
 
 interface RetrievalOptions {
@@ -22,22 +21,20 @@ interface RetrievalOptions {
  * Flow:
  * 1. Embed the user's message
  * 2. Query pgvector for nearest neighbors
- * 3. Apply privacy filtering (FR-2.4)
- * 4. Weight by relevance_score and recency
- * 5. Return top-K memories
+ * 3. Weight by relevance_score and recency
+ * 4. Return top-K memories
  */
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, currentUserId, limit = 20, minRelevanceScore = 0.1 } = options;
+  const { query, limit = 20, minRelevanceScore = 0.1 } = options;
   const start = Date.now();
 
   try {
     // 1. Embed the query
     const queryEmbedding = await embedText(query);
 
-    // 2. Query pgvector — fetch more than we need so we can filter by privacy
-    const fetchLimit = limit * 3;
+    // 2. Query pgvector for nearest neighbors
     const results = await db
       .select({
         memory: memories,
@@ -53,17 +50,11 @@ export async function retrieveMemories(
       .orderBy(
         sql`${memories.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector`,
       )
-      .limit(fetchLimit);
+      .limit(limit);
 
-    // 3. Apply privacy filtering
-    const rawMemories = results.map((r) => r.memory);
-    const filtered = filterMemoriesByPrivacy(rawMemories, currentUserId);
-
-    // 4. Score: combine cosine similarity with relevance_score and recency
+    // 3. Score: combine cosine similarity with relevance_score and recency
     const now = Date.now();
-    const scored = filtered.map((memory) => {
-      const result = results.find((r) => r.memory.id === memory.id);
-      const similarity = result?.similarity ?? 0;
+    const scored = results.map(({ memory, similarity }) => {
 
       // Recency boost: memories from the last 24h get a boost, older ones decay
       const ageMs = now - new Date(memory.createdAt).getTime();
@@ -79,14 +70,13 @@ export async function retrieveMemories(
       return { memory, score };
     });
 
-    // 5. Sort by combined score and return top-K
+    // 4. Sort by combined score and return top-K
     scored.sort((a, b) => b.score - a.score);
-    const topMemories = scored.slice(0, limit).map((s) => s.memory);
+    const topMemories = scored.map((s) => s.memory);
 
     logger.info(`Retrieved ${topMemories.length} memories in ${Date.now() - start}ms`, {
       query: query.substring(0, 100),
       totalCandidates: results.length,
-      afterPrivacyFilter: filtered.length,
     });
 
     return topMemories;
