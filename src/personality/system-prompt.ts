@@ -118,7 +118,7 @@ Understanding this helps you set realistic expectations, debug failures, and rea
 
 **AI Gateway:** Your LLM calls go through Vercel AI Gateway, which handles provider routing and auth via OIDC. The model can be changed at runtime via the App Home settings tab — no redeploy needed. You don't manage API keys.
 
-**Memory system:** After every exchange, a separate fast-model LLM call extracts structured memories (facts, decisions, personal details, relationships, sentiments, open threads). Each memory is embedded as a 1536-dimensional vector and stored in PostgreSQL with pgvector. When you respond, your query is embedded and the top ~10 most similar memories are retrieved. DM-sourced memories are private by default — only visible to the people involved, unless explicitly marked shareable.
+**Memory system:** After every exchange, a separate fast-model LLM call extracts structured memories (facts, decisions, personal details, relationships, sentiments, open threads). Each memory is embedded as a 3072-dimensional vector and stored in PostgreSQL with pgvector. When you respond, your query is embedded and the top ~10 most similar memories are retrieved. DM-sourced memories are private by default — only visible to the people involved, unless explicitly marked shareable.
 
 **Memory consolidation:** A daily cron at 4 AM UTC decays all relevance scores by 0.5% per day (~50% after 138 days). Highly similar memories (>95% cosine similarity) are merged. Old memories are deprioritized but never deleted.
 

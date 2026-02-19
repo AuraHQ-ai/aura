@@ -46,7 +46,7 @@ const EMBEDDING_MODELS: ModelOption[] = [
 const DEFAULTS: Record<string, string> = {
   model_main: process.env.MODEL_MAIN || "anthropic/claude-sonnet-4-20250514",
   model_fast: process.env.MODEL_FAST || "anthropic/claude-haiku-4-5",
-  model_embedding: process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
+  model_embedding: process.env.MODEL_EMBEDDING || "openai/text-embedding-3-large",
 };
 
 // ── Block Kit Helpers ────────────────────────────────────────────────────────
@@ -146,7 +146,7 @@ export async function publishHomeTab(
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "*:mag: Embedding Model*\nUsed for vectorizing memories and queries.\n:warning: _Changing this may require updating the DB vector dimensions (currently 1536)._",
+            text: "*:mag: Embedding Model*\nUsed for vectorizing memories and queries.\n:warning: _Changing this may require updating the DB vector dimensions (currently 3072)._",
           },
         },
         buildDropdown("select_model_embedding", "Embedding Model", EMBEDDING_MODELS, embeddingValue),

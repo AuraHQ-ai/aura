@@ -77,7 +77,7 @@ export const memories = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
-    embedding: vector("embedding", { dimensions: 1536 }),
+    embedding: vector("embedding", { dimensions: 3072 }),
     relevanceScore: real("relevance_score").notNull().default(1.0),
     shareable: integer("shareable").notNull().default(0),
     createdAt: timestamptz("created_at").notNull().defaultNow(),

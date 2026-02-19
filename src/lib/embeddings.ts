@@ -3,7 +3,7 @@ import { getEmbeddingModel } from "./ai.js";
 import { logger } from "./logger.js";
 
 /**
- * Embed a single text string into a 1536-dimensional vector.
+ * Embed a single text string into a 3072-dimensional vector.
  */
 export async function embedText(text: string): Promise<number[]> {
   const start = Date.now();
