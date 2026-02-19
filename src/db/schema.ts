@@ -7,6 +7,7 @@ import {
   real,
   integer,
   jsonb,
+  boolean,
   index,
   uniqueIndex,
   vector,
@@ -261,6 +262,31 @@ export const eventLocks = pgTable(
   ],
 );
 
+// ── Error Events ────────────────────────────────────────────────────────────
+
+export const errorEvents = pgTable(
+  "error_events",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    timestamp: timestamptz("timestamp").notNull().defaultNow(),
+    errorName: text("error_name").notNull(),
+    errorMessage: text("error_message").notNull(),
+    errorCode: text("error_code"),
+    userId: text("user_id"),
+    channelId: text("channel_id"),
+    channelType: text("channel_type"),
+    context: jsonb("context").$type<Record<string, unknown>>(),
+    stackTrace: text("stack_trace"),
+    resolved: boolean("resolved").default(false),
+  },
+  (table) => [
+    index("error_events_timestamp_idx").on(table.timestamp),
+    index("error_events_error_code_idx").on(table.errorCode),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -277,6 +303,8 @@ export type NewJob = typeof jobs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
 export type EventLock = typeof eventLocks.$inferSelect;
 export type NewEventLock = typeof eventLocks.$inferInsert;
+export type ErrorEvent = typeof errorEvents.$inferSelect;
+export type NewErrorEvent = typeof errorEvents.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {

@@ -4,6 +4,7 @@ import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
+import { logError } from "../lib/error-logger.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
@@ -414,12 +415,26 @@ export async function generateResponse(
           "chatStream not supported for this channel, falling back to postMessage",
           { channelId },
         );
+        logError({
+          errorName: "StreamingUnsupported",
+          errorMessage: err?.message || "channel_type_not_supported",
+          errorCode: "channel_type_not_supported",
+          channelId,
+          context: { fallback: "postMessage" },
+        });
       } else if (isInvalidBlocks(err)) {
         streamingFailed = true;
         logger.warn("chatStream append returned invalid_blocks, falling back to postMessage", {
           channelId,
           slackError: err?.data?.error,
           payloadKeys: Object.keys(payload),
+        });
+        logError({
+          errorName: "InvalidBlocks",
+          errorMessage: err?.message || "invalid_blocks on stream append",
+          errorCode: err?.data?.error || "invalid_blocks",
+          channelId,
+          context: { payloadKeys: Object.keys(payload) },
         });
       } else {
         throw err;
@@ -707,6 +722,13 @@ export async function generateResponse(
             slackError: postErr?.data?.error,
             blockTypes: blocks.map((b: any) => b.type),
           });
+          logError({
+            errorName: "FallbackInvalidBlocks",
+            errorMessage: postErr?.message || "invalid_blocks on fallback postMessage",
+            errorCode: postErr?.data?.error || "invalid_blocks",
+            channelId,
+            context: { blockTypes: blocks.map((b: any) => b.type) },
+          });
           await slackClient.chat.postMessage({
             channel: channelId,
             text: fallbackText,
@@ -752,10 +774,17 @@ export async function generateResponse(
             slackError: stopErr?.data?.error,
             blockTypes: stopBlocks.map((b: any) => b.type),
           });
+          logError({
+            errorName: "StreamStopInvalidBlocks",
+            errorMessage: stopErr?.message || "invalid_blocks on streamer.stop()",
+            errorCode: stopErr?.data?.error || "invalid_blocks",
+            channelId,
+            context: { blockTypes: stopBlocks.map((b: any) => b.type) },
+          });
           try {
             await streamer.stop();
           } catch {
-            // Stream may already be finalized — nothing we can do
+            // Stream may already be finalized
           }
         } else {
           throw stopErr;
@@ -850,15 +879,30 @@ export async function generateResponse(
           },
           toolCalls: toolCallRecords,
         };
-      } catch (retryError) {
+      } catch (retryError: any) {
         clearTimeout(retryInactivityTimer);
         logger.error("Retry without files also failed", {
           channelId,
           error: retryError instanceof Error ? retryError.message : String(retryError),
         });
-        // Fall through to stream cleanup below
+        logError({
+          errorName: retryError?.name || "RetryError",
+          errorMessage: retryError instanceof Error ? retryError.message : String(retryError),
+          errorCode: "retry_without_files_failed",
+          channelId,
+          stackTrace: retryError instanceof Error ? retryError.stack : undefined,
+        });
       }
     }
+
+    logError({
+      errorName: error?.name || "StreamingError",
+      errorMessage: error?.message || String(error),
+      errorCode: error?.data?.error || error?.code || "streaming_failure",
+      channelId,
+      context: { hasFiles, accumulatedTextLength: accumulatedText.length },
+      stackTrace: error?.stack,
+    });
 
     // If streaming was never established, don't try to stop it
     if (!streamingFailed) {
