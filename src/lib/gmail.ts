@@ -144,6 +144,60 @@ function getHeader(
   return header?.value || "";
 }
 
+function extractBody(payload: any): string {
+  if (payload.body?.data) {
+    return Buffer.from(payload.body.data, "base64").toString("utf-8");
+  }
+
+  if (payload.parts) {
+    const textPart = payload.parts.find(
+      (p: any) => p.mimeType === "text/plain",
+    );
+    if (textPart?.body?.data) {
+      return Buffer.from(textPart.body.data, "base64").toString("utf-8");
+    }
+
+    const htmlPart = payload.parts.find(
+      (p: any) => p.mimeType === "text/html",
+    );
+    if (htmlPart?.body?.data) {
+      return Buffer.from(htmlPart.body.data, "base64").toString("utf-8");
+    }
+
+    for (const part of payload.parts) {
+      if (part.parts) {
+        const nested = extractBody(part);
+        if (nested) return nested;
+      }
+    }
+  }
+
+  return "";
+}
+
+function extractAttachments(
+  payload: any,
+): { filename: string; mimeType: string; size: number }[] {
+  const attachments: { filename: string; mimeType: string; size: number }[] =
+    [];
+
+  function walk(parts: any[]) {
+    for (const part of parts) {
+      if (part.filename && part.filename.length > 0) {
+        attachments.push({
+          filename: part.filename,
+          mimeType: part.mimeType || "application/octet-stream",
+          size: part.body?.size || 0,
+        });
+      }
+      if (part.parts) walk(part.parts);
+    }
+  }
+
+  if (payload.parts) walk(payload.parts);
+  return attachments;
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -205,34 +259,35 @@ export async function listEmails(
 
   const listRes = await gmail.users.messages.list({
     userId: "me",
-    maxResults: options?.maxResults || 10,
+    maxResults: Math.min(options?.maxResults || 10, 20),
     q: q || undefined,
   });
 
   const messages = listRes.data.messages || [];
-  const results: EmailSummary[] = [];
+  if (messages.length === 0) return [];
 
-  for (const msg of messages) {
-    if (!msg.id) continue;
-    const detail = await gmail.users.messages.get({
-      userId: "me",
-      id: msg.id,
-      format: "metadata",
-      metadataHeaders: ["From", "To", "Subject", "Date"],
-    });
+  const results: EmailSummary[] = await Promise.all(
+    messages.map(async (msg) => {
+      const detail = await gmail.users.messages.get({
+        userId: "me",
+        id: msg.id!,
+        format: "metadata",
+        metadataHeaders: ["From", "To", "Subject", "Date"],
+      });
 
-    const headers = detail.data.payload?.headers || [];
-    results.push({
-      id: msg.id,
-      threadId: detail.data.threadId || "",
-      from: getHeader(headers, "From"),
-      to: getHeader(headers, "To"),
-      subject: getHeader(headers, "Subject"),
-      date: getHeader(headers, "Date"),
-      snippet: detail.data.snippet || "",
-      isUnread: (detail.data.labelIds || []).includes("UNREAD"),
-    });
-  }
+      const headers = detail.data.payload?.headers || [];
+      return {
+        id: detail.data.id || "",
+        threadId: detail.data.threadId || "",
+        from: getHeader(headers, "From"),
+        to: getHeader(headers, "To"),
+        subject: getHeader(headers, "Subject"),
+        date: getHeader(headers, "Date"),
+        snippet: detail.data.snippet || "",
+        isUnread: (detail.data.labelIds || []).includes("UNREAD"),
+      };
+    }),
+  );
 
   return results;
 }
@@ -254,29 +309,9 @@ export async function getEmail(messageId: string): Promise<EmailDetail | null> {
   });
 
   const headers = res.data.payload?.headers || [];
-  const parts = res.data.payload?.parts || [];
-
-  // Extract body from parts or directly from payload
-  let body = "";
-  if (parts.length > 0) {
-    const textPart = parts.find((p) => p.mimeType === "text/plain");
-    const htmlPart = parts.find((p) => p.mimeType === "text/html");
-    const part = textPart || htmlPart;
-    if (part?.body?.data) {
-      body = Buffer.from(part.body.data, "base64").toString("utf-8");
-    }
-  } else if (res.data.payload?.body?.data) {
-    body = Buffer.from(res.data.payload.body.data, "base64").toString("utf-8");
-  }
-
-  // Extract attachments info
-  const attachments = parts
-    .filter((p) => p.filename && p.filename.length > 0)
-    .map((p) => ({
-      filename: p.filename || "unknown",
-      mimeType: p.mimeType || "application/octet-stream",
-      size: p.body?.size || 0,
-    }));
+  const payload = res.data.payload || {};
+  const body = extractBody(payload);
+  const attachments = extractAttachments(payload);
 
   return {
     id: res.data.id || "",
