@@ -37,6 +37,9 @@ export function getSandboxEnvs(): Record<string, string> {
   if (process.env.ANTHROPIC_API_KEY) {
     envs.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   }
+  if (process.env.DATABASE_URL) {
+    envs.DATABASE_URL = process.env.DATABASE_URL;
+  }
   return envs;
 }
 
