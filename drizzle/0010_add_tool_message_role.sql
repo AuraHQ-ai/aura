@@ -1,0 +1,1 @@
+ALTER TYPE "message_role" ADD VALUE IF NOT EXISTS 'tool';

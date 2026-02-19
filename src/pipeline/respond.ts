@@ -15,7 +15,7 @@ export const TOOL_IO_EVENT_TYPE = "aura_tool_io";
 /** Max bytes for serialized tool I/O metadata (Slack limit is 16 KB). */
 const METADATA_BUDGET = 8_000;
 
-interface ToolCallRecord {
+export interface ToolCallRecord {
   /** Tool name */
   name: string;
   /** JSON-serialized input args */
@@ -261,6 +261,8 @@ export interface LLMResponse {
     outputTokens: number;
     totalTokens: number;
   };
+  /** Tool calls executed during this response */
+  toolCalls: ToolCallRecord[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -653,6 +655,7 @@ export async function generateResponse(
       raw: finalText,
       alreadyPosted: true,
       usage: { inputTokens, outputTokens, totalTokens },
+      toolCalls: toolCallRecords,
     };
   } catch (error: any) {
     clearTimeout(inactivityTimer);
@@ -728,6 +731,7 @@ export async function generateResponse(
             outputTokens: retryOutputTokens,
             totalTokens: retryInputTokens + retryOutputTokens,
           },
+          toolCalls: toolCallRecords,
         };
       } catch (retryError) {
         clearTimeout(retryInactivityTimer);
