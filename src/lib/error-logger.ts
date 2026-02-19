@@ -152,11 +152,10 @@ async function postToSlack(params: LogErrorParams): Promise<void> {
 
   try {
     await slack.chat.postMessage({ channel: channelId, text });
+    slackWindows.set(code, { lastPostTime: now, batchedCount: 0 });
   } catch {
     logger.warn("Failed to post error to #aura-errors");
   }
-
-  slackWindows.set(code, { lastPostTime: now, batchedCount: 0 });
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────

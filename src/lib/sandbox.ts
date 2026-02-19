@@ -152,6 +152,7 @@ export async function pauseSandbox(): Promise<void> {
     logger.info("E2B sandbox paused", { sandboxId });
   } catch (error: any) {
     logger.warn("Failed to pause sandbox", { error: error.message });
+    throw error;
   } finally {
     cachedSandbox = null;
   }
