@@ -4,14 +4,15 @@ import { getFastModel } from "../lib/ai.js";
 import { embedTexts } from "../lib/embeddings.js";
 import { storeMemories } from "./store.js";
 import { logger } from "../lib/logger.js";
+import { getUserList } from "../tools/slack.js";
 import type { NewMemory } from "../db/schema.js";
 
 // ── User ID Normalization ───────────────────────────────────────────────────
 
 const SLACK_USER_ID_RE = /^U[A-Z0-9]+$/;
 
-/** Per-invocation cache of the user lookup map. */
-let userLookupCache: Map<string, string> | null = null;
+/** Cached in-flight promise so concurrent callers share one API round-trip. */
+let userLookupPromise: Promise<Map<string, string>> | null = null;
 
 /**
  * Build a case-insensitive lookup from display names, real names, and
@@ -19,32 +20,29 @@ let userLookupCache: Map<string, string> | null = null;
  * are included as a convenience (the LLM often emits just "Joan").
  */
 async function buildUserLookup(): Promise<Map<string, string>> {
-  if (userLookupCache) return userLookupCache;
+  if (userLookupPromise) return userLookupPromise;
+  userLookupPromise = buildUserLookupInner();
+  return userLookupPromise;
+}
 
+async function buildUserLookupInner(): Promise<Map<string, string>> {
   const botToken = process.env.SLACK_BOT_TOKEN;
   if (!botToken) {
     logger.warn("SLACK_BOT_TOKEN not set — skipping user ID normalization");
     return new Map();
   }
 
-  const { WebClient } = await import("@slack/web-api");
-  const client = new WebClient(botToken);
+  try {
+    const { WebClient } = await import("@slack/web-api");
+    const client = new WebClient(botToken);
 
-  const lookup = new Map<string, string>();
-  const firstNameUsers = new Map<string, Set<string>>();
-  let cursor: string | undefined;
+    const users = await getUserList(client);
 
-  do {
-    const result = await client.users.list({ limit: 200, cursor });
+    const lookup = new Map<string, string>();
+    const firstNameUsers = new Map<string, Set<string>>();
 
-    for (const u of result.members || []) {
-      if (u.deleted || u.is_bot || !u.id) continue;
-
-      const names = [
-        u.profile?.display_name,
-        u.real_name,
-        u.name,
-      ].filter(Boolean) as string[];
+    for (const u of users) {
+      const names = [u.displayName, u.realName, u.username].filter(Boolean);
 
       for (const raw of names) {
         const lower = raw.toLowerCase().trim();
@@ -63,8 +61,7 @@ async function buildUserLookup(): Promise<Map<string, string>> {
         }
       }
 
-      // Track first-name → user ID mappings for later dedup
-      for (const raw of [u.real_name, u.profile?.display_name]) {
+      for (const raw of [u.realName, u.displayName]) {
         if (!raw) continue;
         const first = raw.split(/\s+/)[0]?.toLowerCase().trim();
         if (!first) continue;
@@ -74,18 +71,19 @@ async function buildUserLookup(): Promise<Map<string, string>> {
       }
     }
 
-    cursor = result.response_metadata?.next_cursor || undefined;
-  } while (cursor);
-
-  // Only add first names that unambiguously map to a single user
-  for (const [firstName, ids] of firstNameUsers) {
-    if (ids.size === 1 && !lookup.has(firstName)) {
-      lookup.set(firstName, [...ids][0]);
+    for (const [firstName, ids] of firstNameUsers) {
+      if (ids.size === 1 && !lookup.has(firstName)) {
+        lookup.set(firstName, [...ids][0]);
+      }
     }
-  }
 
-  userLookupCache = lookup;
-  return lookup;
+    return lookup;
+  } catch (error) {
+    logger.warn("Failed to build user lookup — skipping user ID normalization", {
+      error: String(error),
+    });
+    return new Map();
+  }
 }
 
 /**

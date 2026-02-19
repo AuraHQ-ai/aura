@@ -52,7 +52,7 @@ let userCache:
   | { id: string; displayName: string; realName: string; username: string }[]
   | null = null;
 
-async function getUserList(
+export async function getUserList(
   client: WebClient,
 ): Promise<
   { id: string; displayName: string; realName: string; username: string }[]
