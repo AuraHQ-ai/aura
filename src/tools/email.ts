@@ -304,7 +304,7 @@ export function createEmailTools() {
               name: u.name,
               title: u.title || undefined,
               department: u.department || undefined,
-              isAdmin: u.isAdmin,
+
             })),
           };
         } catch (error: any) {
@@ -354,13 +354,13 @@ export function createEmailTools() {
             ok: true,
             count: users.length,
             users: users
-              .filter((u) => !u.suspended)
+
               .map((u) => ({
                 email: u.email,
                 name: u.name,
                 title: u.title || undefined,
                 department: u.department || undefined,
-                isAdmin: u.isAdmin,
+  
               })),
           };
         } catch (error: any) {
