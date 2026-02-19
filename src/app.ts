@@ -459,7 +459,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         });
       }
 
-      if (channelId && channelId !== "unknown") {
+      if (channelId && channelId !== "unknown" && channelId !== dmChannelId) {
         await slackClient.chat.postMessage({
           channel: channelId,
           thread_ts: threadTs || undefined,
