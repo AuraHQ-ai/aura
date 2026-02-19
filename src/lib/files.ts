@@ -21,13 +21,25 @@ const AUDIO_MIME_TYPES = new Set([
   "audio/x-m4a",
 ]);
 
+const GATEWAY_SUPPORTED_FILE_TYPES = new Set([
+  "application/pdf",
+  "text/csv",
+  "application/csv",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/html",
+  "text/plain",
+  "text/markdown",
+]);
+
 const TEXT_MIME_TYPES = new Set([
   "application/json",
   "application/xml",
   "application/javascript",
   "application/x-javascript",
   "application/typescript",
-  "application/csv",
   "application/x-yaml",
   "application/yaml",
   "application/sql",
@@ -127,12 +139,19 @@ async function toContentPart(
     }
   }
 
+  if (GATEWAY_SUPPORTED_FILE_TYPES.has(mimeType)) {
+    return { type: "file", data, mediaType: mimeType, filename: name };
+  }
+
   if (isTextMimeType(mimeType)) {
     const text = new TextDecoder().decode(data);
     return { type: "text", text: `[File: ${name}]\n${text}` };
   }
 
-  return { type: "file", data, mediaType: mimeType, filename: name };
+  return {
+    type: "text",
+    text: `[File: ${name} (${mimeType})] — I received this file but can't process this type yet.`,
+  };
 }
 
 /**
