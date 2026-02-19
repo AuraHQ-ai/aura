@@ -80,7 +80,7 @@ function getRedirectUri(): string {
 
 const SETTINGS_KEY = "google_refresh_token";
 
-async function getRefreshToken(): Promise<string | null> {
+export async function getRefreshToken(): Promise<string | null> {
   // DB is source of truth; env var is fallback for migration
   try {
     const { getSetting } = await import("./settings.js");
