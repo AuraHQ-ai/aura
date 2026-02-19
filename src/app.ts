@@ -395,7 +395,8 @@ app.post("/api/webhook/cursor-agent", async (c) => {
           const issueMatch = content.match(
             /## Issue\n([\s\S]*?)$/,
           );
-          if (requesterMatch) requester = requesterMatch[1];
+          if (requesterMatch && requesterMatch[1] !== "unknown")
+            requester = requesterMatch[1];
           if (channelMatch) channelId = channelMatch[1];
           if (threadMatch && threadMatch[1] !== "none")
             threadTs = threadMatch[1];
