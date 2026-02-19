@@ -43,14 +43,6 @@ export interface CursorAgentStatus {
   finishedAt?: string;
 }
 
-export interface CursorAgentConversation {
-  id: string;
-  messages: Array<{
-    role: string;
-    content: string;
-  }>;
-}
-
 export async function launchCursorAgent(
   params: LaunchCursorAgentParams,
 ): Promise<CursorAgentResponse> {
@@ -104,55 +96,3 @@ export async function getCursorAgentStatus(
   return (await res.json()) as CursorAgentStatus;
 }
 
-export async function getCursorAgentConversation(
-  agentId: string,
-): Promise<CursorAgentConversation> {
-  const res = await fetch(
-    `${CURSOR_API_BASE}/agents/${agentId}/conversation`,
-    {
-      method: "GET",
-      headers: headers(),
-    },
-  );
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(
-      `Cursor API GET /agents/${agentId}/conversation failed (${res.status}): ${text}`,
-    );
-  }
-
-  return (await res.json()) as CursorAgentConversation;
-}
-
-export async function sendCursorAgentFollowup(
-  agentId: string,
-  text: string,
-): Promise<void> {
-  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/followup`, {
-    method: "POST",
-    headers: headers(),
-    body: JSON.stringify({ text }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(
-      `Cursor API POST /agents/${agentId}/followup failed (${res.status}): ${body}`,
-    );
-  }
-}
-
-export async function stopCursorAgent(agentId: string): Promise<void> {
-  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/stop`, {
-    method: "POST",
-    headers: headers(),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(
-      `Cursor API POST /agents/${agentId}/stop failed (${res.status}): ${body}`,
-    );
-  }
-}
