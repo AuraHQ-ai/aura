@@ -673,12 +673,19 @@ export async function generateResponse(
         ? `${options.userMessage}\n\n[Some attached files could not be processed: ${fileNames}]`
         : options.userMessage;
 
+      const retryAbortController = new AbortController();
+      let retryInactivityTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+        logger.warn("LLM retry inactivity timeout (180s), aborting");
+        retryAbortController.abort();
+      }, 180_000);
+
       const retryOptions: any = {
         model,
         system: options.systemPrompt,
         tools: streamOptions.tools,
         stopWhen: stepCountIs(25),
         prompt: retryPrompt,
+        abortSignal: retryAbortController.signal,
       };
 
       try {
@@ -686,11 +693,19 @@ export async function generateResponse(
         let retryText = "";
 
         for await (const chunk of retryResult.fullStream) {
+          clearTimeout(retryInactivityTimer);
+          retryInactivityTimer = setTimeout(() => {
+            logger.warn("LLM retry inactivity timeout (180s), aborting");
+            retryAbortController.abort();
+          }, 180_000);
+
           if (chunk.type === "text-delta") {
             retryText += chunk.text;
             await tryStreamAppend({ markdown_text: chunk.text });
           }
         }
+
+        clearTimeout(retryInactivityTimer);
 
         const retryUsage = await retryResult.usage;
         const retryInputTokens = retryUsage.inputTokens ?? 0;
@@ -717,11 +732,12 @@ export async function generateResponse(
           },
         };
       } catch (retryError) {
+        clearTimeout(retryInactivityTimer);
         logger.error("Retry without files also failed", {
           channelId,
           error: retryError instanceof Error ? retryError.message : String(retryError),
         });
-        throw retryError;
+        // Fall through to stream cleanup below
       }
     }
 
