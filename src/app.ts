@@ -330,95 +330,28 @@ app.get("/api/oauth/google/auth-url", async (c) => {
 app.get("/api/oauth/google/callback", async (c) => {
   const code = c.req.query("code");
   if (!code) return c.json({ error: "No auth code received" }, 400);
-  const { exchangeCodeForTokens } = await import("./lib/gmail.js");
+  const { exchangeCodeForTokens, saveRefreshToken } = await import("./lib/gmail.js");
   const result = await exchangeCodeForTokens(code);
   if (!result.refreshToken) return c.json({ error: "Token exchange failed", detail: result.error || "No refresh token returned" }, 500);
 
-  // Auto-save refresh token to Vercel env vars
-  const vercelToken = process.env.VERCEL_TOKEN;
-  const teamId = process.env.VERCEL_TEAM_ID;
-  if (vercelToken && teamId) {
-    try {
-      const envName = "GOOGLE_EMAIL_REFRESH_TOKEN";
-      const baseUrl = `https://api.vercel.com/v9/projects/aura/env?teamId=${teamId}`;
-
-      // Check if env var already exists
-      const listRes = await fetch(baseUrl, {
-        headers: { Authorization: `Bearer ${vercelToken}` },
-      });
-      const listData = (await listRes.json()) as { envs?: Array<{ id: string; key: string }> };
-      const existing = listData.envs?.find((e: { key: string }) => e.key === envName);
-
-      if (existing) {
-        // Update existing
-        await fetch(
-          `https://api.vercel.com/v9/projects/aura/env/${existing.id}?teamId=${teamId}`,
-          {
-            method: "PATCH",
-            headers: {
-              Authorization: `Bearer ${vercelToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ value: result.refreshToken }),
-          },
-        );
-      } else {
-        // Create new
-        await fetch(`https://api.vercel.com/v10/projects/aura/env?teamId=${teamId}`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${vercelToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            key: envName,
-            value: result.refreshToken,
-            target: ["production"],
-            type: "encrypted",
-          }),
-        });
-      }
-
-      // Trigger production redeploy
-      const deploysRes = await fetch(
-        `https://api.vercel.com/v6/deployments?teamId=${teamId}&projectId=aura&limit=1&target=production&state=READY`,
-        { headers: { Authorization: `Bearer ${vercelToken}` } },
-      );
-      const deploysData = (await deploysRes.json()) as { deployments?: Array<{ uid: string }> };
-      const latestDeploy = deploysData.deployments?.[0];
-      if (latestDeploy) {
-        await fetch(`https://api.vercel.com/v13/deployments?teamId=${teamId}`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${vercelToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: "aura",
-            deploymentId: latestDeploy.uid,
-            target: "production",
-          }),
-        });
-      }
-
-      logger.info("OAuth refresh token auto-saved to Vercel and redeploy triggered");
-      return c.json({
-        success: true,
-        message: "Gmail connected! Refresh token saved to Vercel and redeploy triggered. Email will be active in ~3 minutes.",
-      });
-    } catch (saveError: any) {
-      logger.error("Failed to auto-save refresh token to Vercel", { error: saveError.message });
-      // Fall through to manual instructions
-    }
+  // Save refresh token to database — no env var or redeploy needed
+  try {
+    await saveRefreshToken(result.refreshToken);
+    logger.info("OAuth refresh token saved to database");
+    return c.json({
+      success: true,
+      message: "Gmail connected! Refresh token saved to database. Email is active immediately — no redeploy needed.",
+    });
+  } catch (saveError: any) {
+    logger.error("Failed to save refresh token to database", { error: saveError.message });
+    // Fallback: show token for manual setup
+    return c.json({
+      success: true,
+      refresh_token: result.refreshToken,
+      instructions:
+        "Auto-save to database failed. Add this refresh token as GOOGLE_EMAIL_REFRESH_TOKEN in Vercel env vars, then redeploy.",
+    });
   }
-
-  // Fallback: show token for manual setup
-  return c.json({
-    success: true,
-    refresh_token: result.refreshToken,
-    instructions:
-      "Auto-save failed. Add this refresh token as GOOGLE_EMAIL_REFRESH_TOKEN in Vercel env vars, then redeploy.",
-  });
 });
 
 // ── Cursor Agent Webhook ───────────────────────────────────────────────────

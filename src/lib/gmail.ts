@@ -76,14 +76,39 @@ function getRedirectUri(): string {
   return `${protocol}://${host}/api/oauth/google/callback`;
 }
 
+const SETTINGS_KEY = "google_refresh_token";
+
+async function getRefreshToken(): Promise<string | null> {
+  // DB is source of truth; env var is fallback for migration
+  try {
+    const { getSetting } = await import("./settings.js");
+    const dbToken = await getSetting(SETTINGS_KEY);
+    if (dbToken) return dbToken;
+  } catch {
+    // DB unavailable — fall back to env
+  }
+  return process.env.GOOGLE_EMAIL_REFRESH_TOKEN || null;
+}
+
+/**
+ * Save a refresh token to the database.
+ * Called by the OAuth callback after exchanging an auth code.
+ */
+export async function saveRefreshToken(token: string): Promise<void> {
+  const { setSetting } = await import("./settings.js");
+  await setSetting(SETTINGS_KEY, token, "oauth-callback");
+  logger.info("Refresh token saved to database");
+}
+
 async function getOAuth2Client() {
   const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_EMAIL_REFRESH_TOKEN;
 
   if (!clientId || !clientSecret) {
     return null;
   }
+
+  const refreshToken = await getRefreshToken();
 
   const { OAuth2Client } = await import("google-auth-library");
   const oauth2Client = new OAuth2Client(
@@ -106,9 +131,10 @@ export async function getGmailClient() {
   const auth = await getOAuth2Client();
   if (!auth) return null;
 
-  // Verify we have a refresh token
-  if (!process.env.GOOGLE_EMAIL_REFRESH_TOKEN) {
-    logger.warn("Gmail: No refresh token configured");
+  // Verify we have a refresh token (check DB + env)
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    logger.warn("Gmail: No refresh token configured (checked DB and env)");
     return null;
   }
 
