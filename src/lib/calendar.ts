@@ -32,6 +32,15 @@ async function getCalendarClient() {
   const auth = await getOAuth2Client();
   if (!auth) return null;
 
+  // Verify a refresh token exists (mirrors getGmailClient check)
+  const { getSetting } = await import("./settings.js");
+  const dbToken = await getSetting("google_refresh_token").catch(() => null);
+  const refreshToken = dbToken || process.env.GOOGLE_EMAIL_REFRESH_TOKEN;
+  if (!refreshToken) {
+    logger.warn("Calendar: No refresh token configured (checked DB and env)");
+    return null;
+  }
+
   const { calendar_v3 } = await import("@googleapis/calendar");
   return new calendar_v3.Calendar({ auth });
 }
