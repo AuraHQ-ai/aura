@@ -7,6 +7,7 @@ import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 
 const DEFAULT_REPO = "realadvisor/aura";
+const DEFAULT_REPO_URL = `https://github.com/${DEFAULT_REPO}`;
 
 /**
  * Create Cursor Cloud Agent tools for the AI SDK.
@@ -98,7 +99,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
 
           const result = await launchCursorAgent({
             prompt,
-            repo: DEFAULT_REPO,
+            repository: DEFAULT_REPO_URL,
             ref: ref || "main",
             branchName,
             autoCreatePr: true,

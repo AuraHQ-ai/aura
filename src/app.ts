@@ -339,7 +339,7 @@ function verifyCursorWebhookSignature(
 
 app.post("/api/webhook/cursor-agent", async (c) => {
   const rawBody = await c.req.text();
-  const signature = c.req.header("x-cursor-signature") || "";
+  const signature = c.req.header("x-webhook-signature") || "";
 
   if (process.env.CURSOR_WEBHOOK_SECRET) {
     if (!verifyCursorWebhookSignature(rawBody, signature)) {
