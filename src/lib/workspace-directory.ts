@@ -9,11 +9,7 @@ export interface DirectoryUser {
   title?: string;
   department?: string;
   phone?: string;
-  orgUnitPath?: string;
-  isAdmin: boolean;
-  suspended: boolean;
-  lastLoginTime?: string;
-  thumbnailPhotoUrl?: string;
+  photoUrl?: string;
 }
 
 // ── Auth ────────────────────────────────────────────────────────────────────
@@ -69,83 +65,36 @@ async function getAccessToken(): Promise<string | null> {
   return data.access_token;
 }
 
-// ── Directory API ───────────────────────────────────────────────────────────
+// ── People API (Directory) ─────────────────────────────────────────────────
 
-function parseUser(user: Record<string, unknown>): DirectoryUser {
-  const primaryEmail = (user.primaryEmail as string) || "";
-  const name = user.name as Record<string, string> | undefined;
-  const fullName = name?.fullName || `${name?.givenName || ""} ${name?.familyName || ""}`.trim();
+interface PeopleApiPerson {
+  resourceName?: string;
+  names?: Array<{ displayName?: string; givenName?: string; familyName?: string }>;
+  emailAddresses?: Array<{ value?: string; type?: string }>;
+  organizations?: Array<{ title?: string; department?: string; name?: string }>;
+  phoneNumbers?: Array<{ value?: string; type?: string }>;
+  photos?: Array<{ url?: string }>;
+}
 
+function parsePerson(person: PeopleApiPerson): DirectoryUser | null {
+  const email = person.emailAddresses?.[0]?.value;
+  const name = person.names?.[0]?.displayName;
+  if (!email && !name) return null;
+
+  const org = person.organizations?.[0];
   return {
-    email: primaryEmail,
-    name: fullName,
-    title: (user.organizations as Array<Record<string, string>>)?.[0]?.title,
-    department: (user.organizations as Array<Record<string, string>>)?.[0]?.department,
-    phone: (user.phones as Array<Record<string, string>>)?.[0]?.value,
-    orgUnitPath: user.orgUnitPath as string | undefined,
-    isAdmin: (user.isAdmin as boolean) || false,
-    suspended: (user.suspended as boolean) || false,
-    lastLoginTime: user.lastLoginTime as string | undefined,
-    thumbnailPhotoUrl: user.thumbnailPhotoUrl as string | undefined,
+    email: email || "unknown",
+    name: name || email || "unknown",
+    title: org?.title || undefined,
+    department: org?.department || undefined,
+    phone: person.phoneNumbers?.[0]?.value || undefined,
+    photoUrl: person.photos?.[0]?.url || undefined,
   };
 }
 
 /**
- * List all users in the Google Workspace directory.
- */
-export async function listDirectoryUsers(
-  options: { maxResults?: number; query?: string; orderBy?: string } = {}
-): Promise<DirectoryUser[] | null> {
-  const token = await getAccessToken();
-  if (!token) return null;
-
-  const params = new URLSearchParams({
-    customer: "my_customer",
-    maxResults: String(options.maxResults || 100),
-    projection: "full",
-    orderBy: options.orderBy || "email",
-  });
-
-  if (options.query) {
-    params.set("query", options.query);
-  }
-
-  const allUsers: DirectoryUser[] = [];
-  let pageToken: string | undefined;
-
-  do {
-    if (pageToken) params.set("pageToken", pageToken);
-
-    const resp = await fetch(
-      `https://admin.googleapis.com/admin/directory/v1/users?${params}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (!resp.ok) {
-      const body = await resp.text();
-      logger.error("Directory API list users failed", {
-        status: resp.status,
-        body,
-      });
-      return null;
-    }
-
-    const data = (await resp.json()) as {
-      users?: Record<string, unknown>[];
-      nextPageToken?: string;
-    };
-
-    if (data.users) {
-      allUsers.push(...data.users.map(parseUser));
-    }
-    pageToken = data.nextPageToken;
-  } while (pageToken && allUsers.length < (options.maxResults || 100));
-
-  return allUsers;
-}
-
-/**
- * Search for a user by name or email in the directory.
+ * Search for users in the Google Workspace directory using the People API.
+ * Uses the `directory.readonly` scope — no admin privileges needed.
  */
 export async function searchDirectoryUser(
   query: string
@@ -153,95 +102,88 @@ export async function searchDirectoryUser(
   const token = await getAccessToken();
   if (!token) return null;
 
-  // Try exact email lookup first
-  if (query.includes("@")) {
-    const resp = await fetch(
-      `https://admin.googleapis.com/admin/directory/v1/users/${encodeURIComponent(query)}?projection=full`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (resp.ok) {
-      const user = (await resp.json()) as Record<string, unknown>;
-      return [parseUser(user)];
-    }
-    // Fall through to search if exact lookup fails
-  }
-
-  // Search by name or email prefix
-  // The Directory API supports queries like: name:'John' email:'john@'
+  // People API directory search
   const params = new URLSearchParams({
-    customer: "my_customer",
-    maxResults: "10",
-    projection: "full",
-    query: `name:'${query}' email:'${query}'`,
+    query,
+    readMask: "names,emailAddresses,organizations,phoneNumbers,photos",
+    sources: "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+    pageSize: "20",
   });
 
   const resp = await fetch(
-    `https://admin.googleapis.com/admin/directory/v1/users?${params}`,
+    `https://people.googleapis.com/v1/people:searchDirectoryPeople?${params}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
   if (!resp.ok) {
-    // Try with just name query (OR doesn't work, need separate call)
-    const nameParams = new URLSearchParams({
-      customer: "my_customer",
-      maxResults: "10",
-      projection: "full",
-      query: `name:'${query}'`,
-    });
-
-    const nameResp = await fetch(
-      `https://admin.googleapis.com/admin/directory/v1/users?${nameParams}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (!nameResp.ok) {
-      const body = await nameResp.text();
-      logger.error("Directory API search failed", {
-        status: nameResp.status,
-        body,
-        query,
-      });
-      return null;
-    }
-
-    const nameData = (await nameResp.json()) as {
-      users?: Record<string, unknown>[];
-    };
-    return nameData.users?.map(parseUser) || [];
-  }
-
-  const data = (await resp.json()) as {
-    users?: Record<string, unknown>[];
-  };
-  return data.users?.map(parseUser) || [];
-}
-
-/**
- * Get a specific user by email.
- */
-export async function getDirectoryUser(
-  email: string
-): Promise<DirectoryUser | null> {
-  const token = await getAccessToken();
-  if (!token) return null;
-
-  const resp = await fetch(
-    `https://admin.googleapis.com/admin/directory/v1/users/${encodeURIComponent(email)}?projection=full`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!resp.ok) {
-    if (resp.status === 404) return null;
     const body = await resp.text();
-    logger.error("Directory API get user failed", {
+    logger.error("People API directory search failed", {
       status: resp.status,
       body,
-      email,
+      query,
     });
     return null;
   }
 
-  const user = (await resp.json()) as Record<string, unknown>;
-  return parseUser(user);
+  const data = (await resp.json()) as {
+    people?: PeopleApiPerson[];
+    totalSize?: number;
+  };
+
+  return (data.people || []).map(parsePerson).filter((u): u is DirectoryUser => u !== null);
+}
+
+/**
+ * List all users in the Google Workspace directory.
+ * Paginates through the full directory.
+ */
+export async function listDirectoryUsers(opts?: {
+  maxResults?: number;
+}): Promise<DirectoryUser[] | null> {
+  const token = await getAccessToken();
+  if (!token) return null;
+
+  const max = opts?.maxResults || 100;
+  const allUsers: DirectoryUser[] = [];
+  let pageToken: string | undefined;
+
+  while (allUsers.length < max) {
+    const params = new URLSearchParams({
+      readMask: "names,emailAddresses,organizations,phoneNumbers,photos",
+      sources: "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+      pageSize: String(Math.min(max - allUsers.length, 100)),
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const resp = await fetch(
+      `https://people.googleapis.com/v1/people:listDirectoryPeople?${params}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    if (!resp.ok) {
+      const body = await resp.text();
+      logger.error("People API directory list failed", {
+        status: resp.status,
+        body,
+      });
+      // Return what we have so far, or null if nothing
+      return allUsers.length > 0 ? allUsers : null;
+    }
+
+    const data = (await resp.json()) as {
+      people?: PeopleApiPerson[];
+      nextPageToken?: string;
+    };
+
+    const parsed = (data.people || [])
+      .map(parsePerson)
+      .filter((u): u is DirectoryUser => u !== null);
+    allUsers.push(...parsed);
+
+    if (!data.nextPageToken || parsed.length === 0) break;
+    pageToken = data.nextPageToken;
+  }
+
+  logger.info("Listed directory users", { count: allUsers.length });
+  return allUsers;
 }
