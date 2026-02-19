@@ -322,7 +322,7 @@ async function executeJob(
         channelId: job.channelId || undefined,
         threadTs: job.threadTs || undefined,
       }),
-      stopWhen: stepCountIs(50),
+      stopWhen: stepCountIs(500),
     });
 
     const result = (text || "Job completed (no text output)").substring(0, 2000);

@@ -378,7 +378,7 @@ export async function generateResponse(
     model,
     system: options.systemPrompt,
     tools: createSlackTools(options.slackClient, options.context),
-    stopWhen: stepCountIs(25),
+    stopWhen: stepCountIs(250),
     abortSignal: abortController.signal,
   };
 
