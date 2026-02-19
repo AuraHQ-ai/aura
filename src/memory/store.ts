@@ -130,11 +130,12 @@ export async function storeToolCallMessages(
   let storedCount = 0;
   for (const msg of messagesToStore) {
     try {
-      await db
+      const result = await db
         .insert(messages)
         .values(msg)
-        .onConflictDoNothing({ target: messages.slackTs });
-      storedCount++;
+        .onConflictDoNothing({ target: messages.slackTs })
+        .returning({ id: messages.id });
+      if (result.length > 0) storedCount++;
     } catch (error) {
       logger.warn("Failed to store tool call message", {
         error: String(error),

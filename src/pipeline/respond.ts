@@ -24,6 +24,8 @@ export interface ToolCallRecord {
   output: string;
   /** Whether the tool errored */
   is_error: boolean;
+  /** Raw (untruncated) output object, available for post-processing */
+  rawOutput?: unknown;
 }
 
 /** Truncate a string to fit within a byte budget, appending "…" if cut. */
@@ -490,6 +492,7 @@ export async function generateResponse(
             input: pending?.input ?? "{}",
             output: serializeToolOutput(chunk.toolName, output),
             is_error: !!isError,
+            rawOutput: output,
           });
           pendingToolInputs.delete(chunk.toolCallId);
 

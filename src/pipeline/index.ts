@@ -512,19 +512,15 @@ async function runBackgroundTasks(params: {
         const tc = toolCalls[i];
         if (!channelReadTools.includes(tc.name)) continue;
 
-        try {
-          const output = JSON.parse(tc.output);
-          if (output.ok && Array.isArray(output.messages) && output.messages.length > 0) {
-            const channelName = output.channel || output.user || "unknown";
-            await storeChannelReadMessage(
-              tc.name,
-              channelName,
-              output.messages,
-              { ...storageCtx, toolIndex: i },
-            );
-          }
-        } catch {
-          // Output couldn't be parsed — skip channel read storage
+        const output = tc.rawOutput as any;
+        if (output?.ok && Array.isArray(output.messages) && output.messages.length > 0) {
+          const channelName = output.channel || output.user || "unknown";
+          await storeChannelReadMessage(
+            tc.name,
+            channelName,
+            output.messages,
+            { ...storageCtx, toolIndex: i },
+          );
         }
       }
     }
