@@ -51,6 +51,7 @@ export const messages = pgTable(
     userId: text("user_id").notNull(),
     role: messageRoleEnum("role").notNull(),
     content: text("content").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [

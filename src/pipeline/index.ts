@@ -33,6 +33,30 @@ import type { SlackEvent } from "./context.js";
 /** Maximum message length we'll process (characters). Slack max is ~40k. */
 const MAX_MESSAGE_LENGTH = 8000;
 
+/**
+ * Build an optional metadata record from a Slack event's rich fields
+ * (attachments, blocks, files, forwarded content, etc.).
+ * Returns undefined when there's nothing worth storing.
+ */
+function buildMessageMetadata(
+  event: SlackEvent,
+): Record<string, unknown> | undefined {
+  const meta: Record<string, unknown> = {};
+  const ev = event as unknown as Record<string, unknown>;
+
+  if (Array.isArray(ev.attachments) && ev.attachments.length > 0) {
+    meta.attachments = ev.attachments;
+  }
+  if (Array.isArray(ev.blocks) && ev.blocks.length > 0) {
+    meta.blocks = ev.blocks;
+  }
+  if (Array.isArray(ev.files) && ev.files.length > 0) {
+    meta.files = ev.files;
+  }
+
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
 interface PipelineOptions {
   event: SlackEvent;
   client: WebClient;
@@ -109,7 +133,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       channelId: context.channelId,
     });
     // Still store the message for long-term memory, but don't respond
-    const storePromise = storeUserMessage(context);
+    const storePromise = storeUserMessage(context, event);
     if (waitUntil) {
       waitUntil(storePromise);
     } else {
@@ -283,6 +307,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // 7. Background tasks (via waitUntil so they don't block the response)
     const backgroundTasks = runBackgroundTasks({
       context: { ...context, text: messageText },
+      event,
       response: response.raw,
       displayName,
       client,
@@ -412,7 +437,7 @@ async function handleTransparencyCommands(
 /**
  * Store the user's message in the background.
  */
-async function storeUserMessage(context: MessageContext): Promise<void> {
+async function storeUserMessage(context: MessageContext, event: SlackEvent): Promise<void> {
   try {
     await storeMessage({
       slackTs: context.messageTs,
@@ -422,6 +447,7 @@ async function storeUserMessage(context: MessageContext): Promise<void> {
       userId: context.userId,
       role: "user",
       content: context.text,
+      metadata: buildMessageMetadata(event),
     });
   } catch (error) {
     recordError("storeUserMessage", error, { userId: context.userId });
@@ -433,11 +459,12 @@ async function storeUserMessage(context: MessageContext): Promise<void> {
  */
 async function runBackgroundTasks(params: {
   context: MessageContext;
+  event: SlackEvent;
   response: string;
   displayName: string;
   client: InstanceType<typeof import("@slack/web-api").WebClient>;
 }): Promise<void> {
-  const { context, response, displayName, client } = params;
+  const { context, event, response, displayName, client } = params;
 
   try {
     // Store the user's message
@@ -449,6 +476,7 @@ async function runBackgroundTasks(params: {
       userId: context.userId,
       role: "user",
       content: context.text,
+      metadata: buildMessageMetadata(event),
     });
 
     // Store Aura's response with a pseudo-timestamp

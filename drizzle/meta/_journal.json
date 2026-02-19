@@ -64,6 +64,13 @@
       "when": 1771456188641,
       "tag": "0008_add_unaccent_extension",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1771514088605,
+      "tag": "0009_lush_maestro",
+      "breakpoints": true
     }
   ]
 }
