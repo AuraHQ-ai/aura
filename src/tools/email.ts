@@ -1,0 +1,245 @@
+import { tool } from "ai";
+import { z } from "zod";
+import { logger } from "../lib/logger.js";
+
+// ── Tool Definitions ────────────────────────────────────────────────────────
+
+/**
+ * Create email tools for the AI SDK.
+ * Uses dynamic import for gmail.js to avoid loading googleapis on every request.
+ */
+export function createEmailTools() {
+  return {
+    send_email: tool({
+      description:
+        "Send an email from aura@realadvisor.com. Use for external communication, follow-ups, outreach, and reports.",
+      inputSchema: z.object({
+        to: z.string().describe("Recipient email address"),
+        subject: z.string().describe("Email subject line"),
+        body: z.string().describe("Email body text"),
+        cc: z.string().optional().describe("CC email address"),
+        bcc: z.string().optional().describe("BCC email address"),
+        reply_to_message_id: z
+          .string()
+          .optional()
+          .describe("Message ID to reply to (for threading)"),
+        thread_id: z
+          .string()
+          .optional()
+          .describe("Thread ID for reply threading"),
+      }),
+      execute: async ({
+        to,
+        subject,
+        body,
+        cc,
+        bcc,
+        reply_to_message_id,
+        thread_id,
+      }) => {
+        try {
+          const { getGmailClient, sendEmail } = await import(
+            "../lib/gmail.js"
+          );
+          const client = await getGmailClient();
+          if (!client) {
+            return {
+              ok: false,
+              error:
+                "Gmail is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and GOOGLE_EMAIL_REFRESH_TOKEN.",
+            };
+          }
+
+          const result = await sendEmail(to, subject, body, {
+            cc,
+            bcc,
+            replyToMessageId: reply_to_message_id,
+            threadId: thread_id,
+          });
+
+          logger.info("send_email tool called", {
+            to,
+            subject,
+            messageId: result.id,
+          });
+
+          return {
+            ok: true,
+            message: `Email sent to ${to}`,
+            id: result.id,
+            threadId: result.threadId,
+          };
+        } catch (error: any) {
+          logger.error("send_email tool failed", {
+            to,
+            subject,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to send email: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    read_emails: tool({
+      description:
+        "Read recent emails from Aura's inbox. Can filter by unread status or search query.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .optional()
+          .describe(
+            "Gmail search query, e.g. 'from:someone@example.com' or 'is:unread'",
+          ),
+        max_results: z
+          .number()
+          .optional()
+          .default(10)
+          .describe("Maximum emails to return (max 20)"),
+        unread_only: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("Only show unread emails"),
+      }),
+      execute: async ({ query, max_results, unread_only }) => {
+        try {
+          const { getGmailClient, listEmails } = await import(
+            "../lib/gmail.js"
+          );
+          const client = await getGmailClient();
+          if (!client) {
+            return {
+              ok: false,
+              error:
+                "Gmail is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and GOOGLE_EMAIL_REFRESH_TOKEN.",
+            };
+          }
+
+          const emails = await listEmails({
+            query,
+            maxResults: max_results,
+            unreadOnly: unread_only,
+          });
+
+          logger.info("read_emails tool called", {
+            query,
+            count: emails.length,
+          });
+
+          return {
+            ok: true,
+            emails,
+            count: emails.length,
+          };
+        } catch (error: any) {
+          logger.error("read_emails tool failed", {
+            query,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read emails: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    read_email: tool({
+      description:
+        "Read the full content of a specific email by its message ID.",
+      inputSchema: z.object({
+        message_id: z.string().describe("The Gmail message ID to read"),
+      }),
+      execute: async ({ message_id }) => {
+        try {
+          const { getGmailClient, getEmail } = await import(
+            "../lib/gmail.js"
+          );
+          const client = await getGmailClient();
+          if (!client) {
+            return {
+              ok: false,
+              error:
+                "Gmail is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and GOOGLE_EMAIL_REFRESH_TOKEN.",
+            };
+          }
+
+          const email = await getEmail(message_id);
+
+          logger.info("read_email tool called", {
+            messageId: message_id,
+            subject: email.subject,
+          });
+
+          return {
+            ok: true,
+            email,
+          };
+        } catch (error: any) {
+          logger.error("read_email tool failed", {
+            messageId: message_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read email: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    reply_to_email: tool({
+      description: "Reply to an existing email thread.",
+      inputSchema: z.object({
+        message_id: z
+          .string()
+          .describe("Message ID of the email to reply to"),
+        thread_id: z
+          .string()
+          .describe("Thread ID for proper threading"),
+        body: z.string().describe("Reply body text"),
+      }),
+      execute: async ({ message_id, thread_id, body }) => {
+        try {
+          const { getGmailClient, replyToEmail } = await import(
+            "../lib/gmail.js"
+          );
+          const client = await getGmailClient();
+          if (!client) {
+            return {
+              ok: false,
+              error:
+                "Gmail is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and GOOGLE_EMAIL_REFRESH_TOKEN.",
+            };
+          }
+
+          const result = await replyToEmail(message_id, thread_id, body);
+
+          logger.info("reply_to_email tool called", {
+            originalMessageId: message_id,
+            replyId: result.id,
+          });
+
+          return {
+            ok: true,
+            message: "Reply sent",
+            id: result.id,
+            threadId: result.threadId,
+          };
+        } catch (error: any) {
+          logger.error("reply_to_email tool failed", {
+            messageId: message_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to reply to email: ${error.message}`,
+          };
+        }
+      },
+    }),
+  };
+}

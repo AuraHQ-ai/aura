@@ -312,6 +312,49 @@ function isUnsupportedFileError(error: any): boolean {
   );
 }
 
+// ── Stream Continuation ──────────────────────────────────────────────────────
+// Slack's chatStream rejects appends when accumulated content exceeds ~40K
+// chars with `msg_too_long`. We proactively split into continuation messages
+// using cascading boundary detection to find clean break points.
+
+const STREAM_THRESHOLD_NEWLINE = 30_000;
+const STREAM_THRESHOLD_SENTENCE = 35_000;
+const STREAM_THRESHOLD_WHITESPACE = 38_000;
+const STREAM_HARD_LIMIT = 39_500;
+
+/**
+ * Find the best split index in a text delta for stream continuation.
+ * Returns the char offset within `delta` at which to split: text before
+ * stays in the current stream, text from this offset goes to a new one.
+ * Returns -1 if no split is needed yet.
+ */
+function findContinuationBreak(delta: string, streamLength: number): number {
+  if (streamLength >= STREAM_HARD_LIMIT) return 0;
+
+  const candidates: number[] = [];
+
+  if (streamLength >= STREAM_THRESHOLD_NEWLINE) {
+    const idx = delta.indexOf("\n");
+    if (idx >= 0) candidates.push(idx + 1);
+  }
+
+  if (streamLength >= STREAM_THRESHOLD_SENTENCE) {
+    const idx = delta.indexOf(". ");
+    if (idx >= 0) candidates.push(idx + 2);
+  }
+
+  if (streamLength >= STREAM_THRESHOLD_WHITESPACE) {
+    const idx = delta.search(/\s/);
+    if (idx >= 0) candidates.push(idx + 1);
+    if (streamLength + delta.length >= STREAM_HARD_LIMIT) {
+      candidates.push(Math.max(0, STREAM_HARD_LIMIT - streamLength));
+    }
+  }
+
+  if (candidates.length === 0) return -1;
+  return Math.min(...candidates);
+}
+
 // ── Main Function ────────────────────────────────────────────────────────────
 
 /**
@@ -352,7 +395,7 @@ export async function generateResponse(
   if (options.teamId) streamParams.recipient_team_id = options.teamId;
   if (options.recipientUserId) streamParams.recipient_user_id = options.recipientUserId;
 
-  const streamer = slackClient.chatStream(streamParams as any);
+  let streamer = slackClient.chatStream(streamParams as any);
 
   // ── Streaming fallback ──────────────────────────────────────────────
   // Some channel types (e.g. Slack List internal channels) don't support
@@ -428,6 +471,8 @@ export async function generateResponse(
 
   // ── Stream and send to Slack ────────────────────────────────────────
   let accumulatedText = "";
+  let currentStreamLength = 0;
+  let fallbackStartIdx = 0;
   let pendingTableBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
@@ -441,7 +486,59 @@ export async function generateResponse(
       switch (chunk.type) {
         case "text-delta": {
           accumulatedText += chunk.text;
-          await tryStreamAppend({ markdown_text: chunk.text });
+          let remaining = chunk.text;
+
+          while (remaining) {
+            if (streamingFailed) break;
+
+            const breakIdx = findContinuationBreak(remaining, currentStreamLength);
+
+            if (breakIdx < 0) {
+              currentStreamLength += remaining.length;
+              await tryStreamAppend({ markdown_text: remaining });
+              break;
+            }
+
+            const before = remaining.slice(0, breakIdx);
+            remaining = remaining.slice(breakIdx);
+
+            if (before) {
+              currentStreamLength += before.length;
+              await tryStreamAppend({ markdown_text: before });
+            }
+
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length - remaining.length - before.length;
+              break;
+            }
+
+            if (!remaining) break;
+
+            logger.info("Splitting stream for continuation message", {
+              currentStreamLength,
+              totalAccumulated: accumulatedText.length,
+            });
+
+            try {
+              await streamer.stop();
+            } catch (stopErr: any) {
+              logger.warn("Failed to stop stream for continuation", {
+                error: stopErr?.message,
+              });
+            }
+
+            try {
+              streamer = slackClient.chatStream(streamParams as any);
+              currentStreamLength = 0;
+            } catch (startErr: any) {
+              logger.warn(
+                "Failed to start continuation stream, falling back to postMessage",
+                { error: startErr?.message },
+              );
+              streamingFailed = true;
+              fallbackStartIdx = accumulatedText.length - remaining.length;
+            }
+          }
           break;
         }
 
@@ -559,16 +656,21 @@ export async function generateResponse(
     const totalTokens = inputTokens + outputTokens;
 
     if (streamingFailed) {
-      // Fallback: post the complete response via chat.postMessage.
-      // When blocks are present, Slack only renders blocks — text is just a
-      // notification fallback. Include the LLM text as section blocks so it
-      // remains visible alongside the table.
+      // Stop the current streamer to avoid leaving an orphaned stream on Slack
+      try { await streamer.stop(); } catch { /* stream may already be broken */ }
+
+      // Fallback: post the unsent portion via chat.postMessage.
+      // If a continuation split partially succeeded, only post text that
+      // wasn't already streamed (fallbackStartIdx marks the boundary).
+      const unsentText = fallbackStartIdx > 0
+        ? finalText.slice(fallbackStartIdx)
+        : finalText;
       const blocks: any[] = [];
-      if (finalText) {
-        for (let i = 0; i < finalText.length; i += 3000) {
+      if (unsentText) {
+        for (let i = 0; i < unsentText.length; i += 3000) {
           blocks.push({
             type: "section",
-            text: { type: "mrkdwn", text: finalText.slice(i, i + 3000) },
+            text: { type: "mrkdwn", text: unsentText.slice(i, i + 3000) },
             expand: true,
           });
         }
@@ -588,7 +690,7 @@ export async function generateResponse(
       });
 
       const toolMeta = buildToolMetadata(toolCallRecords);
-      const fallbackText = finalText || "_I processed your request but had nothing to say._";
+      const fallbackText = unsentText || "_I processed your request but had nothing to say._";
 
       try {
         await slackClient.chat.postMessage({
