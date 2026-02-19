@@ -219,7 +219,17 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
 
     // Embed all extracted memories in a single batch
     const memoryTexts = normalizedMemories.map((m) => m.content);
-    const embeddings = await embedTexts(memoryTexts);
+    let embeddings: (number[] | null)[];
+    try {
+      embeddings = await embedTexts(memoryTexts);
+    } catch (embedError) {
+      logger.error("Memory embedding failed — storing memories WITHOUT embeddings", {
+        error: String(embedError),
+        memoryCount: memoryTexts.length,
+        userId: context.userId,
+      });
+      embeddings = memoryTexts.map(() => null);
+    }
 
     // Prepare memories for storage
     const newMemories: NewMemory[] = normalizedMemories.map((m, i) => ({
@@ -228,19 +238,22 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       sourceMessageId: context.sourceMessageId || undefined,
       sourceChannelType: context.channelType,
       relatedUserIds: m.relatedUserIds.length > 0 ? m.relatedUserIds : [context.userId],
-      embedding: embeddings[i],
+      embedding: embeddings[i] ?? null,
       shareable: m.shareable ? 1 : 0,
       relevanceScore: 1.0,
     }));
 
+    const hasEmbeddings = newMemories.some((m) => m.embedding !== null);
     await storeMemories(newMemories);
 
     logger.info(`Extracted ${newMemories.length} memories in ${Date.now() - start}ms`, {
       types: newMemories.map((m) => m.type),
+      hasEmbeddings,
     });
   } catch (error) {
     logger.error("Memory extraction failed", {
       error: String(error),
+      stack: (error as Error).stack?.split("\n").slice(0, 5).join(" | "),
       userId: context.userId,
     });
     // Don't rethrow — extraction is best-effort and should not crash the pipeline

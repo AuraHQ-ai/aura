@@ -25,27 +25,32 @@ export async function claimEvent(eventTs: string, channelId: string): Promise<bo
  */
 export async function storeMessage(message: NewMessage): Promise<string> {
   try {
-    // Generate embedding for the message content
-    let embedding: number[] | undefined;
+    let embedding: number[] | null = null;
     if (message.content && message.content.trim().length > 0) {
       try {
         embedding = await embedText(message.content);
       } catch (error) {
-        logger.warn("Failed to embed message, storing without embedding", {
+        logger.error("Failed to embed message — storing without embedding", {
           error: String(error),
           slackTs: message.slackTs,
+          contentLength: message.content.length,
         });
       }
     }
 
     const [inserted] = await db
       .insert(messages)
-      .values({ ...message, embedding: embedding ?? null })
+      .values({ ...message, embedding })
       .onConflictDoNothing({ target: messages.slackTs })
       .returning({ id: messages.id });
 
     if (inserted) {
-      logger.debug("Stored message", { id: inserted.id, role: message.role, hasEmbedding: !!embedding });
+      logger.info("Stored message", {
+        id: inserted.id,
+        role: message.role,
+        hasEmbedding: embedding !== null,
+        embeddingDims: embedding?.length,
+      });
       return inserted.id;
     }
 
@@ -106,6 +111,53 @@ export async function backfillMessageEmbeddings(batchSize = 50): Promise<number>
     return totalEmbedded;
   } catch (error) {
     logger.error("Message embedding backfill failed", {
+      error: String(error),
+      totalEmbeddedBeforeFailure: totalEmbedded,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Backfill embeddings for existing memories that don't have them.
+ * Processes in batches to avoid overwhelming the embedding API.
+ */
+export async function backfillMemoryEmbeddings(batchSize = 50): Promise<number> {
+  let totalEmbedded = 0;
+
+  try {
+    while (true) {
+      const batch = await db
+        .select({ id: memories.id, content: memories.content })
+        .from(memories)
+        .where(
+          and(
+            isNull(memories.embedding),
+            sql`${memories.content} IS NOT NULL AND length(${memories.content}) > 0`,
+          ),
+        )
+        .limit(batchSize);
+
+      if (batch.length === 0) break;
+
+      const texts = batch.map((m) => m.content);
+      const embeddings = await embedTexts(texts);
+
+      for (let i = 0; i < batch.length; i++) {
+        await db
+          .update(memories)
+          .set({ embedding: embeddings[i] })
+          .where(eq(memories.id, batch[i].id));
+      }
+
+      totalEmbedded += batch.length;
+      logger.info(`Backfilled ${totalEmbedded} memory embeddings so far`);
+    }
+
+    logger.info(`Memory backfill complete: embedded ${totalEmbedded} memories`);
+    return totalEmbedded;
+  } catch (error) {
+    logger.error("Memory embedding backfill failed", {
       error: String(error),
       totalEmbeddedBeforeFailure: totalEmbedded,
     });
