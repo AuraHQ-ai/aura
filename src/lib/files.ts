@@ -10,6 +10,15 @@ const IMAGE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 
+/**
+ * MIME types that model providers widely accept as FilePart input.
+ * Everything else that isn't an image or text gets a text-description fallback
+ * so one unsupported attachment can't crash the whole LLM call.
+ */
+const SUPPORTED_FILE_PART_TYPES = new Set([
+  "application/pdf",
+]);
+
 const TEXT_MIME_TYPES = new Set([
   "application/json",
   "application/xml",
@@ -101,7 +110,18 @@ function toContentPart(
     return { type: "text", text: `[File: ${name}]\n${text}` };
   }
 
-  return { type: "file", data, mediaType: mimeType, filename: name };
+  if (SUPPORTED_FILE_PART_TYPES.has(mimeType)) {
+    return { type: "file", data, mediaType: mimeType, filename: name };
+  }
+
+  // Binary types without broad model support (audio, video, docx, etc.):
+  // include a text description so the model knows a file was attached
+  // without risking an unsupported-media-type error that kills the response.
+  const sizeKB = Math.round(data.length / 1024);
+  return {
+    type: "text",
+    text: `[Attached file: ${name} (${mimeType}, ${sizeKB} KB) — this binary file type cannot be processed directly]`,
+  };
 }
 
 /**
