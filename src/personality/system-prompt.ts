@@ -383,9 +383,16 @@ function formatUserProfile(profile: UserProfile): string {
 function formatConversations(conversations: ConversationThread[]): string {
   if (conversations.length === 0) return "";
 
+  const MAX_THREAD_MESSAGES = 50;
+
   const formatted = conversations
     .map((thread) => {
-      const msgs = thread.messages
+      const allMsgs = thread.messages;
+      const capped =
+        allMsgs.length <= MAX_THREAD_MESSAGES
+          ? allMsgs
+          : [allMsgs[0], ...allMsgs.slice(-MAX_THREAD_MESSAGES + 1)];
+      const msgs = capped
         .map((m) => {
           const timeAgo = relativeTime(new Date(m.createdAt));
           const speaker = m.role === "assistant" ? "Aura" : m.userId;

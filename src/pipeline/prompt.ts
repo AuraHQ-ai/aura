@@ -34,24 +34,36 @@ export async function assemblePrompt(
 ): Promise<AssembledPrompt> {
   const start = Date.now();
 
-  // Embed the query once, then share the vector with both retrieval functions
-  const queryEmbedding = await embedText(context.text);
+  // Embed the query once, then share the vector with both retrieval functions.
+  // If the embedding API is unavailable, degrade gracefully (no memories/conversations).
+  let queryEmbedding: number[] | undefined;
+  try {
+    queryEmbedding = await embedText(context.text);
+  } catch (error) {
+    logger.error("Embedding failed, proceeding without memory context", {
+      error: String(error),
+    });
+  }
 
   // Run memory retrieval, conversation retrieval, and profile fetch in parallel
   const [memories, conversations, userProfile] = await Promise.all([
-    retrieveMemories({
-      query: context.text,
-      queryEmbedding,
-      currentUserId: context.userId,
-      limit: 15,
-    }),
-    retrieveConversations({
-      query: context.text,
-      queryEmbedding,
-      threadLimit: 3,
-      matchLimit: 15,
-      minSimilarity: 0.35,
-    }),
+    queryEmbedding
+      ? retrieveMemories({
+          query: context.text,
+          queryEmbedding,
+          currentUserId: context.userId,
+          limit: 15,
+        })
+      : Promise.resolve([] as Memory[]),
+    queryEmbedding
+      ? retrieveConversations({
+          query: context.text,
+          queryEmbedding,
+          threadLimit: 3,
+          matchLimit: 15,
+          minSimilarity: 0.35,
+        })
+      : Promise.resolve([] as ConversationThread[]),
     getProfile(context.userId),
   ]);
 
