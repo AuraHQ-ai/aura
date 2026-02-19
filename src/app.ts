@@ -9,6 +9,9 @@ import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
 import crypto from "node:crypto";
+import { eq } from "drizzle-orm";
+import { db } from "./db/client.js";
+import { notes } from "./db/schema.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -308,6 +311,176 @@ app.post("/api/slack/interactions", async (c) => {
   }
 
   // Acknowledge immediately
+  return c.json({ ok: true });
+});
+
+// ── Cursor Agent Webhook ───────────────────────────────────────────────────
+
+function verifyCursorWebhookSignature(
+  rawBody: string,
+  signature: string,
+): boolean {
+  const secret = process.env.CURSOR_WEBHOOK_SECRET;
+  if (!secret || !signature) return false;
+
+  const expected =
+    "sha256=" +
+    crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(expected, "utf8"),
+      Buffer.from(signature, "utf8"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+app.post("/api/webhook/cursor-agent", async (c) => {
+  const rawBody = await c.req.text();
+  const signature = c.req.header("x-webhook-signature") || "";
+
+  if (!process.env.CURSOR_WEBHOOK_SECRET) {
+    logger.warn("CURSOR_WEBHOOK_SECRET not configured — rejecting webhook");
+    return c.json({ error: "Webhook not configured" }, 403);
+  }
+
+  if (!verifyCursorWebhookSignature(rawBody, signature)) {
+    logger.warn("Invalid Cursor webhook signature — rejecting");
+    return c.json({ error: "Invalid signature" }, 401);
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+
+  const agentId: string = payload.id || payload.agentId || "";
+  const status: string = payload.status || payload.event || "";
+  const prUrl: string = payload.target?.prUrl || payload.prUrl || "";
+  const branchName: string =
+    payload.target?.branchName || payload.branchName || "";
+  const summary: string = payload.summary || "";
+  const webhookId = c.req.header("x-webhook-id") || "";
+
+  logger.info("Cursor agent webhook received", {
+    agentId,
+    status,
+    webhookId,
+    prUrl,
+  });
+
+  const processWebhook = async () => {
+    try {
+      // Look up tracking note for callback context
+      let requester = "";
+      let channelId = "";
+      let threadTs = "";
+      let issueDescription = "";
+
+      if (agentId) {
+        const trackingRows = await db
+          .select({ content: notes.content })
+          .from(notes)
+          .where(eq(notes.topic, `cursor-agent:${agentId}`))
+          .limit(1);
+
+        if (trackingRows[0]?.content) {
+          const content = trackingRows[0].content;
+          const requesterMatch = content.match(
+            /\*\*Requester\*\*:\s*(\S+)/,
+          );
+          const channelMatch = content.match(/\*\*Channel\*\*:\s*(\S+)/);
+          const threadMatch = content.match(/\*\*Thread\*\*:\s*(\S+)/);
+          const issueMatch = content.match(
+            /## Issue\n([\s\S]*?)$/,
+          );
+          if (requesterMatch && requesterMatch[1] !== "unknown")
+            requester = requesterMatch[1];
+          if (channelMatch) channelId = channelMatch[1];
+          if (threadMatch && threadMatch[1] !== "none")
+            threadTs = threadMatch[1];
+          if (issueMatch) issueDescription = issueMatch[1].trim();
+        }
+      }
+
+      const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+      const dmTarget = requester || adminIds[0];
+
+      if (!dmTarget) {
+        logger.warn("Cursor agent webhook: no DM target found", { agentId });
+        return;
+      }
+
+      const dashboardUrl = `https://cursor.com/agents/${agentId}`;
+      const isFinished =
+        status.toLowerCase() === "finished" ||
+        status.toLowerCase() === "completed";
+      const isError =
+        status.toLowerCase() === "error" ||
+        status.toLowerCase() === "failed";
+
+      let message: string;
+      if (isFinished) {
+        const prLine = prUrl ? `\n*PR*: ${prUrl}` : "";
+        const summaryLine = summary ? `\n\n${summary}` : "";
+        message =
+          `Cursor agent \`${agentId}\` *finished*.${prLine}\n*Branch*: \`${branchName || "unknown"}\`\n*Dashboard*: ${dashboardUrl}${summaryLine}` +
+          (issueDescription
+            ? `\n\n_Original task: ${issueDescription.slice(0, 200)}${issueDescription.length > 200 ? "..." : ""}_`
+            : "");
+      } else if (isError) {
+        const summaryLine = summary ? `\n\n${summary}` : "";
+        message =
+          `Cursor agent \`${agentId}\` *failed*.${summaryLine}\n*Dashboard*: ${dashboardUrl}` +
+          (issueDescription
+            ? `\n\n_Original task: ${issueDescription.slice(0, 200)}${issueDescription.length > 200 ? "..." : ""}_`
+            : "");
+      } else {
+        message = `Cursor agent \`${agentId}\` status update: *${status}*\n*Dashboard*: ${dashboardUrl}`;
+      }
+
+      const dmResult = await slackClient.conversations.open({
+        users: dmTarget,
+      });
+      const dmChannelId = dmResult.channel?.id;
+      if (dmChannelId) {
+        await slackClient.chat.postMessage({
+          channel: dmChannelId,
+          text: message,
+        });
+        logger.info("Cursor agent webhook: DM sent", {
+          agentId,
+          target: dmTarget,
+          status,
+        });
+      }
+
+      if (channelId && channelId !== "unknown" && channelId !== dmChannelId) {
+        await slackClient.chat.postMessage({
+          channel: channelId,
+          thread_ts: threadTs || undefined,
+          text: message,
+        });
+        logger.info("Cursor agent webhook: thread notification sent", {
+          agentId,
+          channelId,
+          threadTs,
+          status,
+        });
+      }
+    } catch (err) {
+      recordError("cursor_agent_webhook", err, { agentId, status });
+    }
+  };
+
+  waitUntil(processWebhook());
   return c.json({ ok: true });
 });
 
