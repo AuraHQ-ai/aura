@@ -257,5 +257,122 @@ export function createEmailTools() {
         }
       },
     }),
+
+    // ── Workspace Directory Tools ───────────────────────────────────────────
+
+    lookup_workspace_user: tool({
+      description:
+        "Look up a person in the Google Workspace directory by name or email. Returns their email, title, department, and other org info. Use this to find someone's email address before sending them an email.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe(
+            "Name or email to search for, e.g. 'Joan Rodriguez' or 'joan@realadvisor.com'"
+          ),
+      }),
+      execute: async ({ query }) => {
+        try {
+          const { searchDirectoryUser } = await import(
+            "../lib/workspace-directory.js"
+          );
+          const users = await searchDirectoryUser(query);
+          if (!users) {
+            return {
+              ok: false,
+              error:
+                "Workspace Directory is not configured or the API returned an error. The OAuth token may need the admin.directory.user.readonly scope.",
+            };
+          }
+
+          if (users.length === 0) {
+            return {
+              ok: true,
+              message: `No users found matching "${query}"`,
+              users: [],
+            };
+          }
+
+          logger.info("lookup_workspace_user tool called", {
+            query,
+            resultCount: users.length,
+          });
+
+          return {
+            ok: true,
+            users: users.map((u) => ({
+              email: u.email,
+              name: u.name,
+              title: u.title || undefined,
+              department: u.department || undefined,
+              isAdmin: u.isAdmin,
+            })),
+          };
+        } catch (error: any) {
+          logger.error("lookup_workspace_user failed", {
+            query,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to search directory: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    list_workspace_users: tool({
+      description:
+        "List all users in the Google Workspace directory. Returns emails, names, titles, and departments for everyone in the organization.",
+      inputSchema: z.object({
+        max_results: z
+          .number()
+          .optional()
+          .default(100)
+          .describe("Maximum number of users to return (default 100)"),
+      }),
+      execute: async ({ max_results }) => {
+        try {
+          const { listDirectoryUsers } = await import(
+            "../lib/workspace-directory.js"
+          );
+          const users = await listDirectoryUsers({
+            maxResults: max_results,
+          });
+          if (!users) {
+            return {
+              ok: false,
+              error:
+                "Workspace Directory is not configured or the API returned an error.",
+            };
+          }
+
+          logger.info("list_workspace_users tool called", {
+            resultCount: users.length,
+          });
+
+          return {
+            ok: true,
+            count: users.length,
+            users: users
+              .filter((u) => !u.suspended)
+              .map((u) => ({
+                email: u.email,
+                name: u.name,
+                title: u.title || undefined,
+                department: u.department || undefined,
+                isAdmin: u.isAdmin,
+              })),
+          };
+        } catch (error: any) {
+          logger.error("list_workspace_users failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to list directory users: ${error.message}`,
+          };
+        }
+      },
+    }),
   };
 }
