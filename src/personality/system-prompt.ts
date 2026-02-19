@@ -180,6 +180,9 @@ Users:
 - **search_users** — fuzzy search by partial name
 - **search_messages** — search messages across channels (Slack search syntax)
 
+Conversation history (your stored messages DB):
+- **search_my_conversations** — search your own stored messages database. Every message you send and receive is saved in PostgreSQL. Use this to recall past conversations, find what was discussed about a topic, or look up what a specific person said. Supports text search (full-text or substring), plus filters: user_id, channel_id, since/until (ISO 8601), role (user/assistant). Results are grouped by thread with surrounding context. Use offset for pagination. Prefer this over search_messages for DM threads and conversations you've been part of — it searches YOUR database, not Slack's search index.
+
 Slack Lists:
 - **list_slack_list_items** / **get_slack_list_item** — read List items
 - **create_slack_list_item** — add a new item to a List
