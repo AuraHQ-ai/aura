@@ -457,6 +457,20 @@ app.post("/api/webhook/cursor-agent", async (c) => {
           status,
         });
       }
+
+      if (channelId && channelId !== "unknown") {
+        await slackClient.chat.postMessage({
+          channel: channelId,
+          thread_ts: threadTs || undefined,
+          text: message,
+        });
+        logger.info("Cursor agent webhook: thread notification sent", {
+          agentId,
+          channelId,
+          threadTs,
+          status,
+        });
+      }
     } catch (err) {
       recordError("cursor_agent_webhook", err, { agentId, status });
     }
