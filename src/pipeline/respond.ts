@@ -658,21 +658,6 @@ export async function generateResponse(
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
 
-    // If streaming was never established, don't try to stop it
-    if (!streamingFailed) {
-      try {
-        const errorText = accumulatedText
-          ? "\n\n_...interrupted. Something went wrong._"
-          : "_Sorry, I got interrupted before I could finish. Try again?_";
-
-        await streamer.stop({
-          chunks: [{ type: "markdown_text", text: errorText }],
-        });
-      } catch {
-        // Stream may already be closed — nothing we can do
-      }
-    }
-
     if (hasFiles && isUnsupportedFileError(error)) {
       logger.warn("LLM call failed due to unsupported file type, retrying without file parts", {
         channelId,
@@ -737,6 +722,21 @@ export async function generateResponse(
           error: retryError instanceof Error ? retryError.message : String(retryError),
         });
         throw retryError;
+      }
+    }
+
+    // If streaming was never established, don't try to stop it
+    if (!streamingFailed) {
+      try {
+        const errorText = accumulatedText
+          ? "\n\n_...interrupted. Something went wrong._"
+          : "_Sorry, I got interrupted before I could finish. Try again?_";
+
+        await streamer.stop({
+          chunks: [{ type: "markdown_text", text: errorText }],
+        });
+      } catch {
+        // Stream may already be closed — nothing we can do
       }
     }
 

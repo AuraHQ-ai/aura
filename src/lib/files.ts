@@ -139,13 +139,13 @@ async function toContentPart(
     }
   }
 
+  if (GATEWAY_SUPPORTED_FILE_TYPES.has(mimeType)) {
+    return { type: "file", data, mediaType: mimeType, filename: name };
+  }
+
   if (isTextMimeType(mimeType)) {
     const text = new TextDecoder().decode(data);
     return { type: "text", text: `[File: ${name}]\n${text}` };
-  }
-
-  if (GATEWAY_SUPPORTED_FILE_TYPES.has(mimeType)) {
-    return { type: "file", data, mediaType: mimeType, filename: name };
   }
 
   return {
