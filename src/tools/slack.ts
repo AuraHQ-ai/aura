@@ -11,6 +11,7 @@ import { createWebTools } from "./web.js";
 import { createBigQueryTools } from "./bigquery.js";
 import { createTableTools } from "./table.js";
 import { createCursorAgentTools } from "./cursor-agent.js";
+import { createConversationSearchTools } from "./conversations.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
@@ -2264,5 +2265,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Cursor Agent Tools (async code agent dispatch) ──────────────────
     ...createCursorAgentTools(context),
+
+    // ── Conversation Search Tools (search stored messages DB) ─────────
+    ...createConversationSearchTools(),
   };
 }
