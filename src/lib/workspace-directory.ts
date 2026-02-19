@@ -180,7 +180,7 @@ export async function listDirectoryUsers(opts?: {
       .filter((u): u is DirectoryUser => u !== null);
     allUsers.push(...parsed);
 
-    if (!data.nextPageToken || parsed.length === 0) break;
+    if (!data.nextPageToken || !data.people?.length) break;
     pageToken = data.nextPageToken;
   }
 
