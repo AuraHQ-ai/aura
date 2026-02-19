@@ -1,4 +1,5 @@
 import { logger } from "./logger.js";
+import { transcribeAudio } from "./audio.js";
 
 /** Max file size to download (20MB) */
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -8,6 +9,16 @@ const IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/gif",
   "image/webp",
+]);
+
+const AUDIO_MIME_TYPES = new Set([
+  "audio/webm",
+  "audio/ogg",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/mp4a-latm",
+  "audio/wav",
+  "audio/x-m4a",
 ]);
 
 const TEXT_MIME_TYPES = new Set([
@@ -87,13 +98,33 @@ async function downloadSlackFile(
 }
 
 /** Convert raw file data + metadata into an AI SDK content part. */
-function toContentPart(
+async function toContentPart(
   data: Uint8Array,
   mimeType: string,
   name: string,
-): FileContentPart {
+): Promise<FileContentPart> {
   if (IMAGE_MIME_TYPES.has(mimeType)) {
     return { type: "image", image: data, mediaType: mimeType };
+  }
+
+  if (AUDIO_MIME_TYPES.has(mimeType)) {
+    try {
+      const transcription = await transcribeAudio(data, mimeType, name);
+      return {
+        type: "text",
+        text: `[Voice message transcription]: ${transcription}`,
+      };
+    } catch (error: any) {
+      logger.error("Audio transcription failed", {
+        name,
+        mimeType,
+        error: error.message,
+      });
+      return {
+        type: "text",
+        text: `[Voice message]: Audio transcription failed — ${error.message}`,
+      };
+    }
   }
 
   if (isTextMimeType(mimeType)) {
@@ -119,7 +150,7 @@ export async function downloadEventFiles(
   for (const file of files) {
     try {
       const data = await downloadSlackFile(file.url, botToken);
-      const part = toContentPart(data, file.mimetype, file.name);
+      const part = await toContentPart(data, file.mimetype, file.name);
       parts.push(part);
       logger.info("Downloaded Slack file", {
         name: file.name,
