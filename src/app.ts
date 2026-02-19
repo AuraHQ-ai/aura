@@ -341,11 +341,14 @@ app.post("/api/webhook/cursor-agent", async (c) => {
   const rawBody = await c.req.text();
   const signature = c.req.header("x-webhook-signature") || "";
 
-  if (process.env.CURSOR_WEBHOOK_SECRET) {
-    if (!verifyCursorWebhookSignature(rawBody, signature)) {
-      logger.warn("Invalid Cursor webhook signature — rejecting");
-      return c.json({ error: "Invalid signature" }, 401);
-    }
+  if (!process.env.CURSOR_WEBHOOK_SECRET) {
+    logger.warn("CURSOR_WEBHOOK_SECRET not configured — rejecting webhook");
+    return c.json({ error: "Webhook not configured" }, 403);
+  }
+
+  if (!verifyCursorWebhookSignature(rawBody, signature)) {
+    logger.warn("Invalid Cursor webhook signature — rejecting");
+    return c.json({ error: "Invalid signature" }, 401);
   }
 
   let payload: any;
