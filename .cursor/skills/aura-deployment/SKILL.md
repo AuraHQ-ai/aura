@@ -7,7 +7,7 @@ description: Deploy Aura to Vercel, manage environment variables, read logs, and
 
 ## Vercel CLI
 
-The project uses `npx --yes vercel@50.13.2` (not globally installed). Always include `--scope real-advisor`.
+The project uses `npx --yes vercel@50.13.2` (not globally installed). Always include `--scope realadvisor`.
 
 ## Pre-Push Checklist (CRITICAL)
 
@@ -25,24 +25,24 @@ Lesson learned: A static `import` of the `e2b` package (which uses ESM-only `cha
 Push to `main` triggers auto-deploy. For manual deploy:
 
 ```bash
-npx --yes vercel@50.13.2 --prod --scope real-advisor
+npx --yes vercel@50.13.2 --prod --scope realadvisor
 ```
 
 ## Environment Variables
 
 **Add** (use `printf` to avoid trailing newlines):
 ```bash
-printf '%s' 'the-value' | npx --yes vercel@50.13.2 env add VAR_NAME production --scope real-advisor
+printf '%s' 'the-value' | npx --yes vercel@50.13.2 env add VAR_NAME production --scope realadvisor
 ```
 
 **List**:
 ```bash
-npx --yes vercel@50.13.2 env ls --scope real-advisor
+npx --yes vercel@50.13.2 env ls --scope realadvisor
 ```
 
 **Remove**:
 ```bash
-npx --yes vercel@50.13.2 env rm VAR_NAME production --scope real-advisor --yes
+npx --yes vercel@50.13.2 env rm VAR_NAME production --scope realadvisor --yes
 ```
 
 After adding/removing env vars, redeploy for changes to take effect.
@@ -51,7 +51,7 @@ After adding/removing env vars, redeploy for changes to take effect.
 
 **Stream runtime logs** (run with timeout, kill after):
 ```bash
-npx --yes vercel@50.13.2 logs aura-alpha-five.vercel.app --scope real-advisor 2>&1 &
+npx --yes vercel@50.13.2 logs aura-alpha-five.vercel.app --scope realadvisor 2>&1 &
 BGPID=$!
 sleep 30
 kill $BGPID 2>/dev/null
@@ -61,12 +61,12 @@ true
 
 **Check deployment status**:
 ```bash
-npx --yes vercel@50.13.2 ls --prod --scope real-advisor
+npx --yes vercel@50.13.2 ls --prod --scope realadvisor
 ```
 
 **Build logs for a specific deployment**:
 ```bash
-npx --yes vercel@50.13.2 inspect <deployment-url> --logs --scope real-advisor
+npx --yes vercel@50.13.2 inspect <deployment-url> --logs --scope realadvisor
 ```
 
 ## Current Environment Variables
