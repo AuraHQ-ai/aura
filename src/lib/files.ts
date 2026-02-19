@@ -3,6 +3,9 @@ import { logger } from "./logger.js";
 /** Max file size to download (20MB) */
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
+/** Max text content to embed in the prompt (~100KB ≈ ~25k tokens) */
+const MAX_TEXT_CONTENT_SIZE = 100 * 1024;
+
 const IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -97,8 +100,11 @@ function toContentPart(
   }
 
   if (isTextMimeType(mimeType)) {
-    const text = new TextDecoder().decode(data);
-    return { type: "text", text: `[File: ${name}]\n${text}` };
+    const raw = new TextDecoder().decode(data);
+    const truncated = raw.length > MAX_TEXT_CONTENT_SIZE;
+    const text = truncated ? raw.slice(0, MAX_TEXT_CONTENT_SIZE) : raw;
+    const suffix = truncated ? "\n...[truncated]" : "";
+    return { type: "text", text: `[File: ${name}]\n${text}${suffix}` };
   }
 
   return { type: "file", data, mediaType: mimeType, filename: name };
