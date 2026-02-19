@@ -82,6 +82,7 @@ async function buildUserLookupInner(): Promise<Map<string, string>> {
     logger.warn("Failed to build user lookup — skipping user ID normalization", {
       error: String(error),
     });
+    userLookupPromise = null;
     return new Map();
   }
 }
