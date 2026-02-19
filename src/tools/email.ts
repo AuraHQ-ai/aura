@@ -280,7 +280,7 @@ export function createEmailTools() {
             return {
               ok: false,
               error:
-                "Workspace Directory is not configured or the API returned an error. The OAuth token may need the admin.directory.user.readonly scope.",
+                "Workspace Directory is not configured or the API returned an error. The OAuth token may need the directory.readonly scope.",
             };
           }
 
@@ -304,7 +304,6 @@ export function createEmailTools() {
               name: u.name,
               title: u.title || undefined,
               department: u.department || undefined,
-              isAdmin: u.isAdmin,
             })),
           };
         } catch (error: any) {
@@ -335,9 +334,7 @@ export function createEmailTools() {
           const { listDirectoryUsers } = await import(
             "../lib/workspace-directory.js"
           );
-          const users = await listDirectoryUsers({
-            maxResults: max_results,
-          });
+          const users = await listDirectoryUsers(max_results);
           if (!users) {
             return {
               ok: false,
@@ -353,14 +350,11 @@ export function createEmailTools() {
           return {
             ok: true,
             count: users.length,
-            users: users
-              .filter((u) => !u.suspended)
-              .map((u) => ({
+            users: users.map((u) => ({
                 email: u.email,
                 name: u.name,
                 title: u.title || undefined,
                 department: u.department || undefined,
-                isAdmin: u.isAdmin,
               })),
           };
         } catch (error: any) {
