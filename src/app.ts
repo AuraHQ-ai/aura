@@ -332,10 +332,10 @@ app.get("/api/oauth/google/callback", async (c) => {
   if (!code) return c.json({ error: "No auth code received" }, 400);
   const { exchangeCodeForTokens } = await import("./lib/gmail.js");
   const result = await exchangeCodeForTokens(code);
-  if (!result) return c.json({ error: "Token exchange failed" }, 500);
+  if (!result.refreshToken) return c.json({ error: "Token exchange failed", detail: result.error || "No refresh token returned" }, 500);
   return c.json({
     success: true,
-    refresh_token: result,
+    refresh_token: result.refreshToken,
     instructions:
       "Add this refresh token as GOOGLE_EMAIL_REFRESH_TOKEN in Vercel env vars, then redeploy.",
   });

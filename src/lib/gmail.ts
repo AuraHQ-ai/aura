@@ -66,8 +66,8 @@ async function getOAuth2Client() {
     return null;
   }
 
-  const { google } = await import("googleapis");
-  const oauth2Client = new google.auth.OAuth2(
+  const { OAuth2Client } = await import("google-auth-library");
+  const oauth2Client = new OAuth2Client(
     clientId,
     clientSecret,
     getRedirectUri(),
@@ -85,62 +85,42 @@ async function getOAuth2Client() {
  */
 export async function getGmailClient() {
   const auth = await getOAuth2Client();
-  if (!auth) {
-    logger.warn(
-      "GOOGLE_EMAIL_CLIENT_ID or GOOGLE_EMAIL_CLIENT_SECRET not set — Gmail tools will be unavailable",
-    );
-    return null;
-  }
+  if (!auth) return null;
 
+  // Verify we have a refresh token
   if (!process.env.GOOGLE_EMAIL_REFRESH_TOKEN) {
-    logger.warn(
-      "GOOGLE_EMAIL_REFRESH_TOKEN not set — Gmail tools will be unavailable",
-    );
+    logger.warn("Gmail: No refresh token configured");
     return null;
   }
 
-  const { google } = await import("googleapis");
-  return google.gmail({ version: "v1", auth });
+  const { gmail } = await import("@googleapis/gmail");
+  return gmail({ version: "v1", auth });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function getHeader(
-  headers: { name?: string | null; value?: string | null }[],
-  name: string,
-): string {
-  const h = headers.find(
-    (h) => h.name?.toLowerCase() === name.toLowerCase(),
-  );
-  return h?.value || "";
-}
-
 function base64UrlEncode(str: string): string {
-  return Buffer.from(str, "utf-8")
+  return Buffer.from(str)
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 }
 
-function base64UrlDecode(str: string): string {
-  const padded = str + "=".repeat((4 - (str.length % 4)) % 4);
-  return Buffer.from(padded, "base64").toString("utf-8");
-}
-
 function buildMimeMessage(
   to: string,
   subject: string,
   body: string,
-  options?: SendEmailOptions & { from?: string },
+  options?: SendEmailOptions,
 ): string {
-  const fromAddr =
-    options?.from ||
-    process.env.AURA_EMAIL_ADDRESS ||
-    "aura@realadvisor.com";
+  const auraEmail =
+    process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com";
   const lines: string[] = [
-    `From: ${fromAddr}`,
+    `From: Aura <${auraEmail}>`,
     `To: ${to}`,
+    `Subject: ${subject}`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
   ];
 
   if (options?.cc) lines.push(`Cc: ${options.cc}`);
@@ -150,95 +130,47 @@ function buildMimeMessage(
     lines.push(`References: ${options.replyToMessageId}`);
   }
 
-  lines.push(`Subject: ${subject}`);
-  lines.push("MIME-Version: 1.0");
-  lines.push("Content-Type: text/plain; charset=UTF-8");
-  lines.push("");
-  lines.push(body);
-
+  lines.push("", body);
   return lines.join("\r\n");
 }
 
-function extractBody(payload: any): string {
-  if (payload.body?.data) {
-    return base64UrlDecode(payload.body.data);
-  }
-
-  if (payload.parts) {
-    // Prefer text/plain, fall back to text/html
-    const textPart = payload.parts.find(
-      (p: any) => p.mimeType === "text/plain",
-    );
-    if (textPart?.body?.data) {
-      return base64UrlDecode(textPart.body.data);
-    }
-
-    const htmlPart = payload.parts.find(
-      (p: any) => p.mimeType === "text/html",
-    );
-    if (htmlPart?.body?.data) {
-      return base64UrlDecode(htmlPart.body.data);
-    }
-
-    // Recurse into nested multipart parts
-    for (const part of payload.parts) {
-      if (part.parts) {
-        const nested = extractBody(part);
-        if (nested) return nested;
-      }
-    }
-  }
-
-  return "";
-}
-
-function extractAttachments(
-  payload: any,
-): { filename: string; mimeType: string; size: number }[] {
-  const attachments: { filename: string; mimeType: string; size: number }[] =
-    [];
-
-  function walk(parts: any[]) {
-    for (const part of parts) {
-      if (part.filename && part.body?.attachmentId) {
-        attachments.push({
-          filename: part.filename,
-          mimeType: part.mimeType || "application/octet-stream",
-          size: part.body.size || 0,
-        });
-      }
-      if (part.parts) walk(part.parts);
-    }
-  }
-
-  if (payload.parts) walk(payload.parts);
-  return attachments;
+function getHeader(
+  headers: { name?: string | null; value?: string | null }[],
+  name: string,
+): string {
+  const header = headers.find(
+    (h) => h.name?.toLowerCase() === name.toLowerCase(),
+  );
+  return header?.value || "";
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Send an email from the configured Gmail account.
+ * Send an email.
  */
 export async function sendEmail(
   to: string,
   subject: string,
   body: string,
   options?: SendEmailOptions,
-): Promise<{ id: string; threadId: string }> {
+): Promise<{ id: string; threadId: string } | null> {
   const gmail = await getGmailClient();
-  if (!gmail) throw new Error("Gmail is not configured");
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return null;
+  }
 
-  const raw = base64UrlEncode(
-    buildMimeMessage(to, subject, body, options),
-  );
+  const raw = base64UrlEncode(buildMimeMessage(to, subject, body, options));
+
+  const requestBody: { raw: string; threadId?: string } = { raw };
+  if (options?.threadId) {
+    requestBody.threadId = options.threadId;
+  }
 
   const res = await gmail.users.messages.send({
     userId: "me",
-    requestBody: {
-      raw,
-      threadId: options?.threadId || undefined,
-    },
+    requestBody,
   });
 
   logger.info("Email sent", {
@@ -255,62 +187,65 @@ export async function sendEmail(
 }
 
 /**
- * List emails from the inbox with optional filters.
+ * List emails from the inbox.
  */
 export async function listEmails(
   options?: ListEmailsOptions,
 ): Promise<EmailSummary[]> {
   const gmail = await getGmailClient();
-  if (!gmail) throw new Error("Gmail is not configured");
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return [];
+  }
 
-  const queryParts: string[] = [];
-  if (options?.query) queryParts.push(options.query);
-  if (options?.unreadOnly) queryParts.push("is:unread");
-  const q = queryParts.join(" ") || undefined;
+  let q = options?.query || "";
+  if (options?.unreadOnly) {
+    q = q ? `${q} is:unread` : "is:unread";
+  }
 
   const listRes = await gmail.users.messages.list({
     userId: "me",
-    maxResults: Math.min(options?.maxResults || 10, 20),
-    q,
+    maxResults: options?.maxResults || 10,
+    q: q || undefined,
   });
 
-  const messageIds = listRes.data.messages || [];
-  if (messageIds.length === 0) return [];
+  const messages = listRes.data.messages || [];
+  const results: EmailSummary[] = [];
 
-  const summaries: EmailSummary[] = await Promise.all(
-    messageIds.map(async (msg) => {
-      const detail = await gmail.users.messages.get({
-        userId: "me",
-        id: msg.id!,
-        format: "metadata",
-        metadataHeaders: ["From", "To", "Subject", "Date"],
-      });
+  for (const msg of messages) {
+    if (!msg.id) continue;
+    const detail = await gmail.users.messages.get({
+      userId: "me",
+      id: msg.id,
+      format: "metadata",
+      metadataHeaders: ["From", "To", "Subject", "Date"],
+    });
 
-      const headers = detail.data.payload?.headers || [];
-      const labelIds = detail.data.labelIds || [];
+    const headers = detail.data.payload?.headers || [];
+    results.push({
+      id: msg.id,
+      threadId: detail.data.threadId || "",
+      from: getHeader(headers, "From"),
+      to: getHeader(headers, "To"),
+      subject: getHeader(headers, "Subject"),
+      date: getHeader(headers, "Date"),
+      snippet: detail.data.snippet || "",
+      isUnread: (detail.data.labelIds || []).includes("UNREAD"),
+    });
+  }
 
-      return {
-        id: detail.data.id || "",
-        threadId: detail.data.threadId || "",
-        from: getHeader(headers, "From"),
-        to: getHeader(headers, "To"),
-        subject: getHeader(headers, "Subject"),
-        date: getHeader(headers, "Date"),
-        snippet: detail.data.snippet || "",
-        isUnread: labelIds.includes("UNREAD"),
-      };
-    }),
-  );
-
-  return summaries;
+  return results;
 }
 
 /**
- * Get full email content by message ID.
+ * Get full details of a specific email.
  */
-export async function getEmail(messageId: string): Promise<EmailDetail> {
+export async function getEmail(messageId: string): Promise<EmailDetail | null> {
   const gmail = await getGmailClient();
-  if (!gmail) throw new Error("Gmail is not configured");
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return null;
+  }
 
   const res = await gmail.users.messages.get({
     userId: "me",
@@ -319,8 +254,29 @@ export async function getEmail(messageId: string): Promise<EmailDetail> {
   });
 
   const headers = res.data.payload?.headers || [];
-  const labelIds = res.data.labelIds || [];
-  const payload = res.data.payload || {};
+  const parts = res.data.payload?.parts || [];
+
+  // Extract body from parts or directly from payload
+  let body = "";
+  if (parts.length > 0) {
+    const textPart = parts.find((p) => p.mimeType === "text/plain");
+    const htmlPart = parts.find((p) => p.mimeType === "text/html");
+    const part = textPart || htmlPart;
+    if (part?.body?.data) {
+      body = Buffer.from(part.body.data, "base64").toString("utf-8");
+    }
+  } else if (res.data.payload?.body?.data) {
+    body = Buffer.from(res.data.payload.body.data, "base64").toString("utf-8");
+  }
+
+  // Extract attachments info
+  const attachments = parts
+    .filter((p) => p.filename && p.filename.length > 0)
+    .map((p) => ({
+      filename: p.filename || "unknown",
+      mimeType: p.mimeType || "application/octet-stream",
+      size: p.body?.size || 0,
+    }));
 
   return {
     id: res.data.id || "",
@@ -330,25 +286,28 @@ export async function getEmail(messageId: string): Promise<EmailDetail> {
     cc: getHeader(headers, "Cc"),
     subject: getHeader(headers, "Subject"),
     date: getHeader(headers, "Date"),
-    body: extractBody(payload),
+    body,
     snippet: res.data.snippet || "",
-    isUnread: labelIds.includes("UNREAD"),
-    attachments: extractAttachments(payload),
+    isUnread: (res.data.labelIds || []).includes("UNREAD"),
+    attachments,
   };
 }
 
 /**
- * Reply to an existing email thread.
- * Fetches the original message to build proper threading headers.
+ * Reply to an email in the same thread.
  */
 export async function replyToEmail(
   messageId: string,
   threadId: string,
   body: string,
-): Promise<{ id: string; threadId: string }> {
+): Promise<{ id: string; threadId: string } | null> {
   const gmail = await getGmailClient();
-  if (!gmail) throw new Error("Gmail is not configured");
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return null;
+  }
 
+  // Get original message to extract headers
   const original = await gmail.users.messages.get({
     userId: "me",
     id: messageId,
@@ -424,9 +383,9 @@ export function generateAuthUrl(): string | null {
  */
 export async function exchangeCodeForTokens(
   code: string,
-): Promise<string | null> {
+): Promise<{ refreshToken: string | null; error?: string }> {
   const auth = await getOAuth2Client();
-  if (!auth) return null;
+  if (!auth) return { refreshToken: null, error: "OAuth client not configured" };
 
   try {
     const { tokens } = await auth.getToken(code);
@@ -434,11 +393,13 @@ export async function exchangeCodeForTokens(
       hasRefreshToken: !!tokens.refresh_token,
       hasAccessToken: !!tokens.access_token,
     });
-    return tokens.refresh_token || null;
+    return { refreshToken: tokens.refresh_token || null };
   } catch (error: any) {
+    const msg = error.message || "Unknown error";
     logger.error("Failed to exchange OAuth code for tokens", {
-      error: error.message,
+      error: msg,
+      response: error.response?.data,
     });
-    return null;
+    return { refreshToken: null, error: msg };
   }
 }
