@@ -7,8 +7,6 @@ import { logger } from "../lib/logger.js";
 interface RetrievalOptions {
   /** The user's current message text */
   query: string;
-  /** The Slack user ID of the person asking */
-  currentUserId: string;
   /** Maximum number of memories to return */
   limit?: number;
   /** Minimum relevance score threshold */

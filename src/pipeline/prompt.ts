@@ -36,7 +36,6 @@ export async function assemblePrompt(
   const [memories, userProfile] = await Promise.all([
     retrieveMemories({
       query: context.text,
-      currentUserId: context.userId,
       limit: 15,
     }),
     getProfile(context.userId),
