@@ -36,9 +36,7 @@ const FAST_MODELS: ModelOption[] = [
 ];
 
 const EMBEDDING_MODELS: ModelOption[] = [
-  { value: "openai/text-embedding-3-small", label: "OpenAI Embedding 3 Small (1536d)" },
   { value: "openai/text-embedding-3-large", label: "OpenAI Embedding 3 Large (3072d)" },
-  { value: "google/text-embedding-005", label: "Google Embedding 005" },
 ];
 
 // ── Defaults ─────────────────────────────────────────────────────────────────

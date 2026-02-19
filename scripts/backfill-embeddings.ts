@@ -8,7 +8,7 @@
  * Safe to run multiple times (e.g. after a partial failure).
  */
 
-const EMBEDDING_MODEL = "text-embedding-3-large";
+const EMBEDDING_MODEL = (process.env.MODEL_EMBEDDING || "openai/text-embedding-3-large").replace(/^openai\//, "");
 const EMBEDDING_DIMENSIONS = 3072;
 const BATCH_SIZE = 50;
 const MAX_RETRIES = 5;
@@ -129,6 +129,11 @@ async function main() {
 
     try {
       embeddings = await callOpenAIEmbeddings(texts, apiKey);
+      if (embeddings.length !== texts.length) {
+        throw new Error(
+          `Embeddings count mismatch: expected ${texts.length}, got ${embeddings.length}`,
+        );
+      }
     } catch (err) {
       console.error(`Batch ${batchNumber} failed:`, err);
       console.error(
