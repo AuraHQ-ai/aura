@@ -60,7 +60,7 @@ const SEED_SKILLS = [
     category: "skill",
     content: `# How to handle tasks that exceed your step limit
 
-You have up to 50 tool calls per job execution. This is enough for most tasks.
+You have up to 350 tool calls per job execution. This is enough for most tasks.
 
 1. Plan before you act. For ambitious work, sketch your approach first.
 2. Be efficient with tool calls -- batch reads, avoid redundant lookups.
