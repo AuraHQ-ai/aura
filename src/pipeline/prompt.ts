@@ -16,6 +16,7 @@ export interface AssembledPrompt {
   memories: Memory[];
   conversations: ConversationThread[];
   userProfile: UserProfile | null;
+  queryEmbedding?: number[];
 }
 
 /**
@@ -115,5 +116,5 @@ export async function assemblePrompt(
     hasThread: !!threadContext,
   });
 
-  return { systemPrompt, memories, conversations, userProfile };
+  return { systemPrompt, memories, conversations, userProfile, queryEmbedding };
 }

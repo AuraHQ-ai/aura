@@ -238,7 +238,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { systemPrompt, memories, conversations } = await assemblePrompt(
+    const { systemPrompt, memories, conversations, queryEmbedding } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
@@ -314,6 +314,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       toolCalls: response.toolCalls,
       displayName,
       client,
+      userMessageEmbedding: queryEmbedding,
     });
 
     if (waitUntil) {
@@ -467,21 +468,25 @@ async function runBackgroundTasks(params: {
   toolCalls: ToolCallRecord[];
   displayName: string;
   client: InstanceType<typeof import("@slack/web-api").WebClient>;
+  userMessageEmbedding?: number[];
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client } = params;
+  const { context, event, response, toolCalls, displayName, client, userMessageEmbedding } = params;
 
   try {
-    // Store the user's message
-    const userMessageId = await storeMessage({
-      slackTs: context.messageTs,
-      slackThreadTs: context.threadTs,
-      channelId: context.channelId,
-      channelType: context.channelType,
-      userId: context.userId,
-      role: "user",
-      content: context.text,
-      metadata: buildMessageMetadata(event),
-    });
+    // Store the user's message (reuse the embedding computed during prompt assembly)
+    const userMessageId = await storeMessage(
+      {
+        slackTs: context.messageTs,
+        slackThreadTs: context.threadTs,
+        channelId: context.channelId,
+        channelType: context.channelType,
+        userId: context.userId,
+        role: "user",
+        content: context.text,
+        metadata: buildMessageMetadata(event),
+      },
+      { embedding: userMessageEmbedding },
+    );
 
     // Store Aura's response with a pseudo-timestamp
     const assistantTs = `${context.messageTs}-aura`;

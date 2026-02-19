@@ -395,7 +395,7 @@ function formatConversations(conversations: ConversationThread[]): string {
       const msgs = capped
         .map((m) => {
           const timeAgo = relativeTime(new Date(m.createdAt));
-          const speaker = m.role === "assistant" ? "Aura" : m.userId;
+          const speaker = m.role === "assistant" ? "Aura" : m.role === "tool" ? "Tool" : m.userId;
           return `  ${speaker} (${timeAgo}): ${m.content.length > 300 ? m.content.substring(0, 300) + "…" : m.content}`;
         })
         .join("\n");

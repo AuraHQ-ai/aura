@@ -23,11 +23,13 @@ export async function claimEvent(eventTs: string, channelId: string): Promise<bo
  * Store a raw message (user or assistant) to the messages table.
  * Generates and stores a vector embedding for semantic search.
  */
-export async function storeMessage(message: NewMessage): Promise<string> {
+export async function storeMessage(
+  message: NewMessage,
+  options?: { embedding?: number[] },
+): Promise<string> {
   try {
-    // Generate embedding for the message content
-    let embedding: number[] | undefined;
-    if (message.content && message.content.trim().length > 0) {
+    let embedding: number[] | undefined = options?.embedding;
+    if (!embedding && message.content && message.content.trim().length > 0) {
       try {
         embedding = await embedText(message.content);
       } catch (error) {
