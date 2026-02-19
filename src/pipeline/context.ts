@@ -9,6 +9,13 @@ import { resolveChannelById } from "../tools/slack.js";
 // Minimal local types — replaces the @slack/bolt dependency that was only used
 // for these type imports.
 
+export interface SlackAttachment {
+  text?: string;
+  fallback?: string;
+  pretext?: string;
+  [key: string]: unknown;
+}
+
 export interface SlackMessageEvent {
   type: "message";
   channel: string;
@@ -20,6 +27,7 @@ export interface SlackMessageEvent {
   channel_type?: string;
   subtype?: string;
   files?: Array<Record<string, unknown>>;
+  attachments?: SlackAttachment[];
 }
 
 export interface SlackAppMentionEvent {
@@ -64,13 +72,24 @@ export function buildMessageContext(
   event: SlackEvent,
   botUserId: string,
 ): MessageContext | null {
-  // Skip bot messages, message_changed, etc. -- but allow file_share (image uploads)
-  if ("subtype" in event && event.subtype) {
-    const allowedSubtypes = new Set(["file_share"]);
-    if (!allowedSubtypes.has(event.subtype as string)) {
-      logger.debug("Skipping message with subtype", { subtype: event.subtype });
-      return null;
-    }
+  // Skip system/meta subtypes but allow content-bearing ones (forwarded, shared, edited, file_share, etc.)
+  const ignoredSubtypes = new Set([
+    "channel_join",
+    "channel_leave",
+    "channel_topic",
+    "channel_purpose",
+    "channel_name",
+    "channel_archive",
+    "channel_unarchive",
+    "bot_add",
+    "bot_remove",
+    "pinned_item",
+    "unpinned_item",
+  ]);
+
+  if ("subtype" in event && event.subtype && ignoredSubtypes.has(event.subtype as string)) {
+    logger.debug("Skipping message with ignored subtype", { subtype: event.subtype });
+    return null;
   }
 
   // Skip messages from our own bot
@@ -78,9 +97,19 @@ export function buildMessageContext(
     return null;
   }
 
-  const text = "text" in event ? (event.text || "") : "";
+  let text = "text" in event ? (event.text || "") : "";
   const userId = "user" in event ? event.user! : "";
   const channelId = event.channel;
+
+  // If primary text is empty, try extracting from attachments (forwarded/shared messages)
+  if (!text.trim() && "attachments" in event && Array.isArray(event.attachments)) {
+    const attachmentTexts = event.attachments
+      .map((a) => a.text || a.fallback || "")
+      .filter((t) => t.trim());
+    if (attachmentTexts.length > 0) {
+      text = attachmentTexts.join("\n");
+    }
+  }
 
   // Allow empty text if the message has file attachments (image-only messages)
   const hasFiles = Array.isArray((event as any).files) && (event as any).files.length > 0;
