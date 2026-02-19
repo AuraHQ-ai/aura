@@ -48,6 +48,24 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
 ];
 
+// ── Email Signature ─────────────────────────────────────────────────────────
+
+const EMAIL_SIGNATURE_HTML = `
+<div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e0e0e0; font-family: Arial, sans-serif; font-size: 13px; color: #666;">
+  <strong style="color: #333;">Aura</strong> &middot; AI Team Member<br/>
+  <a href="https://www.realadvisor.com" style="color: #0066cc; text-decoration: none;">RealAdvisor</a>
+</div>`.trim();
+
+const EMAIL_SIGNATURE_TEXT = `\n--\nAura · AI Team Member\nRealAdvisor · https://www.realadvisor.com`;
+
+function textToHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br/>");
+}
+
 function getRedirectUri(): string {
   const host =
     process.env.VERCEL_PROJECT_PRODUCTION_URL ||
@@ -115,23 +133,42 @@ function buildMimeMessage(
 ): string {
   const auraEmail =
     process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com";
-  const lines: string[] = [
+  const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const htmlBody = `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>\n${EMAIL_SIGNATURE_HTML}`;
+  const textBody = `${body}${EMAIL_SIGNATURE_TEXT}`;
+
+  const headers: string[] = [
     `From: Aura <${auraEmail}>`,
     `To: ${to}`,
     `Subject: ${subject}`,
     "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
 
-  if (options?.cc) lines.push(`Cc: ${options.cc}`);
-  if (options?.bcc) lines.push(`Bcc: ${options.bcc}`);
+  if (options?.cc) headers.push(`Cc: ${options.cc}`);
+  if (options?.bcc) headers.push(`Bcc: ${options.bcc}`);
   if (options?.replyToMessageId) {
-    lines.push(`In-Reply-To: ${options.replyToMessageId}`);
-    lines.push(`References: ${options.replyToMessageId}`);
+    headers.push(`In-Reply-To: ${options.replyToMessageId}`);
+    headers.push(`References: ${options.replyToMessageId}`);
   }
 
-  lines.push("", body);
-  return lines.join("\r\n");
+  const parts = [
+    headers.join("\r\n"),
+    "",
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "",
+    textBody,
+    "",
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "",
+    htmlBody,
+    "",
+    `--${boundary}--`,
+  ];
+
+  return parts.join("\r\n");
 }
 
 function getHeader(
