@@ -40,6 +40,17 @@ export interface ListEmailsOptions {
   unreadOnly?: boolean;
 }
 
+/**
+ * Returns true if all required Gmail env vars are present.
+ */
+export function isGmailConfigured(): boolean {
+  return !!(
+    process.env.GOOGLE_EMAIL_CLIENT_ID &&
+    process.env.GOOGLE_EMAIL_CLIENT_SECRET &&
+    process.env.GOOGLE_EMAIL_REFRESH_TOKEN
+  );
+}
+
 // ── OAuth2 Client ───────────────────────────────────────────────────────────
 
 const SCOPES = [

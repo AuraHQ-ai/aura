@@ -38,11 +38,10 @@ export function createEmailTools() {
         thread_id,
       }) => {
         try {
-          const { getGmailClient, sendEmail } = await import(
+          const { isGmailConfigured, sendEmail } = await import(
             "../lib/gmail.js"
           );
-          const client = await getGmailClient();
-          if (!client) {
+          if (!isGmailConfigured()) {
             return {
               ok: false,
               error:
@@ -106,11 +105,10 @@ export function createEmailTools() {
       }),
       execute: async ({ query, max_results, unread_only }) => {
         try {
-          const { getGmailClient, listEmails } = await import(
+          const { isGmailConfigured, listEmails } = await import(
             "../lib/gmail.js"
           );
-          const client = await getGmailClient();
-          if (!client) {
+          if (!isGmailConfigured()) {
             return {
               ok: false,
               error:
@@ -155,11 +153,10 @@ export function createEmailTools() {
       }),
       execute: async ({ message_id }) => {
         try {
-          const { getGmailClient, getEmail } = await import(
+          const { isGmailConfigured, getEmail } = await import(
             "../lib/gmail.js"
           );
-          const client = await getGmailClient();
-          if (!client) {
+          if (!isGmailConfigured()) {
             return {
               ok: false,
               error:
@@ -204,11 +201,10 @@ export function createEmailTools() {
       }),
       execute: async ({ message_id, thread_id, body }) => {
         try {
-          const { getGmailClient, replyToEmail } = await import(
+          const { isGmailConfigured, replyToEmail } = await import(
             "../lib/gmail.js"
           );
-          const client = await getGmailClient();
-          if (!client) {
+          if (!isGmailConfigured()) {
             return {
               ok: false,
               error:
