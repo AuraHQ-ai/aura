@@ -168,6 +168,6 @@ export async function getDirectoryUser(
   return (
     results.find(
       (u) => u.email.toLowerCase() === email.toLowerCase()
-    ) || results[0] || null
+    ) || null
   );
 }
