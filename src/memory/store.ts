@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { eq, sql, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages, memories, eventLocks, type NewMessage, type NewMemory } from "../db/schema.js";
+import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
 
@@ -20,17 +21,31 @@ export async function claimEvent(eventTs: string, channelId: string): Promise<bo
 
 /**
  * Store a raw message (user or assistant) to the messages table.
+ * Generates and stores a vector embedding for semantic search.
  */
 export async function storeMessage(message: NewMessage): Promise<string> {
   try {
+    // Generate embedding for the message content
+    let embedding: number[] | undefined;
+    if (message.content && message.content.trim().length > 0) {
+      try {
+        embedding = await embedText(message.content);
+      } catch (error) {
+        logger.warn("Failed to embed message, storing without embedding", {
+          error: String(error),
+          slackTs: message.slackTs,
+        });
+      }
+    }
+
     const [inserted] = await db
       .insert(messages)
-      .values(message)
+      .values({ ...message, embedding: embedding ?? null })
       .onConflictDoNothing({ target: messages.slackTs })
       .returning({ id: messages.id });
 
     if (inserted) {
-      logger.debug("Stored message", { id: inserted.id, role: message.role });
+      logger.debug("Stored message", { id: inserted.id, role: message.role, hasEmbedding: !!embedding });
       return inserted.id;
     }
 
@@ -46,6 +61,53 @@ export async function storeMessage(message: NewMessage): Promise<string> {
     logger.error("Failed to store message", {
       error: String(error),
       slackTs: message.slackTs,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Backfill embeddings for existing messages that don't have them.
+ * Processes in batches to avoid overwhelming the embedding API.
+ */
+export async function backfillMessageEmbeddings(batchSize = 50): Promise<number> {
+  let totalEmbedded = 0;
+
+  try {
+    while (true) {
+      const batch = await db
+        .select({ id: messages.id, content: messages.content })
+        .from(messages)
+        .where(
+          and(
+            isNull(messages.embedding),
+            sql`${messages.content} IS NOT NULL AND length(${messages.content}) > 0`,
+          ),
+        )
+        .limit(batchSize);
+
+      if (batch.length === 0) break;
+
+      const texts = batch.map((m) => m.content);
+      const embeddings = await embedTexts(texts);
+
+      for (let i = 0; i < batch.length; i++) {
+        await db
+          .update(messages)
+          .set({ embedding: embeddings[i] })
+          .where(eq(messages.id, batch[i].id));
+      }
+
+      totalEmbedded += batch.length;
+      logger.info(`Backfilled ${totalEmbedded} message embeddings so far`);
+    }
+
+    logger.info(`Backfill complete: embedded ${totalEmbedded} messages`);
+    return totalEmbedded;
+  } catch (error) {
+    logger.error("Message embedding backfill failed", {
+      error: String(error),
+      totalEmbeddedBeforeFailure: totalEmbedded,
     });
     throw error;
   }
