@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 import { buildSystemPrompt } from "../personality/system-prompt.js";
-import { retrieveMemories } from "../memory/retrieve.js";
+import { retrieveMemories, retrieveConversations, type ConversationThread } from "../memory/retrieve.js";
+import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
 import type { MessageContext } from "./context.js";
 import { resolveChannelName } from "./context.js";
@@ -13,6 +14,7 @@ import { getMainModelId } from "../lib/ai.js";
 export interface AssembledPrompt {
   systemPrompt: string;
   memories: Memory[];
+  conversations: ConversationThread[];
   userProfile: UserProfile | null;
 }
 
@@ -20,7 +22,7 @@ export interface AssembledPrompt {
  * Assemble the full prompt for an LLM call.
  *
  * Steps:
- * 1. Retrieve relevant memories via semantic search (long-term knowledge)
+ * 1. Embed the query once, then retrieve memories + conversations in parallel
  * 2. Fetch user profile for tone adaptation
  * 3. Format live conversation context from Slack API (already fetched)
  * 4. Build the system prompt with all context injected
@@ -32,12 +34,23 @@ export async function assemblePrompt(
 ): Promise<AssembledPrompt> {
   const start = Date.now();
 
-  // Run memory retrieval and profile fetch in parallel
-  const [memories, userProfile] = await Promise.all([
+  // Embed the query once, then share the vector with both retrieval functions
+  const queryEmbedding = await embedText(context.text);
+
+  // Run memory retrieval, conversation retrieval, and profile fetch in parallel
+  const [memories, conversations, userProfile] = await Promise.all([
     retrieveMemories({
       query: context.text,
+      queryEmbedding,
       currentUserId: context.userId,
       limit: 15,
+    }),
+    retrieveConversations({
+      query: context.text,
+      queryEmbedding,
+      threadLimit: 3,
+      matchLimit: 15,
+      minSimilarity: 0.35,
     }),
     getProfile(context.userId),
   ]);
@@ -72,6 +85,7 @@ export async function assemblePrompt(
   // Build the system prompt (async: queries skill index from DB)
   const systemPrompt = await buildSystemPrompt({
     memories,
+    conversations,
     userProfile,
     channelContext,
     channelType: context.channelType,
@@ -83,9 +97,10 @@ export async function assemblePrompt(
 
   logger.debug(`Assembled prompt in ${Date.now() - start}ms`, {
     memoryCount: memories.length,
+    conversationCount: conversations.length,
     hasProfile: !!userProfile,
     hasThread: !!threadContext,
   });
 
-  return { systemPrompt, memories, userProfile };
+  return { systemPrompt, memories, conversations, userProfile };
 }

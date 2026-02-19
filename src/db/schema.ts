@@ -56,12 +56,17 @@ export const messages = pgTable(
     role: messageRoleEnum("role").notNull(),
     content: text("content").notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
     uniqueIndex("messages_slack_ts_idx").on(table.slackTs),
     index("messages_channel_created_idx").on(table.channelId, table.createdAt),
     index("messages_thread_idx").on(table.slackThreadTs),
+    index("messages_embedding_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
   ],
 );
 
