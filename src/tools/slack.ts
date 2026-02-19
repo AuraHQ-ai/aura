@@ -96,6 +96,94 @@ const channelIdNameCache = new Map<string, { id: string; name: string; is_privat
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
+ * Extract text from all rich-content locations in a Slack message.
+ * Slack messages can carry content in msg.text, attachments (forwarded/shared
+ * messages), rich_text blocks, and file shares. This helper concatenates all
+ * non-empty sources so forwarded messages no longer appear blank.
+ */
+function extractFullMessageText(msg: any): string {
+  const parts: string[] = [];
+
+  if (msg.text) {
+    parts.push(msg.text);
+  }
+
+  // Attachments: forwarded messages, shared messages, link unfurls
+  if (Array.isArray(msg.attachments)) {
+    for (const att of msg.attachments) {
+      const attParts: string[] = [];
+      if (att.pretext) attParts.push(att.pretext);
+      if (att.title) attParts.push(att.title);
+      if (att.text) attParts.push(att.text);
+      else if (att.fallback) attParts.push(att.fallback);
+      if (attParts.length > 0) {
+        const label = att.is_msg_unfurl ? "[forwarded message]" : "[attachment]";
+        parts.push(`${label} ${attParts.join(" — ")}`);
+      }
+    }
+  }
+
+  // Rich-text blocks: iterate into nested element tree
+  if (Array.isArray(msg.blocks)) {
+    for (const block of msg.blocks) {
+      if (block.type === "rich_text" && Array.isArray(block.elements)) {
+        for (const section of block.elements) {
+          if (Array.isArray(section.elements)) {
+            const sectionText = section.elements
+              .filter((el: any) => el.type === "text" && el.text)
+              .map((el: any) => el.text)
+              .join("");
+            if (sectionText) parts.push(sectionText);
+          }
+        }
+      }
+    }
+  }
+
+  // File shares: include file name/title as metadata
+  if (Array.isArray(msg.files)) {
+    for (const file of msg.files) {
+      const name = file.title || file.name;
+      if (name) parts.push(`[file: ${name}]`);
+    }
+  }
+
+  // Deduplicate: msg.text often duplicates what blocks contain
+  if (parts.length <= 1) return parts[0] || "";
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const p of parts) {
+    const normalized = p.trim();
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      unique.push(normalized);
+    }
+  }
+  return unique.join("\n");
+}
+
+/**
+ * Generate a short summary of rich content attached to a message.
+ * Returns null when there's nothing beyond plain text.
+ */
+function generateAttachmentsSummary(msg: any): string | null {
+  const counts: string[] = [];
+
+  if (Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+    const forwarded = msg.attachments.filter((a: any) => a.is_msg_unfurl).length;
+    const other = msg.attachments.length - forwarded;
+    if (forwarded > 0) counts.push(`${forwarded} forwarded message${forwarded > 1 ? "s" : ""}`);
+    if (other > 0) counts.push(`${other} attachment${other > 1 ? "s" : ""}`);
+  }
+
+  if (Array.isArray(msg.files) && msg.files.length > 0) {
+    counts.push(`${msg.files.length} file${msg.files.length > 1 ? "s" : ""}`);
+  }
+
+  return counts.length > 0 ? counts.join(", ") : null;
+}
+
+/**
  * Search for a public channel by name using the user token.
  * The bot token's conversations.list only returns channels the bot is in,
  * so we need the user token to find channels the bot hasn't joined yet.
@@ -744,16 +832,18 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             limit,
           });
 
-          // Resolve user IDs to display names
+          // Resolve user IDs to display names and extract rich content
           const messages = await Promise.all(
             (result.messages || []).map(async (msg) => {
               const userName = msg.user
                 ? await resolveUserById(client, msg.user)
                 : "unknown";
+              const attachmentsSummary = generateAttachmentsSummary(msg);
               return {
                 user: userName,
-                text: msg.text || "",
+                text: extractFullMessageText(msg),
                 timestamp: msg.ts || "",
+                ...(attachmentsSummary ? { attachments_summary: attachmentsSummary } : {}),
                 reactions:
                   (msg as any).reactions?.map((r: any) => ({
                     name: r.name,
@@ -1245,17 +1335,19 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           const result = await client.conversations.history(historyParams as any);
 
-          // Resolve user IDs to display names
+          // Resolve user IDs to display names and extract rich content
           const messages = await Promise.all(
             (result.messages || []).map(async (msg) => {
               const userName = msg.user
                 ? await resolveUserById(client, msg.user)
                 : "unknown";
+              const attachmentsSummary = generateAttachmentsSummary(msg);
               return {
                 user: userName,
                 user_id: msg.user || "",
-                text: msg.text || "",
+                text: extractFullMessageText(msg),
                 timestamp: msg.ts || "",
+                ...(attachmentsSummary ? { attachments_summary: attachmentsSummary } : {}),
                 reactions:
                   (msg as any).reactions?.map((r: any) => ({
                     name: r.name,
