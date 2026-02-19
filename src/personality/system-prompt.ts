@@ -5,10 +5,13 @@ import { notes } from "../db/schema.js";
 import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
 import { buildSkillIndex } from "../lib/skill-index.js";
 import { logger } from "../lib/logger.js";
+import type { ConversationThread } from "../memory/retrieve.js";
 
 interface SystemPromptContext {
   /** Retrieved memories relevant to this conversation */
   memories: Memory[];
+  /** Retrieved conversation threads relevant to this conversation */
+  conversations?: ConversationThread[];
   /** The user's profile (if available) */
   userProfile: UserProfile | null;
   /** Channel name or "DM" */
@@ -375,6 +378,35 @@ function formatUserProfile(profile: UserProfile): string {
 }
 
 /**
+ * Format retrieved conversation threads for injection into the prompt.
+ */
+function formatConversations(conversations: ConversationThread[]): string {
+  if (conversations.length === 0) return "";
+
+  const MAX_THREAD_MESSAGES = 50;
+
+  const formatted = conversations
+    .map((thread) => {
+      const allMsgs = thread.messages;
+      const capped =
+        allMsgs.length <= MAX_THREAD_MESSAGES
+          ? allMsgs
+          : [allMsgs[0], ...allMsgs.slice(-MAX_THREAD_MESSAGES + 1)];
+      const msgs = capped
+        .map((m) => {
+          const timeAgo = relativeTime(new Date(m.createdAt));
+          const speaker = m.role === "assistant" ? "Aura" : m.userId;
+          return `  ${speaker} (${timeAgo}): ${m.content.length > 300 ? m.content.substring(0, 300) + "…" : m.content}`;
+        })
+        .join("\n");
+      return `Thread in ${thread.channelId} (similarity: ${thread.bestSimilarity.toFixed(2)}):\n${msgs}`;
+    })
+    .join("\n\n");
+
+  return `\n## Relevant past conversations\n\nThese are past conversation threads retrieved from your message history. Use them for context if relevant — reference specific things people said.\n\n${formatted}`;
+}
+
+/**
  * Build the full system prompt for an LLM call.
  * Async because it queries the skill index from the database.
  */
@@ -463,6 +495,11 @@ export async function buildSystemPrompt(
   // Retrieved memories
   if (context.memories.length > 0) {
     parts.push(formatMemories(context.memories));
+  }
+
+  // Retrieved conversation threads
+  if (context.conversations && context.conversations.length > 0) {
+    parts.push(formatConversations(context.conversations));
   }
 
   // Skill index (progressive disclosure -- lightweight topic + first line)
