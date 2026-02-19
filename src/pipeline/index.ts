@@ -28,6 +28,7 @@ import {
 import { downloadEventFiles } from "../lib/files.js";
 import { pauseSandbox } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
+import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import type { SlackEvent } from "./context.js";
 
@@ -277,6 +278,14 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       logger.warn("Failed to pause sandbox after response", {
         error: err.message,
       });
+      logError({
+        errorName: "SandboxPauseError",
+        errorMessage: err?.message || String(err),
+        errorCode: "sandbox_pause_failed",
+        userId: context.userId,
+        channelId: context.channelId,
+        channelType: context.channelType,
+      });
     });
 
     // Response is already posted to Slack via streaming updates
@@ -343,6 +352,16 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       channelType: context.channelType,
     });
 
+    logError({
+      errorName,
+      errorMessage,
+      errorCode: error?.data?.error || error?.code || "pipeline_error",
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      stackTrace: error?.stack,
+    });
+
     // Try to send a graceful error message
     try {
       await client.chat.postMessage({
@@ -381,9 +400,18 @@ async function handleTransparencyCommands(
         thread_ts: replyThreadTs,
       });
       return true;
-    } catch (error) {
+    } catch (error: any) {
       recordError("transparency.knowledge", error, {
         userId: context.userId,
+      });
+      logError({
+        errorName: error?.name || "TransparencyKnowledgeError",
+        errorMessage: error?.message || String(error),
+        errorCode: "transparency_knowledge",
+        userId: context.userId,
+        channelId: context.channelId,
+        channelType: context.channelType,
+        stackTrace: error?.stack,
       });
       await client.chat.postMessage({
         channel: context.channelId,
@@ -420,10 +448,20 @@ async function handleTransparencyCommands(
         });
       }
       return true;
-    } catch (error) {
+    } catch (error: any) {
       recordError("transparency.forget", error, {
         userId: context.userId,
         whatToForget,
+      });
+      logError({
+        errorName: error?.name || "TransparencyForgetError",
+        errorMessage: error?.message || String(error),
+        errorCode: "transparency_forget",
+        userId: context.userId,
+        channelId: context.channelId,
+        channelType: context.channelType,
+        context: { whatToForget },
+        stackTrace: error?.stack,
       });
       await client.chat.postMessage({
         channel: context.channelId,
@@ -452,8 +490,17 @@ async function storeUserMessage(context: MessageContext, event: SlackEvent): Pro
       content: context.text,
       metadata: buildMessageMetadata(event),
     });
-  } catch (error) {
+  } catch (error: any) {
     recordError("storeUserMessage", error, { userId: context.userId });
+    logError({
+      errorName: error?.name || "StoreUserMessageError",
+      errorMessage: error?.message || String(error),
+      errorCode: "store_user_message",
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      stackTrace: error?.stack,
+    });
   }
 }
 
@@ -562,8 +609,17 @@ async function runBackgroundTasks(params: {
       context.text,
       response,
     );
-  } catch (error) {
+  } catch (error: any) {
     recordError("backgroundTasks", error, { userId: context.userId });
+    logError({
+      errorName: error?.name || "BackgroundTaskError",
+      errorMessage: error?.message || String(error),
+      errorCode: "background_tasks",
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      stackTrace: error?.stack,
+    });
   }
 }
 
