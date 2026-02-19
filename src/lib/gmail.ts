@@ -131,9 +131,7 @@ export async function getGmailClient() {
   const auth = await getOAuth2Client();
   if (!auth) return null;
 
-  // Verify we have a refresh token (check DB + env)
-  const refreshToken = await getRefreshToken();
-  if (!refreshToken) {
+  if (!auth.credentials.refresh_token) {
     logger.warn("Gmail: No refresh token configured (checked DB and env)");
     return null;
   }
