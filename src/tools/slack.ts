@@ -1245,17 +1245,59 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           const result = await client.conversations.history(historyParams as any);
 
-          // Resolve user IDs to display names
+          // Resolve user IDs to display names, and fetch thread replies for threaded messages
           const messages = await Promise.all(
             (result.messages || []).map(async (msg) => {
               const userName = msg.user
                 ? await resolveUserById(client, msg.user)
                 : "unknown";
+
+              const replyCount = (msg as any).reply_count as number | undefined;
+              const threadTs = msg.ts || "";
+              const latestReply = (msg as any).latest_reply as string | undefined;
+
+              let replies: Array<{ user: string; user_id: string; text: string; timestamp: string }> | undefined;
+
+              if (replyCount && replyCount > 0 && threadTs) {
+                try {
+                  const threadResult = await client.conversations.replies({
+                    channel: dmChannelId!,
+                    ts: threadTs,
+                    limit: 200,
+                  });
+                  // First message in replies is the parent — skip it
+                  const threadMessages = (threadResult.messages || []).slice(1);
+                  replies = await Promise.all(
+                    threadMessages.map(async (reply) => {
+                      const replyUserName = reply.user
+                        ? await resolveUserById(client, reply.user)
+                        : "unknown";
+                      return {
+                        user: replyUserName,
+                        user_id: reply.user || "",
+                        text: reply.text || "",
+                        timestamp: reply.ts || "",
+                      };
+                    }),
+                  );
+                } catch (threadError: any) {
+                  logger.error("Failed to fetch thread replies", {
+                    channel: dmChannelId,
+                    thread_ts: threadTs,
+                    error: threadError.message,
+                  });
+                }
+              }
+
               return {
                 user: userName,
                 user_id: msg.user || "",
                 text: msg.text || "",
                 timestamp: msg.ts || "",
+                ...(replyCount != null && replyCount > 0
+                  ? { reply_count: replyCount, thread_ts: threadTs, latest_reply: latestReply }
+                  : {}),
+                ...(replies && replies.length > 0 ? { replies } : {}),
                 reactions:
                   (msg as any).reactions?.map((r: any) => ({
                     name: r.name,
