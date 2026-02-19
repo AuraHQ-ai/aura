@@ -62,6 +62,7 @@ export async function assemblePrompt(
           threadLimit: 3,
           matchLimit: 15,
           minSimilarity: 0.35,
+          excludeThreadTs: context.threadTs,
         })
       : Promise.resolve([] as ConversationThread[]),
     getProfile(context.userId),

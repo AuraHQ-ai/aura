@@ -124,6 +124,8 @@ interface ConversationRetrievalOptions {
   threadLimit?: number;
   /** Minimum cosine similarity threshold for message matches */
   minSimilarity?: number;
+  /** Thread ts to exclude from results (e.g. the current thread, which is already in context) */
+  excludeThreadTs?: string;
 }
 
 /**
@@ -145,6 +147,7 @@ export async function retrieveConversations(
     matchLimit = 20,
     threadLimit = 5,
     minSimilarity = 0.3,
+    excludeThreadTs,
   } = options;
   const start = Date.now();
 
@@ -184,6 +187,10 @@ export async function retrieveConversations(
           bestSimilarity: r.similarity,
         });
       }
+    }
+
+    if (excludeThreadTs) {
+      threadMap.delete(excludeThreadTs);
     }
 
     // Sort threads by best similarity and take top N
