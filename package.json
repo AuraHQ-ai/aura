@@ -19,6 +19,7 @@
   "dependencies": {
     "@ai-sdk/gateway": "^3.0.46",
     "@google-cloud/bigquery": "^8.1.1",
+    "@googleapis/calendar": "^14.2.0",
     "@googleapis/gmail": "^16.1.1",
     "@hono/node-server": "^1.19.9",
     "@neondatabase/serverless": "^1.0.0",

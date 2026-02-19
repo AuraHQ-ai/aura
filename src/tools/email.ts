@@ -374,5 +374,191 @@ export function createEmailTools() {
         }
       },
     }),
+
+    // ── Contact Lookup ──────────────────────────────────────────────────────
+
+    lookup_contact: tool({
+      description:
+        "Search for external contacts (agents, clients, partners) by name or email. Searches the RealAdvisor platform (3M+ users) and Close CRM (216K sales contacts across CH, ES, FR, IT). Returns name, email, phone, company, and source.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe(
+            "Name or email to search for, e.g. 'Rahel Thoma' or 'trewim.ch'"
+          ),
+      }),
+      execute: async ({ query }) => {
+        try {
+          const { lookupContact } = await import(
+            "../lib/contact-lookup.js"
+          );
+          const contacts = await lookupContact(query);
+          return {
+            ok: true,
+            count: contacts.length,
+            contacts,
+          };
+        } catch (error: any) {
+          logger.error("lookup_contact failed", {
+            query,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Contact lookup failed: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    // ── Calendar Tools ──────────────────────────────────────────────────────
+
+    check_calendar: tool({
+      description:
+        "List upcoming calendar events for aura@realadvisor.com. Use to check schedule, find meetings, or see what's coming up.",
+      inputSchema: z.object({
+        time_min: z
+          .string()
+          .optional()
+          .describe(
+            "Start of time range (ISO 8601). Defaults to now."
+          ),
+        time_max: z
+          .string()
+          .optional()
+          .describe(
+            "End of time range (ISO 8601). E.g. '2026-02-28T23:59:59Z'"
+          ),
+        max_results: z
+          .number()
+          .optional()
+          .default(20)
+          .describe("Maximum events to return (default 20)"),
+        query: z
+          .string()
+          .optional()
+          .describe("Free-text search to filter events"),
+      }),
+      execute: async ({ time_min, time_max, max_results, query }) => {
+        try {
+          const { listEvents } = await import("../lib/calendar.js");
+          const events = await listEvents({
+            timeMin: time_min,
+            timeMax: time_max,
+            maxResults: max_results,
+            query: query || undefined,
+          });
+          if (!events) {
+            return {
+              ok: false,
+              error:
+                "Calendar is not configured. The OAuth token may need calendar scopes.",
+            };
+          }
+          return { ok: true, count: events.length, events };
+        } catch (error: any) {
+          logger.error("check_calendar failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Calendar query failed: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    create_event: tool({
+      description:
+        "Create a calendar event with optional attendees. Sends email invitations to all attendees.",
+      inputSchema: z.object({
+        summary: z.string().describe("Event title"),
+        start: z
+          .string()
+          .describe("Start time (ISO 8601), e.g. '2026-02-20T10:00:00+01:00'"),
+        end: z
+          .string()
+          .describe("End time (ISO 8601), e.g. '2026-02-20T11:00:00+01:00'"),
+        description: z.string().optional().describe("Event description"),
+        location: z.string().optional().describe("Event location or meeting link"),
+        attendees: z
+          .array(z.string())
+          .optional()
+          .describe("List of attendee email addresses"),
+      }),
+      execute: async ({ summary, start, end, description, location, attendees }) => {
+        try {
+          const { createEvent } = await import("../lib/calendar.js");
+          const event = await createEvent({
+            summary,
+            start,
+            end,
+            description: description || undefined,
+            location: location || undefined,
+            attendees: attendees || undefined,
+          });
+          if (!event) {
+            return {
+              ok: false,
+              error:
+                "Calendar is not configured. The OAuth token may need calendar scopes.",
+            };
+          }
+          return { ok: true, event };
+        } catch (error: any) {
+          logger.error("create_event failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to create event: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    find_available_slot: tool({
+      description:
+        "Find available meeting slots across multiple people's calendars. Uses the free/busy API to find gaps where everyone is free.",
+      inputSchema: z.object({
+        emails: z
+          .array(z.string())
+          .describe("Email addresses of people to check availability for"),
+        time_min: z
+          .string()
+          .describe("Start of search range (ISO 8601)"),
+        time_max: z
+          .string()
+          .describe("End of search range (ISO 8601)"),
+        duration_minutes: z
+          .number()
+          .describe("Required meeting duration in minutes, e.g. 30"),
+      }),
+      execute: async ({ emails, time_min, time_max, duration_minutes }) => {
+        try {
+          const { findAvailableSlots } = await import("../lib/calendar.js");
+          const slots = await findAvailableSlots({
+            emails,
+            timeMin: time_min,
+            timeMax: time_max,
+            durationMinutes: duration_minutes,
+          });
+          if (!slots) {
+            return {
+              ok: false,
+              error:
+                "Calendar is not configured. The OAuth token may need calendar scopes.",
+            };
+          }
+          return {
+            ok: true,
+            count: slots.length,
+            slots: slots.slice(0, 10), // cap at 10 suggestions
+          };
+        } catch (error: any) {
+          logger.error("find_available_slot failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to find slots: ${error.message}`,
+          };
+        }
+      },
+    }),
   };
 }

@@ -47,6 +47,8 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/admin.directory.user.readonly",
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
 ];
 
 // ── Email Signature ─────────────────────────────────────────────────────────
@@ -100,7 +102,7 @@ export async function saveRefreshToken(token: string): Promise<void> {
   logger.info("Refresh token saved to database");
 }
 
-async function getOAuth2Client() {
+export async function getOAuth2Client() {
   const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
 
