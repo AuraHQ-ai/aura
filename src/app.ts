@@ -346,12 +346,13 @@ app.get("/api/oauth/google/callback", async (c) => {
       const listRes = await fetch(baseUrl, {
         headers: { Authorization: `Bearer ${vercelToken}` },
       });
+      if (!listRes.ok) throw new Error(`Vercel list env vars failed: ${listRes.status}`);
       const listData = (await listRes.json()) as { envs?: Array<{ id: string; key: string }> };
       const existing = listData.envs?.find((e: { key: string }) => e.key === envName);
 
       if (existing) {
         // Update existing
-        await fetch(
+        const updateRes = await fetch(
           `https://api.vercel.com/v9/projects/aura/env/${existing.id}?teamId=${teamId}`,
           {
             method: "PATCH",
@@ -362,9 +363,10 @@ app.get("/api/oauth/google/callback", async (c) => {
             body: JSON.stringify({ value: result.refreshToken }),
           },
         );
+        if (!updateRes.ok) throw new Error(`Vercel update env var failed: ${updateRes.status}`);
       } else {
         // Create new
-        await fetch(`https://api.vercel.com/v10/projects/aura/env?teamId=${teamId}`, {
+        const createRes = await fetch(`https://api.vercel.com/v10/projects/aura/env?teamId=${teamId}`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${vercelToken}`,
@@ -377,6 +379,7 @@ app.get("/api/oauth/google/callback", async (c) => {
             type: "encrypted",
           }),
         });
+        if (!createRes.ok) throw new Error(`Vercel create env var failed: ${createRes.status}`);
       }
 
       // Trigger production redeploy
@@ -384,10 +387,11 @@ app.get("/api/oauth/google/callback", async (c) => {
         `https://api.vercel.com/v6/deployments?teamId=${teamId}&projectId=aura&limit=1&target=production&state=READY`,
         { headers: { Authorization: `Bearer ${vercelToken}` } },
       );
+      if (!deploysRes.ok) throw new Error(`Vercel list deployments failed: ${deploysRes.status}`);
       const deploysData = (await deploysRes.json()) as { deployments?: Array<{ uid: string }> };
       const latestDeploy = deploysData.deployments?.[0];
       if (latestDeploy) {
-        await fetch(`https://api.vercel.com/v13/deployments?teamId=${teamId}`, {
+        const redeployRes = await fetch(`https://api.vercel.com/v13/deployments?teamId=${teamId}`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${vercelToken}`,
@@ -399,6 +403,7 @@ app.get("/api/oauth/google/callback", async (c) => {
             target: "production",
           }),
         });
+        if (!redeployRes.ok) throw new Error(`Vercel redeploy failed: ${redeployRes.status}`);
       }
 
       logger.info("OAuth refresh token auto-saved to Vercel and redeploy triggered");
