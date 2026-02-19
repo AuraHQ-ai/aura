@@ -280,7 +280,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       });
       logError({
         errorName: "SandboxPauseError",
-        errorMessage: err.message,
+        errorMessage: err?.message || String(err),
         errorCode: "sandbox_pause_failed",
         userId: context.userId,
         channelId: context.channelId,

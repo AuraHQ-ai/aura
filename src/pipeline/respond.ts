@@ -705,15 +705,6 @@ export async function generateResponse(
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
 
-    logError({
-      errorName: error?.name || "StreamingError",
-      errorMessage: error?.message || String(error),
-      errorCode: error?.data?.error || error?.code || "streaming_failure",
-      channelId,
-      context: { hasFiles, accumulatedTextLength: accumulatedText.length },
-      stackTrace: error?.stack,
-    });
-
     if (hasFiles && isUnsupportedFileError(error)) {
       logger.warn("LLM call failed due to unsupported file type, retrying without file parts", {
         channelId,
@@ -801,6 +792,15 @@ export async function generateResponse(
         });
       }
     }
+
+    logError({
+      errorName: error?.name || "StreamingError",
+      errorMessage: error?.message || String(error),
+      errorCode: error?.data?.error || error?.code || "streaming_failure",
+      channelId,
+      context: { hasFiles, accumulatedTextLength: accumulatedText.length },
+      stackTrace: error?.stack,
+    });
 
     // If streaming was never established, don't try to stop it
     if (!streamingFailed) {
