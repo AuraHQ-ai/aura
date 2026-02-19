@@ -1,4 +1,5 @@
 import { logger } from "./logger.js";
+import { getRefreshToken } from "./gmail.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -17,10 +18,10 @@ export interface DirectoryUser {
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
-function getCredentials() {
+async function getCredentials() {
   const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_EMAIL_REFRESH_TOKEN;
+  const refreshToken = await getRefreshToken();
 
   if (!clientId || !clientSecret || !refreshToken) {
     return null;
@@ -35,7 +36,7 @@ async function getAccessToken(): Promise<string | null> {
     return cachedAccessToken.token;
   }
 
-  const creds = getCredentials();
+  const creds = await getCredentials();
   if (!creds) return null;
 
   const resp = await fetch("https://oauth2.googleapis.com/token", {
