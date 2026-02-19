@@ -123,8 +123,11 @@ function extractFullMessageText(msg: any): string {
     }
   }
 
-  // Rich-text blocks: iterate into nested element tree
-  if (Array.isArray(msg.blocks)) {
+  // Rich-text blocks: only extract when msg.text is absent, since msg.text
+  // already contains the full mrkdwn fallback and partial extraction of
+  // rich_text elements (which drops links, mentions, emoji) creates noisy
+  // near-duplicate lines that fail dedup.
+  if (!msg.text && Array.isArray(msg.blocks)) {
     for (const block of msg.blocks) {
       if (block.type === "rich_text" && Array.isArray(block.elements)) {
         for (const section of block.elements) {
