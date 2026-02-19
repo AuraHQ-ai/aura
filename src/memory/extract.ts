@@ -219,7 +219,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
 
     // Embed all extracted memories in a single batch
     const memoryTexts = normalizedMemories.map((m) => m.content);
-    let embeddings: number[][];
+    let embeddings: (number[] | null)[];
     try {
       embeddings = await embedTexts(memoryTexts);
     } catch (embedError) {
@@ -228,7 +228,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
         memoryCount: memoryTexts.length,
         userId: context.userId,
       });
-      embeddings = memoryTexts.map(() => null as unknown as number[]);
+      embeddings = memoryTexts.map(() => null);
     }
 
     // Prepare memories for storage
