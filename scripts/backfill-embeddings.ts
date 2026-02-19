@@ -1,5 +1,5 @@
 /**
- * Backfill script: re-embed all memories and messages with text-embedding-3-large (3072 dimensions).
+ * Backfill script: re-embed all memories and messages with text-embedding-3-large (2000 dimensions).
  *
  * Usage:
  *   OPENAI_API_KEY=sk-... DATABASE_URL=postgresql://... npx tsx scripts/backfill-embeddings.ts
@@ -9,7 +9,7 @@
  */
 
 const EMBEDDING_MODEL = "text-embedding-3-large";
-const EMBEDDING_DIMENSIONS = 3072;
+const EMBEDDING_DIMENSIONS = 2000;
 const BATCH_SIZE = 50;
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 1000;
@@ -127,7 +127,7 @@ async function backfillTable(
     if (tableName === "memories") {
       await sql`
         UPDATE memories AS m
-        SET embedding = data.vec::vector(3072),
+        SET embedding = data.vec::vector(2000),
             updated_at = NOW()
         FROM (
           SELECT unnest(${ids}::uuid[]) AS id,
@@ -138,7 +138,7 @@ async function backfillTable(
     } else {
       await sql`
         UPDATE messages AS m
-        SET embedding = data.vec::vector(3072)
+        SET embedding = data.vec::vector(2000)
         FROM (
           SELECT unnest(${ids}::uuid[]) AS id,
                  unnest(${vectors}::text[]) AS vec
