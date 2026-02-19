@@ -40,6 +40,9 @@ export function getSandboxEnvs(): Record<string, string> {
   if (process.env.DATABASE_URL) {
     envs.DATABASE_URL = process.env.DATABASE_URL;
   }
+  if (process.env.VERCEL_TOKEN) {
+    envs.VERCEL_TOKEN = process.env.VERCEL_TOKEN;
+  }
   return envs;
 }
 
