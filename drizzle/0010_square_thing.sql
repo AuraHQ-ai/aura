@@ -12,3 +12,7 @@ ALTER TABLE "memories" ALTER COLUMN "embedding" SET DATA TYPE vector(3072);
 
 -- 4. Recreate the HNSW index for cosine similarity search
 CREATE INDEX "memories_embedding_idx" ON "memories" USING hnsw ("embedding" vector_cosine_ops);
+
+-- 5. Clear any persisted embedding model override so getEmbeddingModel() falls
+--    back to the new default (text-embedding-3-large, 3072-d).
+DELETE FROM "settings" WHERE "key" = 'model_embedding';
