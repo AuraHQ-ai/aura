@@ -71,6 +71,13 @@
       "when": 1771514088605,
       "tag": "0009_lush_maestro",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1771519581434,
+      "tag": "0010_damp_skrulls",
+      "breakpoints": true
     }
   ]
 }

@@ -46,7 +46,7 @@ const EMBEDDING_MODELS: ModelOption[] = [
 const DEFAULTS: Record<string, string> = {
   model_main: process.env.MODEL_MAIN || "anthropic/claude-sonnet-4-20250514",
   model_fast: process.env.MODEL_FAST || "anthropic/claude-haiku-4-5",
-  model_embedding: process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
+  model_embedding: process.env.MODEL_EMBEDDING || "openai/text-embedding-3-large",
 };
 
 // ── Block Kit Helpers ────────────────────────────────────────────────────────

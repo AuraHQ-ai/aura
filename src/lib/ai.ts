@@ -50,7 +50,7 @@ export async function getFastModel() {
 export async function getEmbeddingModel() {
   const override = await getSetting("model_embedding");
   return gateway.embedding(
-    override || process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
+    override || process.env.MODEL_EMBEDDING || "openai/text-embedding-3-large",
   );
 }
 
@@ -67,5 +67,5 @@ export const fastModel = gateway(
 );
 
 export const embeddingModel = gateway.embedding(
-  process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
+  process.env.MODEL_EMBEDDING || "openai/text-embedding-3-large",
 );
