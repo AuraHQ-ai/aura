@@ -1,34 +1,15 @@
 import type { Memory } from "../db/schema.js";
 
 /**
- * Filter memories by DM privacy rules (FR-2.4).
- *
- * Rules:
- * - Memories from public/private channels pass through (shared knowledge).
- * - Memories sourced from DMs are only included if:
- *   1. The current user is in `relatedUserIds` (it's their own DM), OR
- *   2. The memory was explicitly marked as `shareable` during extraction
- *      (e.g., user said "Tell Maria that I approved the budget").
+ * Previously filtered DM-sourced memories by related_user_ids / shareable.
+ * Now returns all memories unfiltered — this is a corporate tool where
+ * full transparency is the policy. The related_user_ids column is kept in
+ * the schema as a useful index ("show me everything about person X") but
+ * is no longer used as an access gate.
  */
 export function filterMemoriesByPrivacy(
   memories: Memory[],
-  currentUserId: string,
+  _currentUserId: string,
 ): Memory[] {
-  return memories.filter((memory) => {
-    // Channel-sourced memories are always visible
-    if (memory.sourceChannelType !== "dm") {
-      return true;
-    }
-
-    // DM memory: only visible to related users or if shareable
-    if (memory.relatedUserIds.includes(currentUserId)) {
-      return true;
-    }
-
-    if (memory.shareable === 1) {
-      return true;
-    }
-
-    return false;
-  });
+  return memories;
 }
