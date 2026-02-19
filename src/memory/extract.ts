@@ -9,7 +9,7 @@ import type { NewMemory } from "../db/schema.js";
 
 // ── User ID Normalization ───────────────────────────────────────────────────
 
-const SLACK_USER_ID_RE = /^U[A-Z0-9]+$/;
+const SLACK_USER_ID_RE = /^[UW][A-Z0-9]+$/;
 
 /** Cached in-flight promise so concurrent callers share one API round-trip. */
 let userLookupPromise: Promise<Map<string, string>> | null = null;
@@ -102,7 +102,7 @@ async function normalizeUserReferences(refs: string[]): Promise<string[]> {
     if (SLACK_USER_ID_RE.test(ref)) return ref;
 
     // Strip Slack mention markup: <@U12345> → U12345
-    const mentionMatch = ref.match(/^<@(U[A-Z0-9]+)>$/);
+    const mentionMatch = ref.match(/^<@([UW][A-Z0-9]+)>$/);
     if (mentionMatch) return mentionMatch[1];
 
     const lower = ref.toLowerCase().trim().replace(/^@/, "");
