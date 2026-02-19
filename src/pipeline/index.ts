@@ -238,7 +238,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { systemPrompt, memories } = await assemblePrompt(
+    const { systemPrompt, memories, conversations } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
@@ -301,6 +301,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       userId: context.userId,
       channelType: context.channelType,
       memoriesUsed: memories.length,
+      conversationsUsed: conversations.length,
       llmMs,
       retrievalMs,
     });
