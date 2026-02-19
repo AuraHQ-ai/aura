@@ -25,27 +25,32 @@ export async function claimEvent(eventTs: string, channelId: string): Promise<bo
  */
 export async function storeMessage(message: NewMessage): Promise<string> {
   try {
-    // Generate embedding for the message content
-    let embedding: number[] | undefined;
+    let embedding: number[] | null = null;
     if (message.content && message.content.trim().length > 0) {
       try {
         embedding = await embedText(message.content);
       } catch (error) {
-        logger.warn("Failed to embed message, storing without embedding", {
+        logger.error("Failed to embed message — storing without embedding", {
           error: String(error),
           slackTs: message.slackTs,
+          contentLength: message.content.length,
         });
       }
     }
 
     const [inserted] = await db
       .insert(messages)
-      .values({ ...message, embedding: embedding ?? null })
+      .values({ ...message, embedding })
       .onConflictDoNothing({ target: messages.slackTs })
       .returning({ id: messages.id });
 
     if (inserted) {
-      logger.debug("Stored message", { id: inserted.id, role: message.role, hasEmbedding: !!embedding });
+      logger.info("Stored message", {
+        id: inserted.id,
+        role: message.role,
+        hasEmbedding: embedding !== null,
+        embeddingDims: embedding?.length,
+      });
       return inserted.id;
     }
 
