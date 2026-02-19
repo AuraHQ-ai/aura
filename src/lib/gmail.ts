@@ -245,11 +245,11 @@ export async function sendEmail(
  */
 export async function listEmails(
   options?: ListEmailsOptions,
-): Promise<EmailSummary[]> {
+): Promise<EmailSummary[] | null> {
   const gmail = await getGmailClient();
   if (!gmail) {
     logger.error("Gmail client not available");
-    return [];
+    return null;
   }
 
   let q = options?.query || "";
