@@ -202,8 +202,20 @@ function getToolOutput(toolName: string, output: any): string | undefined {
     case "execute_query": return `${output.total_rows ?? 0} rows`;
     case "web_search": return `${output.count ?? 0} results`;
     case "search_messages": return `${output.count ?? 0} messages`;
-    case "run_command":
-      return output.exit_code === 0 ? undefined : `Exit code ${output.exit_code}`;
+    case "run_command": {
+      if (output.exit_code === 0) return undefined;
+      const stderr = typeof output.stderr === "string" ? output.stderr.trim() : "";
+      const stdout = typeof output.stdout === "string" ? output.stdout.trim() : "";
+      if (stderr) {
+        const detail = truncate(stderr, 180);
+        return `Exit code ${output.exit_code}: ${detail}`;
+      }
+      if (stdout) {
+        const detail = truncate(stdout, 180);
+        return `Exit code ${output.exit_code}: ${detail}`;
+      }
+      return `Exit code ${output.exit_code}`;
+    }
     case "read_channel_history": return `${output.count ?? 0} messages`;
     case "inspect_table":
       return `${output.row_count ?? "?"} rows, ${(output.schema ?? []).length} columns`;
