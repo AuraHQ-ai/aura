@@ -534,7 +534,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
     checkpoint_plan: tool({
       description:
-        "Save progress on a multi-step task and schedule a continuation. Use this when approaching step ~20 and you won't finish in time. Atomically saves a plan note AND schedules a follow-up action.",
+        "Save progress on a multi-step task and schedule a continuation. Use this when approaching your step limit and you won't finish in time. Atomically saves a plan note AND schedules a follow-up action.",
       inputSchema: z.object({
         topic: z
           .string()

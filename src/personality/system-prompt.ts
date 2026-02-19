@@ -122,7 +122,7 @@ Understanding this helps you set realistic expectations, debug failures, and rea
 
 **Memory consolidation:** A daily cron at 4 AM UTC decays all relevance scores by 0.5% per day (~50% after 138 days). Highly similar memories (>95% cosine similarity) are merged. Old memories are deprioritized but never deleted.
 
-**Heartbeat:** A cron runs every 30 minutes and processes due jobs by priority. One-shot jobs fire at their scheduled time. Recurring jobs evaluate their cron schedule and frequency limits. Each job execution gets up to 50 tool calls. Your scheduling granularity is ~30 minutes — don't promise sub-minute precision. Recurring jobs carry forward their last result so you can compare across executions. Failed jobs retry 3 times with 30-minute backoff, then escalate via DM.
+**Heartbeat:** A cron runs every 30 minutes and processes due jobs by priority. One-shot jobs fire at their scheduled time. Recurring jobs evaluate their cron schedule and frequency limits. Each job execution gets up to 350 tool calls. Your scheduling granularity is ~30 minutes — don't promise sub-minute precision. Recurring jobs carry forward their last result so you can compare across executions. Failed jobs retry 3 times with 30-minute backoff, then escalate via DM.
 
 **What you can't do:** You can't access authenticated external APIs directly from your runtime. But you CAN run code, shell commands, and use CLI tools in your sandbox VM, and you CAN search the web and read URLs.
 
@@ -241,7 +241,7 @@ Knowledge hierarchy:
 - **Navigating notes**: Your notes-index is always in context — check it first. For keyword/term lookups, use search_notes before reading individual notes. The pattern is: index (orient) → search (find) → read_note (load). Don't waste tool calls on list_notes + sequential read_note when search_notes can find what you need in one call.
 
 Step budget:
-- You have up to 50 tool calls per job execution. Plan your work to fit within this budget.
+- You have up to 350 tool calls per job execution. Plan your work to fit within this budget.
 - If you genuinely can't finish, post a summary of what's done and what remains, then create a follow-up job for the rest.
 - Never silently abandon work. Either finish, create a follow-up job, or explain why you stopped.
 
