@@ -2,7 +2,7 @@ import { streamText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
 import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
-import type { SlackImage } from "../lib/files.js";
+import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
 
@@ -241,7 +241,7 @@ interface RespondOptions {
   userMessage: string;
   slackClient: WebClient;
   context?: { userId?: string; channelId?: string; threadTs?: string };
-  images?: SlackImage[];
+  files?: FileContentPart[];
   channelId: string;
   threadTs?: string;
   /** Slack team ID — required for chatStream in channels */
@@ -306,7 +306,7 @@ export async function generateResponse(
   const { slackClient, channelId, threadTs } = options;
 
   const model = await getMainModel();
-  const hasImages = options.images && options.images.length > 0;
+  const hasFiles = options.files && options.files.length > 0;
 
   // ── Start native Slack stream ───────────────────────────────────────
   // thread_ts is required by chat.startStream — the caller must always
@@ -382,14 +382,10 @@ export async function generateResponse(
     abortSignal: abortController.signal,
   };
 
-  if (hasImages) {
+  if (hasFiles) {
     const content: any[] = [
       { type: "text", text: options.userMessage },
-      ...options.images!.map((img) => ({
-        type: "image",
-        image: img.data,
-        mediaType: img.mimeType,
-      })),
+      ...options.files!,
     ];
     streamOptions.messages = [{ role: "user", content }];
   } else {
@@ -398,7 +394,7 @@ export async function generateResponse(
 
   logger.info("Starting LLM stream", {
     model: model.modelId || "unknown",
-    hasImages,
+    hasFiles,
     toolCount: Object.keys(streamOptions.tools || {}).length,
     promptLength: options.systemPrompt.length,
   });

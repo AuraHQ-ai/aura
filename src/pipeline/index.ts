@@ -24,7 +24,7 @@ import {
   recordInteraction,
   updateProfileFromConversation,
 } from "../users/profiles.js";
-import { downloadEventImages, type SlackImage } from "../lib/files.js";
+import { downloadEventFiles } from "../lib/files.js";
 import { pauseSandbox } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
@@ -172,7 +172,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     }
 
     // ── Edge case: extremely long message ────────────────────────────────
-    let messageText = context.text || (hasFiles ? "What do you see in this image?" : "");
+    let messageText = context.text || (hasFiles ? "What can you tell me about this file?" : "");
     if (messageText.length > MAX_MESSAGE_LENGTH) {
       messageText = messageText.substring(0, MAX_MESSAGE_LENGTH);
       logger.warn("Truncated long message", {
@@ -220,13 +220,13 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     );
     const retrievalMs = Date.now() - retrievalStart;
 
-    // 4b. Download images if the message has file attachments
+    // 4b. Download files if the message has attachments
     const botToken = process.env.SLACK_BOT_TOKEN || "";
-    const images = await downloadEventImages(event, botToken);
-    if (images.length > 0) {
-      logger.info("Images ready for LLM", {
-        count: images.length,
-        names: images.map((i) => i.name),
+    const fileParts = await downloadEventFiles(event, botToken);
+    if (fileParts.length > 0) {
+      logger.info("Files ready for LLM", {
+        count: fileParts.length,
+        types: fileParts.map((p) => p.type),
       });
     }
 
@@ -237,7 +237,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       userMessage: messageText,
       slackClient: client,
       context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs },
-      images,
+      files: fileParts,
       channelId: context.channelId,
       threadTs: replyThreadTs,
       teamId,

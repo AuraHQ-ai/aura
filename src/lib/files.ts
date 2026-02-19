@@ -1,105 +1,140 @@
 import { logger } from "./logger.js";
 
-/** Supported image MIME types for multimodal LLM input */
-const SUPPORTED_IMAGE_TYPES = new Set([
+/** Max file size to download (20MB) */
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+
+const IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/gif",
   "image/webp",
 ]);
 
-/** Max file size to download (10MB) */
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const TEXT_MIME_TYPES = new Set([
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/x-javascript",
+  "application/typescript",
+  "application/csv",
+  "application/x-yaml",
+  "application/yaml",
+  "application/sql",
+  "application/graphql",
+  "application/x-sh",
+  "application/xhtml+xml",
+]);
 
-export interface SlackImage {
-  data: Uint8Array;
-  mimeType: string;
-  name: string;
+function isTextMimeType(mimeType: string): boolean {
+  return mimeType.startsWith("text/") || TEXT_MIME_TYPES.has(mimeType);
 }
 
+/** AI SDK content part for a user message file attachment. */
+export type FileContentPart =
+  | { type: "image"; image: Uint8Array; mediaType: string }
+  | { type: "file"; data: Uint8Array; mediaType: string; filename: string }
+  | { type: "text"; text: string };
+
 /**
- * Extract downloadable image files from a Slack event.
- * Filters for supported image types and reasonable sizes.
+ * Extract downloadable files from a Slack event.
+ * Accepts all file types, filtering only by size and presence of a download URL.
  */
-export function getImageFiles(
+export function getEventFiles(
   event: any,
-): { url_private_download: string; mimetype: string; name: string; size: number }[] {
+): { url: string; mimetype: string; name: string; size: number }[] {
   const files = event.files;
   if (!Array.isArray(files) || files.length === 0) return [];
 
-  return files.filter((f: any) => {
-    // Slack uses url_private_download or url_private
-    if (!f.url_private_download && !f.url_private) return false;
-    if (!f.url_private_download) f.url_private_download = f.url_private;
-    if (!f.mimetype || !SUPPORTED_IMAGE_TYPES.has(f.mimetype)) return false;
-    if (f.size && f.size > MAX_FILE_SIZE) {
-      logger.warn("Skipping large image file", {
-        name: f.name,
-        size: f.size,
-      });
-      return false;
-    }
-    return true;
-  });
+  return files
+    .filter((f: any) => {
+      const url = f.url_private_download || f.url_private;
+      if (!url) return false;
+      if (f.size && f.size > MAX_FILE_SIZE) {
+        logger.warn("Skipping large file (exceeds 20MB limit)", {
+          name: f.name,
+          size: f.size,
+          mimetype: f.mimetype,
+        });
+        return false;
+      }
+      return true;
+    })
+    .map((f: any) => ({
+      url: f.url_private_download || f.url_private,
+      mimetype: f.mimetype || "application/octet-stream",
+      name: f.name || "file",
+      size: f.size || 0,
+    }));
 }
 
 /**
- * Download an image from Slack's private URL using the bot token.
- * Returns raw bytes as Uint8Array (no base64 needed for AI SDK v6).
+ * Download a file from Slack's private URL using the bot token.
  */
-export async function downloadSlackImage(
+async function downloadSlackFile(
   url: string,
   botToken: string,
 ): Promise<Uint8Array> {
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${botToken}` },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to download image: HTTP ${response.status}`);
+    throw new Error(`Failed to download file: HTTP ${response.status}`);
   }
 
   return new Uint8Array(await response.arrayBuffer());
 }
 
+/** Convert raw file data + metadata into an AI SDK content part. */
+function toContentPart(
+  data: Uint8Array,
+  mimeType: string,
+  name: string,
+): FileContentPart {
+  if (IMAGE_MIME_TYPES.has(mimeType)) {
+    return { type: "image", image: data, mediaType: mimeType };
+  }
+
+  if (isTextMimeType(mimeType)) {
+    const text = new TextDecoder().decode(data);
+    return { type: "text", text: `[File: ${name}]\n${text}` };
+  }
+
+  return { type: "file", data, mediaType: mimeType, filename: name };
+}
+
 /**
- * Download all image files from a Slack event.
- * Returns an array of SlackImage objects ready for multimodal input.
+ * Download all files from a Slack event and convert to AI SDK content parts.
  */
-export async function downloadEventImages(
+export async function downloadEventFiles(
   event: any,
   botToken: string,
-): Promise<SlackImage[]> {
-  const imageFiles = getImageFiles(event);
-  if (imageFiles.length === 0) return [];
+): Promise<FileContentPart[]> {
+  const files = getEventFiles(event);
+  if (files.length === 0) return [];
 
-  const images: SlackImage[] = [];
+  const parts: FileContentPart[] = [];
 
-  for (const file of imageFiles) {
+  for (const file of files) {
     try {
-      const data = await downloadSlackImage(
-        file.url_private_download,
-        botToken,
-      );
-      images.push({
-        data,
-        mimeType: file.mimetype,
-        name: file.name || "image",
-      });
-      logger.info("Downloaded Slack image", {
+      const data = await downloadSlackFile(file.url, botToken);
+      const part = toContentPart(data, file.mimetype, file.name);
+      parts.push(part);
+      logger.info("Downloaded Slack file", {
         name: file.name,
         size: data.length,
         mimeType: file.mimetype,
+        partType: part.type,
       });
     } catch (error: any) {
-      logger.error("Failed to download Slack image", {
+      logger.error("Failed to download Slack file", {
         name: file.name,
-        url: file.url_private_download,
+        url: file.url,
         error: error.message,
       });
     }
   }
 
-  return images;
+  return parts;
 }
