@@ -197,7 +197,7 @@ export function createConversationSearchTools() {
             let group = threadMap.get(threadKey);
             if (!group) {
               group = {
-                thread_ts: row.slack_thread_ts,
+                thread_ts: row.slack_thread_ts || row.slack_ts,
                 channel_id: row.channel_id,
                 messages: [],
               };
