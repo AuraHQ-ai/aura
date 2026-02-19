@@ -12,7 +12,8 @@ import {
   resolveDisplayName,
   type ConversationContext,
 } from "./slack-context.js";
-import { storeMessage, claimEvent } from "../memory/store.js";
+import { storeMessage, claimEvent, storeToolCallMessages, storeChannelReadMessage } from "../memory/store.js";
+import type { ToolCallRecord } from "./respond.js";
 import { extractMemories } from "../memory/extract.js";
 import {
   getKnowledgeAboutUser,
@@ -309,6 +310,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       context: { ...context, text: messageText },
       event,
       response: response.raw,
+      toolCalls: response.toolCalls,
       displayName,
       client,
     });
@@ -461,10 +463,11 @@ async function runBackgroundTasks(params: {
   context: MessageContext;
   event: SlackEvent;
   response: string;
+  toolCalls: ToolCallRecord[];
   displayName: string;
   client: InstanceType<typeof import("@slack/web-api").WebClient>;
 }): Promise<void> {
-  const { context, event, response, displayName, client } = params;
+  const { context, event, response, toolCalls, displayName, client } = params;
 
   try {
     // Store the user's message
@@ -491,10 +494,42 @@ async function runBackgroundTasks(params: {
       content: response,
     });
 
-    // Extract memories from this exchange
+    // Store tool call I/O as durable messages
+    if (toolCalls.length > 0) {
+      const storageCtx = {
+        parentTs: context.messageTs,
+        threadTs: context.threadTs,
+        channelId: context.channelId,
+        channelType: context.channelType,
+        userId: context.userId,
+      };
+
+      await storeToolCallMessages(toolCalls, storageCtx);
+
+      // Store channel reads as dedicated summary messages
+      const channelReadTools = ["read_channel_history", "read_dm_history"];
+      for (let i = 0; i < toolCalls.length; i++) {
+        const tc = toolCalls[i];
+        if (!channelReadTools.includes(tc.name)) continue;
+
+        const output = tc.rawOutput as any;
+        if (output?.ok && Array.isArray(output.messages) && output.messages.length > 0) {
+          const channelName = output.channel || output.user || "unknown";
+          await storeChannelReadMessage(
+            tc.name,
+            channelName,
+            output.messages,
+            { ...storageCtx, toolIndex: i },
+          );
+        }
+      }
+    }
+
+    // Extract memories from this exchange (include tool context for richer extraction)
+    const toolContextSummary = buildToolContextForExtraction(toolCalls);
     await extractMemories({
       userMessage: context.text,
-      assistantResponse: response,
+      assistantResponse: response + toolContextSummary,
       userId: context.userId,
       channelType: context.channelType,
       sourceMessageId: userMessageId || undefined,
@@ -529,5 +564,29 @@ async function runBackgroundTasks(params: {
   } catch (error) {
     recordError("backgroundTasks", error, { userId: context.userId });
   }
+}
+
+/**
+ * Build a compact summary of tool calls to append to the assistant response
+ * before memory extraction, so the LLM can extract facts from tool outputs.
+ */
+function buildToolContextForExtraction(toolCalls: ToolCallRecord[]): string {
+  if (toolCalls.length === 0) return "";
+
+  const informativeTools = toolCalls.filter(
+    (tc) =>
+      !tc.is_error &&
+      !["set_my_status", "add_reaction", "remove_reaction"].includes(tc.name),
+  );
+
+  if (informativeTools.length === 0) return "";
+
+  const summaries = informativeTools.slice(0, 10).map((tc) => {
+    const outputPreview =
+      tc.output.length > 300 ? tc.output.slice(0, 300) + "…" : tc.output;
+    return `[Tool: ${tc.name}] ${outputPreview}`;
+  });
+
+  return "\n\n---\nTool outputs from this conversation:\n" + summaries.join("\n");
 }
 

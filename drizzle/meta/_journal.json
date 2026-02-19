@@ -71,6 +71,13 @@
       "when": 1771514088605,
       "tag": "0009_lush_maestro",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1771600000000,
+      "tag": "0010_add_tool_message_role",
+      "breakpoints": true
     }
   ]
 }
