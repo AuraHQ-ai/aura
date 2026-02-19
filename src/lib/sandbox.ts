@@ -43,6 +43,9 @@ export function getSandboxEnvs(): Record<string, string> {
   if (process.env.VERCEL_TOKEN) {
     envs.VERCEL_TOKEN = process.env.VERCEL_TOKEN;
   }
+  if (process.env.OPENAI_API_KEY) {
+    envs.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  }
   return envs;
 }
 
