@@ -17,11 +17,13 @@ function headers(): Record<string, string> {
 
 export interface LaunchCursorAgentParams {
   prompt: string;
-  repo: string;
+  /** Full GitHub URL, e.g. "https://github.com/owner/repo" */
+  repository: string;
   ref?: string;
   branchName?: string;
   autoCreatePr?: boolean;
   webhookUrl?: string;
+  /** Must be at least 32 characters if provided */
   webhookSecret?: string;
 }
 
@@ -47,18 +49,27 @@ export async function launchCursorAgent(
   params: LaunchCursorAgentParams,
 ): Promise<CursorAgentResponse> {
   const body: Record<string, unknown> = {
-    prompt: params.prompt,
-    repo: params.repo,
+    prompt: { text: params.prompt },
+    source: {
+      repository: params.repository,
+      ...(params.ref && { ref: params.ref }),
+    },
   };
-  if (params.ref) body.ref = params.ref;
-  if (params.branchName) body.branchName = params.branchName;
+
+  const target: Record<string, unknown> = {};
+  if (params.branchName) target.branchName = params.branchName;
   if (params.autoCreatePr !== undefined)
-    body.autoCreatePr = params.autoCreatePr;
-  if (params.webhookUrl) body.webhookUrl = params.webhookUrl;
-  if (params.webhookSecret) body.webhookSecret = params.webhookSecret;
+    target.autoCreatePr = params.autoCreatePr;
+  if (Object.keys(target).length > 0) body.target = target;
+
+  if (params.webhookUrl) {
+    const webhook: Record<string, string> = { url: params.webhookUrl };
+    if (params.webhookSecret) webhook.secret = params.webhookSecret;
+    body.webhook = webhook;
+  }
 
   logger.info("launchCursorAgent: dispatching", {
-    repo: params.repo,
+    repository: params.repository,
     branch: params.branchName,
   });
 
