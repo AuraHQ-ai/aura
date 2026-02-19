@@ -1,8 +1,7 @@
-import { sql, desc, and, or, arrayContains } from "drizzle-orm";
+import { sql, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { memories, type Memory } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
-import { filterMemoriesByPrivacy } from "../lib/privacy.js";
 import { logger } from "../lib/logger.js";
 
 interface RetrievalOptions {
@@ -36,8 +35,8 @@ export async function retrieveMemories(
     // 1. Embed the query
     const queryEmbedding = await embedText(query);
 
-    // 2. Query pgvector — fetch more than we need so we can filter by privacy
-    const fetchLimit = limit * 3;
+    // 2. Query pgvector for nearest neighbors
+    const fetchLimit = limit;
     const results = await db
       .select({
         memory: memories,
@@ -55,9 +54,8 @@ export async function retrieveMemories(
       )
       .limit(fetchLimit);
 
-    // 3. Apply privacy filtering
-    const rawMemories = results.map((r) => r.memory);
-    const filtered = filterMemoriesByPrivacy(rawMemories, currentUserId);
+    // 3. No privacy filtering — full transparency (corporate policy)
+    const filtered = results.map((r) => r.memory);
 
     // 4. Score: combine cosine similarity with relevance_score and recency
     const now = Date.now();
