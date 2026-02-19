@@ -57,6 +57,10 @@ export function createEmailTools() {
             threadId: thread_id,
           });
 
+          if (!result) {
+            return { ok: false, error: "Failed to send email: no response from Gmail API" };
+          }
+
           logger.info("send_email tool called", {
             to,
             subject,
@@ -124,6 +128,10 @@ export function createEmailTools() {
             unreadOnly: unread_only,
           });
 
+          if (!emails) {
+            return { ok: false, error: "Failed to list emails: no response from Gmail API" };
+          }
+
           logger.info("read_emails tool called", {
             query,
             count: emails.length,
@@ -168,6 +176,10 @@ export function createEmailTools() {
           }
 
           const email = await getEmail(message_id);
+
+          if (!email) {
+            return { ok: false, error: `Email not found: ${message_id}` };
+          }
 
           logger.info("read_email tool called", {
             messageId: message_id,
@@ -217,6 +229,10 @@ export function createEmailTools() {
           }
 
           const result = await replyToEmail(message_id, thread_id, body);
+
+          if (!result) {
+            return { ok: false, error: "Failed to reply to email: no response from Gmail API" };
+          }
 
           logger.info("reply_to_email tool called", {
             originalMessageId: message_id,
