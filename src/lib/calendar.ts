@@ -140,7 +140,7 @@ export async function deleteEvent(eventId: string): Promise<boolean> {
   const client = await getCalendarClient();
   if (!client) return false;
 
-  await client.events.delete({ calendarId: "primary", eventId });
+  await client.events.delete({ calendarId: "primary", eventId, sendUpdates: "all" });
 
   logger.info("Calendar event deleted", { eventId });
   return true;
@@ -176,6 +176,7 @@ export async function updateEvent(
   const res = await client.events.patch({
     calendarId: "primary",
     eventId,
+    sendUpdates: "all",
     requestBody,
   });
 
