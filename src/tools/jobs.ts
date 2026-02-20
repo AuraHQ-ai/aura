@@ -4,7 +4,7 @@ import { eq, and, or, desc, isNotNull, ne, sql } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
-import { jobs } from "../db/schema.js";
+import { jobs, jobExecutions } from "../db/schema.js";
 import type { FrequencyConfig, ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -396,6 +396,201 @@ export function createJobTools(
         } catch (error: any) {
           logger.error("cancel_job tool failed", { error: error.message });
           return { ok: false, error: `Failed to cancel job: ${error.message}` };
+        }
+      },
+    }),
+
+    dispatch_headless: tool({
+      description:
+        "Dispatch a task for immediate headless execution (no Slack streaming overhead). Creates a job and triggers it NOW — no waiting for the 30-min heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. The task runs as full Aura with all tools. Results are posted to the callback channel/thread when done. Admin-only.",
+      inputSchema: z.object({
+        task: z
+          .string()
+          .describe(
+            "What to do. Be specific — this is the prompt for headless execution.",
+          ),
+        callback_channel: z
+          .string()
+          .optional()
+          .describe(
+            "Channel to post results in when done. Defaults to current channel.",
+          ),
+        callback_thread_ts: z
+          .string()
+          .optional()
+          .describe(
+            "Thread to post results in. Defaults to current thread.",
+          ),
+        name: z
+          .string()
+          .optional()
+          .describe("Job name for tracking."),
+        playbook: z
+          .string()
+          .optional()
+          .describe("Detailed execution guide (markdown)."),
+      }),
+      execute: async ({
+        task,
+        callback_channel,
+        callback_thread_ts,
+        name,
+        playbook,
+      }) => {
+        if (!isAdmin(context?.userId)) {
+          return {
+            ok: false,
+            error: "Only admins can dispatch headless executions.",
+          };
+        }
+
+        try {
+          const cbChannel = callback_channel || context?.channelId;
+          const cbThread = callback_thread_ts || context?.threadTs;
+
+          const jobName = name || `headless-${Date.now()}`;
+          const [job] = await db
+            .insert(jobs)
+            .values({
+              name: jobName,
+              description: task,
+              playbook: playbook || null,
+              channelId: cbChannel || null,
+              threadTs: cbThread || null,
+              executeAt: new Date(),
+              requestedBy: context?.userId || "aura",
+              priority: "high",
+              status: "pending",
+              timezone: "UTC",
+            })
+            .returning();
+
+          const baseUrl = process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}`
+            : "http://localhost:3000";
+
+          fetch(`${baseUrl}/api/execute-now`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jobId: job.id }),
+          }).catch(() => {});
+
+          logger.info("dispatch_headless tool called", {
+            jobId: job.id,
+            jobName,
+            task: task.substring(0, 80),
+            callbackChannel: cbChannel,
+          });
+
+          return {
+            ok: true,
+            jobId: job.id,
+            jobName,
+            message: `Headless task dispatched. Will report back in ${cbChannel ? `channel ${cbChannel}` : "this conversation"} when done.`,
+          };
+        } catch (error: any) {
+          logger.error("dispatch_headless tool failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to dispatch headless task: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    read_job_trace: tool({
+      description:
+        "Read execution traces of jobs — reasoning steps, tool calls, results, token usage. Use to inspect what headless execution did, debug failed jobs, or review past autonomous work.",
+      inputSchema: z.object({
+        job_id: z.string().optional().describe("Specific job ID"),
+        job_name: z
+          .string()
+          .optional()
+          .describe("Job name to find latest execution(s) of"),
+        limit: z
+          .number()
+          .default(1)
+          .describe(
+            "Number of recent executions to return (default 1)",
+          ),
+        include_steps: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Include full step details (can be very large). Default false returns just summary + token usage.",
+          ),
+      }),
+      execute: async ({ job_id, job_name, limit, include_steps }) => {
+        try {
+          let condition;
+          if (job_id) {
+            condition = eq(jobExecutions.jobId, job_id);
+          } else if (job_name) {
+            const [job] = await db
+              .select({ id: jobs.id })
+              .from(jobs)
+              .where(eq(jobs.name, job_name))
+              .limit(1);
+            if (!job)
+              return {
+                ok: false,
+                error: `No job found with name "${job_name}"`,
+              };
+            condition = eq(jobExecutions.jobId, job.id);
+          } else {
+            condition = undefined;
+          }
+
+          const query = db.select().from(jobExecutions);
+          const executions = await (condition
+            ? query.where(condition)
+            : query
+          )
+            .orderBy(desc(jobExecutions.startedAt))
+            .limit(limit);
+
+          logger.info("read_job_trace tool called", {
+            job_id,
+            job_name,
+            resultCount: executions.length,
+          });
+
+          return {
+            ok: true,
+            executions: executions.map((e) => ({
+              id: e.id,
+              jobId: e.jobId,
+              status: e.status,
+              trigger: e.trigger,
+              startedAt: e.startedAt?.toISOString(),
+              finishedAt: e.finishedAt?.toISOString(),
+              durationMs:
+                e.finishedAt && e.startedAt
+                  ? e.finishedAt.getTime() - e.startedAt.getTime()
+                  : null,
+              summary: e.summary,
+              tokenUsage: e.tokenUsage,
+              error: e.error,
+              callbackChannel: e.callbackChannel,
+              ...(include_steps
+                ? { steps: e.steps }
+                : {
+                    stepCount: Array.isArray(e.steps)
+                      ? (e.steps as unknown[]).length
+                      : null,
+                  }),
+            })),
+          };
+        } catch (error: any) {
+          logger.error("read_job_trace tool failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read job traces: ${error.message}`,
+          };
         }
       },
     }),
