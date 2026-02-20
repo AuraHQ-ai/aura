@@ -290,6 +290,11 @@ export function createConversationSearchTools() {
                 ) as MessageRow[];
 
                 const matchIds = new Set(thread.messages.map((m) => m.id));
+                const matchScoreMap = new Map(
+                  thread.messages
+                    .filter((m) => m.similarity_score != null)
+                    .map((m) => [m.id, m.similarity_score!]),
+                );
                 const contextIds = new Set(contextRows.map((r) => r.id));
                 const contextMessages = contextRows.map((r) => ({
                   id: r.id,
@@ -302,7 +307,14 @@ export function createConversationSearchTools() {
                       : new Date(r.created_at).toISOString(),
                   channel_id: r.channel_id,
                   channel_type: r.channel_type,
-                  ...(matchIds.has(r.id) ? { matched: true } : {}),
+                  ...(matchIds.has(r.id)
+                    ? {
+                        matched: true,
+                        ...(matchScoreMap.has(r.id)
+                          ? { similarity_score: matchScoreMap.get(r.id) }
+                          : {}),
+                      }
+                    : {}),
                 }));
                 const missingMatches = thread.messages
                   .filter((m) => !contextIds.has(m.id))
