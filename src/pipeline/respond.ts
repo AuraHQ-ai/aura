@@ -312,6 +312,45 @@ function isMsgTooLong(error: any): boolean {
   return msg.includes("msg_too_long") || code === "msg_too_long";
 }
 
+/**
+ * Convert LLM markdown to Slack mrkdwn.
+ * Handles bold, italic, and heading syntax differences while preserving
+ * code blocks, lists, and links (which share the same syntax).
+ */
+function formatForSlack(text: string): string {
+  // Protect fenced code blocks from transformation
+  const codeBlocks: string[] = [];
+  let result = text.replace(/```[\s\S]*?```/g, (match) => {
+    codeBlocks.push(match);
+    return `\x00CODE${codeBlocks.length - 1}\x00`;
+  });
+
+  // Protect inline code spans from transformation
+  const inlineCode: string[] = [];
+  result = result.replace(/`[^`]+`/g, (match) => {
+    inlineCode.push(match);
+    return `\x00INLINE${inlineCode.length - 1}\x00`;
+  });
+
+  // Headers → bold (### heading, ## heading, # heading)
+  // Strip inline bold/emphasis markers within headers since the whole header becomes bold
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, (_, content) => {
+    const cleaned = content.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1");
+    return `*${cleaned}*`;
+  });
+  // Bold: **text** → *text*
+  result = result.replace(/\*\*(.+?)\*\*/g, "*$1*");
+  // Bold: __text__ → *text*
+  result = result.replace(/__(.+?)__/g, "*$1*");
+
+  // Restore inline code spans
+  result = result.replace(/\x00INLINE(\d+)\x00/g, (_, idx) => inlineCode[Number(idx)]);
+  // Restore code blocks
+  result = result.replace(/\x00CODE(\d+)\x00/g, (_, idx) => codeBlocks[Number(idx)]);
+
+  return result;
+}
+
 function isUnsupportedFileError(error: any): boolean {
   const msg = error?.message || error?.toString() || "";
   const name = error?.name || "";
@@ -324,14 +363,14 @@ function isUnsupportedFileError(error: any): boolean {
 }
 
 // ── Stream Continuation ──────────────────────────────────────────────────────
-// Slack's chatStream rejects appends when accumulated content exceeds ~40K
+// Slack's chatStream rejects appends when accumulated content exceeds ~10K
 // chars with `msg_too_long`. We proactively split into continuation messages
 // using cascading boundary detection to find clean break points.
 
-const STREAM_THRESHOLD_NEWLINE = 30_000;
-const STREAM_THRESHOLD_SENTENCE = 35_000;
-const STREAM_THRESHOLD_WHITESPACE = 38_000;
-const STREAM_HARD_LIMIT = 39_500;
+const STREAM_THRESHOLD_NEWLINE = 7_000;
+const STREAM_THRESHOLD_SENTENCE = 8_000;
+const STREAM_THRESHOLD_WHITESPACE = 9_000;
+const STREAM_HARD_LIMIT = 9_500;
 const MAX_CONTINUATIONS = 5;
 
 /**
@@ -816,11 +855,12 @@ export async function generateResponse(
         ? finalText.slice(fallbackStartIdx)
         : finalText;
       const blocks: any[] = [];
-      if (unsentText) {
-        for (let i = 0; i < unsentText.length; i += 3000) {
+      const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
+      if (formattedUnsent) {
+        for (let i = 0; i < formattedUnsent.length; i += 3000) {
           blocks.push({
             type: "section",
-            text: { type: "mrkdwn", text: unsentText.slice(i, i + 3000) },
+            text: { type: "mrkdwn", text: formattedUnsent.slice(i, i + 3000) },
             expand: true,
           });
         }
@@ -840,7 +880,7 @@ export async function generateResponse(
       });
 
       const toolMeta = buildToolMetadata(toolCallRecords);
-      const fallbackText = unsentText || "_I processed your request but had nothing to say._";
+      const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
 
       try {
         await slackClient.chat.postMessage({
@@ -934,6 +974,19 @@ export async function generateResponse(
           } catch {
             // Stream may already be finalized
           }
+        } else if (isMsgTooLong(stopErr)) {
+          logger.warn("streamer.stop() returned msg_too_long, finalizing without payload", {
+            channelId,
+            currentStreamLength,
+          });
+          logError({
+            errorName: "StreamStopMsgTooLong",
+            errorMessage: stopErr?.message || "msg_too_long on streamer.stop()",
+            errorCode: "msg_too_long",
+            channelId,
+            context: { currentStreamLength },
+          });
+          try { await streamer.stop(); } catch { /* already finalized */ }
         } else {
           throw stopErr;
         }
