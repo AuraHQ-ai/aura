@@ -221,8 +221,6 @@ const CAPS = {
   personalDetails: 50,
 } as const;
 
-const CONSOLIDATION_THRESHOLD = 100;
-
 const consolidatedSchema = z.object({
   consolidated: z.array(z.string()).describe("Consolidated list of items"),
 });
@@ -257,9 +255,9 @@ export async function consolidateProfiles(): Promise<{
     .from(userProfiles)
     .where(
       sql`(
-        jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'interests', '[]'::jsonb)) > ${CONSOLIDATION_THRESHOLD}
-        OR jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'preferences', '[]'::jsonb)) > ${CONSOLIDATION_THRESHOLD}
-        OR jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'personalDetails', '[]'::jsonb)) > ${CONSOLIDATION_THRESHOLD}
+        jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'interests', '[]'::jsonb)) > ${CAPS.interests}
+        OR jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'preferences', '[]'::jsonb)) > ${CAPS.preferences}
+        OR jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'personalDetails', '[]'::jsonb)) > ${CAPS.personalDetails}
       )`,
     );
 
@@ -289,7 +287,7 @@ export async function consolidateProfiles(): Promise<{
 
     try {
       totalBefore += beforeCount;
-      if (interests.length > CONSOLIDATION_THRESHOLD) {
+      if (interests.length > CAPS.interests) {
         consolidated.interests = await consolidateCategory(
           model,
           "interests",
@@ -298,7 +296,7 @@ export async function consolidateProfiles(): Promise<{
         );
       }
 
-      if (preferences.length > CONSOLIDATION_THRESHOLD) {
+      if (preferences.length > CAPS.preferences) {
         consolidated.preferences = await consolidateCategory(
           model,
           "preferences",
@@ -307,7 +305,7 @@ export async function consolidateProfiles(): Promise<{
         );
       }
 
-      if (personalDetails.length > CONSOLIDATION_THRESHOLD) {
+      if (personalDetails.length > CAPS.personalDetails) {
         consolidated.personalDetails = await consolidateCategory(
           model,
           "personalDetails",
