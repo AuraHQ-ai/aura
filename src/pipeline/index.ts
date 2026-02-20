@@ -210,7 +210,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // Ensure user has a profile and resolve their timezone
     const { name: displayName, timezone: slackTimezone } = await resolveDisplayName(client, context.userId);
     const userProfile = await getOrCreateProfile(context.userId, displayName, slackTimezone);
-    const userTimezone = userProfile.timezone || "Europe/Zurich";
+    const userTimezone = userProfile.timezone || "UTC";
 
     // 3. Check for transparency commands first
     const transparencyResult = await handleTransparencyCommands(

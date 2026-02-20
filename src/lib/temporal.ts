@@ -128,7 +128,7 @@ function compactRelative(date: Date, now: Date): string | null {
  * The relative suffix is only appended for timestamps < 7 days old.
  *
  * @param input  Any supported timestamp format
- * @param timezone  IANA timezone string (default "Europe/Zurich")
+ * @param timezone  IANA timezone string (default "UTC")
  */
 export function formatTimestamp(
   input: string | number | Date | null | undefined,
@@ -156,23 +156,44 @@ export function formatTimestamp(
 
   if (isNaN(date.getTime())) return String(input);
 
-  const formatter = new Intl.DateTimeFormat("en-GB", {
-    timeZone: tz,
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  let effectiveTz = tz;
+  try {
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: effectiveTz,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
 
-  const formatted = formatter.format(date);
-  const tzAbbrev = getShortTzName(date, tz);
-  const relative = compactRelative(date, new Date());
-  const suffix = relative ? ` (${relative})` : "";
+    const formatted = formatter.format(date);
+    const tzAbbrev = getShortTzName(date, effectiveTz);
+    const relative = compactRelative(date, new Date());
+    const suffix = relative ? ` (${relative})` : "";
 
-  return `${formatted} ${tzAbbrev}${suffix}`;
+    return `${formatted} ${tzAbbrev}${suffix}`;
+  } catch {
+    effectiveTz = "UTC";
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: effectiveTz,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    const formatted = formatter.format(date);
+    const relative = compactRelative(date, new Date());
+    const suffix = relative ? ` (${relative})` : "";
+
+    return `${formatted} UTC${suffix}`;
+  }
 }
 
 /**
