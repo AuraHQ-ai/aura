@@ -325,11 +325,11 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       displayName,
       client,
       threadMessageCount: conversation.thread?.length ?? 0,
-      recentThreadMessages: (() => {
+      ...(() => {
         const all = (conversation.thread ?? conversation.recentMessages)
           .map(m => ({ displayName: m.displayName, text: m.text }));
-        if (all.length <= 6) return all;
-        return [...all.slice(0, 3), ...all.slice(-3)];
+        if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
+        return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
       })(),
     });
 
@@ -524,8 +524,9 @@ async function runBackgroundTasks(params: {
   client: InstanceType<typeof import("@slack/web-api").WebClient>;
   threadMessageCount: number;
   recentThreadMessages: Array<{ displayName: string; text: string }>;
+  threadMessagesElided: boolean;
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages } = params;
+  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided } = params;
 
   try {
     // Store the user's message
@@ -619,6 +620,7 @@ async function runBackgroundTasks(params: {
         await maybeUpdateDmThreadTitle({
           threadMessageCount,
           recentMessages: recentThreadMessages,
+          messagesElided: threadMessagesElided,
           assistantResponse: response,
           channelId: context.channelId,
           threadTs: context.threadTs,
@@ -691,12 +693,13 @@ async function setInitialDmThreadTitle(params: {
 async function maybeUpdateDmThreadTitle(params: {
   threadMessageCount: number;
   recentMessages: Array<{ displayName: string; text: string }>;
+  messagesElided: boolean;
   assistantResponse: string;
   channelId: string;
   threadTs: string;
   client: WebClient;
 }): Promise<void> {
-  const { threadMessageCount, recentMessages, assistantResponse, channelId, threadTs, client } = params;
+  const { threadMessageCount, recentMessages, messagesElided, assistantResponse, channelId, threadTs, client } = params;
 
   // +1 for the assistant response we just posted
   const totalMessages = threadMessageCount + 1;
@@ -711,8 +714,7 @@ async function maybeUpdateDmThreadTitle(params: {
     const fastModel = await getFastModel();
 
     const half = Math.ceil(recentMessages.length / 2);
-    const hasGap = recentMessages.length >= 6;
-    const messagesContext = hasGap
+    const messagesContext = messagesElided
       ? [
           "--- Start of conversation ---",
           ...recentMessages.slice(0, half).map(m => `${m.displayName}: ${m.text.slice(0, 150)}`),
