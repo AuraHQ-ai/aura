@@ -7,6 +7,7 @@ import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime } from "../lib/temporal.js";
+import { embedText } from "../lib/embeddings.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,6 +128,10 @@ export function createNoteTools(context?: ScheduleContext) {
               target: notes.topic,
               set: updateSet,
             });
+
+          embedText(content).then(embedding => {
+            db.update(notes).set({ embedding }).where(eq(notes.topic, topic)).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+          });
 
           logger.info("save_note tool called", {
             topic,
@@ -375,6 +380,10 @@ export function createNoteTools(context?: ScheduleContext) {
             .set({ content: newContent, updatedAt: new Date() })
             .where(eq(notes.topic, topic));
 
+          embedText(newContent).then(embedding => {
+            db.update(notes).set({ embedding }).where(eq(notes.topic, topic)).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+          });
+
           const finalLineCount = newContent.split("\n").length;
 
           logger.info("edit_note tool called", {
@@ -446,25 +455,70 @@ export function createNoteTools(context?: ScheduleContext) {
 
     search_notes: tool({
       description:
-        "Full-text search across all notes content. Returns matching notes with topic, category, and a snippet showing the match in context. Use when you need to find which notes mention a specific term.",
+        "Search across all notes content. Supports two modes: 'text' (default) uses full-text keyword search, 'semantic' uses vector similarity to find conceptually related notes even without exact keyword matches.",
       inputSchema: z.object({
         query: z
           .string()
           .describe("Search term or phrase to find across all notes"),
+        mode: z
+          .enum(["text", "semantic"])
+          .default("text")
+          .describe("Search mode: 'text' for keyword/full-text search, 'semantic' for vector similarity search"),
         limit: z
           .number()
           .optional()
           .default(10)
           .describe("Max results to return (default 10)"),
       }),
-      execute: async ({ query, limit }) => {
+      execute: async ({ query, mode, limit }) => {
         try {
           const trimmed = query.trim();
           if (!trimmed) {
             return { ok: false, error: "Query cannot be empty." };
           }
 
-          // Try tsvector search with unaccent first, fall back to ILIKE
+          if (mode === "semantic") {
+            const queryEmbedding = await embedText(trimmed);
+            const embeddingLiteral = JSON.stringify(queryEmbedding);
+
+            const results = await db
+              .select({
+                topic: notes.topic,
+                category: notes.category,
+                content: notes.content,
+                updatedAt: notes.updatedAt,
+                similarity: sql<number>`1 - (${notes.embedding} <=> ${embeddingLiteral}::vector)`.as("similarity"),
+              })
+              .from(notes)
+              .where(
+                and(
+                  sql`${notes.embedding} IS NOT NULL`,
+                  or(isNull(notes.expiresAt), gt(notes.expiresAt, new Date()))!,
+                ),
+              )
+              .orderBy(sql`${notes.embedding} <=> ${embeddingLiteral}::vector`)
+              .limit(limit);
+
+            logger.info("search_notes tool called (semantic)", {
+              query: trimmed,
+              resultCount: results.length,
+            });
+
+            return {
+              ok: true,
+              mode: "semantic",
+              results: results.map((r) => ({
+                topic: r.topic,
+                category: r.category,
+                snippet: r.content.substring(0, 200) + (r.content.length > 200 ? "..." : ""),
+                similarity: Math.round(r.similarity * 1000) / 1000,
+                updated_at: r.updatedAt.toISOString(),
+              })),
+              count: results.length,
+            };
+          }
+
+          // mode === "text": existing tsvector + ILIKE fallback
           let rows: any[];
           try {
             const results = await db.execute(sql`
@@ -489,7 +543,6 @@ export function createNoteTools(context?: ScheduleContext) {
             logger.warn("tsvector search failed, falling back to ILIKE", {
               error: err instanceof Error ? err.message : String(err),
             });
-            // Fallback: ILIKE (works without unaccent extension)
             const escaped = trimmed.replace(/[\\%_]/g, "\\$&");
             const pattern = `%${escaped.toLowerCase()}%`;
             const results = await db.execute(sql`
@@ -505,13 +558,14 @@ export function createNoteTools(context?: ScheduleContext) {
             rows = (results as any).rows ?? results;
           }
 
-          logger.info("search_notes tool called", {
+          logger.info("search_notes tool called (text)", {
             query: trimmed,
             resultCount: rows.length,
           });
 
           return {
             ok: true,
+            mode: "text",
             results: rows.map((r: any) => ({
               topic: r.topic,
               category: r.category,

@@ -1,6 +1,6 @@
 import { eq, sql, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { messages, memories, eventLocks, type NewMessage, type NewMemory } from "../db/schema.js";
+import { messages, memories, notes, eventLocks, type NewMessage, type NewMemory } from "../db/schema.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
@@ -158,6 +158,53 @@ export async function backfillMemoryEmbeddings(batchSize = 50): Promise<number> 
     return totalEmbedded;
   } catch (error) {
     logger.error("Memory embedding backfill failed", {
+      error: String(error),
+      totalEmbeddedBeforeFailure: totalEmbedded,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Backfill embeddings for existing notes that don't have them.
+ * Processes in batches to avoid overwhelming the embedding API.
+ */
+export async function backfillNoteEmbeddings(batchSize = 50): Promise<number> {
+  let totalEmbedded = 0;
+
+  try {
+    while (true) {
+      const batch = await db
+        .select({ id: notes.id, content: notes.content })
+        .from(notes)
+        .where(
+          and(
+            isNull(notes.embedding),
+            sql`${notes.content} IS NOT NULL AND length(${notes.content}) > 0`,
+          ),
+        )
+        .limit(batchSize);
+
+      if (batch.length === 0) break;
+
+      const texts = batch.map((n) => n.content);
+      const embeddings = await embedTexts(texts);
+
+      for (let i = 0; i < batch.length; i++) {
+        await db
+          .update(notes)
+          .set({ embedding: embeddings[i] })
+          .where(eq(notes.id, batch[i].id));
+      }
+
+      totalEmbedded += batch.length;
+      logger.info(`Backfilled ${totalEmbedded} note embeddings so far`);
+    }
+
+    logger.info(`Note backfill complete: embedded ${totalEmbedded} notes`);
+    return totalEmbedded;
+  } catch (error) {
+    logger.error("Note embedding backfill failed", {
       error: String(error),
       totalEmbeddedBeforeFailure: totalEmbedded,
     });

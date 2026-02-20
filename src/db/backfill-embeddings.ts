@@ -6,14 +6,15 @@
  * Safe to run multiple times (idempotent — skips already-embedded rows).
  */
 
-import { backfillMessageEmbeddings, backfillMemoryEmbeddings } from "../memory/store.js";
+import { backfillMessageEmbeddings, backfillMemoryEmbeddings, backfillNoteEmbeddings } from "../memory/store.js";
 
 const BATCH_SIZE = parseInt(process.env.BACKFILL_BATCH_SIZE || "50", 10);
 const args = process.argv.slice(2);
 const doMessages = args.includes("--messages") || args.includes("--all") || args.length === 0;
 const doMemories = args.includes("--memories") || args.includes("--all") || args.length === 0;
+const doNotes = args.includes("--notes") || args.includes("--all") || args.length === 0;
 
-console.log(`Backfill config: batch=${BATCH_SIZE}, messages=${doMessages}, memories=${doMemories}`);
+console.log(`Backfill config: batch=${BATCH_SIZE}, messages=${doMessages}, memories=${doMemories}, notes=${doNotes}`);
 
 try {
   if (doMessages) {
@@ -26,6 +27,12 @@ try {
     console.log("\n--- Backfilling memory embeddings ---");
     const memCount = await backfillMemoryEmbeddings(BATCH_SIZE);
     console.log(`Memories done: embedded ${memCount} rows.`);
+  }
+
+  if (doNotes) {
+    console.log("\n--- Backfilling note embeddings ---");
+    const noteCount = await backfillNoteEmbeddings(BATCH_SIZE);
+    console.log(`Notes done: embedded ${noteCount} rows.`);
   }
 
   console.log("\nBackfill complete.");
