@@ -326,10 +326,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       client,
       threadMessageCount: conversation.thread?.length ?? 0,
       ...(() => {
-        const all = (conversation.thread ?? conversation.recentMessages)
-          .map(m => ({ displayName: m.displayName, text: m.text }));
-        if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
-        return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
+        const src = conversation.thread ?? conversation.recentMessages;
+        const pick = (m: typeof src[number]) => ({ displayName: m.displayName, text: m.text });
+        if (src.length <= 6) return { recentThreadMessages: src.map(pick), threadMessagesElided: false };
+        return { recentThreadMessages: [...src.slice(0, 3).map(pick), ...src.slice(-3).map(pick)], threadMessagesElided: true };
       })(),
     });
 
