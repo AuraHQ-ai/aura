@@ -6,7 +6,7 @@ import { notes, jobs } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
-import { parseRelativeTime } from "../lib/temporal.js";
+import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { embedText } from "../lib/embeddings.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -61,6 +61,8 @@ function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
  * @param context Optional schedule context for checkpoint_plan routing (channelId, threadTs, userId)
  */
 export function createNoteTools(context?: ScheduleContext) {
+  const tz = context?.timezone || "Europe/Zurich";
+
   return {
     save_note: tool({
       description:
@@ -187,8 +189,8 @@ export function createNoteTools(context?: ScheduleContext) {
             category: note.category,
             content: numbered,
             line_count: lineCount,
-            updated_at: note.updatedAt.toISOString(),
-            expires_at: note.expiresAt?.toISOString() ?? null,
+            updated_at: formatTimestamp(note.updatedAt, tz),
+            expires_at: note.expiresAt ? formatTimestamp(note.expiresAt, tz) : null,
           };
         } catch (error: any) {
           logger.error("read_note tool failed", {
@@ -242,8 +244,8 @@ export function createNoteTools(context?: ScheduleContext) {
               n.content.substring(0, 80) +
               (n.content.length > 80 ? "..." : ""),
             lines: n.content.split("\n").length,
-            updated_at: n.updatedAt.toISOString(),
-            expires_at: n.expiresAt?.toISOString() ?? null,
+            updated_at: formatTimestamp(n.updatedAt, tz),
+            expires_at: n.expiresAt ? formatTimestamp(n.expiresAt, tz) : null,
           }));
 
           logger.info("list_notes tool called", {

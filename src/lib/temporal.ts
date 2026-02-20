@@ -77,6 +77,96 @@ export function relativeTime(date: Date, now?: Date): string {
 }
 
 /**
+ * Convert any timestamp to human-readable format with combined absolute + relative time.
+ * Output: "Fri, 20 Feb, 09:32 CET (3h ago)" or "Fri, 20 Feb, 09:32 CET" (if > 7 days old)
+ *
+ * Accepts: Slack ts string ("1771561968.163239"), ISO string, Date object, epoch number
+ * timezone: IANA timezone string, defaults to "Europe/Zurich"
+ */
+export function formatTimestamp(
+  input: string | number | Date,
+  timezone?: string,
+): string {
+  const tz = timezone || "Europe/Zurich";
+  const date = parseToDate(input);
+  if (!date || isNaN(date.getTime())) return String(input);
+
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const tzAbbr = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    timeZoneName: "short",
+  })
+    .formatToParts(date)
+    .find((p) => p.type === "timeZoneName")?.value || tz;
+
+  const parts = formatter.formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
+
+  const absolute = `${get("weekday")}, ${get("day")} ${get("month")}, ${get("hour")}:${get("minute")} ${tzAbbr}`;
+
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0 || diffMs > 7 * 24 * 60 * 60 * 1000) return absolute;
+
+  const seconds = Math.floor(diffMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  let rel: string;
+  if (seconds < 60) rel = "just now";
+  else if (minutes < 60) rel = `${minutes}m ago`;
+  else if (hours < 24) rel = `${hours}h ago`;
+  else if (days === 1) rel = "yesterday";
+  else rel = `${days}d ago`;
+
+  return `${absolute} (${rel})`;
+}
+
+function parseToDate(input: string | number | Date): Date | null {
+  if (input instanceof Date) return input;
+
+  if (typeof input === "number") {
+    return input > 1e12 ? new Date(input) : new Date(input * 1000);
+  }
+
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+
+    // Slack ts: digits with a dot and microsecond decimal (e.g. "1771561968.163239")
+    if (/^\d+\.\d+$/.test(trimmed)) {
+      const epochSeconds = parseFloat(trimmed);
+      return new Date(epochSeconds * 1000);
+    }
+
+    // Pure numeric string (epoch seconds)
+    if (/^\d+$/.test(trimmed)) {
+      const n = parseInt(trimmed, 10);
+      return n > 1e12 ? new Date(n) : new Date(n * 1000);
+    }
+
+    // ISO string — handle truncated timezone offset like "+00" -> "+00:00"
+    let iso = trimmed;
+    if (/[+-]\d{2}$/.test(iso)) {
+      iso += ":00";
+    }
+    const d = new Date(iso);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  return null;
+}
+
+/**
  * Parse a relative time string into milliseconds.
  * Supports: "30 minutes", "2 hours", "1 day", "3 days", "1 week", "tomorrow"
  */

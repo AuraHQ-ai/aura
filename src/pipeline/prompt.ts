@@ -74,7 +74,8 @@ export async function assemblePrompt(
   // would have no conversation context despite the shouldRespond gate seeing it.
   const useChannelFallback =
     context.isDm || !!context.threadTs || conversation.auraRecentlyActive;
-  const threadContext = formatConversationContext(conversation, useChannelFallback);
+  const userTimezone = userProfile?.timezone || undefined;
+  const threadContext = formatConversationContext(conversation, useChannelFallback, userTimezone);
 
   // Resolve channel ID to human-readable name (e.g. C0BNVKS77 -> #dev)
   let channelContext: string;
