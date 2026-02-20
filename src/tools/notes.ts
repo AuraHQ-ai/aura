@@ -104,10 +104,11 @@ export function createNoteTools(context?: ScheduleContext) {
 
           const effectiveCategory = category ?? "knowledge";
 
+          const savedAt = new Date();
           const updateSet: Record<string, unknown> = {
             content,
             embedding: null,
-            updatedAt: new Date(),
+            updatedAt: savedAt,
           };
           if (category !== undefined) {
             updateSet.category = category;
@@ -123,7 +124,7 @@ export function createNoteTools(context?: ScheduleContext) {
               content,
               category: effectiveCategory,
               expiresAt,
-              updatedAt: new Date(),
+              updatedAt: savedAt,
             })
             .onConflictDoUpdate({
               target: notes.topic,
@@ -131,7 +132,7 @@ export function createNoteTools(context?: ScheduleContext) {
             });
 
           embedText(content).then(embedding => {
-            db.update(notes).set({ embedding }).where(eq(notes.topic, topic)).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+            db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
           }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 
           logger.info("save_note tool called", {
@@ -376,13 +377,14 @@ export function createNoteTools(context?: ScheduleContext) {
               return { ok: false, error: `Unknown operation: ${operation}` };
           }
 
+          const savedAt = new Date();
           await db
             .update(notes)
-            .set({ content: newContent, embedding: null, updatedAt: new Date() })
+            .set({ content: newContent, embedding: null, updatedAt: savedAt })
             .where(eq(notes.topic, topic));
 
           embedText(newContent).then(embedding => {
-            db.update(notes).set({ embedding }).where(eq(notes.topic, topic)).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+            db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
           }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 
           const finalLineCount = newContent.split("\n").length;
@@ -651,6 +653,7 @@ export function createNoteTools(context?: ScheduleContext) {
             const sevenDays = new Date(
               Date.now() + 7 * 24 * 60 * 60 * 1000,
             );
+            const savedAt = new Date();
 
             await db
               .insert(notes)
@@ -659,17 +662,22 @@ export function createNoteTools(context?: ScheduleContext) {
                 content: noteContent,
                 category: "plan",
                 expiresAt: sevenDays,
-                updatedAt: new Date(),
+                updatedAt: savedAt,
               })
               .onConflictDoUpdate({
                 target: notes.topic,
                 set: {
                   content: noteContent,
                   category: "plan",
+                  embedding: null,
                   expiresAt: sevenDays,
-                  updatedAt: new Date(),
+                  updatedAt: savedAt,
                 },
               });
+
+            embedText(noteContent).then(embedding => {
+              db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+            }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 
             logger.info("checkpoint_plan: depth limit reached", {
               topic,
@@ -694,6 +702,7 @@ export function createNoteTools(context?: ScheduleContext) {
             Date.now() + continue_in_minutes * 60 * 1000,
           );
           const description = `[CONTINUE:${topic}] ${next_steps}`;
+          const savedAt = new Date();
 
           // 1. Upsert the plan note
           await db
@@ -703,17 +712,22 @@ export function createNoteTools(context?: ScheduleContext) {
               content: noteContent,
               category: "plan",
               expiresAt: sevenDays,
-              updatedAt: new Date(),
+              updatedAt: savedAt,
             })
             .onConflictDoUpdate({
               target: notes.topic,
               set: {
                 content: noteContent,
                 category: "plan",
+                embedding: null,
                 expiresAt: sevenDays,
-                updatedAt: new Date(),
+                updatedAt: savedAt,
               },
             });
+
+          embedText(noteContent).then(embedding => {
+            db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+          }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 
           // 2. Insert a continuation job with channelId + threadTs for routing
           await db.insert(jobs).values({
