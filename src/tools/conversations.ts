@@ -3,6 +3,7 @@ import { z } from "zod";
 import { sql, and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages } from "../db/schema.js";
+import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 
 const MAX_CONTENT_LENGTH = 500;
@@ -24,6 +25,7 @@ interface MessageRow {
   role: string;
   content: string;
   created_at: Date | string;
+  similarity?: number;
 }
 
 export interface ThreadGroup {
@@ -37,6 +39,7 @@ export interface ThreadGroup {
     timestamp: string;
     channel_id: string;
     channel_type: string;
+    similarity_score?: number;
   }>;
 }
 
@@ -44,13 +47,19 @@ export function createConversationSearchTools() {
   return {
     search_my_conversations: tool({
       description:
-        "Search Aura's stored messages database (every message she has sent and received). Use this to recall past conversations, find what was discussed about a topic, or look up what a specific person said. Supports text search with optional filters by user, channel, time range, and message role. Results are grouped by conversation thread.",
+        "Search Aura's stored messages database (every message she has sent and received). Use this to recall past conversations, find what was discussed about a topic, or look up what a specific person said. Supports two search modes: 'text' (keyword/full-text search, default) and 'semantic' (vector similarity search using embeddings — better for conceptual/meaning-based queries). Results are grouped by conversation thread.",
       inputSchema: z.object({
         query: z
           .string()
           .optional()
           .describe(
-            "Search term or phrase. Uses PostgreSQL full-text search with fallback to case-insensitive substring match. Omit to browse with filters only.",
+            "Search term or phrase. In 'text' mode: uses PostgreSQL full-text search with fallback to case-insensitive substring match; omit to browse with filters only. In 'semantic' mode: required — the text is embedded and compared against stored message embeddings for meaning-based search.",
+          ),
+        mode: z
+          .enum(["text", "semantic"])
+          .default("text")
+          .describe(
+            "Search mode. 'text' (default): keyword-based full-text search. 'semantic': vector similarity search using embeddings — finds messages with similar meaning even if they don't share exact words.",
           ),
         user_id: z
           .string()
@@ -88,8 +97,15 @@ export function createConversationSearchTools() {
           .default(0)
           .describe("Number of messages to skip for pagination (default 0)"),
       }),
-      execute: async ({ query, user_id, channel_id, since, until, role, limit, offset }) => {
+      execute: async ({ query, mode, user_id, channel_id, since, until, role, limit, offset }) => {
         try {
+          if (mode === "semantic" && !query?.trim()) {
+            return {
+              ok: false,
+              error: "The 'query' parameter is required when mode is 'semantic'.",
+            };
+          }
+
           if (!query && !user_id && !channel_id && !since && !until && !role) {
             return {
               ok: false,
@@ -126,7 +142,29 @@ export function createConversationSearchTools() {
 
           let rows: MessageRow[];
 
-          if (query) {
+          if (mode === "semantic") {
+            const trimmed = query!.trim();
+            const queryEmbedding = await embedText(trimmed);
+            const embeddingLiteral = JSON.stringify(queryEmbedding);
+
+            const embeddingNotNull = sql`${messages.embedding} IS NOT NULL`;
+            const allConditions =
+              conditions.length > 0
+                ? and(embeddingNotNull, ...conditions)
+                : embeddingNotNull;
+
+            const results = await db.execute(sql`
+              SELECT id, slack_ts, slack_thread_ts, channel_id, channel_type,
+                     user_id, role, content, created_at,
+                     1 - (embedding <=> ${embeddingLiteral}::vector) as similarity
+              FROM messages
+              WHERE ${allConditions}
+              ORDER BY embedding <=> ${embeddingLiteral}::vector
+              LIMIT ${limit}
+              OFFSET ${offset}
+            `);
+            rows = ((results as any).rows ?? results) as MessageRow[];
+          } else if (query) {
             const trimmed = query.trim();
             if (!trimmed) {
               return { ok: false, error: "Query cannot be empty string." };
@@ -213,6 +251,7 @@ export function createConversationSearchTools() {
                 : new Date(row.created_at).toISOString(),
               channel_id: row.channel_id,
               channel_type: row.channel_type,
+              ...(row.similarity != null ? { similarity_score: Number(row.similarity) } : {}),
             });
           }
 
@@ -251,6 +290,11 @@ export function createConversationSearchTools() {
                 ) as MessageRow[];
 
                 const matchIds = new Set(thread.messages.map((m) => m.id));
+                const matchScoreMap = new Map(
+                  thread.messages
+                    .filter((m) => m.similarity_score != null)
+                    .map((m) => [m.id, m.similarity_score!]),
+                );
                 const contextIds = new Set(contextRows.map((r) => r.id));
                 const contextMessages = contextRows.map((r) => ({
                   id: r.id,
@@ -263,7 +307,14 @@ export function createConversationSearchTools() {
                       : new Date(r.created_at).toISOString(),
                   channel_id: r.channel_id,
                   channel_type: r.channel_type,
-                  ...(matchIds.has(r.id) ? { matched: true } : {}),
+                  ...(matchIds.has(r.id)
+                    ? {
+                        matched: true,
+                        ...(matchScoreMap.has(r.id)
+                          ? { similarity_score: matchScoreMap.get(r.id) }
+                          : {}),
+                      }
+                    : {}),
                 }));
                 const missingMatches = thread.messages
                   .filter((m) => !contextIds.has(m.id))
@@ -287,6 +338,7 @@ export function createConversationSearchTools() {
 
           logger.info("search_my_conversations tool called", {
             query: query?.substring(0, 100),
+            mode,
             user_id,
             channel_id,
             since,
@@ -299,6 +351,7 @@ export function createConversationSearchTools() {
           return {
             ok: true,
             query: query || null,
+            mode,
             filters: {
               ...(user_id ? { user_id } : {}),
               ...(channel_id ? { channel_id } : {}),
