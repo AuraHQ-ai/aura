@@ -507,6 +507,83 @@ export function createEmailTools() {
       },
     }),
 
+    update_event: tool({
+      description:
+        "Update an existing calendar event. Only provided fields are changed.",
+      inputSchema: z.object({
+        event_id: z.string().describe("The calendar event ID to update"),
+        summary: z.string().optional().describe("New event title"),
+        description: z.string().optional().describe("New event description"),
+        start: z
+          .string()
+          .optional()
+          .describe("New start time (ISO 8601)"),
+        end: z
+          .string()
+          .optional()
+          .describe("New end time (ISO 8601)"),
+        location: z.string().optional().describe("New event location or meeting link"),
+        attendees: z
+          .array(z.string())
+          .optional()
+          .describe("New list of attendee email addresses (replaces existing)"),
+      }),
+      execute: async ({ event_id, summary, description, start, end, location, attendees }) => {
+        try {
+          const { updateEvent } = await import("../lib/calendar.js");
+          const event = await updateEvent(event_id, {
+            summary: summary || undefined,
+            description: description || undefined,
+            start: start || undefined,
+            end: end || undefined,
+            location: location || undefined,
+            attendees: attendees || undefined,
+          });
+          if (!event) {
+            return {
+              ok: false,
+              error:
+                "Calendar is not configured. The OAuth token may need calendar scopes.",
+            };
+          }
+          return { ok: true, event };
+        } catch (error: any) {
+          logger.error("update_event failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to update event: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    delete_event: tool({
+      description: "Delete a calendar event by its event ID.",
+      inputSchema: z.object({
+        event_id: z.string().describe("The calendar event ID to delete"),
+      }),
+      execute: async ({ event_id }) => {
+        try {
+          const { deleteEvent } = await import("../lib/calendar.js");
+          const success = await deleteEvent(event_id);
+          if (!success) {
+            return {
+              ok: false,
+              error:
+                "Calendar is not configured. The OAuth token may need calendar scopes.",
+            };
+          }
+          return { ok: true, message: `Event ${event_id} deleted successfully.` };
+        } catch (error: any) {
+          logger.error("delete_event failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to delete event: ${error.message}`,
+          };
+        }
+      },
+    }),
+
     find_available_slot: tool({
       description:
         "Find available meeting slots across multiple people's calendars. Uses the free/busy API to find gaps where everyone is free.",
