@@ -448,7 +448,7 @@ export function createJobTools(
           const cbChannel = callback_channel || context?.channelId;
           const cbThread = callback_thread_ts || context?.threadTs;
 
-          const jobName = name || `headless-${Date.now()}`;
+          const jobName = name || `headless-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           const [job] = await db
             .insert(jobs)
             .values({
