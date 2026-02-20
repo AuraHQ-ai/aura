@@ -697,9 +697,8 @@ async function maybeUpdateDmThreadTitle(params: {
   // +1 for the assistant response we just posted
   const totalMessages = threadMessageCount + 1;
 
-  // Re-evaluate near every 5th message (fuzzy: allows off-by-one from
-  // varying user/assistant message counts)
-  if (totalMessages < 5 || totalMessages % 5 > 1) return;
+  // Re-evaluate at every 5th message
+  if (totalMessages < 5 || totalMessages % 5 !== 0) return;
 
   try {
     const { getFastModel } = await import("../lib/ai.js");
