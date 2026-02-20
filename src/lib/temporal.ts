@@ -136,7 +136,7 @@ export function formatTimestamp(
 ): string {
   if (input == null || input === "") return "";
 
-  const tz = timezone || "Europe/Zurich";
+  const tz = timezone || "UTC";
   let date: Date;
 
   if (input instanceof Date) {
