@@ -78,7 +78,7 @@ export function relativeTime(date: Date, now?: Date): string {
 
 /**
  * Convert any timestamp to human-readable format with combined absolute + relative time.
- * Output: "Fri, 20 Feb, 09:32 CET (3h ago)" or "Fri, 20 Feb, 09:32 CET" (if > 7 days old)
+ * Output: "Fri, 20 Feb 2026, 09:32 CET (3h ago)" or "Fri, 20 Feb 2026, 09:32 CET" (if > 7 days old)
  *
  * Accepts: Slack ts string ("1771561968.163239"), ISO string, Date object, epoch number
  * timezone: IANA timezone string, defaults to "Europe/Zurich"
@@ -96,6 +96,7 @@ export function formatTimestamp(
     weekday: "short",
     day: "numeric",
     month: "short",
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -111,7 +112,7 @@ export function formatTimestamp(
   const parts = formatter.formatToParts(date);
   const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
 
-  const absolute = `${get("weekday")}, ${get("day")} ${get("month")}, ${get("hour")}:${get("minute")} ${tzAbbr}`;
+  const absolute = `${get("weekday")}, ${get("day")} ${get("month")} ${get("year")}, ${get("hour")}:${get("minute")} ${tzAbbr}`;
 
   const diffMs = Date.now() - date.getTime();
   if (diffMs < 0 || diffMs > 7 * 24 * 60 * 60 * 1000) return absolute;
