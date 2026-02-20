@@ -5,6 +5,8 @@ import { logger } from "../lib/logger.js";
 const SHEETS_URL_REGEX =
   /docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/;
 
+const MAX_RESULT_CHARS = 8000;
+
 function extractSpreadsheetId(input: string): string {
   const match = input.match(SHEETS_URL_REGEX);
   if (match) return match[1];
@@ -79,8 +81,14 @@ export function createSheetsTools() {
           .describe(
             "A1 notation range, e.g. 'Sheet1!A1:D10'. If omitted, reads all data from the first sheet (or the sheet matching the URL's gid).",
           ),
+        max_rows: z
+          .number()
+          .min(1)
+          .max(1000)
+          .default(100)
+          .describe("Maximum data rows to return (default 100, max 1000)"),
       }),
-      execute: async ({ spreadsheet_id, range }) => {
+      execute: async ({ spreadsheet_id, range, max_rows }) => {
         try {
           const token = await getAccessToken();
           if (!token) {
@@ -113,7 +121,8 @@ export function createSheetsTools() {
             } else {
               sheetName = meta.sheets[0]?.properties.title ?? "Sheet1";
             }
-            effectiveRange = sheetName;
+            effectiveRange =
+              "'" + sheetName.replace(/'/g, "''") + "'";
           }
 
           const data = await fetchJson<{
@@ -127,22 +136,47 @@ export function createSheetsTools() {
 
           const allRows = data.values ?? [];
           const headers = allRows[0] ?? [];
-          const rows = allRows.slice(1);
+          const totalDataRows = allRows.length - 1;
+          const rows = allRows.slice(1, 1 + max_rows);
 
           logger.info("read_google_sheet tool called", {
             spreadsheet_id: id,
             range: effectiveRange,
             rowCount: rows.length,
+            totalDataRows,
           });
 
-          return {
+          let result: Record<string, unknown> = {
             ok: true,
             spreadsheet_id: id,
             range: effectiveRange,
             headers,
             rows,
-            total_rows: rows.length,
+            total_rows: totalDataRows,
           };
+
+          const serialized = JSON.stringify(result);
+          if (serialized.length > MAX_RESULT_CHARS) {
+            let truncated = rows.slice();
+            do {
+              truncated = truncated.slice(0, Math.floor(truncated.length / 2));
+              result = {
+                ok: true,
+                spreadsheet_id: id,
+                range: effectiveRange,
+                headers,
+                rows: truncated,
+                total_rows: totalDataRows,
+                _truncated: true,
+                _note: `Showing ${truncated.length} of ${totalDataRows} rows to stay within size limits. Use a specific range to narrow results.`,
+              };
+            } while (
+              JSON.stringify(result).length > MAX_RESULT_CHARS &&
+              truncated.length > 0
+            );
+          }
+
+          return result;
         } catch (error: any) {
           logger.error("read_google_sheet tool failed", {
             spreadsheet_id,
