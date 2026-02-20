@@ -115,51 +115,55 @@ export function formatTimestamp(
 
   if (isNaN(date.getTime())) return String(ts);
 
-  // Format the date in the target timezone
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
+  try {
+    // Format the date in the target timezone
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(date);
 
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  const weekday = get("weekday");
-  const day = get("day");
-  const month = get("month");
-  const hour = get("hour");
-  const minute = get("minute");
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    const weekday = get("weekday");
+    const day = get("day");
+    const month = get("month");
+    const hour = get("hour");
+    const minute = get("minute");
 
-  // Get short timezone abbreviation (e.g. "CET", "CEST")
-  const tzAbbr = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    timeZoneName: "short",
-  })
-    .formatToParts(date)
-    .find((p) => p.type === "timeZoneName")?.value ?? tz;
+    // Get short timezone abbreviation (e.g. "CET", "CEST")
+    const tzAbbr = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      timeZoneName: "short",
+    })
+      .formatToParts(date)
+      .find((p) => p.type === "timeZoneName")?.value ?? tz;
 
-  const absolute = `${weekday}, ${day} ${month}, ${hour}:${minute} ${tzAbbr}`;
+    const absolute = `${weekday}, ${day} ${month}, ${hour}:${minute} ${tzAbbr}`;
 
-  // Relative part (only for < 7 days)
-  const diffMs = Date.now() - date.getTime();
-  if (diffMs < 0 || diffMs >= 7 * 24 * 60 * 60 * 1000) return absolute;
+    // Relative part (only for < 7 days)
+    const diffMs = Date.now() - date.getTime();
+    if (diffMs < 0 || diffMs >= 7 * 24 * 60 * 60 * 1000) return absolute;
 
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHr = Math.floor(diffMin / 60);
-  const diffDays = Math.floor(diffHr / 24);
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHr = Math.floor(diffMin / 60);
+    const diffDays = Math.floor(diffHr / 24);
 
-  let relative: string;
-  if (diffSec < 60) relative = "just now";
-  else if (diffMin < 60) relative = `${diffMin}m ago`;
-  else if (diffHr < 24) relative = `${diffHr}h ago`;
-  else if (diffDays === 1) relative = "yesterday";
-  else relative = `${diffDays}d ago`;
+    let relative: string;
+    if (diffSec < 60) relative = "just now";
+    else if (diffMin < 60) relative = `${diffMin}m ago`;
+    else if (diffHr < 24) relative = `${diffHr}h ago`;
+    else if (diffDays === 1) relative = "yesterday";
+    else relative = `${diffDays}d ago`;
 
-  return `${absolute} (${relative})`;
+    return `${absolute} (${relative})`;
+  } catch {
+    return date.toISOString();
+  }
 }
 
 export function parseRelativeTime(input: string): number | null {
