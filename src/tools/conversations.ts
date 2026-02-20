@@ -38,7 +38,7 @@ export interface ThreadGroup {
     role: string;
     content: string;
     timestamp: string;
-    created_at: Date | string;
+    created_at?: Date | string;
     channel_id: string;
     channel_type: string;
     similarity_score?: number;
@@ -260,7 +260,7 @@ export function createConversationSearchTools(timezone?: string) {
           // Sort messages within each thread by timestamp
           for (const group of threadMap.values()) {
             group.messages.sort(
-              (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+              (a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime(),
             );
           }
 
@@ -320,7 +320,7 @@ export function createConversationSearchTools(timezone?: string) {
                   .filter((m) => !contextIds.has(m.id))
                   .map((m) => ({ ...m, matched: true }));
                 const allMessages = [...contextMessages, ...missingMatches].sort(
-                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+                  (a, b) => new Date(a.created_at!).getTime() - new Date(b.created_at!).getTime(),
                 );
                 const fullThread: ThreadGroup = {
                   thread_ts: thread.thread_ts,
@@ -334,6 +334,10 @@ export function createConversationSearchTools(timezone?: string) {
             }
           } else {
             threadContexts.push(...threads);
+          }
+
+          for (const thread of threadContexts) {
+            thread.messages = thread.messages.map(({ created_at, ...rest }) => rest) as ThreadGroup["messages"];
           }
 
           logger.info("search_my_conversations tool called", {
