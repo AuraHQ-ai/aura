@@ -470,17 +470,19 @@ export async function generateResponse(
         try {
           await new Promise(r => setTimeout(r, 500));
           await streamer.append(payload);
-        } catch {
+        } catch (retryErr: any) {
           streamingFailed = true;
-          logger.warn("chatStream append got internal_error twice, falling back to postMessage", {
+          logger.warn("chatStream append failed on retry after internal_error, falling back to postMessage", {
             channelId,
+            originalError: err?.data?.error,
+            retryError: retryErr?.data?.error || retryErr?.message,
           });
           logError({
             errorName: "SlackInternalError",
-            errorMessage: err?.message || "internal_error on stream append",
-            errorCode: "internal_error",
+            errorMessage: retryErr?.message || "error on stream append retry",
+            errorCode: retryErr?.data?.error || "internal_error",
             channelId,
-            context: { fallback: "postMessage", retried: true },
+            context: { fallback: "postMessage", retried: true, originalError: err?.data?.error },
           });
         }
       } else {
