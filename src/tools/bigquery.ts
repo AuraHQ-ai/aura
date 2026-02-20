@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
+import { formatTimestamp } from "../lib/temporal.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
 
 /**
@@ -220,10 +221,10 @@ export function createBigQueryTools() {
             size_bytes: metadata.numBytes ?? null,
             description: metadata.description ?? null,
             created: metadata.creationTime
-              ? new Date(Number(metadata.creationTime)).toISOString()
+              ? formatTimestamp(new Date(Number(metadata.creationTime)))
               : null,
             modified: metadata.lastModifiedTime
-              ? new Date(Number(metadata.lastModifiedTime)).toISOString()
+              ? formatTimestamp(new Date(Number(metadata.lastModifiedTime)))
               : null,
           };
 

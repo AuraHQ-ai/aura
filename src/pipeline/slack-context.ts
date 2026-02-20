@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 
 import { logger } from "../lib/logger.js";
+import { formatTimestamp } from "../lib/temporal.js";
 import { TOOL_IO_EVENT_TYPE } from "./respond.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -284,8 +285,10 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
 }
 
 /** Format a single message, preferring rich tool I/O over task_card summaries. */
-function formatMessage(m: SlackThreadMessage): string {
-  const base = `${m.displayName}: ${m.text}`;
+function formatMessage(m: SlackThreadMessage, tz?: string): string {
+  const time = formatTimestamp(m.ts, tz || "Europe/Zurich");
+  const prefix = time ? `[${time}] ` : "";
+  const base = `${prefix}${m.displayName}: ${m.text}`;
   if (m.toolIO?.length) return base + formatToolIO(m.toolIO);
   if (m.toolCalls?.length) return base + formatToolCalls(m.toolCalls);
   return base;
@@ -305,7 +308,10 @@ function formatMessage(m: SlackThreadMessage): string {
 export function formatConversationContext(
   conversation: ConversationContext,
   includeChannelFallback: boolean = true,
+  timezone?: string,
 ): string | undefined {
+  const tz = timezone || "Europe/Zurich";
+
   // Prefer thread context if available
   if (conversation.thread && conversation.thread.length > 0) {
     // Cap thread context to avoid inflating the system prompt for long threads.
@@ -317,7 +323,7 @@ export function formatConversationContext(
         ? thread
         : [thread[0], ...thread.slice(-MAX_THREAD_MESSAGES + 1)];
     const formatted = capped
-      .map(formatMessage)
+      .map((m) => formatMessage(m, tz))
       .join("\n\n");
     return formatted;
   }
@@ -325,7 +331,7 @@ export function formatConversationContext(
   // Fall back to recent channel/DM messages only when appropriate
   if (includeChannelFallback && conversation.recentMessages.length > 0) {
     const formatted = conversation.recentMessages
-      .map(formatMessage)
+      .map((m) => formatMessage(m, tz))
       .join("\n\n");
     return formatted;
   }

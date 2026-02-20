@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
+import { formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName, resolveUserByName } from "./slack.js";
 import type { ScheduleContext } from "../db/schema.js";
 
@@ -62,6 +63,8 @@ async function postTable(
 }
 
 export function createTableTools(client: WebClient, context?: ScheduleContext) {
+  const tz = context?.timezone || "Europe/Zurich";
+
   return {
     draw_table: tool({
       description:
@@ -179,7 +182,8 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
             return {
               ok: true,
               message: "Table posted as a thread reply.",
-              timestamp: result.ts,
+              ts: result.ts,
+              time: formatTimestamp(result.ts, tz),
             };
           } catch (err: any) {
             logger.error("draw_table (reply) failed", { error: err.message });
@@ -224,7 +228,8 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
           return {
             ok: true,
             message: `Table sent to ${target_user ? target_user : `#${target_channel}`}`,
-            timestamp: result.ts,
+            ts: result.ts,
+            time: formatTimestamp(result.ts, tz),
           };
         } catch (err: any) {
           logger.error("draw_table (targeted) failed", { error: err.message });

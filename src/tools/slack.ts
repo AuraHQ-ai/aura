@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { isAdmin } from "../lib/permissions.js";
+import { formatTimestamp } from "../lib/temporal.js";
 import { createNoteTools } from "./notes.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
@@ -386,6 +387,8 @@ export async function resolveChannelById(
  * Each tool receives the WebClient via closure.
  */
 export function createSlackTools(client: WebClient, context?: ScheduleContext) {
+  const tz = context?.timezone || "Europe/Zurich";
+
   // Resolve thread coordinates for Slack List items.
   // List channels use the list ID with a C prefix (F088... → C088...).
   // Each root message in the channel has a slack_list.list_record_id field
@@ -814,7 +817,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               return {
                 user: userName,
                 text: extractFullMessageText(msg),
-                timestamp: msg.ts || "",
+                ts: msg.ts || "",
+                time: formatTimestamp(msg.ts, tz),
                 ...(attachmentsSummary ? { attachments_summary: attachmentsSummary } : {}),
                 reactions:
                   (msg as any).reactions?.map((r: any) => ({
@@ -899,7 +903,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return {
             ok: true,
             message: `Message sent to #${channel.name}`,
-            timestamp: result.ts,
+            ts: result.ts,
+            time: formatTimestamp(result.ts, tz),
           };
         } catch (error: any) {
           logger.error("send_channel_message tool failed", {
@@ -1122,7 +1127,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             user: m.username || m.user || "unknown",
             text: m.text || "",
             channel: m.channel?.name || "unknown",
-            timestamp: m.ts || "",
+            ts: m.ts || "",
+            time: formatTimestamp(m.ts, tz),
             permalink: m.permalink || "",
           }));
 
@@ -1202,7 +1208,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return {
             ok: true,
             message: `Direct message sent to ${user.name}`,
-            timestamp: result.ts,
+            ts: result.ts,
+            time: formatTimestamp(result.ts, tz),
           };
         } catch (error: any) {
           logger.error("send_direct_message tool failed", {
@@ -1318,7 +1325,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               const threadTs = msg.ts || "";
               const latestReply = (msg as any).latest_reply as string | undefined;
 
-              let replies: Array<{ user: string; user_id: string; text: string; timestamp: string }> | undefined;
+              let replies: Array<{ user: string; user_id: string; text: string; ts: string; time: string }> | undefined;
 
               if (replyCount && replyCount > 0 && threadTs) {
                 try {
@@ -1338,7 +1345,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                         user: replyUserName,
                         user_id: reply.user || "",
                         text: extractFullMessageText(reply),
-                        timestamp: reply.ts || "",
+                        ts: reply.ts || "",
+                        time: formatTimestamp(reply.ts, tz),
                       };
                     }),
                   );
@@ -1356,7 +1364,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 user: userName,
                 user_id: msg.user || "",
                 text: extractFullMessageText(msg),
-                timestamp: msg.ts || "",
+                ts: msg.ts || "",
+                time: formatTimestamp(msg.ts, tz),
                 ...(attachmentsSummary ? { attachments_summary: attachmentsSummary } : {}),
                 ...(replyCount != null && replyCount > 0
                   ? { reply_count: replyCount, thread_ts: threadTs, latest_reply: latestReply }
@@ -1455,7 +1464,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             user_id: string;
             dm_channel_id: string;
             last_message_preview: string;
-            last_activity_ts: string;
+            last_activity: string;
           }> = [];
 
           for (const ch of result.channels || []) {
@@ -1468,9 +1477,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               user_id: ch.user,
               dm_channel_id: ch.id,
               last_message_preview: "",
-              last_activity_ts:
+              last_activity:
                 typeof updated === "number" && updated > 0
-                  ? String(updated)
+                  ? formatTimestamp(updated, tz)
                   : "",
             });
           }
@@ -1946,7 +1955,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return {
             ok: true,
             message: `Reply sent in thread in #${channel.name}`,
-            timestamp: result.ts,
+            ts: result.ts,
+            time: formatTimestamp(result.ts, tz),
           };
         } catch (error: any) {
           logger.error("send_thread_reply tool failed", {

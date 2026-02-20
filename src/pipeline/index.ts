@@ -239,7 +239,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { systemPrompt, memories, conversations } = await assemblePrompt(
+    const { systemPrompt, memories, conversations, userProfile } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
@@ -262,7 +262,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       systemPrompt,
       userMessage: messageText,
       slackClient: client,
-      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs },
+      context: {
+        userId: context.userId,
+        channelId: context.channelId,
+        threadTs: replyThreadTs,
+        timezone: userProfile?.timezone || "Europe/Zurich",
+      },
       files: fileParts,
       channelId: context.channelId,
       threadTs: replyThreadTs,
