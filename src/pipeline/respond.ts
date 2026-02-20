@@ -702,7 +702,7 @@ export async function generateResponse(
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
 
-          if (currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
+          if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
             if (!await splitToNewStream() && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
             }
@@ -745,7 +745,7 @@ export async function generateResponse(
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
 
-          if (currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
+          if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
             if (!await splitToNewStream() && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
             }
