@@ -216,8 +216,8 @@ export async function getProfile(
 // ── Profile Consolidation ─────────────────────────────────────────────────
 
 const CAPS = {
-  interests: 150,
-  preferences: 150,
+  interests: 100,
+  preferences: 100,
   personalDetails: 50,
 } as const;
 
@@ -284,11 +284,11 @@ export async function consolidateProfiles(): Promise<{
 
     const beforeCount =
       interests.length + preferences.length + personalDetails.length;
-    totalBefore += beforeCount;
 
     const consolidated: KnownFacts = { ...facts };
 
     try {
+      totalBefore += beforeCount;
       if (interests.length > CONSOLIDATION_THRESHOLD) {
         consolidated.interests = await consolidateCategory(
           model,
