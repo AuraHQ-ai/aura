@@ -141,6 +141,7 @@ export const userProfiles = pgTable(
     knownFacts: jsonb("known_facts").$type<KnownFacts>().default({}),
     interactionCount: integer("interaction_count").notNull().default(0),
     lastInteractionAt: timestamptz("last_interaction_at"),
+    lastProfileConsolidation: timestamptz("last_profile_consolidation"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
