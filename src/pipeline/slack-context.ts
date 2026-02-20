@@ -2,6 +2,7 @@ import type { WebClient } from "@slack/web-api";
 
 import { logger } from "../lib/logger.js";
 import { TOOL_IO_EVENT_TYPE } from "./respond.js";
+import { formatTimestamp } from "../lib/temporal.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -285,7 +286,8 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
 
 /** Format a single message, preferring rich tool I/O over task_card summaries. */
 function formatMessage(m: SlackThreadMessage): string {
-  const base = `${m.displayName}: ${m.text}`;
+  const time = formatTimestamp(m.ts);
+  const base = `[${time}] ${m.displayName}: ${m.text}`;
   if (m.toolIO?.length) return base + formatToolIO(m.toolIO);
   if (m.toolCalls?.length) return base + formatToolCalls(m.toolCalls);
   return base;

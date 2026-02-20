@@ -14,6 +14,7 @@ import { createCursorAgentTools } from "./cursor-agent.js";
 import { createConversationSearchTools } from "./conversations.js";
 import { createEmailTools } from "./email.js";
 import type { ScheduleContext } from "../db/schema.js";
+import { formatTimestamp } from "../lib/temporal.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
 
@@ -805,6 +806,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           });
 
           // Resolve user IDs to display names
+          const tz = context?.timezone;
           const messages = await Promise.all(
             (result.messages || []).map(async (msg) => {
               const userName = msg.user
@@ -814,7 +816,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               return {
                 user: userName,
                 text: extractFullMessageText(msg),
-                timestamp: msg.ts || "",
+                ts: msg.ts || "",
+                time: formatTimestamp(msg.ts, tz),
                 ...(attachmentsSummary ? { attachments_summary: attachmentsSummary } : {}),
                 reactions:
                   (msg as any).reactions?.map((r: any) => ({
@@ -1118,11 +1121,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             sort_dir: "desc",
           });
 
+          const tz = context?.timezone;
           const matches = (result.messages?.matches || []).map((m: any) => ({
             user: m.username || m.user || "unknown",
             text: m.text || "",
             channel: m.channel?.name || "unknown",
-            timestamp: m.ts || "",
+            ts: m.ts || "",
+            time: formatTimestamp(m.ts, tz),
             permalink: m.permalink || "",
           }));
 
@@ -1308,6 +1313,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const result = await client.conversations.history(historyParams as any);
 
           // Resolve user IDs to display names, and fetch thread replies for threaded messages
+          const tz = context?.timezone;
           const messages = await Promise.all(
             (result.messages || []).map(async (msg) => {
               const userName = msg.user
@@ -1318,7 +1324,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               const threadTs = msg.ts || "";
               const latestReply = (msg as any).latest_reply as string | undefined;
 
-              let replies: Array<{ user: string; user_id: string; text: string; timestamp: string }> | undefined;
+              let replies: Array<{ user: string; user_id: string; text: string; ts: string; time: string }> | undefined;
 
               if (replyCount && replyCount > 0 && threadTs) {
                 try {
@@ -1338,7 +1344,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                         user: replyUserName,
                         user_id: reply.user || "",
                         text: extractFullMessageText(reply),
-                        timestamp: reply.ts || "",
+                        ts: reply.ts || "",
+                        time: formatTimestamp(reply.ts, tz),
                       };
                     }),
                   );
@@ -1356,7 +1363,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 user: userName,
                 user_id: msg.user || "",
                 text: extractFullMessageText(msg),
-                timestamp: msg.ts || "",
+                ts: msg.ts || "",
+                time: formatTimestamp(msg.ts, tz),
                 ...(attachmentsSummary ? { attachments_summary: attachmentsSummary } : {}),
                 ...(replyCount != null && replyCount > 0
                   ? { reply_count: replyCount, thread_ts: threadTs, latest_reply: latestReply }
@@ -1450,12 +1458,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             ...(inputCursor ? { cursor: inputCursor } : {}),
           });
 
+          const tz = context?.timezone;
           const conversations: Array<{
             user_name: string;
             user_id: string;
             dm_channel_id: string;
             last_message_preview: string;
             last_activity_ts: string;
+            last_activity_time: string;
           }> = [];
 
           for (const ch of result.channels || []) {
@@ -1463,15 +1473,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
             const userName = userNameMap.get(ch.user) || ch.user;
             const updated = (ch as any).updated;
+            const rawTs =
+              typeof updated === "number" && updated > 0
+                ? String(updated)
+                : "";
             conversations.push({
               user_name: userName,
               user_id: ch.user,
               dm_channel_id: ch.id,
               last_message_preview: "",
-              last_activity_ts:
-                typeof updated === "number" && updated > 0
-                  ? String(updated)
-                  : "",
+              last_activity_ts: rawTs,
+              last_activity_time: formatTimestamp(rawTs, tz),
             });
           }
 
