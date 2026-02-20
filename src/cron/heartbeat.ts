@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { generateText, stepCountIs } from "ai";
-import { eq, and, lt, lte, sql, isNull, or } from "drizzle-orm";
+import { eq, and, lt, lte, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
@@ -253,14 +253,65 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     const staleRunningCutoff = new Date(Date.now() - STALE_RUNNING_THRESHOLD_MS);
     const staleRunning = await db
       .update(jobs)
-      .set({ status: "pending", updatedAt: new Date() })
-      .where(and(eq(jobs.status, "running"), lt(jobs.updatedAt, staleRunningCutoff)))
+      .set({
+        status: "pending",
+        retries: sql`${jobs.retries} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(jobs.status, "running"),
+          lt(jobs.updatedAt, staleRunningCutoff),
+          lt(jobs.retries, MAX_RETRIES),
+        ),
+      )
       .returning({ id: jobs.id, name: jobs.name });
+
+    const staleExhausted = await db
+      .update(jobs)
+      .set({
+        status: "failed",
+        result: "Failed: job stuck in running state and exceeded retry limit",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(jobs.status, "running"),
+          lt(jobs.updatedAt, staleRunningCutoff),
+        ),
+      )
+      .returning({ id: jobs.id, name: jobs.name });
+
+    const allStaleIds = [
+      ...staleRunning.map((j) => j.id),
+      ...staleExhausted.map((j) => j.id),
+    ];
+
+    if (allStaleIds.length > 0) {
+      await db
+        .update(jobExecutions)
+        .set({
+          status: "failed",
+          finishedAt: new Date(),
+          error: "Execution interrupted: recovered by stale detection",
+        })
+        .where(
+          and(
+            inArray(jobExecutions.jobId, allStaleIds),
+            eq(jobExecutions.status, "running"),
+          ),
+        );
+    }
 
     staleRunningRecovered = staleRunning.length;
     if (staleRunningRecovered > 0) {
       logger.warn(`Heartbeat: recovered ${staleRunningRecovered} stale running jobs`, {
         jobs: staleRunning.map((j) => j.name),
+      });
+    }
+    if (staleExhausted.length > 0) {
+      logger.error(`Heartbeat: ${staleExhausted.length} stale jobs exceeded retry limit`, {
+        jobs: staleExhausted.map((j) => j.name),
       });
     }
 
@@ -300,9 +351,20 @@ heartbeatApp.post("/api/execute-now", async (c) => {
   const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
   if (!job) return c.json({ error: "Job not found" }, 404);
 
+  if (job.status !== "pending") {
+    return c.json(
+      { ok: false, jobId, error: `Job is not pending (current status: ${job.status})` },
+      409,
+    );
+  }
+
   try {
     const skillIndex = await buildSkillIndex();
-    await executeJob(job, skillIndex, "dispatch");
+    const executed = await executeJob(job, skillIndex, "dispatch");
+
+    if (!executed) {
+      return c.json({ ok: false, jobId, message: "Job was not executed (already claimed)" }, 409);
+    }
 
     return c.json({ ok: true, jobId, message: "Execution completed" });
   } catch (err: any) {
@@ -317,7 +379,7 @@ async function executeJob(
   job: typeof jobs.$inferSelect,
   skillIndex: string,
   trigger: "heartbeat" | "dispatch" | "continuation" = "heartbeat",
-) {
+): Promise<boolean> {
   const jobId = job.id;
 
   // Atomically claim the job to prevent duplicate execution.
@@ -330,7 +392,7 @@ async function executeJob(
 
   if (claimed.length === 0) {
     logger.info("executeJob: job already claimed, skipping", { jobId, jobName: job.name });
-    return;
+    return false;
   }
 
   // Insert execution trace row
@@ -490,6 +552,8 @@ async function executeJob(
         isContinuation,
       });
     }
+
+    return true;
   } catch (error: any) {
     // Update execution trace with failure (protected so it can't break retry logic)
     try {
