@@ -88,6 +88,26 @@ export function createSandboxTools(context?: ScheduleContext) {
             stderr: stderr || undefined,
           };
         } catch (error: any) {
+          // E2B's CommandExitError implements CommandResult with exitCode/stdout/stderr
+          if ("exitCode" in error && typeof error.exitCode === "number") {
+            const stdout = truncateOutput(error.stdout || "", 4000);
+            const stderr = truncateOutput(error.stderr || "", 2000);
+
+            logger.info("run_command tool: non-zero exit", {
+              command: command.substring(0, 100),
+              exitCode: error.exitCode,
+              stdoutLength: (error.stdout || "").length,
+              stderrLength: (error.stderr || "").length,
+            });
+
+            return {
+              ok: true,
+              exit_code: error.exitCode,
+              stdout,
+              stderr: stderr || undefined,
+            };
+          }
+
           logger.error("run_command tool failed", {
             command: command.substring(0, 100),
             error: error.message,
