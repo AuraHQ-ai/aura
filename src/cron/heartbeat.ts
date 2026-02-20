@@ -299,6 +299,19 @@ async function executeJob(
 ) {
   const jobId = job.id;
 
+  // Atomically claim the job to prevent duplicate execution.
+  // If another process already claimed it, this updates 0 rows.
+  const claimed = await db
+    .update(jobs)
+    .set({ status: "running", updatedAt: new Date() })
+    .where(and(eq(jobs.id, jobId), eq(jobs.status, "pending")))
+    .returning({ id: jobs.id });
+
+  if (claimed.length === 0) {
+    logger.info("executeJob: job already claimed, skipping", { jobId, jobName: job.name });
+    return;
+  }
+
   // Insert execution trace row
   const [execution] = await db
     .insert(jobExecutions)
@@ -422,6 +435,7 @@ async function executeJob(
       await db
         .update(jobs)
         .set({
+          status: "pending",
           executeAt: null,
           retries: 0,
           lastExecutedAt: now,
@@ -473,7 +487,7 @@ async function executeJob(
       const retryAt = new Date(Date.now() + RETRY_DELAY_MS);
       await db
         .update(jobs)
-        .set({ executeAt: retryAt, retries: newRetries, updatedAt: new Date() })
+        .set({ status: "pending", executeAt: retryAt, retries: newRetries, updatedAt: new Date() })
         .where(eq(jobs.id, jobId));
 
       logger.warn("Heartbeat: job retrying", {
