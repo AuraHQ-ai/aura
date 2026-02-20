@@ -136,7 +136,7 @@ export function createSheetsTools() {
 
           const allRows = data.values ?? [];
           const headers = allRows[0] ?? [];
-          const totalDataRows = allRows.length - 1;
+          const totalDataRows = Math.max(0, allRows.length - 1);
           const rows = allRows.slice(1, 1 + max_rows);
 
           logger.info("read_google_sheet tool called", {
