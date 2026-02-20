@@ -134,6 +134,71 @@ export async function createEvent(opts: {
   };
 }
 
+// ── Delete Event ─────────────────────────────────────────────────────────────
+
+export async function deleteEvent(eventId: string): Promise<boolean> {
+  const client = await getCalendarClient();
+  if (!client) return false;
+
+  await client.events.delete({ calendarId: "primary", eventId, sendUpdates: "all" });
+
+  logger.info("Calendar event deleted", { eventId });
+  return true;
+}
+
+// ── Update Event ─────────────────────────────────────────────────────────────
+
+export async function updateEvent(
+  eventId: string,
+  updates: {
+    summary?: string;
+    description?: string;
+    start?: string;
+    end?: string;
+    location?: string;
+    attendees?: string[];
+  },
+): Promise<CalendarEvent | null> {
+  const client = await getCalendarClient();
+  if (!client) return null;
+
+  const requestBody: Record<string, unknown> = {};
+  if (updates.summary !== undefined) requestBody.summary = updates.summary;
+  if (updates.description !== undefined)
+    requestBody.description = updates.description;
+  if (updates.location !== undefined) requestBody.location = updates.location;
+  if (updates.start !== undefined)
+    requestBody.start = { dateTime: updates.start };
+  if (updates.end !== undefined) requestBody.end = { dateTime: updates.end };
+  if (updates.attendees !== undefined)
+    requestBody.attendees = updates.attendees.map((email) => ({ email }));
+
+  const res = await client.events.patch({
+    calendarId: "primary",
+    eventId,
+    sendUpdates: "all",
+    requestBody,
+  });
+
+  const e = res.data;
+  logger.info("Calendar event updated", { id: e.id, summary: e.summary });
+
+  return {
+    id: e.id || "",
+    summary: e.summary || "",
+    description: e.description || undefined,
+    start: e.start?.dateTime || e.start?.date || "",
+    end: e.end?.dateTime || e.end?.date || "",
+    location: e.location || undefined,
+    attendees: e.attendees?.map((a) => ({
+      email: a.email || "",
+      responseStatus: a.responseStatus || undefined,
+    })),
+    htmlLink: e.htmlLink || undefined,
+    status: e.status || undefined,
+  };
+}
+
 // ── Free/Busy ───────────────────────────────────────────────────────────────
 
 export async function checkFreeBusy(opts: {

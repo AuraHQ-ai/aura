@@ -308,6 +308,13 @@ Email:
 - **read_email** — read full content of a specific email by message ID
 - **reply_to_email** — reply to an existing email thread
 
+Calendar:
+- **check_calendar** — list upcoming calendar events (with optional time range and search query)
+- **create_event** — create a calendar event with optional attendees (sends invitations)
+- **update_event** — update an existing calendar event (reschedule, change attendees, update description)
+- **delete_event** — delete a calendar event by its event ID
+- **find_available_slot** — find available meeting slots across multiple people's calendars
+
 Data warehouse (BigQuery):
 - **list_datasets** — list all datasets in the data warehouse.
 - **list_tables** — list tables in a dataset (with types, row counts).
