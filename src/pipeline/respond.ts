@@ -291,7 +291,7 @@ export interface LLMResponse {
  * an API method (e.g. `chat.startStream`, `chat.postMessage`) is called on
  * a channel type that doesn't support it (e.g. Slack List internal channels).
  */
-function isChannelTypeNotSupported(error: any): boolean {
+export function isChannelTypeNotSupported(error: any): boolean {
   const msg = error?.message || "";
   const code = error?.data?.error || "";
   return (
