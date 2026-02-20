@@ -49,6 +49,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/directory.readonly",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/spreadsheets.readonly",
 ];
 
 // ── Email Signature ─────────────────────────────────────────────────────────
