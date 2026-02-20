@@ -878,7 +878,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .min(1)
           .max(200)
           .default(50)
-          .optional()
           .describe("Max replies to fetch (default 50)"),
       }),
       execute: async ({ channel: channelInput, thread_ts, limit }) => {
@@ -894,7 +893,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const threadResult = await client.conversations.replies({
             channel: channel.id,
             ts: thread_ts,
-            limit: limit || 50,
+            limit: limit + 1,
           });
 
           const allMessages = threadResult.messages || [];
