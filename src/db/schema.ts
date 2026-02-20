@@ -247,6 +247,32 @@ export const jobs = pgTable(
   ],
 );
 
+// ── Job Executions (trace storage for every job run) ────────────────────────
+
+export const jobExecutions = pgTable(
+  "job_executions",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    jobId: uuid("job_id").references(() => jobs.id),
+    startedAt: timestamptz("started_at").notNull().defaultNow(),
+    finishedAt: timestamptz("finished_at"),
+    status: text("status").notNull().default("running"),
+    trigger: text("trigger").notNull().default("heartbeat"),
+    callbackChannel: text("callback_channel"),
+    callbackThreadTs: text("callback_thread_ts"),
+    steps: jsonb("steps"),
+    summary: text("summary"),
+    tokenUsage: jsonb("token_usage"),
+    error: text("error"),
+  },
+  (table) => [
+    index("job_executions_job_id_idx").on(table.jobId),
+    index("job_executions_started_at_idx").on(table.startedAt),
+  ],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(
@@ -310,6 +336,8 @@ export type EventLock = typeof eventLocks.$inferSelect;
 export type NewEventLock = typeof eventLocks.$inferInsert;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type NewErrorEvent = typeof errorEvents.$inferInsert;
+export type JobExecution = typeof jobExecutions.$inferSelect;
+export type NewJobExecution = typeof jobExecutions.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {

@@ -99,6 +99,13 @@
       "when": 1771561682063,
       "tag": "0013_ambiguous_sunspot",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1771593578962,
+      "tag": "0014_sudden_scarecrow",
+      "breakpoints": true
     }
   ]
 }
