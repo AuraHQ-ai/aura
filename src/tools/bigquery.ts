@@ -3,6 +3,7 @@ import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
+import type { ScheduleContext } from "../db/schema.js";
 
 /**
  * Strip leading SQL comments (line -- and block comments) and whitespace
@@ -104,7 +105,7 @@ async function resolveDatasetLocation(
  * Create BigQuery tools for the AI SDK.
  * All tools are read-only. DML/DDL is rejected.
  */
-export function createBigQueryTools() {
+export function createBigQueryTools(context?: ScheduleContext) {
   return {
     list_datasets: tool({
       description:
@@ -221,10 +222,10 @@ export function createBigQueryTools() {
             size_bytes: metadata.numBytes ?? null,
             description: metadata.description ?? null,
             created: metadata.creationTime
-              ? formatTimestamp(new Date(Number(metadata.creationTime)))
+              ? formatTimestamp(new Date(Number(metadata.creationTime)), context?.timezone)
               : null,
             modified: metadata.lastModifiedTime
-              ? formatTimestamp(new Date(Number(metadata.lastModifiedTime)))
+              ? formatTimestamp(new Date(Number(metadata.lastModifiedTime)), context?.timezone)
               : null,
           };
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { sql, and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages } from "../db/schema.js";
+import type { ScheduleContext } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import { formatTimestamp } from "../lib/temporal.js";
@@ -44,7 +45,7 @@ export interface ThreadGroup {
   }>;
 }
 
-export function createConversationSearchTools() {
+export function createConversationSearchTools(context?: ScheduleContext) {
   return {
     search_my_conversations: tool({
       description:
@@ -250,7 +251,7 @@ export function createConversationSearchTools() {
               user_id: row.user_id,
               role: row.role,
               content: truncate(row.content, MAX_CONTENT_LENGTH),
-              timestamp: formatTimestamp(createdDate),
+              timestamp: formatTimestamp(createdDate, context?.timezone),
               channel_id: row.channel_id,
               channel_type: row.channel_type,
               ...(row.similarity != null ? { similarity_score: Number(row.similarity) } : {}),
@@ -306,7 +307,7 @@ export function createConversationSearchTools() {
                     user_id: r.user_id,
                     role: r.role,
                     content: truncate(r.content, MAX_CONTENT_LENGTH),
-                    timestamp: formatTimestamp(ctxDate),
+                    timestamp: formatTimestamp(ctxDate, context?.timezone),
                     channel_id: r.channel_id,
                     channel_type: r.channel_type,
                     ...(matchIds.has(r.id)

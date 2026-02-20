@@ -27,7 +27,15 @@ export async function getOrCreateProfile(
     .limit(1);
 
   if (existing.length > 0) {
-    return existing[0];
+    const profile = existing[0];
+    if (timezone && !profile.timezone) {
+      await db
+        .update(userProfiles)
+        .set({ timezone, updatedAt: new Date() })
+        .where(eq(userProfiles.slackUserId, slackUserId));
+      return { ...profile, timezone };
+    }
+    return profile;
   }
 
   // Create new profile (upsert to handle concurrent inserts)
