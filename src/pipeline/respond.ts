@@ -325,13 +325,22 @@ function formatForSlack(text: string): string {
     return `\x00CODE${codeBlocks.length - 1}\x00`;
   });
 
+  // Protect inline code spans from transformation
+  const inlineCode: string[] = [];
+  result = result.replace(/`[^`]+`/g, (match) => {
+    inlineCode.push(match);
+    return `\x00INLINE${inlineCode.length - 1}\x00`;
+  });
+
   // Headers → bold (### heading, ## heading, # heading)
   result = result.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
   // Bold: **text** → *text*
   result = result.replace(/\*\*(.+?)\*\*/g, "*$1*");
-  // Italic: __text__ → _text_
-  result = result.replace(/__(.+?)__/g, "_$1_");
+  // Bold: __text__ → *text*
+  result = result.replace(/__(.+?)__/g, "*$1*");
 
+  // Restore inline code spans
+  result = result.replace(/\x00INLINE(\d+)\x00/g, (_, idx) => inlineCode[Number(idx)]);
   // Restore code blocks
   result = result.replace(/\x00CODE(\d+)\x00/g, (_, idx) => codeBlocks[Number(idx)]);
 
@@ -834,7 +843,7 @@ export async function generateResponse(
       });
 
       const toolMeta = buildToolMetadata(toolCallRecords);
-      const fallbackText = (unsentText ? formatForSlack(unsentText) : "") || "_I processed your request but had nothing to say._";
+      const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
 
       try {
         await slackClient.chat.postMessage({
