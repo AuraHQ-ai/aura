@@ -8,6 +8,20 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 let cachedSandbox: any | null = null;
 
 /**
+ * Clear the cached sandbox reference so the next call to
+ * getOrCreateSandbox() creates a fresh instance. Call this when a
+ * sandbox becomes unresponsive (e.g. after a command timeout).
+ */
+export function clearCachedSandbox(): void {
+  if (cachedSandbox) {
+    logger.info("Clearing cached sandbox reference", {
+      sandboxId: cachedSandbox.sandboxId,
+    });
+    cachedSandbox = null;
+  }
+}
+
+/**
  * Dynamically import the E2B SDK.
  * Kept as dynamic import so the module only loads when sandbox
  * tools are actually called (not on every cold start).
@@ -83,6 +97,14 @@ export async function getOrCreateSandbox(): Promise<any> {
       const sandbox = await Sandbox.connect(savedId, {
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
+
+      // Health check: verify the sandbox is actually responsive
+      const healthCheck = await sandbox.commands.run("echo ok", {
+        timeoutMs: 5_000,
+      });
+      if (healthCheck.exitCode !== 0) {
+        throw new Error("Health check failed after resume");
+      }
 
       cachedSandbox = sandbox;
       logger.info("E2B sandbox resumed", { sandboxId: savedId });

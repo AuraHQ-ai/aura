@@ -4,6 +4,7 @@ import {
   getOrCreateSandbox,
   getSandboxEnvs,
   truncateOutput,
+  clearCachedSandbox,
 } from "../lib/sandbox.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -93,6 +94,7 @@ export function createSandboxTools(context?: ScheduleContext) {
           });
 
           if (error.message?.includes("timed out")) {
+            clearCachedSandbox();
             return {
               ok: false,
               error: `Command timed out after ${timeout_seconds} seconds. Try increasing timeout_seconds or breaking the command into smaller steps.`,
