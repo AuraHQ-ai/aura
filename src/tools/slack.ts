@@ -2278,7 +2278,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createSandboxTools(context),
 
     // ── BigQuery Tools ────────────────────────────────────────────────────
-    ...createBigQueryTools(),
+    ...createBigQueryTools(context),
 
     // ── Email Tools (Gmail) ──────────────────────────────────────────────
     ...createEmailTools(),

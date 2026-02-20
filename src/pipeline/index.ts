@@ -113,7 +113,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   let decision: { respond: boolean; reason: string };
 
   // Fetch user timezone early so conversation context timestamps use it
-  const userTimezone = await getProfile(context.userId).then(p => p?.timezone || undefined);
+  let userTimezone: string | undefined;
+  try {
+    userTimezone = await getProfile(context.userId).then(p => p?.timezone || undefined);
+  } catch {
+    userTimezone = undefined;
+  }
 
   if (context.isDm) {
     decision = { respond: true, reason: "dm" };
@@ -245,7 +250,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { systemPrompt, memories, conversations, userProfile } = await assemblePrompt(
+    const { systemPrompt, memories, conversations } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
@@ -268,7 +273,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       systemPrompt,
       userMessage: messageText,
       slackClient: client,
-      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs, timezone: userProfile?.timezone || undefined },
+      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs, timezone: userTimezone },
       files: fileParts,
       channelId: context.channelId,
       threadTs: replyThreadTs,
