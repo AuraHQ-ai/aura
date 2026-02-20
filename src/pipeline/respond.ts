@@ -288,10 +288,10 @@ export interface LLMResponse {
 
 /**
  * Detect Slack's `channel_type_not_supported` error, which is thrown when
- * `chat.startStream` is called on a channel type that doesn't support
- * streaming (e.g. Slack List internal channels).
+ * an API method (e.g. `chat.startStream`, `chat.postMessage`) is called on
+ * a channel type that doesn't support it (e.g. Slack List internal channels).
  */
-function isStreamingUnsupported(error: any): boolean {
+export function isChannelTypeNotSupported(error: any): boolean {
   const msg = error?.message || "";
   const code = error?.data?.error || "";
   return (
@@ -425,7 +425,7 @@ export async function generateResponse(
     try {
       await streamer.append(payload);
     } catch (err: any) {
-      if (isStreamingUnsupported(err)) {
+      if (isChannelTypeNotSupported(err)) {
         streamingFailed = true;
         logger.warn(
           "chatStream not supported for this channel, falling back to postMessage",
@@ -851,7 +851,20 @@ export async function generateResponse(
           ...(toolMeta && { metadata: toolMeta }),
         });
       } catch (postErr: any) {
-        if (isInvalidBlocks(postErr)) {
+        if (isChannelTypeNotSupported(postErr)) {
+          if (toolCallRecords.length > 0) {
+            logger.info("Fallback postMessage not supported for this channel type — response already delivered via tool calls", {
+              channelId,
+              slackError: postErr?.data?.error,
+              toolCallCount: toolCallRecords.length,
+            });
+          } else {
+            logger.warn("Fallback postMessage not supported and no tool calls were made — response lost", {
+              channelId,
+              slackError: postErr?.data?.error,
+            });
+          }
+        } else if (isInvalidBlocks(postErr)) {
           logger.warn("Fallback postMessage rejected blocks, retrying as plain text", {
             channelId,
             slackError: postErr?.data?.error,
