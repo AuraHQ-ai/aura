@@ -107,3 +107,66 @@ export async function getCursorAgentStatus(
   return (await res.json()) as CursorAgentStatus;
 }
 
+export async function followupCursorAgent(
+  agentId: string,
+  prompt: string,
+): Promise<CursorAgentResponse> {
+  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/follow-up`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ prompt: { text: prompt } }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cursor API POST /agents/${agentId}/follow-up failed (${res.status}): ${text}`,
+    );
+  }
+  return (await res.json()) as CursorAgentResponse;
+}
+
+export async function getCursorConversation(agentId: string): Promise<any> {
+  const res = await fetch(
+    `${CURSOR_API_BASE}/agents/${agentId}/conversation`,
+    {
+      method: "GET",
+      headers: headers(),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cursor API GET /agents/${agentId}/conversation failed (${res.status}): ${text}`,
+    );
+  }
+  return await res.json();
+}
+
+export async function stopCursorAgent(agentId: string): Promise<any> {
+  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/stop`, {
+    method: "POST",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cursor API POST /agents/${agentId}/stop failed (${res.status}): ${text}`,
+    );
+  }
+  return await res.json();
+}
+
+export async function listCursorAgents(prUrl?: string): Promise<any> {
+  const url = new URL(`${CURSOR_API_BASE}/agents`);
+  if (prUrl) url.searchParams.set("prUrl", prUrl);
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Cursor API GET /agents failed (${res.status}): ${text}`);
+  }
+  return await res.json();
+}
+
