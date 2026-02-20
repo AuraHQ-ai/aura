@@ -2281,6 +2281,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createCursorAgentTools(context),
 
     // ── Conversation Search Tools (search stored messages DB) ─────────
-    ...createConversationSearchTools(),
+    ...createConversationSearchTools(context),
   };
 }
