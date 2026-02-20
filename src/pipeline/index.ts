@@ -6,7 +6,7 @@ import {
   type MessageContext,
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
-import { generateResponse } from "./respond.js";
+import { generateResponse, isChannelTypeNotSupported } from "./respond.js";
 import {
   fetchConversationContext,
   resolveDisplayName,
@@ -378,15 +378,14 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         thread_ts: replyThreadTs,
       });
     } catch (notifyErr: any) {
-      const slackCode = notifyErr?.data?.error;
-      if (slackCode === "channel_type_not_supported") {
+      if (isChannelTypeNotSupported(notifyErr)) {
         logger.info("Error notification skipped — channel type does not support postMessage", {
           channelId: context.channelId,
         });
       } else {
         logger.error("Failed to send error message to Slack", {
           channelId: context.channelId,
-          slackError: slackCode,
+          slackError: notifyErr?.data?.error,
           error: notifyErr?.message || String(notifyErr),
         });
       }
