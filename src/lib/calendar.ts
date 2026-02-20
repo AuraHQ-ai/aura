@@ -25,6 +25,42 @@ export interface AvailableSlot {
   end: string;
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatEvent(e: {
+  id?: string | null;
+  summary?: string | null;
+  description?: string | null;
+  start?: { dateTime?: string | null; date?: string | null } | null;
+  end?: { dateTime?: string | null; date?: string | null } | null;
+  location?: string | null;
+  attendees?: { email?: string | null; responseStatus?: string | null }[] | null;
+  htmlLink?: string | null;
+  status?: string | null;
+  organizer?: { email?: string | null; displayName?: string | null } | null;
+}): CalendarEvent {
+  return {
+    id: e.id || "",
+    summary: e.summary || "(no title)",
+    description: e.description || undefined,
+    start: e.start?.dateTime || e.start?.date || "",
+    end: e.end?.dateTime || e.end?.date || "",
+    location: e.location || undefined,
+    attendees: e.attendees?.map((a) => ({
+      email: a.email || "",
+      responseStatus: a.responseStatus || undefined,
+    })),
+    htmlLink: e.htmlLink || undefined,
+    status: e.status || undefined,
+    organizer: e.organizer
+      ? {
+          email: e.organizer.email || "",
+          displayName: e.organizer.displayName || undefined,
+        }
+      : undefined,
+  };
+}
+
 // ── Calendar Client ─────────────────────────────────────────────────────────
 
 async function getCalendarClient() {
@@ -61,26 +97,7 @@ export async function listEvents(opts: {
     q: opts.query,
   });
 
-  return (res.data.items || []).map((e) => ({
-    id: e.id || "",
-    summary: e.summary || "(no title)",
-    description: e.description || undefined,
-    start: e.start?.dateTime || e.start?.date || "",
-    end: e.end?.dateTime || e.end?.date || "",
-    location: e.location || undefined,
-    attendees: e.attendees?.map((a) => ({
-      email: a.email || "",
-      responseStatus: a.responseStatus || undefined,
-    })),
-    htmlLink: e.htmlLink || undefined,
-    status: e.status || undefined,
-    organizer: e.organizer
-      ? {
-          email: e.organizer.email || "",
-          displayName: e.organizer.displayName || undefined,
-        }
-      : undefined,
-  }));
+  return (res.data.items || []).map(formatEvent);
 }
 
 // ── Create Event ────────────────────────────────────────────────────────────
@@ -118,20 +135,7 @@ export async function createEvent(opts: {
     summary: e.summary,
   });
 
-  return {
-    id: e.id || "",
-    summary: e.summary || "",
-    description: e.description || undefined,
-    start: e.start?.dateTime || e.start?.date || "",
-    end: e.end?.dateTime || e.end?.date || "",
-    location: e.location || undefined,
-    attendees: e.attendees?.map((a) => ({
-      email: a.email || "",
-      responseStatus: a.responseStatus || undefined,
-    })),
-    htmlLink: e.htmlLink || undefined,
-    status: e.status || undefined,
-  };
+  return formatEvent(e);
 }
 
 // ── Delete Event ─────────────────────────────────────────────────────────────
@@ -183,20 +187,7 @@ export async function updateEvent(
   const e = res.data;
   logger.info("Calendar event updated", { id: e.id, summary: e.summary });
 
-  return {
-    id: e.id || "",
-    summary: e.summary || "",
-    description: e.description || undefined,
-    start: e.start?.dateTime || e.start?.date || "",
-    end: e.end?.dateTime || e.end?.date || "",
-    location: e.location || undefined,
-    attendees: e.attendees?.map((a) => ({
-      email: a.email || "",
-      responseStatus: a.responseStatus || undefined,
-    })),
-    htmlLink: e.htmlLink || undefined,
-    status: e.status || undefined,
-  };
+  return formatEvent(e);
 }
 
 // ── Free/Busy ───────────────────────────────────────────────────────────────

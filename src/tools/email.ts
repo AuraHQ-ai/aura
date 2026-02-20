@@ -532,12 +532,12 @@ export function createEmailTools() {
         try {
           const { updateEvent } = await import("../lib/calendar.js");
           const event = await updateEvent(event_id, {
-            summary: summary || undefined,
-            description: description || undefined,
-            start: start || undefined,
-            end: end || undefined,
-            location: location || undefined,
-            attendees: attendees || undefined,
+            summary,
+            description,
+            start,
+            end,
+            location,
+            attendees,
           });
           if (!event) {
             return {
