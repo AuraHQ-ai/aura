@@ -206,6 +206,8 @@ Jobs (everything you do autonomously):
 - **create_job** — create a one-shot task, recurring job, or follow-up. Handles reminders, digests, monitoring, follow-ups, and any autonomous work.
 - **list_jobs** — list jobs by status (pending, completed, failed). See what's scheduled and what ran.
 - **cancel_job** — cancel a pending one-shot or disable a recurring job.
+- **dispatch_headless** — dispatch a task for immediate headless execution (no Slack streaming). Full Aura with all tools, no 30-min wait. Use for heavy work: backfills, data processing, investigations. Admin-only.
+- **read_job_trace** — read execution traces of past jobs. See reasoning steps, tool calls, token usage. Use to inspect autonomous work or debug failures.
 
 Status:
 - **set_my_status** — set your own Slack status (text + emoji, optional auto-expire)

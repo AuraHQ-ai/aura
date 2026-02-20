@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { generateText, stepCountIs } from "ai";
-import { eq, and, lt, lte, sql, isNull, or } from "drizzle-orm";
+import { eq, and, lt, lte, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
-import { jobs, notes } from "../db/schema.js";
+import { jobs, notes, jobExecutions } from "../db/schema.js";
 import type { FrequencyConfig } from "../db/schema.js";
 import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
@@ -22,6 +22,9 @@ const MAX_RETRIES = 3;
 
 /** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
 const RETRY_DELAY_MS = 30 * 60 * 1000;
+
+/** Threshold for recovering jobs stuck in "running" (15 minutes) */
+const STALE_RUNNING_THRESHOLD_MS = 15 * 60 * 1000;
 
 // ── System Prompts ───────────────────────────────────────────────────────────
 
@@ -140,6 +143,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let failed = 0;
   let plansExpired = 0;
   let plansAbandoned = 0;
+  let staleRunningRecovered = 0;
 
   try {
     const now = new Date();
@@ -195,8 +199,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
       for (const job of dueJobs) {
         try {
-          await executeJob(job, skillIndex);
-          executed++;
+          const ran = await executeJob(job, skillIndex, "heartbeat");
+          if (ran) executed++;
         } catch (error: any) {
           logger.error("Heartbeat: job execution error", {
             jobName: job.name,
@@ -244,6 +248,73 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
+    // ── 5. Recover jobs stuck in "running" ─────────────────────────────
+
+    const staleRunningCutoff = new Date(Date.now() - STALE_RUNNING_THRESHOLD_MS);
+    const staleRunning = await db
+      .update(jobs)
+      .set({
+        status: "pending",
+        retries: sql`${jobs.retries} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(jobs.status, "running"),
+          lt(jobs.updatedAt, staleRunningCutoff),
+          lt(jobs.retries, MAX_RETRIES),
+        ),
+      )
+      .returning({ id: jobs.id, name: jobs.name });
+
+    const staleExhausted = await db
+      .update(jobs)
+      .set({
+        status: "failed",
+        result: "Failed: job stuck in running state and exceeded retry limit",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(jobs.status, "running"),
+          lt(jobs.updatedAt, staleRunningCutoff),
+        ),
+      )
+      .returning({ id: jobs.id, name: jobs.name });
+
+    const allStaleIds = [
+      ...staleRunning.map((j) => j.id),
+      ...staleExhausted.map((j) => j.id),
+    ];
+
+    if (allStaleIds.length > 0) {
+      await db
+        .update(jobExecutions)
+        .set({
+          status: "failed",
+          finishedAt: new Date(),
+          error: "Execution interrupted: recovered by stale detection",
+        })
+        .where(
+          and(
+            inArray(jobExecutions.jobId, allStaleIds),
+            eq(jobExecutions.status, "running"),
+          ),
+        );
+    }
+
+    staleRunningRecovered = staleRunning.length;
+    if (staleRunningRecovered > 0) {
+      logger.warn(`Heartbeat: recovered ${staleRunningRecovered} stale running jobs`, {
+        jobs: staleRunning.map((j) => j.name),
+      });
+    }
+    if (staleExhausted.length > 0) {
+      logger.error(`Heartbeat: ${staleExhausted.length} stale jobs exceeded retry limit`, {
+        jobs: staleExhausted.map((j) => j.name),
+      });
+    }
+
     // ── Done ─────────────────────────────────────────────────────────────
 
     const duration = Date.now() - sweepStart;
@@ -252,12 +323,53 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       failed,
       plansExpired,
       plansAbandoned,
+      staleRunningRecovered,
     });
 
-    return c.json({ ok: true, executed, failed, plansExpired, plansAbandoned, duration });
+    return c.json({ ok: true, executed, failed, plansExpired, plansAbandoned, staleRunningRecovered, duration });
   } catch (error: any) {
     logger.error("Heartbeat failed", { error: error.message });
     return c.json({ error: "Heartbeat failed" }, 500);
+  }
+});
+
+// ── Execute Now (on-demand dispatch) ─────────────────────────────────────────
+
+heartbeatApp.post("/api/execute-now", async (c) => {
+  const authHeader = c.req.header("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    logger.warn("Unauthorized execute-now invocation");
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  const { jobId } = await c.req.json<{ jobId?: string }>();
+
+  if (!jobId) return c.json({ error: "jobId required" }, 400);
+
+  const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
+  if (!job) return c.json({ error: "Job not found" }, 404);
+
+  if (job.status !== "pending") {
+    return c.json(
+      { ok: false, jobId, error: `Job is not pending (current status: ${job.status})` },
+      409,
+    );
+  }
+
+  try {
+    const skillIndex = await buildSkillIndex();
+    const executed = await executeJob(job, skillIndex, "dispatch");
+
+    if (!executed) {
+      return c.json({ ok: false, jobId, message: "Job was not executed (already claimed)" }, 409);
+    }
+
+    return c.json({ ok: true, jobId, message: "Execution completed" });
+  } catch (err: any) {
+    logger.error("execute-now failed", { jobId, error: err.message });
+    return c.json({ ok: false, jobId, error: err.message }, 500);
   }
 });
 
@@ -266,13 +378,49 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 async function executeJob(
   job: typeof jobs.$inferSelect,
   skillIndex: string,
-) {
+  trigger: "heartbeat" | "dispatch" | "continuation" = "heartbeat",
+): Promise<boolean> {
   const jobId = job.id;
+
+  // Atomically claim the job to prevent duplicate execution.
+  // If another process already claimed it, this updates 0 rows.
+  const claimed = await db
+    .update(jobs)
+    .set({ status: "running", updatedAt: new Date() })
+    .where(and(eq(jobs.id, jobId), eq(jobs.status, "pending")))
+    .returning({ id: jobs.id });
+
+  if (claimed.length === 0) {
+    logger.info("executeJob: job already claimed, skipping", { jobId, jobName: job.name });
+    return false;
+  }
+
+  // Insert execution trace row
+  const [execution] = await db
+    .insert(jobExecutions)
+    .values({
+      jobId,
+      status: "running",
+      trigger,
+      callbackChannel: job.channelId || null,
+      callbackThreadTs: job.threadTs || null,
+    })
+    .returning({ id: jobExecutions.id });
+
+  const executionId = execution.id;
 
   try {
     const planTopic = parseContinuationTag(job.description);
     const isContinuation = planTopic !== null;
     const isRecurring = !!job.cronSchedule || !!job.frequencyConfig;
+
+    const effectiveTrigger = isContinuation && trigger === "heartbeat" ? "continuation" : trigger;
+    if (effectiveTrigger !== trigger) {
+      await db
+        .update(jobExecutions)
+        .set({ trigger: effectiveTrigger })
+        .where(eq(jobExecutions.id, executionId));
+    }
 
     let prompt: string;
     let systemPrompt: string;
@@ -289,6 +437,7 @@ async function executeJob(
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
+        executionId,
         planTopic,
         hasPlanNote: !!planContent,
       });
@@ -305,15 +454,17 @@ async function executeJob(
 
       logger.info("Heartbeat: executing job", {
         jobId,
+        executionId,
         jobName: job.name,
         isRecurring,
         hasPlaybook: !!job.playbook,
+        trigger: effectiveTrigger,
       });
     }
 
     const model = await getMainModel();
 
-    const { text } = await generateText({
+    const generateResult = await generateText({
       model,
       system: systemPrompt,
       prompt,
@@ -325,16 +476,49 @@ async function executeJob(
       stopWhen: stepCountIs(350),
     });
 
+    const { text, steps, totalUsage: usage } = generateResult;
+
+    const serializedSteps = steps.map((step) => ({
+      type: step.finishReason,
+      text: step.text,
+      toolCalls: step.toolCalls?.map((tc) => ({
+        toolName: tc.toolName,
+        input: tc.input,
+      })),
+      toolResults: step.toolResults?.map((tr) => ({
+        toolName: tr.toolName,
+        output: tr.output,
+      })),
+    }));
+
+    const tokenUsage = {
+      input: usage.inputTokens,
+      output: usage.outputTokens,
+      total: usage.totalTokens,
+    };
+
+    // Update execution trace with results
+    await db
+      .update(jobExecutions)
+      .set({
+        status: "completed",
+        finishedAt: new Date(),
+        steps: serializedSteps,
+        tokenUsage,
+        summary: (text || "").substring(0, 500) || null,
+      })
+      .where(eq(jobExecutions.id, executionId));
+
     const result = (text || "Job completed (no text output)").substring(0, 2000);
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
     const isNewDay = job.lastExecutionDate !== todayStr;
 
     if (isRecurring) {
-      // Recurring: update stats, keep pending for next cycle
       await db
         .update(jobs)
         .set({
+          status: "pending",
           executeAt: null,
           retries: 0,
           lastExecutedAt: now,
@@ -348,9 +532,9 @@ async function executeJob(
 
       logger.info("Heartbeat: recurring job completed", {
         jobName: job.name,
+        executionId,
       });
     } else {
-      // One-shot: mark completed
       await db
         .update(jobs)
         .set({
@@ -364,10 +548,31 @@ async function executeJob(
 
       logger.info("Heartbeat: one-shot job completed", {
         jobName: job.name,
+        executionId,
         isContinuation,
       });
     }
+
+    return true;
   } catch (error: any) {
+    // Update execution trace with failure (protected so it can't break retry logic)
+    try {
+      await db
+        .update(jobExecutions)
+        .set({
+          status: "failed",
+          finishedAt: new Date(),
+          error: error.message,
+        })
+        .where(eq(jobExecutions.id, executionId));
+    } catch (traceErr: any) {
+      logger.error("executeJob: failed to update execution trace", {
+        jobId,
+        executionId,
+        error: traceErr.message,
+      });
+    }
+
     // Retry logic
     const newRetries = job.retries + 1;
 
@@ -375,11 +580,12 @@ async function executeJob(
       const retryAt = new Date(Date.now() + RETRY_DELAY_MS);
       await db
         .update(jobs)
-        .set({ executeAt: retryAt, retries: newRetries, updatedAt: new Date() })
+        .set({ status: "pending", executeAt: retryAt, retries: newRetries, updatedAt: new Date() })
         .where(eq(jobs.id, jobId));
 
       logger.warn("Heartbeat: job retrying", {
         jobName: job.name,
+        executionId,
         retries: newRetries,
         retryAt: retryAt.toISOString(),
       });
@@ -408,11 +614,12 @@ async function executeJob(
           }
         }
       } catch {
-        logger.error("Heartbeat: failed to send escalation DM", { jobId });
+        logger.error("Heartbeat: failed to send escalation DM", { jobId, executionId });
       }
 
       logger.error("Heartbeat: job failed permanently", {
         jobName: job.name,
+        executionId,
         error: error.message,
       });
     }
