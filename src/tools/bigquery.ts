@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
+import { formatTimestamp, DEFAULT_TIMEZONE } from "../lib/temporal.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
 
 /**
@@ -215,16 +216,20 @@ export function createBigQueryTools() {
             description: f.description ?? null,
           }));
 
+          const createdDate = metadata.creationTime
+            ? new Date(Number(metadata.creationTime))
+            : null;
+          const modifiedDate = metadata.lastModifiedTime
+            ? new Date(Number(metadata.lastModifiedTime))
+            : null;
           const info = {
             row_count: metadata.numRows ?? null,
             size_bytes: metadata.numBytes ?? null,
             description: metadata.description ?? null,
-            created: metadata.creationTime
-              ? new Date(Number(metadata.creationTime)).toISOString()
-              : null,
-            modified: metadata.lastModifiedTime
-              ? new Date(Number(metadata.lastModifiedTime)).toISOString()
-              : null,
+            created: createdDate?.toISOString() ?? null,
+            created_formatted: createdDate ? formatTimestamp(createdDate, DEFAULT_TIMEZONE) : null,
+            modified: modifiedDate?.toISOString() ?? null,
+            modified_formatted: modifiedDate ? formatTimestamp(modifiedDate, DEFAULT_TIMEZONE) : null,
           };
 
           const location: string | undefined = metadata.location ?? undefined;

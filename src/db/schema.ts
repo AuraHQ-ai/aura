@@ -316,4 +316,6 @@ export interface ScheduleContext {
   userId?: string;
   channelId?: string;
   threadTs?: string;
+  /** IANA timezone for formatting timestamps in tool outputs (default Europe/Zurich). */
+  timezone?: string;
 }

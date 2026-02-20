@@ -3,7 +3,9 @@ import { z } from "zod";
 import { sql, and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages } from "../db/schema.js";
+import type { ScheduleContext } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
+import { formatTimestamp } from "../lib/temporal.js";
 import { logger } from "../lib/logger.js";
 
 const MAX_CONTENT_LENGTH = 500;
@@ -37,13 +39,15 @@ export interface ThreadGroup {
     role: string;
     content: string;
     timestamp: string;
+    formatted_time?: string;
     channel_id: string;
     channel_type: string;
     similarity_score?: number;
   }>;
 }
 
-export function createConversationSearchTools() {
+export function createConversationSearchTools(context?: ScheduleContext) {
+  const tz = context?.timezone;
   return {
     search_my_conversations: tool({
       description:
@@ -241,14 +245,16 @@ export function createConversationSearchTools() {
               };
               threadMap.set(threadKey, group);
             }
+            const isoTs = typeof row.created_at === "string"
+              ? row.created_at
+              : new Date(row.created_at).toISOString();
             group.messages.push({
               id: row.id,
               user_id: row.user_id,
               role: row.role,
               content: truncate(row.content, MAX_CONTENT_LENGTH),
-              timestamp: typeof row.created_at === "string"
-                ? row.created_at
-                : new Date(row.created_at).toISOString(),
+              timestamp: isoTs,
+              formatted_time: formatTimestamp(isoTs, tz),
               channel_id: row.channel_id,
               channel_type: row.channel_type,
               ...(row.similarity != null ? { similarity_score: Number(row.similarity) } : {}),
@@ -296,26 +302,30 @@ export function createConversationSearchTools() {
                     .map((m) => [m.id, m.similarity_score!]),
                 );
                 const contextIds = new Set(contextRows.map((r) => r.id));
-                const contextMessages = contextRows.map((r) => ({
-                  id: r.id,
-                  user_id: r.user_id,
-                  role: r.role,
-                  content: truncate(r.content, MAX_CONTENT_LENGTH),
-                  timestamp:
+                const contextMessages = contextRows.map((r) => {
+                  const ctxIsoTs =
                     typeof r.created_at === "string"
                       ? r.created_at
-                      : new Date(r.created_at).toISOString(),
-                  channel_id: r.channel_id,
-                  channel_type: r.channel_type,
-                  ...(matchIds.has(r.id)
-                    ? {
-                        matched: true,
-                        ...(matchScoreMap.has(r.id)
-                          ? { similarity_score: matchScoreMap.get(r.id) }
-                          : {}),
-                      }
-                    : {}),
-                }));
+                      : new Date(r.created_at).toISOString();
+                  return {
+                    id: r.id,
+                    user_id: r.user_id,
+                    role: r.role,
+                    content: truncate(r.content, MAX_CONTENT_LENGTH),
+                    timestamp: ctxIsoTs,
+                    formatted_time: formatTimestamp(ctxIsoTs, tz),
+                    channel_id: r.channel_id,
+                    channel_type: r.channel_type,
+                    ...(matchIds.has(r.id)
+                      ? {
+                          matched: true,
+                          ...(matchScoreMap.has(r.id)
+                            ? { similarity_score: matchScoreMap.get(r.id) }
+                            : {}),
+                        }
+                      : {}),
+                  };
+                });
                 const missingMatches = thread.messages
                   .filter((m) => !contextIds.has(m.id))
                   .map((m) => ({ ...m, matched: true }));

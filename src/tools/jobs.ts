@@ -8,7 +8,7 @@ import { jobs } from "../db/schema.js";
 import type { FrequencyConfig, ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
-import { parseRelativeTime } from "../lib/temporal.js";
+import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
@@ -22,6 +22,8 @@ export function createJobTools(
   client: WebClient,
   context?: ScheduleContext,
 ) {
+  const tz = context?.timezone;
+
   return {
     create_job: tool({
       description:
@@ -234,6 +236,7 @@ export function createJobTools(
             });
 
           const timeStr = executeAt?.toISOString() ?? "next cron window";
+          const formattedTime = executeAt ? formatTimestamp(executeAt, tz) : "next cron window";
           const recurStr = recurring
             ? ` (recurring: ${recurring} ${timezone})`
             : " (one-shot)";
@@ -248,9 +251,10 @@ export function createJobTools(
 
           return {
             ok: true,
-            message: `Job "${jobName}" created${recurStr}. First execution: ${timeStr}.${channelId ? ` Posts to ${channelLabel}.` : ""}`,
+            message: `Job "${jobName}" created${recurStr}. First execution: ${formattedTime}.${channelId ? ` Posts to ${channelLabel}.` : ""}`,
             name: jobName,
             execute_at: timeStr,
+            execute_at_formatted: formattedTime,
           };
         } catch (error: any) {
           logger.error("create_job tool failed", { error: error.message });
@@ -305,12 +309,14 @@ export function createJobTools(
             cron_schedule: j.cronSchedule,
             frequency_config: j.frequencyConfig,
             execute_at: j.executeAt?.toISOString() ?? null,
+            execute_at_formatted: j.executeAt ? formatTimestamp(j.executeAt, tz) : null,
             channel_id: j.channelId || null,
             requested_by: j.requestedBy,
             priority: j.priority,
             status: j.status,
             retries: j.retries,
             last_executed_at: j.lastExecutedAt?.toISOString() ?? null,
+            last_executed_at_formatted: j.lastExecutedAt ? formatTimestamp(j.lastExecutedAt, tz) : null,
             execution_count: j.executionCount,
             has_playbook: !!j.playbook,
             last_result: j.lastResult ? j.lastResult.substring(0, 200) : null,
