@@ -465,8 +465,39 @@ export async function generateResponse(
           channelId,
           context: { currentStreamLength },
         });
+      } else if (err?.data?.error === 'internal_error') {
+        // Transient Slack server error — retry once after 500ms, then fall back
+        try {
+          await new Promise(r => setTimeout(r, 500));
+          await streamer.append(payload);
+        } catch {
+          streamingFailed = true;
+          logger.warn("chatStream append got internal_error twice, falling back to postMessage", {
+            channelId,
+          });
+          logError({
+            errorName: "SlackInternalError",
+            errorMessage: err?.message || "internal_error on stream append",
+            errorCode: "internal_error",
+            channelId,
+            context: { fallback: "postMessage", retried: true },
+          });
+        }
       } else {
-        throw err;
+        // Unknown streaming error — don't kill the response, fall back gracefully
+        streamingFailed = true;
+        logger.error("chatStream append got unexpected error, falling back to postMessage", {
+          channelId,
+          slackError: err?.data?.error,
+          message: err?.message,
+        });
+        logError({
+          errorName: "UnexpectedStreamError",
+          errorMessage: err?.message || "unexpected error on stream append",
+          errorCode: err?.data?.error || "unknown",
+          channelId,
+          context: { fallback: "postMessage" },
+        });
       }
     }
   }
