@@ -1,8 +1,9 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
-import { formatTimestamp, DEFAULT_TIMEZONE } from "../lib/temporal.js";
+import { formatTimestamp } from "../lib/temporal.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
+import type { ScheduleContext } from "../db/schema.js";
 
 /**
  * Strip leading SQL comments (line -- and block comments) and whitespace
@@ -104,7 +105,8 @@ async function resolveDatasetLocation(
  * Create BigQuery tools for the AI SDK.
  * All tools are read-only. DML/DDL is rejected.
  */
-export function createBigQueryTools() {
+export function createBigQueryTools(context?: ScheduleContext) {
+  const tz = context?.timezone;
   return {
     list_datasets: tool({
       description:
@@ -227,9 +229,9 @@ export function createBigQueryTools() {
             size_bytes: metadata.numBytes ?? null,
             description: metadata.description ?? null,
             created: createdDate?.toISOString() ?? null,
-            created_formatted: createdDate ? formatTimestamp(createdDate, DEFAULT_TIMEZONE) : null,
+            created_formatted: createdDate ? formatTimestamp(createdDate, tz) : null,
             modified: modifiedDate?.toISOString() ?? null,
-            modified_formatted: modifiedDate ? formatTimestamp(modifiedDate, DEFAULT_TIMEZONE) : null,
+            modified_formatted: modifiedDate ? formatTimestamp(modifiedDate, tz) : null,
           };
 
           const location: string | undefined = metadata.location ?? undefined;

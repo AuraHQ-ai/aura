@@ -119,8 +119,15 @@ export function formatTimestamp(
     return String(ts);
   }
 
+  let effectiveTz = tz;
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: tz });
+  } catch {
+    effectiveTz = DEFAULT_TIMEZONE;
+  }
+
   const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
+    timeZone: effectiveTz,
     weekday: "short",
     year: "numeric",
     month: "short",
@@ -130,7 +137,7 @@ export function formatTimestamp(
     hour12: true,
   });
 
-  return `${formatter.format(date)} (${tz})`;
+  return `${formatter.format(date)} (${effectiveTz})`;
 }
 
 export function parseRelativeTime(input: string): number | null {
