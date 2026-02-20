@@ -321,6 +321,7 @@ async function executeJob(
         userId: job.requestedBy,
         channelId: job.channelId || undefined,
         threadTs: job.threadTs || undefined,
+        timezone: job.timezone || undefined,
       }),
       stopWhen: stepCountIs(350),
     });

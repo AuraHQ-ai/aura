@@ -80,6 +80,59 @@ export function relativeTime(date: Date, now?: Date): string {
  * Parse a relative time string into milliseconds.
  * Supports: "30 minutes", "2 hours", "1 day", "3 days", "1 week", "tomorrow"
  */
+/** Default timezone used when none is provided. */
+export const DEFAULT_TIMEZONE = "Europe/Zurich";
+
+/**
+ * Format a timestamp into a human-readable string in the given timezone.
+ *
+ * Accepts:
+ *  - Slack message timestamps ("1718920800.123456")
+ *  - Unix epoch seconds (number)
+ *  - ISO 8601 date strings ("2025-01-15T09:00:00Z")
+ *  - Date objects
+ *
+ * Returns a string like "Mon, 20 Jan 2025, 10:35 AM (Europe/Zurich)".
+ */
+export function formatTimestamp(
+  ts: string | number | Date,
+  timezone?: string,
+): string {
+  const tz = timezone || DEFAULT_TIMEZONE;
+
+  let date: Date;
+  if (ts instanceof Date) {
+    date = ts;
+  } else if (typeof ts === "number") {
+    date = new Date(ts * 1000);
+  } else {
+    // Slack timestamps look like "1718920800.123456" — pure numeric with optional dot
+    const numeric = parseFloat(ts);
+    if (!isNaN(numeric) && /^\d+(\.\d+)?$/.test(ts)) {
+      date = new Date(numeric * 1000);
+    } else {
+      date = new Date(ts);
+    }
+  }
+
+  if (isNaN(date.getTime())) {
+    return String(ts);
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  return `${formatter.format(date)} (${tz})`;
+}
+
 export function parseRelativeTime(input: string): number | null {
   const cleaned = input.trim().toLowerCase();
 

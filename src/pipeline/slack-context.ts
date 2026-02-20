@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 
 import { logger } from "../lib/logger.js";
+import { formatTimestamp } from "../lib/temporal.js";
 import { TOOL_IO_EVENT_TYPE } from "./respond.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -30,6 +31,8 @@ export interface SlackThreadMessage {
   text: string;
   /** Slack message timestamp */
   ts: string;
+  /** Human-readable formatted time */
+  formattedTime?: string;
   /** Whether this message is from the bot */
   isBot: boolean;
   /** Extracted task card data from bot messages (tool call history) */
@@ -139,6 +142,7 @@ export async function fetchConversationContext(
   channelId: string,
   botUserId: string,
   threadTs?: string,
+  timezone?: string,
 ): Promise<ConversationContext> {
   const result: ConversationContext = {
     thread: null,
@@ -183,12 +187,14 @@ export async function fetchConversationContext(
           : await resolveDisplayName(client, userId);
         const toolCalls = isBot ? extractToolCalls((msg as any).blocks) : undefined;
         const toolIO = isBot ? extractToolIO(msg) : undefined;
+        const rawTs = msg.ts || "";
 
         threadMessages.push({
           user: userId,
           displayName,
           text: msg.text || "",
-          ts: msg.ts || "",
+          ts: rawTs,
+          formattedTime: rawTs ? formatTimestamp(rawTs, timezone) : undefined,
           isBot,
           ...(toolCalls?.length && { toolCalls }),
           ...(toolIO?.length && { toolIO }),
@@ -226,12 +232,14 @@ export async function fetchConversationContext(
         : await resolveDisplayName(client, userId);
       const toolCalls = isBot ? extractToolCalls((msg as any).blocks) : undefined;
       const toolIO = isBot ? extractToolIO(msg) : undefined;
+      const histRawTs = msg.ts || "";
 
       result.recentMessages.push({
         user: userId,
         displayName,
         text: msg.text || "",
-        ts: msg.ts || "",
+        ts: histRawTs,
+        formattedTime: histRawTs ? formatTimestamp(histRawTs, timezone) : undefined,
         isBot,
         ...(toolCalls?.length && { toolCalls }),
         ...(toolIO?.length && { toolIO }),
@@ -285,7 +293,8 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
 
 /** Format a single message, preferring rich tool I/O over task_card summaries. */
 function formatMessage(m: SlackThreadMessage): string {
-  const base = `${m.displayName}: ${m.text}`;
+  const timePrefix = m.formattedTime ? `[${m.formattedTime}] ` : "";
+  const base = `${timePrefix}${m.displayName}: ${m.text}`;
   if (m.toolIO?.length) return base + formatToolIO(m.toolIO);
   if (m.toolCalls?.length) return base + formatToolCalls(m.toolCalls);
   return base;
