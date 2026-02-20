@@ -1,0 +1,1 @@
+ALTER TABLE "user_profiles" ADD COLUMN "last_profile_consolidation" timestamp with time zone;
