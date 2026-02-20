@@ -264,7 +264,7 @@ export function createJobTools(
         "List jobs by status. See what's pending, completed, or failed. Shows both one-shot tasks and recurring jobs.",
       inputSchema: z.object({
         status: z
-          .enum(["pending", "completed", "failed", "cancelled"])
+          .enum(["pending", "running", "completed", "failed", "cancelled"])
           .default("pending")
           .describe("Filter by status"),
         recurring_only: z
@@ -476,7 +476,12 @@ export function createJobTools(
               Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
             },
             body: JSON.stringify({ jobId: job.id }),
-          }).catch(() => {});
+          }).catch((err: any) => {
+            logger.error("dispatch_headless: immediate execution request failed", {
+              jobId: job.id,
+              error: err.message,
+            });
+          });
 
           logger.info("dispatch_headless tool called", {
             jobId: job.id,

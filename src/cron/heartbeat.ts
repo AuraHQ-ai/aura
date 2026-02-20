@@ -23,6 +23,9 @@ const MAX_RETRIES = 3;
 /** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
 const RETRY_DELAY_MS = 30 * 60 * 1000;
 
+/** Threshold for recovering jobs stuck in "running" (15 minutes) */
+const STALE_RUNNING_THRESHOLD_MS = 15 * 60 * 1000;
+
 // ── System Prompts ───────────────────────────────────────────────────────────
 
 const JOB_SYSTEM_PROMPT = `You are Aura executing a job autonomously. You have full access to your tools.
@@ -140,6 +143,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let failed = 0;
   let plansExpired = 0;
   let plansAbandoned = 0;
+  let staleRunningRecovered = 0;
 
   try {
     const now = new Date();
@@ -244,6 +248,22 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
+    // ── 5. Recover jobs stuck in "running" ─────────────────────────────
+
+    const staleRunningCutoff = new Date(Date.now() - STALE_RUNNING_THRESHOLD_MS);
+    const staleRunning = await db
+      .update(jobs)
+      .set({ status: "pending", updatedAt: new Date() })
+      .where(and(eq(jobs.status, "running"), lt(jobs.updatedAt, staleRunningCutoff)))
+      .returning({ id: jobs.id, name: jobs.name });
+
+    staleRunningRecovered = staleRunning.length;
+    if (staleRunningRecovered > 0) {
+      logger.warn(`Heartbeat: recovered ${staleRunningRecovered} stale running jobs`, {
+        jobs: staleRunning.map((j) => j.name),
+      });
+    }
+
     // ── Done ─────────────────────────────────────────────────────────────
 
     const duration = Date.now() - sweepStart;
@@ -252,9 +272,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       failed,
       plansExpired,
       plansAbandoned,
+      staleRunningRecovered,
     });
 
-    return c.json({ ok: true, executed, failed, plansExpired, plansAbandoned, duration });
+    return c.json({ ok: true, executed, failed, plansExpired, plansAbandoned, staleRunningRecovered, duration });
   } catch (error: any) {
     logger.error("Heartbeat failed", { error: error.message });
     return c.json({ error: "Heartbeat failed" }, 500);
@@ -393,7 +414,7 @@ async function executeJob(
       stopWhen: stepCountIs(350),
     });
 
-    const { text, steps, usage } = generateResult;
+    const { text, steps, totalUsage: usage } = generateResult;
 
     const serializedSteps = steps.map((step) => ({
       type: step.finishReason,
@@ -470,15 +491,23 @@ async function executeJob(
       });
     }
   } catch (error: any) {
-    // Update execution trace with failure
-    await db
-      .update(jobExecutions)
-      .set({
-        status: "failed",
-        finishedAt: new Date(),
-        error: error.message,
-      })
-      .where(eq(jobExecutions.id, executionId));
+    // Update execution trace with failure (protected so it can't break retry logic)
+    try {
+      await db
+        .update(jobExecutions)
+        .set({
+          status: "failed",
+          finishedAt: new Date(),
+          error: error.message,
+        })
+        .where(eq(jobExecutions.id, executionId));
+    } catch (traceErr: any) {
+      logger.error("executeJob: failed to update execution trace", {
+        jobId,
+        executionId,
+        error: traceErr.message,
+      });
+    }
 
     // Retry logic
     const newRetries = job.retries + 1;
