@@ -3,6 +3,7 @@ import { z } from "zod";
 import { sql, and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages } from "../db/schema.js";
+import type { ScheduleContext } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { logger } from "../lib/logger.js";
@@ -44,7 +45,8 @@ export interface ThreadGroup {
   }>;
 }
 
-export function createConversationSearchTools() {
+export function createConversationSearchTools(context?: ScheduleContext) {
+  const tz = context?.timezone || "Europe/Zurich";
   return {
     search_my_conversations: tool({
       description:
@@ -247,7 +249,7 @@ export function createConversationSearchTools() {
               user_id: row.user_id,
               role: row.role,
               content: truncate(row.content, MAX_CONTENT_LENGTH),
-              timestamp: formatTimestamp(row.created_at),
+              timestamp: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
               channel_id: row.channel_id,
               channel_type: row.channel_type,
               ...(row.similarity != null ? { similarity_score: Number(row.similarity) } : {}),
@@ -300,7 +302,7 @@ export function createConversationSearchTools() {
                   user_id: r.user_id,
                   role: r.role,
                   content: truncate(r.content, MAX_CONTENT_LENGTH),
-                  timestamp: formatTimestamp(r.created_at),
+                  timestamp: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
                   channel_id: r.channel_id,
                   channel_type: r.channel_type,
                   ...(matchIds.has(r.id)
@@ -330,6 +332,12 @@ export function createConversationSearchTools() {
             }
           } else {
             threadContexts.push(...threads);
+          }
+
+          for (const thread of threadContexts) {
+            for (const msg of thread.messages) {
+              msg.timestamp = formatTimestamp(msg.timestamp, tz);
+            }
           }
 
           logger.info("search_my_conversations tool called", {
