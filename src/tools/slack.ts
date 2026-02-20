@@ -819,7 +819,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 user: userName,
                 text: extractFullMessageText(msg),
                 ts: rawTs,
-                timestamp: rawTs ? formatTimestamp(rawTs, tz) : "",
+                timestamp: rawTs,
+                formatted_time: rawTs ? formatTimestamp(rawTs, tz) : "",
                 ...(attachmentsSummary ? { attachments_summary: attachmentsSummary } : {}),
                 reactions:
                   (msg as any).reactions?.map((r: any) => ({
@@ -905,7 +906,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             ok: true,
             message: `Message sent to #${channel.name}`,
             ts: result.ts,
-            timestamp: result.ts ? formatTimestamp(result.ts, tz) : "",
+            timestamp: result.ts,
+            formatted_time: result.ts ? formatTimestamp(result.ts, tz) : "",
           };
         } catch (error: any) {
           logger.error("send_channel_message tool failed", {
@@ -1131,7 +1133,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               text: m.text || "",
               channel: m.channel?.name || "unknown",
               ts: rawTs,
-              timestamp: rawTs ? formatTimestamp(rawTs, tz) : "",
+              timestamp: rawTs,
+              formatted_time: rawTs ? formatTimestamp(rawTs, tz) : "",
               permalink: m.permalink || "",
             };
           });
@@ -1213,7 +1216,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             ok: true,
             message: `Direct message sent to ${user.name}`,
             ts: result.ts,
-            timestamp: result.ts ? formatTimestamp(result.ts, tz) : "",
+            timestamp: result.ts,
+            formatted_time: result.ts ? formatTimestamp(result.ts, tz) : "",
           };
         } catch (error: any) {
           logger.error("send_direct_message tool failed", {
@@ -1329,7 +1333,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               const threadTs = msg.ts || "";
               const latestReply = (msg as any).latest_reply as string | undefined;
 
-              let replies: Array<{ user: string; user_id: string; text: string; ts: string; timestamp: string }> | undefined;
+              let replies: Array<{ user: string; user_id: string; text: string; ts: string; timestamp: string; formatted_time: string }> | undefined;
 
               if (replyCount && replyCount > 0 && threadTs) {
                 try {
@@ -1351,7 +1355,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                         user_id: reply.user || "",
                         text: extractFullMessageText(reply),
                         ts: replyRawTs,
-                        timestamp: replyRawTs ? formatTimestamp(replyRawTs, tz) : "",
+                        timestamp: replyRawTs,
+                        formatted_time: replyRawTs ? formatTimestamp(replyRawTs, tz) : "",
                       };
                     }),
                   );
@@ -1371,7 +1376,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 user_id: msg.user || "",
                 text: extractFullMessageText(msg),
                 ts: msgRawTs,
-                timestamp: msgRawTs ? formatTimestamp(msgRawTs, tz) : "",
+                timestamp: msgRawTs,
+                formatted_time: msgRawTs ? formatTimestamp(msgRawTs, tz) : "",
                 ...(attachmentsSummary ? { attachments_summary: attachmentsSummary } : {}),
                 ...(replyCount != null && replyCount > 0
                   ? { reply_count: replyCount, thread_ts: threadTs, latest_reply: latestReply }
@@ -1965,7 +1971,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             ok: true,
             message: `Reply sent in thread in #${channel.name}`,
             ts: result.ts,
-            timestamp: result.ts ? formatTimestamp(result.ts, tz) : "",
+            timestamp: result.ts,
+            formatted_time: result.ts ? formatTimestamp(result.ts, tz) : "",
           };
         } catch (error: any) {
           logger.error("send_thread_reply tool failed", {
