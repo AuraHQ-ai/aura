@@ -106,6 +106,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
           const updateSet: Record<string, unknown> = {
             content,
+            embedding: null,
             updatedAt: new Date(),
           };
           if (category !== undefined) {
@@ -131,7 +132,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
           embedText(content).then(embedding => {
             db.update(notes).set({ embedding }).where(eq(notes.topic, topic)).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
-          });
+          }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 
           logger.info("save_note tool called", {
             topic,
@@ -377,12 +378,12 @@ export function createNoteTools(context?: ScheduleContext) {
 
           await db
             .update(notes)
-            .set({ content: newContent, updatedAt: new Date() })
+            .set({ content: newContent, embedding: null, updatedAt: new Date() })
             .where(eq(notes.topic, topic));
 
           embedText(newContent).then(embedding => {
             db.update(notes).set({ embedding }).where(eq(notes.topic, topic)).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
-          });
+          }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 
           const finalLineCount = newContent.split("\n").length;
 
