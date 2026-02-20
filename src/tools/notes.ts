@@ -45,6 +45,13 @@ function parseContinuationDepth(content: string): number {
   return match ? parseInt(match[1]) : 0;
 }
 
+/** Fire-and-forget: embed note content and update the embedding column. Uses updatedAt guard to avoid stale writes. */
+function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
+  embedText(text).then(embedding => {
+    db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+  }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
+}
+
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
 /**
@@ -131,9 +138,7 @@ export function createNoteTools(context?: ScheduleContext) {
               set: updateSet,
             });
 
-          embedText(content).then(embedding => {
-            db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
-          }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
+          updateNoteEmbedding(content, topic, savedAt);
 
           logger.info("save_note tool called", {
             topic,
@@ -383,9 +388,7 @@ export function createNoteTools(context?: ScheduleContext) {
             .set({ content: newContent, embedding: null, updatedAt: savedAt })
             .where(eq(notes.topic, topic));
 
-          embedText(newContent).then(embedding => {
-            db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
-          }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
+          updateNoteEmbedding(newContent, topic, savedAt);
 
           const finalLineCount = newContent.split("\n").length;
 
@@ -675,9 +678,7 @@ export function createNoteTools(context?: ScheduleContext) {
                 },
               });
 
-            embedText(noteContent).then(embedding => {
-              db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
-            }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
+            updateNoteEmbedding(noteContent, topic, savedAt);
 
             logger.info("checkpoint_plan: depth limit reached", {
               topic,
@@ -725,9 +726,7 @@ export function createNoteTools(context?: ScheduleContext) {
               },
             });
 
-          embedText(noteContent).then(embedding => {
-            db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
-          }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
+          updateNoteEmbedding(noteContent, topic, savedAt);
 
           // 2. Insert a continuation job with channelId + threadTs for routing
           await db.insert(jobs).values({
