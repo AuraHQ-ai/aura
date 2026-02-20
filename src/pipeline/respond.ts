@@ -158,6 +158,8 @@ const TOOL_STATUS: Record<string, string> = {
   create_job: "Scheduling a job...",
   list_jobs: "Checking jobs...",
   cancel_job: "Cancelling a job...",
+  dispatch_headless: "Dispatching headless execution...",
+  read_job_trace: "Reading execution trace...",
   // BigQuery
   list_datasets: "Listing datasets...",
   list_tables: "Listing tables...",
