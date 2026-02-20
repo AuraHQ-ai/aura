@@ -569,6 +569,15 @@ export async function generateResponse(
           while (remaining) {
             if (streamingFailed) break;
 
+            if (continuationCount >= MAX_CONTINUATIONS) {
+              currentStreamLength += remaining.length;
+              await tryStreamAppend({ markdown_text: remaining });
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length - remaining.length;
+              }
+              break;
+            }
+
             const breakIdx = findContinuationBreak(remaining, currentStreamLength);
 
             if (breakIdx < 0) {
