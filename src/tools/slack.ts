@@ -861,6 +861,105 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       },
     }),
 
+    read_thread_replies: tool({
+      description:
+        "Read replies from a specific thread in a channel. Works for regular channel threads and Slack List item comment threads. Aura must be a member of the channel (except for list channels like C088REN54FM where posting access is implicit).",
+      inputSchema: z.object({
+        channel: z
+          .string()
+          .describe(
+            "Channel name (e.g. 'general') or channel ID (e.g. 'C088REN54FM')",
+          ),
+        thread_ts: z
+          .string()
+          .describe("Timestamp of the parent/root message of the thread"),
+        limit: z
+          .number()
+          .min(1)
+          .max(200)
+          .default(50)
+          .optional()
+          .describe("Max replies to fetch (default 50)"),
+      }),
+      execute: async ({ channel: channelInput, thread_ts, limit }) => {
+        try {
+          const channel = await resolveChannelByName(client, channelInput);
+          if (!channel) {
+            return {
+              ok: false,
+              error: `Could not find a channel named "${channelInput}".`,
+            };
+          }
+
+          const threadResult = await client.conversations.replies({
+            channel: channel.id,
+            ts: thread_ts,
+            limit: limit || 50,
+          });
+
+          const allMessages = threadResult.messages || [];
+          // First message is the parent/root — skip it, return only replies
+          const replyMessages = allMessages.slice(1);
+
+          const replies = await Promise.all(
+            replyMessages.map(async (reply) => {
+              const userName = reply.user
+                ? await resolveUserById(client, reply.user)
+                : "unknown";
+              const attachmentsSummary = generateAttachmentsSummary(reply);
+              return {
+                user: userName,
+                user_id: reply.user || "",
+                text: extractFullMessageText(reply),
+                timestamp: reply.ts || "",
+                ...(attachmentsSummary
+                  ? { attachments_summary: attachmentsSummary }
+                  : {}),
+                reactions:
+                  (reply as any).reactions?.map((r: any) => ({
+                    name: r.name,
+                    count: r.count,
+                  })) || [],
+              };
+            }),
+          );
+
+          logger.info("read_thread_replies tool called", {
+            channel: channel.name,
+            thread_ts,
+            replyCount: replies.length,
+          });
+
+          return {
+            ok: true,
+            channel: channel.name,
+            thread_ts,
+            replies,
+            count: replies.length,
+            has_more: threadResult.has_more || false,
+          };
+        } catch (error: any) {
+          logger.error("read_thread_replies tool failed", {
+            channel: channelInput,
+            thread_ts,
+            error: error.message,
+          });
+
+          if (error.data?.error === "not_in_channel") {
+            return {
+              ok: false,
+              error: `I'm not a member of #${channelInput}. Use join_channel to join it first.`,
+            };
+          }
+
+          return {
+            ok: false,
+            error: `Failed to read thread replies in #${channelInput}: ${error.message}`,
+          };
+        }
+      },
+    }),
+
     send_channel_message: tool({
       description:
         "Send a message to a Slack channel. Aura must be a member of the channel. Use join_channel first if needed.",
