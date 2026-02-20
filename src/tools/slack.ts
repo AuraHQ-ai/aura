@@ -13,6 +13,7 @@ import { createTableTools } from "./table.js";
 import { createCursorAgentTools } from "./cursor-agent.js";
 import { createConversationSearchTools } from "./conversations.js";
 import { createEmailTools } from "./email.js";
+import { createSheetsTools } from "./sheets.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
@@ -2263,6 +2264,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Email Tools (Gmail) ──────────────────────────────────────────────
     ...createEmailTools(),
+
+    // ── Google Sheets Tools ───────────────────────────────────────────────
+    ...createSheetsTools(),
 
     // ── Table Tools (native Slack table blocks) ──────────────────────────
     ...createTableTools(client, context),

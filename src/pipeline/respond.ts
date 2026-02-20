@@ -166,6 +166,8 @@ const TOOL_STATUS: Record<string, string> = {
   // Sandbox & code
   run_command: "Running a command in the sandbox...",
   patch_own_code: "Dispatching a coding agent (this may take a few minutes)...",
+  // Google Sheets
+  read_google_sheet: "Reading Google Sheet...",
   // Misc
   set_my_status: "Updating status...",
   draw_table: "Drawing a table...",
@@ -190,6 +192,7 @@ function getToolDetails(toolName: string, args: Record<string, any>): string | u
     case "list_tables": return args.dataset;
     case "read_channel_history": return args.channel;
     case "read_note": case "save_note": case "edit_note": return args.topic;
+    case "read_google_sheet": return args.spreadsheet_id;
     default: return undefined;
   }
 }
@@ -222,6 +225,7 @@ function getToolOutput(toolName: string, output: any): string | undefined {
       return `${output.row_count ?? "?"} rows, ${(output.schema ?? []).length} columns`;
     case "list_tables": return `${(output.tables ?? []).length} tables`;
     case "list_datasets": return `${(output.datasets ?? []).length} datasets`;
+    case "read_google_sheet": return `${output.total_rows ?? 0} rows`;
     default: return undefined;
   }
 }
