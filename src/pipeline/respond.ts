@@ -302,6 +302,12 @@ function isInvalidBlocks(error: any): boolean {
   return msg.includes("invalid_blocks") || code === "invalid_blocks";
 }
 
+function isMsgTooLong(error: any): boolean {
+  const msg = error?.message || "";
+  const code = error?.data?.error || "";
+  return msg.includes("msg_too_long") || code === "msg_too_long";
+}
+
 function isUnsupportedFileError(error: any): boolean {
   const msg = error?.message || error?.toString() || "";
   const name = error?.name || "";
@@ -322,6 +328,7 @@ const STREAM_THRESHOLD_NEWLINE = 30_000;
 const STREAM_THRESHOLD_SENTENCE = 35_000;
 const STREAM_THRESHOLD_WHITESPACE = 38_000;
 const STREAM_HARD_LIMIT = 39_500;
+const MAX_CONTINUATIONS = 5;
 
 /**
  * Find the best split index in a text delta for stream continuation.
@@ -354,6 +361,11 @@ function findContinuationBreak(delta: string, streamLength: number): number {
 
   if (candidates.length === 0) return -1;
   return Math.min(...candidates);
+}
+
+function estimateAppendSize(payload: any): number {
+  if (payload.markdown_text) return payload.markdown_text.length;
+  return JSON.stringify(payload).length;
 }
 
 // ── Main Function ────────────────────────────────────────────────────────────
@@ -436,6 +448,19 @@ export async function generateResponse(
           channelId,
           context: { payloadKeys: Object.keys(payload) },
         });
+      } else if (isMsgTooLong(err)) {
+        streamingFailed = true;
+        logger.warn("chatStream append returned msg_too_long, falling back to postMessage", {
+          channelId,
+          currentStreamLength,
+        });
+        logError({
+          errorName: "MsgTooLong",
+          errorMessage: err?.message || "msg_too_long on stream append",
+          errorCode: "msg_too_long",
+          channelId,
+          context: { currentStreamLength },
+        });
       } else {
         throw err;
       }
@@ -491,6 +516,44 @@ export async function generateResponse(
   let pendingTableBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
+  let continuationCount = 0;
+
+  async function splitToNewStream(): Promise<boolean> {
+    if (streamingFailed || continuationCount >= MAX_CONTINUATIONS) {
+      if (continuationCount >= MAX_CONTINUATIONS) {
+        logger.warn("Max continuation messages reached", { continuationCount });
+      }
+      return false;
+    }
+
+    logger.info("Splitting stream for continuation message", {
+      currentStreamLength,
+      totalAccumulated: accumulatedText.length,
+      continuationCount: continuationCount + 1,
+    });
+
+    try {
+      await streamer.stop();
+    } catch (stopErr: any) {
+      logger.warn("Failed to stop stream for continuation", {
+        error: stopErr?.message,
+      });
+    }
+
+    try {
+      streamer = slackClient.chatStream(streamParams as any);
+      currentStreamLength = 0;
+      continuationCount++;
+      return true;
+    } catch (startErr: any) {
+      logger.warn(
+        "Failed to start continuation stream, falling back to postMessage",
+        { error: startErr?.message },
+      );
+      streamingFailed = true;
+      return false;
+    }
+  }
 
   try {
     const result = streamText(streamOptions);
@@ -506,11 +569,23 @@ export async function generateResponse(
           while (remaining) {
             if (streamingFailed) break;
 
+            if (continuationCount >= MAX_CONTINUATIONS) {
+              currentStreamLength += remaining.length;
+              await tryStreamAppend({ markdown_text: remaining });
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length - remaining.length;
+              }
+              break;
+            }
+
             const breakIdx = findContinuationBreak(remaining, currentStreamLength);
 
             if (breakIdx < 0) {
               currentStreamLength += remaining.length;
               await tryStreamAppend({ markdown_text: remaining });
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length - remaining.length;
+              }
               break;
             }
 
@@ -529,29 +604,19 @@ export async function generateResponse(
 
             if (!remaining) break;
 
-            logger.info("Splitting stream for continuation message", {
-              currentStreamLength,
-              totalAccumulated: accumulatedText.length,
-            });
-
-            try {
-              await streamer.stop();
-            } catch (stopErr: any) {
-              logger.warn("Failed to stop stream for continuation", {
-                error: stopErr?.message,
-              });
-            }
-
-            try {
-              streamer = slackClient.chatStream(streamParams as any);
-              currentStreamLength = 0;
-            } catch (startErr: any) {
-              logger.warn(
-                "Failed to start continuation stream, falling back to postMessage",
-                { error: startErr?.message },
-              );
-              streamingFailed = true;
+            if (await splitToNewStream()) {
+              // Split succeeded, currentStreamLength reset, loop continues
+            } else if (streamingFailed) {
               fallbackStartIdx = accumulatedText.length - remaining.length;
+              break;
+            } else {
+              // Max continuations reached, stream still active — flush remaining
+              currentStreamLength += remaining.length;
+              await tryStreamAppend({ markdown_text: remaining });
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length - remaining.length;
+              }
+              break;
             }
           }
           break;
@@ -561,7 +626,7 @@ export async function generateResponse(
           const title = TOOL_STATUS[chunk.toolName] || "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
           const details = getToolDetails(chunk.toolName, inputArgs);
-          await tryStreamAppend({
+          const toolCallPayload = {
             chunks: [{
               type: "task_update",
               id: chunk.toolCallId,
@@ -569,7 +634,14 @@ export async function generateResponse(
               status: "in_progress",
               ...(details && { details }),
             }],
-          });
+          };
+          currentStreamLength += estimateAppendSize(toolCallPayload);
+          if (!streamingFailed) {
+            await tryStreamAppend(toolCallPayload);
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
 
           pendingToolInputs.set(chunk.toolCallId, {
             name: chunk.toolName,
@@ -599,7 +671,7 @@ export async function generateResponse(
           const taskOutput = getToolOutput(chunk.toolName, output);
           const sources = getToolSources(chunk.toolName, output);
 
-          await tryStreamAppend({
+          const toolResultPayload = {
             chunks: [{
               type: "task_update",
               id: chunk.toolCallId,
@@ -608,7 +680,14 @@ export async function generateResponse(
               ...(taskOutput && { output: taskOutput }),
               ...(sources && { sources }),
             }],
-          });
+          };
+          currentStreamLength += estimateAppendSize(toolResultPayload);
+          if (!streamingFailed) {
+            await tryStreamAppend(toolResultPayload);
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
 
           const pending = pendingToolInputs.get(chunk.toolCallId);
           toolCallRecords.push({
@@ -622,6 +701,12 @@ export async function generateResponse(
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
+
+          if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
+            if (!await splitToNewStream() && streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
           break;
         }
 
@@ -631,7 +716,7 @@ export async function generateResponse(
           const title = TOOL_STATUS[errToolName] || "Failed";
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
-          await tryStreamAppend({
+          const toolErrorPayload = {
             chunks: [{
               type: "task_update",
               id: errToolCallId,
@@ -639,7 +724,14 @@ export async function generateResponse(
               status: "error",
               output: truncate(errorMsg, 200),
             }],
-          });
+          };
+          currentStreamLength += estimateAppendSize(toolErrorPayload);
+          if (!streamingFailed) {
+            await tryStreamAppend(toolErrorPayload);
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
 
           const pending = pendingToolInputs.get(errToolCallId);
           toolCallRecords.push({
@@ -652,6 +744,12 @@ export async function generateResponse(
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           resetTimer();
+
+          if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
+            if (!await splitToNewStream() && streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
           break;
         }
       }
