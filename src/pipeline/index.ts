@@ -325,9 +325,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       displayName,
       client,
       threadMessageCount: conversation.thread?.length ?? 0,
-      recentThreadMessages: (conversation.thread ?? conversation.recentMessages)
-        .slice(-5)
-        .map(m => ({ displayName: m.displayName, text: m.text })),
+      recentThreadMessages: (() => {
+        const all = (conversation.thread ?? conversation.recentMessages)
+          .map(m => ({ displayName: m.displayName, text: m.text }));
+        if (all.length <= 6) return all;
+        return [...all.slice(0, 3), ...all.slice(-3)];
+      })(),
     });
 
     if (waitUntil) {
@@ -662,7 +665,7 @@ async function setInitialDmThreadTitle(params: {
     const { text: raw } = await generateText({
       model: fastModel,
       maxOutputTokens: 40,
-      prompt: `Summarize this conversation in 5-8 words for a thread title. Be concise and descriptive of the topic. No quotes, no punctuation at the end.\n\nUser: "${userMessage.slice(0, 300)}"\n\nAssistant: "${assistantResponse.slice(0, 500)}"`,
+      prompt: `What is this conversation about? Name the core topic in 3-8 words. No quotes, no punctuation at the end.\n\nUser: "${userMessage.slice(0, 300)}"\n\nAssistant: "${assistantResponse.slice(0, 500)}"`,
     });
     const title = sanitizeTitle(raw).slice(0, 100);
     if (!title) return;
@@ -707,14 +710,24 @@ async function maybeUpdateDmThreadTitle(params: {
     const { generateText } = await import("ai");
     const fastModel = await getFastModel();
 
-    const messagesContext = recentMessages
-      .map(m => `${m.displayName}: ${m.text.slice(0, 150)}`)
-      .join("\n");
+    const half = Math.ceil(recentMessages.length / 2);
+    const hasGap = recentMessages.length >= 6;
+    const messagesContext = hasGap
+      ? [
+          "--- Start of conversation ---",
+          ...recentMessages.slice(0, half).map(m => `${m.displayName}: ${m.text.slice(0, 150)}`),
+          "--- ... ---",
+          ...recentMessages.slice(half).map(m => `${m.displayName}: ${m.text.slice(0, 150)}`),
+          "--- Latest ---",
+        ].join("\n")
+      : recentMessages
+          .map(m => `${m.displayName}: ${m.text.slice(0, 150)}`)
+          .join("\n");
 
     const { text: raw } = await generateText({
       model: fastModel,
       maxOutputTokens: 40,
-      prompt: `Generate a concise thread title (5-8 words) that describes the current main topic of this Slack DM conversation. No quotes, no punctuation at the end.\n\nRecent messages:\n${messagesContext}\n\nLatest assistant response: "${assistantResponse.slice(0, 300)}"`,
+      prompt: `What are the 1-3 core topics discussed in this Slack DM conversation? Express as a short title (5-10 words). If multiple distinct topics, separate them with " / ". Capture the essence of the whole conversation arc, not just the latest messages. No quotes, no punctuation at the end.\n\nConversation:\n${messagesContext}\n\nLatest assistant response: "${assistantResponse.slice(0, 300)}"`,
     });
 
     const newTitle = sanitizeTitle(raw).slice(0, 100);
