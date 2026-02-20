@@ -818,7 +818,16 @@ export async function generateResponse(
           ...(toolMeta && { metadata: toolMeta }),
         });
       } catch (postErr: any) {
-        if (isInvalidBlocks(postErr)) {
+        if (isStreamingUnsupported(postErr)) {
+          // Slack List channels (and similar) don't support postMessage either.
+          // The LLM's work was already delivered via tool calls (e.g. send_thread_reply
+          // on individual list items), so failing to post the summary is OK.
+          logger.info("Fallback postMessage not supported for this channel type — response already delivered via tool calls", {
+            channelId,
+            slackError: postErr?.data?.error,
+            toolCallCount: toolCallRecords.length,
+          });
+        } else if (isInvalidBlocks(postErr)) {
           logger.warn("Fallback postMessage rejected blocks, retrying as plain text", {
             channelId,
             slackError: postErr?.data?.error,

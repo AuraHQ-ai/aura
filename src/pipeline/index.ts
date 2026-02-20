@@ -377,8 +377,19 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         text: "Sorry, I hit a snag processing that. Give me a sec and try again.",
         thread_ts: replyThreadTs,
       });
-    } catch {
-      logger.error("Failed to send error message to Slack");
+    } catch (notifyErr: any) {
+      const slackCode = notifyErr?.data?.error;
+      if (slackCode === "channel_type_not_supported") {
+        logger.info("Error notification skipped — channel type does not support postMessage", {
+          channelId: context.channelId,
+        });
+      } else {
+        logger.error("Failed to send error message to Slack", {
+          channelId: context.channelId,
+          slackError: slackCode,
+          error: notifyErr?.message || String(notifyErr),
+        });
+      }
     }
   }
 }
