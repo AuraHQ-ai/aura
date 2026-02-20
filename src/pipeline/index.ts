@@ -325,9 +325,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       displayName,
       client,
       threadMessageCount: conversation.thread?.length ?? 0,
-      recentThreadMessages: (conversation.thread ?? conversation.recentMessages)
-        .slice(-5)
-        .map(m => ({ displayName: m.displayName, text: m.text })),
+      ...(() => {
+        const all = (conversation.thread ?? conversation.recentMessages)
+          .map(m => ({ displayName: m.displayName, text: m.text }));
+        if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
+        return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
+      })(),
     });
 
     if (waitUntil) {
@@ -521,8 +524,9 @@ async function runBackgroundTasks(params: {
   client: InstanceType<typeof import("@slack/web-api").WebClient>;
   threadMessageCount: number;
   recentThreadMessages: Array<{ displayName: string; text: string }>;
+  threadMessagesElided: boolean;
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages } = params;
+  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided } = params;
 
   try {
     // Store the user's message
@@ -616,6 +620,7 @@ async function runBackgroundTasks(params: {
         await maybeUpdateDmThreadTitle({
           threadMessageCount,
           recentMessages: recentThreadMessages,
+          messagesElided: threadMessagesElided,
           assistantResponse: response,
           channelId: context.channelId,
           threadTs: context.threadTs,
@@ -662,7 +667,7 @@ async function setInitialDmThreadTitle(params: {
     const { text: raw } = await generateText({
       model: fastModel,
       maxOutputTokens: 40,
-      prompt: `Summarize this conversation in 5-8 words for a thread title. Be concise and descriptive of the topic. No quotes, no punctuation at the end.\n\nUser: "${userMessage.slice(0, 300)}"\n\nAssistant: "${assistantResponse.slice(0, 500)}"`,
+      prompt: `What is this conversation about? Name the core topic in 3-8 words. No quotes, no punctuation at the end.\n\nUser: "${userMessage.slice(0, 300)}"\n\nAssistant: "${assistantResponse.slice(0, 500)}"`,
     });
     const title = sanitizeTitle(raw).slice(0, 100);
     if (!title) return;
@@ -688,12 +693,13 @@ async function setInitialDmThreadTitle(params: {
 async function maybeUpdateDmThreadTitle(params: {
   threadMessageCount: number;
   recentMessages: Array<{ displayName: string; text: string }>;
+  messagesElided: boolean;
   assistantResponse: string;
   channelId: string;
   threadTs: string;
   client: WebClient;
 }): Promise<void> {
-  const { threadMessageCount, recentMessages, assistantResponse, channelId, threadTs, client } = params;
+  const { threadMessageCount, recentMessages, messagesElided, assistantResponse, channelId, threadTs, client } = params;
 
   // +1 for the assistant response we just posted
   const totalMessages = threadMessageCount + 1;
@@ -707,14 +713,23 @@ async function maybeUpdateDmThreadTitle(params: {
     const { generateText } = await import("ai");
     const fastModel = await getFastModel();
 
-    const messagesContext = recentMessages
-      .map(m => `${m.displayName}: ${m.text.slice(0, 150)}`)
-      .join("\n");
+    const half = Math.ceil(recentMessages.length / 2);
+    const messagesContext = messagesElided
+      ? [
+          "--- Start of conversation ---",
+          ...recentMessages.slice(0, half).map(m => `${m.displayName}: ${m.text.slice(0, 150)}`),
+          "--- ... ---",
+          ...recentMessages.slice(half).map(m => `${m.displayName}: ${m.text.slice(0, 150)}`),
+          "--- Latest ---",
+        ].join("\n")
+      : recentMessages
+          .map(m => `${m.displayName}: ${m.text.slice(0, 150)}`)
+          .join("\n");
 
     const { text: raw } = await generateText({
       model: fastModel,
       maxOutputTokens: 40,
-      prompt: `Generate a concise thread title (5-8 words) that describes the current main topic of this Slack DM conversation. No quotes, no punctuation at the end.\n\nRecent messages:\n${messagesContext}\n\nLatest assistant response: "${assistantResponse.slice(0, 300)}"`,
+      prompt: `What are the 1-3 core topics discussed in this Slack DM conversation? Express as a short title (5-10 words). If multiple distinct topics, separate them with " / ". Capture the essence of the whole conversation arc, not just the latest messages. No quotes, no punctuation at the end.\n\nConversation:\n${messagesContext}\n\nLatest assistant response: "${assistantResponse.slice(0, 300)}"`,
     });
 
     const newTitle = sanitizeTitle(raw).slice(0, 100);
