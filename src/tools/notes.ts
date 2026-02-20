@@ -7,6 +7,7 @@ import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime } from "../lib/temporal.js";
+import { embedText } from "../lib/embeddings.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,13 @@ async function getNoteByTopic(
 function parseContinuationDepth(content: string): number {
   const match = content.match(/^## Continuations: (\d+)/m);
   return match ? parseInt(match[1]) : 0;
+}
+
+/** Fire-and-forget: embed note content and update the embedding column. Uses updatedAt guard to avoid stale writes. */
+function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
+  embedText(text).then(embedding => {
+    db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+  }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 }
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
@@ -103,9 +111,11 @@ export function createNoteTools(context?: ScheduleContext) {
 
           const effectiveCategory = category ?? "knowledge";
 
+          const savedAt = new Date();
           const updateSet: Record<string, unknown> = {
             content,
-            updatedAt: new Date(),
+            embedding: null,
+            updatedAt: savedAt,
           };
           if (category !== undefined) {
             updateSet.category = category;
@@ -121,12 +131,14 @@ export function createNoteTools(context?: ScheduleContext) {
               content,
               category: effectiveCategory,
               expiresAt,
-              updatedAt: new Date(),
+              updatedAt: savedAt,
             })
             .onConflictDoUpdate({
               target: notes.topic,
               set: updateSet,
             });
+
+          updateNoteEmbedding(content, topic, savedAt);
 
           logger.info("save_note tool called", {
             topic,
@@ -370,10 +382,13 @@ export function createNoteTools(context?: ScheduleContext) {
               return { ok: false, error: `Unknown operation: ${operation}` };
           }
 
+          const savedAt = new Date();
           await db
             .update(notes)
-            .set({ content: newContent, updatedAt: new Date() })
+            .set({ content: newContent, embedding: null, updatedAt: savedAt })
             .where(eq(notes.topic, topic));
+
+          updateNoteEmbedding(newContent, topic, savedAt);
 
           const finalLineCount = newContent.split("\n").length;
 
@@ -446,25 +461,70 @@ export function createNoteTools(context?: ScheduleContext) {
 
     search_notes: tool({
       description:
-        "Full-text search across all notes content. Returns matching notes with topic, category, and a snippet showing the match in context. Use when you need to find which notes mention a specific term.",
+        "Search across all notes content. Supports two modes: 'text' (default) uses full-text keyword search, 'semantic' uses vector similarity to find conceptually related notes even without exact keyword matches.",
       inputSchema: z.object({
         query: z
           .string()
           .describe("Search term or phrase to find across all notes"),
+        mode: z
+          .enum(["text", "semantic"])
+          .default("text")
+          .describe("Search mode: 'text' for keyword/full-text search, 'semantic' for vector similarity search"),
         limit: z
           .number()
           .optional()
           .default(10)
           .describe("Max results to return (default 10)"),
       }),
-      execute: async ({ query, limit }) => {
+      execute: async ({ query, mode, limit }) => {
         try {
           const trimmed = query.trim();
           if (!trimmed) {
             return { ok: false, error: "Query cannot be empty." };
           }
 
-          // Try tsvector search with unaccent first, fall back to ILIKE
+          if (mode === "semantic") {
+            const queryEmbedding = await embedText(trimmed);
+            const embeddingLiteral = JSON.stringify(queryEmbedding);
+
+            const results = await db
+              .select({
+                topic: notes.topic,
+                category: notes.category,
+                content: notes.content,
+                updatedAt: notes.updatedAt,
+                similarity: sql<number>`1 - (${notes.embedding} <=> ${embeddingLiteral}::vector)`.as("similarity"),
+              })
+              .from(notes)
+              .where(
+                and(
+                  sql`${notes.embedding} IS NOT NULL`,
+                  or(isNull(notes.expiresAt), gt(notes.expiresAt, new Date()))!,
+                ),
+              )
+              .orderBy(sql`${notes.embedding} <=> ${embeddingLiteral}::vector`)
+              .limit(limit);
+
+            logger.info("search_notes tool called (semantic)", {
+              query: trimmed,
+              resultCount: results.length,
+            });
+
+            return {
+              ok: true,
+              mode: "semantic",
+              results: results.map((r) => ({
+                topic: r.topic,
+                category: r.category,
+                snippet: r.content.substring(0, 200) + (r.content.length > 200 ? "..." : ""),
+                similarity: Math.round(r.similarity * 1000) / 1000,
+                updated_at: r.updatedAt.toISOString(),
+              })),
+              count: results.length,
+            };
+          }
+
+          // mode === "text": existing tsvector + ILIKE fallback
           let rows: any[];
           try {
             const results = await db.execute(sql`
@@ -489,7 +549,6 @@ export function createNoteTools(context?: ScheduleContext) {
             logger.warn("tsvector search failed, falling back to ILIKE", {
               error: err instanceof Error ? err.message : String(err),
             });
-            // Fallback: ILIKE (works without unaccent extension)
             const escaped = trimmed.replace(/[\\%_]/g, "\\$&");
             const pattern = `%${escaped.toLowerCase()}%`;
             const results = await db.execute(sql`
@@ -505,13 +564,14 @@ export function createNoteTools(context?: ScheduleContext) {
             rows = (results as any).rows ?? results;
           }
 
-          logger.info("search_notes tool called", {
+          logger.info("search_notes tool called (text)", {
             query: trimmed,
             resultCount: rows.length,
           });
 
           return {
             ok: true,
+            mode: "text",
             results: rows.map((r: any) => ({
               topic: r.topic,
               category: r.category,
@@ -596,6 +656,7 @@ export function createNoteTools(context?: ScheduleContext) {
             const sevenDays = new Date(
               Date.now() + 7 * 24 * 60 * 60 * 1000,
             );
+            const savedAt = new Date();
 
             await db
               .insert(notes)
@@ -604,17 +665,20 @@ export function createNoteTools(context?: ScheduleContext) {
                 content: noteContent,
                 category: "plan",
                 expiresAt: sevenDays,
-                updatedAt: new Date(),
+                updatedAt: savedAt,
               })
               .onConflictDoUpdate({
                 target: notes.topic,
                 set: {
                   content: noteContent,
                   category: "plan",
+                  embedding: null,
                   expiresAt: sevenDays,
-                  updatedAt: new Date(),
+                  updatedAt: savedAt,
                 },
               });
+
+            updateNoteEmbedding(noteContent, topic, savedAt);
 
             logger.info("checkpoint_plan: depth limit reached", {
               topic,
@@ -639,6 +703,7 @@ export function createNoteTools(context?: ScheduleContext) {
             Date.now() + continue_in_minutes * 60 * 1000,
           );
           const description = `[CONTINUE:${topic}] ${next_steps}`;
+          const savedAt = new Date();
 
           // 1. Upsert the plan note
           await db
@@ -648,17 +713,20 @@ export function createNoteTools(context?: ScheduleContext) {
               content: noteContent,
               category: "plan",
               expiresAt: sevenDays,
-              updatedAt: new Date(),
+              updatedAt: savedAt,
             })
             .onConflictDoUpdate({
               target: notes.topic,
               set: {
                 content: noteContent,
                 category: "plan",
+                embedding: null,
                 expiresAt: sevenDays,
-                updatedAt: new Date(),
+                updatedAt: savedAt,
               },
             });
+
+          updateNoteEmbedding(noteContent, topic, savedAt);
 
           // 2. Insert a continuation job with channelId + threadTs for routing
           await db.insert(jobs).values({

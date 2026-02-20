@@ -92,6 +92,13 @@
       "when": 1771526241905,
       "tag": "0012_curvy_tombstone",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1771561682063,
+      "tag": "0013_ambiguous_sunspot",
+      "breakpoints": true
     }
   ]
 }
