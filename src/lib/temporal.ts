@@ -77,6 +77,104 @@ export function relativeTime(date: Date, now?: Date): string {
 }
 
 /**
+ * Short timezone abbreviation from Intl output.
+ * Intl.DateTimeFormat with `timeZoneName: "short"` produces strings like
+ * "2/20/2026, 9:32 AM CET". We extract the trailing abbreviation.
+ */
+function getShortTzName(date: Date, tz: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      timeZoneName: "short",
+    }).formatToParts(date);
+    const tzPart = parts.find((p) => p.type === "timeZoneName");
+    return tzPart?.value || tz;
+  } catch {
+    return tz;
+  }
+}
+
+/**
+ * Compact relative label for timestamps within the last 7 days.
+ * Returns null for dates older than 7 days.
+ */
+function compactRelative(date: Date, now: Date): string | null {
+  const diffMs = now.getTime() - date.getTime();
+  if (diffMs < 0) return "in the future";
+
+  const seconds = Math.floor(diffMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (seconds < 60) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  return null;
+}
+
+/**
+ * Convert any timestamp to a human-readable string with optional timezone.
+ *
+ * Accepted inputs:
+ *  - Slack message ts (e.g. "1740045172.123456")
+ *  - ISO 8601 string ("2026-02-20T09:32:52Z")
+ *  - Date object
+ *  - Unix epoch in seconds or milliseconds (number)
+ *
+ * Output: "Fri, 20 Feb, 09:32 CET (3h ago)"
+ * The relative suffix is only appended for timestamps < 7 days old.
+ *
+ * @param input  Any supported timestamp format
+ * @param timezone  IANA timezone string (default "Europe/Zurich")
+ */
+export function formatTimestamp(
+  input: string | number | Date | null | undefined,
+  timezone?: string,
+): string {
+  if (input == null || input === "") return "";
+
+  const tz = timezone || "Europe/Zurich";
+  let date: Date;
+
+  if (input instanceof Date) {
+    date = input;
+  } else if (typeof input === "number") {
+    // Heuristic: if < 1e12 it's seconds, otherwise milliseconds
+    date = input < 1e12 ? new Date(input * 1000) : new Date(input);
+  } else {
+    // String: try Slack ts (float seconds) or ISO
+    const asNum = Number(input);
+    if (!isNaN(asNum) && asNum > 1e8) {
+      date = asNum < 1e12 ? new Date(asNum * 1000) : new Date(asNum);
+    } else {
+      date = new Date(input);
+    }
+  }
+
+  if (isNaN(date.getTime())) return String(input);
+
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const formatted = formatter.format(date);
+  const tzAbbrev = getShortTzName(date, tz);
+  const relative = compactRelative(date, new Date());
+  const suffix = relative ? ` (${relative})` : "";
+
+  return `${formatted} ${tzAbbrev}${suffix}`;
+}
+
+/**
  * Parse a relative time string into milliseconds.
  * Supports: "30 minutes", "2 hours", "1 day", "3 days", "1 week", "tomorrow"
  */
