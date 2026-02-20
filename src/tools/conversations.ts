@@ -270,9 +270,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
           // Fetch thread context: for each thread, get surrounding messages
           const threadContexts: ThreadGroup[] = [];
           if (threads.length > 0 && threads.length <= 10) {
-            for (const thread of threads) {
-              const threadKey =
-                thread.thread_ts || thread.messages[0]?.timestamp;
+            for (const [threadKey, thread] of threadMap.entries()) {
               if (!threadKey) {
                 threadContexts.push(thread);
                 continue;
