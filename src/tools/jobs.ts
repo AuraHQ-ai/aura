@@ -471,7 +471,10 @@ export function createJobTools(
 
           fetch(`${baseUrl}/api/execute-now`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
+            },
             body: JSON.stringify({ jobId: job.id }),
           }).catch(() => {});
 

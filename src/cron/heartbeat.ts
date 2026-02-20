@@ -264,6 +264,14 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 // ── Execute Now (on-demand dispatch) ─────────────────────────────────────────
 
 heartbeatApp.post("/api/execute-now", async (c) => {
+  const authHeader = c.req.header("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    logger.warn("Unauthorized execute-now invocation");
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
   const { jobId } = await c.req.json<{ jobId?: string }>();
 
   if (!jobId) return c.json({ error: "jobId required" }, 400);
