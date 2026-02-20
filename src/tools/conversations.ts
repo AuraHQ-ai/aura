@@ -38,6 +38,7 @@ export interface ThreadGroup {
     role: string;
     content: string;
     timestamp: string;
+    created_at: Date | string;
     channel_id: string;
     channel_type: string;
     similarity_score?: number;
@@ -249,6 +250,7 @@ export function createConversationSearchTools(timezone?: string) {
               role: row.role,
               content: truncate(row.content, MAX_CONTENT_LENGTH),
               timestamp: formatTimestamp(row.created_at, tz),
+              created_at: row.created_at,
               channel_id: row.channel_id,
               channel_type: row.channel_type,
               ...(row.similarity != null ? { similarity_score: Number(row.similarity) } : {}),
@@ -258,7 +260,7 @@ export function createConversationSearchTools(timezone?: string) {
           // Sort messages within each thread by timestamp
           for (const group of threadMap.values()) {
             group.messages.sort(
-              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+              (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
             );
           }
 
@@ -302,6 +304,7 @@ export function createConversationSearchTools(timezone?: string) {
                   role: r.role,
                   content: truncate(r.content, MAX_CONTENT_LENGTH),
                   timestamp: formatTimestamp(r.created_at, tz),
+                  created_at: r.created_at,
                   channel_id: r.channel_id,
                   channel_type: r.channel_type,
                   ...(matchIds.has(r.id)
@@ -317,7 +320,7 @@ export function createConversationSearchTools(timezone?: string) {
                   .filter((m) => !contextIds.has(m.id))
                   .map((m) => ({ ...m, matched: true }));
                 const allMessages = [...contextMessages, ...missingMatches].sort(
-                  (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
                 );
                 const fullThread: ThreadGroup = {
                   thread_ts: thread.thread_ts,
