@@ -130,7 +130,7 @@ function toIso8601InTimezone(date: Date, tz: string): string {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false,
+    hourCycle: "h23",
   });
 
   const parts = formatter.formatToParts(date);
@@ -140,7 +140,7 @@ function toIso8601InTimezone(date: Date, tz: string): string {
   const year = get("year");
   const month = get("month");
   const day = get("day");
-  const hour = get("hour") === "24" ? "00" : get("hour");
+  const hour = get("hour");
   const minute = get("minute");
   const second = get("second");
 
