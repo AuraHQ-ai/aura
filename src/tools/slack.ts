@@ -2271,7 +2271,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createSandboxTools(context),
 
     // ── BigQuery Tools ────────────────────────────────────────────────────
-    ...createBigQueryTools(),
+    ...createBigQueryTools(context),
 
     // ── Email Tools (Gmail) ──────────────────────────────────────────────
     ...createEmailTools(),
@@ -2283,6 +2283,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createCursorAgentTools(context),
 
     // ── Conversation Search Tools (search stored messages DB) ─────────
-    ...createConversationSearchTools(),
+    ...createConversationSearchTools(context),
   };
 }
