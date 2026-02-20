@@ -584,6 +584,7 @@ export function createNoteTools(context?: ScheduleContext) {
               category: r.category,
               snippet: r.snippet,
               updated_at: r.updated_at,
+              updated_at_formatted: formatTimestamp(r.updated_at, tz),
             })),
             count: rows.length,
           };
