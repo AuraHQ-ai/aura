@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
@@ -45,8 +46,14 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe(
             "List of key files for the agent to focus on, e.g. ['src/app.ts', 'src/tools/slack.ts']",
           ),
+        repository: z
+          .string()
+          .optional()
+          .describe(
+            "GitHub repository in owner/repo format, e.g. 'realadvisor/realadvisor'. Defaults to 'realadvisor/aura'",
+          ),
       }),
-      execute: async ({ issue_description, branch_prefix, ref, key_files }) => {
+      execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {
         if (!isAdmin(context?.userId) && context?.userId !== "aura") {
           return {
             ok: false,
@@ -67,6 +74,9 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             "../lib/cursor-agent.js"
           );
 
+          const repo = repository || DEFAULT_REPO;
+          const repoUrl = `https://github.com/${repo}`;
+
           const slug = issue_description
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")
@@ -81,7 +91,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
 
           const prompt = [
             `## Task\n\n${issue_description}`,
-            `## Repository\n\nThis is the Aura project (github.com/${DEFAULT_REPO}) — a Slack AI assistant built with TypeScript, Hono, Vercel serverless, AI SDK v6, and PostgreSQL.`,
+            `## Repository\n\nThis is the Aura project (github.com/${repo}) — a Slack AI assistant built with TypeScript, Hono, Vercel serverless, AI SDK v6, and PostgreSQL.`,
             keyFilesSection,
             `## Instructions\n\n- Use \`inputSchema\` (not \`parameters\`) for AI SDK v6 tools`,
             `- Use .js extensions in imports (ESM with "type": "module")`,
@@ -99,7 +109,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
 
           const result = await launchCursorAgent({
             prompt,
-            repository: DEFAULT_REPO_URL,
+            repository: repoUrl,
             ref: ref || "main",
             branchName,
             autoCreatePr: true,
@@ -111,7 +121,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             `## Cursor Agent Dispatch`,
             `- **Agent ID**: ${result.id}`,
             `- **Branch**: ${branchName}`,
-            `- **Repo**: ${DEFAULT_REPO}`,
+            `- **Repo**: ${repo}`,
             `- **Requester**: ${context?.userId || "unknown"}`,
             `- **Channel**: ${context?.channelId || "unknown"}`,
             `- **Thread**: ${context?.threadTs || "none"}`,
@@ -223,6 +233,245 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           return {
             ok: false,
             error: `Failed to check Cursor agent status: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    followup_cursor_agent: tool({
+      description:
+        "Send follow-up instructions to a finished Cursor agent. The agent continues working on the same branch/PR. " +
+        "Use this instead of dispatching a new agent when iterating on the same task.",
+      inputSchema: z.object({
+        agent_id: z.string().describe("The agent ID to follow up on"),
+        prompt: z
+          .string()
+          .describe("Follow-up instructions for the agent"),
+      }),
+      execute: async ({ agent_id, prompt }) => {
+        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          return {
+            ok: false,
+            error: "Only admins can follow up on Cursor agents.",
+          };
+        }
+
+        if (!process.env.CURSOR_API_KEY) {
+          return {
+            ok: false,
+            error:
+              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
+          };
+        }
+
+        try {
+          const { followupCursorAgent } = await import(
+            "../lib/cursor-agent.js"
+          );
+
+          const result = await followupCursorAgent(agent_id, prompt);
+
+          const followupNote = [
+            `\n\n## Follow-up (${new Date().toISOString()})`,
+            `- **Requester**: ${context?.userId || "unknown"}`,
+            `- **Prompt**: ${prompt.slice(0, 500)}`,
+          ].join("\n");
+
+          const trackingRows = await db
+            .select({ content: notes.content })
+            .from(notes)
+            .where(eq(notes.topic, `cursor-agent:${agent_id}`))
+            .limit(1);
+
+          if (trackingRows[0]?.content) {
+            const sevenDays = new Date(
+              Date.now() + 7 * 24 * 60 * 60 * 1000,
+            );
+            await db
+              .insert(notes)
+              .values({
+                topic: `cursor-agent:${agent_id}`,
+                content: trackingRows[0].content + followupNote,
+                category: "plan",
+                expiresAt: sevenDays,
+                updatedAt: new Date(),
+              })
+              .onConflictDoUpdate({
+                target: notes.topic,
+                set: {
+                  content: trackingRows[0].content + followupNote,
+                  expiresAt: sevenDays,
+                  updatedAt: new Date(),
+                },
+              });
+          }
+
+          logger.info("followup_cursor_agent: sent", {
+            agentId: agent_id,
+            userId: context?.userId,
+          });
+
+          return {
+            ok: true,
+            agent_id: result.id,
+            status: result.status,
+            message: `Follow-up sent to agent ${agent_id}. It will continue working on the same branch/PR.`,
+          };
+        } catch (error: any) {
+          logger.error("followup_cursor_agent failed", {
+            agentId: agent_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to follow up on Cursor agent: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    get_cursor_conversation: tool({
+      description:
+        "Get the full conversation history of a Cursor agent — every step it took, files it read, changes it made.",
+      inputSchema: z.object({
+        agent_id: z.string().describe("The agent ID"),
+      }),
+      execute: async ({ agent_id }) => {
+        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          return {
+            ok: false,
+            error: "Only admins can view Cursor agent conversations.",
+          };
+        }
+
+        if (!process.env.CURSOR_API_KEY) {
+          return {
+            ok: false,
+            error:
+              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
+          };
+        }
+
+        try {
+          const { getCursorConversation } = await import(
+            "../lib/cursor-agent.js"
+          );
+
+          const conversation = await getCursorConversation(agent_id);
+
+          logger.info("get_cursor_conversation: fetched", {
+            agentId: agent_id,
+          });
+
+          return { ok: true, agent_id, conversation };
+        } catch (error: any) {
+          logger.error("get_cursor_conversation failed", {
+            agentId: agent_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to get conversation: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    stop_cursor_agent: tool({
+      description: "Stop a running Cursor agent.",
+      inputSchema: z.object({
+        agent_id: z.string().describe("The agent ID to stop"),
+      }),
+      execute: async ({ agent_id }) => {
+        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          return {
+            ok: false,
+            error: "Only admins can stop Cursor agents.",
+          };
+        }
+
+        if (!process.env.CURSOR_API_KEY) {
+          return {
+            ok: false,
+            error:
+              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
+          };
+        }
+
+        try {
+          const { stopCursorAgent } = await import(
+            "../lib/cursor-agent.js"
+          );
+
+          const result = await stopCursorAgent(agent_id);
+
+          logger.info("stop_cursor_agent: stopped", {
+            agentId: agent_id,
+          });
+
+          return {
+            ok: true,
+            agent_id,
+            result,
+            message: `Agent ${agent_id} has been stopped.`,
+          };
+        } catch (error: any) {
+          logger.error("stop_cursor_agent failed", {
+            agentId: agent_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to stop Cursor agent: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    list_cursor_agents: tool({
+      description:
+        "List Cursor agents. Optionally filter by PR URL to find agents that worked on a specific PR.",
+      inputSchema: z.object({
+        pr_url: z
+          .string()
+          .optional()
+          .describe("Filter by PR URL"),
+      }),
+      execute: async ({ pr_url }) => {
+        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          return {
+            ok: false,
+            error: "Only admins can list Cursor agents.",
+          };
+        }
+
+        if (!process.env.CURSOR_API_KEY) {
+          return {
+            ok: false,
+            error:
+              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
+          };
+        }
+
+        try {
+          const { listCursorAgents } = await import(
+            "../lib/cursor-agent.js"
+          );
+
+          const agents = await listCursorAgents(pr_url);
+
+          logger.info("list_cursor_agents: fetched", {
+            prUrl: pr_url,
+          });
+
+          return { ok: true, agents };
+        } catch (error: any) {
+          logger.error("list_cursor_agents failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to list Cursor agents: ${error.message}`,
           };
         }
       },

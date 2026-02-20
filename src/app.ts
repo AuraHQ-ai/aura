@@ -415,11 +415,9 @@ app.post("/api/webhook/cursor-agent", async (c) => {
 
   const processWebhook = async () => {
     try {
-      // Look up tracking note for callback context
       let requester = "";
       let channelId = "";
       let threadTs = "";
-      let issueDescription = "";
 
       if (agentId) {
         const trackingRows = await db
@@ -435,15 +433,11 @@ app.post("/api/webhook/cursor-agent", async (c) => {
           );
           const channelMatch = content.match(/\*\*Channel\*\*:\s*(\S+)/);
           const threadMatch = content.match(/\*\*Thread\*\*:\s*(\S+)/);
-          const issueMatch = content.match(
-            /## Issue\n([\s\S]*?)$/,
-          );
           if (requesterMatch && requesterMatch[1] !== "unknown")
             requester = requesterMatch[1];
           if (channelMatch) channelId = channelMatch[1];
           if (threadMatch && threadMatch[1] !== "none")
             threadTs = threadMatch[1];
-          if (issueMatch) issueDescription = issueMatch[1].trim();
         }
       }
 
@@ -458,7 +452,6 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         return;
       }
 
-      const dashboardUrl = `https://cursor.com/agents/${agentId}`;
       const isFinished =
         status.toLowerCase() === "finished" ||
         status.toLowerCase() === "completed";
@@ -466,33 +459,83 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         status.toLowerCase() === "error" ||
         status.toLowerCase() === "failed";
 
+      let prTitle = "";
+      if (prUrl) {
+        const prMatch = prUrl.match(/\/pull\/(\d+)$/);
+        if (prMatch) {
+          try {
+            const ghToken =
+              process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+            if (ghToken) {
+              const prNumber = prMatch[1];
+              const repoMatch = prUrl.match(
+                /github\.com\/([^/]+\/[^/]+)\/pull/,
+              );
+              if (repoMatch) {
+                const ghRes = await fetch(
+                  `https://api.github.com/repos/${repoMatch[1]}/pulls/${prNumber}`,
+                  {
+                    headers: {
+                      Authorization: `token ${ghToken}`,
+                      Accept: "application/vnd.github.v3+json",
+                    },
+                  },
+                );
+                if (ghRes.ok) {
+                  const prData = (await ghRes.json()) as any;
+                  prTitle = prData.title || "";
+                }
+              }
+            }
+          } catch {
+            /* fallback to no title */
+          }
+        }
+      }
+
       let message: string;
       if (isFinished) {
-        const prLine = prUrl ? `\n*PR*: ${prUrl}` : "";
+        const prLine = prUrl
+          ? prTitle
+            ? `\u2705 *<${prUrl}|${prTitle}>*`
+            : `\u2705 *<${prUrl}|PR>*`
+          : "\u2705 Agent finished";
+        const branchLine = branchName
+          ? `\n_Branch:_ \`${branchName}\``
+          : "";
         const summaryLine = summary ? `\n\n${summary}` : "";
-        message =
-          `Cursor agent \`${agentId}\` *finished*.${prLine}\n*Branch*: \`${branchName || "unknown"}\`\n*Dashboard*: ${dashboardUrl}${summaryLine}` +
-          (issueDescription
-            ? `\n\n_Original task: ${issueDescription.slice(0, 200)}${issueDescription.length > 200 ? "..." : ""}_`
-            : "");
+        message = `${prLine}${branchLine}${summaryLine}`;
       } else if (isError) {
-        const summaryLine = summary ? `\n\n${summary}` : "";
-        message =
-          `Cursor agent \`${agentId}\` *failed*.${summaryLine}\n*Dashboard*: ${dashboardUrl}` +
-          (issueDescription
-            ? `\n\n_Original task: ${issueDescription.slice(0, 200)}${issueDescription.length > 200 ? "..." : ""}_`
-            : "");
+        message = `\u274C Agent *failed*${summary ? `\n\n${summary}` : ""}`;
       } else {
-        message = `Cursor agent \`${agentId}\` status update: *${status}*\n*Dashboard*: ${dashboardUrl}`;
+        message = `Agent status: *${status}*`;
+      }
+
+      if (isFinished && agentId) {
+        try {
+          const { getCursorConversation } = await import(
+            "./lib/cursor-agent.js"
+          );
+          const conversation = await getCursorConversation(agentId);
+          if (conversation?.summary) {
+            message += `\n\n_${conversation.summary}_`;
+          }
+        } catch {
+          /* non-critical */
+        }
       }
 
       const dmResult = await slackClient.conversations.open({
         users: dmTarget,
       });
       const dmChannelId = dmResult.channel?.id;
+
       if (dmChannelId) {
+        const useThreadTs =
+          channelId === dmChannelId && threadTs ? threadTs : undefined;
         await slackClient.chat.postMessage({
           channel: dmChannelId,
+          thread_ts: useThreadTs,
           text: message,
         });
         logger.info("Cursor agent webhook: DM sent", {
@@ -502,7 +545,11 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         });
       }
 
-      if (channelId && channelId !== "unknown" && channelId !== dmChannelId) {
+      if (
+        channelId &&
+        channelId !== "unknown" &&
+        channelId !== dmChannelId
+      ) {
         await slackClient.chat.postMessage({
           channel: channelId,
           thread_ts: threadTs || undefined,
