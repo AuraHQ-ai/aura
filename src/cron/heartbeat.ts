@@ -199,8 +199,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
       for (const job of dueJobs) {
         try {
-          await executeJob(job, skillIndex, "heartbeat");
-          executed++;
+          const ran = await executeJob(job, skillIndex, "heartbeat");
+          if (ran) executed++;
         } catch (error: any) {
           logger.error("Heartbeat: job execution error", {
             jobName: job.name,
