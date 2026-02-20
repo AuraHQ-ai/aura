@@ -6,7 +6,7 @@ import { notes, jobs } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
-import { parseRelativeTime } from "../lib/temporal.js";
+import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { embedText } from "../lib/embeddings.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -61,6 +61,8 @@ function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
  * @param context Optional schedule context for checkpoint_plan routing (channelId, threadTs, userId)
  */
 export function createNoteTools(context?: ScheduleContext) {
+  const tz = context?.timezone || "Europe/Zurich";
+
   return {
     save_note: tool({
       description:
@@ -148,7 +150,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
           return {
             ok: true,
-            message: `Note "${topic}" saved (${effectiveCategory}, ${content.split("\n").length} lines${expiresAt ? `, expires ${expiresAt.toISOString()}` : ""})`,
+            message: `Note "${topic}" saved (${effectiveCategory}, ${content.split("\n").length} lines${expiresAt ? `, expires ${formatTimestamp(expiresAt, tz)}` : ""})`,
           };
         } catch (error: any) {
           logger.error("save_note tool failed", {
@@ -187,8 +189,8 @@ export function createNoteTools(context?: ScheduleContext) {
             category: note.category,
             content: numbered,
             line_count: lineCount,
-            updated_at: note.updatedAt.toISOString(),
-            expires_at: note.expiresAt?.toISOString() ?? null,
+            updated_at: formatTimestamp(note.updatedAt, tz),
+            expires_at: note.expiresAt ? formatTimestamp(note.expiresAt, tz) : null,
           };
         } catch (error: any) {
           logger.error("read_note tool failed", {
@@ -242,8 +244,8 @@ export function createNoteTools(context?: ScheduleContext) {
               n.content.substring(0, 80) +
               (n.content.length > 80 ? "..." : ""),
             lines: n.content.split("\n").length,
-            updated_at: n.updatedAt.toISOString(),
-            expires_at: n.expiresAt?.toISOString() ?? null,
+            updated_at: formatTimestamp(n.updatedAt, tz),
+            expires_at: n.expiresAt ? formatTimestamp(n.expiresAt, tz) : null,
           }));
 
           logger.info("list_notes tool called", {
@@ -518,7 +520,7 @@ export function createNoteTools(context?: ScheduleContext) {
                 category: r.category,
                 snippet: r.content.substring(0, 200) + (r.content.length > 200 ? "..." : ""),
                 similarity: Math.round(r.similarity * 1000) / 1000,
-                updated_at: r.updatedAt.toISOString(),
+                updated_at: formatTimestamp(r.updatedAt, tz),
               })),
               count: results.length,
             };
@@ -576,7 +578,7 @@ export function createNoteTools(context?: ScheduleContext) {
               topic: r.topic,
               category: r.category,
               snippet: r.snippet,
-              updated_at: r.updated_at,
+              updated_at: formatTimestamp(r.updated_at, tz),
             })),
             count: rows.length,
           };
@@ -742,13 +744,13 @@ export function createNoteTools(context?: ScheduleContext) {
           logger.info("checkpoint_plan tool called", {
             topic,
             depth: newDepth,
-            continueAt: executeAt.toISOString(),
+            continueAt: formatTimestamp(executeAt, tz),
           });
 
           return {
             ok: true,
-            message: `Plan "${topic}" saved (continuation ${newDepth}/${MAX_CONTINUATIONS}). Resuming at ${executeAt.toISOString()}.`,
-            continue_at: executeAt.toISOString(),
+            message: `Plan "${topic}" saved (continuation ${newDepth}/${MAX_CONTINUATIONS}). Resuming at ${formatTimestamp(executeAt, tz)}.`,
+            continue_at: formatTimestamp(executeAt, tz),
             continuations: newDepth,
           };
         } catch (error: any) {

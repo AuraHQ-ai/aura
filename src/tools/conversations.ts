@@ -4,6 +4,7 @@ import { sql, and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
+import { formatTimestamp } from "../lib/temporal.js";
 import { logger } from "../lib/logger.js";
 
 const MAX_CONTENT_LENGTH = 500;
@@ -246,9 +247,7 @@ export function createConversationSearchTools() {
               user_id: row.user_id,
               role: row.role,
               content: truncate(row.content, MAX_CONTENT_LENGTH),
-              timestamp: typeof row.created_at === "string"
-                ? row.created_at
-                : new Date(row.created_at).toISOString(),
+              timestamp: formatTimestamp(row.created_at),
               channel_id: row.channel_id,
               channel_type: row.channel_type,
               ...(row.similarity != null ? { similarity_score: Number(row.similarity) } : {}),
@@ -301,10 +300,7 @@ export function createConversationSearchTools() {
                   user_id: r.user_id,
                   role: r.role,
                   content: truncate(r.content, MAX_CONTENT_LENGTH),
-                  timestamp:
-                    typeof r.created_at === "string"
-                      ? r.created_at
-                      : new Date(r.created_at).toISOString(),
+                  timestamp: formatTimestamp(r.created_at),
                   channel_id: r.channel_id,
                   channel_type: r.channel_type,
                   ...(matchIds.has(r.id)
