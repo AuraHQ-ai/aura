@@ -22,6 +22,7 @@ import {
 } from "../memory/transparency.js";
 import {
   getOrCreateProfile,
+  getProfile,
   recordInteraction,
   updateProfileFromConversation,
 } from "../users/profiles.js";
@@ -111,6 +112,9 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   let conversation: ConversationContext | undefined;
   let decision: { respond: boolean; reason: string };
 
+  // Fetch user timezone early so conversation context timestamps use it
+  const userTimezone = await getProfile(context.userId).then(p => p?.timezone || undefined);
+
   if (context.isDm) {
     decision = { respond: true, reason: "dm" };
   } else if (context.isMentioned) {
@@ -124,6 +128,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       context.channelId,
       botUserId,
       context.threadTs,
+      userTimezone,
     );
     decision = await shouldRespond(context, conversation);
   }
@@ -236,6 +241,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         context.channelId,
         botUserId,
         context.threadTs,
+        userTimezone,
       );
     }
     const retrievalStart = Date.now();
