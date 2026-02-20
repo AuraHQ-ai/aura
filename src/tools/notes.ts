@@ -148,7 +148,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
           return {
             ok: true,
-            message: `Note "${topic}" saved (${effectiveCategory}, ${content.split("\n").length} lines${expiresAt ? `, expires ${expiresAt.toISOString()}` : ""})`,
+            message: `Note "${topic}" saved (${effectiveCategory}, ${content.split("\n").length} lines${expiresAt ? `, expires ${formatTimestamp(expiresAt, context?.timezone)}` : ""})`,
           };
         } catch (error: any) {
           logger.error("save_note tool failed", {
@@ -518,7 +518,7 @@ export function createNoteTools(context?: ScheduleContext) {
                 category: r.category,
                 snippet: r.content.substring(0, 200) + (r.content.length > 200 ? "..." : ""),
                 similarity: Math.round(r.similarity * 1000) / 1000,
-                updated_at: r.updatedAt.toISOString(),
+                updated_at: formatTimestamp(r.updatedAt, context?.timezone),
               })),
               count: results.length,
             };
@@ -576,7 +576,7 @@ export function createNoteTools(context?: ScheduleContext) {
               topic: r.topic,
               category: r.category,
               snippet: r.snippet,
-              updated_at: r.updated_at,
+              updated_at: formatTimestamp(r.updated_at, context?.timezone),
             })),
             count: rows.length,
           };
@@ -747,8 +747,8 @@ export function createNoteTools(context?: ScheduleContext) {
 
           return {
             ok: true,
-            message: `Plan "${topic}" saved (continuation ${newDepth}/${MAX_CONTINUATIONS}). Resuming at ${executeAt.toISOString()}.`,
-            continue_at: executeAt.toISOString(),
+            message: `Plan "${topic}" saved (continuation ${newDepth}/${MAX_CONTINUATIONS}). Resuming at ${formatTimestamp(executeAt, context?.timezone)}.`,
+            continue_at: formatTimestamp(executeAt, context?.timezone),
             continuations: newDepth,
           };
         } catch (error: any) {

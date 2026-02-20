@@ -233,7 +233,7 @@ export function createJobTools(
               set: updateSet,
             });
 
-          const timeStr = executeAt?.toISOString() ?? "next cron window";
+          const timeStr = (executeAt ? formatTimestamp(executeAt, context?.timezone) : null) || "next cron window";
           const recurStr = recurring
             ? ` (recurring: ${recurring} ${timezone})`
             : " (one-shot)";
