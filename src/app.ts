@@ -495,9 +495,14 @@ app.post("/api/webhook/cursor-agent", async (c) => {
 
       let message: string;
       if (isFinished) {
+        const safePrTitle = prTitle
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\|/g, "\u2758");
         const prLine = prUrl
-          ? prTitle
-            ? `\u2705 *<${prUrl}|${prTitle}>*`
+          ? safePrTitle
+            ? `\u2705 *<${prUrl}|${safePrTitle}>*`
             : `\u2705 *<${prUrl}|PR>*`
           : "\u2705 Agent finished";
         const branchLine = branchName

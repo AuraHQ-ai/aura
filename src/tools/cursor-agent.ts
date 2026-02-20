@@ -8,7 +8,6 @@ import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 
 const DEFAULT_REPO = "realadvisor/aura";
-const DEFAULT_REPO_URL = `https://github.com/${DEFAULT_REPO}`;
 
 /**
  * Create Cursor Cloud Agent tools for the AI SDK.
@@ -89,15 +88,24 @@ export function createCursorAgentTools(context?: ScheduleContext) {
               ? `\n\nKey files to focus on:\n${key_files.map((f) => `- ${f}`).join("\n")}`
               : "";
 
+          const isAuraRepo = repo === DEFAULT_REPO;
+          const repoDescription = isAuraRepo
+            ? `This is the Aura project (github.com/${repo}) — a Slack AI assistant built with TypeScript, Hono, Vercel serverless, AI SDK v6, and PostgreSQL.`
+            : `Repository: github.com/${repo}`;
+
+          const instructions = isAuraRepo
+            ? [
+                `- Use \`inputSchema\` (not \`parameters\`) for AI SDK v6 tools`,
+                `- Use .js extensions in imports (ESM with "type": "module")`,
+                `- Run \`npx tsc --noEmit\` before committing to verify types`,
+              ]
+            : [];
+
           const prompt = [
             `## Task\n\n${issue_description}`,
-            `## Repository\n\nThis is the Aura project (github.com/${repo}) — a Slack AI assistant built with TypeScript, Hono, Vercel serverless, AI SDK v6, and PostgreSQL.`,
+            `## Repository\n\n${repoDescription}`,
             keyFilesSection,
-            `## Instructions\n\n- Use \`inputSchema\` (not \`parameters\`) for AI SDK v6 tools`,
-            `- Use .js extensions in imports (ESM with "type": "module")`,
-            `- Run \`npx tsc --noEmit\` before committing to verify types`,
-            `- Never push directly to main — work on branch \`${branchName}\``,
-            `- Create a PR with a clear description of changes`,
+            `## Instructions\n\n${[...instructions, `- Never push directly to main — work on branch \`${branchName}\``, `- Create a PR with a clear description of changes`].join("\n")}`,
           ].join("\n\n");
 
           const webhookUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
