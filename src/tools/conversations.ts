@@ -231,6 +231,7 @@ export function createConversationSearchTools() {
 
           // Group by thread
           const threadMap = new Map<string, ThreadGroup>();
+          const messageDateMap = new Map<string, number>();
           for (const row of rows) {
             const threadKey = row.slack_thread_ts || row.slack_ts;
             let group = threadMap.get(threadKey);
@@ -242,9 +243,8 @@ export function createConversationSearchTools() {
               };
               threadMap.set(threadKey, group);
             }
-            const createdDate = typeof row.created_at === "string"
-              ? new Date(row.created_at)
-              : new Date(row.created_at);
+            const createdDate = new Date(row.created_at);
+            messageDateMap.set(row.id, createdDate.getTime());
             group.messages.push({
               id: row.id,
               user_id: row.user_id,
@@ -260,7 +260,7 @@ export function createConversationSearchTools() {
           // Sort messages within each thread by timestamp
           for (const group of threadMap.values()) {
             group.messages.sort(
-              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+              (a, b) => (messageDateMap.get(a.id) ?? 0) - (messageDateMap.get(b.id) ?? 0),
             );
           }
 
@@ -299,9 +299,8 @@ export function createConversationSearchTools() {
                 );
                 const contextIds = new Set(contextRows.map((r) => r.id));
                 const contextMessages = contextRows.map((r) => {
-                  const ctxDate = typeof r.created_at === "string"
-                    ? new Date(r.created_at)
-                    : new Date(r.created_at);
+                  const ctxDate = new Date(r.created_at);
+                  messageDateMap.set(r.id, ctxDate.getTime());
                   return {
                     id: r.id,
                     user_id: r.user_id,
@@ -324,7 +323,7 @@ export function createConversationSearchTools() {
                   .filter((m) => !contextIds.has(m.id))
                   .map((m) => ({ ...m, matched: true }));
                 const allMessages = [...contextMessages, ...missingMatches].sort(
-                  (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+                  (a, b) => (messageDateMap.get(a.id) ?? 0) - (messageDateMap.get(b.id) ?? 0),
                 );
                 const fullThread: ThreadGroup = {
                   thread_ts: thread.thread_ts,

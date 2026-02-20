@@ -187,8 +187,8 @@ export function createNoteTools(context?: ScheduleContext) {
             category: note.category,
             content: numbered,
             line_count: lineCount,
-            updated_at: formatTimestamp(note.updatedAt),
-            expires_at: note.expiresAt ? formatTimestamp(note.expiresAt) : null,
+            updated_at: formatTimestamp(note.updatedAt, context?.timezone),
+            expires_at: note.expiresAt ? formatTimestamp(note.expiresAt, context?.timezone) : null,
           };
         } catch (error: any) {
           logger.error("read_note tool failed", {
@@ -242,8 +242,8 @@ export function createNoteTools(context?: ScheduleContext) {
               n.content.substring(0, 80) +
               (n.content.length > 80 ? "..." : ""),
             lines: n.content.split("\n").length,
-            updated_at: formatTimestamp(n.updatedAt),
-            expires_at: n.expiresAt ? formatTimestamp(n.expiresAt) : null,
+            updated_at: formatTimestamp(n.updatedAt, context?.timezone),
+            expires_at: n.expiresAt ? formatTimestamp(n.expiresAt, context?.timezone) : null,
           }));
 
           logger.info("list_notes tool called", {
