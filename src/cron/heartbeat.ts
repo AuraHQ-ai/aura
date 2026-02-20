@@ -4,7 +4,7 @@ import { generateText, stepCountIs } from "ai";
 import { eq, and, lt, lte, sql, isNull, or } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
-import { jobs, notes } from "../db/schema.js";
+import { jobs, notes, jobExecutions } from "../db/schema.js";
 import type { FrequencyConfig } from "../db/schema.js";
 import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
@@ -195,7 +195,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
       for (const job of dueJobs) {
         try {
-          await executeJob(job, skillIndex);
+          await executeJob(job, skillIndex, "heartbeat");
           executed++;
         } catch (error: any) {
           logger.error("Heartbeat: job execution error", {
@@ -261,18 +261,62 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   }
 });
 
+// ── Execute Now (on-demand dispatch) ─────────────────────────────────────────
+
+heartbeatApp.post("/api/execute-now", async (c) => {
+  const { jobId } = await c.req.json<{ jobId?: string }>();
+
+  if (!jobId) return c.json({ error: "jobId required" }, 400);
+
+  const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
+  if (!job) return c.json({ error: "Job not found" }, 404);
+
+  try {
+    const skillIndex = await buildSkillIndex();
+    await executeJob(job, skillIndex, "dispatch");
+
+    return c.json({ ok: true, jobId, message: "Execution completed" });
+  } catch (err: any) {
+    logger.error("execute-now failed", { jobId, error: err.message });
+    return c.json({ ok: false, jobId, error: err.message }, 500);
+  }
+});
+
 // ── Job Execution ────────────────────────────────────────────────────────────
 
 async function executeJob(
   job: typeof jobs.$inferSelect,
   skillIndex: string,
+  trigger: "heartbeat" | "dispatch" | "continuation" = "heartbeat",
 ) {
   const jobId = job.id;
+
+  // Insert execution trace row
+  const [execution] = await db
+    .insert(jobExecutions)
+    .values({
+      jobId,
+      status: "running",
+      trigger,
+      callbackChannel: job.channelId || null,
+      callbackThreadTs: job.threadTs || null,
+    })
+    .returning({ id: jobExecutions.id });
+
+  const executionId = execution.id;
 
   try {
     const planTopic = parseContinuationTag(job.description);
     const isContinuation = planTopic !== null;
     const isRecurring = !!job.cronSchedule || !!job.frequencyConfig;
+
+    const effectiveTrigger = isContinuation && trigger === "heartbeat" ? "continuation" : trigger;
+    if (effectiveTrigger !== trigger) {
+      await db
+        .update(jobExecutions)
+        .set({ trigger: effectiveTrigger })
+        .where(eq(jobExecutions.id, executionId));
+    }
 
     let prompt: string;
     let systemPrompt: string;
@@ -289,6 +333,7 @@ async function executeJob(
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
+        executionId,
         planTopic,
         hasPlanNote: !!planContent,
       });
@@ -305,15 +350,17 @@ async function executeJob(
 
       logger.info("Heartbeat: executing job", {
         jobId,
+        executionId,
         jobName: job.name,
         isRecurring,
         hasPlaybook: !!job.playbook,
+        trigger: effectiveTrigger,
       });
     }
 
     const model = await getMainModel();
 
-    const { text } = await generateText({
+    const generateResult = await generateText({
       model,
       system: systemPrompt,
       prompt,
@@ -325,13 +372,45 @@ async function executeJob(
       stopWhen: stepCountIs(350),
     });
 
+    const { text, steps, usage } = generateResult;
+
+    const serializedSteps = steps.map((step) => ({
+      type: step.finishReason,
+      text: step.text,
+      toolCalls: step.toolCalls?.map((tc) => ({
+        toolName: tc.toolName,
+        input: tc.input,
+      })),
+      toolResults: step.toolResults?.map((tr) => ({
+        toolName: tr.toolName,
+        output: tr.output,
+      })),
+    }));
+
+    const tokenUsage = {
+      input: usage.inputTokens,
+      output: usage.outputTokens,
+      total: usage.totalTokens,
+    };
+
+    // Update execution trace with results
+    await db
+      .update(jobExecutions)
+      .set({
+        status: "completed",
+        finishedAt: new Date(),
+        steps: serializedSteps,
+        tokenUsage,
+        summary: (text || "").substring(0, 500) || null,
+      })
+      .where(eq(jobExecutions.id, executionId));
+
     const result = (text || "Job completed (no text output)").substring(0, 2000);
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
     const isNewDay = job.lastExecutionDate !== todayStr;
 
     if (isRecurring) {
-      // Recurring: update stats, keep pending for next cycle
       await db
         .update(jobs)
         .set({
@@ -348,9 +427,9 @@ async function executeJob(
 
       logger.info("Heartbeat: recurring job completed", {
         jobName: job.name,
+        executionId,
       });
     } else {
-      // One-shot: mark completed
       await db
         .update(jobs)
         .set({
@@ -364,10 +443,21 @@ async function executeJob(
 
       logger.info("Heartbeat: one-shot job completed", {
         jobName: job.name,
+        executionId,
         isContinuation,
       });
     }
   } catch (error: any) {
+    // Update execution trace with failure
+    await db
+      .update(jobExecutions)
+      .set({
+        status: "failed",
+        finishedAt: new Date(),
+        error: error.message,
+      })
+      .where(eq(jobExecutions.id, executionId));
+
     // Retry logic
     const newRetries = job.retries + 1;
 
@@ -380,6 +470,7 @@ async function executeJob(
 
       logger.warn("Heartbeat: job retrying", {
         jobName: job.name,
+        executionId,
         retries: newRetries,
         retryAt: retryAt.toISOString(),
       });
@@ -408,11 +499,12 @@ async function executeJob(
           }
         }
       } catch {
-        logger.error("Heartbeat: failed to send escalation DM", { jobId });
+        logger.error("Heartbeat: failed to send escalation DM", { jobId, executionId });
       }
 
       logger.error("Heartbeat: job failed permanently", {
         jobName: job.name,
+        executionId,
         error: error.message,
       });
     }
