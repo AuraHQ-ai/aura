@@ -259,7 +259,7 @@ interface RespondOptions {
   systemPrompt: string;
   userMessage: string;
   slackClient: WebClient;
-  context?: { userId?: string; channelId?: string; threadTs?: string };
+  context?: { userId?: string; channelId?: string; threadTs?: string; timezone?: string };
   files?: FileContentPart[];
   channelId: string;
   threadTs?: string;

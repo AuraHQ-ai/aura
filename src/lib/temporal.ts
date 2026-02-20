@@ -6,20 +6,16 @@
  * and relative-time parsing for scheduling.
  */
 
-const MONTHS = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
+import { format } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
+
+/**
+ * Format a Date as ISO 8601 in the given IANA timezone.
+ * Example: "2026-02-20T10:32:52+01:00"
+ */
+function toIso8601InTimezone(date: Date, tz: string): string {
+  return formatInTimeZone(date, tz, "yyyy-MM-dd'T'HH:mm:ssxxx");
+}
 
 /**
  * Get a human-readable current-time string for injection into the system prompt.
@@ -29,18 +25,12 @@ export function getCurrentTimeContext(timezone?: string): string {
   const tz = timezone || "UTC";
   const now = new Date();
 
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  const formatted = formatInTimeZone(
+    now,
+    tz,
+    "EEEE, MMMM d, yyyy h:mm a",
+  );
 
-  const formatted = formatter.format(now);
   return `Current time: ${formatted} (${tz})`;
 }
 
@@ -70,10 +60,55 @@ export function relativeTime(date: Date, now?: Date): string {
   if (weeks < 4) return `about ${weeks} weeks ago`;
   if (months <= 1) return "about a month ago";
   if (months < 12) {
-    return `back in ${MONTHS[date.getMonth()]}`;
+    return `back in ${format(date, "MMMM")}`;
   }
 
-  return `back in ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+  return `back in ${format(date, "MMMM yyyy")}`;
+}
+
+/**
+ * Convert any timestamp to an ISO 8601 string in the given timezone.
+ *
+ * Accepted inputs:
+ *  - Slack message ts (e.g. "1740045172.123456")
+ *  - ISO 8601 string ("2026-02-20T09:32:52Z")
+ *  - Date object
+ *  - Unix epoch in seconds or milliseconds (number)
+ *
+ * Output: "2026-02-20T10:32:52+01:00" (ISO 8601 in user timezone)
+ *
+ * @param input  Any supported timestamp format
+ * @param timezone  IANA timezone string (default "UTC")
+ */
+export function formatTimestamp(
+  input: string | number | Date | null | undefined,
+  timezone?: string,
+): string {
+  if (input == null || input === "") return "";
+
+  const tz = timezone || "UTC";
+  let date: Date;
+
+  if (input instanceof Date) {
+    date = input;
+  } else if (typeof input === "number") {
+    date = input < 1e12 ? new Date(input * 1000) : new Date(input);
+  } else {
+    const asNum = Number(input);
+    if (!isNaN(asNum) && asNum > 1e8) {
+      date = asNum < 1e12 ? new Date(asNum * 1000) : new Date(asNum);
+    } else {
+      date = new Date(input);
+    }
+  }
+
+  if (isNaN(date.getTime())) return String(input);
+
+  try {
+    return toIso8601InTimezone(date, tz);
+  } catch {
+    return toIso8601InTimezone(date, "UTC");
+  }
 }
 
 /**

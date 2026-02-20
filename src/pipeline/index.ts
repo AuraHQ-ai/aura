@@ -207,9 +207,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       });
     }
 
-    // Ensure user has a profile
-    const displayName = await resolveDisplayName(client, context.userId);
-    await getOrCreateProfile(context.userId, displayName);
+    // Ensure user has a profile and resolve their timezone
+    const { name: displayName, timezone: slackTimezone } = await resolveDisplayName(client, context.userId);
+    const userProfile = await getOrCreateProfile(context.userId, displayName, slackTimezone);
+    const userTimezone = userProfile.timezone || "UTC";
 
     // 3. Check for transparency commands first
     const transparencyResult = await handleTransparencyCommands(
@@ -262,7 +263,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       systemPrompt,
       userMessage: messageText,
       slackClient: client,
-      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs },
+      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs, timezone: userTimezone },
       files: fileParts,
       channelId: context.channelId,
       threadTs: replyThreadTs,

@@ -2,6 +2,7 @@ import type { WebClient } from "@slack/web-api";
 
 import { logger } from "../lib/logger.js";
 import { TOOL_IO_EVENT_TYPE } from "./respond.js";
+import { formatTimestamp } from "../lib/temporal.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,12 +54,12 @@ export interface ConversationContext {
 
 // ── Per-invocation caches ────────────────────────────────────────────────────
 
-const userDisplayNameCache = new Map<string, string>();
+const userDisplayNameCache = new Map<string, { name: string; timezone?: string }>();
 
 export async function resolveDisplayName(
   client: WebClient,
   userId: string,
-): Promise<string> {
+): Promise<{ name: string; timezone?: string }> {
   const cached = userDisplayNameCache.get(userId);
   if (cached) return cached;
 
@@ -69,10 +70,12 @@ export async function resolveDisplayName(
       result.user?.real_name ||
       result.user?.name ||
       userId;
-    userDisplayNameCache.set(userId, name);
-    return name;
+    const timezone = result.user?.tz || undefined;
+    const entry = { name, timezone };
+    userDisplayNameCache.set(userId, entry);
+    return entry;
   } catch {
-    return userId;
+    return { name: userId };
   }
 }
 
@@ -178,8 +181,8 @@ export async function fetchConversationContext(
       for (const msg of rawMessages) {
         const userId = msg.user || msg.bot_id || "unknown";
         const isBot = msg.user === botUserId;
-        const displayName = isBot
-          ? "Aura"
+        const { name: displayName } = isBot
+          ? { name: "Aura" }
           : await resolveDisplayName(client, userId);
         const toolCalls = isBot ? extractToolCalls((msg as any).blocks) : undefined;
         const toolIO = isBot ? extractToolIO(msg) : undefined;
@@ -221,8 +224,8 @@ export async function fetchConversationContext(
     for (const msg of rawHistory) {
       const userId = msg.user || msg.bot_id || "unknown";
       const isBot = msg.user === botUserId;
-      const displayName = isBot
-        ? "Aura"
+      const { name: displayName } = isBot
+        ? { name: "Aura" }
         : await resolveDisplayName(client, userId);
       const toolCalls = isBot ? extractToolCalls((msg as any).blocks) : undefined;
       const toolIO = isBot ? extractToolIO(msg) : undefined;
@@ -284,8 +287,9 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
 }
 
 /** Format a single message, preferring rich tool I/O over task_card summaries. */
-function formatMessage(m: SlackThreadMessage): string {
-  const base = `${m.displayName}: ${m.text}`;
+function formatMessage(m: SlackThreadMessage, timezone?: string): string {
+  const time = formatTimestamp(m.ts, timezone);
+  const base = `[${time}] ${m.displayName}: ${m.text}`;
   if (m.toolIO?.length) return base + formatToolIO(m.toolIO);
   if (m.toolCalls?.length) return base + formatToolCalls(m.toolCalls);
   return base;
@@ -305,6 +309,7 @@ function formatMessage(m: SlackThreadMessage): string {
 export function formatConversationContext(
   conversation: ConversationContext,
   includeChannelFallback: boolean = true,
+  timezone?: string,
 ): string | undefined {
   // Prefer thread context if available
   if (conversation.thread && conversation.thread.length > 0) {
@@ -317,7 +322,7 @@ export function formatConversationContext(
         ? thread
         : [thread[0], ...thread.slice(-MAX_THREAD_MESSAGES + 1)];
     const formatted = capped
-      .map(formatMessage)
+      .map((m) => formatMessage(m, timezone))
       .join("\n\n");
     return formatted;
   }
@@ -325,7 +330,7 @@ export function formatConversationContext(
   // Fall back to recent channel/DM messages only when appropriate
   if (includeChannelFallback && conversation.recentMessages.length > 0) {
     const formatted = conversation.recentMessages
-      .map(formatMessage)
+      .map((m) => formatMessage(m, timezone))
       .join("\n\n");
     return formatted;
   }

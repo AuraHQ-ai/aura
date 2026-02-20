@@ -3,8 +3,10 @@ import { z } from "zod";
 import { sql, and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages } from "../db/schema.js";
+import type { ScheduleContext } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
+import { formatTimestamp } from "../lib/temporal.js";
 
 const MAX_CONTENT_LENGTH = 500;
 const DEFAULT_LIMIT = 20;
@@ -43,7 +45,7 @@ export interface ThreadGroup {
   }>;
 }
 
-export function createConversationSearchTools() {
+export function createConversationSearchTools(context?: ScheduleContext) {
   return {
     search_my_conversations: tool({
       description:
@@ -230,6 +232,7 @@ export function createConversationSearchTools() {
 
           // Group by thread
           const threadMap = new Map<string, ThreadGroup>();
+          const messageDateMap = new Map<string, number>();
           for (const row of rows) {
             const threadKey = row.slack_thread_ts || row.slack_ts;
             let group = threadMap.get(threadKey);
@@ -241,14 +244,14 @@ export function createConversationSearchTools() {
               };
               threadMap.set(threadKey, group);
             }
+            const createdDate = new Date(row.created_at);
+            messageDateMap.set(row.id, createdDate.getTime());
             group.messages.push({
               id: row.id,
               user_id: row.user_id,
               role: row.role,
               content: truncate(row.content, MAX_CONTENT_LENGTH),
-              timestamp: typeof row.created_at === "string"
-                ? row.created_at
-                : new Date(row.created_at).toISOString(),
+              timestamp: formatTimestamp(createdDate, context?.timezone),
               channel_id: row.channel_id,
               channel_type: row.channel_type,
               ...(row.similarity != null ? { similarity_score: Number(row.similarity) } : {}),
@@ -258,7 +261,7 @@ export function createConversationSearchTools() {
           // Sort messages within each thread by timestamp
           for (const group of threadMap.values()) {
             group.messages.sort(
-              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+              (a, b) => (messageDateMap.get(a.id) ?? 0) - (messageDateMap.get(b.id) ?? 0),
             );
           }
 
@@ -267,9 +270,7 @@ export function createConversationSearchTools() {
           // Fetch thread context: for each thread, get surrounding messages
           const threadContexts: ThreadGroup[] = [];
           if (threads.length > 0 && threads.length <= 10) {
-            for (const thread of threads) {
-              const threadKey =
-                thread.thread_ts || thread.messages[0]?.timestamp;
+            for (const [threadKey, thread] of threadMap.entries()) {
               if (!threadKey) {
                 threadContexts.push(thread);
                 continue;
@@ -296,31 +297,32 @@ export function createConversationSearchTools() {
                     .map((m) => [m.id, m.similarity_score!]),
                 );
                 const contextIds = new Set(contextRows.map((r) => r.id));
-                const contextMessages = contextRows.map((r) => ({
-                  id: r.id,
-                  user_id: r.user_id,
-                  role: r.role,
-                  content: truncate(r.content, MAX_CONTENT_LENGTH),
-                  timestamp:
-                    typeof r.created_at === "string"
-                      ? r.created_at
-                      : new Date(r.created_at).toISOString(),
-                  channel_id: r.channel_id,
-                  channel_type: r.channel_type,
-                  ...(matchIds.has(r.id)
-                    ? {
-                        matched: true,
-                        ...(matchScoreMap.has(r.id)
-                          ? { similarity_score: matchScoreMap.get(r.id) }
-                          : {}),
-                      }
-                    : {}),
-                }));
+                const contextMessages = contextRows.map((r) => {
+                  const ctxDate = new Date(r.created_at);
+                  messageDateMap.set(r.id, ctxDate.getTime());
+                  return {
+                    id: r.id,
+                    user_id: r.user_id,
+                    role: r.role,
+                    content: truncate(r.content, MAX_CONTENT_LENGTH),
+                    timestamp: formatTimestamp(ctxDate, context?.timezone),
+                    channel_id: r.channel_id,
+                    channel_type: r.channel_type,
+                    ...(matchIds.has(r.id)
+                      ? {
+                          matched: true,
+                          ...(matchScoreMap.has(r.id)
+                            ? { similarity_score: matchScoreMap.get(r.id) }
+                            : {}),
+                        }
+                      : {}),
+                  };
+                });
                 const missingMatches = thread.messages
                   .filter((m) => !contextIds.has(m.id))
                   .map((m) => ({ ...m, matched: true }));
                 const allMessages = [...contextMessages, ...missingMatches].sort(
-                  (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+                  (a, b) => (messageDateMap.get(a.id) ?? 0) - (messageDateMap.get(b.id) ?? 0),
                 );
                 const fullThread: ThreadGroup = {
                   thread_ts: thread.thread_ts,
