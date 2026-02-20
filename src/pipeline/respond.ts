@@ -574,6 +574,9 @@ export async function generateResponse(
             if (breakIdx < 0) {
               currentStreamLength += remaining.length;
               await tryStreamAppend({ markdown_text: remaining });
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length - remaining.length;
+              }
               break;
             }
 
@@ -624,7 +627,12 @@ export async function generateResponse(
             }],
           };
           currentStreamLength += estimateAppendSize(toolCallPayload);
-          await tryStreamAppend(toolCallPayload);
+          if (!streamingFailed) {
+            await tryStreamAppend(toolCallPayload);
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
 
           pendingToolInputs.set(chunk.toolCallId, {
             name: chunk.toolName,
@@ -665,7 +673,12 @@ export async function generateResponse(
             }],
           };
           currentStreamLength += estimateAppendSize(toolResultPayload);
-          await tryStreamAppend(toolResultPayload);
+          if (!streamingFailed) {
+            await tryStreamAppend(toolResultPayload);
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
 
           const pending = pendingToolInputs.get(chunk.toolCallId);
           toolCallRecords.push({
@@ -704,7 +717,12 @@ export async function generateResponse(
             }],
           };
           currentStreamLength += estimateAppendSize(toolErrorPayload);
-          await tryStreamAppend(toolErrorPayload);
+          if (!streamingFailed) {
+            await tryStreamAppend(toolErrorPayload);
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
 
           const pending = pendingToolInputs.get(errToolCallId);
           toolCallRecords.push({
