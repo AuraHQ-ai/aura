@@ -333,7 +333,11 @@ function formatForSlack(text: string): string {
   });
 
   // Headers → bold (### heading, ## heading, # heading)
-  result = result.replace(/^#{1,6}\s+(.+)$/gm, "*$1*");
+  // Strip inline bold/emphasis markers within headers since the whole header becomes bold
+  result = result.replace(/^#{1,6}\s+(.+)$/gm, (_, content) => {
+    const cleaned = content.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1");
+    return `*${cleaned}*`;
+  });
   // Bold: **text** → *text*
   result = result.replace(/\*\*(.+?)\*\*/g, "*$1*");
   // Bold: __text__ → *text*
