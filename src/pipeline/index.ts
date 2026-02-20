@@ -590,7 +590,16 @@ async function runBackgroundTasks(params: {
       displayName,
     });
 
-    // Set or update DM thread title for the Assistant History tab
+    // Record interaction and potentially update profile
+    await recordInteraction(context.userId);
+    await updateProfileFromConversation(
+      context.userId,
+      context.text,
+      response,
+    );
+
+    // Set or update DM thread title for the Assistant History tab.
+    // Runs last so the LLM call doesn't delay critical background work above.
     if (context.isDm) {
       if (!context.threadTs) {
         // Phase 1: Generate initial title after first assistant response
@@ -613,14 +622,6 @@ async function runBackgroundTasks(params: {
         });
       }
     }
-
-    // Record interaction and potentially update profile
-    await recordInteraction(context.userId);
-    await updateProfileFromConversation(
-      context.userId,
-      context.text,
-      response,
-    );
   } catch (error: any) {
     recordError("backgroundTasks", error, { userId: context.userId });
     logError({
@@ -633,6 +634,11 @@ async function runBackgroundTasks(params: {
       stackTrace: error?.stack,
     });
   }
+}
+
+/** Strip wrapping quotes and trailing punctuation that LLMs sometimes add despite instructions. */
+function sanitizeTitle(raw: string): string {
+  return raw.trim().replace(/^["'""]+|["'""]+$/g, "").replace(/[.!;:]+$/, "").trim();
 }
 
 /**
@@ -652,19 +658,19 @@ async function setInitialDmThreadTitle(params: {
     const { getFastModel } = await import("../lib/ai.js");
     const { generateText } = await import("ai");
     const fastModel = await getFastModel();
-    const { text: title } = await generateText({
+    const { text: raw } = await generateText({
       model: fastModel,
+      maxOutputTokens: 40,
       prompt: `Summarize this conversation in 5-8 words for a thread title. Be concise and descriptive of the topic. No quotes, no punctuation at the end.\n\nUser: "${userMessage.slice(0, 300)}"\n\nAssistant: "${assistantResponse.slice(0, 500)}"`,
     });
+    const title = sanitizeTitle(raw).slice(0, 100);
+    if (!title) return;
     await client.assistant.threads.setTitle({
       channel_id: channelId,
       thread_ts: threadTs,
-      title: title.slice(0, 100),
+      title,
     });
-    logger.info("Set initial DM thread title", {
-      title: title.slice(0, 100),
-      channelId,
-    });
+    logger.info("Set initial DM thread title", { title, channelId });
   } catch (error: any) {
     logger.warn("Failed to set DM thread title", {
       error: error?.message || String(error),
@@ -704,20 +710,21 @@ async function maybeUpdateDmThreadTitle(params: {
       .map(m => `${m.displayName}: ${m.text.slice(0, 150)}`)
       .join("\n");
 
-    const { text: newTitle } = await generateText({
+    const { text: raw } = await generateText({
       model: fastModel,
+      maxOutputTokens: 40,
       prompt: `Generate a concise thread title (5-8 words) that describes the current main topic of this Slack DM conversation. No quotes, no punctuation at the end.\n\nRecent messages:\n${messagesContext}\n\nLatest assistant response: "${assistantResponse.slice(0, 300)}"`,
     });
 
-    const trimmed = newTitle.trim();
-    if (trimmed.length > 0) {
+    const newTitle = sanitizeTitle(raw).slice(0, 100);
+    if (newTitle) {
       await client.assistant.threads.setTitle({
         channel_id: channelId,
         thread_ts: threadTs,
-        title: trimmed.slice(0, 100),
+        title: newTitle,
       });
       logger.info("Updated DM thread title at checkpoint", {
-        newTitle: trimmed.slice(0, 100),
+        newTitle,
         channelId,
         messageCount: totalMessages,
       });
