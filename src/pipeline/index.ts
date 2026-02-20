@@ -239,7 +239,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { systemPrompt, memories, conversations } = await assemblePrompt(
+    const { systemPrompt, memories, conversations, userProfile } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
@@ -258,11 +258,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
 
     // 5. Call LLM (streams response directly to Slack via chat.update)
     const llmStart = Date.now();
+    const userTimezone = userProfile?.timezone || undefined;
     const response = await generateResponse({
       systemPrompt,
       userMessage: messageText,
       slackClient: client,
-      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs },
+      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs, timezone: userTimezone },
       files: fileParts,
       channelId: context.channelId,
       threadTs: replyThreadTs,

@@ -8,7 +8,7 @@ import { jobs } from "../db/schema.js";
 import type { FrequencyConfig, ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
-import { parseRelativeTime } from "../lib/temporal.js";
+import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
@@ -22,6 +22,8 @@ export function createJobTools(
   client: WebClient,
   context?: ScheduleContext,
 ) {
+  const tz = context?.timezone || "Europe/Zurich";
+
   return {
     create_job: tool({
       description:
@@ -233,7 +235,7 @@ export function createJobTools(
               set: updateSet,
             });
 
-          const timeStr = executeAt?.toISOString() ?? "next cron window";
+          const timeStr = executeAt ? formatTimestamp(executeAt, tz) : "next cron window";
           const recurStr = recurring
             ? ` (recurring: ${recurring} ${timezone})`
             : " (one-shot)";
@@ -241,7 +243,7 @@ export function createJobTools(
           logger.info("create_job tool called", {
             name: jobName,
             description: description.substring(0, 80),
-            executeAt: timeStr,
+            executeAt: executeAt?.toISOString() ?? null,
             recurring,
             requestedBy,
           });
@@ -304,13 +306,13 @@ export function createJobTools(
             is_recurring: !!j.cronSchedule,
             cron_schedule: j.cronSchedule,
             frequency_config: j.frequencyConfig,
-            execute_at: j.executeAt?.toISOString() ?? null,
+            execute_at: j.executeAt ? formatTimestamp(j.executeAt, tz) : null,
             channel_id: j.channelId || null,
             requested_by: j.requestedBy,
             priority: j.priority,
             status: j.status,
             retries: j.retries,
-            last_executed_at: j.lastExecutedAt?.toISOString() ?? null,
+            last_executed_at: j.lastExecutedAt ? formatTimestamp(j.lastExecutedAt, tz) : null,
             execution_count: j.executionCount,
             has_playbook: !!j.playbook,
             last_result: j.lastResult ? j.lastResult.substring(0, 200) : null,
