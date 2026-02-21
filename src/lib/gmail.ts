@@ -309,24 +309,16 @@ export async function sendEmail(
   };
 }
 
-/**
- * List emails from the inbox.
- */
-export async function listEmails(
+async function listEmailsWithClient(
+  gmailClient: any,
   options?: ListEmailsOptions,
 ): Promise<EmailSummary[]> {
-  const gmail = await getGmailClient();
-  if (!gmail) {
-    logger.error("Gmail client not available");
-    return [];
-  }
-
   let q = options?.query || "";
   if (options?.unreadOnly) {
     q = q ? `${q} is:unread` : "is:unread";
   }
 
-  const listRes = await gmail.users.messages.list({
+  const listRes = await gmailClient.users.messages.list({
     userId: "me",
     maxResults: Math.min(options?.maxResults || 10, 20),
     q: q || undefined,
@@ -336,8 +328,8 @@ export async function listEmails(
   if (messages.length === 0) return [];
 
   const results: EmailSummary[] = await Promise.all(
-    messages.map(async (msg) => {
-      const detail = await gmail.users.messages.get({
+    messages.map(async (msg: any) => {
+      const detail = await gmailClient.users.messages.get({
         userId: "me",
         id: msg.id!,
         format: "metadata",
@@ -362,16 +354,25 @@ export async function listEmails(
 }
 
 /**
- * Get full details of a specific email.
+ * List emails from the inbox.
  */
-export async function getEmail(messageId: string): Promise<EmailDetail | null> {
+export async function listEmails(
+  options?: ListEmailsOptions,
+): Promise<EmailSummary[]> {
   const gmail = await getGmailClient();
   if (!gmail) {
     logger.error("Gmail client not available");
-    return null;
+    return [];
   }
 
-  const res = await gmail.users.messages.get({
+  return listEmailsWithClient(gmail, options);
+}
+
+async function getEmailWithClient(
+  gmailClient: any,
+  messageId: string,
+): Promise<EmailDetail> {
+  const res = await gmailClient.users.messages.get({
     userId: "me",
     id: messageId,
     format: "full",
@@ -395,6 +396,19 @@ export async function getEmail(messageId: string): Promise<EmailDetail | null> {
     isUnread: (res.data.labelIds || []).includes("UNREAD"),
     attachments,
   };
+}
+
+/**
+ * Get full details of a specific email.
+ */
+export async function getEmail(messageId: string): Promise<EmailDetail | null> {
+  const gmail = await getGmailClient();
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return null;
+  }
+
+  return getEmailWithClient(gmail, messageId);
 }
 
 /**
@@ -791,44 +805,7 @@ export async function readUserEmails(
     return [];
   }
 
-  let q = options?.query || "";
-  if (options?.unreadOnly) {
-    q = q ? `${q} is:unread` : "is:unread";
-  }
-
-  const listRes = await gmail.users.messages.list({
-    userId: "me",
-    maxResults: Math.min(options?.maxResults || 10, 20),
-    q: q || undefined,
-  });
-
-  const messages = listRes.data.messages || [];
-  if (messages.length === 0) return [];
-
-  const results: EmailSummary[] = await Promise.all(
-    messages.map(async (msg) => {
-      const detail = await gmail.users.messages.get({
-        userId: "me",
-        id: msg.id!,
-        format: "metadata",
-        metadataHeaders: ["From", "To", "Subject", "Date"],
-      });
-
-      const headers = detail.data.payload?.headers || [];
-      return {
-        id: detail.data.id || "",
-        threadId: detail.data.threadId || "",
-        from: getHeader(headers, "From"),
-        to: getHeader(headers, "To"),
-        subject: getHeader(headers, "Subject"),
-        date: getHeader(headers, "Date"),
-        snippet: detail.data.snippet || "",
-        isUnread: (detail.data.labelIds || []).includes("UNREAD"),
-      };
-    }),
-  );
-
-  return results;
+  return listEmailsWithClient(gmail, options);
 }
 
 /**
@@ -844,28 +821,5 @@ export async function readUserEmail(
     return null;
   }
 
-  const res = await gmail.users.messages.get({
-    userId: "me",
-    id: messageId,
-    format: "full",
-  });
-
-  const headers = res.data.payload?.headers || [];
-  const payload = res.data.payload || {};
-  const body = extractBody(payload);
-  const attachments = extractAttachments(payload);
-
-  return {
-    id: res.data.id || "",
-    threadId: res.data.threadId || "",
-    from: getHeader(headers, "From"),
-    to: getHeader(headers, "To"),
-    cc: getHeader(headers, "Cc"),
-    subject: getHeader(headers, "Subject"),
-    date: getHeader(headers, "Date"),
-    body,
-    snippet: res.data.snippet || "",
-    isUnread: (res.data.labelIds || []).includes("UNREAD"),
-    attachments,
-  };
+  return getEmailWithClient(gmail, messageId);
 }
