@@ -633,3 +633,364 @@ export function createEmailTools() {
     }),
   };
 }
+
+// ── Multi-user Gmail Tools ──────────────────────────────────────────────────
+
+/**
+ * Create tools for managing Gmail as an Executive Assistant.
+ * These tools operate on behalf of specific users who have granted Aura OAuth access.
+ */
+export function createGmailEATools() {
+  return {
+    create_gmail_draft: tool({
+      description:
+        "Create a draft email in a user's Gmail account. The user must have granted Aura OAuth access first.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner, e.g. 'Joan' or '@joan'",
+          ),
+        to: z.string().describe("Recipient email address"),
+        subject: z.string().describe("Email subject line"),
+        body: z.string().describe("Email body text"),
+        cc: z.string().optional().describe("CC email address"),
+        bcc: z.string().optional().describe("BCC email address"),
+        in_reply_to: z
+          .string()
+          .optional()
+          .describe("Message-ID to reply to (for threading)"),
+        references: z
+          .string()
+          .optional()
+          .describe("References header (for threading)"),
+        thread_id: z
+          .string()
+          .optional()
+          .describe("Gmail thread ID to add the draft to"),
+        quoted_message: z
+          .string()
+          .optional()
+          .describe("Original message text to quote in the reply"),
+      }),
+      execute: async ({
+        user_name,
+        to,
+        subject,
+        body,
+        cc,
+        bcc,
+        in_reply_to,
+        references,
+        thread_id,
+        quoted_message,
+      }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+            };
+          }
+
+          const { createDraft } = await import("../lib/gmail.js");
+          const result = await createDraft(userId, {
+            to,
+            subject,
+            body,
+            cc,
+            bcc,
+            inReplyTo: in_reply_to,
+            references,
+            threadId: thread_id,
+            quotedMessage: quoted_message,
+          });
+
+          if (!result) {
+            return {
+              ok: false,
+              error: `No Gmail access for user '${user_name}'. They need to authorize Aura via the OAuth flow first.`,
+            };
+          }
+
+          return {
+            ok: true,
+            draft_id: result.draftId,
+            message_id: result.messageId,
+            message: `Draft created in ${user_name}'s Gmail: "${subject}" to ${to}`,
+          };
+        } catch (error: any) {
+          logger.error("create_gmail_draft failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to create draft: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    list_gmail_drafts: tool({
+      description:
+        "List draft emails in a user's Gmail account. The user must have granted Aura OAuth access.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner",
+          ),
+        max_results: z
+          .number()
+          .min(1)
+          .max(20)
+          .optional()
+          .default(10)
+          .describe("Maximum number of drafts to return (default 10)"),
+      }),
+      execute: async ({ user_name, max_results }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'.`,
+            };
+          }
+
+          const { listDrafts } = await import("../lib/gmail.js");
+          const drafts = await listDrafts(userId, max_results);
+
+          if (!drafts) {
+            return {
+              ok: false,
+              error: `No Gmail access for user '${user_name}'. They need to authorize Aura via OAuth first.`,
+            };
+          }
+
+          return {
+            ok: true,
+            count: drafts.length,
+            drafts,
+          };
+        } catch (error: any) {
+          logger.error("list_gmail_drafts failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to list drafts: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    read_user_emails: tool({
+      description:
+        "Read recent emails from a specific user's Gmail inbox. The user must have granted Aura OAuth access.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner",
+          ),
+        query: z
+          .string()
+          .optional()
+          .describe(
+            "Gmail search query, e.g. 'from:someone@example.com' or 'is:unread'",
+          ),
+        max_results: z
+          .number()
+          .min(1)
+          .max(20)
+          .optional()
+          .default(10)
+          .describe("Maximum emails to return (default 10)"),
+        unread_only: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("Only show unread emails"),
+      }),
+      execute: async ({ user_name, query, max_results, unread_only }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'.`,
+            };
+          }
+
+          const { readUserEmails } = await import("../lib/gmail.js");
+          const emails = await readUserEmails(userId, {
+            query,
+            maxResults: max_results,
+            unreadOnly: unread_only,
+          });
+
+          if (!emails) {
+            return {
+              ok: false,
+              error: `No Gmail access for user '${user_name}'. They need to authorize Aura via OAuth first.`,
+            };
+          }
+
+          return {
+            ok: true,
+            count: emails.length,
+            emails,
+          };
+        } catch (error: any) {
+          logger.error("read_user_emails failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to read emails: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    read_user_email: tool({
+      description:
+        "Read the full content of a specific email from a user's Gmail account by message ID.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner",
+          ),
+        message_id: z
+          .string()
+          .describe("The Gmail message ID to read"),
+      }),
+      execute: async ({ user_name, message_id }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'.`,
+            };
+          }
+
+          const { readUserEmail } = await import("../lib/gmail.js");
+          const email = await readUserEmail(userId, message_id);
+
+          if (!email) {
+            return {
+              ok: false,
+              error: `No Gmail access for user '${user_name}', or message not found.`,
+            };
+          }
+
+          return {
+            ok: true,
+            ...email,
+          };
+        } catch (error: any) {
+          logger.error("read_user_email failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to read email: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    delete_gmail_draft: tool({
+      description:
+        "Delete a draft email from a user's Gmail account. The user must have granted Aura OAuth access.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner",
+          ),
+        draft_id: z
+          .string()
+          .describe("The Gmail draft ID to delete"),
+      }),
+      execute: async ({ user_name, draft_id }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'.`,
+            };
+          }
+
+          const { deleteDraft } = await import("../lib/gmail.js");
+          const success = await deleteDraft(userId, draft_id);
+
+          if (!success) {
+            return {
+              ok: false,
+              error: `No Gmail access for user '${user_name}', or draft not found.`,
+            };
+          }
+
+          return {
+            ok: true,
+            message: `Draft ${draft_id} deleted from ${user_name}'s Gmail.`,
+          };
+        } catch (error: any) {
+          logger.error("delete_gmail_draft failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to delete draft: ${error.message}`,
+          };
+        }
+      },
+    }),
+  };
+}
+
+/**
+ * Resolve a user display name / username to a Slack user ID.
+ * Reuses the paginated, cached getUserList from slack.ts.
+ */
+async function resolveSlackUserId(
+  userName: string,
+): Promise<string | null> {
+  try {
+    const { WebClient } = await import("@slack/web-api");
+    const { getUserList } = await import("./slack.js");
+    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
+    const users = await getUserList(client);
+
+    const normalizedInput = userName
+      .replace(/^@/, "")
+      .toLowerCase()
+      .trim();
+
+    // Exact match
+    for (const user of users) {
+      if (
+        user.displayName.toLowerCase() === normalizedInput ||
+        user.realName.toLowerCase() === normalizedInput ||
+        user.username.toLowerCase() === normalizedInput
+      ) {
+        return user.id;
+      }
+    }
+
+    // Fuzzy match (starts with)
+    for (const user of users) {
+      if (
+        user.displayName.toLowerCase().startsWith(normalizedInput) ||
+        user.realName.toLowerCase().startsWith(normalizedInput) ||
+        user.username.toLowerCase().startsWith(normalizedInput)
+      ) {
+        return user.id;
+      }
+    }
+
+    return null;
+  } catch (error: any) {
+    logger.error("Failed to resolve Slack user ID", {
+      userName,
+      error: error.message,
+    });
+    return null;
+  }
+}

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -44,6 +45,7 @@ export interface ListEmailsOptions {
 
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/directory.readonly",
@@ -188,15 +190,22 @@ function buildMimeMessage(
   subject: string,
   body: string,
   options?: SendEmailOptions,
+  explicitInReplyTo?: string,
+  explicitReferences?: string,
+  overrides?: { from?: string; includeSignature?: boolean },
 ): string {
   const auraEmail =
     process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com";
+  const fromHeader = overrides?.from || `Aura <${auraEmail}>`;
+  const includeSignature = overrides?.includeSignature !== false;
   const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const htmlBody = `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>\n${EMAIL_SIGNATURE_HTML}`;
-  const textBody = `${body}${EMAIL_SIGNATURE_TEXT}`;
+  const htmlBody = includeSignature
+    ? `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>\n${EMAIL_SIGNATURE_HTML}`
+    : `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>`;
+  const textBody = includeSignature ? `${body}${EMAIL_SIGNATURE_TEXT}` : body;
 
   const headers: string[] = [
-    `From: Aura <${auraEmail}>`,
+    `From: ${fromHeader}`,
     `To: ${to}`,
     `Subject: ${encodeSubject(subject)}`,
     "MIME-Version: 1.0",
@@ -205,9 +214,13 @@ function buildMimeMessage(
 
   if (options?.cc) headers.push(`Cc: ${options.cc}`);
   if (options?.bcc) headers.push(`Bcc: ${options.bcc}`);
-  if (options?.replyToMessageId) {
-    headers.push(`In-Reply-To: ${options.replyToMessageId}`);
-    headers.push(`References: ${options.replyToMessageId}`);
+  const inReplyToValue = explicitInReplyTo || options?.replyToMessageId;
+  const referencesValue = explicitReferences || options?.replyToMessageId;
+  if (inReplyToValue) {
+    headers.push(`In-Reply-To: ${inReplyToValue}`);
+  }
+  if (referencesValue) {
+    headers.push(`References: ${referencesValue}`);
   }
 
   const parts = [
@@ -335,24 +348,18 @@ export async function sendEmail(
   };
 }
 
-/**
- * List emails from the inbox.
- */
-export async function listEmails(
+// ── Shared helpers (DRY: used by both Aura and user-facing functions) ───────
+
+async function listEmailsWithClient(
+  gmailClient: any,
   options?: ListEmailsOptions,
 ): Promise<EmailSummary[]> {
-  const gmail = await getGmailClient();
-  if (!gmail) {
-    logger.error("Gmail client not available");
-    return [];
-  }
-
   let q = options?.query || "";
   if (options?.unreadOnly) {
     q = q ? `${q} is:unread` : "is:unread";
   }
 
-  const listRes = await gmail.users.messages.list({
+  const listRes = await gmailClient.users.messages.list({
     userId: "me",
     maxResults: Math.min(options?.maxResults || 10, 20),
     q: q || undefined,
@@ -362,8 +369,8 @@ export async function listEmails(
   if (messages.length === 0) return [];
 
   const results: EmailSummary[] = await Promise.all(
-    messages.map(async (msg) => {
-      const detail = await gmail.users.messages.get({
+    messages.map(async (msg: any) => {
+      const detail = await gmailClient.users.messages.get({
         userId: "me",
         id: msg.id!,
         format: "metadata",
@@ -387,17 +394,11 @@ export async function listEmails(
   return results;
 }
 
-/**
- * Get full details of a specific email.
- */
-export async function getEmail(messageId: string): Promise<EmailDetail | null> {
-  const gmail = await getGmailClient();
-  if (!gmail) {
-    logger.error("Gmail client not available");
-    return null;
-  }
-
-  const res = await gmail.users.messages.get({
+async function getEmailWithClient(
+  gmailClient: any,
+  messageId: string,
+): Promise<EmailDetail> {
+  const res = await gmailClient.users.messages.get({
     userId: "me",
     id: messageId,
     format: "full",
@@ -421,6 +422,34 @@ export async function getEmail(messageId: string): Promise<EmailDetail | null> {
     isUnread: (res.data.labelIds || []).includes("UNREAD"),
     attachments,
   };
+}
+
+/**
+ * List emails from the inbox.
+ */
+export async function listEmails(
+  options?: ListEmailsOptions,
+): Promise<EmailSummary[]> {
+  const gmail = await getGmailClient();
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return [];
+  }
+
+  return listEmailsWithClient(gmail, options);
+}
+
+/**
+ * Get full details of a specific email.
+ */
+export async function getEmail(messageId: string): Promise<EmailDetail | null> {
+  const gmail = await getGmailClient();
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return null;
+  }
+
+  return getEmailWithClient(gmail, messageId);
 }
 
 /**
@@ -513,7 +542,7 @@ export function generateAuthUrl(): string | null {
  */
 export async function exchangeCodeForTokens(
   code: string,
-): Promise<{ refreshToken: string | null; error?: string }> {
+): Promise<{ refreshToken: string | null; email?: string; error?: string }> {
   const auth = await getOAuth2Client();
   if (!auth) return { refreshToken: null, error: "OAuth client not configured" };
 
@@ -523,7 +552,23 @@ export async function exchangeCodeForTokens(
       hasRefreshToken: !!tokens.refresh_token,
       hasAccessToken: !!tokens.access_token,
     });
-    return { refreshToken: tokens.refresh_token || null };
+
+    let email: string | undefined;
+    if (tokens.access_token) {
+      try {
+        const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+        });
+        if (res.ok) {
+          const profile = (await res.json()) as { emailAddress?: string };
+          email = profile.emailAddress || undefined;
+        }
+      } catch (e) {
+        logger.warn("Failed to fetch user email from userinfo endpoint", { error: e });
+      }
+    }
+
+    return { refreshToken: tokens.refresh_token || null, email };
   } catch (error: any) {
     const msg = error.message || "Unknown error";
     logger.error("Failed to exchange OAuth code for tokens", {
@@ -532,4 +577,350 @@ export async function exchangeCodeForTokens(
     });
     return { refreshToken: null, error: msg };
   }
+}
+
+// ── Multi-user OAuth ────────────────────────────────────────────────────────
+
+export interface CreateDraftOptions {
+  to: string;
+  subject: string;
+  body: string;
+  cc?: string;
+  bcc?: string;
+  inReplyTo?: string;
+  references?: string;
+  threadId?: string;
+  quotedMessage?: string;
+}
+
+export interface DraftSummary {
+  draftId: string;
+  messageId: string;
+  subject: string;
+  to: string;
+  snippet: string;
+}
+
+/**
+ * Get a refresh token for a specific Slack user from the oauth_tokens table.
+ * Returns null if the user has not authorized Aura.
+ */
+export async function getUserRefreshToken(
+  userId: string,
+): Promise<{ refreshToken: string; email: string | null } | null> {
+  try {
+    const { eq, and } = await import("drizzle-orm");
+    const { db } = await import("../db/client.js");
+    const { oauthTokens } = await import("../db/schema.js");
+
+    const rows = await db
+      .select({
+        refreshToken: oauthTokens.refreshToken,
+        email: oauthTokens.email,
+      })
+      .from(oauthTokens)
+      .where(
+        and(
+          eq(oauthTokens.userId, userId),
+          eq(oauthTokens.provider, "google"),
+        ),
+      )
+      .limit(1);
+
+    if (!rows[0]) return null;
+    return {
+      refreshToken: rows[0].refreshToken,
+      email: rows[0].email,
+    };
+  } catch (error) {
+    logger.error("Failed to get user refresh token", { userId, error });
+    return null;
+  }
+}
+
+/**
+ * Save or update a user's OAuth refresh token.
+ */
+export async function saveUserRefreshToken(
+  userId: string,
+  refreshToken: string,
+  email?: string,
+): Promise<void> {
+  const { db } = await import("../db/client.js");
+  const { oauthTokens } = await import("../db/schema.js");
+
+  await db
+    .insert(oauthTokens)
+    .values({
+      userId,
+      provider: "google",
+      refreshToken,
+      email: email || null,
+      scopes: SCOPES.join(" "),
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [oauthTokens.userId, oauthTokens.provider],
+      set: {
+        refreshToken,
+        email: email || undefined,
+        scopes: SCOPES.join(" "),
+        updatedAt: new Date(),
+      },
+    });
+
+  logger.info("User OAuth refresh token saved", { userId, email });
+}
+
+/**
+ * Get an authenticated Gmail client for a specific Slack user.
+ * Returns null if the user has not authorized or credentials are missing.
+ */
+export async function getGmailClientForUser(userId: string) {
+  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    logger.warn("Gmail: OAuth client credentials not configured");
+    return null;
+  }
+
+  const userToken = await getUserRefreshToken(userId);
+  if (!userToken) {
+    logger.warn("Gmail: No OAuth token found for user", { userId });
+    return null;
+  }
+
+  const { OAuth2Client } = await import("google-auth-library");
+  const oauth2Client = new OAuth2Client(
+    clientId,
+    clientSecret,
+    getRedirectUri(),
+  );
+  oauth2Client.setCredentials({ refresh_token: userToken.refreshToken });
+
+  const { gmail } = await import("@googleapis/gmail");
+  const client = gmail({ version: "v1", auth: oauth2Client });
+  return { client, email: userToken.email };
+}
+
+// ── OAuth State Signing (nonce + TTL) ───────────────────────────────────────
+
+function getOAuthStateSecret(): string {
+  return process.env.GOOGLE_EMAIL_CLIENT_SECRET || "";
+}
+
+const OAUTH_STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+
+function signOAuthState(userId: string): string {
+  const secret = getOAuthStateSecret();
+  const nonce = crypto.randomBytes(16).toString("hex");
+  const ts = Date.now();
+  const payload = `${userId}:${nonce}:${ts}`;
+  const sig = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  return JSON.stringify({ userId, nonce, ts, sig });
+}
+
+/**
+ * Verify the HMAC signature on an OAuth state parameter.
+ * Returns the userId if valid, or null if tampered/expired/missing.
+ */
+export function verifyOAuthState(stateParam: string): string | null {
+  try {
+    const { userId, nonce, ts, sig } = JSON.parse(stateParam);
+    if (!userId || !nonce || !ts || !sig) return null;
+    const secret = getOAuthStateSecret();
+    if (!secret) return null;
+    if (Date.now() - ts > OAUTH_STATE_EXPIRY_MS) return null;
+    const payload = `${userId}:${nonce}:${ts}`;
+    const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+    const valid = crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"));
+    return valid ? userId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Generate an OAuth consent URL for a specific user.
+ * Encodes the user_id in a signed state parameter so the callback can save the token.
+ */
+export function generateAuthUrlForUser(userId: string): string | null {
+  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return null;
+  }
+
+  const redirectUri = getRedirectUri();
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: SCOPES.join(" "),
+    access_type: "offline",
+    prompt: "consent",
+    state: signOAuthState(userId),
+  });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+// ── Draft Functions ─────────────────────────────────────────────────────────
+
+/**
+ * Create a draft email in a user's Gmail account.
+ */
+export async function createDraft(
+  userId: string,
+  options: CreateDraftOptions,
+): Promise<{ draftId: string; messageId: string } | null> {
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
+
+  const { client: gmail, email: userEmail } = result;
+
+  let bodyText = options.body;
+  if (options.quotedMessage) {
+    bodyText += `\n\n---------- Forwarded message ----------\n${options.quotedMessage}`;
+  }
+
+  const raw = base64UrlEncode(
+    buildMimeMessage(
+      options.to,
+      options.subject,
+      bodyText,
+      {
+        cc: options.cc,
+        bcc: options.bcc,
+        replyToMessageId: options.inReplyTo,
+        threadId: options.threadId,
+      },
+      options.inReplyTo,
+      options.references,
+      {
+        from: userEmail || undefined,
+        includeSignature: false,
+      },
+    ),
+  );
+
+  const res = await gmail.users.drafts.create({
+    userId: "me",
+    requestBody: {
+      message: {
+        raw,
+        threadId: options.threadId || undefined,
+      },
+    },
+  });
+
+  logger.info("Draft created", {
+    userId,
+    draftId: res.data.id,
+    to: options.to,
+    subject: options.subject,
+  });
+
+  return {
+    draftId: res.data.id || "",
+    messageId: res.data.message?.id || "",
+  };
+}
+
+/**
+ * List drafts in a user's Gmail account.
+ */
+export async function listDrafts(
+  userId: string,
+  maxResults: number = 10,
+): Promise<DraftSummary[] | null> {
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
+
+  const { client: gmail } = result;
+  const res = await gmail.users.drafts.list({
+    userId: "me",
+    maxResults,
+  });
+
+  const drafts = res.data.drafts || [];
+  if (drafts.length === 0) return [];
+
+  const results: DraftSummary[] = await Promise.all(
+    drafts.filter((draft) => draft.id).map(async (draft) => {
+      try {
+        const detail = await gmail.users.drafts.get({
+          userId: "me",
+          id: draft.id!,
+          format: "metadata",
+        });
+        const headers = detail.data.message?.payload?.headers || [];
+        return {
+          draftId: draft.id!,
+          messageId: detail.data.message?.id || "",
+          subject: getHeader(headers as any[], "Subject") || "(no subject)",
+          to: getHeader(headers as any[], "To"),
+          snippet: detail.data.message?.snippet || "",
+        };
+      } catch {
+        return {
+          draftId: draft.id!,
+          messageId: draft.message?.id || "",
+          subject: "(unable to read)",
+          to: "",
+          snippet: "",
+        };
+      }
+    }),
+  );
+
+  return results;
+}
+
+/**
+ * Delete a draft from a user's Gmail account.
+ */
+export async function deleteDraft(
+  userId: string,
+  draftId: string,
+): Promise<boolean> {
+  const result = await getGmailClientForUser(userId);
+  if (!result) return false;
+
+  const { client: gmail } = result;
+  await gmail.users.drafts.delete({
+    userId: "me",
+    id: draftId,
+  });
+
+  logger.info("Draft deleted", { userId, draftId });
+  return true;
+}
+
+/**
+ * Read emails from a specific user's Gmail inbox.
+ */
+export async function readUserEmails(
+  userId: string,
+  options?: ListEmailsOptions,
+): Promise<EmailSummary[] | null> {
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
+
+  return listEmailsWithClient(result.client, options);
+}
+
+/**
+ * Read a specific email from a user's Gmail inbox.
+ */
+export async function readUserEmail(
+  userId: string,
+  messageId: string,
+): Promise<EmailDetail | null> {
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
+
+  return getEmailWithClient(result.client, messageId);
 }
