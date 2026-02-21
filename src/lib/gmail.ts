@@ -39,6 +39,12 @@ export interface ListEmailsOptions {
   query?: string;
   maxResults?: number;
   unreadOnly?: boolean;
+  pageToken?: string;
+}
+
+export interface ListEmailsResult {
+  emails: EmailSummary[];
+  nextPageToken?: string | null;
 }
 
 // ── OAuth2 Client ───────────────────────────────────────────────────────────
@@ -353,7 +359,7 @@ export async function sendEmail(
 async function listEmailsWithClient(
   gmailClient: any,
   options?: ListEmailsOptions,
-): Promise<EmailSummary[]> {
+): Promise<ListEmailsResult> {
   let q = options?.query || "";
   if (options?.unreadOnly) {
     q = q ? `${q} is:unread` : "is:unread";
@@ -363,12 +369,14 @@ async function listEmailsWithClient(
     userId: "me",
     maxResults: Math.min(options?.maxResults || 10, 20),
     q: q || undefined,
+    pageToken: options?.pageToken || undefined,
   });
 
+  const nextPageToken: string | null = listRes.data.nextPageToken || null;
   const messages = listRes.data.messages || [];
-  if (messages.length === 0) return [];
+  if (messages.length === 0) return { emails: [], nextPageToken };
 
-  const results: EmailSummary[] = await Promise.all(
+  const emails: EmailSummary[] = await Promise.all(
     messages.map(async (msg: any) => {
       const detail = await gmailClient.users.messages.get({
         userId: "me",
@@ -391,7 +399,7 @@ async function listEmailsWithClient(
     }),
   );
 
-  return results;
+  return { emails, nextPageToken };
 }
 
 async function getEmailWithClient(
@@ -429,11 +437,11 @@ async function getEmailWithClient(
  */
 export async function listEmails(
   options?: ListEmailsOptions,
-): Promise<EmailSummary[]> {
+): Promise<ListEmailsResult> {
   const gmail = await getGmailClient();
   if (!gmail) {
     logger.error("Gmail client not available");
-    return [];
+    return { emails: [], nextPageToken: null };
   }
 
   return listEmailsWithClient(gmail, options);
@@ -905,7 +913,7 @@ export async function deleteDraft(
 export async function readUserEmails(
   userId: string,
   options?: ListEmailsOptions,
-): Promise<EmailSummary[] | null> {
+): Promise<ListEmailsResult | null> {
   const result = await getGmailClientForUser(userId);
   if (!result) return null;
 

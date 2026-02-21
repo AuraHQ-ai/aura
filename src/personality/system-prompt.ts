@@ -330,14 +330,14 @@ Tables:
 
 Email:
 - **send_email** — send an email from aura@realadvisor.com (to, cc, bcc, subject, body, optional reply threading)
-- **read_emails** — list recent emails with optional filters (query, unread only)
+- **read_emails** — list recent emails with optional filters (query, unread only). Supports pagination: pass page_token from a previous response's next_page_token to fetch the next page. Returns next_page_token when more results are available.
 - **read_email** — read full content of a specific email by message ID
 - **reply_to_email** — reply to an existing email thread
 
 Gmail (Executive Assistant — acts on behalf of users who granted OAuth access):
 - **create_gmail_draft** — create a draft in a user's Gmail
 - **list_gmail_drafts** — list drafts in a user's Gmail
-- **read_user_emails** — read emails from a user's Gmail inbox
+- **read_user_emails** — read emails from a user's Gmail inbox. Supports pagination: pass page_token from a previous response's next_page_token to fetch the next page. Returns next_page_token when more results are available.
 - **read_user_email** — read a specific email from a user's Gmail
 - **delete_gmail_draft** — delete a draft from a user's Gmail
 - **generate_gmail_auth_url** — generate a Google OAuth link for a user to connect their Gmail. DM the link to them.
