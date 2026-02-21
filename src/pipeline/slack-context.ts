@@ -321,10 +321,35 @@ export function formatConversationContext(
       thread.length <= MAX_THREAD_MESSAGES
         ? thread
         : [thread[0], ...thread.slice(-MAX_THREAD_MESSAGES + 1)];
-    const formatted = capped
+    const threadFormatted = capped
       .map((m) => formatMessage(m, timezone))
       .join("\n\n");
-    return formatted;
+
+    // Include channel messages posted before the thread root for broader context.
+    // recentMessages are in chronological order (oldest-first after the reverse
+    // in fetchConversationContext), so we take the last N that precede the root.
+    const MAX_SURROUNDING = 5;
+    const threadRootTs = parseFloat(thread[0].ts);
+    const surrounding = conversation.recentMessages
+      .filter((m) => {
+        const ts = parseFloat(m.ts);
+        return ts < threadRootTs && m.ts !== thread[0].ts;
+      })
+      .slice(-MAX_SURROUNDING);
+
+    if (surrounding.length > 0) {
+      const channelFormatted = surrounding
+        .map((m) => formatMessage(m, timezone))
+        .join("\n\n");
+      return (
+        "Channel messages near the thread (for context):\n\n" +
+        channelFormatted +
+        "\n\nRecent thread context:\n\n" +
+        threadFormatted
+      );
+    }
+
+    return threadFormatted;
   }
 
   // Fall back to recent channel/DM messages only when appropriate
