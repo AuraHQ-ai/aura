@@ -11,6 +11,7 @@ import {
   index,
   uniqueIndex,
   vector,
+  serial,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -178,6 +179,28 @@ export const settings = pgTable("settings", {
   updatedBy: text("updated_by"),
 });
 
+// ── OAuth Tokens (multi-user OAuth for Gmail/Google) ────────────────────────
+
+export const oauthTokens = pgTable(
+  "oauth_tokens",
+  {
+    id: serial("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").notNull().default("google"),
+    email: text("email"),
+    refreshToken: text("refresh_token").notNull(),
+    scopes: text("scopes"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("oauth_tokens_user_provider_idx").on(
+      table.userId,
+      table.provider,
+    ),
+  ],
+);
+
 // ── Notes (agent scratchpad with three-tier hierarchy) ──────────────────────
 
 export const notes = pgTable(
@@ -330,6 +353,8 @@ export type NewUserProfile = typeof userProfiles.$inferInsert;
 export type Channel = typeof channels.$inferSelect;
 export type NewChannel = typeof channels.$inferInsert;
 export type Setting = typeof settings.$inferSelect;
+export type OAuthToken = typeof oauthTokens.$inferSelect;
+export type NewOAuthToken = typeof oauthTokens.$inferInsert;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
