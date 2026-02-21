@@ -498,7 +498,7 @@ export function generateAuthUrl(): string | null {
  */
 export async function exchangeCodeForTokens(
   code: string,
-): Promise<{ refreshToken: string | null; error?: string }> {
+): Promise<{ refreshToken: string | null; email?: string; error?: string }> {
   const auth = await getOAuth2Client();
   if (!auth) return { refreshToken: null, error: "OAuth client not configured" };
 
@@ -508,7 +508,23 @@ export async function exchangeCodeForTokens(
       hasRefreshToken: !!tokens.refresh_token,
       hasAccessToken: !!tokens.access_token,
     });
-    return { refreshToken: tokens.refresh_token || null };
+
+    let email: string | undefined;
+    if (tokens.access_token) {
+      try {
+        const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+        });
+        if (res.ok) {
+          const profile = (await res.json()) as { emailAddress?: string };
+          email = profile.emailAddress || undefined;
+        }
+      } catch (e) {
+        logger.warn("Failed to fetch user email from userinfo endpoint", { error: e });
+      }
+    }
+
+    return { refreshToken: tokens.refresh_token || null, email };
   } catch (error: any) {
     const msg = error.message || "Unknown error";
     logger.error("Failed to exchange OAuth code for tokens", {
@@ -784,35 +800,36 @@ export async function listDrafts(
   });
 
   const drafts = res.data.drafts || [];
-  const results: DraftSummary[] = [];
+  if (drafts.length === 0) return [];
 
-  for (const draft of drafts) {
-    if (!draft.id) continue;
-    try {
-      const detail = await gmail.users.drafts.get({
-        userId: "me",
-        id: draft.id,
-        format: "metadata",
-        metadataHeaders: ["To", "Subject"],
-      });
-      const headers = detail.data.message?.payload?.headers || [];
-      results.push({
-        draftId: draft.id,
-        messageId: detail.data.message?.id || "",
-        subject: headers.find((h: any) => h.name === "Subject")?.value || "(no subject)",
-        to: headers.find((h: any) => h.name === "To")?.value || "",
-        snippet: detail.data.message?.snippet || "",
-      });
-    } catch {
-      results.push({
-        draftId: draft.id,
-        messageId: draft.message?.id || "",
-        subject: "(unable to read)",
-        to: "",
-        snippet: "",
-      });
-    }
-  }
+  const results: DraftSummary[] = await Promise.all(
+    drafts.filter((draft) => draft.id).map(async (draft) => {
+      try {
+        const detail = await gmail.users.drafts.get({
+          userId: "me",
+          id: draft.id!,
+          format: "metadata",
+          metadataHeaders: ["To", "Subject"],
+        });
+        const headers = detail.data.message?.payload?.headers || [];
+        return {
+          draftId: draft.id!,
+          messageId: detail.data.message?.id || "",
+          subject: headers.find((h: any) => h.name === "Subject")?.value || "(no subject)",
+          to: headers.find((h: any) => h.name === "To")?.value || "",
+          snippet: detail.data.message?.snippet || "",
+        };
+      } catch {
+        return {
+          draftId: draft.id!,
+          messageId: draft.message?.id || "",
+          subject: "(unable to read)",
+          to: "",
+          snippet: "",
+        };
+      }
+    }),
+  );
 
   return results;
 }
@@ -859,31 +876,32 @@ export async function readUserEmails(
   });
 
   const messages = res.data.messages || [];
-  const results: EmailSummary[] = [];
+  if (messages.length === 0) return [];
 
-  for (const msg of messages) {
-    if (!msg.id) continue;
-    const detail = await gmail.users.messages.get({
-      userId: "me",
-      id: msg.id,
-      format: "metadata",
-      metadataHeaders: ["From", "To", "Subject", "Date"],
-    });
+  const results: EmailSummary[] = await Promise.all(
+    messages.filter((msg) => msg.id).map(async (msg) => {
+      const detail = await gmail.users.messages.get({
+        userId: "me",
+        id: msg.id!,
+        format: "metadata",
+        metadataHeaders: ["From", "To", "Subject", "Date"],
+      });
 
-    const headers = detail.data.payload?.headers || [];
-    const labelIds = detail.data.labelIds || [];
+      const headers = detail.data.payload?.headers || [];
+      const labelIds = detail.data.labelIds || [];
 
-    results.push({
-      id: msg.id,
-      threadId: detail.data.threadId || "",
-      from: getHeader(headers, "From"),
-      to: getHeader(headers, "To"),
-      subject: getHeader(headers, "Subject"),
-      date: getHeader(headers, "Date"),
-      snippet: detail.data.snippet || "",
-      isUnread: labelIds.includes("UNREAD"),
-    });
-  }
+      return {
+        id: msg.id!,
+        threadId: detail.data.threadId || "",
+        from: getHeader(headers, "From"),
+        to: getHeader(headers, "To"),
+        subject: getHeader(headers, "Subject"),
+        date: getHeader(headers, "Date"),
+        snippet: detail.data.snippet || "",
+        isUnread: labelIds.includes("UNREAD"),
+      };
+    }),
+  );
 
   return results;
 }

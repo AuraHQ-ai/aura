@@ -369,8 +369,8 @@ app.get("/api/oauth/google/callback", async (c) => {
   // Multi-user flow: save to oauth_tokens table
   if (userId) {
     try {
-      await saveUserRefreshToken(userId, result.refreshToken);
-      logger.info("User OAuth refresh token saved to database", { userId });
+      await saveUserRefreshToken(userId, result.refreshToken, result.email);
+      logger.info("User OAuth refresh token saved to database", { userId, email: result.email });
       return c.json({
         success: true,
         message: `Gmail connected for user ${userId}! Refresh token saved. Aura can now access this Gmail account.`,
