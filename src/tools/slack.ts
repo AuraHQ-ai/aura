@@ -2053,21 +2053,40 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          const result = await (client as any).apiCall(
-            "canvases.access.set",
-            {
-              canvas_id,
-              access_level,
-              ...(user_ids && { user_ids }),
-              ...(channel_ids && { channel_ids }),
-            },
-          );
-
-          if (!result.ok) {
+          if (access_level === "owner" && channel_ids?.length) {
             return {
               ok: false,
-              error: `Failed to share canvas: ${result.error || "unknown error"}`,
+              error:
+                "access_level 'owner' can only be granted to users (user_ids), not channels.",
             };
+          }
+
+          // user_ids and channel_ids are mutually exclusive in the API,
+          // so make separate calls when both are provided
+          if (user_ids?.length) {
+            const userResult = await (client as any).apiCall(
+              "canvases.access.set",
+              { canvas_id, access_level, user_ids },
+            );
+            if (!userResult.ok) {
+              return {
+                ok: false,
+                error: `Failed to share canvas with users: ${userResult.error || "unknown error"}`,
+              };
+            }
+          }
+
+          if (channel_ids?.length) {
+            const channelResult = await (client as any).apiCall(
+              "canvases.access.set",
+              { canvas_id, access_level, channel_ids },
+            );
+            if (!channelResult.ok) {
+              return {
+                ok: false,
+                error: `Failed to share canvas with channels: ${channelResult.error || "unknown error"}`,
+              };
+            }
           }
 
           logger.info("share_canvas tool called", {
@@ -2117,7 +2136,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const { WebClient } = await import("@slack/web-api");
           const userClient = new WebClient(userToken);
           const result = await userClient.apiCall("files.list", {
-            types: "canvases",
+            types: "spaces",
             count,
             ...(channel && { channel }),
           });
