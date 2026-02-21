@@ -336,29 +336,35 @@ app.get("/api/oauth/google/callback", async (c) => {
   const stateParam = c.req.query("state");
   let stateUserId: string | undefined;
   if (stateParam) {
-    try {
-      const parsed = JSON.parse(stateParam);
-      stateUserId = parsed.userId;
-    } catch {
-      // state wasn't JSON — ignore
+    const { verifyOAuthState } = await import("./lib/gmail.js");
+    const verified = verifyOAuthState(stateParam);
+    if (!verified) {
+      return c.json({ error: "Invalid or tampered OAuth state" }, 403);
     }
+    stateUserId = verified;
   }
 
   const { exchangeCodeForTokens, saveRefreshToken, saveUserRefreshToken } = await import("./lib/gmail.js");
   const result = await exchangeCodeForTokens(code);
   if (!result.refreshToken) return c.json({ error: "Token exchange failed", detail: result.error || "No refresh token returned" }, 500);
 
-  try {
-    if (stateUserId) {
+  if (stateUserId) {
+    try {
       await saveUserRefreshToken(stateUserId, result.refreshToken, result.scopes);
       logger.info("OAuth refresh token saved for user", { userId: stateUserId });
       return c.json({
         success: true,
         message: `Gmail connected for user ${stateUserId}! Aura can now create drafts and read emails on your behalf.`,
       });
+    } catch (saveError: any) {
+      logger.error("Failed to save user refresh token to database", { error: saveError.message, userId: stateUserId });
+      return c.json({
+        error: "Failed to save OAuth token. Please try again or contact an admin.",
+      }, 500);
     }
+  }
 
-    // No user_id in state — save to settings as before (backward compatible)
+  try {
     await saveRefreshToken(result.refreshToken);
     logger.info("OAuth refresh token saved to database");
     return c.json({
