@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { generateText, Output } from "ai";
+import { generateObject, generateText, Output } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
@@ -211,4 +211,142 @@ export async function getProfile(
     .limit(1);
 
   return results[0] || null;
+}
+
+// ── Profile Consolidation ─────────────────────────────────────────────────
+
+const CAPS = {
+  interests: 100,
+  preferences: 100,
+  personalDetails: 50,
+} as const;
+
+const consolidatedSchema = z.object({
+  consolidated: z.array(z.string()).describe("Consolidated list of items"),
+});
+
+async function consolidateCategory(
+  model: Awaited<ReturnType<typeof getFastModel>>,
+  category: string,
+  items: string[],
+  cap: number,
+): Promise<string[]> {
+  const { object } = await generateObject({
+    model,
+    schema: consolidatedSchema,
+    system: `You are consolidating a user profile's "${category}" list. Merge semantically similar items, remove noise and overly granular entries, and keep genuinely distinct items. Preserve the most important/recent items. Return at most ${cap} items.`,
+    prompt: `Consolidate these ${items.length} items:\n\n${items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`,
+  });
+
+  return object.consolidated.slice(0, cap);
+}
+
+/**
+ * Consolidate bloated user profiles by deduplicating and merging similar items
+ * via LLM. Runs as part of the daily cron to keep profiles bounded.
+ */
+export async function consolidateProfiles(): Promise<{
+  profilesProcessed: number;
+  totalBefore: number;
+  totalAfter: number;
+}> {
+  const profiles = await db
+    .select()
+    .from(userProfiles)
+    .where(
+      sql`(
+        jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'interests', '[]'::jsonb)) > ${CAPS.interests}
+        OR jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'preferences', '[]'::jsonb)) > ${CAPS.preferences}
+        OR jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'personalDetails', '[]'::jsonb)) > ${CAPS.personalDetails}
+      )`,
+    );
+
+  if (profiles.length === 0) {
+    logger.info("Profile consolidation: no profiles need consolidation");
+    return { profilesProcessed: 0, totalBefore: 0, totalAfter: 0 };
+  }
+
+  logger.info(
+    `Profile consolidation: ${profiles.length} profile(s) need consolidation`,
+  );
+
+  const model = await getFastModel();
+  let totalBefore = 0;
+  let totalAfter = 0;
+
+  for (const profile of profiles) {
+    const facts = profile.knownFacts || {};
+    const interests = facts.interests || [];
+    const preferences = facts.preferences || [];
+    const personalDetails = facts.personalDetails || [];
+
+    const beforeCount =
+      interests.length + preferences.length + personalDetails.length;
+
+    const consolidated: KnownFacts = { ...facts };
+
+    try {
+      totalBefore += beforeCount;
+      if (interests.length > CAPS.interests) {
+        consolidated.interests = await consolidateCategory(
+          model,
+          "interests",
+          interests,
+          CAPS.interests,
+        );
+      }
+
+      if (preferences.length > CAPS.preferences) {
+        consolidated.preferences = await consolidateCategory(
+          model,
+          "preferences",
+          preferences,
+          CAPS.preferences,
+        );
+      }
+
+      if (personalDetails.length > CAPS.personalDetails) {
+        consolidated.personalDetails = await consolidateCategory(
+          model,
+          "personalDetails",
+          personalDetails,
+          CAPS.personalDetails,
+        );
+      }
+
+      const afterCount =
+        (consolidated.interests?.length || 0) +
+        (consolidated.preferences?.length || 0) +
+        (consolidated.personalDetails?.length || 0);
+      totalAfter += afterCount;
+
+      await db
+        .update(userProfiles)
+        .set({
+          knownFacts: consolidated,
+          lastProfileConsolidation: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(userProfiles.id, profile.id));
+
+      logger.info("Consolidated user profile", {
+        slackUserId: profile.slackUserId,
+        before: beforeCount,
+        after: afterCount,
+      });
+    } catch (error) {
+      logger.error("Failed to consolidate profile", {
+        slackUserId: profile.slackUserId,
+        error: String(error),
+      });
+    }
+  }
+
+  logger.info("Profile consolidation complete", {
+    profilesProcessed: profiles.length,
+    totalBefore,
+    totalAfter,
+  });
+
+  return { profilesProcessed: profiles.length, totalBefore, totalAfter };
 }
