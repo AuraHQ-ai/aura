@@ -348,17 +348,15 @@ app.get("/api/oauth/google/callback", async (c) => {
   let userId: string | undefined;
   if (stateParam) {
     try {
-      const parsed = JSON.parse(stateParam);
-      if (parsed.user_id) {
-        const { verifyOAuthState } = await import("./lib/gmail.js");
-        const verified = verifyOAuthState(stateParam);
-        if (!verified) {
-          return c.json({ error: "Invalid OAuth state signature" }, 403);
-        }
-        userId = verified.userId;
+      const { verifyOAuthState } = await import("./lib/gmail.js");
+      const verified = verifyOAuthState(stateParam);
+      if (verified) {
+        userId = verified;
+      } else {
+        return c.json({ error: "Invalid or expired OAuth state" }, 403);
       }
     } catch {
-      // State is not JSON — ignore (backward compatible)
+      // State parsing failed — ignore (backward compatible)
     }
   }
 

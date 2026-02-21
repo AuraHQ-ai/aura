@@ -320,24 +320,18 @@ export async function sendEmail(
   };
 }
 
-/**
- * List emails from the inbox.
- */
-export async function listEmails(
+// ── Shared helpers (DRY: used by both Aura and user-facing functions) ───────
+
+async function listEmailsWithClient(
+  gmailClient: any,
   options?: ListEmailsOptions,
 ): Promise<EmailSummary[]> {
-  const gmail = await getGmailClient();
-  if (!gmail) {
-    logger.error("Gmail client not available");
-    return [];
-  }
-
   let q = options?.query || "";
   if (options?.unreadOnly) {
     q = q ? `${q} is:unread` : "is:unread";
   }
 
-  const listRes = await gmail.users.messages.list({
+  const listRes = await gmailClient.users.messages.list({
     userId: "me",
     maxResults: Math.min(options?.maxResults || 10, 20),
     q: q || undefined,
@@ -347,8 +341,8 @@ export async function listEmails(
   if (messages.length === 0) return [];
 
   const results: EmailSummary[] = await Promise.all(
-    messages.map(async (msg) => {
-      const detail = await gmail.users.messages.get({
+    messages.map(async (msg: any) => {
+      const detail = await gmailClient.users.messages.get({
         userId: "me",
         id: msg.id!,
         format: "metadata",
@@ -372,17 +366,11 @@ export async function listEmails(
   return results;
 }
 
-/**
- * Get full details of a specific email.
- */
-export async function getEmail(messageId: string): Promise<EmailDetail | null> {
-  const gmail = await getGmailClient();
-  if (!gmail) {
-    logger.error("Gmail client not available");
-    return null;
-  }
-
-  const res = await gmail.users.messages.get({
+async function getEmailWithClient(
+  gmailClient: any,
+  messageId: string,
+): Promise<EmailDetail> {
+  const res = await gmailClient.users.messages.get({
     userId: "me",
     id: messageId,
     format: "full",
@@ -406,6 +394,34 @@ export async function getEmail(messageId: string): Promise<EmailDetail | null> {
     isUnread: (res.data.labelIds || []).includes("UNREAD"),
     attachments,
   };
+}
+
+/**
+ * List emails from the inbox.
+ */
+export async function listEmails(
+  options?: ListEmailsOptions,
+): Promise<EmailSummary[]> {
+  const gmail = await getGmailClient();
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return [];
+  }
+
+  return listEmailsWithClient(gmail, options);
+}
+
+/**
+ * Get full details of a specific email.
+ */
+export async function getEmail(messageId: string): Promise<EmailDetail | null> {
+  const gmail = await getGmailClient();
+  if (!gmail) {
+    logger.error("Gmail client not available");
+    return null;
+  }
+
+  return getEmailWithClient(gmail, messageId);
 }
 
 /**
@@ -660,9 +676,46 @@ export async function getGmailClientForUser(userId: string) {
   return { client, email: userToken.email };
 }
 
+// ── OAuth State Signing (nonce + TTL) ───────────────────────────────────────
+
+function getOAuthStateSecret(): string {
+  return process.env.SLACK_SIGNING_SECRET || process.env.GOOGLE_EMAIL_CLIENT_SECRET || "";
+}
+
+const OAUTH_STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+
+function signOAuthState(userId: string): string {
+  const secret = getOAuthStateSecret();
+  const nonce = crypto.randomBytes(16).toString("hex");
+  const ts = Date.now();
+  const payload = `${userId}:${nonce}:${ts}`;
+  const sig = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  return JSON.stringify({ userId, nonce, ts, sig });
+}
+
+/**
+ * Verify the HMAC signature on an OAuth state parameter.
+ * Returns the userId if valid, or null if tampered/expired/missing.
+ */
+export function verifyOAuthState(stateParam: string): string | null {
+  try {
+    const { userId, nonce, ts, sig } = JSON.parse(stateParam);
+    if (!userId || !nonce || !ts || !sig) return null;
+    const secret = getOAuthStateSecret();
+    if (!secret) return null;
+    if (Date.now() - ts > OAUTH_STATE_EXPIRY_MS) return null;
+    const payload = `${userId}:${nonce}:${ts}`;
+    const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+    const valid = crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"));
+    return valid ? userId : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Generate an OAuth consent URL for a specific user.
- * Encodes the user_id in the state parameter so the callback can save the token.
+ * Encodes the user_id in a signed state parameter so the callback can save the token.
  */
 export function generateAuthUrlForUser(userId: string): string | null {
   const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
@@ -673,11 +726,6 @@ export function generateAuthUrlForUser(userId: string): string | null {
   }
 
   const redirectUri = getRedirectUri();
-  const sig = crypto
-    .createHmac("sha256", clientSecret)
-    .update(userId)
-    .digest("hex");
-  const state = JSON.stringify({ user_id: userId, sig });
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -685,40 +733,10 @@ export function generateAuthUrlForUser(userId: string): string | null {
     scope: SCOPES.join(" "),
     access_type: "offline",
     prompt: "consent",
-    state,
+    state: signOAuthState(userId),
   });
 
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-}
-
-/**
- * Verify the HMAC signature in an OAuth state parameter.
- * Returns the user_id if valid, null otherwise.
- */
-export function verifyOAuthState(
-  stateParam: string,
-): { userId: string } | null {
-  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
-  if (!clientSecret || !stateParam) return null;
-
-  try {
-    const state = JSON.parse(stateParam);
-    const { user_id, sig } = state;
-    if (!user_id || !sig) return null;
-
-    const expectedSig = crypto
-      .createHmac("sha256", clientSecret)
-      .update(user_id)
-      .digest("hex");
-    const sigBuf = Buffer.from(sig, "utf8");
-    const expectedBuf = Buffer.from(expectedSig, "utf8");
-    if (sigBuf.length !== expectedBuf.length) return null;
-    if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
-
-    return { userId: user_id };
-  } catch {
-    return null;
-  }
 }
 
 // ── Draft Functions ─────────────────────────────────────────────────────────
@@ -809,14 +827,13 @@ export async function listDrafts(
           userId: "me",
           id: draft.id!,
           format: "metadata",
-          metadataHeaders: ["To", "Subject"],
         });
         const headers = detail.data.message?.payload?.headers || [];
         return {
           draftId: draft.id!,
           messageId: detail.data.message?.id || "",
-          subject: headers.find((h: any) => h.name === "Subject")?.value || "(no subject)",
-          to: headers.find((h: any) => h.name === "To")?.value || "",
+          subject: getHeader(headers as any[], "Subject") || "(no subject)",
+          to: getHeader(headers as any[], "To"),
           snippet: detail.data.message?.snippet || "",
         };
       } catch {
@@ -859,51 +876,12 @@ export async function deleteDraft(
  */
 export async function readUserEmails(
   userId: string,
-  options: ListEmailsOptions = {},
+  options?: ListEmailsOptions,
 ): Promise<EmailSummary[] | null> {
   const result = await getGmailClientForUser(userId);
   if (!result) return null;
 
-  const { client: gmail } = result;
-  const q = [options.query || "", options.unreadOnly ? "is:unread" : ""]
-    .filter(Boolean)
-    .join(" ");
-
-  const res = await gmail.users.messages.list({
-    userId: "me",
-    maxResults: options.maxResults || 10,
-    q: q || undefined,
-  });
-
-  const messages = res.data.messages || [];
-  if (messages.length === 0) return [];
-
-  const results: EmailSummary[] = await Promise.all(
-    messages.filter((msg) => msg.id).map(async (msg) => {
-      const detail = await gmail.users.messages.get({
-        userId: "me",
-        id: msg.id!,
-        format: "metadata",
-        metadataHeaders: ["From", "To", "Subject", "Date"],
-      });
-
-      const headers = detail.data.payload?.headers || [];
-      const labelIds = detail.data.labelIds || [];
-
-      return {
-        id: msg.id!,
-        threadId: detail.data.threadId || "",
-        from: getHeader(headers, "From"),
-        to: getHeader(headers, "To"),
-        subject: getHeader(headers, "Subject"),
-        date: getHeader(headers, "Date"),
-        snippet: detail.data.snippet || "",
-        isUnread: labelIds.includes("UNREAD"),
-      };
-    }),
-  );
-
-  return results;
+  return listEmailsWithClient(result.client, options);
 }
 
 /**
@@ -916,28 +894,5 @@ export async function readUserEmail(
   const result = await getGmailClientForUser(userId);
   if (!result) return null;
 
-  const { client: gmail } = result;
-  const res = await gmail.users.messages.get({
-    userId: "me",
-    id: messageId,
-    format: "full",
-  });
-
-  const payload = res.data.payload || {};
-  const headers = payload.headers || [];
-  const labelIds = res.data.labelIds || [];
-
-  return {
-    id: res.data.id || "",
-    threadId: res.data.threadId || "",
-    from: getHeader(headers, "From"),
-    to: getHeader(headers, "To"),
-    cc: getHeader(headers, "Cc"),
-    subject: getHeader(headers, "Subject"),
-    date: getHeader(headers, "Date"),
-    body: extractBody(payload),
-    snippet: res.data.snippet || "",
-    isUnread: labelIds.includes("UNREAD"),
-    attachments: extractAttachments(payload),
-  };
+  return getEmailWithClient(result.client, messageId);
 }
