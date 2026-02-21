@@ -741,6 +741,13 @@ export function createEmailTools(client?: WebClient) {
           const { listDrafts } = await import("../lib/gmail.js");
           const drafts = await listDrafts(userId);
 
+          if (drafts === null) {
+            return {
+              ok: false,
+              error: `No Gmail OAuth token found for this user. They need to grant Aura access first via the OAuth flow.`,
+            };
+          }
+
           logger.info("list_gmail_drafts tool called", {
             userId,
             count: drafts.length,
@@ -799,6 +806,13 @@ export function createEmailTools(client?: WebClient) {
             maxResults: max_results,
             unreadOnly: unread_only,
           });
+
+          if (emails === null) {
+            return {
+              ok: false,
+              error: `No Gmail OAuth token found for this user. They need to grant Aura access first via the OAuth flow.`,
+            };
+          }
 
           logger.info("read_user_emails tool called", {
             userId,
