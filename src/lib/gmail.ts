@@ -155,6 +155,18 @@ function base64UrlEncode(str: string): string {
     .replace(/=+$/, "");
 }
 
+/**
+ * RFC 2047 encode a subject line if it contains non-ASCII characters.
+ * MIME headers must be ASCII-only; non-ASCII needs encoded-word syntax.
+ */
+function encodeSubject(subject: string): string {
+  // If pure ASCII, no encoding needed
+  if (/^[\x20-\x7E]*$/.test(subject)) return subject;
+  // RFC 2047 Base64 encoding for UTF-8
+  const encoded = Buffer.from(subject, "utf-8").toString("base64");
+  return `=?UTF-8?B?${encoded}?=`;
+}
+
 function buildMimeMessage(
   to: string,
   subject: string,
@@ -170,7 +182,7 @@ function buildMimeMessage(
   const headers: string[] = [
     `From: Aura <${auraEmail}>`,
     `To: ${to}`,
-    `Subject: ${subject}`,
+    `Subject: ${encodeSubject(subject)}`,
     "MIME-Version: 1.0",
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
