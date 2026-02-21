@@ -351,9 +351,9 @@ app.get("/api/oauth/google/callback", async (c) => {
     const verified = verifyOAuthState(stateParam);
     if (verified) {
       userId = verified;
+    } else {
+      return c.json({ error: "Invalid or expired OAuth state" }, 403);
     }
-    // If verification returns null (old format, expired, tampered), fall through
-    // without a userId — backward compatible with pre-signed state flows.
   }
 
   const { exchangeCodeForTokens, saveRefreshToken, saveUserRefreshToken } = await import("./lib/gmail.js");
