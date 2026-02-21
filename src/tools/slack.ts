@@ -15,6 +15,7 @@ import { createConversationSearchTools } from "./conversations.js";
 import { createEmailTools } from "./email.js";
 import { createSheetsTools } from "./sheets.js";
 import type { ScheduleContext } from "../db/schema.js";
+import { formatForSlack } from "../lib/format.js";
 import { formatTimestamp } from "../lib/temporal.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
@@ -989,7 +990,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           const result = await client.chat.postMessage({
             channel: channel.id,
-            text: message,
+            text: formatForSlack(message),
           });
 
           logger.info("send_channel_message tool called", {
@@ -1294,7 +1295,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           const result = await client.chat.postMessage({
             channel: dmChannelId,
-            text: message,
+            text: formatForSlack(message),
           });
 
           logger.info("send_direct_message tool called", {
@@ -1977,7 +1978,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           await client.chat.update({
             channel: channel.id,
             ts: message_ts,
-            text: new_text,
+            text: formatForSlack(new_text),
           });
           logger.info("edit_message tool called", {
             channel: channel.name,
@@ -2047,7 +2048,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             return { ok: false, error: `Channel "${channelInput}" not found.` };
           const result = await client.chat.postMessage({
             channel: channel.id,
-            text: message,
+            text: formatForSlack(message),
             thread_ts,
           });
           logger.info("send_thread_reply tool called", {
