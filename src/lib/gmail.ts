@@ -160,11 +160,27 @@ function base64UrlEncode(str: string): string {
  * MIME headers must be ASCII-only; non-ASCII needs encoded-word syntax.
  */
 function encodeSubject(subject: string): string {
-  // If pure ASCII, no encoding needed
   if (/^[\x20-\x7E]*$/.test(subject)) return subject;
-  // RFC 2047 Base64 encoding for UTF-8
-  const encoded = Buffer.from(subject, "utf-8").toString("base64");
-  return `=?UTF-8?B?${encoded}?=`;
+
+  // RFC 2047 limits each encoded-word to 75 chars.
+  // "=?UTF-8?B?" (10) + "?=" (2) = 12 chars overhead, leaving 63 for base64.
+  // 63 base64 chars encode floor(63/4)*3 = 45 bytes of UTF-8 per chunk.
+  const MAX_BYTES_PER_CHUNK = 45;
+  const buf = Buffer.from(subject, "utf-8");
+  const words: string[] = [];
+
+  for (let offset = 0; offset < buf.length; ) {
+    let end = Math.min(offset + MAX_BYTES_PER_CHUNK, buf.length);
+    // Avoid splitting in the middle of a multi-byte UTF-8 sequence:
+    // continuation bytes have the form 10xxxxxx (0x80–0xBF).
+    while (end > offset && end < buf.length && (buf[end]! & 0xc0) === 0x80) {
+      end--;
+    }
+    words.push(`=?UTF-8?B?${buf.subarray(offset, end).toString("base64")}?=`);
+    offset = end;
+  }
+
+  return words.join("\r\n ");
 }
 
 function buildMimeMessage(
