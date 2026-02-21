@@ -317,25 +317,48 @@ app.post("/api/slack/interactions", async (c) => {
 // ── Google OAuth Routes (Gmail) ─────────────────────────────────────────────
 
 app.get("/api/oauth/google/auth-url", async (c) => {
+  const userId = c.req.query("user_id");
   const { generateAuthUrl } = await import("./lib/gmail.js");
-  const url = generateAuthUrl();
+  const url = generateAuthUrl(userId ? { userId } : undefined);
   if (!url) return c.json({ error: "Gmail OAuth not configured" }, 500);
   return c.json({
     url,
-    instructions:
-      "Open this URL in a browser logged in as aura@realadvisor.com",
+    instructions: userId
+      ? `Open this URL in a browser to grant Aura access to your Gmail (user: ${userId})`
+      : "Open this URL in a browser logged in as aura@realadvisor.com",
   });
 });
 
 app.get("/api/oauth/google/callback", async (c) => {
   const code = c.req.query("code");
   if (!code) return c.json({ error: "No auth code received" }, 400);
-  const { exchangeCodeForTokens, saveRefreshToken } = await import("./lib/gmail.js");
+
+  const stateParam = c.req.query("state");
+  let stateUserId: string | undefined;
+  if (stateParam) {
+    try {
+      const parsed = JSON.parse(stateParam);
+      stateUserId = parsed.userId;
+    } catch {
+      // state wasn't JSON — ignore
+    }
+  }
+
+  const { exchangeCodeForTokens, saveRefreshToken, saveUserRefreshToken } = await import("./lib/gmail.js");
   const result = await exchangeCodeForTokens(code);
   if (!result.refreshToken) return c.json({ error: "Token exchange failed", detail: result.error || "No refresh token returned" }, 500);
 
-  // Save refresh token to database — no env var or redeploy needed
   try {
+    if (stateUserId) {
+      await saveUserRefreshToken(stateUserId, result.refreshToken, result.scopes);
+      logger.info("OAuth refresh token saved for user", { userId: stateUserId });
+      return c.json({
+        success: true,
+        message: `Gmail connected for user ${stateUserId}! Aura can now create drafts and read emails on your behalf.`,
+      });
+    }
+
+    // No user_id in state — save to settings as before (backward compatible)
     await saveRefreshToken(result.refreshToken);
     logger.info("OAuth refresh token saved to database");
     return c.json({
@@ -344,7 +367,6 @@ app.get("/api/oauth/google/callback", async (c) => {
     });
   } catch (saveError: any) {
     logger.error("Failed to save refresh token to database", { error: saveError.message });
-    // Fallback: show token for manual setup
     return c.json({
       success: true,
       refresh_token: result.refreshToken,
