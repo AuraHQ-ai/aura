@@ -2063,6 +2063,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           // user_ids and channel_ids are mutually exclusive in the API,
           // so make separate calls when both are provided
+          let usersShared = false;
+
           if (user_ids?.length) {
             const userResult = await (client as any).apiCall(
               "canvases.access.set",
@@ -2074,6 +2076,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 error: `Failed to share canvas with users: ${userResult.error || "unknown error"}`,
               };
             }
+            usersShared = true;
           }
 
           if (channel_ids?.length) {
@@ -2085,6 +2088,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               return {
                 ok: false,
                 error: `Failed to share canvas with channels: ${channelResult.error || "unknown error"}`,
+                partial_success: usersShared
+                  ? "Users were successfully shared before channel sharing failed."
+                  : undefined,
               };
             }
           }
