@@ -1772,6 +1772,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             "canvases.sections.lookup",
             {
               canvas_id,
+              criteria: {},
             },
           );
 
@@ -1871,22 +1872,31 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     edit_canvas: tool({
       description:
-        "Edit an existing Slack Canvas. Supports inserting content at the start or end, replacing a section, or renaming the canvas.",
+        "Edit an existing Slack Canvas. Supports inserting content at start/end or before/after a section, replacing or deleting a section, or renaming the canvas.",
       inputSchema: z.object({
         canvas_id: z.string().describe("The ID of the Canvas to edit"),
         operation: z
-          .enum(["insert_at_end", "insert_at_start", "replace", "rename"])
+          .enum([
+            "insert_at_end",
+            "insert_at_start",
+            "insert_before",
+            "insert_after",
+            "replace",
+            "delete",
+            "rename",
+          ])
           .describe("The type of edit operation to perform"),
         content: z
           .string()
+          .optional()
           .describe(
-            "Markdown content to insert/replace, or the new title for rename",
+            "Markdown content to insert/replace, or the new title for rename. Not needed for delete.",
           ),
         section_id: z
           .string()
           .optional()
           .describe(
-            "Section ID to replace (required for 'replace' operation). Use read_canvas to find section IDs.",
+            "Section ID (required for replace, delete, insert_before, insert_after). Use read_canvas to find section IDs.",
           ),
       }),
       execute: async ({ canvas_id, operation, content, section_id }) => {
@@ -1894,24 +1904,48 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           let changes: any[];
 
           if (operation === "rename") {
-            changes = [{ operation: "rename", title: content }];
-          } else if (operation === "replace") {
-            if (!section_id) {
-              return {
-                ok: false,
-                error:
-                  "Section ID is required for replace operations. Use read_canvas to find section IDs.",
-              };
+            if (!content) {
+              return { ok: false, error: "Content (new title) is required for rename operations." };
             }
             changes = [
               {
-                operation: "replace",
+                operation: "rename",
+                title_content: { type: "markdown", markdown: content },
+              },
+            ];
+          } else if (operation === "delete") {
+            if (!section_id) {
+              return {
+                ok: false,
+                error: "Section ID is required for delete operations. Use read_canvas to find section IDs.",
+              };
+            }
+            changes = [{ operation: "delete", section_id }];
+          } else if (
+            operation === "replace" ||
+            operation === "insert_before" ||
+            operation === "insert_after"
+          ) {
+            if (!section_id) {
+              return {
+                ok: false,
+                error: `Section ID is required for ${operation} operations. Use read_canvas to find section IDs.`,
+              };
+            }
+            if (!content) {
+              return { ok: false, error: `Content is required for ${operation} operations.` };
+            }
+            changes = [
+              {
+                operation,
                 section_id,
                 document_content: { type: "markdown", markdown: content },
               },
             ];
           } else {
-            // insert_at_start or insert_at_end
+            if (!content) {
+              return { ok: false, error: `Content is required for ${operation} operations.` };
+            }
             changes = [
               {
                 operation,
@@ -1950,6 +1984,163 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return {
             ok: false,
             error: `Failed to edit canvas: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    delete_canvas: tool({
+      description:
+        "Delete a Slack Canvas permanently by its canvas/file ID.",
+      inputSchema: z.object({
+        canvas_id: z
+          .string()
+          .describe("The canvas ID (e.g. 'F0AFVJRES9M')"),
+      }),
+      execute: async ({ canvas_id }) => {
+        try {
+          const result = await (client as any).apiCall("canvases.delete", {
+            canvas_id,
+          });
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to delete canvas: ${result.error || "unknown error"}`,
+            };
+          }
+
+          logger.info("delete_canvas tool called", { canvas_id });
+          return { ok: true, message: `Canvas ${canvas_id} deleted` };
+        } catch (error: any) {
+          logger.error("delete_canvas tool failed", {
+            canvas_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to delete canvas: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    share_canvas: tool({
+      description:
+        "Share a canvas with users or channels. Set access level (read, write, or owner).",
+      inputSchema: z.object({
+        canvas_id: z.string().describe("The canvas ID"),
+        access_level: z
+          .enum(["read", "write", "owner"])
+          .default("write")
+          .describe("Access level to grant"),
+        user_ids: z
+          .array(z.string())
+          .optional()
+          .describe("User IDs to share with"),
+        channel_ids: z
+          .array(z.string())
+          .optional()
+          .describe("Channel IDs to share with"),
+      }),
+      execute: async ({ canvas_id, access_level, user_ids, channel_ids }) => {
+        try {
+          if (!user_ids?.length && !channel_ids?.length) {
+            return {
+              ok: false,
+              error:
+                "At least one user_id or channel_id is required to share with.",
+            };
+          }
+
+          const result = await (client as any).apiCall(
+            "canvases.access.set",
+            {
+              canvas_id,
+              access_level,
+              ...(user_ids && { user_ids }),
+              ...(channel_ids && { channel_ids }),
+            },
+          );
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to share canvas: ${result.error || "unknown error"}`,
+            };
+          }
+
+          logger.info("share_canvas tool called", {
+            canvas_id,
+            access_level,
+            user_ids,
+            channel_ids,
+          });
+          return {
+            ok: true,
+            message: `Canvas shared with ${access_level} access`,
+          };
+        } catch (error: any) {
+          logger.error("share_canvas tool failed", {
+            canvas_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to share canvas: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    list_canvases: tool({
+      description:
+        "List canvases in the workspace. Uses files.list with a canvas type filter. Requires SLACK_USER_TOKEN.",
+      inputSchema: z.object({
+        channel: z
+          .string()
+          .optional()
+          .describe("Filter by channel ID"),
+        count: z.number().default(20).describe("Max results to return"),
+      }),
+      execute: async ({ channel, count }) => {
+        try {
+          const userToken = process.env.SLACK_USER_TOKEN;
+          if (!userToken) {
+            return {
+              ok: false,
+              error:
+                "Listing canvases requires a SLACK_USER_TOKEN environment variable (a user OAuth token with files:read scope). It's not currently configured.",
+            };
+          }
+
+          const { WebClient } = await import("@slack/web-api");
+          const userClient = new WebClient(userToken);
+          const result = await userClient.apiCall("files.list", {
+            types: "canvases",
+            count,
+            ...(channel && { channel }),
+          });
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to list canvases: ${result.error || "unknown error"}`,
+            };
+          }
+
+          logger.info("list_canvases tool called", { channel, count });
+          return {
+            ok: true,
+            files: (result as any).files || [],
+          };
+        } catch (error: any) {
+          logger.error("list_canvases tool failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to list canvases: ${error.message}`,
           };
         }
       },
