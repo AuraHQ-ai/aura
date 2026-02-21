@@ -942,6 +942,48 @@ export function createGmailEATools() {
         }
       },
     }),
+
+    generate_gmail_auth_url: tool({
+      description:
+        "Generate a Google OAuth consent URL for a user to connect their Gmail account. DM the resulting URL to the user so they can click it and authorize Aura to read their inbox and create drafts.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner, e.g. 'Joan' or '@joan'",
+          ),
+      }),
+      execute: async ({ user_name }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+            };
+          }
+
+          const { generateAuthUrlForUser } = await import("../lib/gmail.js");
+          const url = generateAuthUrlForUser(userId);
+          if (!url) {
+            return {
+              ok: false,
+              error: "Google OAuth credentials not configured. Cannot generate auth URL.",
+            };
+          }
+
+          return {
+            ok: true,
+            url,
+            user_id: userId,
+            message: `OAuth consent URL generated for ${user_name}. DM this link to them — they click it, authorize in Google, and their Gmail is connected.`,
+          };
+        } catch (err: any) {
+          logger.error("generate_gmail_auth_url failed", { error: err?.message || String(err) });
+          return { ok: false, error: err?.message || String(err) };
+        }
+      },
+    }),
   };
 }
 
