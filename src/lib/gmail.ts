@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -163,15 +164,20 @@ function buildMimeMessage(
   options?: SendEmailOptions,
   explicitInReplyTo?: string,
   explicitReferences?: string,
+  overrides?: { from?: string; includeSignature?: boolean },
 ): string {
   const auraEmail =
     process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com";
+  const fromHeader = overrides?.from || `Aura <${auraEmail}>`;
+  const includeSignature = overrides?.includeSignature !== false;
   const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const htmlBody = `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>\n${EMAIL_SIGNATURE_HTML}`;
-  const textBody = `${body}${EMAIL_SIGNATURE_TEXT}`;
+  const htmlBody = includeSignature
+    ? `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>\n${EMAIL_SIGNATURE_HTML}`
+    : `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>`;
+  const textBody = includeSignature ? `${body}${EMAIL_SIGNATURE_TEXT}` : body;
 
   const headers: string[] = [
-    `From: Aura <${auraEmail}>`,
+    `From: ${fromHeader}`,
     `To: ${to}`,
     `Subject: ${subject}`,
     "MIME-Version: 1.0",
@@ -633,8 +639,8 @@ export async function getGmailClientForUser(userId: string) {
   );
   oauth2Client.setCredentials({ refresh_token: userToken.refreshToken });
 
-  const { google } = await import("googleapis");
-  return google.gmail({ version: "v1", auth: oauth2Client });
+  const { gmail } = await import("@googleapis/gmail");
+  return gmail({ version: "v1", auth: oauth2Client });
 }
 
 /**
@@ -650,7 +656,11 @@ export function generateAuthUrlForUser(userId: string): string | null {
   }
 
   const redirectUri = getRedirectUri();
-  const state = JSON.stringify({ user_id: userId });
+  const sig = crypto
+    .createHmac("sha256", clientSecret)
+    .update(userId)
+    .digest("hex");
+  const state = JSON.stringify({ user_id: userId, sig });
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -664,6 +674,36 @@ export function generateAuthUrlForUser(userId: string): string | null {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 }
 
+/**
+ * Verify the HMAC signature in an OAuth state parameter.
+ * Returns the user_id if valid, null otherwise.
+ */
+export function verifyOAuthState(
+  stateParam: string,
+): { userId: string } | null {
+  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
+  if (!clientSecret || !stateParam) return null;
+
+  try {
+    const state = JSON.parse(stateParam);
+    const { user_id, sig } = state;
+    if (!user_id || !sig) return null;
+
+    const expectedSig = crypto
+      .createHmac("sha256", clientSecret)
+      .update(user_id)
+      .digest("hex");
+    const sigBuf = Buffer.from(sig, "utf8");
+    const expectedBuf = Buffer.from(expectedSig, "utf8");
+    if (sigBuf.length !== expectedBuf.length) return null;
+    if (!crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
+
+    return { userId: user_id };
+  } catch {
+    return null;
+  }
+}
+
 // ── Draft Functions ─────────────────────────────────────────────────────────
 
 /**
@@ -675,6 +715,9 @@ export async function createDraft(
 ): Promise<{ draftId: string; messageId: string } | null> {
   const gmail = await getGmailClientForUser(userId);
   if (!gmail) return null;
+
+  const userToken = await getUserRefreshToken(userId);
+  const userEmail = userToken?.email;
 
   let bodyText = options.body;
   if (options.quotedMessage) {
@@ -694,6 +737,10 @@ export async function createDraft(
       },
       options.inReplyTo,
       options.references,
+      {
+        from: userEmail || undefined,
+        includeSignature: false,
+      },
     ),
   );
 

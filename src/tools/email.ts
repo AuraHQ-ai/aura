@@ -895,59 +895,93 @@ export function createGmailEATools() {
         }
       },
     }),
+
+    delete_gmail_draft: tool({
+      description:
+        "Delete a draft email from a user's Gmail account. The user must have granted Aura OAuth access.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner",
+          ),
+        draft_id: z
+          .string()
+          .describe("The Gmail draft ID to delete"),
+      }),
+      execute: async ({ user_name, draft_id }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'.`,
+            };
+          }
+
+          const { deleteDraft } = await import("../lib/gmail.js");
+          const success = await deleteDraft(userId, draft_id);
+
+          if (!success) {
+            return {
+              ok: false,
+              error: `No Gmail access for user '${user_name}', or draft not found.`,
+            };
+          }
+
+          return {
+            ok: true,
+            message: `Draft ${draft_id} deleted from ${user_name}'s Gmail.`,
+          };
+        } catch (error: any) {
+          logger.error("delete_gmail_draft failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to delete draft: ${error.message}`,
+          };
+        }
+      },
+    }),
   };
 }
 
 /**
  * Resolve a user display name / username to a Slack user ID.
+ * Reuses the paginated, cached getUserList from slack.ts.
  */
 async function resolveSlackUserId(
   userName: string,
 ): Promise<string | null> {
   try {
     const { WebClient } = await import("@slack/web-api");
+    const { getUserList } = await import("./slack.js");
     const client = new WebClient(process.env.SLACK_BOT_TOKEN);
-
-    const result = await client.users.list({ limit: 200 });
-    const members = result.members || [];
+    const users = await getUserList(client);
 
     const normalizedInput = userName
       .replace(/^@/, "")
       .toLowerCase()
       .trim();
 
-    for (const member of members) {
-      if (member.deleted || member.is_bot) continue;
-      const displayName = (
-        member.profile?.display_name || ""
-      ).toLowerCase();
-      const realName = (member.profile?.real_name || "").toLowerCase();
-      const username = (member.name || "").toLowerCase();
-
+    // Exact match
+    for (const user of users) {
       if (
-        displayName === normalizedInput ||
-        realName === normalizedInput ||
-        username === normalizedInput
+        user.displayName.toLowerCase() === normalizedInput ||
+        user.realName.toLowerCase() === normalizedInput ||
+        user.username.toLowerCase() === normalizedInput
       ) {
-        return member.id || null;
+        return user.id;
       }
     }
 
-    // Try fuzzy match (starts with)
-    for (const member of members) {
-      if (member.deleted || member.is_bot) continue;
-      const displayName = (
-        member.profile?.display_name || ""
-      ).toLowerCase();
-      const realName = (member.profile?.real_name || "").toLowerCase();
-      const username = (member.name || "").toLowerCase();
-
+    // Fuzzy match (starts with)
+    for (const user of users) {
       if (
-        displayName.startsWith(normalizedInput) ||
-        realName.startsWith(normalizedInput) ||
-        username.startsWith(normalizedInput)
+        user.displayName.toLowerCase().startsWith(normalizedInput) ||
+        user.realName.toLowerCase().startsWith(normalizedInput) ||
+        user.username.toLowerCase().startsWith(normalizedInput)
       ) {
-        return member.id || null;
+        return user.id;
       }
     }
 
