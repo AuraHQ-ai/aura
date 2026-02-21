@@ -10,6 +10,7 @@ import {
   boolean,
   index,
   uniqueIndex,
+  serial,
   vector,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -319,6 +320,29 @@ export const errorEvents = pgTable(
   ],
 );
 
+
+// ── OAuth Tokens ───────────────────────────────────────────────────────────
+
+export const oauthTokens = pgTable(
+  "oauth_tokens",
+  {
+    id: serial("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    provider: text("provider").notNull().default("google"),
+    email: text("email"),
+    refreshToken: text("refresh_token").notNull(),
+    scopes: text("scopes"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("oauth_tokens_user_provider_idx").on(
+      table.userId,
+      table.provider,
+    ),
+    index("oauth_tokens_email_idx").on(table.email),
+  ],
+);
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -339,6 +363,8 @@ export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type NewErrorEvent = typeof errorEvents.$inferInsert;
 export type JobExecution = typeof jobExecutions.$inferSelect;
 export type NewJobExecution = typeof jobExecutions.$inferInsert;
+export type OAuthToken = typeof oauthTokens.$inferSelect;
+export type NewOAuthToken = typeof oauthTokens.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
