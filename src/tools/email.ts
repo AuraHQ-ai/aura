@@ -979,6 +979,7 @@ export function createGmailEATools() {
             message: `OAuth consent URL generated for ${user_name}. DM this link to them — they click it, authorize in Google, and their Gmail is connected.`,
           };
         } catch (err: any) {
+          logger.error("generate_gmail_auth_url failed", { error: err?.message || String(err) });
           return { ok: false, error: err?.message || String(err) };
         }
       },
