@@ -320,6 +320,14 @@ app.get("/api/oauth/google/auth-url", async (c) => {
   const userId = c.req.query("user_id");
   const { generateAuthUrl, generateAuthUrlForUser } = await import("./lib/gmail.js");
 
+  if (userId) {
+    const authHeader = c.req.header("authorization") || "";
+    const expectedSecret = signingSecret;
+    if (!expectedSecret || authHeader !== `Bearer ${expectedSecret}`) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  }
+
   const url = userId ? generateAuthUrlForUser(userId) : generateAuthUrl();
   if (!url) return c.json({ error: "Gmail OAuth not configured" }, 500);
 

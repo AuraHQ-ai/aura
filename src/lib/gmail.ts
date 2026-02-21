@@ -640,7 +640,8 @@ export async function getGmailClientForUser(userId: string) {
   oauth2Client.setCredentials({ refresh_token: userToken.refreshToken });
 
   const { gmail } = await import("@googleapis/gmail");
-  return gmail({ version: "v1", auth: oauth2Client });
+  const client = gmail({ version: "v1", auth: oauth2Client });
+  return { client, email: userToken.email };
 }
 
 /**
@@ -713,11 +714,10 @@ export async function createDraft(
   userId: string,
   options: CreateDraftOptions,
 ): Promise<{ draftId: string; messageId: string } | null> {
-  const gmail = await getGmailClientForUser(userId);
-  if (!gmail) return null;
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
 
-  const userToken = await getUserRefreshToken(userId);
-  const userEmail = userToken?.email;
+  const { client: gmail, email: userEmail } = result;
 
   let bodyText = options.body;
   if (options.quotedMessage) {
@@ -774,9 +774,10 @@ export async function listDrafts(
   userId: string,
   maxResults: number = 10,
 ): Promise<DraftSummary[] | null> {
-  const gmail = await getGmailClientForUser(userId);
-  if (!gmail) return null;
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
 
+  const { client: gmail } = result;
   const res = await gmail.users.drafts.list({
     userId: "me",
     maxResults,
@@ -823,9 +824,10 @@ export async function deleteDraft(
   userId: string,
   draftId: string,
 ): Promise<boolean> {
-  const gmail = await getGmailClientForUser(userId);
-  if (!gmail) return false;
+  const result = await getGmailClientForUser(userId);
+  if (!result) return false;
 
+  const { client: gmail } = result;
   await gmail.users.drafts.delete({
     userId: "me",
     id: draftId,
@@ -842,9 +844,10 @@ export async function readUserEmails(
   userId: string,
   options: ListEmailsOptions = {},
 ): Promise<EmailSummary[] | null> {
-  const gmail = await getGmailClientForUser(userId);
-  if (!gmail) return null;
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
 
+  const { client: gmail } = result;
   const q = [options.query || "", options.unreadOnly ? "is:unread" : ""]
     .filter(Boolean)
     .join(" ");
@@ -892,16 +895,18 @@ export async function readUserEmail(
   userId: string,
   messageId: string,
 ): Promise<EmailDetail | null> {
-  const gmail = await getGmailClientForUser(userId);
-  if (!gmail) return null;
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
 
+  const { client: gmail } = result;
   const res = await gmail.users.messages.get({
     userId: "me",
     id: messageId,
     format: "full",
   });
 
-  const headers = res.data.payload?.headers || [];
+  const payload = res.data.payload || {};
+  const headers = payload.headers || [];
   const labelIds = res.data.labelIds || [];
 
   return {
@@ -912,9 +917,9 @@ export async function readUserEmail(
     cc: getHeader(headers, "Cc"),
     subject: getHeader(headers, "Subject"),
     date: getHeader(headers, "Date"),
-    body: extractBody(res.data.payload),
+    body: extractBody(payload),
     snippet: res.data.snippet || "",
     isUnread: labelIds.includes("UNREAD"),
-    attachments: extractAttachments(res.data.payload),
+    attachments: extractAttachments(payload),
   };
 }
