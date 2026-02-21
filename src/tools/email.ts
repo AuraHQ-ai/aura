@@ -89,7 +89,7 @@ export function createEmailTools() {
 
     read_emails: tool({
       description:
-        "Read recent emails from Aura's inbox. Can filter by unread status or search query.",
+        "Read recent emails from Aura's inbox. Can filter by unread status or search query. Supports pagination via page_token.",
       inputSchema: z.object({
         query: z
           .string()
@@ -107,8 +107,12 @@ export function createEmailTools() {
           .optional()
           .default(false)
           .describe("Only show unread emails"),
+        page_token: z
+          .string()
+          .optional()
+          .describe("Page token from a previous response to fetch the next page of results"),
       }),
-      execute: async ({ query, max_results, unread_only }) => {
+      execute: async ({ query, max_results, unread_only, page_token }) => {
         try {
           const { getGmailClient, listEmails } = await import(
             "../lib/gmail.js"
@@ -122,25 +126,27 @@ export function createEmailTools() {
             };
           }
 
-          const emails = await listEmails({
+          const result = await listEmails({
             query,
             maxResults: max_results,
             unreadOnly: unread_only,
+            pageToken: page_token,
           });
 
-          if (!emails) {
+          if (!result) {
             return { ok: false, error: "Failed to list emails: no response from Gmail API" };
           }
 
           logger.info("read_emails tool called", {
             query,
-            count: emails.length,
+            count: result.emails.length,
           });
 
           return {
             ok: true,
-            emails,
-            count: emails.length,
+            emails: result.emails,
+            count: result.emails.length,
+            next_page_token: result.nextPageToken || undefined,
           };
         } catch (error: any) {
           logger.error("read_emails tool failed", {
@@ -784,7 +790,7 @@ export function createGmailEATools() {
 
     read_user_emails: tool({
       description:
-        "Read recent emails from a specific user's Gmail inbox. The user must have granted Aura OAuth access.",
+        "Read recent emails from a specific user's Gmail inbox. The user must have granted Aura OAuth access. Supports pagination via page_token.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -809,8 +815,12 @@ export function createGmailEATools() {
           .optional()
           .default(false)
           .describe("Only show unread emails"),
+        page_token: z
+          .string()
+          .optional()
+          .describe("Page token from a previous response to fetch the next page of results"),
       }),
-      execute: async ({ user_name, query, max_results, unread_only }) => {
+      execute: async ({ user_name, query, max_results, unread_only, page_token }) => {
         try {
           const userId = await resolveSlackUserId(user_name);
           if (!userId) {
@@ -821,13 +831,14 @@ export function createGmailEATools() {
           }
 
           const { readUserEmails } = await import("../lib/gmail.js");
-          const emails = await readUserEmails(userId, {
+          const result = await readUserEmails(userId, {
             query,
             maxResults: max_results,
             unreadOnly: unread_only,
+            pageToken: page_token,
           });
 
-          if (!emails) {
+          if (!result) {
             return {
               ok: false,
               error: `No Gmail access for user '${user_name}'. They need to authorize Aura via OAuth first.`,
@@ -836,8 +847,9 @@ export function createGmailEATools() {
 
           return {
             ok: true,
-            count: emails.length,
-            emails,
+            count: result.emails.length,
+            emails: result.emails,
+            next_page_token: result.nextPageToken || undefined,
           };
         } catch (error: any) {
           logger.error("read_user_emails failed", { error: error.message });
