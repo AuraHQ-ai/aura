@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -455,6 +456,34 @@ export async function replyToEmail(
   };
 }
 
+function getOAuthStateSecret(): string {
+  return process.env.SLACK_SIGNING_SECRET || process.env.GOOGLE_EMAIL_CLIENT_SECRET || "";
+}
+
+function signOAuthState(userId: string): string {
+  const secret = getOAuthStateSecret();
+  const sig = crypto.createHmac("sha256", secret).update(userId).digest("hex");
+  return JSON.stringify({ userId, sig });
+}
+
+/**
+ * Verify the HMAC signature on an OAuth state parameter.
+ * Returns the userId if valid, or null if tampered/missing.
+ */
+export function verifyOAuthState(stateParam: string): string | null {
+  try {
+    const { userId, sig } = JSON.parse(stateParam);
+    if (!userId || !sig) return null;
+    const secret = getOAuthStateSecret();
+    if (!secret) return null;
+    const expected = crypto.createHmac("sha256", secret).update(userId).digest("hex");
+    const valid = crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"));
+    return valid ? userId : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Generate an OAuth consent URL for Gmail access.
  * If stateData.userId is provided, it's embedded in the OAuth state param
@@ -480,7 +509,7 @@ export function generateAuthUrl(stateData?: { userId?: string }): string | null 
   });
 
   if (stateData?.userId) {
-    params.set("state", JSON.stringify({ userId: stateData.userId }));
+    params.set("state", signOAuthState(stateData.userId));
   }
 
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
@@ -747,24 +776,6 @@ export async function listDrafts(userId: string): Promise<DraftSummary[]> {
   );
 
   return results;
-}
-
-/**
- * Delete a draft from a user's Gmail.
- */
-export async function deleteDraft(
-  userId: string,
-  draftId: string,
-): Promise<boolean> {
-  const gmail = await getGmailClientForUser(userId);
-  if (!gmail) {
-    logger.error("Gmail client not available for user", { userId });
-    return false;
-  }
-
-  await gmail.users.drafts.delete({ userId: "me", id: draftId });
-  logger.info("Draft deleted", { userId, draftId });
-  return true;
 }
 
 /**
