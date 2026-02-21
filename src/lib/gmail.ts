@@ -679,7 +679,7 @@ export async function getGmailClientForUser(userId: string) {
 // ── OAuth State Signing (nonce + TTL) ───────────────────────────────────────
 
 function getOAuthStateSecret(): string {
-  return process.env.SLACK_SIGNING_SECRET || process.env.GOOGLE_EMAIL_CLIENT_SECRET || "";
+  return process.env.GOOGLE_EMAIL_CLIENT_SECRET || "";
 }
 
 const OAUTH_STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
