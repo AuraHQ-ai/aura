@@ -44,6 +44,7 @@ export interface ListEmailsOptions {
 
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/directory.readonly",
@@ -160,6 +161,8 @@ function buildMimeMessage(
   subject: string,
   body: string,
   options?: SendEmailOptions,
+  explicitInReplyTo?: string,
+  explicitReferences?: string,
 ): string {
   const auraEmail =
     process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com";
@@ -177,9 +180,13 @@ function buildMimeMessage(
 
   if (options?.cc) headers.push(`Cc: ${options.cc}`);
   if (options?.bcc) headers.push(`Bcc: ${options.bcc}`);
-  if (options?.replyToMessageId) {
-    headers.push(`In-Reply-To: ${options.replyToMessageId}`);
-    headers.push(`References: ${options.replyToMessageId}`);
+  const inReplyToValue = explicitInReplyTo || options?.replyToMessageId;
+  const referencesValue = explicitReferences || options?.replyToMessageId;
+  if (inReplyToValue) {
+    headers.push(`In-Reply-To: ${inReplyToValue}`);
+  }
+  if (referencesValue) {
+    headers.push(`References: ${referencesValue}`);
   }
 
   const parts = [
@@ -504,4 +511,363 @@ export async function exchangeCodeForTokens(
     });
     return { refreshToken: null, error: msg };
   }
+}
+
+// ── Multi-user OAuth ────────────────────────────────────────────────────────
+
+export interface CreateDraftOptions {
+  to: string;
+  subject: string;
+  body: string;
+  cc?: string;
+  bcc?: string;
+  inReplyTo?: string;
+  references?: string;
+  threadId?: string;
+  quotedMessage?: string;
+}
+
+export interface DraftSummary {
+  draftId: string;
+  messageId: string;
+  subject: string;
+  to: string;
+  snippet: string;
+}
+
+/**
+ * Get a refresh token for a specific Slack user from the oauth_tokens table.
+ * Returns null if the user has not authorized Aura.
+ */
+export async function getUserRefreshToken(
+  userId: string,
+): Promise<{ refreshToken: string; email: string | null } | null> {
+  try {
+    const { eq, and } = await import("drizzle-orm");
+    const { db } = await import("../db/client.js");
+    const { oauthTokens } = await import("../db/schema.js");
+
+    const rows = await db
+      .select({
+        refreshToken: oauthTokens.refreshToken,
+        email: oauthTokens.email,
+      })
+      .from(oauthTokens)
+      .where(
+        and(
+          eq(oauthTokens.userId, userId),
+          eq(oauthTokens.provider, "google"),
+        ),
+      )
+      .limit(1);
+
+    if (!rows[0]) return null;
+    return {
+      refreshToken: rows[0].refreshToken,
+      email: rows[0].email,
+    };
+  } catch (error) {
+    logger.error("Failed to get user refresh token", { userId, error });
+    return null;
+  }
+}
+
+/**
+ * Save or update a user's OAuth refresh token.
+ */
+export async function saveUserRefreshToken(
+  userId: string,
+  refreshToken: string,
+  email?: string,
+): Promise<void> {
+  const { db } = await import("../db/client.js");
+  const { oauthTokens } = await import("../db/schema.js");
+
+  await db
+    .insert(oauthTokens)
+    .values({
+      userId,
+      provider: "google",
+      refreshToken,
+      email: email || null,
+      scopes: SCOPES.join(" "),
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [oauthTokens.userId, oauthTokens.provider],
+      set: {
+        refreshToken,
+        email: email || undefined,
+        scopes: SCOPES.join(" "),
+        updatedAt: new Date(),
+      },
+    });
+
+  logger.info("User OAuth refresh token saved", { userId, email });
+}
+
+/**
+ * Get an authenticated Gmail client for a specific Slack user.
+ * Returns null if the user has not authorized or credentials are missing.
+ */
+export async function getGmailClientForUser(userId: string) {
+  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    logger.warn("Gmail: OAuth client credentials not configured");
+    return null;
+  }
+
+  const userToken = await getUserRefreshToken(userId);
+  if (!userToken) {
+    logger.warn("Gmail: No OAuth token found for user", { userId });
+    return null;
+  }
+
+  const { OAuth2Client } = await import("google-auth-library");
+  const oauth2Client = new OAuth2Client(
+    clientId,
+    clientSecret,
+    getRedirectUri(),
+  );
+  oauth2Client.setCredentials({ refresh_token: userToken.refreshToken });
+
+  const { google } = await import("googleapis");
+  return google.gmail({ version: "v1", auth: oauth2Client });
+}
+
+/**
+ * Generate an OAuth consent URL for a specific user.
+ * Encodes the user_id in the state parameter so the callback can save the token.
+ */
+export function generateAuthUrlForUser(userId: string): string | null {
+  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return null;
+  }
+
+  const redirectUri = getRedirectUri();
+  const state = JSON.stringify({ user_id: userId });
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: SCOPES.join(" "),
+    access_type: "offline",
+    prompt: "consent",
+    state,
+  });
+
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+// ── Draft Functions ─────────────────────────────────────────────────────────
+
+/**
+ * Create a draft email in a user's Gmail account.
+ */
+export async function createDraft(
+  userId: string,
+  options: CreateDraftOptions,
+): Promise<{ draftId: string; messageId: string } | null> {
+  const gmail = await getGmailClientForUser(userId);
+  if (!gmail) return null;
+
+  let bodyText = options.body;
+  if (options.quotedMessage) {
+    bodyText += `\n\n---------- Forwarded message ----------\n${options.quotedMessage}`;
+  }
+
+  const raw = base64UrlEncode(
+    buildMimeMessage(
+      options.to,
+      options.subject,
+      bodyText,
+      {
+        cc: options.cc,
+        bcc: options.bcc,
+        replyToMessageId: options.inReplyTo,
+        threadId: options.threadId,
+      },
+      options.inReplyTo,
+      options.references,
+    ),
+  );
+
+  const res = await gmail.users.drafts.create({
+    userId: "me",
+    requestBody: {
+      message: {
+        raw,
+        threadId: options.threadId || undefined,
+      },
+    },
+  });
+
+  logger.info("Draft created", {
+    userId,
+    draftId: res.data.id,
+    to: options.to,
+    subject: options.subject,
+  });
+
+  return {
+    draftId: res.data.id || "",
+    messageId: res.data.message?.id || "",
+  };
+}
+
+/**
+ * List drafts in a user's Gmail account.
+ */
+export async function listDrafts(
+  userId: string,
+  maxResults: number = 10,
+): Promise<DraftSummary[] | null> {
+  const gmail = await getGmailClientForUser(userId);
+  if (!gmail) return null;
+
+  const res = await gmail.users.drafts.list({
+    userId: "me",
+    maxResults,
+  });
+
+  const drafts = res.data.drafts || [];
+  const results: DraftSummary[] = [];
+
+  for (const draft of drafts) {
+    if (!draft.id) continue;
+    try {
+      const detail = await gmail.users.drafts.get({
+        userId: "me",
+        id: draft.id,
+        format: "metadata",
+        metadataHeaders: ["To", "Subject"],
+      });
+      const headers = detail.data.message?.payload?.headers || [];
+      results.push({
+        draftId: draft.id,
+        messageId: detail.data.message?.id || "",
+        subject: headers.find((h: any) => h.name === "Subject")?.value || "(no subject)",
+        to: headers.find((h: any) => h.name === "To")?.value || "",
+        snippet: detail.data.message?.snippet || "",
+      });
+    } catch {
+      results.push({
+        draftId: draft.id,
+        messageId: draft.message?.id || "",
+        subject: "(unable to read)",
+        to: "",
+        snippet: "",
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Delete a draft from a user's Gmail account.
+ */
+export async function deleteDraft(
+  userId: string,
+  draftId: string,
+): Promise<boolean> {
+  const gmail = await getGmailClientForUser(userId);
+  if (!gmail) return false;
+
+  await gmail.users.drafts.delete({
+    userId: "me",
+    id: draftId,
+  });
+
+  logger.info("Draft deleted", { userId, draftId });
+  return true;
+}
+
+/**
+ * Read emails from a specific user's Gmail inbox.
+ */
+export async function readUserEmails(
+  userId: string,
+  options: ListEmailsOptions = {},
+): Promise<EmailSummary[] | null> {
+  const gmail = await getGmailClientForUser(userId);
+  if (!gmail) return null;
+
+  const q = [options.query || "", options.unreadOnly ? "is:unread" : ""]
+    .filter(Boolean)
+    .join(" ");
+
+  const res = await gmail.users.messages.list({
+    userId: "me",
+    maxResults: options.maxResults || 10,
+    q: q || undefined,
+  });
+
+  const messages = res.data.messages || [];
+  const results: EmailSummary[] = [];
+
+  for (const msg of messages) {
+    if (!msg.id) continue;
+    const detail = await gmail.users.messages.get({
+      userId: "me",
+      id: msg.id,
+      format: "metadata",
+      metadataHeaders: ["From", "To", "Subject", "Date"],
+    });
+
+    const headers = detail.data.payload?.headers || [];
+    const labelIds = detail.data.labelIds || [];
+
+    results.push({
+      id: msg.id,
+      threadId: detail.data.threadId || "",
+      from: getHeader(headers, "From"),
+      to: getHeader(headers, "To"),
+      subject: getHeader(headers, "Subject"),
+      date: getHeader(headers, "Date"),
+      snippet: detail.data.snippet || "",
+      isUnread: labelIds.includes("UNREAD"),
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Read a specific email from a user's Gmail inbox.
+ */
+export async function readUserEmail(
+  userId: string,
+  messageId: string,
+): Promise<EmailDetail | null> {
+  const gmail = await getGmailClientForUser(userId);
+  if (!gmail) return null;
+
+  const res = await gmail.users.messages.get({
+    userId: "me",
+    id: messageId,
+    format: "full",
+  });
+
+  const headers = res.data.payload?.headers || [];
+  const labelIds = res.data.labelIds || [];
+
+  return {
+    id: res.data.id || "",
+    threadId: res.data.threadId || "",
+    from: getHeader(headers, "From"),
+    to: getHeader(headers, "To"),
+    cc: getHeader(headers, "Cc"),
+    subject: getHeader(headers, "Subject"),
+    date: getHeader(headers, "Date"),
+    body: extractBody(res.data.payload),
+    snippet: res.data.snippet || "",
+    isUnread: labelIds.includes("UNREAD"),
+    attachments: extractAttachments(res.data.payload),
+  };
 }
