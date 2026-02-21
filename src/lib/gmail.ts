@@ -474,10 +474,15 @@ function getOAuthStateSecret(): string {
   return process.env.SLACK_SIGNING_SECRET || process.env.GOOGLE_EMAIL_CLIENT_SECRET || "";
 }
 
+const OAUTH_STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
+
 function signOAuthState(userId: string): string {
   const secret = getOAuthStateSecret();
-  const sig = crypto.createHmac("sha256", secret).update(userId).digest("hex");
-  return JSON.stringify({ userId, sig });
+  const nonce = crypto.randomBytes(16).toString("hex");
+  const ts = Date.now();
+  const payload = `${userId}:${nonce}:${ts}`;
+  const sig = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  return JSON.stringify({ userId, nonce, ts, sig });
 }
 
 /**
@@ -486,11 +491,13 @@ function signOAuthState(userId: string): string {
  */
 export function verifyOAuthState(stateParam: string): string | null {
   try {
-    const { userId, sig } = JSON.parse(stateParam);
-    if (!userId || !sig) return null;
+    const { userId, nonce, ts, sig } = JSON.parse(stateParam);
+    if (!userId || !nonce || !ts || !sig) return null;
     const secret = getOAuthStateSecret();
     if (!secret) return null;
-    const expected = crypto.createHmac("sha256", secret).update(userId).digest("hex");
+    if (Date.now() - ts > OAUTH_STATE_EXPIRY_MS) return null;
+    const payload = `${userId}:${nonce}:${ts}`;
+    const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
     const valid = crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"));
     return valid ? userId : null;
   } catch {
@@ -754,11 +761,11 @@ export async function createDraft(
 /**
  * List drafts in a user's Gmail.
  */
-export async function listDrafts(userId: string): Promise<DraftSummary[]> {
+export async function listDrafts(userId: string): Promise<DraftSummary[] | null> {
   const gmail = await getGmailClientForUser(userId);
   if (!gmail) {
     logger.error("Gmail client not available for user", { userId });
-    return [];
+    return null;
   }
 
   const listRes = await gmail.users.drafts.list({
@@ -798,11 +805,11 @@ export async function listDrafts(userId: string): Promise<DraftSummary[]> {
 export async function readUserEmails(
   userId: string,
   options?: ListEmailsOptions,
-): Promise<EmailSummary[]> {
+): Promise<EmailSummary[] | null> {
   const gmail = await getGmailClientForUser(userId);
   if (!gmail) {
     logger.error("Gmail client not available for user", { userId });
-    return [];
+    return null;
   }
 
   return listEmailsWithClient(gmail, options);
