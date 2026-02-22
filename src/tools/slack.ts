@@ -1139,8 +1139,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         query: z
           .string()
           .describe("Partial name to search for, e.g. 'joan' or 'rodriguez'"),
+        limit: z
+          .number()
+          .min(1)
+          .max(50)
+          .default(20)
+          .describe("Maximum number of results to return"),
       }),
-      execute: async ({ query }) => {
+      execute: async ({ query, limit }) => {
         try {
           const allUsers = await getUserList(client);
           const q = query.toLowerCase();
@@ -1152,7 +1158,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
               u.username.toLowerCase().includes(q),
           );
 
-          const results = matches.map((u) => ({
+          const results = matches.slice(0, limit || 20).map((u) => ({
             display_name: u.displayName || u.realName || u.username,
             real_name: u.realName,
             username: u.username,
@@ -1169,6 +1175,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             query,
             results,
             count: results.length,
+            total_matches: matches.length,
+            has_more: matches.length > results.length,
           };
         } catch (error: any) {
           logger.error("search_users tool failed", {
