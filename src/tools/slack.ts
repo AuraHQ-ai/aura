@@ -1257,12 +1257,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     send_direct_message: tool({
       description:
-        "Send a direct message to a user by their display name or username. Opens a DM conversation if one doesn't exist.",
+        "Send a direct message to one user or a group of users. Pass a single name for a 1:1 DM, or an array of names to open/find a group DM (MPIM). Opens the conversation if it doesn't exist.",
       inputSchema: z.object({
         user_name: z
-          .string()
+          .union([z.string(), z.array(z.string()).min(1)])
           .describe(
-            "The display name, real name, or username of the person to DM, e.g. 'Joan' or '@joan'",
+            "A single display name/username (e.g. 'Joan') for a 1:1 DM, or an array of names (e.g. ['Joan', 'Alex', 'Sam']) for a group DM.",
           ),
         message: z
           .string()
@@ -1272,24 +1272,37 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ user_name, message }) => {
         try {
-          const user = await resolveUserByName(client, user_name);
-          if (!user) {
+          const names = Array.isArray(user_name) ? user_name : [user_name];
+
+          const resolved = await Promise.all(
+            names.map(async (name) => ({
+              name,
+              user: await resolveUserByName(client, name),
+            })),
+          );
+
+          const failed = resolved.filter((r) => !r.user);
+          if (failed.length > 0) {
+            const failedNames = failed.map((r) => `"${r.name}"`).join(", ");
             return {
               ok: false,
-              error: `Could not find a user named "${user_name}". Make sure the name matches their Slack display name, real name, or username.`,
+              error: `Could not find user(s): ${failedNames}. Make sure the names match their Slack display name, real name, or username.`,
             };
           }
 
-          // Open a DM conversation
+          const users = resolved.map((r) => r.user!);
+          const userIds = users.map((u) => u.id).join(",");
+
           const dmResult = await client.conversations.open({
-            users: user.id,
+            users: userIds,
           });
 
           const dmChannelId = dmResult.channel?.id;
           if (!dmChannelId) {
+            const userNames = users.map((u) => u.name).join(", ");
             return {
               ok: false,
-              error: `Failed to open a DM with ${user.name}.`,
+              error: `Failed to open a DM with ${userNames}.`,
             };
           }
 
@@ -1298,15 +1311,21 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             text: formatForSlack(message),
           });
 
+          const isGroup = users.length > 1;
+          const userNames = users.map((u) => u.name).join(", ");
+
           logger.info("send_direct_message tool called", {
-            user: user.name,
-            userId: user.id,
+            users: userNames,
+            userIds: users.map((u) => u.id),
+            isGroup,
             messageTs: result.ts,
           });
 
           return {
             ok: true,
-            message: `Direct message sent to ${user.name}`,
+            message: isGroup
+              ? `Group DM sent to ${userNames}`
+              : `Direct message sent to ${userNames}`,
             timestamp: result.ts,
           };
         } catch (error: any) {
@@ -1317,7 +1336,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           return {
             ok: false,
-            error: `Failed to DM ${user_name}: ${error.message}`,
+            error: `Failed to DM ${Array.isArray(user_name) ? user_name.join(", ") : user_name}: ${error.message}`,
           };
         }
       },
