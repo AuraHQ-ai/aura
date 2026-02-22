@@ -321,6 +321,45 @@ export const errorEvents = pgTable(
 );
 
 
+// ── Emails Raw (email staging pipeline) ────────────────────────────────────
+
+export const emailsRaw = pgTable(
+  "emails_raw",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    userId: text("user_id").notNull(),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    gmailThreadId: text("gmail_thread_id").notNull(),
+    subject: text("subject"),
+    fromEmail: text("from_email").notNull(),
+    fromName: text("from_name"),
+    toEmails: jsonb("to_emails").$type<string[]>(),
+    ccEmails: jsonb("cc_emails").$type<string[]>(),
+    date: timestamptz("date").notNull(),
+    bodyMarkdown: text("body_markdown"),
+    bodySizeBytes: integer("body_size_bytes"),
+    triage: text("triage"),
+    triageReason: text("triage_reason"),
+    direction: text("direction").notNull(),
+    hasAttachments: boolean("has_attachments").default(false),
+    labels: jsonb("labels").$type<string[]>(),
+    rawHeaders: jsonb("raw_headers").$type<Record<string, string>>(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("emails_raw_user_gmail_msg_idx").on(
+      table.userId,
+      table.gmailMessageId,
+    ),
+    index("emails_raw_user_thread_idx").on(table.userId, table.gmailThreadId),
+    index("emails_raw_user_triage_idx").on(table.userId, table.triage),
+    index("emails_raw_user_date_idx").on(table.userId, table.date),
+  ],
+);
+
 // ── OAuth Tokens ───────────────────────────────────────────────────────────
 
 export const oauthTokens = pgTable(
@@ -365,6 +404,8 @@ export type JobExecution = typeof jobExecutions.$inferSelect;
 export type NewJobExecution = typeof jobExecutions.$inferInsert;
 export type OAuthToken = typeof oauthTokens.$inferSelect;
 export type NewOAuthToken = typeof oauthTokens.$inferInsert;
+export type EmailRaw = typeof emailsRaw.$inferSelect;
+export type NewEmailRaw = typeof emailsRaw.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
