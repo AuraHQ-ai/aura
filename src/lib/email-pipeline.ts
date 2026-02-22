@@ -299,49 +299,50 @@ async function upsertEmails(
 
   const { db } = await import("../db/client.js");
   const { emailsRaw } = await import("../db/schema.js");
+  const { sql } = await import("drizzle-orm");
 
-  for (const email of emails) {
-    await db
-      .insert(emailsRaw)
-      .values({
-        userId,
-        gmailMessageId: email.gmailMessageId,
-        gmailThreadId: email.gmailThreadId,
-        subject: email.subject,
-        fromEmail: email.fromEmail,
-        fromName: email.fromName,
-        toEmails: email.toEmails,
-        ccEmails: email.ccEmails,
-        date: email.date,
-        bodyMarkdown: email.bodyMarkdown,
-        bodyRaw: email.bodyRaw,
-        snippet: email.snippet,
-        labelIds: email.labelIds,
-        isInbound: email.isInbound,
-      })
-      .onConflictDoUpdate({
-        target: [emailsRaw.userId, emailsRaw.gmailMessageId],
-        set: {
-          subject: email.subject,
-          fromEmail: email.fromEmail,
-          fromName: email.fromName,
-          toEmails: email.toEmails,
-          ccEmails: email.ccEmails,
-          date: email.date,
-          bodyMarkdown: email.bodyMarkdown,
-          bodyRaw: email.bodyRaw,
-          snippet: email.snippet,
-          labelIds: email.labelIds,
-          isInbound: email.isInbound,
-        },
-      });
-  }
+  const rows = emails.map((email) => ({
+    userId,
+    gmailMessageId: email.gmailMessageId,
+    gmailThreadId: email.gmailThreadId,
+    subject: email.subject,
+    fromEmail: email.fromEmail,
+    fromName: email.fromName,
+    toEmails: email.toEmails,
+    ccEmails: email.ccEmails,
+    date: email.date,
+    bodyMarkdown: email.bodyMarkdown,
+    bodyRaw: email.bodyRaw,
+    snippet: email.snippet,
+    labelIds: email.labelIds,
+    isInbound: email.isInbound,
+  }));
+
+  await db
+    .insert(emailsRaw)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+      set: {
+        subject: sql`excluded.subject`,
+        fromEmail: sql`excluded.from_email`,
+        fromName: sql`excluded.from_name`,
+        toEmails: sql`excluded.to_emails`,
+        ccEmails: sql`excluded.cc_emails`,
+        date: sql`excluded.date`,
+        bodyMarkdown: sql`excluded.body_markdown`,
+        bodyRaw: sql`excluded.body_raw`,
+        snippet: sql`excluded.snippet`,
+        labelIds: sql`excluded.label_ids`,
+        isInbound: sql`excluded.is_inbound`,
+      },
+    });
 }
 
 // ── Haiku Triage Gate ───────────────────────────────────────────────────────
 
 const TRIAGE_BATCH_SIZE = 50;
-const TRIAGE_MODEL = "claude-haiku-4-20250514";
+const TRIAGE_MODEL = "claude-haiku-4-5-20251001";
 
 interface TriageResult {
   gmail_message_id: string;
