@@ -34,11 +34,19 @@ export async function assemblePrompt(
 ): Promise<AssembledPrompt> {
   const start = Date.now();
 
+  // Build a richer query from thread context for better memory retrieval.
+  // Use the last 5 thread messages instead of just the latest message,
+  // falling back to the single message text if no thread is available.
+  const threadMessages = conversation.thread;
+  const queryText = threadMessages && threadMessages.length > 1
+    ? threadMessages.slice(-5).map(m => m.text).join('\n')
+    : context.text;
+
   // Embed the query once, then share the vector with both retrieval functions.
   // If the embedding API is unavailable, degrade gracefully (no memories/conversations).
   let queryEmbedding: number[] | undefined;
   try {
-    queryEmbedding = await embedText(context.text);
+    queryEmbedding = await embedText(queryText);
   } catch (error) {
     logger.error("Embedding failed, proceeding without memory context", {
       error: String(error),
@@ -49,7 +57,7 @@ export async function assemblePrompt(
   const [memories, conversations, userProfile] = await Promise.all([
     queryEmbedding
       ? retrieveMemories({
-          query: context.text,
+          query: queryText,
           queryEmbedding,
           currentUserId: context.userId,
           limit: 15,
@@ -57,7 +65,7 @@ export async function assemblePrompt(
       : Promise.resolve([] as Memory[]),
     queryEmbedding
       ? retrieveConversations({
-          query: context.text,
+          query: queryText,
           queryEmbedding,
           threadLimit: 3,
           matchLimit: 15,
