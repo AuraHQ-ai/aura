@@ -1148,51 +1148,22 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ query, limit }) => {
         try {
-          let results: { display_name: string; real_name: string; username: string; id: string }[];
+          const allUsers = await getUserList(client);
+          const q = query.toLowerCase();
 
-          try {
-            const effectiveLimit = limit || 20;
-            const apiResult = await client.apiCall("users.search", {
-              query,
-              count: effectiveLimit * 3,
-            }) as { ok: boolean; results?: any[] };
+          const matches = allUsers.filter(
+            (u) =>
+              u.displayName.toLowerCase().includes(q) ||
+              u.realName.toLowerCase().includes(q) ||
+              u.username.toLowerCase().includes(q),
+          );
 
-            if (!apiResult.ok || !Array.isArray(apiResult.results)) {
-              throw new Error("Unexpected users.search response shape");
-            }
-
-            results = apiResult.results
-              .filter((u: any) => u.id && !u.deleted && !u.is_bot)
-              .slice(0, effectiveLimit)
-              .map((u: any) => ({
-                display_name: u.profile?.display_name || u.real_name || u.name || "",
-                real_name: u.real_name || "",
-                username: u.name || "",
-                id: u.id,
-              }));
-          } catch (searchError: any) {
-            logger.warn("users.search API failed, falling back to local filter", {
-              query,
-              error: searchError.message,
-            });
-
-            const allUsers = await getUserList(client);
-            const q = query.toLowerCase();
-
-            const matches = allUsers.filter(
-              (u) =>
-                u.displayName.toLowerCase().includes(q) ||
-                u.realName.toLowerCase().includes(q) ||
-                u.username.toLowerCase().includes(q),
-            );
-
-            results = matches.slice(0, limit || 20).map((u) => ({
-              display_name: u.displayName || u.realName || u.username,
-              real_name: u.realName,
-              username: u.username,
-              id: u.id,
-            }));
-          }
+          const results = matches.slice(0, limit || 20).map((u) => ({
+            display_name: u.displayName || u.realName || u.username,
+            real_name: u.realName,
+            username: u.username,
+            id: u.id,
+          }));
 
           logger.info("search_users tool called", {
             query,
