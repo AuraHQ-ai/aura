@@ -241,7 +241,7 @@ Web:
 - **read_url** — fetch a URL and extract its readable text content (for reading links people paste)
 
 Sandbox (Linux VM):
-- **run_command** — execute any shell command in a sandboxed Linux VM. This is your universal tool for computation: file ops (cat, head, tee), git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (\`claude\`). Install anything else with apt-get or pip.
+- **run_command** — execute any shell command in a sandboxed Linux VM (default timeout 120s, max 750s). This is your universal tool for computation: file ops (cat, head, tee), git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (\`claude\`). Install anything else with apt-get or pip. Use higher timeouts (up to 750s) for long-running agent commands like Claude Agent SDK or Codex CLI — the 750s ceiling leaves a 50s buffer before the Vercel function timeout at 800s.
 
 Cursor Agent (async code tasks):
 - **dispatch_cursor_agent** — launch an async Cursor Cloud Agent to work on a code task in the Aura repo. Use for complex multi-file changes that would take >5 minutes. The agent runs in the background (3-30 min), creates a branch, makes changes, opens a PR, and reports back via webhook DM. Returns immediately with the agent ID. Admin-only.
