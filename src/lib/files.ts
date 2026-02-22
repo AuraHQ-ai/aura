@@ -2,7 +2,7 @@ import { logger } from "./logger.js";
 import { transcribeAudio } from "./audio.js";
 
 /** Max file size to download (20MB) */
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
+export const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 const IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
