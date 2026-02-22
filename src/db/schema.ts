@@ -343,6 +343,48 @@ export const oauthTokens = pgTable(
     index("oauth_tokens_email_idx").on(table.email),
   ],
 );
+// ── Email Triage ────────────────────────────────────────────────────────────
+
+export const emailTriageEnum = pgEnum("email_triage", [
+  "junk",
+  "fyi",
+  "actionable",
+  "urgent",
+]);
+
+export const emailsRaw = pgTable(
+  "emails_raw",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: text("user_id").notNull(),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    gmailThreadId: text("gmail_thread_id").notNull(),
+    from: text("from_address").notNull(),
+    to: text("to_address"),
+    cc: text("cc_address"),
+    subject: text("subject"),
+    snippet: text("snippet"),
+    bodyMarkdown: text("body_markdown"),
+    date: timestamptz("date"),
+    labels: jsonb("labels").$type<string[]>(),
+    isUnread: boolean("is_unread").default(true),
+    direction: text("direction").notNull(),
+    triage: emailTriageEnum("triage"),
+    embedded: boolean("embedded").default(false),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("emails_raw_gmail_msg_idx").on(table.userId, table.gmailMessageId),
+    index("emails_raw_thread_idx").on(table.gmailThreadId),
+    index("emails_raw_user_date_idx").on(table.userId, table.date),
+    index("emails_raw_triage_idx").on(table.triage),
+  ],
+);
+
+export type EmailRaw = typeof emailsRaw.$inferSelect;
+export type NewEmailRaw = typeof emailsRaw.$inferInsert;
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
