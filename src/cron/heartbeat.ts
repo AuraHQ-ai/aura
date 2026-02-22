@@ -68,6 +68,88 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
   return true;
 }
 
+// ── Stale Job Reaper ─────────────────────────────────────────────────────────
+
+async function reapStaleJobs(): Promise<number> {
+  const staleExecutions = await db
+    .select({
+      id: jobExecutions.id,
+      jobId: jobExecutions.jobId,
+      startedAt: jobExecutions.startedAt,
+    })
+    .from(jobExecutions)
+    .where(
+      and(
+        eq(jobExecutions.status, "running"),
+        lt(jobExecutions.startedAt, sql`NOW() - INTERVAL '15 minutes'`),
+      ),
+    );
+
+  let reaped = 0;
+
+  for (const exec of staleExecutions) {
+    const now = new Date();
+    const elapsedMinutes = Math.round(
+      (now.getTime() - exec.startedAt.getTime()) / 60000,
+    );
+
+    await db
+      .update(jobExecutions)
+      .set({
+        status: "failed",
+        finishedAt: now,
+        error:
+          "Vercel timeout (inferred) -- execution exceeded 15 minute ceiling",
+      })
+      .where(eq(jobExecutions.id, exec.id));
+
+    if (!exec.jobId) continue;
+
+    const [parentJob] = await db
+      .select({ id: jobs.id, name: jobs.name, retries: jobs.retries })
+      .from(jobs)
+      .where(eq(jobs.id, exec.jobId))
+      .limit(1);
+
+    if (!parentJob) continue;
+
+    const newRetries = parentJob.retries + 1;
+
+    if (newRetries < MAX_RETRIES) {
+      await db
+        .update(jobs)
+        .set({
+          status: "pending",
+          retries: newRetries,
+          lastExecutedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(jobs.id, parentJob.id));
+    } else {
+      await db
+        .update(jobs)
+        .set({
+          status: "failed",
+          retries: newRetries,
+          lastExecutedAt: now,
+          result: "Permanently failed after 3 timeout retries",
+          updatedAt: now,
+        })
+        .where(eq(jobs.id, parentJob.id));
+    }
+
+    logger.warn("Reaped stale job", {
+      jobName: parentJob.name,
+      jobId: parentJob.id,
+      elapsedMinutes,
+    });
+
+    reaped++;
+  }
+
+  return reaped;
+}
+
 // ── Heartbeat Cron App ───────────────────────────────────────────────────────
 
 export const heartbeatApp = new Hono();
@@ -89,8 +171,16 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let plansExpired = 0;
   let plansAbandoned = 0;
   let staleRunningRecovered = 0;
+  let staleJobsReaped = 0;
 
   try {
+    // ── 0. Reap stale job executions ─────────────────────────────────────
+
+    staleJobsReaped = await reapStaleJobs();
+    if (staleJobsReaped > 0) {
+      logger.info(`Heartbeat: reaped ${staleJobsReaped} stale job executions`);
+    }
+
     const now = new Date();
 
     // ── 1. Query all pending enabled jobs ────────────────────────────────
@@ -269,9 +359,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       plansExpired,
       plansAbandoned,
       staleRunningRecovered,
+      staleJobsReaped,
     });
 
-    return c.json({ ok: true, executed, failed, plansExpired, plansAbandoned, staleRunningRecovered, duration });
+    return c.json({ ok: true, executed, failed, plansExpired, plansAbandoned, staleRunningRecovered, staleJobsReaped, duration });
   } catch (error: any) {
     logger.error("Heartbeat failed", { error: error.message });
     return c.json({ error: "Heartbeat failed" }, 500);
