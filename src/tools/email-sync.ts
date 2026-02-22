@@ -93,6 +93,9 @@ export function createEmailSyncTools(
             gmailQuery = rawQuery;
           } else if (newer_than) {
             gmailQuery = `newer_than:${newer_than}`;
+            if (before) {
+              gmailQuery += ` before:${before}`;
+            }
           } else {
             const afterDate = after || "2025/01/01";
             gmailQuery = `after:${afterDate}`;
