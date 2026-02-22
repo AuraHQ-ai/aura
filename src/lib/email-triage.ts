@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { emailsRaw } from "../db/schema.js";
 import { getFastModel } from "./ai.js";
@@ -111,27 +111,38 @@ export async function triageEmails(
         maxOutputTokens: 2000,
       });
 
-      for (const r of object.results) {
-        const updated = await db
-          .update(emailsRaw)
-          .set({
-            triage: r.triage,
-            triageReason: r.reason,
-            updatedAt: new Date(),
-          })
-          .where(and(eq(emailsRaw.id, r.id), eq(emailsRaw.userId, userId)))
-          .returning({ id: emailsRaw.id });
+      if (object.results.length > 0) {
+        const valueRows = object.results.map(
+          (r) => sql`(${r.id}::uuid, ${r.triage}, ${r.reason})`,
+        );
 
-        if (updated.length > 0) {
+        const updated = await db.execute(sql`
+          UPDATE emails_raw SET
+            triage = v.triage,
+            triage_reason = v.reason,
+            updated_at = now()
+          FROM (VALUES ${sql.join(valueRows, sql`, `)}) AS v(id, triage, reason)
+          WHERE emails_raw.id = v.id
+            AND emails_raw.user_id = ${userId}
+          RETURNING emails_raw.id, v.triage AS triage_cat
+        `);
+
+        const updatedIds = new Set<string>();
+        for (const row of updated.rows as { id: string; triage_cat: string }[]) {
+          updatedIds.add(row.id);
           summary.triaged++;
-          summary.breakdown[r.triage] =
-            (summary.breakdown[r.triage] || 0) + 1;
-        } else {
-          logger.warn("Triage update matched no rows", {
-            id: r.id,
-            userId,
-          });
-          summary.errors++;
+          summary.breakdown[row.triage_cat] =
+            (summary.breakdown[row.triage_cat] || 0) + 1;
+        }
+
+        for (const r of object.results) {
+          if (!updatedIds.has(r.id)) {
+            logger.warn("Triage update matched no rows", {
+              id: r.id,
+              userId,
+            });
+            summary.errors++;
+          }
         }
       }
     } catch (err) {
