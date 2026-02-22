@@ -17,7 +17,7 @@ import { createSheetsTools } from "./sheets.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { formatTimestamp } from "../lib/temporal.js";
-import { downloadSlackFile } from "../lib/files.js";
+import { downloadSlackFile, MAX_FILE_SIZE } from "../lib/files.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
 
@@ -2227,8 +2227,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          const maxSize = 20 * 1024 * 1024;
-          if (size > maxSize) {
+          if (size > MAX_FILE_SIZE) {
             return {
               ok: false,
               error: `File "${filename}" is ${(size / 1024 / 1024).toFixed(1)}MB, which exceeds the 20MB limit.`,
