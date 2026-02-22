@@ -110,6 +110,12 @@ export async function syncEmails(
   }
   const { client: gmail, email: userEmail } = gmailResult;
 
+  if (!userEmail) {
+    throw new Error(
+      `Gmail email address not found for user ${userId} — cannot determine email direction`,
+    );
+  }
+
   const query = options.query || "newer_than:7d";
   const maxMessages = options.maxMessages || 500;
 
@@ -175,7 +181,7 @@ export async function syncEmails(
           parseEmailAddress(fromRaw);
         const date = dateStr ? new Date(dateStr) : new Date();
         const direction: "inbound" | "outbound" =
-          userEmail && fromEmail.toLowerCase() === userEmail.toLowerCase()
+          fromEmail.toLowerCase() === userEmail.toLowerCase()
             ? "outbound"
             : "inbound";
 
