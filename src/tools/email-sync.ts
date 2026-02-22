@@ -171,11 +171,7 @@ export function createEmailSyncTools(
 
           const threadMap = new Map<string, (typeof emails)[0]>();
           for (const email of emails) {
-            const existing = threadMap.get(email.gmailThreadId);
-            if (
-              !existing ||
-              (email.date && existing.date && email.date > existing.date)
-            ) {
+            if (!threadMap.has(email.gmailThreadId)) {
               threadMap.set(email.gmailThreadId, email);
             }
           }
