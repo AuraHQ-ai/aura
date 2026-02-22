@@ -1151,9 +1151,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           let results: { display_name: string; real_name: string; username: string; id: string }[];
 
           try {
+            const effectiveLimit = limit || 20;
             const apiResult = await client.apiCall("users.search", {
               query,
-              count: limit || 20,
+              count: effectiveLimit * 3,
             }) as { ok: boolean; results?: any[] };
 
             if (!apiResult.ok || !Array.isArray(apiResult.results)) {
@@ -1162,6 +1163,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
             results = apiResult.results
               .filter((u: any) => u.id && !u.deleted && !u.is_bot)
+              .slice(0, effectiveLimit)
               .map((u: any) => ({
                 display_name: u.profile?.display_name || u.real_name || u.name || "",
                 real_name: u.real_name || "",
