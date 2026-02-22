@@ -117,6 +117,78 @@ async function getUserClient(): Promise<WebClient | null> {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
+ * Convert simple HTML (as returned by Slack canvas url_private) to markdown.
+ * Handles headings, paragraphs, lists, links, bold/italic, code, and <br>.
+ */
+function htmlToMarkdown(html: string): string {
+  let s = html;
+
+  // Remove <head>, <style>, <script> blocks entirely
+  s = s.replace(/<head[\s\S]*?<\/head>/gi, "");
+  s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
+
+  // Headings
+  s = s.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, "\n# $1\n");
+  s = s.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, "\n## $1\n");
+  s = s.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, "\n### $1\n");
+  s = s.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, "\n#### $1\n");
+  s = s.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, "\n##### $1\n");
+  s = s.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, "\n###### $1\n");
+
+  // Bold / strong
+  s = s.replace(/<(b|strong)[^>]*>([\s\S]*?)<\/\1>/gi, "**$2**");
+
+  // Italic / em
+  s = s.replace(/<(i|em)[^>]*>([\s\S]*?)<\/\1>/gi, "_$2_");
+
+  // Strikethrough
+  s = s.replace(/<(s|strike|del)[^>]*>([\s\S]*?)<\/\1>/gi, "~$2~");
+
+  // Inline code
+  s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, "`$1`");
+
+  // Code blocks / pre
+  s = s.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, "\n```\n$1\n```\n");
+
+  // Links
+  s = s.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)");
+
+  // Images — use alt text or URL
+  s = s.replace(/<img[^>]*alt="([^"]*)"[^>]*src="([^"]*)"[^>]*\/?>/gi, "![$1]($2)");
+  s = s.replace(/<img[^>]*src="([^"]*)"[^>]*\/?>/gi, "![]($1)");
+
+  // List items (before removing <ul>/<ol> tags)
+  s = s.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, "- $1\n");
+
+  // Paragraphs and divs → double newline
+  s = s.replace(/<\/(p|div)>/gi, "\n\n");
+  s = s.replace(/<(p|div)[^>]*>/gi, "");
+
+  // Line breaks
+  s = s.replace(/<br\s*\/?>/gi, "\n");
+
+  // Horizontal rules
+  s = s.replace(/<hr[^>]*\/?>/gi, "\n---\n");
+
+  // Remove all remaining HTML tags
+  s = s.replace(/<[^>]+>/g, "");
+
+  // Decode common HTML entities
+  s = s.replace(/&amp;/g, "&");
+  s = s.replace(/&lt;/g, "<");
+  s = s.replace(/&gt;/g, ">");
+  s = s.replace(/&quot;/g, '"');
+  s = s.replace(/&#39;/g, "'");
+  s = s.replace(/&nbsp;/g, " ");
+
+  // Collapse excessive blank lines
+  s = s.replace(/\n{3,}/g, "\n\n");
+
+  return s.trim();
+}
+
+/**
  * Extract text from all rich-content locations in a Slack message.
  * Slack messages can carry content in msg.text, attachments (forwarded/shared
  * messages), rich_text blocks, and file shares.
@@ -1682,33 +1754,70 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     read_canvas: tool({
       description:
-        "Read the content of a Slack Canvas by looking up its sections. Returns the canvas structure and content.",
+        "Read the content of a Slack Canvas. Returns the title and readable markdown content.",
       inputSchema: z.object({
         canvas_id: z.string().describe("The ID of the Canvas to read"),
       }),
       execute: async ({ canvas_id }) => {
         try {
-          const result = await (client as any).apiCall(
-            "canvases.sections.lookup",
-            {
-              canvas_id,
-              criteria: { any_header: true },
-            },
-          );
+          const fileInfo = await client.files.info({ file: canvas_id });
 
-          if (!result.ok) {
+          if (!fileInfo.ok || !fileInfo.file) {
             return {
               ok: false,
-              error: `Failed to read canvas: ${result.error || "unknown error"}`,
+              error: `Failed to get canvas info: ${fileInfo.error || "unknown error"}`,
             };
           }
 
-          logger.info("read_canvas tool called", { canvas_id });
+          const title = fileInfo.file.title ?? "Untitled";
+          const urlPrivate = fileInfo.file.url_private;
+
+          if (!urlPrivate) {
+            return {
+              ok: false,
+              error: "Canvas has no downloadable URL (url_private missing)",
+            };
+          }
+
+          const response = await fetch(urlPrivate, {
+            headers: { Authorization: `Bearer ${client.token}` },
+          });
+
+          if (!response.ok) {
+            return {
+              ok: false,
+              error: `Failed to download canvas content: HTTP ${response.status}`,
+            };
+          }
+
+          const html = await response.text();
+          const content = htmlToMarkdown(html);
+
+          // Try to get section IDs for edit_canvas compatibility
+          let sections: { id: string }[] = [];
+          try {
+            const sectionsResult = await (client as any).apiCall(
+              "canvases.sections.lookup",
+              {
+                canvas_id,
+                criteria: { section_types: ["any_header"] },
+              },
+            );
+            if (sectionsResult.ok && sectionsResult.sections) {
+              sections = sectionsResult.sections;
+            }
+          } catch {
+            // Section lookup is best-effort; content is what matters
+          }
+
+          logger.info("read_canvas tool called", { canvas_id, title });
 
           return {
             ok: true,
             canvas_id,
-            sections: result.sections || [],
+            title,
+            content,
+            ...(sections.length > 0 ? { sections } : {}),
           };
         } catch (error: any) {
           logger.error("read_canvas tool failed", {
