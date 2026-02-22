@@ -2,6 +2,7 @@ import type { WebClient } from "@slack/web-api";
 import { getAllSettings } from "../lib/settings.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
+import { getCredential, maskCredential } from "../lib/credentials.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
 
@@ -49,6 +50,27 @@ const DEFAULTS: Record<string, string> = {
   model_embedding: process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
 };
 
+// ── Credential Definitions ───────────────────────────────────────────────────
+
+interface CredentialDef {
+  key: string;
+  label: string;
+  description: string;
+}
+
+const CREDENTIALS: CredentialDef[] = [
+  {
+    key: "github_token",
+    label: "GitHub Token",
+    description: "For issues, PRs, and code access",
+  },
+];
+
+/** Map credential button action IDs to credential keys */
+export const CREDENTIAL_ACTIONS: Record<string, string> = {
+  credential_edit_github_token: "github_token",
+};
+
 // ── Block Kit Helpers ────────────────────────────────────────────────────────
 
 function buildDropdown(
@@ -82,6 +104,93 @@ function buildDropdown(
       initial_option: initialOption,
     },
   };
+}
+
+async function buildCredentialBlocks(): Promise<any[]> {
+  const blocks: any[] = [
+    { type: "divider" },
+    {
+      type: "header",
+      text: { type: "plain_text", text: "Credentials" },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: "Encrypted and stored in the database. Values are never logged or displayed in full.",
+        },
+      ],
+    },
+  ];
+
+  for (const cred of CREDENTIALS) {
+    const value = await getCredential(cred.key);
+    const status = value ? `\`${maskCredential(value)}\`` : "_not set_";
+
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*${cred.label}*  —  ${cred.description}\nCurrent: ${status}`,
+      },
+      accessory: {
+        type: "button",
+        text: { type: "plain_text", text: value ? "Update" : "Set" },
+        action_id: `credential_edit_${cred.key}`,
+      },
+    });
+  }
+
+  return blocks;
+}
+
+/**
+ * Open a modal for editing a credential value.
+ */
+export async function openCredentialModal(
+  client: WebClient,
+  triggerId: string,
+  credentialKey: string,
+): Promise<void> {
+  const cred = CREDENTIALS.find((c) => c.key === credentialKey);
+  if (!cred) return;
+
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "credential_submit",
+      private_metadata: credentialKey,
+      title: { type: "plain_text", text: `Update ${cred.label}` },
+      submit: { type: "plain_text", text: "Save" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "input",
+          block_id: "credential_input_block",
+          label: { type: "plain_text", text: cred.label },
+          element: {
+            type: "plain_text_input",
+            action_id: "credential_value",
+            placeholder: {
+              type: "plain_text",
+              text: "Paste the new token here",
+            },
+          },
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: `This will replace the current ${cred.label}. The value is encrypted at rest with AES-256-GCM.`,
+            },
+          ],
+        },
+      ],
+    },
+  });
 }
 
 // ── Publish Home Tab ─────────────────────────────────────────────────────────
@@ -166,6 +275,11 @@ export async function publishHomeTab(
           },
         },
       );
+    }
+
+    if (admin) {
+      const credBlocks = await buildCredentialBlocks();
+      blocks.push(...credBlocks);
     }
 
     blocks.push(
