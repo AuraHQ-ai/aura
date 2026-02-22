@@ -17,6 +17,7 @@
     "lint": "eslint src/"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.46",
     "@ai-sdk/gateway": "^3.0.46",
     "@google-cloud/bigquery": "^8.1.1",
     "@googleapis/calendar": "^14.2.0",
