@@ -347,6 +347,7 @@ export const emailsRaw = pgTable(
     labels: jsonb("labels").$type<string[]>(),
     rawHeaders: jsonb("raw_headers").$type<Record<string, string>>(),
     threadState: text("thread_state"),
+    threadStateReason: text("thread_state_reason"),
     threadStateUpdatedAt: timestamptz("thread_state_updated_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
