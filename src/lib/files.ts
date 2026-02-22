@@ -93,7 +93,7 @@ export function getEventFiles(
 /**
  * Download a file from Slack's private URL using the bot token.
  */
-async function downloadSlackFile(
+export async function downloadSlackFile(
   url: string,
   botToken: string,
 ): Promise<Uint8Array> {

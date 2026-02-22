@@ -222,6 +222,10 @@ Slack Lists:
 Canvases:
 - **read_canvas** / **create_canvas** / **edit_canvas** — read, create, edit Canvases
 
+Files:
+- **upload_file** — upload a file (text or binary via base64) to Slack, optionally sharing to a channel or thread
+- **download_slack_file** — download a file from Slack by its file ID (e.g. F0ABC123). Returns base64-encoded content plus metadata (filename, mimetype, size). Use when you need to inspect or process a file someone shared. 20MB limit.
+
 Notes (three-tier knowledge hierarchy):
 - **save_note** / **read_note** / **list_notes** / **edit_note** / **delete_note**
 - **search_notes** — full-text search across all notes content. Returns matching notes with topic, category, and a context snippet. Use when you need to find which notes mention a specific term, before resorting to list_notes + read_note loops.
