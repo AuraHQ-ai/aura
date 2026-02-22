@@ -1,4 +1,5 @@
 import { getSetting, setSetting } from "./settings.js";
+import { getCredential } from "./credentials.js";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
@@ -42,11 +43,12 @@ async function loadE2B() {
  * unreliable (see e2b-dev/E2B#884). Per-command `envs` is the only
  * mechanism that works consistently.
  */
-export function getSandboxEnvs(): Record<string, string> {
+export async function getSandboxEnvs(): Promise<Record<string, string>> {
   const envs: Record<string, string> = {};
-  if (process.env.GITHUB_TOKEN) {
-    envs.GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-    envs.GH_TOKEN = process.env.GITHUB_TOKEN;
+  const ghToken = await getCredential("github_token");
+  if (ghToken) {
+    envs.GITHUB_TOKEN = ghToken;
+    envs.GH_TOKEN = ghToken;
   }
   if (process.env.ANTHROPIC_API_KEY) {
     envs.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -87,7 +89,7 @@ export async function getOrCreateSandbox(): Promise<any> {
   }
 
   const Sandbox = await loadE2B();
-  const envs = getSandboxEnvs();
+  const envs = await getSandboxEnvs();
 
   // Try to resume a previously paused sandbox
   const savedId = await getSetting(SANDBOX_NOTE_KEY);
