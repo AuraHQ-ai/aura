@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -107,9 +107,15 @@ export function createEmailSyncTools(
           });
 
           let triageResult = null;
+          let threadResult = null;
           if (triage !== false) {
             const { triageEmails } = await import("../lib/email-triage.js");
             triageResult = await triageEmails(user.id);
+
+            const { computeThreadStates } = await import(
+              "../lib/email-thread-state.js"
+            );
+            threadResult = await computeThreadStates(user.id);
           }
 
           return {
@@ -118,9 +124,17 @@ export function createEmailSyncTools(
             skipped: syncResult.skipped,
             errors: syncResult.errors,
             triage: triageResult,
+            threadStates: threadResult,
             message: `Synced ${syncResult.synced} emails (${syncResult.skipped} already existed, ${syncResult.errors} errors)${
               triageResult
                 ? `, triaged ${triageResult.triaged} (${Object.entries(triageResult.breakdown)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(", ")})`
+                : ""
+            }${
+              threadResult
+                ? `, thread states: ${threadResult.threadsProcessed} threads (${Object.entries(threadResult.breakdown)
+                    .filter(([, v]) => v > 0)
                     .map(([k, v]) => `${k}: ${v}`)
                     .join(", ")})`
                 : ""
@@ -183,80 +197,82 @@ export function createEmailSyncTools(
             statsMap[s.triage || "untriaged"] = s.count;
           }
 
-          const emails = await db
+          // Thread-state-aware query: aggregate per thread
+          const threadRows = await db
             .select({
               gmailThreadId: emailsRaw.gmailThreadId,
-              subject: emailsRaw.subject,
-              fromEmail: emailsRaw.fromEmail,
-              fromName: emailsRaw.fromName,
-              date: emailsRaw.date,
-              triage: emailsRaw.triage,
-              triageReason: emailsRaw.triageReason,
-              direction: emailsRaw.direction,
+              subject: sql<string>`(array_agg(${emailsRaw.subject} ORDER BY ${emailsRaw.date} DESC))[1]`,
+              fromEmail: sql<string>`(array_agg(${emailsRaw.fromEmail} ORDER BY ${emailsRaw.date} DESC))[1]`,
+              fromName: sql<string | null>`(array_agg(${emailsRaw.fromName} ORDER BY ${emailsRaw.date} DESC))[1]`,
+              lastDate: sql<Date>`max(${emailsRaw.date})`,
+              threadState: sql<string | null>`(array_agg(${emailsRaw.threadState} ORDER BY ${emailsRaw.date} DESC))[1]`,
+              hasUrgent: sql<boolean>`bool_or(${emailsRaw.triage} = 'urgent')`,
+              messageCount: sql<number>`count(*)::int`,
+              participantCount: sql<number>`count(DISTINCT ${emailsRaw.fromEmail})::int`,
             })
             .from(emailsRaw)
             .where(
               and(
                 eq(emailsRaw.userId, userId),
                 include_fyi
-                  ? sql`(${emailsRaw.triage} IS NULL OR ${emailsRaw.triage} != 'junk')`
-                  : sql`(${emailsRaw.triage} IS NULL OR ${emailsRaw.triage} NOT IN ('junk', 'fyi'))`,
+                  ? sql`(${emailsRaw.threadState} IS NULL OR ${emailsRaw.threadState} NOT IN ('junk'))`
+                  : sql`(${emailsRaw.threadState} IS NULL OR ${emailsRaw.threadState} NOT IN ('junk', 'fyi'))`,
               ),
             )
+            .groupBy(emailsRaw.gmailThreadId)
             .orderBy(
-              sql`CASE ${emailsRaw.triage}
-                WHEN 'urgent' THEN 1
-                WHEN 'actionable' THEN 2
+              sql`bool_or(${emailsRaw.triage} = 'urgent') DESC`,
+              sql`CASE (array_agg(${emailsRaw.threadState} ORDER BY ${emailsRaw.date} DESC))[1]
+                WHEN 'awaiting_your_reply' THEN 1
+                WHEN 'awaiting_their_reply' THEN 2
                 WHEN 'fyi' THEN 3
-                WHEN 'junk' THEN 4
-                ELSE 5 END`,
-              desc(emailsRaw.date),
+                ELSE 4 END`,
+              sql`max(${emailsRaw.date}) DESC`,
             )
             .limit(200);
 
-          const threadMap = new Map<string, (typeof emails)[0]>();
-          for (const email of emails) {
-            if (!threadMap.has(email.gmailThreadId)) {
-              threadMap.set(email.gmailThreadId, email);
-            }
-          }
-
-          const threads = [...threadMap.values()].map((t) => ({
+          const threads = threadRows.map((t) => ({
             subject: t.subject || "(no subject)",
             from: t.fromName
               ? `${t.fromName} <${t.fromEmail}>`
               : t.fromEmail,
-            triage: t.triage || "untriaged",
-            triage_reason: t.triageReason || "",
-            direction: t.direction,
-            last_message: t.date
-              ? formatDistanceToNow(t.date, { addSuffix: true })
+            thread_state: t.threadState || "unknown",
+            has_urgent: t.hasUrgent,
+            message_count: t.messageCount,
+            participant_count: t.participantCount,
+            last_message: t.lastDate
+              ? formatDistanceToNow(t.lastDate, { addSuffix: true })
               : "unknown",
           }));
 
-          const urgent = threads.filter((t) => t.triage === "urgent");
-          const actionable = threads.filter((t) => t.triage === "actionable");
-          const fyi = threads.filter((t) => t.triage === "fyi");
           const awaitingReply = threads.filter(
-            (t) =>
-              t.direction === "inbound" &&
-              (t.triage === "urgent" || t.triage === "actionable"),
+            (t) => t.thread_state === "awaiting_your_reply",
           );
+          const awaitingTheirs = threads.filter(
+            (t) => t.thread_state === "awaiting_their_reply",
+          );
+          const urgent = threads.filter((t) => t.has_urgent);
+          const fyi = threads.filter((t) => t.thread_state === "fyi");
 
           let summary = `📧 **Email Digest** (${threads.length} threads)\n`;
           if (urgent.length > 0)
             summary += `🚨 **${urgent.length} urgent**\n`;
-          if (actionable.length > 0)
-            summary += `⚡ **${actionable.length} actionable**\n`;
-          if (fyi.length > 0) summary += `ℹ️ **${fyi.length} FYI**\n`;
           if (awaitingReply.length > 0)
-            summary += `📩 **${awaitingReply.length} awaiting reply**\n`;
+            summary += `📩 **${awaitingReply.length} awaiting your reply**\n`;
+          if (awaitingTheirs.length > 0)
+            summary += `📤 **${awaitingTheirs.length} awaiting their reply**\n`;
+          if (fyi.length > 0) summary += `ℹ️ **${fyi.length} FYI**\n`;
 
-          if (urgent.length > 0 || actionable.length > 0) {
+          const priority = threads
+            .filter((t) => t.has_urgent || t.thread_state === "awaiting_your_reply")
+            .slice(0, 10);
+
+          if (priority.length > 0) {
             summary += "\n**Priority threads:**\n";
-            [...urgent, ...actionable].slice(0, 10).forEach((t) => {
-              const icon = t.triage === "urgent" ? "🚨" : "⚡";
-              summary += `${icon} **${t.subject}** from ${t.from} • ${t.last_message}\n`;
+            priority.forEach((t) => {
+              const icon = t.has_urgent ? "🚨" : "📩";
+              const meta = `${t.message_count} msg, ${t.participant_count} participants`;
+              summary += `${icon} **${t.subject}** from ${t.from} • ${t.last_message} (${meta})\n`;
             });
           }
 
