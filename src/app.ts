@@ -740,10 +740,13 @@ app.post("/api/webhook/github", async (c) => {
       const { tool: aiTool } = await import("ai");
       const { z } = await import("zod");
       const { getFastModel } = await import("./lib/ai.js");
-      const { execSync } = await import("node:child_process");
+      const { execFileSync } = await import("node:child_process");
+      const { createNoteTools } = await import("./tools/notes.js");
 
       const model = await getFastModel();
+      const { read_note, edit_note } = createNoteTools();
 
+      const noteTools = { read_note, edit_note };
       const ghTools = {
         run_gh_command: aiTool({
           description:
@@ -765,7 +768,8 @@ app.post("/api/webhook/github", async (c) => {
               if (!ghToken) {
                 return { ok: false, error: "No GitHub token configured" };
               }
-              const output = execSync(command, {
+              const args = command.slice(3).split(/\s+/).filter(Boolean);
+              const output = execFileSync("gh", args, {
                 encoding: "utf8",
                 timeout: 15_000,
                 env: { ...process.env, GH_TOKEN: ghToken },
@@ -850,83 +854,7 @@ app.post("/api/webhook/github", async (c) => {
           },
         }),
 
-        read_note: aiTool({
-          description:
-            "Read one of Aura's notes by topic. Use to check gap-issue-pr-map or other tracking notes.",
-          inputSchema: z.object({
-            topic: z.string().describe("The topic key of the note to read"),
-          }),
-          execute: async ({ topic }) => {
-            try {
-              const rows = await db
-                .select()
-                .from(notes)
-                .where(eq(notes.topic, topic))
-                .limit(1);
-              const note = rows[0];
-              if (!note) {
-                return {
-                  ok: false,
-                  error: `No note found with topic "${topic}".`,
-                };
-              }
-              return {
-                ok: true,
-                topic: note.topic,
-                category: note.category,
-                content: note.content,
-                updated_at: note.updatedAt.toISOString(),
-              };
-            } catch (err: any) {
-              return { ok: false, error: err.message };
-            }
-          },
-        }),
-
-        edit_note: aiTool({
-          description:
-            "Edit an existing note. Supports 'append' to add content at the end.",
-          inputSchema: z.object({
-            topic: z.string().describe("The topic key of the note to edit"),
-            operation: z
-              .enum(["append", "prepend"])
-              .describe("How to edit: 'append' adds to end, 'prepend' adds to start"),
-            content: z.string().describe("The content to add"),
-          }),
-          execute: async ({ topic, operation, content: newContent }) => {
-            try {
-              const rows = await db
-                .select()
-                .from(notes)
-                .where(eq(notes.topic, topic))
-                .limit(1);
-              const note = rows[0];
-              if (!note) {
-                return {
-                  ok: false,
-                  error: `No note found with topic "${topic}".`,
-                };
-              }
-
-              const updated =
-                operation === "append"
-                  ? note.content + "\n" + newContent
-                  : newContent + "\n" + note.content;
-
-              await db
-                .update(notes)
-                .set({ content: updated, updatedAt: new Date() })
-                .where(eq(notes.topic, topic));
-
-              return {
-                ok: true,
-                message: `Note "${topic}" updated (${operation}).`,
-              };
-            } catch (err: any) {
-              return { ok: false, error: err.message };
-            }
-          },
-        }),
+        ...noteTools,
       };
 
       const result = await generateText({
