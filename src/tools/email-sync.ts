@@ -88,6 +88,13 @@ export function createEmailSyncTools(client: WebClient, context?: ScheduleContex
           .describe("How many days back to look (default 7)"),
       }),
       execute: async ({ user_name, days }) => {
+        if (!isAdmin(context?.userId)) {
+          return {
+            ok: false,
+            error: "This tool is restricted to admin users only.",
+          };
+        }
+
         try {
           const user = await resolveUserByName(client, user_name);
           if (!user) {
