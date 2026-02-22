@@ -177,15 +177,25 @@ export async function retrieveConversations(
     }
 
     // Group by thread: use slack_thread_ts if present, otherwise slack_ts (top-level message)
-    const threadMap = new Map<string, { channelId: string; bestSimilarity: number }>();
+    const threadMap = new Map<string, { channelId: string; bestSimilarity: number; mostRecentMessageAt: Date }>();
     for (const r of relevant) {
       const threadKey = r.message.slackThreadTs || r.message.slackTs;
+      const messageDate = new Date(r.message.createdAt);
       const existing = threadMap.get(threadKey);
-      if (!existing || r.similarity > existing.bestSimilarity) {
+      if (!existing) {
         threadMap.set(threadKey, {
           channelId: r.message.channelId,
           bestSimilarity: r.similarity,
+          mostRecentMessageAt: messageDate,
         });
+      } else {
+        if (r.similarity > existing.bestSimilarity) {
+          existing.bestSimilarity = r.similarity;
+          existing.channelId = r.message.channelId;
+        }
+        if (messageDate > existing.mostRecentMessageAt) {
+          existing.mostRecentMessageAt = messageDate;
+        }
       }
     }
 
@@ -193,9 +203,16 @@ export async function retrieveConversations(
       threadMap.delete(excludeThreadTs);
     }
 
-    // Sort threads by best similarity and take top N
+    // Score threads: combine cosine similarity with recency boost
+    const now = Date.now();
     const sortedThreads = [...threadMap.entries()]
-      .sort((a, b) => b[1].bestSimilarity - a[1].bestSimilarity)
+      .map(([key, meta]) => {
+        const ageDays = (now - meta.mostRecentMessageAt.getTime()) / (1000 * 60 * 60 * 24);
+        const recencyBoost = Math.max(0, 1 - ageDays / 30);
+        const combinedScore = meta.bestSimilarity * 0.8 + recencyBoost * 0.2;
+        return [key, { ...meta, combinedScore }] as const;
+      })
+      .sort((a, b) => b[1].combinedScore - a[1].combinedScore)
       .slice(0, threadLimit);
 
     if (sortedThreads.length === 0) return [];
