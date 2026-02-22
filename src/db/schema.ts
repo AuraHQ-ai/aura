@@ -343,6 +343,45 @@ export const oauthTokens = pgTable(
     index("oauth_tokens_email_idx").on(table.email),
   ],
 );
+// ── Emails Raw (staging pipeline) ───────────────────────────────────────────
+
+export const emailsRaw = pgTable(
+  "emails_raw",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    userId: text("user_id").notNull(),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    gmailThreadId: text("gmail_thread_id").notNull(),
+    subject: text("subject"),
+    fromEmail: text("from_email"),
+    fromName: text("from_name"),
+    toEmails: text("to_emails").array(),
+    ccEmails: text("cc_emails").array(),
+    date: timestamptz("date"),
+    bodyMarkdown: text("body_markdown"),
+    bodyRaw: text("body_raw"),
+    snippet: text("snippet"),
+    labelIds: text("label_ids").array(),
+    triageClass: text("triage_class"),
+    triageReason: text("triage_reason"),
+    triageModel: text("triage_model"),
+    triagedAt: timestamptz("triaged_at"),
+    isInbound: boolean("is_inbound"),
+    createdAt: timestamptz("created_at").defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("emails_raw_user_gmail_id_idx").on(
+      table.userId,
+      table.gmailMessageId,
+    ),
+    index("idx_emails_raw_user_thread").on(table.userId, table.gmailThreadId),
+    index("idx_emails_raw_user_triage").on(table.userId, table.triageClass),
+    index("idx_emails_raw_date").on(table.date),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -365,6 +404,8 @@ export type JobExecution = typeof jobExecutions.$inferSelect;
 export type NewJobExecution = typeof jobExecutions.$inferInsert;
 export type OAuthToken = typeof oauthTokens.$inferSelect;
 export type NewOAuthToken = typeof oauthTokens.$inferInsert;
+export type EmailRaw = typeof emailsRaw.$inferSelect;
+export type NewEmailRaw = typeof emailsRaw.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
