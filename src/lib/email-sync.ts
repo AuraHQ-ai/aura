@@ -289,7 +289,6 @@ export async function getThreadsAwaitingReply(userId: string): Promise<{
   triage: string;
 }[]> {
   const { db } = await import("../db/client.js");
-  const { emailsRaw } = await import("../db/schema.js");
   const { sql } = await import("drizzle-orm");
 
   // For each thread, get the most recent email.
