@@ -665,4 +665,298 @@ app.post("/api/webhook/cursor-agent", async (c) => {
   return c.json({ ok: true });
 });
 
+// ── GitHub Webhook ─────────────────────────────────────────────────────────
+
+function verifyGitHubWebhookSignature(
+  rawBody: string,
+  signature: string,
+): boolean {
+  const secret = process.env.GITHUB_WEBHOOK_SECRET;
+  if (!secret || !signature) return false;
+
+  const expected =
+    "sha256=" +
+    crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(expected, "utf8"),
+      Buffer.from(signature, "utf8"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+const GITHUB_EVENT_SYSTEM_PROMPT = `You are a GitHub event handler for the Aura repo (realadvisor/aura). You receive GitHub webhook payloads and decide what actions to take.
+
+For pull_request events:
+- "opened" with draft=false OR "ready_for_review": Check if the PR body references issues (Fixes #N, Closes #N). Post a summary to the relevant Slack thread if one exists.
+- "closed" with merged=true: Find referenced issues and close them with \`gh issue close\`. Notify relevant Slack conversations.
+- "opened" with draft=true: If the PR references an issue, consider marking it ready for review with \`gh pr ready\`.
+
+Rules:
+- Be concise in Slack notifications. One or two sentences max.
+- Don't spam. Only notify when it genuinely matters.
+- When closing issues, verify the PR actually addresses them (check the diff summary).
+- Update the gap-issue-pr-map note if relevant.
+- Always include links in notifications.`;
+
+app.post("/api/webhook/github", async (c) => {
+  const rawBody = await c.req.text();
+  const signature = c.req.header("x-hub-signature-256") || "";
+  const eventType = c.req.header("x-github-event") || "";
+
+  if (!process.env.GITHUB_WEBHOOK_SECRET) {
+    logger.warn("GITHUB_WEBHOOK_SECRET not configured — rejecting webhook");
+    return c.json({ error: "Webhook not configured" }, 403);
+  }
+
+  if (!verifyGitHubWebhookSignature(rawBody, signature)) {
+    logger.warn("Invalid GitHub webhook signature — rejecting");
+    return c.json({ error: "Invalid signature" }, 401);
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
+  }
+
+  logger.info("GitHub webhook received", {
+    event: eventType,
+    action: payload.action,
+    repo: payload.repository?.full_name,
+  });
+
+  if (eventType !== "pull_request") {
+    return c.json({ ok: true, skipped: true, reason: `Ignoring event: ${eventType}` });
+  }
+
+  const processGitHubEvent = async () => {
+    try {
+      const { generateText, stepCountIs } = await import("ai");
+      const { tool: aiTool } = await import("ai");
+      const { z } = await import("zod");
+      const { getFastModel } = await import("./lib/ai.js");
+      const { execSync } = await import("node:child_process");
+
+      const model = await getFastModel();
+
+      const ghTools = {
+        run_gh_command: aiTool({
+          description:
+            "Run a GitHub CLI (gh) command. Use for operations like closing issues, marking PRs ready, adding labels. The command should start with 'gh' and will run against the realadvisor/aura repo.",
+          inputSchema: z.object({
+            command: z
+              .string()
+              .describe(
+                "The gh CLI command to run, e.g. 'gh issue close 42 -R realadvisor/aura'",
+              ),
+          }),
+          execute: async ({ command }) => {
+            try {
+              if (!command.startsWith("gh ")) {
+                return { ok: false, error: "Command must start with 'gh'" };
+              }
+              const ghToken =
+                process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+              if (!ghToken) {
+                return { ok: false, error: "No GitHub token configured" };
+              }
+              const output = execSync(command, {
+                encoding: "utf8",
+                timeout: 15_000,
+                env: { ...process.env, GH_TOKEN: ghToken },
+              });
+              logger.info("run_gh_command executed", {
+                command,
+                outputLength: output.length,
+              });
+              return { ok: true, output: output.slice(0, 4000) };
+            } catch (err: any) {
+              logger.error("run_gh_command failed", {
+                command,
+                error: err.message,
+              });
+              return {
+                ok: false,
+                error: `Command failed: ${err.message?.slice(0, 500)}`,
+              };
+            }
+          },
+        }),
+
+        send_slack_message: aiTool({
+          description:
+            "Post a message to a Slack channel. Use for notifying about PR events.",
+          inputSchema: z.object({
+            channel: z
+              .string()
+              .describe("Slack channel ID or name to post to"),
+            text: z.string().describe("Message text (Slack mrkdwn format)"),
+          }),
+          execute: async ({ channel, text }) => {
+            try {
+              const result = await slackClient.chat.postMessage({
+                channel,
+                text,
+              });
+              logger.info("send_slack_message sent", {
+                channel,
+                ts: result.ts,
+              });
+              return { ok: true, ts: result.ts };
+            } catch (err: any) {
+              logger.error("send_slack_message failed", {
+                channel,
+                error: err.message,
+              });
+              return { ok: false, error: err.message };
+            }
+          },
+        }),
+
+        send_slack_thread_reply: aiTool({
+          description: "Reply in a Slack thread.",
+          inputSchema: z.object({
+            channel: z.string().describe("Slack channel ID"),
+            thread_ts: z
+              .string()
+              .describe("Thread timestamp to reply in"),
+            text: z.string().describe("Reply text (Slack mrkdwn format)"),
+          }),
+          execute: async ({ channel, thread_ts, text }) => {
+            try {
+              const result = await slackClient.chat.postMessage({
+                channel,
+                thread_ts,
+                text,
+              });
+              logger.info("send_slack_thread_reply sent", {
+                channel,
+                thread_ts,
+                ts: result.ts,
+              });
+              return { ok: true, ts: result.ts };
+            } catch (err: any) {
+              logger.error("send_slack_thread_reply failed", {
+                channel,
+                error: err.message,
+              });
+              return { ok: false, error: err.message };
+            }
+          },
+        }),
+
+        read_note: aiTool({
+          description:
+            "Read one of Aura's notes by topic. Use to check gap-issue-pr-map or other tracking notes.",
+          inputSchema: z.object({
+            topic: z.string().describe("The topic key of the note to read"),
+          }),
+          execute: async ({ topic }) => {
+            try {
+              const rows = await db
+                .select()
+                .from(notes)
+                .where(eq(notes.topic, topic))
+                .limit(1);
+              const note = rows[0];
+              if (!note) {
+                return {
+                  ok: false,
+                  error: `No note found with topic "${topic}".`,
+                };
+              }
+              return {
+                ok: true,
+                topic: note.topic,
+                category: note.category,
+                content: note.content,
+                updated_at: note.updatedAt.toISOString(),
+              };
+            } catch (err: any) {
+              return { ok: false, error: err.message };
+            }
+          },
+        }),
+
+        edit_note: aiTool({
+          description:
+            "Edit an existing note. Supports 'append' to add content at the end.",
+          inputSchema: z.object({
+            topic: z.string().describe("The topic key of the note to edit"),
+            operation: z
+              .enum(["append", "prepend"])
+              .describe("How to edit: 'append' adds to end, 'prepend' adds to start"),
+            content: z.string().describe("The content to add"),
+          }),
+          execute: async ({ topic, operation, content: newContent }) => {
+            try {
+              const rows = await db
+                .select()
+                .from(notes)
+                .where(eq(notes.topic, topic))
+                .limit(1);
+              const note = rows[0];
+              if (!note) {
+                return {
+                  ok: false,
+                  error: `No note found with topic "${topic}".`,
+                };
+              }
+
+              const updated =
+                operation === "append"
+                  ? note.content + "\n" + newContent
+                  : newContent + "\n" + note.content;
+
+              await db
+                .update(notes)
+                .set({ content: updated, updatedAt: new Date() })
+                .where(eq(notes.topic, topic));
+
+              return {
+                ok: true,
+                message: `Note "${topic}" updated (${operation}).`,
+              };
+            } catch (err: any) {
+              return { ok: false, error: err.message };
+            }
+          },
+        }),
+      };
+
+      const result = await generateText({
+        model,
+        system: GITHUB_EVENT_SYSTEM_PROMPT,
+        prompt: JSON.stringify({
+          event: eventType,
+          action: payload.action,
+          payload,
+        }),
+        tools: ghTools,
+        stopWhen: stepCountIs(10),
+      });
+
+      logger.info("GitHub webhook Haiku processing complete", {
+        event: eventType,
+        action: payload.action,
+        steps: result.steps.length,
+        text: result.text?.slice(0, 200),
+      });
+    } catch (err) {
+      recordError("github_webhook", err, {
+        event: eventType,
+        action: payload.action,
+      });
+    }
+  };
+
+  waitUntil(processGitHubEvent());
+  return c.json({ ok: true });
+});
+
 export default app;
