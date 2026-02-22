@@ -6,10 +6,13 @@ import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, jobExecutions } from "../db/schema.js";
 import type { FrequencyConfig, ScheduleContext } from "../db/schema.js";
+import { waitUntil } from "@vercel/functions";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
+import { executeJob } from "../cron/execute-job.js";
+import { buildSkillIndex } from "../lib/skill-index.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
@@ -466,23 +469,26 @@ export function createJobTools(
             })
             .returning();
 
-          const baseUrl = process.env.VERCEL_URL
-            ? `https://${process.env.VERCEL_URL}`
-            : "http://localhost:3000";
-
-          fetch(`${baseUrl}/api/execute-now`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${process.env.CRON_SECRET || ""}`,
-            },
-            body: JSON.stringify({ jobId: job.id }),
-          }).catch((err: any) => {
-            logger.error("dispatch_headless: immediate execution request failed", {
-              jobId: job.id,
-              error: err.message,
-            });
-          });
+          waitUntil(
+            (async () => {
+              try {
+                const skillIndex = await buildSkillIndex();
+                const executed = await executeJob(job, skillIndex, "dispatch");
+                if (executed) {
+                  logger.info("dispatch_headless: job executed immediately", {
+                    jobId: job.id,
+                    jobName,
+                    latencyMs: Date.now() - job.createdAt.getTime(),
+                  });
+                }
+              } catch (err: any) {
+                logger.error("dispatch_headless: immediate execution failed, will retry at next heartbeat", {
+                  jobId: job.id,
+                  error: err.message,
+                });
+              }
+            })()
+          );
 
           logger.info("dispatch_headless tool called", {
             jobId: job.id,
