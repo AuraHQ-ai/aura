@@ -1692,7 +1692,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             "canvases.sections.lookup",
             {
               canvas_id,
-              criteria: { any_header: true },
+              criteria: { section_types: ["any_header"] },
             },
           );
 
