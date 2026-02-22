@@ -453,7 +453,7 @@ function formatConversations(conversations: ConversationThread[]): string {
         .map((m) => {
           const timeAgo = relativeTime(new Date(m.createdAt));
           const speaker = m.role === "assistant" ? "Aura" : m.userId;
-          return `  ${speaker} (${timeAgo}): ${m.content.length > 300 ? m.content.substring(0, 300) + "…" : m.content}`;
+          return `  ${speaker} (${timeAgo}): ${m.content.length > 800 ? m.content.substring(0, 800) + "…" : m.content}`;
         })
         .join("\n");
       return `Thread in ${thread.channelId} (similarity: ${thread.bestSimilarity.toFixed(2)}):\n${msgs}`;
