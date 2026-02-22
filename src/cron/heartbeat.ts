@@ -375,7 +375,7 @@ heartbeatApp.post("/api/execute-now", async (c) => {
 
 // ── Job Execution ────────────────────────────────────────────────────────────
 
-async function executeJob(
+export async function executeJob(
   job: typeof jobs.$inferSelect,
   skillIndex: string,
   trigger: "heartbeat" | "dispatch" | "continuation" = "heartbeat",
