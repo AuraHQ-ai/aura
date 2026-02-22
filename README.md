@@ -100,7 +100,7 @@ Go to **OAuth & Permissions** in the sidebar. Under **Bot Token Scopes**, add:
 |---|---|
 | `app_mentions:read` | Receive @Aura mentions in channels |
 | `channels:history` | Read messages in public channels |
-| `channels:read` | List channels Aura is in |
+| `channels:read` | List public channels in the workspace |
 | `channels:join` | Join public channels |
 | `channels:manage` | Create channels, set topic, invite users |
 | `chat:write` | Send, edit, delete messages |
@@ -113,12 +113,14 @@ Go to **OAuth & Permissions** in the sidebar. Under **Bot Token Scopes**, add:
 | `mpim:history` | Read group DM messages |
 | `mpim:read` | Access group DM channel info |
 | `users:read` | Look up user profiles |
+| `users:read.email` | Access user email addresses |
 | `reactions:write` | Add/remove emoji reactions |
 | `reactions:read` | Read reactions on messages |
 | `lists:read` | Read Slack List items |
 | `lists:write` | Create/update/delete Slack List items |
 | `canvases:read` | Read Canvas content |
 | `canvases:write` | Create/edit Canvases |
+| `files:read` | List and read files (canvases, uploads) |
 | `users.profile:write` | Set bot's own status |
 | `assistant:write` | Loading shimmer & status indicators (auto-added by Agents & AI Apps toggle) |
 
