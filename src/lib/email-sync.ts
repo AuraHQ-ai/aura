@@ -33,6 +33,7 @@ const turndown = new TurndownService({
 
 turndown.addRule("emailSignatures", {
   filter: (node) => {
+    if ((node as any).childElementCount > 0) return false;
     const text = (node as any).textContent?.toLowerCase() || "";
     return (
       text.includes("sent from my iphone") ||
@@ -216,14 +217,18 @@ export async function syncEmails(
             Object.keys(rawHeaders).length > 0 ? rawHeaders : null,
         };
 
-        await db
+        const insertResult = await db
           .insert(emailsRaw)
           .values(row)
           .onConflictDoNothing({
             target: [emailsRaw.userId, emailsRaw.gmailMessageId],
           });
 
-        result.synced++;
+        if (insertResult.rowCount === 0) {
+          result.skipped++;
+        } else {
+          result.synced++;
+        }
       } catch (err) {
         logger.warn("Failed to process message", {
           userId,
