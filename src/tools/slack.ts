@@ -2222,6 +2222,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           if (title) uploadParams.title = title;
 
+          if (thread_ts && !channel) {
+            return {
+              ok: false,
+              error:
+                "thread_ts requires a channel — provide the channel where the thread lives.",
+            };
+          }
+
           if (channel) {
             let channelId = channel;
             if (!/^[CG][A-Z0-9]+$/.test(channel)) {
