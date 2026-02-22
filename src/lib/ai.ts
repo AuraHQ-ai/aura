@@ -2,8 +2,10 @@ import { gateway, GatewayAuthenticationError } from "@ai-sdk/gateway";
 import {
   wrapLanguageModel,
   type LanguageModelMiddleware,
-  type LanguageModelV3,
 } from "ai";
+
+/** The model type that wrapLanguageModel accepts (LanguageModelV3, not re-exported by "ai"). */
+type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
 import { logger } from "./logger.js";
 
@@ -99,7 +101,7 @@ function gatewayFallbackMiddleware(
  * For non-Anthropic models, returns the model unchanged.
  * For Anthropic models, wraps with fallback middleware.
  */
-function withAnthropicFallback(gatewayModel: LanguageModelV3, gatewayId: string): LanguageModelV3 {
+function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: string): WrappableModel {
   const directId = toDirectAnthropicId(gatewayId);
   if (!directId) {
     return gatewayModel;
