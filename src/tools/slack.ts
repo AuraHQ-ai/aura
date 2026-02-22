@@ -145,18 +145,26 @@ function htmlToMarkdown(html: string): string {
   // Strikethrough
   s = s.replace(/<(s|strike|del)[^>]*>([\s\S]*?)<\/\1>/gi, "~$2~");
 
-  // Inline code
-  s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, "`$1`");
+  // Code blocks: handle <pre><code>...</code></pre> as a single fenced block
+  s = s.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, "\n```\n$1\n```\n");
 
-  // Code blocks / pre
+  // Remaining standalone <pre> blocks
   s = s.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, "\n```\n$1\n```\n");
+
+  // Inline code (after pre blocks are handled)
+  s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, "`$1`");
 
   // Links
   s = s.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)");
 
-  // Images — use alt text or URL
-  s = s.replace(/<img[^>]*alt="([^"]*)"[^>]*src="([^"]*)"[^>]*\/?>/gi, "![$1]($2)");
-  s = s.replace(/<img[^>]*src="([^"]*)"[^>]*\/?>/gi, "![]($1)");
+  // Images — use alt text or URL (handles alt/src in any order)
+  s = s.replace(/<img[^>]*\/?>/gi, (tag) => {
+    const srcMatch = tag.match(/src="([^"]*)"/i);
+    const altMatch = tag.match(/alt="([^"]*)"/i);
+    const src = srcMatch ? srcMatch[1] : "";
+    const alt = altMatch ? altMatch[1] : "";
+    return `![${alt}](${src})`;
+  });
 
   // List items (before removing <ul>/<ol> tags)
   s = s.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, "- $1\n");
