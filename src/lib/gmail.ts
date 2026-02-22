@@ -248,7 +248,7 @@ function buildMimeMessage(
   return parts.join("\r\n");
 }
 
-function getHeader(
+export function getHeader(
   headers: { name?: string | null; value?: string | null }[],
   name: string,
 ): string {
@@ -258,7 +258,7 @@ function getHeader(
   return header?.value || "";
 }
 
-function extractBody(payload: any): string {
+export function extractBody(payload: any): string {
   if (payload.body?.data) {
     return Buffer.from(payload.body.data, "base64").toString("utf-8");
   }

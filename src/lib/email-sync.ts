@@ -1,7 +1,7 @@
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getFastModel } from "./ai.js";
-import { getGmailClientForUser, getUserRefreshToken } from "./gmail.js";
+import { getGmailClientForUser, getUserRefreshToken, getHeader, extractBody } from "./gmail.js";
 import { logger } from "./logger.js";
 import type { NewEmailRaw } from "../db/schema.js";
 
@@ -32,50 +32,12 @@ export async function htmlToMarkdown(html: string): Promise<string> {
   return td.turndown(html).trim();
 }
 
-// ── Gmail helpers ───────────────────────────────────────────────────────────
-
-function getHeader(
-  headers: { name?: string | null; value?: string | null }[],
-  name: string,
-): string {
-  const header = headers.find(
-    (h) => h.name?.toLowerCase() === name.toLowerCase(),
-  );
-  return header?.value || "";
-}
-
-function extractBody(payload: any): string {
-  if (payload.body?.data) {
-    return Buffer.from(payload.body.data, "base64").toString("utf-8");
-  }
-
-  if (payload.parts) {
-    const textPart = payload.parts.find(
-      (p: any) => p.mimeType === "text/plain",
-    );
-    if (textPart?.body?.data) {
-      return Buffer.from(textPart.body.data, "base64").toString("utf-8");
-    }
-
-    const htmlPart = payload.parts.find(
-      (p: any) => p.mimeType === "text/html",
-    );
-    if (htmlPart?.body?.data) {
-      return Buffer.from(htmlPart.body.data, "base64").toString("utf-8");
-    }
-
-    for (const part of payload.parts) {
-      if (part.parts) {
-        const nested = extractBody(part);
-        if (nested) return nested;
-      }
-    }
-  }
-
-  return "";
-}
-
 const HTML_TAG_RE = /<[a-z][\s\S]*?>/i;
+
+function extractEmailAddress(headerValue: string): string {
+  const match = headerValue.match(/<([^>]+)>/);
+  return (match ? match[1] : headerValue).trim().toLowerCase();
+}
 
 // ── Triage Gate ─────────────────────────────────────────────────────────────
 
@@ -217,7 +179,7 @@ export async function syncEmailsForUser(
         body = await htmlToMarkdown(body);
       }
 
-      const direction = ownerEmail && fromAddr.toLowerCase().includes(ownerEmail)
+      const direction = ownerEmail && extractEmailAddress(fromAddr) === ownerEmail
         ? "outbound"
         : "inbound";
 
