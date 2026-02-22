@@ -1,0 +1,158 @@
+import { generateText } from "ai";
+import { eq, and, isNull } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { emailsRaw } from "../db/schema.js";
+import { getFastModel } from "./ai.js";
+import { logger } from "./logger.js";
+
+// ── Types ───────────────────────────────────────────────────────────────────
+
+interface TriageResult {
+  id: string;
+  triage: "junk" | "fyi" | "actionable" | "urgent";
+  reason: string;
+}
+
+export interface TriageSummary {
+  triaged: number;
+  errors: number;
+  breakdown: Record<string, number>;
+}
+
+// ── Haiku Triage Gate ───────────────────────────────────────────────────────
+
+const TRIAGE_PROMPT = `You are an email triage assistant. Classify each email into exactly one category:
+
+- **junk**: spam, marketing, newsletters, automated notifications, no action needed
+- **fyi**: informational, worth seeing but no reply needed (order confirmations, status updates, CC'd threads)
+- **actionable**: requires a response or action within a reasonable timeframe
+- **urgent**: time-sensitive, needs immediate attention (client escalations, broken systems, deadlines today)
+
+For each email, respond with a JSON array of objects:
+[{"id": "<email_id>", "triage": "<category>", "reason": "<one-line explanation>"}]
+
+Only output the JSON array, no other text.`;
+
+/**
+ * Triage un-classified emails in emails_raw using Claude Haiku.
+ * Processes in batches of up to 50.
+ */
+export async function triageEmails(
+  userId: string,
+  options: { batchSize?: number; limit?: number } = {},
+): Promise<TriageSummary> {
+  const batchSize = options.batchSize ?? 50;
+  const limit = options.limit ?? 500;
+  const summary: TriageSummary = { triaged: 0, errors: 0, breakdown: {} };
+
+  // Fetch untriaged emails
+  const untriaged = await db
+    .select({
+      id: emailsRaw.id,
+      subject: emailsRaw.subject,
+      fromEmail: emailsRaw.fromEmail,
+      fromName: emailsRaw.fromName,
+      direction: emailsRaw.direction,
+      bodyMarkdown: emailsRaw.bodyMarkdown,
+      labels: emailsRaw.labels,
+    })
+    .from(emailsRaw)
+    .where(and(eq(emailsRaw.userId, userId), isNull(emailsRaw.triage)))
+    .limit(limit);
+
+  if (untriaged.length === 0) {
+    logger.info("No untriaged emails found", { userId });
+    return summary;
+  }
+
+  logger.info("Triaging emails", {
+    userId,
+    count: untriaged.length,
+    batchSize,
+  });
+
+  // Process in batches
+  for (let i = 0; i < untriaged.length; i += batchSize) {
+    const batch = untriaged.slice(i, i + batchSize);
+
+    const emailDescriptions = batch.map((email) => {
+      const bodyPreview = (email.bodyMarkdown || "").slice(0, 500);
+      const fromDisplay = email.fromName
+        ? `${email.fromName} <${email.fromEmail}>`
+        : email.fromEmail;
+      const labelsStr =
+        (email.labels as string[] | null)?.join(", ") || "none";
+      return [
+        "ID: " + email.id,
+        "Subject: " + (email.subject || "(no subject)"),
+        "From: " + fromDisplay,
+        "Direction: " + email.direction,
+        "Labels: " + labelsStr,
+        "Body preview: " + bodyPreview,
+      ].join("\n");
+    });
+
+    const prompt =
+      TRIAGE_PROMPT +
+      "\n\nHere are " +
+      batch.length +
+      " emails to classify:\n\n" +
+      emailDescriptions.join("\n---\n");
+
+    try {
+      const model = await getFastModel();
+      const { text } = await generateText({
+        model,
+        prompt,
+        maxTokens: 2000,
+      });
+
+      // Parse the JSON response
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) {
+        logger.warn("Triage response was not valid JSON", {
+          userId,
+          text: text.slice(0, 200),
+        });
+        summary.errors += batch.length;
+        continue;
+      }
+
+      const results: TriageResult[] = JSON.parse(jsonMatch[0]);
+
+      for (const r of results) {
+        const validCategories = ["junk", "fyi", "actionable", "urgent"];
+        if (!validCategories.includes(r.triage)) {
+          logger.warn("Invalid triage category", {
+            id: r.id,
+            triage: r.triage,
+          });
+          summary.errors++;
+          continue;
+        }
+
+        await db
+          .update(emailsRaw)
+          .set({
+            triage: r.triage,
+            triageReason: r.reason,
+            updatedAt: new Date(),
+          })
+          .where(eq(emailsRaw.id, r.id));
+
+        summary.triaged++;
+        summary.breakdown[r.triage] = (summary.breakdown[r.triage] || 0) + 1;
+      }
+    } catch (err) {
+      logger.error("Triage batch failed", {
+        userId,
+        batchStart: i,
+        error: String(err),
+      });
+      summary.errors += batch.length;
+    }
+  }
+
+  logger.info("Email triage completed", { userId, ...summary });
+  return summary;
+}
