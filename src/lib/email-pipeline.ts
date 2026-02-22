@@ -81,9 +81,23 @@ function parseEmailAddress(raw: string): { email: string; name: string } {
 
 function parseAddressList(raw: string): string[] {
   if (!raw) return [];
-  return raw
-    .split(",")
-    .map((addr) => parseEmailAddress(addr.trim()).email)
+  const addresses: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (const ch of raw) {
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      current += ch;
+    } else if (ch === "," && !inQuotes) {
+      addresses.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) addresses.push(current.trim());
+  return addresses
+    .map((addr) => parseEmailAddress(addr).email)
     .filter(Boolean);
 }
 
@@ -116,7 +130,7 @@ function extractHtmlBody(payload: any): string {
     }
   }
 
-  if (payload.body?.data) {
+  if (payload.mimeType === "text/html" && payload.body?.data) {
     return Buffer.from(payload.body.data, "base64").toString("utf-8");
   }
 
@@ -534,7 +548,7 @@ export async function getThreadsAwaitingReply(
         from_email,
         triage_class,
         is_inbound,
-        ROW_NUMBER() OVER (PARTITION BY gmail_thread_id ORDER BY date DESC) AS rn,
+        ROW_NUMBER() OVER (PARTITION BY gmail_thread_id ORDER BY date DESC NULLS LAST) AS rn,
         COUNT(*) OVER (PARTITION BY gmail_thread_id) AS message_count
       FROM emails_raw
       WHERE user_id = ${userId}

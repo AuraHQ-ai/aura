@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
+import { resolveSlackUserId } from "../lib/resolve-slack-user.js";
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -1023,52 +1024,4 @@ export function createGmailEATools() {
   };
 }
 
-/**
- * Resolve a user display name / username to a Slack user ID.
- * Reuses the paginated, cached getUserList from slack.ts.
- */
-async function resolveSlackUserId(
-  userName: string,
-): Promise<string | null> {
-  try {
-    const { WebClient } = await import("@slack/web-api");
-    const { getUserList } = await import("./slack.js");
-    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
-    const users = await getUserList(client);
-
-    const normalizedInput = userName
-      .replace(/^@/, "")
-      .toLowerCase()
-      .trim();
-
-    // Exact match
-    for (const user of users) {
-      if (
-        user.displayName.toLowerCase() === normalizedInput ||
-        user.realName.toLowerCase() === normalizedInput ||
-        user.username.toLowerCase() === normalizedInput
-      ) {
-        return user.id;
-      }
-    }
-
-    // Fuzzy match (starts with)
-    for (const user of users) {
-      if (
-        user.displayName.toLowerCase().startsWith(normalizedInput) ||
-        user.realName.toLowerCase().startsWith(normalizedInput) ||
-        user.username.toLowerCase().startsWith(normalizedInput)
-      ) {
-        return user.id;
-      }
-    }
-
-    return null;
-  } catch (error: any) {
-    logger.error("Failed to resolve Slack user ID", {
-      userName,
-      error: error.message,
-    });
-    return null;
-  }
-}
+// resolveSlackUserId is imported from shared utility (see imports above)
