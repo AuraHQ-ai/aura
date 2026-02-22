@@ -2,6 +2,7 @@ import { gateway, GatewayAuthenticationError } from "@ai-sdk/gateway";
 import {
   wrapLanguageModel,
   type LanguageModelMiddleware,
+  type LanguageModelV3,
 } from "ai";
 import { getSetting } from "./settings.js";
 import { logger } from "./logger.js";
@@ -98,7 +99,7 @@ function gatewayFallbackMiddleware(
  * For non-Anthropic models, returns the model unchanged.
  * For Anthropic models, wraps with fallback middleware.
  */
-function withAnthropicFallback<T>(gatewayModel: T, gatewayId: string): T {
+function withAnthropicFallback(gatewayModel: LanguageModelV3, gatewayId: string): LanguageModelV3 {
   const directId = toDirectAnthropicId(gatewayId);
   if (!directId) {
     return gatewayModel;
@@ -107,7 +108,7 @@ function withAnthropicFallback<T>(gatewayModel: T, gatewayId: string): T {
   return wrapLanguageModel({
     model: gatewayModel,
     middleware: gatewayFallbackMiddleware(directId),
-  }) as T;
+  });
 }
 
 /**
