@@ -35,6 +35,36 @@ import type { SlackEvent } from "./context.js";
 /** Maximum message length we'll process (characters). Slack max is ~40k. */
 const MAX_MESSAGE_LENGTH = 8000;
 
+// ── Tier 0: Fast-reject noise ───────────────────────────────────────────────
+// Pure JS, no async, no LLM. Must run before any pipeline processing
+// (memory retrieval, embedding, conversation context, etc.)
+
+const FAST_REJECT_SUBTYPES = new Set([
+  "bot_message",
+  "message_changed",
+  "message_deleted",
+  "channel_join",
+  "channel_leave",
+  "channel_topic",
+  "channel_purpose",
+  "channel_archive",
+  "channel_unarchive",
+  "pinned_item",
+  "unpinned_item",
+]);
+
+function shouldFastReject(event: SlackEvent, botUserId: string): boolean {
+  const ev = event as unknown as Record<string, unknown>;
+
+  if (ev.subtype && FAST_REJECT_SUBTYPES.has(ev.subtype as string)) return true;
+
+  if (ev.bot_id) return true;
+
+  if (ev.user === botUserId) return true;
+
+  return false;
+}
+
 /**
  * Build an optional metadata record from a Slack event's rich fields
  * (attachments, blocks, files, forwarded content, etc.).
@@ -84,6 +114,15 @@ interface PipelineOptions {
 export async function runPipeline(options: PipelineOptions): Promise<void> {
   const { event, client, botUserId, teamId, waitUntil } = options;
   const pipelineStart = Date.now();
+
+  // Tier 0: Fast-reject noise before any processing
+  if (shouldFastReject(event, botUserId)) {
+    logger.debug("Fast-rejected event", {
+      subtype: (event as unknown as Record<string, unknown>).subtype,
+      bot_id: (event as unknown as Record<string, unknown>).bot_id,
+    });
+    return;
+  }
 
   // 1. Parse context
   const context = buildMessageContext(event, botUserId);
