@@ -58,7 +58,7 @@ export function createSandboxTools(context?: ScheduleContext) {
 
         try {
           const sandbox = await getOrCreateSandbox();
-          const envs = getSandboxEnvs();
+          const envs = await getSandboxEnvs();
 
           logger.info("run_command tool: executing", {
             command: command.substring(0, 100),

@@ -4,7 +4,7 @@ import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { runPipeline } from "./pipeline/index.js";
-import { publishHomeTab, ACTION_TO_SETTING, isAdmin } from "./slack/home.js";
+import { publishHomeTab, ACTION_TO_SETTING, CREDENTIAL_ACTIONS, isAdmin, openCredentialModal } from "./slack/home.js";
 import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
@@ -307,6 +307,49 @@ app.post("/api/slack/interactions", async (c) => {
 
         waitUntil(savePromise);
       }
+
+      const credentialKey = CREDENTIAL_ACTIONS[action.action_id];
+      if (credentialKey && payload.trigger_id) {
+        const modalPromise = openCredentialModal(
+          slackClient,
+          payload.trigger_id,
+          credentialKey,
+        ).catch((err) => {
+          recordError("interactions.credential_modal", err, {
+            userId,
+            credentialKey,
+          });
+        });
+        waitUntil(modalPromise);
+      }
+    }
+  }
+
+  if (payload.type === "view_submission") {
+    const callbackId = payload.view?.callback_id;
+    const userId = payload.user?.id;
+
+    if (callbackId === "credential_submit" && userId && isAdmin(userId)) {
+      const credentialKey = payload.view?.private_metadata;
+      const newValue =
+        payload.view?.state?.values?.credential_input_block?.credential_value
+          ?.value;
+
+      if (credentialKey && newValue) {
+        const savePromise = (async () => {
+          try {
+            const { setCredential } = await import("./lib/credentials.js");
+            await setCredential(credentialKey, newValue, userId);
+            await publishHomeTab(slackClient, userId);
+          } catch (err) {
+            recordError("interactions.credential_save", err, {
+              userId,
+              credentialKey,
+            });
+          }
+        })();
+        waitUntil(savePromise);
+      }
     }
   }
 
@@ -507,8 +550,8 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         const prMatch = prUrl.match(/\/pull\/(\d+)$/);
         if (prMatch) {
           try {
-            const ghToken =
-              process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+            const { getCredential } = await import("./lib/credentials.js");
+            const ghToken = await getCredential("github_token");
             if (ghToken) {
               const prNumber = prMatch[1];
               const repoMatch = prUrl.match(
