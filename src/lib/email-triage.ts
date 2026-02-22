@@ -128,17 +128,27 @@ export async function triageEmails(
           continue;
         }
 
-        await db
+        const updated = await db
           .update(emailsRaw)
           .set({
             triage: r.triage,
             triageReason: r.reason,
             updatedAt: new Date(),
           })
-          .where(and(eq(emailsRaw.id, r.id), eq(emailsRaw.userId, userId)));
+          .where(and(eq(emailsRaw.id, r.id), eq(emailsRaw.userId, userId)))
+          .returning({ id: emailsRaw.id });
 
-        summary.triaged++;
-        summary.breakdown[r.triage] = (summary.breakdown[r.triage] || 0) + 1;
+        if (updated.length > 0) {
+          summary.triaged++;
+          summary.breakdown[r.triage] =
+            (summary.breakdown[r.triage] || 0) + 1;
+        } else {
+          logger.warn("Triage update matched no rows", {
+            id: r.id,
+            userId,
+          });
+          summary.errors++;
+        }
       }
     } catch (err) {
       logger.error("Triage batch failed", {
