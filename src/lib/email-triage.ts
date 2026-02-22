@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { eq, and, isNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { emailsRaw } from "../db/schema.js";
 import { getFastModel } from "./ai.js";
@@ -8,8 +8,18 @@ import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export interface TriageSummary {
-  triaged: number;
+export const threadStateValues = [
+  "junk",
+  "resolved",
+  "awaiting_your_reply",
+  "awaiting_their_reply",
+  "fyi",
+] as const;
+
+export type ThreadState = (typeof threadStateValues)[number];
+
+export interface ThreadStateSummary {
+  processed: number;
   errors: number;
   breakdown: Record<string, number>;
   lastError?: string;
@@ -17,146 +27,196 @@ export interface TriageSummary {
 
 // ── Zod schema for structured output ────────────────────────────────────────
 
-const triageResultSchema = z.object({
-  id: z.string(),
-  triage: z.enum(["junk", "fyi", "actionable", "urgent"]),
+const threadStateSchema = z.object({
+  state: z.enum(threadStateValues),
   reason: z.string(),
 });
 
-const triageBatchSchema = z.object({
-  results: z.array(triageResultSchema),
-});
+// ── Thread reconstruction ───────────────────────────────────────────────────
 
-// ── Haiku Triage Gate ───────────────────────────────────────────────────────
+interface EmailRow {
+  id: string;
+  gmailThreadId: string;
+  subject: string | null;
+  fromEmail: string;
+  fromName: string | null;
+  date: Date;
+  direction: string;
+  bodyMarkdown: string | null;
+  threadState: string | null;
+  threadStateUpdatedAt: Date | null;
+}
 
-const TRIAGE_PROMPT = `You are an email triage assistant. Classify each email into exactly one category:
+function reconstructThread(
+  emails: EmailRow[],
+  userName: string,
+): string {
+  const sorted = [...emails].sort(
+    (a, b) => a.date.getTime() - b.date.getTime(),
+  );
 
-- **junk**: spam, marketing, newsletters, automated notifications, no action needed
-- **fyi**: informational, worth seeing but no reply needed (order confirmations, status updates, CC'd threads)
-- **actionable**: requires a response or action within a reasonable timeframe
-- **urgent**: time-sensitive, needs immediate attention (client escalations, broken systems, deadlines today)
+  const participants = [
+    ...new Set(sorted.map((e) => e.fromEmail)),
+  ].join(", ");
 
-For each email, return an object with "id", "triage" (the category), and "reason" (one-line explanation).`;
+  const subject = sorted[0]?.subject || "(no subject)";
+
+  const messages = sorted.map((e) => {
+    const ts = e.date.toISOString().replace("T", " ").slice(0, 16);
+    const direction = e.direction === "inbound" ? "inbound" : "outbound";
+    const body = (e.bodyMarkdown || "").slice(0, 800);
+    return `[${ts}] ${e.fromEmail} (${direction}):\n${body}`;
+  });
+
+  return [
+    `Thread: ${subject}`,
+    `Participants: ${participants}`,
+    "",
+    ...messages,
+  ].join("\n");
+}
+
+// ── Prompt ──────────────────────────────────────────────────────────────────
+
+function buildPrompt(threadText: string, userName: string): string {
+  return `What is the state of this email thread for ${userName}? Classify as exactly one of:
+
+- **junk**: spam, automated noise, marketing, irrelevant notifications
+- **resolved**: conversation is done — thanks, confirmation, acknowledgment, no pending action
+- **awaiting_your_reply**: someone asked ${userName} something or sent something that warrants a response
+- **awaiting_their_reply**: ${userName} asked for something or requested action, waiting on the other party
+- **fyi**: informational thread, no response expected from anyone
+
+Explain in one sentence.
+
+---
+
+${threadText}`;
+}
+
+// ── Main entry point ────────────────────────────────────────────────────────
 
 /**
- * Triage un-classified emails in emails_raw using Claude Haiku.
- * Processes in batches of up to 50.
+ * Compute thread-level states for all email threads belonging to a user.
+ * Only processes threads that have NULL thread_state or where new emails
+ * arrived since the last computation.
  */
-export async function triageEmails(
+export async function computeThreadStates(
   userId: string,
-  options: { batchSize?: number; limit?: number } = {},
-): Promise<TriageSummary> {
-  const batchSize = options.batchSize ?? 50;
-  const limit = options.limit ?? 500;
-  const summary: TriageSummary = { triaged: 0, errors: 0, breakdown: {} };
+): Promise<ThreadStateSummary> {
+  const summary: ThreadStateSummary = {
+    processed: 0,
+    errors: 0,
+    breakdown: {},
+  };
 
-  const untriaged = await db
+  const allEmails = await db
     .select({
       id: emailsRaw.id,
+      gmailThreadId: emailsRaw.gmailThreadId,
       subject: emailsRaw.subject,
       fromEmail: emailsRaw.fromEmail,
       fromName: emailsRaw.fromName,
+      date: emailsRaw.date,
       direction: emailsRaw.direction,
       bodyMarkdown: emailsRaw.bodyMarkdown,
-      labels: emailsRaw.labels,
+      threadState: emailsRaw.threadState,
+      threadStateUpdatedAt: emailsRaw.threadStateUpdatedAt,
     })
     .from(emailsRaw)
-    .where(and(eq(emailsRaw.userId, userId), isNull(emailsRaw.triage)))
-    .limit(limit);
+    .where(eq(emailsRaw.userId, userId));
 
-  if (untriaged.length === 0) {
-    logger.info("No untriaged emails found", { userId });
+  if (allEmails.length === 0) {
+    logger.info("No emails found for user", { userId });
     return summary;
   }
 
-  logger.info("Triaging emails", {
+  const threadMap = new Map<string, EmailRow[]>();
+  for (const email of allEmails) {
+    const list = threadMap.get(email.gmailThreadId) || [];
+    list.push(email);
+    threadMap.set(email.gmailThreadId, list);
+  }
+
+  const threadsToProcess: [string, EmailRow[]][] = [];
+  for (const [threadId, emails] of threadMap) {
+    const maxEmailDate = Math.max(...emails.map((e) => e.date.getTime()));
+    const lastUpdated = emails[0]?.threadStateUpdatedAt?.getTime() ?? 0;
+    const hasNullState = emails.some((e) => e.threadState === null);
+
+    if (hasNullState || maxEmailDate > lastUpdated) {
+      threadsToProcess.push([threadId, emails]);
+    }
+  }
+
+  if (threadsToProcess.length === 0) {
+    logger.info("All threads already classified", { userId });
+    return summary;
+  }
+
+  const userName = deriveUserName(allEmails);
+
+  logger.info("Computing thread states", {
     userId,
-    count: untriaged.length,
-    batchSize,
+    totalThreads: threadMap.size,
+    toProcess: threadsToProcess.length,
   });
 
-  for (let i = 0; i < untriaged.length; i += batchSize) {
-    const batch = untriaged.slice(i, i + batchSize);
+  const model = await getFastModel();
 
-    const emailDescriptions = batch.map((email) => {
-      const bodyPreview = (email.bodyMarkdown || "").slice(0, 500);
-      const fromDisplay = email.fromName
-        ? `${email.fromName} <${email.fromEmail}>`
-        : email.fromEmail;
-      const labelsStr =
-        (email.labels as string[] | null)?.join(", ") || "none";
-      return [
-        "ID: " + email.id,
-        "Subject: " + (email.subject || "(no subject)"),
-        "From: " + fromDisplay,
-        "Direction: " + email.direction,
-        "Labels: " + labelsStr,
-        "Body preview: " + bodyPreview,
-      ].join("\n");
-    });
-
-    const prompt =
-      TRIAGE_PROMPT +
-      "\n\nHere are " +
-      batch.length +
-      " emails to classify:\n\n" +
-      emailDescriptions.join("\n---\n");
-
+  for (const [threadId, emails] of threadsToProcess) {
     try {
-      const model = await getFastModel();
+      const threadText = reconstructThread(emails, userName);
+      const prompt = buildPrompt(threadText, userName);
+
       const { object } = await generateObject({
         model,
-        schema: triageBatchSchema,
+        schema: threadStateSchema,
         prompt,
-        maxOutputTokens: 2000,
+        maxOutputTokens: 200,
       });
 
-      if (object.results.length > 0) {
-        const valueRows = object.results.map(
-          (r) => sql`(${r.id}::uuid, ${r.triage}, ${r.reason})`,
-        );
+      const emailIds = emails.map((e) => e.id);
 
-        const updated = await db.execute(sql`
-          UPDATE emails_raw SET
-            triage = v.triage,
-            triage_reason = v.reason,
-            updated_at = now()
-          FROM (VALUES ${sql.join(valueRows, sql`, `)}) AS v(id, triage, reason)
-          WHERE emails_raw.id = v.id
-            AND emails_raw.user_id = ${userId}
-          RETURNING emails_raw.id, v.triage AS triage_cat
-        `);
+      await db.execute(sql`
+        UPDATE emails_raw SET
+          thread_state = ${object.state},
+          thread_state_reason = ${object.reason},
+          thread_state_updated_at = now(),
+          updated_at = now()
+        WHERE user_id = ${userId}
+          AND gmail_thread_id = ${threadId}
+      `);
 
-        const updatedIds = new Set<string>();
-        for (const row of updated.rows as { id: string; triage_cat: string }[]) {
-          updatedIds.add(row.id);
-          summary.triaged++;
-          summary.breakdown[row.triage_cat] =
-            (summary.breakdown[row.triage_cat] || 0) + 1;
-        }
-
-        for (const r of object.results) {
-          if (!updatedIds.has(r.id)) {
-            logger.warn("Triage update matched no rows", {
-              id: r.id,
-              userId,
-            });
-            summary.errors++;
-          }
-        }
-      }
+      summary.processed++;
+      summary.breakdown[object.state] =
+        (summary.breakdown[object.state] || 0) + 1;
     } catch (err) {
       const errStr = String(err);
-      logger.error("Triage batch failed", {
+      logger.error("Thread state computation failed", {
         userId,
-        batchStart: i,
+        threadId,
         error: errStr,
       });
-      summary.errors += batch.length;
+      summary.errors++;
       summary.lastError = errStr;
     }
   }
 
-  logger.info("Email triage completed", { userId, ...summary });
+  logger.info("Thread state computation completed", { userId, ...summary });
   return summary;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function deriveUserName(emails: EmailRow[]): string {
+  const outbound = emails.find(
+    (e) => e.direction === "outbound" && e.fromName,
+  );
+  if (outbound?.fromName) return outbound.fromName;
+
+  const anyOutbound = emails.find((e) => e.direction === "outbound");
+  if (anyOutbound) return anyOutbound.fromEmail.split("@")[0];
+
+  return "the user";
 }

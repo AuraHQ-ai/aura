@@ -106,7 +106,7 @@ function parseEmailList(raw: string): string[] {
 /**
  * Sync emails from a user's Gmail account into emails_raw.
  * Fetches messages, converts HTML→markdown, and upserts rows.
- * Does NOT run triage — call triageEmails() separately.
+ * Does NOT classify threads — call computeThreadStates() separately.
  */
 export async function syncEmails(
   userId: string,
