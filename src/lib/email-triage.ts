@@ -1,4 +1,5 @@
-import { generateText } from "ai";
+import { generateObject } from "ai";
+import { z } from "zod";
 import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { emailsRaw } from "../db/schema.js";
@@ -7,18 +8,24 @@ import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-interface TriageResult {
-  id: string;
-  triage: "junk" | "fyi" | "actionable" | "urgent";
-  reason: string;
-}
-
 export interface TriageSummary {
   triaged: number;
   errors: number;
   breakdown: Record<string, number>;
   lastError?: string;
 }
+
+// ── Zod schema for structured output ────────────────────────────────────────
+
+const triageResultSchema = z.object({
+  id: z.string(),
+  triage: z.enum(["junk", "fyi", "actionable", "urgent"]),
+  reason: z.string(),
+});
+
+const triageBatchSchema = z.object({
+  results: z.array(triageResultSchema),
+});
 
 // ── Haiku Triage Gate ───────────────────────────────────────────────────────
 
@@ -29,10 +36,7 @@ const TRIAGE_PROMPT = `You are an email triage assistant. Classify each email in
 - **actionable**: requires a response or action within a reasonable timeframe
 - **urgent**: time-sensitive, needs immediate attention (client escalations, broken systems, deadlines today)
 
-For each email, respond with a JSON array of objects:
-[{"id": "<email_id>", "triage": "<category>", "reason": "<one-line explanation>"}]
-
-Only output the JSON array, no other text.`;
+For each email, return an object with "id", "triage" (the category), and "reason" (one-line explanation).`;
 
 /**
  * Triage un-classified emails in emails_raw using Claude Haiku.
@@ -100,35 +104,14 @@ export async function triageEmails(
 
     try {
       const model = await getFastModel();
-      const { text } = await generateText({
+      const { object } = await generateObject({
         model,
+        schema: triageBatchSchema,
         prompt,
         maxOutputTokens: 2000,
       });
 
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        logger.warn("Triage response was not valid JSON", {
-          userId,
-          text: text.slice(0, 200),
-        });
-        summary.errors += batch.length;
-        continue;
-      }
-
-      const results: TriageResult[] = JSON.parse(jsonMatch[0]);
-
-      for (const r of results) {
-        const validCategories = ["junk", "fyi", "actionable", "urgent"];
-        if (!validCategories.includes(r.triage)) {
-          logger.warn("Invalid triage category", {
-            id: r.id,
-            triage: r.triage,
-          });
-          summary.errors++;
-          continue;
-        }
-
+      for (const r of object.results) {
         const updated = await db
           .update(emailsRaw)
           .set({
