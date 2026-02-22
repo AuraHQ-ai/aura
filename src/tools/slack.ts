@@ -98,6 +98,22 @@ const userIdNameCache = new Map<string, string>();
 /** Cache for channel ID -> full metadata lookups. */
 const channelIdNameCache = new Map<string, { id: string; name: string; is_private: boolean; topic: string; purpose: string; num_members: number }>();
 
+// ── User-token client (for search.messages which requires a user token) ─────
+
+let _userClient: WebClient | null | undefined;
+
+async function getUserClient(): Promise<WebClient | null> {
+  if (_userClient !== undefined) return _userClient;
+  const token = process.env.SLACK_USER_TOKEN;
+  if (!token) {
+    _userClient = null;
+    return null;
+  }
+  const { WebClient } = await import("@slack/web-api");
+  _userClient = new WebClient(token);
+  return _userClient;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -159,24 +175,20 @@ function generateAttachmentsSummary(msg: any): string | null {
 }
 
 /**
- * Search for a public channel by name using the user token.
- * The bot token's conversations.list only returns channels the bot is in,
- * so we need the user token to find channels the bot hasn't joined yet.
+ * Search for a public channel by name.
+ * The bot token with channels:read scope can see all public channels,
+ * including ones the bot hasn't joined yet.
  */
 async function searchPublicChannelByName(
+  client: WebClient,
   name: string,
 ): Promise<{ id: string; name: string } | null> {
-  const userToken = process.env.SLACK_USER_TOKEN;
-  if (!userToken) return null;
-
   try {
-    const { WebClient } = await import("@slack/web-api");
-    const userClient = new WebClient(userToken);
     const cleanLower = name.toLowerCase();
 
     let cursor: string | undefined;
     do {
-      const result = await userClient.conversations.list({
+      const result = await client.conversations.list({
         types: "public_channel",
         exclude_archived: true,
         limit: 200,
@@ -194,7 +206,7 @@ async function searchPublicChannelByName(
 
     return null;
   } catch (error: any) {
-    logger.warn("searchPublicChannelByName fallback failed", {
+    logger.warn("searchPublicChannelByName failed", {
       name,
       error: error.message,
     });
@@ -240,7 +252,7 @@ export async function resolveChannelByName(
 
   // Fallback: search all public channels via user token
   if (options?.fallbackToUserToken) {
-    const fallbackMatch = await searchPublicChannelByName(cleaned);
+    const fallbackMatch = await searchPublicChannelByName(client, cleaned);
     if (fallbackMatch) {
       logger.info(
         "resolveChannelByName: found channel via user token fallback",
@@ -354,31 +366,7 @@ export async function resolveChannelById(
     }
     return null;
   } catch {
-    // Bot can't see it — try user token
-    const userToken = process.env.SLACK_USER_TOKEN;
-    if (!userToken) return null;
-
-    try {
-      const { WebClient } = await import("@slack/web-api");
-      const userClient = new WebClient(userToken);
-      const result = await userClient.conversations.info({ channel: channelId, include_num_members: true });
-      const ch = result.channel as any;
-      if (ch) {
-        const entry = {
-          id: channelId,
-          name: ch.name || channelId,
-          is_private: ch.is_private || false,
-          topic: ch.topic?.value || "",
-          purpose: ch.purpose?.value || "",
-          num_members: ch.num_members || 0,
-        };
-        channelIdNameCache.set(channelId, entry);
-        return { ...entry };
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -445,9 +433,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ limit }) => {
         try {
-          // Try user token first — it can see ALL public channels, not just ones the bot is in
-          const userToken = process.env.SLACK_USER_TOKEN;
-          let allChannels: Array<{
+          const allChannels: Array<{
             name: string;
             id: string;
             topic: string;
@@ -455,121 +441,38 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             is_member: boolean;
           }> = [];
 
-          if (userToken) {
-            try {
-              const { WebClient } = await import("@slack/web-api");
-              const userClient = new WebClient(userToken);
-
-              let cursor: string | undefined;
-              const collected: typeof allChannels = [];
-              do {
-                const result = await userClient.conversations.list({
-                  types: "public_channel",
-                  exclude_archived: true,
-                  limit: 200,
-                  cursor,
-                });
-
-                for (const ch of result.channels || []) {
-                  collected.push({
-                    name: ch.name || "unknown",
-                    id: ch.id || "",
-                    topic: ch.topic?.value || "",
-                    member_count: ch.num_members || 0,
-                    is_member: ch.is_member || false,
-                  });
-                }
-
-                cursor = result.response_metadata?.next_cursor || undefined;
-              } while (cursor && collected.length < limit);
-
-              allChannels = collected.slice(0, limit);
-
-              // Fetch ALL bot's channels (paginated) to get accurate is_member
-              // (user token's is_member reflects the user, not the bot)
-              // and to discover private channels the bot is in
-              const botMemberIds = new Set<string>();
-              const botPrivateChannels: typeof allChannels = [];
-              let botCursor: string | undefined;
-              do {
-                const botResult = await client.conversations.list({
-                  types: "public_channel,private_channel",
-                  exclude_archived: true,
-                  limit: 200,
-                  cursor: botCursor,
-                });
-
-                for (const ch of botResult.channels || []) {
-                  if (ch.is_member && ch.id) {
-                    botMemberIds.add(ch.id);
-                  }
-                  if (
-                    ch.is_private &&
-                    !allChannels.find((existing) => existing.id === ch.id)
-                  ) {
-                    botPrivateChannels.push({
-                      name: ch.name || "unknown",
-                      id: ch.id || "",
-                      topic: ch.topic?.value || "",
-                      member_count: ch.num_members || 0,
-                      is_member: ch.is_member || false,
-                    });
-                  }
-                }
-
-                botCursor =
-                  botResult.response_metadata?.next_cursor || undefined;
-              } while (botCursor);
-
-              // Fix is_member on public channels to reflect the bot's membership
-              for (const ch of allChannels) {
-                ch.is_member = botMemberIds.has(ch.id);
-              }
-
-              // Add private channels from bot that aren't already listed
-              for (const ch of botPrivateChannels) {
-                allChannels.push(ch);
-              }
-
-              // Enforce the limit after merging public + private channels
-              allChannels = allChannels.slice(0, limit);
-            } catch (userTokenError: any) {
-              logger.warn(
-                "list_channels user token path failed, falling back to bot-only",
-                {
-                  error: userTokenError.message,
-                },
-              );
-              // Fall through to bot-only listing below
-              allChannels = [];
-            }
-          }
-
-          if (allChannels.length === 0) {
-            // No user token, or user token failed — fall back to bot-only listing
+          let cursor: string | undefined;
+          do {
             const result = await client.conversations.list({
               types: "public_channel,private_channel",
               exclude_archived: true,
-              limit,
+              limit: 200,
+              cursor,
             });
 
-            allChannels = (result.channels || []).map((ch) => ({
-              name: ch.name || "unknown",
-              id: ch.id || "",
-              topic: ch.topic?.value || "",
-              member_count: ch.num_members || 0,
-              is_member: ch.is_member || false,
-            }));
-          }
+            for (const ch of result.channels || []) {
+              allChannels.push({
+                name: ch.name || "unknown",
+                id: ch.id || "",
+                topic: ch.topic?.value || "",
+                member_count: ch.num_members || 0,
+                is_member: ch.is_member || false,
+              });
+            }
+
+            cursor = result.response_metadata?.next_cursor || undefined;
+          } while (cursor && allChannels.length < limit);
+
+          const capped = allChannels.slice(0, limit);
 
           logger.info("list_channels tool called", {
-            count: allChannels.length,
+            count: capped.length,
           });
 
           return {
             ok: true,
-            channels: allChannels,
-            total: allChannels.length,
+            channels: capped,
+            total: capped.length,
           };
         } catch (error: any) {
           logger.error("list_channels tool failed", { error: error.message });
@@ -666,40 +569,33 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             seenIds.add(ch.id);
           }
 
-          // Search all public channels via user token for broader coverage
-          const userToken = process.env.SLACK_USER_TOKEN;
-          if (userToken && results.length < limit) {
-            try {
-              const { WebClient } = await import("@slack/web-api");
-              const userClient = new WebClient(userToken);
-              let cursor: string | undefined;
+          // Search all public channels via bot client for broader coverage
+          if (results.length < limit) {
+            let cursor: string | undefined;
 
-              do {
-                const result = await userClient.conversations.list({
-                  types: "public_channel",
-                  exclude_archived: true,
-                  limit: 200,
-                  cursor,
-                });
+            do {
+              const result = await client.conversations.list({
+                types: "public_channel",
+                exclude_archived: true,
+                limit: 200,
+                cursor,
+              });
 
-                for (const ch of result.channels || []) {
-                  if (results.length >= limit) break;
-                  if (ch.id && ch.name && ch.name.toLowerCase().includes(q) && !seenIds.has(ch.id)) {
-                    results.push({
-                      id: ch.id,
-                      name: ch.name,
-                      topic: ch.topic?.value || "",
-                      is_member: false,
-                    });
-                    seenIds.add(ch.id);
-                  }
+              for (const ch of result.channels || []) {
+                if (results.length >= limit) break;
+                if (ch.id && ch.name && ch.name.toLowerCase().includes(q) && !seenIds.has(ch.id)) {
+                  results.push({
+                    id: ch.id,
+                    name: ch.name,
+                    topic: ch.topic?.value || "",
+                    is_member: ch.is_member || false,
+                  });
+                  seenIds.add(ch.id);
                 }
+              }
 
-                cursor = result.response_metadata?.next_cursor || undefined;
-              } while (cursor && results.length < limit);
-            } catch (e: any) {
-              logger.warn("search_channels user token fallback failed", { error: e.message });
-            }
+              cursor = result.response_metadata?.next_cursor || undefined;
+            } while (cursor && results.length < limit);
           }
 
           const capped = results.slice(0, limit);
@@ -1208,8 +1104,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .describe("Number of results to return (max 20)"),
       }),
       execute: async ({ query, count }) => {
-        const userToken = process.env.SLACK_USER_TOKEN;
-        if (!userToken) {
+        const searchClient = await getUserClient();
+        if (!searchClient) {
           return {
             ok: false,
             error:
@@ -1218,10 +1114,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         }
 
         try {
-          // Use a separate client with the user token for search
-          const { WebClient } = await import("@slack/web-api");
-          const searchClient = new WebClient(userToken);
-
           const result = await searchClient.search.messages({
             query,
             count,
@@ -2148,7 +2040,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     list_canvases: tool({
       description:
-        "List canvases in the workspace. Uses files.list with a canvas type filter. Requires SLACK_USER_TOKEN.",
+        "List canvases in the workspace. Uses files.list with a canvas type filter.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2158,18 +2050,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ channel, count }) => {
         try {
-          const userToken = process.env.SLACK_USER_TOKEN;
-          if (!userToken) {
-            return {
-              ok: false,
-              error:
-                "Listing canvases requires a SLACK_USER_TOKEN environment variable (a user OAuth token with files:read scope). It's not currently configured.",
-            };
-          }
-
-          const { WebClient } = await import("@slack/web-api");
-          const userClient = new WebClient(userToken);
-          const result = await userClient.apiCall("files.list", {
+          const result = await (client as any).apiCall("files.list", {
             types: "spaces",
             count,
             ...(channel && { channel }),
