@@ -16,7 +16,7 @@ import { logger } from "./logger.js";
  * When deployed on Vercel, auth is handled automatically via OIDC.
  * For local development, set VERCEL_AI_GATEWAY_API_KEY in .env.
  *
- * getFastModel() wraps the gateway model with fallback middleware:
+ * All model functions automatically include Anthropic fallback middleware:
  * if the gateway returns a GatewayAuthenticationError (credits depleted,
  * OIDC unavailable), the call is retried against the Anthropic API
  * directly using ANTHROPIC_API_KEY.
@@ -35,11 +35,13 @@ export async function getMainModelId(): Promise<string> {
 }
 
 /**
- * Get the main conversation model.
+ * Get the main conversation model with Anthropic fallback support.
  * Priority: DB setting > env var > default
  */
 export async function getMainModel() {
-  return gateway(await getMainModelId());
+  const gatewayId = await getMainModelId();
+  const gatewayModel = gateway(gatewayId);
+  return withAnthropicFallback(gatewayModel, gatewayId);
 }
 
 function toDirectAnthropicId(gatewayId: string): string | null {
@@ -92,19 +94,11 @@ function gatewayFallbackMiddleware(
 }
 
 /**
- * Get the fast model (memory extraction, profile updates).
- * Priority: DB setting > env var > default.
- *
- * For Anthropic models, the returned model is wrapped with fallback
- * middleware that retries via the direct Anthropic API when gateway
- * auth fails.
+ * Universal helper that adds Anthropic fallback to any gateway model.
+ * For non-Anthropic models, returns the model unchanged.
+ * For Anthropic models, wraps with fallback middleware.
  */
-export async function getFastModel() {
-  const override = await getSetting("model_fast");
-  const gatewayId =
-    override || process.env.MODEL_FAST || "anthropic/claude-haiku-4-5";
-  const gatewayModel = gateway(gatewayId);
-
+function withAnthropicFallback<T>(gatewayModel: T, gatewayId: string): T {
   const directId = toDirectAnthropicId(gatewayId);
   if (!directId) {
     return gatewayModel;
@@ -113,32 +107,52 @@ export async function getFastModel() {
   return wrapLanguageModel({
     model: gatewayModel,
     middleware: gatewayFallbackMiddleware(directId),
-  });
+  }) as T;
 }
 
 /**
- * Get the embedding model.
+ * Get the fast model (memory extraction, profile updates) with Anthropic fallback support.
+ * Priority: DB setting > env var > default.
+ */
+export async function getFastModel() {
+  const override = await getSetting("model_fast");
+  const gatewayId =
+    override || process.env.MODEL_FAST || "anthropic/claude-haiku-4-5";
+  const gatewayModel = gateway(gatewayId);
+  return withAnthropicFallback(gatewayModel, gatewayId);
+}
+
+/**
+ * Get the embedding model with Anthropic fallback support.
  * Priority: DB setting > env var > default
  */
 export async function getEmbeddingModel() {
   const override = await getSetting("model_embedding");
-  return gateway.embedding(
-    override || process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
-  );
+  const gatewayId =
+    override || process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small";
+  const gatewayModel = gateway.embedding(gatewayId);
+  return withAnthropicFallback(gatewayModel, gatewayId);
 }
 
 /**
  * Static references kept for backward compatibility where async isn't feasible.
- * These use env vars only (no DB lookup).
+ * These use env vars only (no DB lookup) and include Anthropic fallback support.
  */
-export const mainModel = gateway(
-  process.env.MODEL_MAIN || "anthropic/claude-sonnet-4-20250514",
+const STATIC_MAIN_MODEL_ID = process.env.MODEL_MAIN || "anthropic/claude-sonnet-4-20250514";
+const STATIC_FAST_MODEL_ID = process.env.MODEL_FAST || "anthropic/claude-haiku-4-5";
+const STATIC_EMBEDDING_MODEL_ID = process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small";
+
+export const mainModel = withAnthropicFallback(
+  gateway(STATIC_MAIN_MODEL_ID),
+  STATIC_MAIN_MODEL_ID,
 );
 
-export const fastModel = gateway(
-  process.env.MODEL_FAST || "anthropic/claude-haiku-4-5",
+export const fastModel = withAnthropicFallback(
+  gateway(STATIC_FAST_MODEL_ID),
+  STATIC_FAST_MODEL_ID,
 );
 
-export const embeddingModel = gateway.embedding(
-  process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
+export const embeddingModel = withAnthropicFallback(
+  gateway.embedding(STATIC_EMBEDDING_MODEL_ID),
+  STATIC_EMBEDDING_MODEL_ID,
 );
