@@ -31,6 +31,8 @@ const turndown = new TurndownService({
   codeBlockStyle: "fenced",
 });
 
+turndown.remove(["style", "script", "head"]);
+
 turndown.addRule("emailSignatures", {
   filter: (node) => {
     if ((node as any).childElementCount > 0) return false;
@@ -44,15 +46,23 @@ turndown.addRule("emailSignatures", {
   replacement: () => "",
 });
 
-function htmlToMarkdown(html: string): string {
-  if (!html) return "";
+function looksLikeHtml(text: string): boolean {
+  const head = text.slice(0, 200);
+  return /font-family:|<div|<table|<style|\{\s*[a-z-]+\s*:/i.test(head);
+}
+
+function htmlToMarkdown(html: string, plain?: string): string {
+  if (!html && !plain) return "";
+  if (!html) return plain || "";
   try {
-    return turndown
+    const md = turndown
       .turndown(html)
       .replace(/\n\s*\n\s*\n/g, "\n\n")
       .trim();
+    if (md && !looksLikeHtml(md)) return md;
+    return plain || md || "";
   } catch {
-    return html;
+    return plain || "";
   }
 }
 
@@ -180,7 +190,7 @@ export async function syncEmails(
             : "inbound";
 
         const { html, plain } = extractBodyParts(msg.payload);
-        const bodyMarkdown = html ? htmlToMarkdown(html) : plain || "";
+        const bodyMarkdown = htmlToMarkdown(html, plain);
         const bodySizeBytes = Buffer.byteLength(bodyMarkdown, "utf-8");
 
         const labels = (msg.labelIds || []) as string[];
