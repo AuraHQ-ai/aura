@@ -36,6 +36,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: "--model claude-sonnet-4-20250514"
+          allowed_bots: "cursor"
 
   auto-review:
     if: |
@@ -58,6 +59,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: "--model claude-sonnet-4-20250514"
+          allowed_bots: "cursor"
           prompt: |
             Review this PR for:
             1. TypeScript type safety and correctness
