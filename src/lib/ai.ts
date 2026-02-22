@@ -47,7 +47,23 @@ export async function getMainModel() {
   return withAnthropicFallback(gatewayModel, gatewayId);
 }
 
+/**
+ * Map Vercel AI Gateway model IDs to direct Anthropic API model IDs.
+ * Gateway uses short names (e.g. "anthropic/claude-haiku-4-5") while
+ * the direct API requires dated slugs (e.g. "claude-3-5-haiku-20241022").
+ */
+const GATEWAY_TO_ANTHROPIC: Record<string, string> = {
+  "anthropic/claude-haiku-4-5": "claude-haiku-4-5-20251001",
+  "anthropic/claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
+  "anthropic/claude-opus-4-6": "claude-opus-4-6",
+  "anthropic/claude-sonnet-4-5-20250514": "claude-sonnet-4-5-20250929",
+};
+
 function toDirectAnthropicId(gatewayId: string): string | null {
+  if (GATEWAY_TO_ANTHROPIC[gatewayId]) {
+    return GATEWAY_TO_ANTHROPIC[gatewayId];
+  }
+  // Fallback: strip "anthropic/" prefix (works when gateway ID matches API ID)
   return gatewayId.startsWith("anthropic/")
     ? gatewayId.slice("anthropic/".length)
     : null;
