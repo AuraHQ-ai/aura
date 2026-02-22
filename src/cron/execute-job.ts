@@ -3,8 +3,8 @@ import { generateText, stepCountIs } from "ai";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
+import type { ScheduleContext } from "../db/schema.js";
 import { getMainModel } from "../lib/ai.js";
-import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
@@ -65,6 +65,7 @@ export async function executeJob(
   job: typeof jobs.$inferSelect,
   skillIndex: string,
   trigger: "heartbeat" | "dispatch" | "continuation" = "heartbeat",
+  createTools: (client: WebClient, context?: ScheduleContext) => Record<string, any> = () => ({}),
 ): Promise<boolean> {
   const jobId = job.id;
 
@@ -154,7 +155,7 @@ export async function executeJob(
       model,
       system: systemPrompt,
       prompt,
-      tools: createSlackTools(slackClient, {
+      tools: createTools(slackClient, {
         userId: job.requestedBy,
         channelId: job.channelId || undefined,
         threadTs: job.threadTs || undefined,
