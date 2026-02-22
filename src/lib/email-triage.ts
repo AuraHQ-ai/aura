@@ -17,6 +17,7 @@ export interface TriageSummary {
   triaged: number;
   errors: number;
   breakdown: Record<string, number>;
+  lastError?: string;
 }
 
 // ── Haiku Triage Gate ───────────────────────────────────────────────────────
@@ -151,12 +152,14 @@ export async function triageEmails(
         }
       }
     } catch (err) {
+      const errStr = String(err);
       logger.error("Triage batch failed", {
         userId,
         batchStart: i,
-        error: String(err),
+        error: errStr,
       });
       summary.errors += batch.length;
+      summary.lastError = errStr;
     }
   }
 
