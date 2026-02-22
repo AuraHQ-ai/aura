@@ -93,7 +93,7 @@ async function reapStaleJobs(): Promise<number> {
       (now.getTime() - exec.startedAt.getTime()) / 60000,
     );
 
-    await db
+    const updated = await db
       .update(jobExecutions)
       .set({
         status: "failed",
@@ -101,7 +101,12 @@ async function reapStaleJobs(): Promise<number> {
         error:
           "Vercel timeout (inferred) -- execution exceeded 15 minute ceiling",
       })
-      .where(eq(jobExecutions.id, exec.id));
+      .where(and(eq(jobExecutions.id, exec.id), eq(jobExecutions.status, "running")))
+      .returning({ id: jobExecutions.id });
+
+    if (updated.length === 0) continue;
+
+    reaped++;
 
     if (!exec.jobId) continue;
 
@@ -120,6 +125,7 @@ async function reapStaleJobs(): Promise<number> {
         .update(jobs)
         .set({
           status: "pending",
+          executeAt: new Date(Date.now() + RETRY_DELAY_MS),
           retries: newRetries,
           lastExecutedAt: now,
           updatedAt: now,
@@ -143,8 +149,6 @@ async function reapStaleJobs(): Promise<number> {
       jobId: parentJob.id,
       elapsedMinutes,
     });
-
-    reaped++;
   }
 
   return reaped;
