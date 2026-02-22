@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { WebClient } from "@slack/web-api";
 import { eq, and, lt, lte, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
@@ -6,7 +7,10 @@ import { jobs, notes, jobExecutions } from "../db/schema.js";
 import type { FrequencyConfig } from "../db/schema.js";
 import { buildSkillIndex } from "../lib/skill-index.js";
 import { logger } from "../lib/logger.js";
-import { executeJob, MAX_RETRIES } from "./execute-job.js";
+import { executeJob, MAX_RETRIES, RETRY_DELAY_MS } from "./execute-job.js";
+
+const botToken = process.env.SLACK_BOT_TOKEN || "";
+const slackClient = new WebClient(botToken);
 
 /** Max jobs to process per heartbeat sweep */
 const MAX_JOBS_PER_SWEEP = 10;
@@ -71,6 +75,7 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
 // ── Stale Job Reaper ─────────────────────────────────────────────────────────
 
 async function reapStaleJobs(): Promise<number> {
+  const staleCutoff = new Date(Date.now() - STALE_RUNNING_THRESHOLD_MS);
   const staleExecutions = await db
     .select({
       id: jobExecutions.id,
@@ -81,7 +86,7 @@ async function reapStaleJobs(): Promise<number> {
     .where(
       and(
         eq(jobExecutions.status, "running"),
-        lt(jobExecutions.startedAt, sql`NOW() - INTERVAL '15 minutes'`),
+        lt(jobExecutions.startedAt, staleCutoff),
       ),
     );
 
@@ -99,7 +104,7 @@ async function reapStaleJobs(): Promise<number> {
         status: "failed",
         finishedAt: now,
         error:
-          "Vercel timeout (inferred) -- execution exceeded 15 minute ceiling",
+          `Vercel timeout (inferred) -- execution exceeded ${STALE_RUNNING_THRESHOLD_MS / 60000} minute ceiling`,
       })
       .where(and(eq(jobExecutions.id, exec.id), eq(jobExecutions.status, "running")))
       .returning({ id: jobExecutions.id });
@@ -144,7 +149,7 @@ async function reapStaleJobs(): Promise<number> {
           status: "failed",
           retries: newRetries,
           lastExecutedAt: now,
-          result: "Permanently failed after 3 timeout retries",
+          result: `Permanently failed after ${MAX_RETRIES} timeout retries`,
           updatedAt: now,
         })
         .where(and(eq(jobs.id, parentJob.id), eq(jobs.status, "running")))
@@ -159,7 +164,7 @@ async function reapStaleJobs(): Promise<number> {
             if (dmResult.channel?.id) {
               await slackClient.chat.postMessage({
                 channel: dmResult.channel.id,
-                text: `I tried 3 times but couldn't complete this job: "${parentJob.description}"\n\nError: Execution timed out repeatedly (Vercel ceiling exceeded)`,
+                text: `I tried ${MAX_RETRIES} times but couldn't complete this job: "${parentJob.description}"\n\nError: Execution timed out repeatedly (Vercel ceiling exceeded)`,
               });
             }
           }

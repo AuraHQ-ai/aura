@@ -14,7 +14,7 @@ const slackClient = new WebClient(botToken);
 export const MAX_RETRIES = 3;
 
 /** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
-const RETRY_DELAY_MS = 30 * 60 * 1000;
+export const RETRY_DELAY_MS = 30 * 60 * 1000;
 
 // ── System Prompts ───────────────────────────────────────────────────────────
 
@@ -295,7 +295,7 @@ export async function executeJob(
           if (dmResult.channel?.id) {
             await slackClient.chat.postMessage({
               channel: dmResult.channel.id,
-              text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
+              text: `I tried ${MAX_RETRIES} times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
             });
           }
         }
