@@ -1139,25 +1139,58 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         query: z
           .string()
           .describe("Partial name to search for, e.g. 'joan' or 'rodriguez'"),
+        limit: z
+          .number()
+          .min(1)
+          .max(50)
+          .default(20)
+          .describe("Maximum number of results to return"),
       }),
-      execute: async ({ query }) => {
+      execute: async ({ query, limit }) => {
         try {
-          const allUsers = await getUserList(client);
-          const q = query.toLowerCase();
+          let results: { display_name: string; real_name: string; username: string; id: string }[];
 
-          const matches = allUsers.filter(
-            (u) =>
-              u.displayName.toLowerCase().includes(q) ||
-              u.realName.toLowerCase().includes(q) ||
-              u.username.toLowerCase().includes(q),
-          );
+          try {
+            const apiResult = await client.apiCall("users.search", {
+              query,
+              count: limit || 20,
+            }) as { ok: boolean; results?: any[] };
 
-          const results = matches.map((u) => ({
-            display_name: u.displayName || u.realName || u.username,
-            real_name: u.realName,
-            username: u.username,
-            id: u.id,
-          }));
+            if (!apiResult.ok || !Array.isArray(apiResult.results)) {
+              throw new Error("Unexpected users.search response shape");
+            }
+
+            results = apiResult.results
+              .filter((u: any) => u.id && !u.deleted && !u.is_bot)
+              .map((u: any) => ({
+                display_name: u.profile?.display_name || u.real_name || u.name || "",
+                real_name: u.real_name || "",
+                username: u.name || "",
+                id: u.id,
+              }));
+          } catch (searchError: any) {
+            logger.warn("users.search API failed, falling back to local filter", {
+              query,
+              error: searchError.message,
+            });
+
+            const allUsers = await getUserList(client);
+            const q = query.toLowerCase();
+
+            const matches = allUsers.filter(
+              (u) =>
+                u.displayName.toLowerCase().includes(q) ||
+                u.realName.toLowerCase().includes(q) ||
+                u.username.toLowerCase().includes(q),
+            );
+
+            results = matches.slice(0, limit || 20).map((u) => ({
+              display_name: u.displayName || u.realName || u.username,
+              real_name: u.realName,
+              username: u.username,
+              id: u.id,
+            }));
+          }
 
           logger.info("search_users tool called", {
             query,
