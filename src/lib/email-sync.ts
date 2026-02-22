@@ -1,7 +1,7 @@
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getFastModel } from "./ai.js";
-import { getGmailClientForUser, getUserRefreshToken, getHeader, extractBody } from "./gmail.js";
+import { getGmailClientForUser, getHeader, extractBody } from "./gmail.js";
 import { logger } from "./logger.js";
 import type { NewEmailRaw } from "../db/schema.js";
 
@@ -95,8 +95,7 @@ export async function syncEmailsForUser(
   }
   const { client: gmail, email: userEmail } = result;
 
-  const userToken = await getUserRefreshToken(userId);
-  const ownerEmail = userToken?.email?.toLowerCase() || userEmail?.toLowerCase() || "";
+  const ownerEmail = userEmail?.toLowerCase() || "";
 
   const afterDate = options?.after || "2025/01/01";
   const maxEmails = options?.maxEmails || 5000;
