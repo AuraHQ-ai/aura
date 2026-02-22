@@ -47,8 +47,7 @@ turndown.addRule("emailSignatures", {
 });
 
 function looksLikeHtml(text: string): boolean {
-  const head = text.slice(0, 200);
-  return /font-family:|<div|<table|<style|\{\s*[a-z-]+\s*:/i.test(head);
+  return /font-family:|<div|<table|<style|\{\s*[a-z-]+\s*:/i.test(text);
 }
 
 function htmlToMarkdown(html: string, plain?: string): string {
@@ -60,7 +59,7 @@ function htmlToMarkdown(html: string, plain?: string): string {
       .replace(/\n\s*\n\s*\n/g, "\n\n")
       .trim();
     if (md && !looksLikeHtml(md)) return md;
-    return plain || md || "";
+    return plain || "";
   } catch {
     return plain || "";
   }
