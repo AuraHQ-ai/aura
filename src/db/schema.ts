@@ -343,6 +343,42 @@ export const oauthTokens = pgTable(
     index("oauth_tokens_email_idx").on(table.email),
   ],
 );
+// ── Emails Raw (email staging pipeline) ────────────────────────────────────
+
+export const emailsRaw = pgTable(
+  "emails_raw",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    userId: text("user_id").notNull(),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    subject: text("subject"),
+    fromAddress: text("from_address"),
+    toAddresses: text("to_addresses").array(),
+    ccAddresses: text("cc_addresses").array(),
+    date: timestamp("date", { withTimezone: true, mode: "date" }),
+    bodyMarkdown: text("body_markdown"),
+    bodyHtml: text("body_html"),
+    labels: text("labels").array(),
+    sizeBytes: integer("size_bytes"),
+    isImportant: boolean("is_important"),
+    triageReason: text("triage_reason"),
+    syncedAt: timestamptz("synced_at").notNull().defaultNow(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("emails_raw_user_message_idx").on(
+      table.userId,
+      table.gmailMessageId,
+    ),
+    index("emails_raw_user_date_idx").on(table.userId, table.date),
+    index("emails_raw_thread_idx").on(table.threadId),
+    index("emails_raw_user_important_idx").on(table.userId, table.isImportant),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -365,6 +401,8 @@ export type JobExecution = typeof jobExecutions.$inferSelect;
 export type NewJobExecution = typeof jobExecutions.$inferInsert;
 export type OAuthToken = typeof oauthTokens.$inferSelect;
 export type NewOAuthToken = typeof oauthTokens.$inferInsert;
+export type EmailRaw = typeof emailsRaw.$inferSelect;
+export type NewEmailRaw = typeof emailsRaw.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {

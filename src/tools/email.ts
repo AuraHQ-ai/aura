@@ -979,6 +979,248 @@ export function createGmailEATools() {
       },
     }),
 
+    sync_gmail: tool({
+      description:
+        "Sync emails from a user's Gmail account into the local emails_raw staging table. Fetches emails since a given date, converts HTML to markdown, and runs a Haiku triage pass to flag important/actionable emails for a startup CEO. Returns counts of synced, important, and skipped emails.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner",
+          ),
+        since: z
+          .string()
+          .optional()
+          .default("2025-01-01")
+          .describe("ISO date to sync emails from (default '2025-01-01')"),
+        max_emails: z
+          .number()
+          .min(1)
+          .max(500)
+          .optional()
+          .default(100)
+          .describe("Maximum number of emails to sync (default 100, max 500)"),
+      }),
+      execute: async ({ user_name, since, max_emails }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+            };
+          }
+
+          const { getGmailClientForUser } = await import("../lib/gmail.js");
+          const gmailResult = await getGmailClientForUser(userId);
+          if (!gmailResult) {
+            return {
+              ok: false,
+              error: `No Gmail access for user '${user_name}'. They need to authorize Aura via OAuth first.`,
+            };
+          }
+          const gmail = gmailResult.client;
+
+          // Convert since date to Unix epoch for Gmail query
+          const sinceDate = new Date(since ?? "2025-01-01");
+          const sinceEpoch = Math.floor(sinceDate.getTime() / 1000);
+
+          // Fetch message IDs
+          const listRes = await gmail.users.messages.list({
+            userId: "me",
+            q: `after:${sinceEpoch}`,
+            maxResults: max_emails ?? 100,
+          });
+
+          const messages = listRes.data.messages ?? [];
+          if (messages.length === 0) {
+            return { ok: true, synced: 0, important: 0, skipped: 0 };
+          }
+
+          // Import dependencies
+          const { db } = await import("../db/client.js");
+          const { emailsRaw } = await import("../db/schema.js");
+          const { generateText } = await import("ai");
+          const { getFastModel } = await import("../lib/ai.js");
+          const TurndownService = (await import("turndown")).default;
+          const td = new TurndownService();
+          const { sql: drizzleSql } = await import("drizzle-orm");
+
+          let synced = 0;
+          let important = 0;
+          let skipped = 0;
+
+          // Process in batches of 10
+          const BATCH_SIZE = 10;
+          for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+            const batch = messages.slice(i, i + BATCH_SIZE);
+            await Promise.all(
+              batch.map(async (msg) => {
+                try {
+                  const msgId = msg.id!;
+                  const fullMsg = await gmail.users.messages.get({
+                    userId: "me",
+                    id: msgId,
+                    format: "full",
+                  });
+                  const payload = fullMsg.data.payload;
+                  const headers = payload?.headers ?? [];
+
+                  const getHeader = (name: string) =>
+                    headers.find(
+                      (h) => h.name?.toLowerCase() === name.toLowerCase(),
+                    )?.value ?? null;
+
+                  const subject = getHeader("Subject");
+                  const fromAddress = getHeader("From");
+                  const toRaw = getHeader("To");
+                  const ccRaw = getHeader("Cc");
+                  const dateRaw = getHeader("Date");
+
+                  const toAddresses = toRaw
+                    ? toRaw.split(",").map((s) => s.trim())
+                    : [];
+                  const ccAddresses = ccRaw
+                    ? ccRaw.split(",").map((s) => s.trim())
+                    : [];
+                  const date = dateRaw ? new Date(dateRaw) : null;
+
+                  const labels = fullMsg.data.labelIds ?? [];
+                  const sizeBytes = fullMsg.data.sizeEstimate ?? null;
+                  const threadId = fullMsg.data.threadId ?? "";
+
+                  // Extract HTML body recursively from parts
+                  const extractBody = (
+                    part: any,
+                  ): { html: string | null; plain: string | null } => {
+                    if (!part) return { html: null, plain: null };
+                    if (part.mimeType === "text/html" && part.body?.data) {
+                      return {
+                        html: Buffer.from(
+                          part.body.data,
+                          "base64",
+                        ).toString("utf8"),
+                        plain: null,
+                      };
+                    }
+                    if (part.mimeType === "text/plain" && part.body?.data) {
+                      return {
+                        html: null,
+                        plain: Buffer.from(
+                          part.body.data,
+                          "base64",
+                        ).toString("utf8"),
+                      };
+                    }
+                    if (part.parts) {
+                      let html: string | null = null;
+                      let plain: string | null = null;
+                      for (const p of part.parts) {
+                        const result = extractBody(p);
+                        if (result.html) html = result.html;
+                        if (result.plain) plain = result.plain;
+                      }
+                      return { html, plain };
+                    }
+                    return { html: null, plain: null };
+                  };
+
+                  const { html: bodyHtml, plain: bodyPlain } =
+                    extractBody(payload);
+                  const bodyMarkdown = bodyHtml
+                    ? td.turndown(bodyHtml)
+                    : (bodyPlain ?? null);
+
+                  // Haiku triage gate
+                  let isImportant: boolean | null = null;
+                  let triageReason: string | null = null;
+                  try {
+                    const model = await getFastModel();
+                    const preview = (bodyMarkdown ?? "").slice(0, 500);
+                    const { text: triageRaw } = await generateText({
+                      model,
+                      system:
+                        "You are an email triage assistant for a startup CEO. Classify emails as important/actionable or not. Reply with valid JSON only.",
+                      prompt: `Subject: ${subject ?? "(no subject)"}\nFrom: ${fromAddress ?? "(unknown)"}\n\nBody preview:\n${preview}\n\nReply with JSON: {"is_important": true/false, "reason": "brief explanation"}`,
+                      maxOutputTokens: 100,
+                    });
+                    const parsed = JSON.parse(
+                      triageRaw.trim().replace(/^```json\n?/, "").replace(/\n?```$/, ""),
+                    );
+                    isImportant = Boolean(parsed.is_important);
+                    triageReason = String(parsed.reason ?? "");
+                  } catch {
+                    // Triage failure is non-fatal; leave null
+                  }
+
+                  // Upsert into emails_raw
+                  await db
+                    .insert(emailsRaw)
+                    .values({
+                      userId,
+                      gmailMessageId: msgId,
+                      threadId,
+                      subject,
+                      fromAddress,
+                      toAddresses,
+                      ccAddresses,
+                      date: date ?? undefined,
+                      bodyMarkdown,
+                      bodyHtml,
+                      labels,
+                      sizeBytes,
+                      isImportant,
+                      triageReason,
+                    })
+                    .onConflictDoUpdate({
+                      target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+                      set: {
+                        subject: drizzleSql`EXCLUDED.subject`,
+                        fromAddress: drizzleSql`EXCLUDED.from_address`,
+                        toAddresses: drizzleSql`EXCLUDED.to_addresses`,
+                        ccAddresses: drizzleSql`EXCLUDED.cc_addresses`,
+                        date: drizzleSql`EXCLUDED.date`,
+                        bodyMarkdown: drizzleSql`EXCLUDED.body_markdown`,
+                        bodyHtml: drizzleSql`EXCLUDED.body_html`,
+                        labels: drizzleSql`EXCLUDED.labels`,
+                        sizeBytes: drizzleSql`EXCLUDED.size_bytes`,
+                        isImportant: drizzleSql`EXCLUDED.is_important`,
+                        triageReason: drizzleSql`EXCLUDED.triage_reason`,
+                        syncedAt: drizzleSql`now()`,
+                      },
+                    });
+
+                  synced++;
+                  if (isImportant) important++;
+                } catch (emailErr: any) {
+                  logger.warn("sync_gmail: failed to process email", {
+                    msgId: msg.id,
+                    error: emailErr.message,
+                  });
+                  skipped++;
+                }
+              }),
+            );
+          }
+
+          logger.info("sync_gmail tool called", {
+            userId,
+            synced,
+            important,
+            skipped,
+          });
+
+          return { ok: true, synced, important, skipped };
+        } catch (error: any) {
+          logger.error("sync_gmail failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to sync Gmail: ${error.message}`,
+          };
+        }
+      },
+    }),
+
     generate_gmail_auth_url: tool({
       description:
         "Generate a Google OAuth consent URL for a user to connect their Gmail account. DM the resulting URL to the user so they can click it and authorize Aura to read their inbox and create drafts.",
