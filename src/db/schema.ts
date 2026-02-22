@@ -378,7 +378,7 @@ export const emailsRaw = pgTable(
     ),
     index("idx_emails_raw_user_thread").on(table.userId, table.gmailThreadId),
     index("idx_emails_raw_user_triage").on(table.userId, table.triageClass),
-    index("idx_emails_raw_date").on(table.date),
+    index("idx_emails_raw_date").on(table.date.desc().nullsLast()),
   ],
 );
 
