@@ -1260,7 +1260,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         "Send a direct message to one user or a group of users. Pass a single name for a 1:1 DM, or an array of names to open/find a group DM (MPIM). Opens the conversation if it doesn't exist.",
       inputSchema: z.object({
         user_name: z
-          .union([z.string(), z.array(z.string())])
+          .union([z.string(), z.array(z.string()).min(1)])
           .describe(
             "A single display name/username (e.g. 'Joan') for a 1:1 DM, or an array of names (e.g. ['Joan', 'Alex', 'Sam']) for a group DM.",
           ),
