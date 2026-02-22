@@ -111,7 +111,13 @@ async function reapStaleJobs(): Promise<number> {
     if (!exec.jobId) continue;
 
     const [parentJob] = await db
-      .select({ id: jobs.id, name: jobs.name, retries: jobs.retries })
+      .select({
+        id: jobs.id,
+        name: jobs.name,
+        retries: jobs.retries,
+        requestedBy: jobs.requestedBy,
+        description: jobs.description,
+      })
       .from(jobs)
       .where(eq(jobs.id, exec.jobId))
       .limit(1);
@@ -130,9 +136,9 @@ async function reapStaleJobs(): Promise<number> {
           lastExecutedAt: now,
           updatedAt: now,
         })
-        .where(eq(jobs.id, parentJob.id));
+        .where(and(eq(jobs.id, parentJob.id), eq(jobs.status, "running")));
     } else {
-      await db
+      const permanentlyFailed = await db
         .update(jobs)
         .set({
           status: "failed",
@@ -141,7 +147,28 @@ async function reapStaleJobs(): Promise<number> {
           result: "Permanently failed after 3 timeout retries",
           updatedAt: now,
         })
-        .where(eq(jobs.id, parentJob.id));
+        .where(and(eq(jobs.id, parentJob.id), eq(jobs.status, "running")))
+        .returning({ id: jobs.id });
+
+      if (permanentlyFailed.length > 0) {
+        try {
+          if (parentJob.requestedBy && parentJob.requestedBy !== "aura") {
+            const dmResult = await slackClient.conversations.open({
+              users: parentJob.requestedBy,
+            });
+            if (dmResult.channel?.id) {
+              await slackClient.chat.postMessage({
+                channel: dmResult.channel.id,
+                text: `I tried 3 times but couldn't complete this job: "${parentJob.description}"\n\nError: Execution timed out repeatedly (Vercel ceiling exceeded)`,
+              });
+            }
+          }
+        } catch {
+          logger.error("Reaper: failed to send escalation DM", {
+            jobId: parentJob.id,
+          });
+        }
+      }
     }
 
     logger.warn("Reaped stale job", {
