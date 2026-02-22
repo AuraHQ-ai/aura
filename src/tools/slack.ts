@@ -2172,6 +2172,102 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       },
     }),
 
+    // ── File Upload Tools ─────────────────────────────────────────────────
+
+    upload_file: tool({
+      description:
+        "Upload a file to Slack. Can share it to a channel or thread. Supports text files (CSV, JSON, code, etc.) and binary files (images, PDFs) via base64 encoding.",
+      inputSchema: z.object({
+        content: z
+          .string()
+          .describe(
+            "File content. For text files, raw text. For binary files, base64-encoded string (set is_binary=true).",
+          ),
+        filename: z
+          .string()
+          .describe("Filename with extension, e.g. 'report.csv', 'chart.png'"),
+        channel: z
+          .string()
+          .optional()
+          .describe(
+            "Channel name or ID to share the file to. If omitted, the file is uploaded but not shared to any channel.",
+          ),
+        title: z
+          .string()
+          .optional()
+          .describe("Display title for the file in Slack"),
+        is_binary: z
+          .boolean()
+          .default(false)
+          .describe(
+            "If true, decode content from base64 before uploading. Use for images, PDFs, and other binary files.",
+          ),
+        thread_ts: z
+          .string()
+          .optional()
+          .describe(
+            "Thread timestamp to attach the file to a specific thread",
+          ),
+      }),
+      execute: async ({ content, filename, channel, title, is_binary, thread_ts }) => {
+        try {
+          const fileBuffer = is_binary
+            ? Buffer.from(content, "base64")
+            : Buffer.from(content, "utf-8");
+
+          const uploadParams: Record<string, unknown> = {
+            file: fileBuffer,
+            filename,
+          };
+
+          if (title) uploadParams.title = title;
+
+          if (channel) {
+            let channelId = channel;
+            if (!/^[CG][A-Z0-9]+$/.test(channel)) {
+              const resolved = await resolveChannelByName(client, channel);
+              if (!resolved) {
+                return {
+                  ok: false,
+                  error: `Could not find a channel named "${channel}". Use list_channels to see available channels.`,
+                };
+              }
+              channelId = resolved.id;
+            }
+            uploadParams.channel_id = channelId;
+            if (thread_ts) uploadParams.thread_ts = thread_ts;
+          }
+
+          const result = await client.filesUploadV2(uploadParams as any);
+          const file = (result as any).file ?? (result as any).files?.[0];
+          const fileId = file?.id ?? null;
+          const fileUrl = file?.permalink ?? file?.url_private ?? null;
+
+          logger.info("upload_file tool called", {
+            filename,
+            channel,
+            fileId,
+          });
+
+          return {
+            ok: true,
+            file_id: fileId,
+            file_url: fileUrl,
+          };
+        } catch (error: any) {
+          logger.error("upload_file tool failed", {
+            filename,
+            channel,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to upload file: ${error.message}`,
+          };
+        }
+      },
+    }),
+
     // ── Message Management Tools ──────────────────────────────────────────
 
     edit_message: tool({
