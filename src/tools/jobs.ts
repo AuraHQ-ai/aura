@@ -11,7 +11,7 @@ import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
-import { executeJob } from "../cron/heartbeat.js";
+import { executeJob } from "../cron/execute-job.js";
 import { buildSkillIndex } from "../lib/skill-index.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
