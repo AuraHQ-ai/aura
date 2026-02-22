@@ -346,6 +346,8 @@ export const emailsRaw = pgTable(
     hasAttachments: boolean("has_attachments").default(false),
     labels: jsonb("labels").$type<string[]>(),
     rawHeaders: jsonb("raw_headers").$type<Record<string, string>>(),
+    threadState: text("thread_state"),
+    threadStateUpdatedAt: timestamptz("thread_state_updated_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -357,6 +359,10 @@ export const emailsRaw = pgTable(
     index("emails_raw_user_thread_idx").on(table.userId, table.gmailThreadId),
     index("emails_raw_user_triage_idx").on(table.userId, table.triage),
     index("emails_raw_user_date_idx").on(table.userId, table.date),
+    index("emails_raw_user_thread_state_idx").on(
+      table.userId,
+      table.threadState,
+    ),
   ],
 );
 
