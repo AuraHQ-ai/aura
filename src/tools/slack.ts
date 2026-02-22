@@ -1175,6 +1175,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             query,
             results,
             count: results.length,
+            total_matches: matches.length,
+            has_more: matches.length > results.length,
           };
         } catch (error: any) {
           logger.error("search_users tool failed", {
