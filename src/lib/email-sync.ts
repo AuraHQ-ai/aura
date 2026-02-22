@@ -32,7 +32,7 @@ export async function htmlToMarkdown(html: string): Promise<string> {
   return td.turndown(html).trim();
 }
 
-const HTML_TAG_RE = /<[a-z][\s\S]*?>/i;
+const HTML_TAG_RE = /<[a-z][a-z0-9]*[\s>\/]/i;
 
 function extractEmailAddress(headerValue: string): string {
   const match = headerValue.match(/<([^>]+)>/);
