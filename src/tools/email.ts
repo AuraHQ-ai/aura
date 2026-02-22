@@ -12,7 +12,7 @@ export function createEmailTools() {
   return {
     send_email: tool({
       description:
-        "Send an email from aura@realadvisor.com. Use for external communication, follow-ups, outreach, and reports.",
+        "Send an email from aura@realadvisor.com. Use for external communication, follow-ups, outreach, and reports. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
         to: z.string().describe("Recipient email address"),
         subject: z.string().describe("Email subject line"),
@@ -27,6 +27,16 @@ export function createEmailTools() {
           .string()
           .optional()
           .describe("Thread ID for reply threading"),
+        attachments: z
+          .array(
+            z.object({
+              filename: z.string().describe("Filename with extension, e.g. 'contract.pdf'"),
+              mimeType: z.string().describe("MIME type, e.g. 'application/pdf'"),
+              content: z.string().describe("Base64-encoded file content"),
+            }),
+          )
+          .optional()
+          .describe("File attachments (base64-encoded)"),
       }),
       execute: async ({
         to,
@@ -36,6 +46,7 @@ export function createEmailTools() {
         bcc,
         reply_to_message_id,
         thread_id,
+        attachments,
       }) => {
         try {
           const { getGmailClient, sendEmail } = await import(
@@ -55,6 +66,7 @@ export function createEmailTools() {
             bcc,
             replyToMessageId: reply_to_message_id,
             threadId: thread_id,
+            attachments,
           });
 
           if (!result) {
@@ -650,7 +662,7 @@ export function createGmailEATools() {
   return {
     create_gmail_draft: tool({
       description:
-        "Create a draft email in a user's Gmail account. The user must have granted Aura OAuth access first.",
+        "Create a draft email in a user's Gmail account. The user must have granted Aura OAuth access first. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -678,6 +690,16 @@ export function createGmailEATools() {
           .string()
           .optional()
           .describe("Original message text to quote in the reply"),
+        attachments: z
+          .array(
+            z.object({
+              filename: z.string().describe("Filename with extension, e.g. 'contract.pdf'"),
+              mimeType: z.string().describe("MIME type, e.g. 'application/pdf'"),
+              content: z.string().describe("Base64-encoded file content"),
+            }),
+          )
+          .optional()
+          .describe("File attachments (base64-encoded)"),
       }),
       execute: async ({
         user_name,
@@ -690,6 +712,7 @@ export function createGmailEATools() {
         references,
         thread_id,
         quoted_message,
+        attachments,
       }) => {
         try {
           const userId = await resolveSlackUserId(user_name);
@@ -711,6 +734,7 @@ export function createGmailEATools() {
             references,
             threadId: thread_id,
             quotedMessage: quoted_message,
+            attachments,
           });
 
           if (!result) {
