@@ -36,9 +36,11 @@ export function createSandboxTools(context?: ScheduleContext) {
         timeout_seconds: z
           .number()
           .min(1)
-          .max(300)
+          .max(750)
           .default(120)
-          .describe("Command timeout in seconds (max 300)"),
+          .describe(
+            "Command timeout in seconds (default 120, max 750). Use higher timeouts for long-running agent commands like Claude Agent SDK or Codex CLI.",
+          ),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
         if (!isAdmin(context?.userId) && context?.userId !== "aura") {
