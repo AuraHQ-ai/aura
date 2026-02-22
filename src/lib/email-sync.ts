@@ -178,7 +178,8 @@ export async function syncEmailsForUser(
         body = await htmlToMarkdown(body);
       }
 
-      const direction = ownerEmail && extractEmailAddress(fromAddr) === ownerEmail
+      const direction = labelIds.includes("SENT")
+        || (ownerEmail && extractEmailAddress(fromAddr) === ownerEmail)
         ? "outbound"
         : "inbound";
 
@@ -244,7 +245,13 @@ export async function syncEmailsForUser(
       snippet: e.snippet || "",
     }));
 
-    const triageResults = await triageEmails(triageInput);
+    let triageResults: Map<string, "junk" | "fyi" | "actionable" | "urgent">;
+    try {
+      triageResults = await triageEmails(triageInput);
+    } catch (err) {
+      logger.error("Email sync: triage failed, skipping", { error: String(err) });
+      triageResults = new Map();
+    }
 
     for (const [msgId, triageValue] of triageResults) {
       try {
