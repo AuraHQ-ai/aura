@@ -17,6 +17,7 @@ import { createSheetsTools } from "./sheets.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { formatTimestamp } from "../lib/temporal.js";
+import { downloadSlackFile, MAX_FILE_SIZE } from "../lib/files.js";
 
 // ── Caches (per function invocation) ─────────────────────────────────────────
 
@@ -2179,6 +2180,85 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return {
             ok: false,
             error: `Failed to upload file: ${error.message}`,
+          };
+        }
+      },
+    }),
+
+    // ── File Download Tools ──────────────────────────────────────────────
+
+    download_slack_file: tool({
+      description:
+        "Download a file from Slack by its file ID. Returns the file content as base64-encoded string along with metadata (filename, mimetype, size). Use this to inspect files shared in messages. Max 20MB.",
+      inputSchema: z.object({
+        file_id: z
+          .string()
+          .describe("Slack file ID (e.g. 'F0ABC123DEF')"),
+      }),
+      execute: async ({ file_id }) => {
+        try {
+          const botToken = process.env.SLACK_BOT_TOKEN;
+          if (!botToken) {
+            return {
+              ok: false,
+              error: "SLACK_BOT_TOKEN is not configured.",
+            };
+          }
+
+          const fileInfo = await client.files.info({ file: file_id });
+          const file = fileInfo.file;
+          if (!file) {
+            return {
+              ok: false,
+              error: `Could not find file with ID "${file_id}".`,
+            };
+          }
+
+          const filename = file.name || "unknown";
+          const mimetype = file.mimetype || "application/octet-stream";
+          const size = file.size || 0;
+          const downloadUrl =
+            (file as any).url_private_download || file.url_private;
+
+          if (!downloadUrl) {
+            return {
+              ok: false,
+              error: `File "${filename}" has no download URL. It may be an external file or hosted content.`,
+            };
+          }
+
+          if (size > MAX_FILE_SIZE) {
+            return {
+              ok: false,
+              error: `File "${filename}" is ${(size / 1024 / 1024).toFixed(1)}MB, which exceeds the 20MB limit.`,
+            };
+          }
+
+          const data = await downloadSlackFile(downloadUrl, botToken);
+          const content_base64 = Buffer.from(data).toString("base64");
+
+          logger.info("download_slack_file tool called", {
+            file_id,
+            filename,
+            mimetype,
+            size,
+          });
+
+          return {
+            ok: true,
+            filename,
+            mimetype,
+            size_bytes: size,
+            content_base64,
+          };
+        } catch (error: any) {
+          logger.error("download_slack_file tool failed", {
+            file_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to download file: ${error.message}`,
           };
         }
       },

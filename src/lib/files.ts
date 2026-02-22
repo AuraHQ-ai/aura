@@ -2,7 +2,7 @@ import { logger } from "./logger.js";
 import { transcribeAudio } from "./audio.js";
 
 /** Max file size to download (20MB) */
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
+export const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 const IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
@@ -93,7 +93,7 @@ export function getEventFiles(
 /**
  * Download a file from Slack's private URL using the bot token.
  */
-async function downloadSlackFile(
+export async function downloadSlackFile(
   url: string,
   botToken: string,
 ): Promise<Uint8Array> {
