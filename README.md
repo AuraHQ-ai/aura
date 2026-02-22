@@ -1,4 +1,4 @@
-# Aura v0
+# Aura
 
 A Slack bot with persistent memory, personality, cross-user awareness, and autonomous capabilities. Aura remembers every conversation, builds profiles of the people she talks to, takes proactive actions via tools, schedules her own tasks, and responds with a consistent, opinionated personality -- not like a tool, but like a colleague.
 
