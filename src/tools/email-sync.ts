@@ -2,51 +2,11 @@ import { tool } from "ai";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { isAdmin } from "../lib/permissions.js";
+import { resolveUserByName } from "./slack.js";
 import type { ScheduleContext } from "../db/schema.js";
+import type { WebClient } from "@slack/web-api";
 
-/**
- * Resolve a user display name / username to a Slack user ID.
- */
-async function resolveSlackUserId(userName: string): Promise<string | null> {
-  try {
-    const { WebClient } = await import("@slack/web-api");
-    const { getUserList } = await import("./slack.js");
-    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
-    const users = await getUserList(client);
-
-    const normalizedInput = userName.replace(/^@/, "").toLowerCase().trim();
-
-    for (const user of users) {
-      if (
-        user.displayName.toLowerCase() === normalizedInput ||
-        user.realName.toLowerCase() === normalizedInput ||
-        user.username.toLowerCase() === normalizedInput
-      ) {
-        return user.id;
-      }
-    }
-
-    for (const user of users) {
-      if (
-        user.displayName.toLowerCase().startsWith(normalizedInput) ||
-        user.realName.toLowerCase().startsWith(normalizedInput) ||
-        user.username.toLowerCase().startsWith(normalizedInput)
-      ) {
-        return user.id;
-      }
-    }
-
-    return null;
-  } catch (error: any) {
-    logger.error("Failed to resolve Slack user ID", {
-      userName,
-      error: error.message,
-    });
-    return null;
-  }
-}
-
-export function createEmailSyncTools(context?: ScheduleContext) {
+export function createEmailSyncTools(client: WebClient, context?: ScheduleContext) {
   return {
     sync_emails: tool({
       description:
@@ -75,8 +35,8 @@ export function createEmailSyncTools(context?: ScheduleContext) {
         }
 
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
             return {
               ok: false,
               error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
@@ -84,13 +44,13 @@ export function createEmailSyncTools(context?: ScheduleContext) {
           }
 
           const { syncEmailsForUser } = await import("../lib/email-sync.js");
-          const stats = await syncEmailsForUser(userId, {
+          const stats = await syncEmailsForUser(user.id, {
             after,
             maxEmails: max_emails,
           });
 
           logger.info("sync_emails tool completed", {
-            userId,
+            userId: user.id,
             ...stats,
           });
 
@@ -129,13 +89,14 @@ export function createEmailSyncTools(context?: ScheduleContext) {
       }),
       execute: async ({ user_name, days }) => {
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
             return {
               ok: false,
               error: `Could not resolve Slack user '${user_name}'.`,
             };
           }
+          const userId = user.id;
 
           const { getThreadsAwaitingReply } = await import("../lib/email-sync.js");
           const { db } = await import("../db/client.js");

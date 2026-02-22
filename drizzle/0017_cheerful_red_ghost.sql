@@ -20,7 +20,7 @@ CREATE TABLE "emails_raw" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "oauth_tokens" (
+CREATE TABLE IF NOT EXISTS "oauth_tokens" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"user_id" text NOT NULL,
 	"provider" text DEFAULT 'google' NOT NULL,
@@ -31,10 +31,10 @@ CREATE TABLE "oauth_tokens" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "user_profiles" ADD COLUMN "last_profile_consolidation" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "user_profiles" ADD COLUMN IF NOT EXISTS "last_profile_consolidation" timestamp with time zone;--> statement-breakpoint
 CREATE UNIQUE INDEX "emails_raw_gmail_msg_idx" ON "emails_raw" USING btree ("user_id","gmail_message_id");--> statement-breakpoint
 CREATE INDEX "emails_raw_thread_idx" ON "emails_raw" USING btree ("gmail_thread_id");--> statement-breakpoint
 CREATE INDEX "emails_raw_user_date_idx" ON "emails_raw" USING btree ("user_id","date");--> statement-breakpoint
 CREATE INDEX "emails_raw_triage_idx" ON "emails_raw" USING btree ("triage");--> statement-breakpoint
-CREATE UNIQUE INDEX "oauth_tokens_user_provider_idx" ON "oauth_tokens" USING btree ("user_id","provider");--> statement-breakpoint
-CREATE INDEX "oauth_tokens_email_idx" ON "oauth_tokens" USING btree ("email");
+CREATE UNIQUE INDEX IF NOT EXISTS "oauth_tokens_user_provider_idx" ON "oauth_tokens" USING btree ("user_id","provider");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "oauth_tokens_email_idx" ON "oauth_tokens" USING btree ("email");

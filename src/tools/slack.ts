@@ -2595,7 +2595,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createGmailEATools(),
 
     // ── Email Sync & Digest Tools ────────────────────────────────────────
-    ...createEmailSyncTools(context),
+    ...createEmailSyncTools(client, context),
 
     // ── Google Sheets Tools ───────────────────────────────────────────────
     ...createSheetsTools(),
