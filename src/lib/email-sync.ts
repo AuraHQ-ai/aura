@@ -48,7 +48,7 @@ turndown.addRule("emailSignatures", {
 
 function looksLikeHtml(text: string): boolean {
   const head = text.slice(0, 200);
-  return /font-family:|<div|<table|<style|\{[^}]*:/i.test(head);
+  return /font-family:|<div|<table|<style|\{\s*[a-z-]+\s*:/i.test(head);
 }
 
 function htmlToMarkdown(html: string, plain?: string): string {
