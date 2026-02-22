@@ -143,7 +143,7 @@ function htmlToMarkdown(html: string): string {
   s = s.replace(/<(i|em)[^>]*>([\s\S]*?)<\/\1>/gi, "_$2_");
 
   // Strikethrough
-  s = s.replace(/<(s|strike|del)[^>]*>([\s\S]*?)<\/\1>/gi, "~$2~");
+  s = s.replace(/<(s|strike|del)[^>]*>([\s\S]*?)<\/\1>/gi, "~~$2~~");
 
   // Code blocks: handle <pre><code>...</code></pre> as a single fenced block
   s = s.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, "\n```\n$1\n```\n");
@@ -182,13 +182,13 @@ function htmlToMarkdown(html: string): string {
   // Remove all remaining HTML tags
   s = s.replace(/<[^>]+>/g, "");
 
-  // Decode common HTML entities
-  s = s.replace(/&amp;/g, "&");
+  // Decode common HTML entities (&amp; must be last to avoid double-decoding)
   s = s.replace(/&lt;/g, "<");
   s = s.replace(/&gt;/g, ">");
   s = s.replace(/&quot;/g, '"');
   s = s.replace(/&#39;/g, "'");
   s = s.replace(/&nbsp;/g, " ");
+  s = s.replace(/&amp;/g, "&");
 
   // Collapse excessive blank lines
   s = s.replace(/\n{3,}/g, "\n\n");
