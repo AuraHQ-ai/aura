@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
-import { eq, and, lt, lte, sql, isNull, or, inArray } from "drizzle-orm";
+import { eq, and, lt, lte, sql, isNull, or } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
@@ -72,17 +72,80 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
   return true;
 }
 
-// ── Stale Job Reaper ─────────────────────────────────────────────────────────
+// ── Shared Retry/Escalation Helper ──────────────────────────────────────────
 
-async function reapStaleJobs(): Promise<number> {
+async function handleJobRetry(
+  job: { id: string; name: string; retries: number; requestedBy: string | null; description: string },
+  errorMessage: string,
+  currentTime: Date = new Date()
+): Promise<'retried' | 'failed'> {
+  const newRetries = job.retries + 1;
+
+  if (newRetries < MAX_RETRIES) {
+    await db
+      .update(jobs)
+      .set({
+        status: "pending",
+        executeAt: new Date(currentTime.getTime() + RETRY_DELAY_MS),
+        retries: newRetries,
+        lastExecutedAt: currentTime,
+        updatedAt: currentTime,
+      })
+      .where(eq(jobs.id, job.id));
+
+    return 'retried';
+  } else {
+    await db
+      .update(jobs)
+      .set({
+        status: "failed",
+        retries: newRetries,
+        lastExecutedAt: currentTime,
+        result: `Permanently failed after ${MAX_RETRIES} retries: ${errorMessage}`,
+        updatedAt: currentTime,
+      })
+      .where(eq(jobs.id, job.id));
+
+    // Send escalation DM
+    try {
+      if (job.requestedBy && job.requestedBy !== "aura") {
+        const dmResult = await slackClient.conversations.open({
+          users: job.requestedBy,
+        });
+        if (dmResult.channel?.id) {
+          await slackClient.chat.postMessage({
+            channel: dmResult.channel.id,
+            text: `I tried ${MAX_RETRIES} times but couldn't complete this job: "${job.description}"\n\nError: ${errorMessage}`,
+          });
+        }
+      }
+    } catch {
+      logger.error("Failed to send escalation DM", { jobId: job.id });
+    }
+
+    return 'failed';
+  }
+}
+
+// ── Consolidated Stale Job Recovery ──────────────────────────────────────────
+
+async function recoverStaleJobs(): Promise<number> {
   const staleCutoff = new Date(Date.now() - STALE_RUNNING_THRESHOLD_MS);
+
+  // Find stale executions with their parent job details
   const staleExecutions = await db
     .select({
-      id: jobExecutions.id,
+      executionId: jobExecutions.id,
       jobId: jobExecutions.jobId,
       startedAt: jobExecutions.startedAt,
+      jobName: jobs.name,
+      jobRetries: jobs.retries,
+      jobRequestedBy: jobs.requestedBy,
+      jobDescription: jobs.description,
+      jobStatus: jobs.status,
     })
     .from(jobExecutions)
+    .innerJoin(jobs, eq(jobExecutions.jobId, jobs.id))
     .where(
       and(
         eq(jobExecutions.status, "running"),
@@ -90,100 +153,64 @@ async function reapStaleJobs(): Promise<number> {
       ),
     );
 
-  let reaped = 0;
+  let recovered = 0;
 
-  for (const exec of staleExecutions) {
+  for (const stale of staleExecutions) {
     const now = new Date();
     const elapsedMinutes = Math.round(
-      (now.getTime() - exec.startedAt.getTime()) / 60000,
+      (now.getTime() - stale.startedAt.getTime()) / 60000,
     );
 
-    const updated = await db
+    // Update execution to failed (with optimistic lock)
+    const updatedExecution = await db
       .update(jobExecutions)
       .set({
         status: "failed",
         finishedAt: now,
-        error:
-          `Vercel timeout (inferred) -- execution exceeded ${STALE_RUNNING_THRESHOLD_MS / 60000} minute ceiling`,
+        error: `Vercel timeout (inferred) -- execution exceeded ${STALE_RUNNING_THRESHOLD_MS / 60000} minute ceiling`,
       })
-      .where(and(eq(jobExecutions.id, exec.id), eq(jobExecutions.status, "running")))
+      .where(
+        and(
+          eq(jobExecutions.id, stale.executionId),
+          eq(jobExecutions.status, "running")
+        )
+      )
       .returning({ id: jobExecutions.id });
 
-    if (updated.length === 0) continue;
+    if (updatedExecution.length === 0) continue;
 
-    reaped++;
+    recovered++;
 
-    if (!exec.jobId) continue;
+    // Only handle job retry if job is still in running state (prevents double-processing)
+    if (stale.jobStatus === "running") {
+      const result = await handleJobRetry(
+        {
+          id: stale.jobId!,
+          name: stale.jobName!,
+          retries: stale.jobRetries!,
+          requestedBy: stale.jobRequestedBy,
+          description: stale.jobDescription!,
+        },
+        "Execution timed out repeatedly (Vercel ceiling exceeded)",
+        now
+      );
 
-    const [parentJob] = await db
-      .select({
-        id: jobs.id,
-        name: jobs.name,
-        retries: jobs.retries,
-        requestedBy: jobs.requestedBy,
-        description: jobs.description,
-      })
-      .from(jobs)
-      .where(eq(jobs.id, exec.jobId))
-      .limit(1);
-
-    if (!parentJob) continue;
-
-    const newRetries = parentJob.retries + 1;
-
-    if (newRetries < MAX_RETRIES) {
-      await db
-        .update(jobs)
-        .set({
-          status: "pending",
-          executeAt: new Date(Date.now() + RETRY_DELAY_MS),
-          retries: newRetries,
-          lastExecutedAt: now,
-          updatedAt: now,
-        })
-        .where(and(eq(jobs.id, parentJob.id), eq(jobs.status, "running")));
+      logger.warn("Recovered stale job", {
+        jobName: stale.jobName,
+        jobId: stale.jobId,
+        elapsedMinutes,
+        result,
+      });
     } else {
-      const permanentlyFailed = await db
-        .update(jobs)
-        .set({
-          status: "failed",
-          retries: newRetries,
-          lastExecutedAt: now,
-          result: `Permanently failed after ${MAX_RETRIES} timeout retries`,
-          updatedAt: now,
-        })
-        .where(and(eq(jobs.id, parentJob.id), eq(jobs.status, "running")))
-        .returning({ id: jobs.id });
-
-      if (permanentlyFailed.length > 0) {
-        try {
-          if (parentJob.requestedBy && parentJob.requestedBy !== "aura") {
-            const dmResult = await slackClient.conversations.open({
-              users: parentJob.requestedBy,
-            });
-            if (dmResult.channel?.id) {
-              await slackClient.chat.postMessage({
-                channel: dmResult.channel.id,
-                text: `I tried ${MAX_RETRIES} times but couldn't complete this job: "${parentJob.description}"\n\nError: Execution timed out repeatedly (Vercel ceiling exceeded)`,
-              });
-            }
-          }
-        } catch {
-          logger.error("Reaper: failed to send escalation DM", {
-            jobId: parentJob.id,
-          });
-        }
-      }
+      logger.info("Cleaned up stale execution (job already handled)", {
+        executionId: stale.executionId,
+        jobId: stale.jobId,
+        jobStatus: stale.jobStatus,
+      });
     }
-
-    logger.warn("Reaped stale job", {
-      jobName: parentJob.name,
-      jobId: parentJob.id,
-      elapsedMinutes,
-    });
   }
 
-  return reaped;
+  return recovered;
 }
 
 // ── Heartbeat Cron App ───────────────────────────────────────────────────────
@@ -210,11 +237,11 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let staleJobsReaped = 0;
 
   try {
-    // ── 0. Reap stale job executions ─────────────────────────────────────
+    // ── 0. Recover stale jobs and executions ─────────────────────────────
 
-    staleJobsReaped = await reapStaleJobs();
+    staleJobsReaped = await recoverStaleJobs();
     if (staleJobsReaped > 0) {
-      logger.info(`Heartbeat: reaped ${staleJobsReaped} stale job executions`);
+      logger.info(`Heartbeat: recovered ${staleJobsReaped} stale job executions`);
     }
 
     const now = new Date();
@@ -319,72 +346,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
-    // ── 5. Recover jobs stuck in "running" ─────────────────────────────
+    // ── 5. [REMOVED] Old stale recovery logic - now handled in step 0 ────
 
-    const staleRunningCutoff = new Date(Date.now() - STALE_RUNNING_THRESHOLD_MS);
-    const staleRunning = await db
-      .update(jobs)
-      .set({
-        status: "pending",
-        retries: sql`${jobs.retries} + 1`,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(jobs.status, "running"),
-          lt(jobs.updatedAt, staleRunningCutoff),
-          lt(jobs.retries, MAX_RETRIES),
-        ),
-      )
-      .returning({ id: jobs.id, name: jobs.name });
-
-    const staleExhausted = await db
-      .update(jobs)
-      .set({
-        status: "failed",
-        result: "Failed: job stuck in running state and exceeded retry limit",
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(jobs.status, "running"),
-          lt(jobs.updatedAt, staleRunningCutoff),
-        ),
-      )
-      .returning({ id: jobs.id, name: jobs.name });
-
-    const allStaleIds = [
-      ...staleRunning.map((j) => j.id),
-      ...staleExhausted.map((j) => j.id),
-    ];
-
-    if (allStaleIds.length > 0) {
-      await db
-        .update(jobExecutions)
-        .set({
-          status: "failed",
-          finishedAt: new Date(),
-          error: "Execution interrupted: recovered by stale detection",
-        })
-        .where(
-          and(
-            inArray(jobExecutions.jobId, allStaleIds),
-            eq(jobExecutions.status, "running"),
-          ),
-        );
-    }
-
-    staleRunningRecovered = staleRunning.length;
-    if (staleRunningRecovered > 0) {
-      logger.warn(`Heartbeat: recovered ${staleRunningRecovered} stale running jobs`, {
-        jobs: staleRunning.map((j) => j.name),
-      });
-    }
-    if (staleExhausted.length > 0) {
-      logger.error(`Heartbeat: ${staleExhausted.length} stale jobs exceeded retry limit`, {
-        jobs: staleExhausted.map((j) => j.name),
-      });
-    }
+    // Stale job recovery is now consolidated in step 0 (recoverStaleJobs)
+    staleRunningRecovered = 0; // This metric is now captured in staleJobsReaped
 
     // ── Done ─────────────────────────────────────────────────────────────
 
