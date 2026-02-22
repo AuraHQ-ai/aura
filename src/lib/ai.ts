@@ -130,8 +130,7 @@ export async function getEmbeddingModel() {
   const override = await getSetting("model_embedding");
   const gatewayId =
     override || process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small";
-  const gatewayModel = gateway.embedding(gatewayId);
-  return withAnthropicFallback(gatewayModel, gatewayId);
+  return gateway.embedding(gatewayId);
 }
 
 /**
@@ -152,7 +151,4 @@ export const fastModel = withAnthropicFallback(
   STATIC_FAST_MODEL_ID,
 );
 
-export const embeddingModel = withAnthropicFallback(
-  gateway.embedding(STATIC_EMBEDDING_MODEL_ID),
-  STATIC_EMBEDDING_MODEL_ID,
-);
+export const embeddingModel = gateway.embedding(STATIC_EMBEDDING_MODEL_ID);
