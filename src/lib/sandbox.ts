@@ -3,7 +3,7 @@ import { getCredential } from "./credentials.js";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes — must exceed max command timeout (750s)
 
 /** Per-invocation cache -- reuse the same sandbox within a single request */
 let cachedSandbox: any | null = null;
