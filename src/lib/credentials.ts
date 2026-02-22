@@ -16,6 +16,10 @@ function getKeyBuffer(): Buffer | null {
   return Buffer.from(hex, "hex");
 }
 
+export function isEncryptionConfigured(): boolean {
+  return getKeyBuffer() !== null;
+}
+
 export function encryptCredential(plaintext: string): string {
   const key = getKeyBuffer();
   if (!key) throw new Error(`${KEY_ENV} is not configured`);

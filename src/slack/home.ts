@@ -2,7 +2,7 @@ import type { WebClient } from "@slack/web-api";
 import { getAllSettings } from "../lib/settings.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
-import { getCredential, maskCredential } from "../lib/credentials.js";
+import { getCredential, maskCredential, isEncryptionConfigured } from "../lib/credentials.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
 
@@ -107,6 +107,8 @@ function buildDropdown(
 }
 
 async function buildCredentialBlocks(): Promise<any[]> {
+  const encryptionReady = isEncryptionConfigured();
+
   const blocks: any[] = [
     { type: "divider" },
     {
@@ -118,7 +120,9 @@ async function buildCredentialBlocks(): Promise<any[]> {
       elements: [
         {
           type: "mrkdwn",
-          text: "Encrypted and stored in the database. Values are never logged or displayed in full.",
+          text: encryptionReady
+            ? "Encrypted and stored in the database. Values are never logged or displayed in full."
+            : ":warning: `CREDENTIALS_KEY` is not configured. Credentials are read from environment variables (read-only).",
         },
       ],
     },
@@ -128,18 +132,23 @@ async function buildCredentialBlocks(): Promise<any[]> {
     const value = await getCredential(cred.key);
     const status = value ? `\`${maskCredential(value)}\`` : "_not set_";
 
-    blocks.push({
+    const section: any = {
       type: "section",
       text: {
         type: "mrkdwn",
         text: `*${cred.label}*  —  ${cred.description}\nCurrent: ${status}`,
       },
-      accessory: {
+    };
+
+    if (encryptionReady) {
+      section.accessory = {
         type: "button",
         text: { type: "plain_text", text: value ? "Update" : "Set" },
         action_id: `credential_edit_${cred.key}`,
-      },
-    });
+      };
+    }
+
+    blocks.push(section);
   }
 
   return blocks;
