@@ -19,7 +19,7 @@ export function createEmailSyncTools(
   return {
     sync_emails: tool({
       description:
-        "Sync recent emails from a user's Gmail into the staging pipeline. Fetches from Gmail, converts HTML to markdown, and stores in emails_raw. Optionally runs Haiku triage. The user must have authorized Aura to access their Gmail. Admin-only.",
+        "Sync emails from a user's Gmail into the staging pipeline. Supports date windows (after/before), relative dates (newer_than), or raw Gmail queries. Resumable — re-running with the same query skips already-synced emails. Admin-only.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -32,12 +32,44 @@ export function createEmailSyncTools(
           .describe(
             "Gmail date filter, e.g. '2025/01/01'. Translated to 'after:<date>' query. Default: '2025/01/01'",
           ),
+        before: z
+          .string()
+          .optional()
+          .describe(
+            "Gmail date filter, e.g. '2025/06/01'. Translated to 'before:<date>' query.",
+          ),
+        newer_than: z
+          .string()
+          .optional()
+          .describe(
+            "Gmail relative date filter, e.g. '7d', '30d', '1y'. Translated to 'newer_than:<value>' query.",
+          ),
+        query: z
+          .string()
+          .optional()
+          .describe(
+            "Raw Gmail search query override. If provided, ignores after/before/newer_than. E.g. 'from:investor@fund.com newer_than:30d'",
+          ),
+        max_messages: z
+          .number()
+          .optional()
+          .describe(
+            "Max messages to fetch per sync call. Default 500 for backfills. Use smaller values (50-100) for quick syncs.",
+          ),
         triage: z
           .boolean()
           .optional()
           .describe("Run Haiku triage after sync (default true)"),
       }),
-      execute: async ({ user_name, after, triage }) => {
+      execute: async ({
+        user_name,
+        after,
+        before,
+        newer_than,
+        query: rawQuery,
+        triage,
+        max_messages,
+      }) => {
         if (!isAdmin(context?.userId)) {
           return {
             ok: false,
@@ -55,10 +87,23 @@ export function createEmailSyncTools(
           }
 
           const { syncEmails } = await import("../lib/email-sync.js");
-          const afterDate = after || "2025/01/01";
+
+          let gmailQuery: string;
+          if (rawQuery) {
+            gmailQuery = rawQuery;
+          } else if (newer_than) {
+            gmailQuery = `newer_than:${newer_than}`;
+          } else {
+            const afterDate = after || "2025/01/01";
+            gmailQuery = `after:${afterDate}`;
+            if (before) {
+              gmailQuery += ` before:${before}`;
+            }
+          }
+
           const syncResult = await syncEmails(user.id, {
-            query: `after:${afterDate}`,
-            maxMessages: 100,
+            query: gmailQuery,
+            maxMessages: max_messages || 500,
           });
 
           let triageResult = null;

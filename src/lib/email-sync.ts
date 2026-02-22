@@ -14,7 +14,7 @@ import { logger } from "./logger.js";
 export interface SyncOptions {
   /** Gmail search query, e.g. "newer_than:7d" */
   query?: string;
-  /** Max number of messages to fetch per call (default 100) */
+  /** Max number of messages to fetch per call (default 500) */
   maxMessages?: number;
 }
 
@@ -111,7 +111,7 @@ export async function syncEmails(
   const { client: gmail, email: userEmail } = gmailResult;
 
   const query = options.query || "newer_than:7d";
-  const maxMessages = options.maxMessages || 100;
+  const maxMessages = options.maxMessages || 500;
 
   let allMessageIds: string[] = [];
   let pageToken: string | undefined;
