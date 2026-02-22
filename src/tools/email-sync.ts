@@ -154,8 +154,8 @@ export function createEmailSyncTools(
               and(
                 eq(emailsRaw.userId, userId),
                 include_fyi
-                  ? sql`1=1`
-                  : sql`(${emailsRaw.triage} IS NULL OR ${emailsRaw.triage} != 'junk')`,
+                  ? sql`(${emailsRaw.triage} IS NULL OR ${emailsRaw.triage} != 'junk')`
+                  : sql`(${emailsRaw.triage} IS NULL OR ${emailsRaw.triage} NOT IN ('junk', 'fyi'))`,
               ),
             )
             .orderBy(
@@ -164,7 +164,7 @@ export function createEmailSyncTools(
                 WHEN 'actionable' THEN 2
                 WHEN 'fyi' THEN 3
                 WHEN 'junk' THEN 4
-                ELSE 0 END`,
+                ELSE 5 END`,
               desc(emailsRaw.date),
             )
             .limit(200);

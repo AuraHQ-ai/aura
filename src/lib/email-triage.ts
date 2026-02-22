@@ -135,7 +135,7 @@ export async function triageEmails(
             triageReason: r.reason,
             updatedAt: new Date(),
           })
-          .where(eq(emailsRaw.id, r.id));
+          .where(and(eq(emailsRaw.id, r.id), eq(emailsRaw.userId, userId)));
 
         summary.triaged++;
         summary.breakdown[r.triage] = (summary.breakdown[r.triage] || 0) + 1;
