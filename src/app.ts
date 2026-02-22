@@ -692,8 +692,8 @@ const GITHUB_EVENT_SYSTEM_PROMPT = `You are a GitHub event handler for the Aura 
 
 For pull_request events:
 - "opened" with draft=false OR "ready_for_review": Check if the PR body references issues (Fixes #N, Closes #N). Post a summary to the relevant Slack thread if one exists.
-- "closed" with merged=true: Find referenced issues and close them with \`gh issue close\`. Notify relevant Slack conversations.
-- "opened" with draft=true: If the PR references an issue, consider marking it ready for review with \`gh pr ready\`.
+- "closed" with merged=true: Find referenced issues and close them with the close_github_issue tool. Notify relevant Slack conversations.
+- "opened" with draft=true: If the PR references an issue, consider marking it ready for review with the mark_pr_ready tool.
 
 Rules:
 - Be concise in Slack notifications. One or two sentences max.
@@ -740,53 +740,137 @@ app.post("/api/webhook/github", async (c) => {
       const { tool: aiTool } = await import("ai");
       const { z } = await import("zod");
       const { getFastModel } = await import("./lib/ai.js");
-      const { execFileSync } = await import("node:child_process");
       const { createNoteTools } = await import("./tools/notes.js");
 
       const model = await getFastModel();
       const { read_note, edit_note } = createNoteTools();
 
+      const ghApiHeaders = () => {
+        const ghToken =
+          process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+        return {
+          Authorization: `Bearer ${ghToken}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "Content-Type": "application/json",
+        };
+      };
+
       const noteTools = { read_note, edit_note };
       const ghTools = {
-        run_gh_command: aiTool({
+        close_github_issue: aiTool({
           description:
-            "Run a GitHub CLI (gh) command. Use for operations like closing issues, marking PRs ready, adding labels. The command should start with 'gh' and will run against the realadvisor/aura repo.",
+            "Close a GitHub issue in the realadvisor/aura repo, with an optional comment.",
           inputSchema: z.object({
-            command: z
+            issue_number: z.number().describe("The issue number to close"),
+            comment: z
               .string()
-              .describe(
-                "The gh CLI command to run, e.g. 'gh issue close 42 -R realadvisor/aura'",
-              ),
+              .optional()
+              .describe("Optional comment to add before closing"),
           }),
-          execute: async ({ command }) => {
+          execute: async ({ issue_number, comment }) => {
             try {
-              if (!command.startsWith("gh ")) {
-                return { ok: false, error: "Command must start with 'gh'" };
-              }
               const ghToken =
                 process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
               if (!ghToken) {
                 return { ok: false, error: "No GitHub token configured" };
               }
-              const args = command.slice(3).split(/\s+/).filter(Boolean);
-              const output = execFileSync("gh", args, {
-                encoding: "utf8",
-                timeout: 15_000,
-                env: { ...process.env, GH_TOKEN: ghToken },
-              });
-              logger.info("run_gh_command executed", {
-                command,
-                outputLength: output.length,
-              });
-              return { ok: true, output: output.slice(0, 4000) };
+              const headers = ghApiHeaders();
+              if (comment) {
+                await fetch(
+                  `https://api.github.com/repos/realadvisor/aura/issues/${issue_number}/comments`,
+                  {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({ body: comment }),
+                  },
+                );
+              }
+              const res = await fetch(
+                `https://api.github.com/repos/realadvisor/aura/issues/${issue_number}`,
+                {
+                  method: "PATCH",
+                  headers,
+                  body: JSON.stringify({ state: "closed" }),
+                },
+              );
+              if (!res.ok) {
+                const text = await res.text();
+                return {
+                  ok: false,
+                  error: `GitHub API ${res.status}: ${text.slice(0, 500)}`,
+                };
+              }
+              logger.info("close_github_issue executed", { issue_number });
+              return { ok: true, issue_number, state: "closed" };
             } catch (err: any) {
-              logger.error("run_gh_command failed", {
-                command,
+              logger.error("close_github_issue failed", {
+                issue_number,
                 error: err.message,
               });
               return {
                 ok: false,
-                error: `Command failed: ${err.message?.slice(0, 500)}`,
+                error: err.message?.slice(0, 500),
+              };
+            }
+          },
+        }),
+
+        mark_pr_ready: aiTool({
+          description:
+            "Mark a draft pull request as ready for review in the realadvisor/aura repo.",
+          inputSchema: z.object({
+            pr_number: z
+              .number()
+              .describe("The pull request number to mark as ready"),
+          }),
+          execute: async ({ pr_number }) => {
+            try {
+              const ghToken =
+                process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+              if (!ghToken) {
+                return { ok: false, error: "No GitHub token configured" };
+              }
+              const headers = ghApiHeaders();
+              const prRes = await fetch(
+                `https://api.github.com/repos/realadvisor/aura/pulls/${pr_number}`,
+                { headers },
+              );
+              if (!prRes.ok) {
+                const text = await prRes.text();
+                return {
+                  ok: false,
+                  error: `GitHub API ${prRes.status}: ${text.slice(0, 500)}`,
+                };
+              }
+              const prData = (await prRes.json()) as { node_id: string };
+              const gqlRes = await fetch(
+                "https://api.github.com/graphql",
+                {
+                  method: "POST",
+                  headers,
+                  body: JSON.stringify({
+                    query: `mutation($id: ID!) { markPullRequestAsReady(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
+                    variables: { id: prData.node_id },
+                  }),
+                },
+              );
+              const gqlData = (await gqlRes.json()) as {
+                errors?: { message: string }[];
+              };
+              if (gqlData.errors) {
+                return { ok: false, error: gqlData.errors[0].message };
+              }
+              logger.info("mark_pr_ready executed", { pr_number });
+              return { ok: true, pr_number, isDraft: false };
+            } catch (err: any) {
+              logger.error("mark_pr_ready failed", {
+                pr_number,
+                error: err.message,
+              });
+              return {
+                ok: false,
+                error: err.message?.slice(0, 500),
               };
             }
           },
