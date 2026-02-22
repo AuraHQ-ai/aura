@@ -3,11 +3,19 @@ import { logger } from "./logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+export interface Attachment {
+  filename: string;
+  mimeType: string;
+  /** Base64-encoded file content */
+  content: string;
+}
+
 export interface SendEmailOptions {
   cc?: string;
   bcc?: string;
   replyToMessageId?: string;
   threadId?: string;
+  attachments?: Attachment[];
 }
 
 export interface EmailSummary {
@@ -191,6 +199,17 @@ function encodeSubject(subject: string): string {
   return words.join("\r\n ");
 }
 
+/**
+ * Split a base64 string into 76-character lines per RFC 2045.
+ */
+function splitBase64Lines(b64: string): string {
+  const lines: string[] = [];
+  for (let i = 0; i < b64.length; i += 76) {
+    lines.push(b64.slice(i, i + 76));
+  }
+  return lines.join("\r\n");
+}
+
 function buildMimeMessage(
   to: string,
   subject: string,
@@ -199,24 +218,35 @@ function buildMimeMessage(
   explicitInReplyTo?: string,
   explicitReferences?: string,
   overrides?: { from?: string; includeSignature?: boolean },
+  attachments?: Attachment[],
 ): string {
   const auraEmail =
     process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com";
   const fromHeader = overrides?.from || `Aura <${auraEmail}>`;
   const includeSignature = overrides?.includeSignature !== false;
-  const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const altBoundary = `boundary_alt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const htmlBody = includeSignature
     ? `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>\n${EMAIL_SIGNATURE_HTML}`
     : `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>`;
   const textBody = includeSignature ? `${body}${EMAIL_SIGNATURE_TEXT}` : body;
+
+  const hasAttachments = attachments && attachments.length > 0;
+  const mixedBoundary = hasAttachments
+    ? `boundary_mixed_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    : null;
 
   const headers: string[] = [
     `From: ${fromHeader}`,
     `To: ${to}`,
     `Subject: ${encodeSubject(subject)}`,
     "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
+
+  if (hasAttachments) {
+    headers.push(`Content-Type: multipart/mixed; boundary="${mixedBoundary}"`);
+  } else {
+    headers.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
+  }
 
   if (options?.cc) headers.push(`Cc: ${options.cc}`);
   if (options?.bcc) headers.push(`Bcc: ${options.bcc}`);
@@ -229,20 +259,56 @@ function buildMimeMessage(
     headers.push(`References: ${referencesValue}`);
   }
 
+  if (hasAttachments) {
+    const parts = [
+      headers.join("\r\n"),
+      "",
+      `--${mixedBoundary}`,
+      `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+      "",
+      `--${altBoundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      "",
+      textBody,
+      "",
+      `--${altBoundary}`,
+      'Content-Type: text/html; charset="UTF-8"',
+      "",
+      htmlBody,
+      "",
+      `--${altBoundary}--`,
+    ];
+
+    for (const att of attachments!) {
+      parts.push(
+        "",
+        `--${mixedBoundary}`,
+        `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+        `Content-Disposition: attachment; filename="${att.filename}"`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        splitBase64Lines(att.content),
+      );
+    }
+
+    parts.push("", `--${mixedBoundary}--`);
+    return parts.join("\r\n");
+  }
+
   const parts = [
     headers.join("\r\n"),
     "",
-    `--${boundary}`,
+    `--${altBoundary}`,
     'Content-Type: text/plain; charset="UTF-8"',
     "",
     textBody,
     "",
-    `--${boundary}`,
+    `--${altBoundary}`,
     'Content-Type: text/html; charset="UTF-8"',
     "",
     htmlBody,
     "",
-    `--${boundary}--`,
+    `--${altBoundary}--`,
   ];
 
   return parts.join("\r\n");
@@ -329,7 +395,9 @@ export async function sendEmail(
     return null;
   }
 
-  const raw = base64UrlEncode(buildMimeMessage(to, subject, body, options));
+  const raw = base64UrlEncode(
+    buildMimeMessage(to, subject, body, options, undefined, undefined, undefined, options?.attachments),
+  );
 
   const requestBody: { raw: string; threadId?: string } = { raw };
   if (options?.threadId) {
@@ -599,6 +667,7 @@ export interface CreateDraftOptions {
   references?: string;
   threadId?: string;
   quotedMessage?: string;
+  attachments?: Attachment[];
 }
 
 export interface DraftSummary {
@@ -811,6 +880,7 @@ export async function createDraft(
         from: userEmail || undefined,
         includeSignature: false,
       },
+      options.attachments,
     ),
   );
 
