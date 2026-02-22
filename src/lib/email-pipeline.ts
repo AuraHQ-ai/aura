@@ -130,10 +130,6 @@ function extractHtmlBody(payload: any): string {
     }
   }
 
-  if (payload.mimeType === "text/html" && payload.body?.data) {
-    return Buffer.from(payload.body.data, "base64").toString("utf-8");
-  }
-
   return "";
 }
 
