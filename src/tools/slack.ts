@@ -13,6 +13,7 @@ import { createTableTools } from "./table.js";
 import { createCursorAgentTools } from "./cursor-agent.js";
 import { createConversationSearchTools } from "./conversations.js";
 import { createEmailTools, createGmailEATools } from "./email.js";
+import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
@@ -2604,6 +2605,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Email Tools (Gmail) ──────────────────────────────────────────────
     ...createEmailTools(),
     ...createGmailEATools(),
+    ...createEmailSyncTools(client, context),
 
     // ── Google Sheets Tools ───────────────────────────────────────────────
     ...createSheetsTools(),

@@ -120,6 +120,20 @@
       "when": 1771804800000,
       "tag": "0016_add_oauth_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1772000000000,
+      "tag": "0017_narrow_iron_patriot",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1772000000000,
+      "tag": "0018_email_staging_pipeline",
+      "breakpoints": true
     }
   ]
 }

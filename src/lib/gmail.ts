@@ -314,7 +314,7 @@ function buildMimeMessage(
   return parts.join("\r\n");
 }
 
-function getHeader(
+export function getHeader(
   headers: { name?: string | null; value?: string | null }[],
   name: string,
 ): string {
@@ -353,6 +353,50 @@ function extractBody(payload: any): string {
   }
 
   return "";
+}
+
+/**
+ * Extract both HTML and plain-text body from a Gmail message payload.
+ * Recurses into multipart/* containers.
+ */
+export function extractBodyParts(payload: any): {
+  html: string;
+  plain: string;
+} {
+  let html = "";
+  let plain = "";
+
+  function walk(part: any): void {
+    const mime: string = part.mimeType || "";
+
+    if (mime === "text/html" && part.body?.data) {
+      html = html || Buffer.from(part.body.data, "base64").toString("utf-8");
+    } else if (mime === "text/plain" && part.body?.data) {
+      plain = plain || Buffer.from(part.body.data, "base64").toString("utf-8");
+    } else if (mime.startsWith("multipart/") && part.parts) {
+      for (const child of part.parts) walk(child);
+    }
+  }
+
+  walk(payload);
+  return { html, plain };
+}
+
+/**
+ * Returns true if the message payload contains any attachment parts
+ * (i.e. parts with a non-empty filename).
+ */
+export function hasAttachmentParts(payload: any): boolean {
+  function walk(part: any): boolean {
+    if (part.filename && part.filename.length > 0) return true;
+    if (part.parts) {
+      for (const child of part.parts) {
+        if (walk(child)) return true;
+      }
+    }
+    return false;
+  }
+  return walk(payload);
 }
 
 function extractAttachments(
