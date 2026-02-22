@@ -261,30 +261,25 @@ export async function computeThreadStates(
     summary.breakdown[state]++;
   }
 
-  // Batch UPDATE per state+reason: group by state, then bulk update
-  const stateGroups = new Map<ThreadState, { threadIds: string[]; reasons: Map<string, string[]> }>();
-  for (const { threadId, state, reason } of sqlUpdates) {
+  // Batch UPDATE per state: group by state, then bulk update
+  const stateGroups = new Map<ThreadState, string[]>();
+  for (const { threadId, state } of sqlUpdates) {
     let group = stateGroups.get(state);
     if (!group) {
-      group = { threadIds: [], reasons: new Map() };
+      group = [];
       stateGroups.set(state, group);
     }
-    group.threadIds.push(threadId);
-    const reasonThreads = group.reasons.get(reason);
-    if (reasonThreads) {
-      reasonThreads.push(threadId);
-    } else {
-      group.reasons.set(reason, [threadId]);
-    }
+    group.push(threadId);
   }
 
   const now = new Date();
-  for (const [state, { threadIds }] of stateGroups) {
+  for (const [state, threadIds] of stateGroups) {
     if (threadIds.length === 0) continue;
     const threadIdValues = threadIds.map((id) => sql`${id}`);
     await db.execute(sql`
       UPDATE emails_raw
       SET thread_state = ${state},
+          thread_state_reason = NULL,
           thread_state_updated_at = ${now.toISOString()}::timestamptz,
           updated_at = now()
       WHERE user_id = ${userId}
