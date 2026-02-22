@@ -134,6 +134,13 @@
       "when": 1771891200000,
       "tag": "0018_add_thread_state",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1771977600000,
+      "tag": "0019_add_thread_state_reason",
+      "breakpoints": true
     }
   ]
 }
