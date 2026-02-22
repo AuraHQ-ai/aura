@@ -351,6 +351,9 @@ app.post("/api/slack/interactions", async (c) => {
         waitUntil(savePromise);
       }
     }
+
+    // Slack modals require empty response or response_action to close properly
+    return c.json({ response_action: "clear" });
   }
 
   // Acknowledge immediately
