@@ -855,6 +855,13 @@ app.post("/api/webhook/github", async (c) => {
                   }),
                 },
               );
+              if (!gqlRes.ok) {
+                const text = await gqlRes.text();
+                return {
+                  ok: false,
+                  error: `GraphQL API ${gqlRes.status}: ${text.slice(0, 500)}`,
+                };
+              }
               const gqlData = (await gqlRes.json()) as {
                 errors?: { message: string }[];
               };
@@ -941,13 +948,29 @@ app.post("/api/webhook/github", async (c) => {
         ...noteTools,
       };
 
+      const pr = payload.pull_request ?? {};
+      const relevantPayload = {
+        action: payload.action,
+        number: pr.number,
+        title: pr.title,
+        body: pr.body?.slice(0, 4000),
+        author: pr.user?.login,
+        draft: pr.draft,
+        merged: pr.merged,
+        state: pr.state,
+        html_url: pr.html_url,
+        head: { ref: pr.head?.ref, sha: pr.head?.sha },
+        base: { ref: pr.base?.ref },
+        repository: payload.repository?.full_name,
+        sender: payload.sender?.login,
+      };
+
       const result = await generateText({
         model,
         system: GITHUB_EVENT_SYSTEM_PROMPT,
         prompt: JSON.stringify({
           event: eventType,
-          action: payload.action,
-          payload,
+          ...relevantPayload,
         }),
         tools: ghTools,
         stopWhen: stepCountIs(10),
