@@ -98,6 +98,7 @@ export function createBrowserTools(context?: ScheduleContext) {
 
         let sessionId = session_id;
         let ownsSession = false;
+        let browser: Awaited<ReturnType<typeof connectSession>>["browser"] | undefined;
 
         try {
           if (!sessionId) {
@@ -106,9 +107,9 @@ export function createBrowserTools(context?: ScheduleContext) {
             ownsSession = true;
           }
 
-          const { browser, context: ctx, page } = await connectSession(
-            sessionId,
-          );
+          const connection = await connectSession(sessionId);
+          browser = connection.browser;
+          const { context: ctx, page } = connection;
 
           const timeoutMs = timeout_seconds * 1000;
           const consoleErrors: string[] = [];
@@ -212,6 +213,10 @@ export function createBrowserTools(context?: ScheduleContext) {
             sessionId,
             error: error.message,
           });
+
+          if (browser) {
+            try { await browser.close(); } catch { /* best-effort */ }
+          }
 
           if (sessionId && (ownsSession || !keep_alive)) {
             releaseSession(sessionId).catch(() => {});
