@@ -232,9 +232,6 @@ export function createEmailSyncTools(
               });
             } else {
               existing.count++;
-              if (email.date > existing.latest.date) {
-                existing.latest = email;
-              }
             }
           }
 

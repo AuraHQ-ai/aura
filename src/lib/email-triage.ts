@@ -149,6 +149,9 @@ export async function computeThreadStates(
     return summary;
   }
 
+  const MAX_THREADS_PER_RUN = 100;
+  const threadIdsBatch = threadIdsToProcess.slice(0, MAX_THREADS_PER_RUN);
+
   // Phase 2: fetch full emails (including bodies) only for threads that need processing
   const fullEmails = await db
     .select({
@@ -167,7 +170,7 @@ export async function computeThreadStates(
     .where(
       and(
         eq(emailsRaw.userId, userId),
-        inArray(emailsRaw.gmailThreadId, threadIdsToProcess),
+        inArray(emailsRaw.gmailThreadId, threadIdsBatch),
       ),
     );
 
@@ -178,7 +181,7 @@ export async function computeThreadStates(
     threadMap.set(email.gmailThreadId, list);
   }
 
-  const threadsToProcess = threadIdsToProcess.map((id) => [
+  const threadsToProcess = threadIdsBatch.map((id) => [
     id,
     threadMap.get(id) || [],
   ] as [string, EmailRow[]]);
@@ -193,9 +196,8 @@ export async function computeThreadStates(
 
   const model = await getFastModel();
 
-  const MAX_THREADS_PER_RUN = 100;
   const CONCURRENCY = 8;
-  const batch = threadsToProcess.slice(0, MAX_THREADS_PER_RUN);
+  const batch = threadsToProcess;
 
   const processThread = async ([threadId, emails]: [string, EmailRow[]]) => {
     try {
