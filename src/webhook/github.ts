@@ -3,15 +3,14 @@ import { waitUntil } from "@vercel/functions";
 import crypto from "node:crypto";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
-import { eq } from "drizzle-orm";
+import { eq, and, like } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes } from "../db/schema.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
 const REPO = "realadvisor/aura";
-const OUR_BRANCH_PREFIXES = ["cursor/", "claude/"];
-const OUR_BOT_AUTHORS = ["aura[bot]"];
+const OUR_GITHUB_USERNAMES = ["aura-vidal"];
 
 export const githubWebhookApp = new Hono();
 
@@ -40,14 +39,31 @@ function verifyGitHubSignature(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function isOurBranch(branchName: string): boolean {
-  return OUR_BRANCH_PREFIXES.some((p) => branchName.startsWith(p));
+function isOurPRSync(pr: { head?: { ref?: string }; user?: { login?: string } }): boolean {
+  const author = pr.user?.login || "";
+  return OUR_GITHUB_USERNAMES.includes(author);
 }
 
-function isOurPR(pr: { head?: { ref?: string }; user?: { login?: string } }): boolean {
+async function isOurPR(pr: { head?: { ref?: string }; user?: { login?: string } }): Promise<boolean> {
+  if (isOurPRSync(pr)) return true;
+
+  // Check if this branch was created by a Cursor agent we dispatched
+  // Cursor agents create PRs under joanrodriguez's account, but we track them via notes
   const branch = pr.head?.ref || "";
-  const author = pr.user?.login || "";
-  return isOurBranch(branch) || OUR_BOT_AUTHORS.includes(author);
+  if (!branch) return false;
+
+  const trackingNotes = await db
+    .select({ topic: notes.topic })
+    .from(notes)
+    .where(
+      and(
+        like(notes.topic, 'cursor-agent:%'),
+        like(notes.content, `%${branch}%`)
+      )
+    )
+    .limit(1);
+
+  return trackingNotes.length > 0;
 }
 
 async function getGitHubToken(): Promise<string | null> {
@@ -132,7 +148,7 @@ async function handlePRReviewComment(payload: any): Promise<void> {
 
   if (!pr || !comment) return;
 
-  if (!isOurPR(pr)) {
+  if (!(await isOurPR(pr))) {
     logger.debug("GitHub webhook: PR review comment on non-agent PR, ignoring", {
       pr: pr.number,
       branch: pr.head?.ref,
@@ -290,13 +306,14 @@ async function handleCheckRunFailure(payload: any): Promise<void> {
   }
 
   for (const pr of prs) {
-    const branchName = pr.head?.ref || "";
-    if (!isOurBranch(branchName)) {
+    if (!(await isOurPR(pr))) {
       logger.debug("GitHub webhook: check_run failure on non-agent branch", {
-        branch: branchName,
+        branch: pr.head?.ref,
       });
       continue;
     }
+
+    const branchName = pr.head?.ref || "";
 
     const checkName = checkRun.name || "CI";
     const prNumber = pr.number;
