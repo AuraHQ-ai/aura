@@ -2258,13 +2258,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             ? Buffer.from(content, "base64")
             : Buffer.from(content, "utf-8");
 
-          const uploadParams: Record<string, unknown> = {
-            file: fileBuffer,
-            filename,
-          };
-
-          if (title) uploadParams.title = title;
-
           if (thread_ts && !channel) {
             return {
               ok: false,
@@ -2273,26 +2266,64 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
+          let channelId: string | undefined;
           if (channel) {
-            let channelId = channel;
-            if (!/^[CG][A-Z0-9]+$/.test(channel)) {
+            if (/^D[A-Z0-9]+$/.test(channel)) {
+              channelId = channel;
+            } else if (/^[CG][A-Z0-9]+$/.test(channel)) {
+              channelId = channel;
+            } else {
               const resolved = await resolveChannelByName(client, channel);
-              if (!resolved) {
-                return {
-                  ok: false,
-                  error: `Could not find a channel named "${channel}". Use list_channels to see available channels.`,
-                };
+              if (resolved) {
+                channelId = resolved.id;
+              } else {
+                try {
+                  const user = await resolveUserByName(client, channel);
+                  if (user?.id) {
+                    const dm = await client.conversations.open({ users: user.id });
+                    channelId = dm.channel?.id;
+                  }
+                } catch {
+                  // fall through to error
+                }
+                if (!channelId) {
+                  return {
+                    ok: false,
+                    error: `Could not find channel or user "${channel}". Use list_channels to see available channels.`,
+                  };
+                }
               }
-              channelId = resolved.id;
             }
-            uploadParams.channel_id = channelId;
-            if (thread_ts) uploadParams.thread_ts = thread_ts;
           }
 
-          const result = await client.filesUploadV2(uploadParams as any);
-          const file = (result as any).file ?? (result as any).files?.[0];
-          const fileId = file?.id ?? null;
-          const fileUrl = file?.permalink ?? file?.url_private ?? null;
+          // 1. Get upload URL
+          const uploadUrlResp = await client.files.getUploadURLExternal({
+            filename,
+            length: fileBuffer.length,
+          });
+          const uploadUrl = uploadUrlResp.upload_url!;
+          const fileId = uploadUrlResp.file_id!;
+
+          // 2. Upload the file content to the presigned URL
+          const uploadResp = await fetch(uploadUrl, {
+            method: "POST",
+            body: fileBuffer,
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+          if (!uploadResp.ok) {
+            throw new Error(`File upload failed: ${uploadResp.status} ${uploadResp.statusText}`);
+          }
+
+          // 3. Complete upload and share to channel
+          const completeParams: Record<string, unknown> = {
+            files: [{ id: fileId, title: title || filename }],
+          };
+          if (channelId) completeParams.channel_id = channelId;
+          if (thread_ts) completeParams.thread_ts = thread_ts;
+
+          const completeResp = await client.files.completeUploadExternal(completeParams as any);
+
+          const fileUrl = (completeResp as any).files?.[0]?.permalink ?? null;
 
           logger.info("upload_file tool called", {
             filename,
