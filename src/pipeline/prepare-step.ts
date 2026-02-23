@@ -1,7 +1,7 @@
 import { logger } from "../lib/logger.js";
 
-const STEP_LIMIT = 250;
-const HEADLESS_STEP_LIMIT = 350;
+export const STEP_LIMIT = 250;
+export const HEADLESS_STEP_LIMIT = 350;
 const WARNING_THRESHOLD = 200;
 const HEADLESS_WARNING_THRESHOLD = 300;
 
