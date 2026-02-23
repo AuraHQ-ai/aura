@@ -35,10 +35,22 @@ export async function runEmailTriageSubagent(
   try {
     const model = await getFastModel();
 
+    const allEmailTools = createEmailTools();
+    const allGmailEATools = createGmailEATools();
+    const allEmailSyncTools = createEmailSyncTools(client, context);
+
     const tools = {
-      ...createEmailTools(),
-      ...createGmailEATools(),
-      ...createEmailSyncTools(client, context),
+      read_emails: allEmailTools.read_emails,
+      read_email: allEmailTools.read_email,
+      lookup_workspace_user: allEmailTools.lookup_workspace_user,
+      list_workspace_users: allEmailTools.list_workspace_users,
+      lookup_contact: allEmailTools.lookup_contact,
+      check_calendar: allEmailTools.check_calendar,
+      find_available_slot: allEmailTools.find_available_slot,
+      read_user_emails: allGmailEATools.read_user_emails,
+      read_user_email: allGmailEATools.read_user_email,
+      list_gmail_drafts: allGmailEATools.list_gmail_drafts,
+      email_digest: allEmailSyncTools.email_digest,
     };
 
     const result = await runSubagent({
