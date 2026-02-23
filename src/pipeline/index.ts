@@ -6,7 +6,8 @@ import {
   type MessageContext,
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
-import { generateResponse, isChannelTypeNotSupported } from "./respond.js";
+import { generateResponse } from "./respond.js";
+import { safePostMessage } from "../lib/slack-messaging.js";
 import {
   fetchConversationContext,
   resolveDisplayName,
@@ -208,8 +209,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // ── Edge case: empty or near-empty message (but allow image-only) ───
     const hasFiles = Array.isArray((event as any).files) && (event as any).files.length > 0;
     if (context.text.trim().length === 0 && !hasFiles) {
-      // User just @mentioned Aura with no text and no files
-      await client.chat.postMessage({
+      await safePostMessage(client, {
         channel: context.channelId,
         text: "Hey. What's up?",
         thread_ts: replyThreadTs,
@@ -308,6 +308,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       threadTs: replyThreadTs,
       teamId,
       recipientUserId: context.userId,
+      channelType: context.channelType,
     });
     const llmMs = Date.now() - llmStart;
 
@@ -411,23 +412,17 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
 
     // Try to send a graceful error message
     try {
-      await client.chat.postMessage({
+      await safePostMessage(client, {
         channel: context.channelId,
         text: "Sorry, I hit a snag processing that. Give me a sec and try again.",
         thread_ts: replyThreadTs,
       });
     } catch (notifyErr: any) {
-      if (isChannelTypeNotSupported(notifyErr)) {
-        logger.info("Error notification skipped — channel type does not support postMessage", {
-          channelId: context.channelId,
-        });
-      } else {
-        logger.error("Failed to send error message to Slack", {
-          channelId: context.channelId,
-          slackError: notifyErr?.data?.error,
-          error: notifyErr?.message || String(notifyErr),
-        });
-      }
+      logger.error("Failed to send error message to Slack", {
+        channelId: context.channelId,
+        slackError: notifyErr?.data?.error,
+        error: notifyErr?.message || String(notifyErr),
+      });
     }
   }
 }
@@ -451,7 +446,7 @@ async function handleTransparencyCommands(
     try {
       const knowledge = await getKnowledgeAboutUser(context.userId);
       const summary = formatKnowledgeSummary(knowledge);
-      await client.chat.postMessage({
+      await safePostMessage(client, {
         channel: context.channelId,
         text: summary,
         thread_ts: replyThreadTs,
@@ -470,7 +465,7 @@ async function handleTransparencyCommands(
         channelType: context.channelType,
         stackTrace: error?.stack,
       });
-      await client.chat.postMessage({
+      await safePostMessage(client, {
         channel: context.channelId,
         text: "I hit a snag pulling that together. Try again in a moment.",
         thread_ts: replyThreadTs,
@@ -488,7 +483,7 @@ async function handleTransparencyCommands(
     try {
       const result = await forgetMemories(context.userId, whatToForget);
       if (result.forgottenCount === 0) {
-        await client.chat.postMessage({
+        await safePostMessage(client, {
           channel: context.channelId,
           text: `I looked, but I couldn't find anything matching "${whatToForget}" in what I know about you. Maybe I never stored it, or it might be phrased differently in my memory.`,
           thread_ts: replyThreadTs,
@@ -498,7 +493,7 @@ async function handleTransparencyCommands(
           result.examples.length > 0
             ? `\n\nRemoved things like:\n${result.examples.map((e) => `- ${e}`).join("\n")}`
             : "";
-        await client.chat.postMessage({
+        await safePostMessage(client, {
           channel: context.channelId,
           text: `Done. I forgot ${result.forgottenCount} thing${result.forgottenCount === 1 ? "" : "s"} related to "${whatToForget}".${examplesText}`,
           thread_ts: replyThreadTs,
@@ -520,7 +515,7 @@ async function handleTransparencyCommands(
         context: { whatToForget },
         stackTrace: error?.stack,
       });
-      await client.chat.postMessage({
+      await safePostMessage(client, {
         channel: context.channelId,
         text: "Something went wrong trying to forget that. Try again?",
         thread_ts: replyThreadTs,
