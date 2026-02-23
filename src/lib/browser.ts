@@ -6,6 +6,7 @@ interface SessionOptions {
   stealth?: boolean;
   proxy?: boolean;
   timeout?: number;
+  keepAlive?: boolean;
 }
 
 interface BrowserbaseSession {
@@ -48,6 +49,10 @@ export async function createSession(
     projectId,
     browserSettings,
   };
+
+  if (options?.keepAlive) {
+    body.keepAlive = true;
+  }
 
   if (options?.proxy) {
     (body as any).proxies = true;
