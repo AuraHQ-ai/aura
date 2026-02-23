@@ -3,6 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import crypto from "node:crypto";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
+import { claimEvent } from "../memory/store.js";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes } from "../db/schema.js";
@@ -58,6 +59,43 @@ async function getGitHubToken(): Promise<string | null> {
 async function getSlackClient() {
   const { WebClient } = await import("@slack/web-api");
   return new WebClient(process.env.SLACK_BOT_TOKEN || "");
+}
+
+let _authenticatedGitHubLogin: string | null | undefined;
+
+async function getAuthenticatedGitHubLogin(): Promise<string | null> {
+  if (_authenticatedGitHubLogin !== undefined) return _authenticatedGitHubLogin;
+  const ghToken = await getGitHubToken();
+  if (!ghToken) {
+    _authenticatedGitHubLogin = null;
+    return null;
+  }
+  try {
+    const res = await fetch("https://api.github.com/user", {
+      headers: {
+        Authorization: `token ${ghToken}`,
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+    if (res.ok) {
+      const user = (await res.json()) as { login: string };
+      _authenticatedGitHubLogin = user.login;
+      return user.login;
+    }
+  } catch {}
+  _authenticatedGitHubLogin = null;
+  return null;
+}
+
+async function isBotComment(comment: {
+  user?: { login?: string; type?: string };
+}): Promise<boolean> {
+  const login = comment.user?.login || "";
+  if (!login) return false;
+  if (OUR_BOT_AUTHORS.includes(login)) return true;
+  if (comment.user?.type === "Bot") return true;
+  const botLogin = await getAuthenticatedGitHubLogin();
+  return botLogin !== null && login === botLogin;
 }
 
 /**
@@ -136,6 +174,14 @@ async function handlePRReviewComment(payload: any): Promise<void> {
     logger.debug("GitHub webhook: PR review comment on non-agent PR, ignoring", {
       pr: pr.number,
       branch: pr.head?.ref,
+    });
+    return;
+  }
+
+  if (await isBotComment(comment)) {
+    logger.debug("GitHub webhook: ignoring bot's own PR comment", {
+      pr: pr.number,
+      author: comment.user?.login,
     });
     return;
   }
@@ -359,6 +405,15 @@ needs_human|<diagnosis>`;
       });
 
       if (decision.startsWith("auto_fixable|")) {
+        const claimed = await claimEvent(`ci-fix:${branchName}:${checkName}`, "github");
+        if (!claimed) {
+          logger.info("GitHub webhook: CI fix already dispatched, skipping", {
+            branch: branchName,
+            check: checkName,
+          });
+          continue;
+        }
+
         const fixDescription = decision.slice("auto_fixable|".length).trim();
         const { launchCursorAgent } = await import("../lib/cursor-agent.js");
 
@@ -427,8 +482,6 @@ Please fix the CI failure. Run the failing checks locally to verify your fix bef
 // ── Webhook Endpoint ────────────────────────────────────────────────────────
 
 githubWebhookApp.post("/api/webhook/github", async (c) => {
-  console.log("GitHub webhook received");
-
   const rawBody = await c.req.text();
   const signature = c.req.header("x-hub-signature-256") || "";
 
