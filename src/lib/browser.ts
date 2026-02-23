@@ -89,8 +89,8 @@ export async function connectSession(sessionId: string) {
     timeout: 30_000,
   });
 
-  const context = browser.contexts()[0];
-  const page = context?.pages()[0] || (await context.newPage());
+  const context = browser.contexts()[0] || (await browser.newContext());
+  const page = context.pages()[0] || (await context.newPage());
 
   logger.info("Connected to Browserbase session via CDP", { sessionId });
   return { browser, context, page };

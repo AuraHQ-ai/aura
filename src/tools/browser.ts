@@ -53,6 +53,12 @@ export function createBrowserTools(context?: ScheduleContext) {
           .boolean()
           .default(true)
           .describe("Enable anti-detection fingerprinting (default true)"),
+        keep_alive: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Keep the browser session alive after this call so it can be reused. Pass the returned session_id to a subsequent browse call to continue.",
+          ),
         timeout_seconds: z
           .number()
           .min(5)
@@ -68,6 +74,7 @@ export function createBrowserTools(context?: ScheduleContext) {
         extract,
         headers,
         stealth,
+        keep_alive,
         timeout_seconds,
       }) => {
         if (!isAdmin(context?.userId) && context?.userId !== "aura") {
@@ -141,14 +148,13 @@ export function createBrowserTools(context?: ScheduleContext) {
           let codeResult: unknown;
 
           if (code) {
-            // Code mode: execute arbitrary Playwright JS
-            const asyncFn = new Function(
-              "page",
-              "context",
-              "browser",
-              `return (async () => { ${code} })();`,
-            );
-            codeResult = await asyncFn(page, ctx, browser);
+            const vm = await import("node:vm");
+            const sandbox = { page, context: ctx, browser };
+            const wrappedCode = `(async () => { ${code} })()`;
+            codeResult = await vm.runInNewContext(wrappedCode, sandbox, {
+              timeout: timeoutMs,
+              filename: "browse-code-mode",
+            });
 
             resultUrl = page.url();
             try {
@@ -218,8 +224,7 @@ export function createBrowserTools(context?: ScheduleContext) {
             // best-effort
           }
 
-          // Release session if we created it and it's not being reused
-          if (ownsSession && !session_id) {
+          if (ownsSession && !keep_alive) {
             releaseSession(sessionId).catch(() => {});
           }
 
