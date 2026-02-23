@@ -92,10 +92,9 @@ Rules:
 
 /**
  * Run the bug investigation subagent.
- * Uses the main model for deeper reasoning with BigQuery, note, and list tools.
+ * Uses the main model for deeper reasoning with BigQuery and note tools.
  */
 export async function runBugInvestigationSubagent(
-  client: WebClient,
   context: ScheduleContext | undefined,
   userPrompt: string,
 ): Promise<{ ok: true; findings: string; usage: { inputTokens: number; outputTokens: number; totalTokens: number }; stepCount: number } | { ok: false; error: string }> {
@@ -191,7 +190,7 @@ export function createSubagentTools(
           };
         }
 
-        const result = await runBugInvestigationSubagent(client, context, task);
+        const result = await runBugInvestigationSubagent(context, task);
         if (!result.ok) return result;
 
         logger.info("run_bug_investigation tool completed", {
