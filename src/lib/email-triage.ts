@@ -206,10 +206,10 @@ export async function computeThreadStates(
   const flushUpdates = async () => {
     if (pendingUpdates.length === 0) return;
 
-    const batch = [...pendingUpdates];
+    const updateBatch = [...pendingUpdates];
     pendingUpdates.length = 0;
 
-    const valueFragments = batch.map(
+    const valueFragments = updateBatch.map(
       (u) => sql`(${u.threadId}, ${u.state}, ${u.reason})`,
     );
 
@@ -231,13 +231,13 @@ export async function computeThreadStates(
       const errStr = String(err);
       logger.error("Batch thread state update failed", {
         userId,
-        count: batch.length,
+        count: updateBatch.length,
         error: errStr,
       });
-      summary.processed -= batch.length;
-      summary.errors += batch.length;
+      summary.processed -= updateBatch.length;
+      summary.errors += updateBatch.length;
       summary.lastError = errStr;
-      for (const u of batch) {
+      for (const u of updateBatch) {
         summary.breakdown[u.state] = (summary.breakdown[u.state] || 0) - 1;
       }
     }

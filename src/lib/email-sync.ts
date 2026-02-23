@@ -250,7 +250,11 @@ export async function syncEmails(
   if (!gmailResult) {
     throw new Error(`No Gmail access for user ${userId}`);
   }
-  const { client: gmail, email: userEmail, accessToken } = gmailResult;
+  const { client: gmail, email: userEmail, oauth2Client } = gmailResult;
+  const { token: accessToken } = await oauth2Client.getAccessToken();
+  if (!accessToken) {
+    throw new Error(`Failed to obtain access token for user ${userId}`);
+  }
 
   const query = options.query || "newer_than:7d";
   const maxMessages = options.maxMessages || 500;

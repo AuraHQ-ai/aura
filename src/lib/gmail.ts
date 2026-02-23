@@ -820,11 +820,9 @@ export async function getGmailClientForUser(userId: string) {
   );
   oauth2Client.setCredentials({ refresh_token: userToken.refreshToken });
 
-  const { token: accessToken } = await oauth2Client.getAccessToken();
-
   const { gmail } = await import("@googleapis/gmail");
   const client = gmail({ version: "v1", auth: oauth2Client });
-  return { client, email: userToken.email, accessToken: accessToken ?? "" };
+  return { client, email: userToken.email, oauth2Client };
 }
 
 // ── OAuth State Signing (nonce + TTL) ───────────────────────────────────────
