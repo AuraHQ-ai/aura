@@ -106,12 +106,29 @@ export function createEmailSyncTools(
             maxMessages: max_messages || 500,
           });
 
+          const LARGE_SYNC_THRESHOLD = 200;
+          const shouldClassify = classify !== false;
+          const isLargeSync = syncResult.synced >= LARGE_SYNC_THRESHOLD;
+
           let threadStates = null;
-          if (classify !== false) {
+          if (shouldClassify && !isLargeSync) {
             const { computeThreadStates } = await import(
               "../lib/email-triage.js"
             );
             threadStates = await computeThreadStates(user.id);
+          }
+
+          const syncSummary = `Synced ${syncResult.synced} emails (${syncResult.skipped} already existed, ${syncResult.errors} errors)`;
+
+          let message: string;
+          if (threadStates) {
+            message = `${syncSummary}, classified ${threadStates.processed} threads (${Object.entries(threadStates.breakdown)
+              .map(([k, v]) => `${k}: ${v}`)
+              .join(", ")})`;
+          } else if (shouldClassify && isLargeSync) {
+            message = `${syncSummary}. Large sync detected (${syncResult.synced} emails) — triage skipped for speed. Run sync_emails with classify=false then trigger triage separately, or re-run with a narrower date window.`;
+          } else {
+            message = syncSummary;
           }
 
           return {
@@ -120,13 +137,8 @@ export function createEmailSyncTools(
             skipped: syncResult.skipped,
             errors: syncResult.errors,
             threadStates,
-            message: `Synced ${syncResult.synced} emails (${syncResult.skipped} already existed, ${syncResult.errors} errors)${
-              threadStates
-                ? `, classified ${threadStates.processed} threads (${Object.entries(threadStates.breakdown)
-                    .map(([k, v]) => `${k}: ${v}`)
-                    .join(", ")})`
-                : ""
-            }`,
+            triageSkipped: shouldClassify && isLargeSync,
+            message,
           };
         } catch (error: any) {
           logger.error("sync_emails tool failed", {

@@ -822,7 +822,7 @@ export async function getGmailClientForUser(userId: string) {
 
   const { gmail } = await import("@googleapis/gmail");
   const client = gmail({ version: "v1", auth: oauth2Client });
-  return { client, email: userToken.email };
+  return { client, email: userToken.email, oauth2Client };
 }
 
 // ── OAuth State Signing (nonce + TTL) ───────────────────────────────────────

@@ -196,8 +196,52 @@ export async function computeThreadStates(
 
   const model = await getFastModel();
 
-  const CONCURRENCY = 8;
+  const CONCURRENCY = 15;
+  const DB_BATCH_SIZE = 20;
   const batch = threadsToProcess;
+
+  const pendingUpdates: { threadId: string; state: string; reason: string }[] =
+    [];
+
+  const flushUpdates = async () => {
+    if (pendingUpdates.length === 0) return;
+
+    const updateBatch = [...pendingUpdates];
+    pendingUpdates.length = 0;
+
+    const valueFragments = updateBatch.map(
+      (u) => sql`(${u.threadId}, ${u.state}, ${u.reason})`,
+    );
+
+    const valuesList = sql.join(valueFragments, sql`, `);
+
+    try {
+      await db.execute(sql`
+        UPDATE emails_raw AS e SET
+          thread_state = v.state,
+          thread_state_reason = v.reason,
+          thread_state_updated_at = now(),
+          updated_at = now()
+        FROM (VALUES ${valuesList})
+          AS v(thread_id, state, reason)
+        WHERE e.user_id = ${userId}
+          AND e.gmail_thread_id = v.thread_id
+      `);
+    } catch (err) {
+      const errStr = String(err);
+      logger.error("Batch thread state update failed", {
+        userId,
+        count: updateBatch.length,
+        error: errStr,
+      });
+      summary.processed -= updateBatch.length;
+      summary.errors += updateBatch.length;
+      summary.lastError = errStr;
+      for (const u of updateBatch) {
+        summary.breakdown[u.state] = (summary.breakdown[u.state] || 0) - 1;
+      }
+    }
+  };
 
   const processThread = async ([threadId, emails]: [string, EmailRow[]]) => {
     try {
@@ -211,15 +255,11 @@ export async function computeThreadStates(
         maxOutputTokens: 200,
       });
 
-      await db.execute(sql`
-        UPDATE emails_raw SET
-          thread_state = ${object.state},
-          thread_state_reason = ${object.reason},
-          thread_state_updated_at = now(),
-          updated_at = now()
-        WHERE user_id = ${userId}
-          AND gmail_thread_id = ${threadId}
-      `);
+      pendingUpdates.push({
+        threadId,
+        state: object.state,
+        reason: object.reason,
+      });
 
       summary.processed++;
       summary.breakdown[object.state] =
@@ -236,9 +276,26 @@ export async function computeThreadStates(
     }
   };
 
+  let processedCount = 0;
   for (let i = 0; i < batch.length; i += CONCURRENCY) {
     await Promise.all(batch.slice(i, i + CONCURRENCY).map(processThread));
+    processedCount += Math.min(CONCURRENCY, batch.length - i);
+
+    if (pendingUpdates.length >= DB_BATCH_SIZE || i + CONCURRENCY >= batch.length) {
+      await flushUpdates();
+    }
+
+    if (processedCount % 20 === 0 || i + CONCURRENCY >= batch.length) {
+      logger.info("Thread triage progress", {
+        userId,
+        processed: processedCount,
+        remaining: batch.length - processedCount,
+        total: batch.length,
+      });
+    }
   }
+
+  await flushUpdates();
 
   logger.info("Thread state computation completed", { userId, ...summary });
   return summary;
