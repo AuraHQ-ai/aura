@@ -274,7 +274,7 @@ async function gatherCheckRunContext(payload: any): Promise<string> {
         prDetails.html_url,
         prDetails.head?.ref,
         `#${prNum}`,
-      ]);
+      ].filter((t): t is string => t != null));
 
       const isOurs = prDetails.user?.login === GITHUB_BOT_USER;
       parts.push(``, `## Tracking`);
@@ -327,7 +327,7 @@ async function gatherPRReviewCommentContext(payload: any): Promise<string> {
     pr.html_url,
     pr.head?.ref,
     `#${number}`,
-  ]);
+  ].filter((t): t is string => t != null));
 
   parts.push(``, `## Tracking`);
   parts.push(`- Is our PR: ${isOurPR(payload) ? "yes" : "no"}`);
