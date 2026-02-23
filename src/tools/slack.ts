@@ -973,6 +973,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             text: formatForSlack(message),
           });
 
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to send message to #${channel.name}: channel type not supported.`,
+            };
+          }
+
           logger.info("send_channel_message tool called", {
             channel: channel.name,
             channelId: channel.id,
@@ -1297,6 +1304,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           const isGroup = users.length > 1;
           const userNames = users.map((u) => u.name).join(", ");
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to send DM to ${userNames}: channel type not supported.`,
+            };
+          }
 
           logger.info("send_direct_message tool called", {
             users: userNames,
@@ -2479,6 +2493,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             text: formatForSlack(message),
             thread_ts,
           });
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to send thread reply in #${channel.name}: channel type not supported.`,
+            };
+          }
           logger.info("send_thread_reply tool called", {
             channel: channel.name,
             thread_ts,
