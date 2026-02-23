@@ -507,10 +507,29 @@ async function runHaikuActor(
     .map((id) => id.trim())
     .filter(Boolean);
 
+  // Build restricted tool set — only expose what the system prompt describes
+  // (Slack messaging, notes, Cursor agents). GitHub webhook payloads contain
+  // user-controlled content (PR descriptions, review comments, issue bodies)
+  // so we minimize the prompt injection surface by excluding sandbox execution,
+  // email, browser automation, BigQuery, Sheets, and other sensitive tools.
+  const allSlackTools = createSlackTools(slackClient, {
+    userId: adminIds[0] || "aura",
+  });
+
   const tools = {
-    ...createSlackTools(slackClient, {
-      userId: adminIds[0] || "aura",
-    }),
+    send_channel_message: allSlackTools.send_channel_message,
+    send_thread_reply: allSlackTools.send_thread_reply,
+    send_direct_message: allSlackTools.send_direct_message,
+    save_note: allSlackTools.save_note,
+    read_note: allSlackTools.read_note,
+    list_notes: allSlackTools.list_notes,
+    edit_note: allSlackTools.edit_note,
+    search_notes: allSlackTools.search_notes,
+    delete_note: allSlackTools.delete_note,
+    dispatch_cursor_agent: allSlackTools.dispatch_cursor_agent,
+    check_cursor_agent: allSlackTools.check_cursor_agent,
+    followup_cursor_agent: allSlackTools.followup_cursor_agent,
+    list_cursor_agents: allSlackTools.list_cursor_agents,
 
     post_github_comment: tool({
       description:
