@@ -49,7 +49,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
   return {
     search_my_conversations: tool({
       description:
-        "Search Aura's stored messages database (every message she has sent and received). Use this to recall past conversations, find what was discussed about a topic, or look up what a specific person said. Supports two search modes: 'text' (keyword/full-text search, default) and 'semantic' (vector similarity search using embeddings — better for conceptual/meaning-based queries). Results are grouped by conversation thread.",
+        "Search Aura's stored messages database (every message she has sent and received is saved in PostgreSQL). Use this to recall past conversations, find what was discussed about a topic, or look up what a specific person said. Supports two modes: 'text' (keyword/full-text, default) and 'semantic' (vector similarity — better for conceptual queries). Results are grouped by conversation thread with surrounding context. Prefer this over search_messages for DM threads and conversations Aura has been part of — it searches Aura's own database, not Slack's search index, so has better coverage of her conversations. Use offset for pagination.",
       inputSchema: z.object({
         query: z
           .string()

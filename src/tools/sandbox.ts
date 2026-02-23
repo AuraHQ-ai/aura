@@ -20,7 +20,7 @@ export function createSandboxTools(context?: ScheduleContext) {
   return {
     run_command: tool({
       description:
-        "Execute a shell command in a sandboxed Linux VM. The sandbox has git, node, python, gh (GitHub CLI), gcloud, vercel CLI, ripgrep, curl, jq, and Claude Code (claude) pre-installed. You can install additional tools with apt-get or pip. The sandbox persists between conversations -- files and state are preserved. Use cat/head/tail to read files, heredocs to write files, rg to search.",
+        "Execute a shell command in a sandboxed Linux VM. This is the universal primitive for computation: file ops, git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (claude). Pre-installed: git, node, python, gh, gcloud, vercel CLI, ripgrep, curl, jq, claude. Install more with apt-get or pip. The sandbox persists between conversations — files and state are preserved across messages. Output is truncated; use head, tail, grep to filter. Break complex tasks into smaller commands. For complex workflows, check your skill notes first. Use higher timeouts (up to 750s) for long-running agent commands like Claude Code — the 750s ceiling leaves a 50s buffer before the Vercel function timeout at 800s.",
       inputSchema: z.object({
         command: z
           .string()
