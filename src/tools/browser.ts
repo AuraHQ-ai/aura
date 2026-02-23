@@ -119,7 +119,7 @@ export function createBrowserTools(context?: ScheduleContext) {
 
         try {
           if (!sessionId) {
-            const session = await createSession({ stealth });
+            const session = await createSession({ stealth, keepAlive: keep_alive });
             sessionId = session.id;
             ownsSession = true;
           }
