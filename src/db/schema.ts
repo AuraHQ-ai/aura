@@ -128,7 +128,10 @@ export const userProfiles = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    slackUserId: text("slack_user_id").notNull(),
+    slackUserId: text("slack_user_id"),
+    email: text("email"),
+    phone: text("phone"),
+    source: text("source").notNull().default("slack"),
     displayName: text("display_name").notNull(),
     timezone: text("timezone"),
     communicationStyle: jsonb("communication_style")
@@ -147,7 +150,12 @@ export const userProfiles = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("user_profiles_slack_user_id_idx").on(table.slackUserId),
+    uniqueIndex("user_profiles_slack_user_id_idx")
+      .on(table.slackUserId)
+      .where(sql`slack_user_id IS NOT NULL`),
+    uniqueIndex("user_profiles_email_idx")
+      .on(table.email)
+      .where(sql`email IS NOT NULL`),
   ],
 );
 
