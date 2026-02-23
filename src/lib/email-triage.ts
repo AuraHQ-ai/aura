@@ -265,7 +265,7 @@ export async function computeThreadStates(
     await Promise.all(batch.slice(i, i + CONCURRENCY).map(processThread));
     processedCount += Math.min(CONCURRENCY, batch.length - i);
 
-    if (processedCount % DB_BATCH_SIZE === 0 || i + CONCURRENCY >= batch.length) {
+    if (pendingUpdates.length >= DB_BATCH_SIZE || i + CONCURRENCY >= batch.length) {
       await flushUpdates();
     }
 
