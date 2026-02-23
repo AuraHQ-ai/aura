@@ -8,6 +8,7 @@ import {
   hasAttachmentParts,
 } from "./gmail.js";
 import { logger } from "./logger.js";
+import { logError } from "./error-logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -18,10 +19,16 @@ export interface SyncOptions {
   maxMessages?: number;
 }
 
+export interface SyncError {
+  gmailMessageId: string;
+  reason: string;
+}
+
 export interface SyncResult {
   synced: number;
   skipped: number;
   errors: number;
+  errorDetails: SyncError[];
 }
 
 // ── HTML to Markdown ────────────────────────────────────────────────────────
@@ -244,7 +251,7 @@ export async function syncEmails(
   userId: string,
   options: SyncOptions = {},
 ): Promise<SyncResult> {
-  const result: SyncResult = { synced: 0, skipped: 0, errors: 0 };
+  const result: SyncResult = { synced: 0, skipped: 0, errors: 0, errorDetails: [] };
 
   const gmailResult = await getGmailClientForUser(userId);
   if (!gmailResult) {
@@ -293,7 +300,16 @@ export async function syncEmails(
     for (const id of batchIds) {
       const msg = messageMap.get(id);
       if (!msg) {
+        const reason = "batch_api_miss: message ID listed but not returned by batch API";
+        result.errorDetails.push({ gmailMessageId: id, reason });
         result.errors++;
+        logError({
+          errorName: "EmailSyncError",
+          errorMessage: reason,
+          errorCode: "email_sync_error",
+          userId,
+          context: { gmailMessageId: id },
+        });
         continue;
       }
       try {
@@ -301,15 +317,33 @@ export async function syncEmails(
         if (row) {
           rows.push(row);
         } else {
+          const reason = "messageToRow_null: missing required fields";
+          result.errorDetails.push({ gmailMessageId: id, reason });
           result.errors++;
+          logError({
+            errorName: "EmailSyncError",
+            errorMessage: reason,
+            errorCode: "email_sync_error",
+            userId,
+            context: { gmailMessageId: id },
+          });
         }
       } catch (err) {
+        const reason = String(err);
         logger.warn("Failed to process message", {
           userId,
           msgId: id,
-          error: String(err),
+          error: reason,
         });
+        result.errorDetails.push({ gmailMessageId: id, reason });
         result.errors++;
+        logError({
+          errorName: "EmailSyncError",
+          errorMessage: reason,
+          errorCode: "email_sync_error",
+          userId,
+          context: { gmailMessageId: id },
+        });
       }
     }
 
