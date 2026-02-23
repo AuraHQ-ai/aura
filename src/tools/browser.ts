@@ -1,6 +1,5 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type { Browser, Page, BrowserContext } from "playwright-core";
 import {
   createSession,
   connectSession,
@@ -21,7 +20,7 @@ function truncate(text: string, max: number): string {
 
 /** Extract text content from a page */
 async function extractContent(
-  page: Page,
+  page: any,
   mode: "text" | "accessibility" | "html",
 ): Promise<string> {
   switch (mode) {
@@ -39,14 +38,14 @@ async function extractContent(
 }
 
 /** Collect console errors during page operations */
-function setupConsoleCollector(page: Page): string[] {
+function setupConsoleCollector(page: any): string[] {
   const errors: string[] = [];
-  page.on("console", (msg) => {
+  page.on("console", (msg: any) => {
     if (msg.type() === "error") {
       errors.push(msg.text());
     }
   });
-  page.on("pageerror", (err) => {
+  page.on("pageerror", (err: any) => {
     errors.push(err.message);
   });
   return errors;
@@ -54,9 +53,10 @@ function setupConsoleCollector(page: Page): string[] {
 
 // ── Tool Definition ──────────────────────────────────────────────────────────
 
-export function createBrowserTools(context?: ScheduleContext) {
-  return {
-    browse: tool({
+export function createBrowserTools(context?: ScheduleContext): Record<string, any> {
+  try {
+    return {
+      browse: tool({
       description:
         "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors. Admin-only.",
       inputSchema: z.object({
@@ -151,7 +151,7 @@ export function createBrowserTools(context?: ScheduleContext) {
         }
 
         const ownSession = !session_id;
-        let browser: Browser | null = null;
+        let browser: any = null;
         let currentSessionId = session_id || "";
 
         try {
@@ -168,10 +168,10 @@ export function createBrowserTools(context?: ScheduleContext) {
           // Connect to the session
           browser = await connectSession(currentSessionId);
           const contexts = browser.contexts();
-          const browserContext: BrowserContext =
+          const browserContext: any =
             contexts.length > 0 ? contexts[0] : await browser.newContext();
           const pages = browserContext.pages();
-          const page: Page =
+          const page: any =
             pages.length > 0 ? pages[0] : await browserContext.newPage();
 
           // Set custom headers if provided
@@ -319,4 +319,8 @@ export function createBrowserTools(context?: ScheduleContext) {
       },
     }),
   };
+  } catch (err) {
+    console.error("Failed to create browser tools:", err);
+    return {};
+  }
 }
