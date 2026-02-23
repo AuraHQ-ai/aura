@@ -420,7 +420,7 @@ needs_human|<diagnosis>`;
       });
 
       if (decision.startsWith("auto_fixable|")) {
-        const claimed = await claimEvent(`ci-fix:${branchName}:${checkName}`, "github");
+        const claimed = await claimEvent(`ci-fix:${branchName}:${checkName}:${checkRun.id}`, "github");
         if (!claimed) {
           logger.info("GitHub webhook: CI fix already dispatched, skipping", {
             branch: branchName,
