@@ -15,13 +15,12 @@ import { createEmailTools, createGmailEATools } from "./email.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
 import { createConversationSearchTools } from "./conversations.js";
-import { createSlackTools } from "./slack.js";
 
 /**
  * Scope presets map scope hints to tool subsets.
  * The parent agent picks the scope at runtime based on the task.
  */
-function buildToolScope(
+async function buildToolScope(
   scope: string,
   client: WebClient,
   context?: ScheduleContext,
@@ -45,18 +44,20 @@ function buildToolScope(
         ...createWebTools(),
         ...createSandboxTools(context),
       };
-    case "slack":
-      return {
-        ...createSlackTools(client, context),
-      };
+    case "slack": {
+      const { createSlackTools } = await import("./slack.js");
+      return { ...createSlackTools(client, context) };
+    }
     case "notes":
       return {
         ...createNoteTools(context),
         ...createConversationSearchTools(context),
       };
     case "all":
-    default:
+    default: {
+      const { createSlackTools } = await import("./slack.js");
       return createSlackTools(client, context);
+    }
   }
 }
 
@@ -67,7 +68,7 @@ export function createSubagentTools(
   return {
     run_subagent: tool({
       description:
-        "Run a focused subtask in an isolated context window. The subagent gets its own conversation context and a scoped set of tools, preventing context pollution in the parent. Use for heavy tasks like email triage, data analysis, bug investigation, or any multi-step work that would bloat the main context. The subagent returns a compressed summary. Admin-only.",
+        "Launch a subagent for parallel fan-out. Call this tool MULTIPLE TIMES in the same tool-call block to run tasks concurrently — e.g. sweep 4 market channels simultaneously, or triage emails while analyzing data. Each subagent runs in its own isolated context with scoped tools, preventing context pollution. Returns a compressed summary. The primary value is parallelism and performance — use when you can split work into independent pieces that don't depend on each other's results. Admin-only.",
       inputSchema: z.object({
         task: z
           .string()
@@ -115,7 +116,7 @@ export function createSubagentTools(
             ? await getMainModel()
             : await getFastModel();
 
-        const tools = buildToolScope(scope, client, context);
+        const tools = await buildToolScope(scope, client, context);
 
         const safeTools = { ...tools };
         delete (safeTools as Record<string, unknown>).run_subagent;
