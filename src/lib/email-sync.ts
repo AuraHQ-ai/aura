@@ -101,11 +101,143 @@ function parseEmailList(raw: string): string[] {
     .filter(Boolean);
 }
 
-// ── Gmail Batch Fetch ────────────────────────────────────────
+// ── Gmail Batch API ──────────────────────────────────────────────────────────
+
+/**
+ * Fetch multiple Gmail messages in a single HTTP batch request.
+ * Gmail batch endpoint accepts up to 100 individual requests per call.
+ */
+async function batchGetMessages(
+  accessToken: string,
+  messageIds: string[],
+): Promise<Map<string, any>> {
+  const BATCH_SIZE = 100;
+  const results = new Map<string, any>();
+
+  for (let i = 0; i < messageIds.length; i += BATCH_SIZE) {
+    const batch = messageIds.slice(i, i + BATCH_SIZE);
+    const boundary = `batch_${Date.now()}_${i}`;
+
+    const parts = batch
+      .map(
+        (id, idx) =>
+          [
+            `--${boundary}`,
+            `Content-Type: application/http`,
+            `Content-ID: <item${idx}>`,
+            ``,
+            `GET /gmail/v1/users/me/messages/${id}?format=full`,
+            ``,
+          ].join("\r\n"),
+      )
+      .join("\r\n");
+
+    const body = `${parts}\r\n--${boundary}--`;
+
+    const res = await fetch("https://www.googleapis.com/batch/gmail/v1", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": `multipart/mixed; boundary=${boundary}`,
+      },
+      body,
+    });
+
+    if (!res.ok) {
+      logger.error("Gmail batch request failed", {
+        status: res.status,
+        statusText: res.statusText,
+        batchOffset: i,
+      });
+      continue;
+    }
+
+    const text = await res.text();
+    const responseParts = text
+      .split(/--batch_[^\r\n]+/)
+      .filter((p) => p.includes("{"));
+    for (const part of responseParts) {
+      const jsonMatch = part.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const msg = JSON.parse(jsonMatch[0]);
+          if (msg.id) results.set(msg.id, msg);
+        } catch {
+          // skip malformed JSON in batch response
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+// ── Message row conversion ───────────────────────────────────────────────────
+
+function messageToRow(
+  msg: any,
+  userId: string,
+  userEmail: string | null,
+): NewEmailRaw | null {
+  if (!msg?.id || !msg?.threadId) return null;
+
+  const headers = msg.payload?.headers || [];
+  const fromRaw = getHeader(headers, "From");
+  const toRaw = getHeader(headers, "To");
+  const ccRaw = getHeader(headers, "Cc");
+  const subject = getHeader(headers, "Subject");
+  const dateStr = getHeader(headers, "Date");
+
+  const { email: fromEmail, name: fromName } = parseEmailAddress(fromRaw);
+  const date = dateStr ? new Date(dateStr) : new Date();
+  const direction: "inbound" | "outbound" =
+    userEmail && fromEmail.toLowerCase() === userEmail.toLowerCase()
+      ? "outbound"
+      : "inbound";
+
+  const { html, plain } = extractBodyParts(msg.payload);
+  const bodyMarkdown = htmlToMarkdown(html, plain);
+  const bodySizeBytes = Buffer.byteLength(bodyMarkdown, "utf-8");
+
+  const labels = (msg.labelIds || []) as string[];
+  const attachments = hasAttachmentParts(msg.payload);
+
+  const rawHeaders: Record<string, string> = {};
+  for (const h of [
+    "Message-ID",
+    "In-Reply-To",
+    "References",
+    "Reply-To",
+    "List-Unsubscribe",
+  ]) {
+    const val = getHeader(headers, h);
+    if (val) rawHeaders[h] = val;
+  }
+
+  return {
+    userId,
+    gmailMessageId: msg.id,
+    gmailThreadId: msg.threadId,
+    subject,
+    fromEmail,
+    fromName: fromName || null,
+    toEmails: parseEmailList(toRaw),
+    ccEmails: ccRaw ? parseEmailList(ccRaw) : null,
+    date,
+    bodyMarkdown,
+    bodySizeBytes,
+    direction,
+    hasAttachments: attachments,
+    labels,
+    rawHeaders: Object.keys(rawHeaders).length > 0 ? rawHeaders : null,
+  };
+}
+
+// ── Main sync function ───────────────────────────────────────────────────────
 
 /**
  * Sync emails from a user's Gmail account into emails_raw.
- * Fetches messages, converts HTML→markdown, and upserts rows.
+ * Uses Gmail's HTTP batch endpoint (100 messages/request) and batch DB inserts.
  * Does NOT classify threads — call computeThreadStates() separately.
  */
 export async function syncEmails(
@@ -118,7 +250,11 @@ export async function syncEmails(
   if (!gmailResult) {
     throw new Error(`No Gmail access for user ${userId}`);
   }
-  const { client: gmail, email: userEmail } = gmailResult;
+  const { client: gmail, email: userEmail, oauth2Client } = gmailResult;
+  const { token: accessToken } = await oauth2Client.getAccessToken();
+  if (!accessToken) {
+    throw new Error(`Failed to obtain access token for user ${userId}`);
+  }
 
   const query = options.query || "newer_than:7d";
   const maxMessages = options.maxMessages || 500;
@@ -141,113 +277,70 @@ export async function syncEmails(
 
   allMessageIds = allMessageIds.slice(0, maxMessages);
 
-  logger.info("Email sync: fetching messages", {
+  logger.info("Email sync: fetching messages via batch API", {
     userId,
     count: allMessageIds.length,
     query,
   });
 
-  const BATCH_SIZE = 20;
+  const BATCH_SIZE = 100;
   for (let i = 0; i < allMessageIds.length; i += BATCH_SIZE) {
-    const batch = allMessageIds.slice(i, i + BATCH_SIZE);
-    const fullMessages = await Promise.all(
-      batch.map(async (id) => {
-        try {
-          const res = await gmail.users.messages.get({
-            userId: "me",
-            id,
-            format: "full",
-          });
-          return res.data;
-        } catch (err: any) {
-          logger.error("Failed to fetch message", {
-            messageId: id,
-            error: err.message,
-          });
-          result.errors++;
-          return null;
-        }
-      }),
-    );
+    const batchIds = allMessageIds.slice(i, i + BATCH_SIZE);
 
-    for (const msg of fullMessages) {
-      if (!msg?.id || !msg?.threadId) continue;
+    const messageMap = await batchGetMessages(accessToken, batchIds);
 
+    const rows: NewEmailRaw[] = [];
+    for (const id of batchIds) {
+      const msg = messageMap.get(id);
+      if (!msg) {
+        result.errors++;
+        continue;
+      }
       try {
-        const headers = msg.payload?.headers || [];
-        const fromRaw = getHeader(headers, "From");
-        const toRaw = getHeader(headers, "To");
-        const ccRaw = getHeader(headers, "Cc");
-        const subject = getHeader(headers, "Subject");
-        const dateStr = getHeader(headers, "Date");
-
-        const { email: fromEmail, name: fromName } =
-          parseEmailAddress(fromRaw);
-        const date = dateStr ? new Date(dateStr) : new Date();
-        const direction: "inbound" | "outbound" =
-          userEmail && fromEmail.toLowerCase() === userEmail.toLowerCase()
-            ? "outbound"
-            : "inbound";
-
-        const { html, plain } = extractBodyParts(msg.payload);
-        const bodyMarkdown = htmlToMarkdown(html, plain);
-        const bodySizeBytes = Buffer.byteLength(bodyMarkdown, "utf-8");
-
-        const labels = (msg.labelIds || []) as string[];
-        const attachments = hasAttachmentParts(msg.payload);
-
-        const rawHeaders: Record<string, string> = {};
-        for (const h of [
-          "Message-ID",
-          "In-Reply-To",
-          "References",
-          "Reply-To",
-          "List-Unsubscribe",
-        ]) {
-          const val = getHeader(headers, h);
-          if (val) rawHeaders[h] = val;
-        }
-
-        const row: NewEmailRaw = {
-          userId,
-          gmailMessageId: msg.id!,
-          gmailThreadId: msg.threadId!,
-          subject,
-          fromEmail,
-          fromName: fromName || null,
-          toEmails: parseEmailList(toRaw),
-          ccEmails: ccRaw ? parseEmailList(ccRaw) : null,
-          date,
-          bodyMarkdown,
-          bodySizeBytes,
-          direction,
-          hasAttachments: attachments,
-          labels,
-          rawHeaders:
-            Object.keys(rawHeaders).length > 0 ? rawHeaders : null,
-        };
-
-        const insertResult = await db
-          .insert(emailsRaw)
-          .values(row)
-          .onConflictDoNothing({
-            target: [emailsRaw.userId, emailsRaw.gmailMessageId],
-          });
-
-        if (insertResult.rowCount === 0) {
-          result.skipped++;
+        const row = messageToRow(msg, userId, userEmail);
+        if (row) {
+          rows.push(row);
         } else {
-          result.synced++;
+          result.errors++;
         }
       } catch (err) {
         logger.warn("Failed to process message", {
           userId,
-          msgId: msg.id,
+          msgId: id,
           error: String(err),
         });
         result.errors++;
       }
     }
+
+    if (rows.length > 0) {
+      try {
+        const insertResult = await db
+          .insert(emailsRaw)
+          .values(rows)
+          .onConflictDoNothing({
+            target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+          });
+        result.synced += insertResult.rowCount ?? 0;
+        result.skipped += rows.length - (insertResult.rowCount ?? 0);
+      } catch (err) {
+        logger.error("Batch DB insert failed", {
+          userId,
+          batchOffset: i,
+          rowCount: rows.length,
+          error: String(err),
+        });
+        result.errors += rows.length;
+      }
+    }
+
+    logger.info("Email sync: batch progress", {
+      userId,
+      fetched: Math.min(i + BATCH_SIZE, allMessageIds.length),
+      total: allMessageIds.length,
+      synced: result.synced,
+      skipped: result.skipped,
+    });
   }
 
   logger.info("Email sync completed", { userId, ...result });
