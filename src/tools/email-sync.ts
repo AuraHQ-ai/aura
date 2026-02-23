@@ -131,11 +131,20 @@ export function createEmailSyncTools(
             message = syncSummary;
           }
 
+          if (syncResult.errors > 0 && syncResult.errorDetails.length > 0) {
+            const sample = syncResult.errorDetails.slice(0, 3);
+            message += `\nError samples: ${sample.map((e) => `${e.gmailMessageId}: ${e.reason}`).join("; ")}`;
+            if (syncResult.errorDetails.length > 3) {
+              message += ` (and ${syncResult.errorDetails.length - 3} more)`;
+            }
+          }
+
           return {
             ok: true,
             synced: syncResult.synced,
             skipped: syncResult.skipped,
             errors: syncResult.errors,
+            errorDetails: syncResult.errorDetails.slice(0, 20),
             threadStates,
             triageSkipped: shouldClassify && isLargeSync,
             message,
