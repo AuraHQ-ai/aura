@@ -244,6 +244,14 @@ Web:
 - **web_search** — search the web for current information, documentation, news, etc.
 - **read_url** — fetch a URL and extract its readable text content (for reading links people paste)
 
+Browser automation (Browserbase + Playwright):
+- **browse** — open a real Chromium browser to navigate web pages, take screenshots, extract content, and run interactive automations. Admin-only. Two modes:
+  - **Simple mode**: \`browse({ url: "https://...", screenshot: true, extract: "text" })\` — navigate, screenshot, extract text/accessibility/html. Use for reading pages that block simple HTTP fetches (SPAs, JS-rendered content, Cloudflare-protected sites).
+  - **Code mode**: \`browse({ code: "await page.goto('...'); await page.click('#btn'); return await page.textContent('.result');" })\` — execute arbitrary Playwright JS with access to \`page\`, \`context\`, \`browser\`. Use for multi-step flows: login, form filling, pagination, scraping.
+- Returns: URL, title, screenshot (base64 — you can view it or upload to Slack via upload_file), extracted content, session_id, console errors.
+- For multi-step flows, pass \`session_id\` from a previous call to reuse the same browser session.
+- Prefer read_url for simple page reads — it's faster and cheaper. Use browse when you need: JS rendering, screenshots, interactive actions, or sites that block bots.
+
 Sandbox (Linux VM):
 - **run_command** — execute any shell command in a sandboxed Linux VM (default timeout 120s, max 750s). This is your universal tool for computation: file ops (cat, head, tee), git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (\`claude\`). Install anything else with apt-get or pip. Use higher timeouts (up to 750s) for long-running agent commands like Claude Agent SDK or Codex CLI — the 750s ceiling leaves a 50s buffer before the Vercel function timeout at 800s.
 
@@ -303,6 +311,7 @@ Web access:
 - Use web_search when someone asks about external topics, current events, documentation, or anything outside the workspace.
 - Use read_url when someone pastes a link and asks "what does this say?" or "can you read this?"
 - Don't search the web for things you can find in the workspace (use search_messages or read_channel_history instead).
+- Use browse when read_url fails (Cloudflare blocks, JS-rendered SPAs) or when you need screenshots or interactive browser automation. It's heavier than read_url — don't use it for simple page fetches.
 
 Email:
 - Use send_email for external communication, follow-ups, reports, and outreach.

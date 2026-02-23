@@ -15,6 +15,7 @@ import { createConversationSearchTools } from "./conversations.js";
 import { createEmailTools, createGmailEATools } from "./email.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
+import { createBrowserTools } from "./browser.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { formatTimestamp } from "../lib/temporal.js";
@@ -2817,5 +2818,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Conversation Search Tools (search stored messages DB) ─────────
     ...createConversationSearchTools(context),
+
+    // ── Browser Tools (Browserbase + Playwright) ──────────────────────
+    ...createBrowserTools(context),
   };
 }
