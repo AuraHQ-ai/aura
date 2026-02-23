@@ -320,7 +320,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
     }),
   };
   } catch (err) {
-    logger.error("Failed to create browser tools:", err);
+    logger.error("Failed to create browser tools", { error: String(err) });
     return {};
   }
 }
