@@ -4,7 +4,7 @@ import { WebClient } from "@slack/web-api";
 import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import crypto from "node:crypto";
-import { eq, like } from "drizzle-orm";
+import { like } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes } from "../db/schema.js";
 import { getFastModel } from "../lib/ai.js";
@@ -12,6 +12,7 @@ import { getCredential } from "../lib/credentials.js";
 import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
+import { claimEvent } from "../memory/store.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -19,7 +20,6 @@ const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
 
 const GITHUB_BOT_USER = "aura-vidal";
-const OWNER_REPO = "realadvisor/aura";
 
 const HANDLED_PR_ACTIONS = new Set([
   "opened",
@@ -33,19 +33,6 @@ const HANDLED_CHECK_CONCLUSIONS = new Set([
   "failure",
   "timed_out",
 ]);
-
-// ── Deduplication ───────────────────────────────────────────────────────────
-
-const recentDeliveries = new Set<string>();
-const DEDUP_TTL_MS = 10 * 60 * 1000;
-
-function isDuplicate(deliveryId: string): boolean {
-  if (!deliveryId) return false;
-  if (recentDeliveries.has(deliveryId)) return true;
-  recentDeliveries.add(deliveryId);
-  setTimeout(() => recentDeliveries.delete(deliveryId), DEDUP_TTL_MS);
-  return false;
-}
 
 // ── Signature Verification ──────────────────────────────────────────────────
 
@@ -133,16 +120,6 @@ async function fetchCheckRunLogs(
     parts.push(`Details:\n${text}`);
   }
   return parts.join("\n\n") || "[Empty output]";
-}
-
-async function fetchIssueDetails(
-  owner: string,
-  repo: string,
-  number: number,
-): Promise<any> {
-  const res = await githubFetch(`/repos/${owner}/${repo}/issues/${number}`);
-  if (!res.ok) return null;
-  return res.json();
 }
 
 // ── Tracking Note Lookup ────────────────────────────────────────────────────
@@ -333,6 +310,7 @@ async function gatherPRReviewCommentContext(payload: any): Promise<string> {
     `**PR Author**: ${pr.user.login}`,
     `**PR URL**: ${pr.html_url}`,
     `**Comment by**: ${comment.user.login}`,
+    `**Comment ID**: ${comment.id}`,
     `**File**: ${comment.path}`,
     `**Line**: ${comment.line || comment.original_line || "N/A"}`,
     `**Comment URL**: ${comment.html_url}`,
@@ -469,7 +447,10 @@ function shouldHandleEvent(
       return HANDLED_PR_ACTIONS.has(payload.action);
 
     case "pull_request_review_comment":
-      return payload.action === "created";
+      return (
+        payload.action === "created" &&
+        payload.comment?.user?.login !== GITHUB_BOT_USER
+      );
 
     case "check_run":
       return (
@@ -478,7 +459,10 @@ function shouldHandleEvent(
       );
 
     case "issue_comment":
-      return payload.action === "created";
+      return (
+        payload.action === "created" &&
+        payload.comment?.user?.login !== GITHUB_BOT_USER
+      );
 
     case "push":
       return payload.ref === "refs/heads/main";
@@ -701,11 +685,6 @@ githubWebhookApp.post("/api/webhook/github", async (c) => {
     return c.json({ error: "Invalid JSON" }, 400);
   }
 
-  if (isDuplicate(deliveryId)) {
-    logger.info("GitHub webhook duplicate delivery, skipping", { deliveryId });
-    return c.json({ ok: true, skipped: "duplicate" });
-  }
-
   if (!shouldHandleEvent(eventType, payload)) {
     logger.debug("GitHub webhook event not handled", {
       eventType,
@@ -713,6 +692,14 @@ githubWebhookApp.post("/api/webhook/github", async (c) => {
       deliveryId,
     });
     return c.json({ ok: true, skipped: "unhandled_event" });
+  }
+
+  if (deliveryId) {
+    const claimed = await claimEvent(deliveryId, "github-webhook");
+    if (!claimed) {
+      logger.info("GitHub webhook duplicate delivery, skipping", { deliveryId });
+      return c.json({ ok: true, skipped: "duplicate" });
+    }
   }
 
   logger.info("GitHub webhook received", {
