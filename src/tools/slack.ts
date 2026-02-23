@@ -7,6 +7,7 @@ import { createNoteTools } from "./notes.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
 import { createSandboxTools } from "./sandbox.js";
+import { createBrowserTools } from "./browser.js";
 import { createWebTools } from "./web.js";
 import { createBigQueryTools } from "./bigquery.js";
 import { createTableTools } from "./table.js";
@@ -2795,6 +2796,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Sandbox Tools ────────────────────────────────────────────────────
     ...createSandboxTools(context),
+
+    // ── Browser Tools (Browserbase + Playwright) ──────────────────────────
+    ...createBrowserTools(context),
 
     // ── BigQuery Tools ────────────────────────────────────────────────────
     ...createBigQueryTools(context),
