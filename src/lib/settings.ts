@@ -61,3 +61,27 @@ export async function getAllSettings(): Promise<Record<string, string>> {
     return {};
   }
 }
+
+// ── Array settings (comma-separated values with short TTL cache) ────────────
+
+const arraySettingsCache = new Map<string, { value: string[]; expiresAt: number }>();
+const ARRAY_CACHE_TTL_MS = 60_000; // 1 minute
+
+/**
+ * Read a setting as a comma-separated array of strings.
+ * Cached for 60s to avoid DB hits on every message in the pipeline.
+ * Returns empty array if not set.
+ */
+export async function getSettingArray(key: string): Promise<string[]> {
+  const now = Date.now();
+  const cached = arraySettingsCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  const raw = await getSetting(key);
+  const value = raw
+    ? raw.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+
+  arraySettingsCache.set(key, { value, expiresAt: now + ARRAY_CACHE_TTL_MS });
+  return value;
+}

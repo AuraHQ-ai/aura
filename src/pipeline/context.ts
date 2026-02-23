@@ -4,6 +4,7 @@ import { getFastModel } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
 import { resolveChannelById } from "../tools/slack.js";
+import { getSettingArray } from "../lib/settings.js";
 
 // ── Slack Event Types ────────────────────────────────────────────────────────
 // Minimal local types — replaces the @slack/bolt dependency that was only used
@@ -153,25 +154,10 @@ export interface ShouldRespondResult {
 }
 
 // ── Channel-level override ───────────────────────────────────────────────────
-// Channels in this set always process new messages without LLM gating (Tier 4
-// is bypassed). Add channel IDs via the AURA_ALWAYS_PROCESS_CHANNELS env var
-// (comma-separated) or hardcode defaults below.
+// Channels in this list always process new messages without LLM gating (Tier 4
+// is bypassed). Managed via DB setting "always_process_channels" (comma-separated
+// channel IDs). Change at runtime — no redeploy needed.
 
-const DEFAULT_ALWAYS_PROCESS_CHANNELS = new Set([
-  "C088REN54FM", // bug tracker channel
-]);
-
-function getAlwaysProcessChannels(): Set<string> {
-  const envChannels = process.env.AURA_ALWAYS_PROCESS_CHANNELS;
-  if (!envChannels) return DEFAULT_ALWAYS_PROCESS_CHANNELS;
-
-  const channels = new Set(DEFAULT_ALWAYS_PROCESS_CHANNELS);
-  for (const id of envChannels.split(",")) {
-    const trimmed = id.trim();
-    if (trimmed) channels.add(trimmed);
-  }
-  return channels;
-}
 
 /**
  * Determine if Aura should respond to this message (Tiers 2–4).
@@ -208,8 +194,8 @@ export async function shouldRespond(
   }
 
   // Channel-level override: always process messages in designated channels
-  const alwaysProcess = getAlwaysProcessChannels();
-  if (alwaysProcess.has(context.channelId)) {
+  const alwaysProcess = await getSettingArray("always_process_channels");
+  if (alwaysProcess.includes(context.channelId)) {
     return { respond: true, reason: "always_process_channel" };
   }
 
