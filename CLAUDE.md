@@ -25,6 +25,11 @@ Aura is an autonomous AI agent that operates as a team member inside RealAdvisor
 - ISO 8601 timestamps in user's timezone throughout
 - Environment variables configured in Vercel, some injected into sandbox at runtime
 
+## Tool documentation convention
+- Tool `description` fields are the **primary source** of "when/how to use" guidance for the LLM
+- The system prompt contains only **cross-cutting behavioral rules** (e.g. DM privacy, channel access), NOT per-tool documentation
+- When adding a new tool, put all usage guidance in the tool's `description` field, not the system prompt
+
 ## Common pitfalls
 - Slack's `chat.update` has a 40K character limit — messages get truncated
 - pgvector columns must all use the same dimensions (1536)
