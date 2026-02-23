@@ -8,6 +8,7 @@ import { logError } from "../lib/error-logger.js";
 import { formatForSlack } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
 import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLong } from "../lib/slack-messaging.js";
+import { interactivePrepareStep } from "./prepare-step.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -516,6 +517,7 @@ export async function generateResponse(
     system: options.systemPrompt,
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(250),
+    prepareStep: interactivePrepareStep,
     abortSignal: abortController.signal,
   };
 
