@@ -63,7 +63,13 @@ Before building anything, **read the platform's documentation and search for exi
 - **Cron jobs**: Hono sub-apps in `src/cron/`, entry points in `api/cron/`, schedule in `vercel.json`.
 - **Caching**: Channel and user lists are cached per invocation to avoid redundant API calls.
 - **Models**: Resolve dynamically via `getMainModel()` / `getFastModel()` / `getEmbeddingModel()` (DB first, then env var, then default).
-- **System prompt**: All personality, tools, and self-awareness in `src/personality/system-prompt.ts`.
+- **System prompt**: Personality and cross-cutting behavioral rules in `src/personality/system-prompt.ts`.
+
+## Tool documentation convention
+
+- Tool `description` fields are the **primary source** of "when/how to use" guidance for the LLM.
+- The system prompt contains only **cross-cutting behavioral rules** (e.g. DM privacy, channel access), NOT per-tool documentation.
+- When adding a new tool, put all usage guidance in the tool's `description` field, not the system prompt.
 
 ## Adding Dependencies -- CRITICAL
 
