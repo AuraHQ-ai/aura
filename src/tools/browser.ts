@@ -29,8 +29,8 @@ async function extractContent(
     case "html":
       return truncate(await page.content(), 32000);
     case "accessibility": {
-      const snapshot = await page.accessibility.snapshot();
-      return truncate(JSON.stringify(snapshot, null, 2), 16000);
+      const snapshot = await page.locator("body").ariaSnapshot();
+      return truncate(snapshot, 16000);
     }
     default:
       return truncate((await page.innerText("body")).trim(), 16000);
@@ -167,6 +167,9 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
 
           // Connect to the session
           browser = await connectSession(currentSessionId);
+          if (!browser) {
+            return { ok: false, error: "Failed to connect to browser session." };
+          }
           const contexts = browser.contexts();
           const browserContext: any =
             contexts.length > 0 ? contexts[0] : await browser.newContext();
