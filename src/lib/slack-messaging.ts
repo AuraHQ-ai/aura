@@ -82,6 +82,8 @@ export async function safePostMessage(
           text,
           thread_ts,
           metadata,
+          unfurl_links,
+          unfurl_media,
         });
         return { ok: true, ts: result.ts, channel: result.channel };
       } catch (retryErr: any) {
@@ -104,6 +106,8 @@ export async function safePostMessage(
               text: text.slice(0, MSG_TRUNCATE_LIMIT),
               thread_ts,
               metadata,
+              unfurl_links,
+              unfurl_media,
             });
             return { ok: true, ts: result.ts, channel: result.channel };
           } catch (truncateErr: any) {
@@ -139,6 +143,8 @@ export async function safePostMessage(
           thread_ts,
           blocks,
           metadata,
+          unfurl_links,
+          unfurl_media,
         });
         return { ok: true, ts: result.ts, channel: result.channel };
       } catch (retryErr: any) {
@@ -149,6 +155,8 @@ export async function safePostMessage(
               text: text.slice(0, MSG_TRUNCATE_LIMIT),
               thread_ts,
               metadata,
+              unfurl_links,
+              unfurl_media,
             });
             return { ok: true, ts: result.ts, channel: result.channel };
           } catch (finalErr: any) {

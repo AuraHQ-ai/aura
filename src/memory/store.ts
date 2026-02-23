@@ -6,9 +6,9 @@ import { logger } from "../lib/logger.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
 import type { ChannelType } from "../pipeline/context.js";
 
-type DbChannelType = "dm" | "public_channel" | "private_channel";
+export type DbChannelType = "dm" | "public_channel" | "private_channel";
 
-function toDbChannelType(ct: ChannelType): DbChannelType {
+export function toDbChannelType(ct: ChannelType): DbChannelType {
   if (ct === "dm" || ct === "public_channel" || ct === "private_channel") return ct;
   return "public_channel";
 }

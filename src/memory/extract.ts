@@ -2,18 +2,11 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getFastModel } from "../lib/ai.js";
 import { embedTexts } from "../lib/embeddings.js";
-import { storeMemories } from "./store.js";
+import { storeMemories, toDbChannelType } from "./store.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
 import type { NewMemory } from "../db/schema.js";
 import type { ChannelType } from "../pipeline/context.js";
-
-type DbChannelType = "dm" | "public_channel" | "private_channel";
-
-function toDbChannelType(ct: ChannelType): DbChannelType {
-  if (ct === "dm" || ct === "public_channel" || ct === "private_channel") return ct;
-  return "public_channel";
-}
 
 // ── User ID Normalization ───────────────────────────────────────────────────
 

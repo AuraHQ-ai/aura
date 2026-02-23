@@ -174,9 +174,6 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
             const result = await postTable(
               client, context.channelId, tableBlock, message, context.threadTs,
             );
-            if (!result.ok) {
-              return { ok: false, error: "Failed to post table reply: channel type not supported." };
-            }
             logger.info("draw_table tool called (reply)", {
               channelId: context.channelId,
               threadTs: context.threadTs,
@@ -221,10 +218,6 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
           const result = await postTable(
             client, channelId, tableBlock, message, thread_ts,
           );
-
-          if (!result.ok) {
-            return { ok: false, error: `Failed to send table to ${target_user ? target_user : `#${target_channel}`}: channel type not supported.` };
-          }
 
           const targetLabel = target_user || target_channel;
           logger.info("draw_table tool called (targeted)", {
