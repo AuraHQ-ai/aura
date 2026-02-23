@@ -74,10 +74,19 @@ export async function runSubagent(config: SubagentConfig): Promise<SubagentResul
 
   const toolCalls = steps.flatMap(
     (step) =>
-      step.toolCalls?.map((tc) => ({
-        toolName: tc.toolName,
-        isError: false,
-      })) ?? [],
+      step.toolCalls?.map((tc) => {
+        const tr = step.toolResults?.find(
+          (r) => r.toolCallId === tc.toolCallId,
+        );
+        const output = tr?.output;
+        const isError =
+          (tr as any)?.isError === true ||
+          (output != null &&
+            typeof output === "object" &&
+            "ok" in (output as Record<string, unknown>) &&
+            (output as Record<string, unknown>).ok === false);
+        return { toolName: tc.toolName, isError };
+      }) ?? [],
   );
 
   const elapsedMs = Date.now() - startMs;
