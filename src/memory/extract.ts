@@ -6,6 +6,9 @@ import { storeMemories } from "./store.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
 import type { NewMemory } from "../db/schema.js";
+import type { ChannelType } from "../pipeline/context.js";
+
+type DbChannelType = "dm" | "public_channel" | "private_channel";
 
 // ── User ID Normalization ───────────────────────────────────────────────────
 
@@ -180,7 +183,7 @@ interface ExtractionContext {
   userMessage: string;
   assistantResponse: string;
   userId: string;
-  channelType: "dm" | "public_channel" | "private_channel";
+  channelType: ChannelType;
   sourceMessageId?: string;
   displayName?: string;
 }
@@ -236,7 +239,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       content: m.content,
       type: m.type,
       sourceMessageId: context.sourceMessageId || undefined,
-      sourceChannelType: context.channelType,
+      sourceChannelType: context.channelType as DbChannelType,
       relatedUserIds: m.relatedUserIds.length > 0 ? m.relatedUserIds : [context.userId],
       embedding: embeddings[i] ?? null,
       shareable: m.shareable ? 1 : 0,
