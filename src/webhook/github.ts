@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
 import { claimEvent } from "../memory/store.js";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes } from "../db/schema.js";
 
@@ -110,6 +110,7 @@ async function findRequesterByBranch(
       .select({ topic: notes.topic, content: notes.content })
       .from(notes)
       .where(eq(notes.category, "plan"))
+      .orderBy(desc(notes.updatedAt))
       .limit(50);
 
     for (const row of rows) {
@@ -237,6 +238,15 @@ ignore`;
     });
 
     if (decision.startsWith("fix_needed")) {
+      const claimed = await claimEvent(`pr-comment:${commentId}`, "github");
+      if (!claimed) {
+        logger.info("GitHub webhook: PR comment fix already dispatched, skipping", {
+          pr: prNumber,
+          commentId,
+        });
+        return;
+      }
+
       const { launchCursorAgent } = await import("../lib/cursor-agent.js");
 
       const fixPrompt = `A code review comment was left on PR #${prNumber} (branch: ${branchName}).
@@ -278,6 +288,7 @@ Please fix the issue described in this review comment. Make the minimal change n
       }
     } else if (decision.startsWith("reply|")) {
       const replyText = decision.slice("reply|".length).trim();
+      let replyPosted = false;
       if (replyText) {
         const ghToken = await getGitHubToken();
         if (ghToken) {
@@ -299,16 +310,20 @@ Please fix the issue described in this review comment. Make the minimal change n
               status: res.status,
               error: errText.slice(0, 500),
             });
+          } else {
+            replyPosted = true;
           }
         }
       }
 
-      const info = await findRequesterByBranch(branchName);
-      if (info?.requester) {
-        await dmUser(
-          info.requester,
-          `💬 Review comment on <https://github.com/${REPO}/pull/${prNumber}|PR #${prNumber}> by ${commentAuthor}:\n> ${commentBody.slice(0, 300)}\n\nI replied on the PR.`,
-        );
+      if (replyPosted) {
+        const info = await findRequesterByBranch(branchName);
+        if (info?.requester) {
+          await dmUser(
+            info.requester,
+            `💬 Review comment on <https://github.com/${REPO}/pull/${prNumber}|PR #${prNumber}> by ${commentAuthor}:\n> ${commentBody.slice(0, 300)}\n\nI replied on the PR.`,
+          );
+        }
       }
     } else {
       logger.debug("GitHub webhook: ignoring PR review comment", { pr: prNumber });
