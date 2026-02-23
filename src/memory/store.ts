@@ -8,6 +8,11 @@ import type { ChannelType } from "../pipeline/context.js";
 
 type DbChannelType = "dm" | "public_channel" | "private_channel";
 
+function toDbChannelType(ct: ChannelType): DbChannelType {
+  if (ct === "dm" || ct === "public_channel" || ct === "private_channel") return ct;
+  return "public_channel";
+}
+
 /**
  * Atomically claim an event for processing using the event_locks table.
  * Returns true if this caller claimed the event, false if it was already claimed.
@@ -43,7 +48,7 @@ export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { 
 
     const [inserted] = await db
       .insert(messages)
-      .values({ ...message, channelType: message.channelType as DbChannelType, embedding })
+      .values({ ...message, channelType: toDbChannelType(message.channelType), embedding })
       .onConflictDoNothing({ target: messages.slackTs })
       .returning({ id: messages.id });
 
@@ -278,7 +283,7 @@ export async function storeToolCallMessages(
     slackTs: `${ctx.parentTs}-tool-${i}`,
     slackThreadTs: ctx.threadTs || ctx.parentTs,
     channelId: ctx.channelId,
-    channelType: ctx.channelType as DbChannelType,
+    channelType: toDbChannelType(ctx.channelType),
     userId: ctx.userId,
     role: "tool" as const,
     content: summarizeToolCall(tc),
@@ -343,7 +348,7 @@ export async function storeChannelReadMessage(
     slackTs: `${ctx.parentTs}-chread-${ctx.toolIndex}`,
     slackThreadTs: ctx.threadTs || ctx.parentTs,
     channelId: ctx.channelId,
-    channelType: ctx.channelType as DbChannelType,
+    channelType: toDbChannelType(ctx.channelType),
     userId: ctx.userId,
     role: "tool" as const,
     content,
