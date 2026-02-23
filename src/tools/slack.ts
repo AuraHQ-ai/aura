@@ -16,6 +16,7 @@ import { createConversationSearchTools } from "./conversations.js";
 import { createEmailTools, createGmailEATools } from "./email.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
+import { createSubagentTools } from "./subagents.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -2873,5 +2874,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Conversation Search Tools (search stored messages DB) ─────────
     ...createConversationSearchTools(context),
+
+    // ── Subagent Tools (isolated context subtask delegation) ─────────
+    ...createSubagentTools(client, context),
   };
 }
