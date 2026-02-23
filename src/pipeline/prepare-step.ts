@@ -26,17 +26,20 @@ type PrepareStepFn = (options: {
  *
  * Injects a system-level nudge when the agent is approaching its step limit,
  * giving it a chance to wrap up gracefully instead of being hard-cut.
+ * The nudge is appended to the original system prompt so the agent retains
+ * all its behavioral guidelines and context.
  */
-export function createPrepareStep(opts?: {
+export function createPrepareStep(opts: {
   stepLimit?: number;
   warningThreshold?: number;
+  systemPrompt: string;
 }): PrepareStepFn {
-  const limit = opts?.stepLimit ?? STEP_LIMIT;
-  const threshold = opts?.warningThreshold ?? WARNING_THRESHOLD;
+  const limit = opts.stepLimit ?? STEP_LIMIT;
+  const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
 
   return ({ stepNumber }) => {
     if (stepNumber >= threshold) {
-      const message = WRAP_UP_MESSAGE
+      const nudge = WRAP_UP_MESSAGE
         .replace("{stepCount}", String(stepNumber))
         .replace("{limit}", String(limit));
 
@@ -45,20 +48,26 @@ export function createPrepareStep(opts?: {
         limit,
       });
 
-      return { system: message };
+      return { system: opts.systemPrompt + "\n\n" + nudge };
     }
     return undefined;
   };
 }
 
-/** Pre-built prepareStep for the interactive Slack agent (250-step limit). */
-export const interactivePrepareStep = createPrepareStep({
-  stepLimit: STEP_LIMIT,
-  warningThreshold: WARNING_THRESHOLD,
-});
+/** Factory for interactive Slack agent prepareStep (250-step limit). */
+export function createInteractivePrepareStep(systemPrompt: string): PrepareStepFn {
+  return createPrepareStep({
+    stepLimit: STEP_LIMIT,
+    warningThreshold: WARNING_THRESHOLD,
+    systemPrompt,
+  });
+}
 
-/** Pre-built prepareStep for headless job execution (350-step limit). */
-export const headlessPrepareStep = createPrepareStep({
-  stepLimit: HEADLESS_STEP_LIMIT,
-  warningThreshold: HEADLESS_WARNING_THRESHOLD,
-});
+/** Factory for headless job execution prepareStep (350-step limit). */
+export function createHeadlessPrepareStep(systemPrompt: string): PrepareStepFn {
+  return createPrepareStep({
+    stepLimit: HEADLESS_STEP_LIMIT,
+    warningThreshold: HEADLESS_WARNING_THRESHOLD,
+    systemPrompt,
+  });
+}
