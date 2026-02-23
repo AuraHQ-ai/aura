@@ -57,6 +57,8 @@ const GATEWAY_TO_ANTHROPIC: Record<string, string> = {
   "anthropic/claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
   "anthropic/claude-opus-4-6": "claude-opus-4-6",
   "anthropic/claude-sonnet-4-5-20250514": "claude-sonnet-4-5-20250929",
+  "anthropic/claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
+  "anthropic/claude-sonnet-4-6": "claude-sonnet-4-6",
 };
 
 function toDirectAnthropicId(gatewayId: string): string | null {
