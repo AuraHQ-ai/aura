@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { emailsRaw } from "../db/schema.js";
 import { getFastModel } from "./ai.js";
@@ -110,7 +110,50 @@ export async function computeThreadStates(
     breakdown: {},
   };
 
-  const allEmails = await db
+  // Phase 1: fetch lightweight metadata to identify which threads need processing
+  const metaRows = await db
+    .select({
+      gmailThreadId: emailsRaw.gmailThreadId,
+      fromEmail: emailsRaw.fromEmail,
+      fromName: emailsRaw.fromName,
+      date: emailsRaw.date,
+      direction: emailsRaw.direction,
+      threadState: emailsRaw.threadState,
+      threadStateUpdatedAt: emailsRaw.threadStateUpdatedAt,
+    })
+    .from(emailsRaw)
+    .where(eq(emailsRaw.userId, userId));
+
+  if (metaRows.length === 0) {
+    logger.info("No emails found for user", { userId });
+    return summary;
+  }
+
+  const threadMeta = new Map<string, typeof metaRows>();
+  for (const row of metaRows) {
+    const list = threadMeta.get(row.gmailThreadId) || [];
+    list.push(row);
+    threadMeta.set(row.gmailThreadId, list);
+  }
+
+  const threadIdsToProcess: string[] = [];
+  for (const [threadId, rows] of threadMeta) {
+    const maxEmailDate = Math.max(...rows.map((e) => e.date.getTime()));
+    const lastUpdated = rows[0]?.threadStateUpdatedAt?.getTime() ?? 0;
+    const hasNullState = rows.some((e) => e.threadState === null);
+
+    if (hasNullState || maxEmailDate > lastUpdated) {
+      threadIdsToProcess.push(threadId);
+    }
+  }
+
+  if (threadIdsToProcess.length === 0) {
+    logger.info("All threads already classified", { userId });
+    return summary;
+  }
+
+  // Phase 2: fetch full emails (including bodies) only for threads that need processing
+  const fullEmails = await db
     .select({
       id: emailsRaw.id,
       gmailThreadId: emailsRaw.gmailThreadId,
@@ -124,41 +167,30 @@ export async function computeThreadStates(
       threadStateUpdatedAt: emailsRaw.threadStateUpdatedAt,
     })
     .from(emailsRaw)
-    .where(eq(emailsRaw.userId, userId));
-
-  if (allEmails.length === 0) {
-    logger.info("No emails found for user", { userId });
-    return summary;
-  }
+    .where(
+      and(
+        eq(emailsRaw.userId, userId),
+        inArray(emailsRaw.gmailThreadId, threadIdsToProcess),
+      ),
+    );
 
   const threadMap = new Map<string, EmailRow[]>();
-  for (const email of allEmails) {
+  for (const email of fullEmails) {
     const list = threadMap.get(email.gmailThreadId) || [];
     list.push(email);
     threadMap.set(email.gmailThreadId, list);
   }
 
-  const threadsToProcess: [string, EmailRow[]][] = [];
-  for (const [threadId, emails] of threadMap) {
-    const maxEmailDate = Math.max(...emails.map((e) => e.date.getTime()));
-    const lastUpdated = emails[0]?.threadStateUpdatedAt?.getTime() ?? 0;
-    const hasNullState = emails.some((e) => e.threadState === null);
+  const threadsToProcess = threadIdsToProcess.map((id) => [
+    id,
+    threadMap.get(id) || [],
+  ] as [string, EmailRow[]]);
 
-    if (hasNullState || maxEmailDate > lastUpdated) {
-      threadsToProcess.push([threadId, emails]);
-    }
-  }
-
-  if (threadsToProcess.length === 0) {
-    logger.info("All threads already classified", { userId });
-    return summary;
-  }
-
-  const userName = deriveUserName(allEmails);
+  const userName = deriveUserName(fullEmails);
 
   logger.info("Computing thread states", {
     userId,
-    totalThreads: threadMap.size,
+    totalThreads: threadMeta.size,
     toProcess: threadsToProcess.length,
   });
 
@@ -175,8 +207,6 @@ export async function computeThreadStates(
         prompt,
         maxOutputTokens: 200,
       });
-
-      const emailIds = emails.map((e) => e.id);
 
       await db.execute(sql`
         UPDATE emails_raw SET
