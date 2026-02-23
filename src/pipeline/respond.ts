@@ -381,7 +381,9 @@ export async function generateResponse(
   const hasFiles = options.files && options.files.length > 0;
 
   // ── Smart routing: skip streaming when it's known to fail ──────────
-  const skipStreaming = options.isHeadless === true;
+  const skipStreaming =
+    options.isHeadless === true ||
+    options.channelType === "slack_list_item";
 
   // ── Start native Slack stream ───────────────────────────────────────
   // thread_ts is required by chat.startStream — the caller must always
