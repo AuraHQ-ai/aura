@@ -310,14 +310,24 @@ export async function syncEmails(
     }
 
     if (rows.length > 0) {
-      const insertResult = await db
-        .insert(emailsRaw)
-        .values(rows)
-        .onConflictDoNothing({
-          target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+      try {
+        const insertResult = await db
+          .insert(emailsRaw)
+          .values(rows)
+          .onConflictDoNothing({
+            target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+          });
+        result.synced += insertResult.rowCount ?? 0;
+        result.skipped += rows.length - (insertResult.rowCount ?? 0);
+      } catch (err) {
+        logger.error("Batch DB insert failed", {
+          userId,
+          batchOffset: i,
+          rowCount: rows.length,
+          error: String(err),
         });
-      result.synced += insertResult.rowCount ?? 0;
-      result.skipped += rows.length - (insertResult.rowCount ?? 0);
+        result.errors += rows.length;
+      }
     }
 
     logger.info("Email sync: batch progress", {

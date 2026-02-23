@@ -206,25 +206,41 @@ export async function computeThreadStates(
   const flushUpdates = async () => {
     if (pendingUpdates.length === 0) return;
 
-    const valueFragments = pendingUpdates.map(
+    const batch = [...pendingUpdates];
+    pendingUpdates.length = 0;
+
+    const valueFragments = batch.map(
       (u) => sql`(${u.threadId}, ${u.state}, ${u.reason})`,
     );
 
     const valuesList = sql.join(valueFragments, sql`, `);
 
-    await db.execute(sql`
-      UPDATE emails_raw AS e SET
-        thread_state = v.state,
-        thread_state_reason = v.reason,
-        thread_state_updated_at = now(),
-        updated_at = now()
-      FROM (VALUES ${valuesList})
-        AS v(thread_id, state, reason)
-      WHERE e.user_id = ${userId}
-        AND e.gmail_thread_id = v.thread_id
-    `);
-
-    pendingUpdates.length = 0;
+    try {
+      await db.execute(sql`
+        UPDATE emails_raw AS e SET
+          thread_state = v.state,
+          thread_state_reason = v.reason,
+          thread_state_updated_at = now(),
+          updated_at = now()
+        FROM (VALUES ${valuesList})
+          AS v(thread_id, state, reason)
+        WHERE e.user_id = ${userId}
+          AND e.gmail_thread_id = v.thread_id
+      `);
+    } catch (err) {
+      const errStr = String(err);
+      logger.error("Batch thread state update failed", {
+        userId,
+        count: batch.length,
+        error: errStr,
+      });
+      summary.processed -= batch.length;
+      summary.errors += batch.length;
+      summary.lastError = errStr;
+      for (const u of batch) {
+        summary.breakdown[u.state] = (summary.breakdown[u.state] || 0) - 1;
+      }
+    }
   };
 
   const processThread = async ([threadId, emails]: [string, EmailRow[]]) => {
