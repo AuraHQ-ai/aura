@@ -4,6 +4,14 @@ import { messages, memories, notes, eventLocks, type NewMessage, type NewMemory 
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
+import type { ChannelType } from "../pipeline/context.js";
+
+export type DbChannelType = "dm" | "public_channel" | "private_channel";
+
+export function toDbChannelType(ct: ChannelType): DbChannelType {
+  if (ct === "dm" || ct === "public_channel" || ct === "private_channel") return ct;
+  return "public_channel";
+}
 
 /**
  * Atomically claim an event for processing using the event_locks table.
@@ -23,7 +31,7 @@ export async function claimEvent(eventTs: string, channelId: string): Promise<bo
  * Store a raw message (user or assistant) to the messages table.
  * Generates and stores a vector embedding for semantic search.
  */
-export async function storeMessage(message: NewMessage): Promise<string> {
+export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { channelType: ChannelType }): Promise<string> {
   try {
     let embedding: number[] | null = null;
     if (message.content && message.content.trim().length > 0) {
@@ -40,7 +48,7 @@ export async function storeMessage(message: NewMessage): Promise<string> {
 
     const [inserted] = await db
       .insert(messages)
-      .values({ ...message, embedding })
+      .values({ ...message, channelType: toDbChannelType(message.channelType), embedding })
       .onConflictDoNothing({ target: messages.slackTs })
       .returning({ id: messages.id });
 
@@ -257,7 +265,7 @@ interface ToolCallStorageContext {
   parentTs: string;
   threadTs?: string;
   channelId: string;
-  channelType: "dm" | "public_channel" | "private_channel";
+  channelType: ChannelType;
   userId: string;
 }
 
@@ -275,7 +283,7 @@ export async function storeToolCallMessages(
     slackTs: `${ctx.parentTs}-tool-${i}`,
     slackThreadTs: ctx.threadTs || ctx.parentTs,
     channelId: ctx.channelId,
-    channelType: ctx.channelType,
+    channelType: toDbChannelType(ctx.channelType),
     userId: ctx.userId,
     role: "tool" as const,
     content: summarizeToolCall(tc),
@@ -340,7 +348,7 @@ export async function storeChannelReadMessage(
     slackTs: `${ctx.parentTs}-chread-${ctx.toolIndex}`,
     slackThreadTs: ctx.threadTs || ctx.parentTs,
     channelId: ctx.channelId,
-    channelType: ctx.channelType,
+    channelType: toDbChannelType(ctx.channelType),
     userId: ctx.userId,
     role: "tool" as const,
     content,

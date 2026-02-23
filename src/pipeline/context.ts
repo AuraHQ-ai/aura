@@ -43,7 +43,7 @@ export interface SlackAppMentionEvent {
 
 export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
-export type ChannelType = "dm" | "public_channel" | "private_channel";
+export type ChannelType = "dm" | "public_channel" | "private_channel" | "slack_list_item";
 
 export interface MessageContext {
   /** The text of the user's message (with @mention stripped) */
@@ -335,6 +335,7 @@ function resolveChannelType(
     const ct = (event as any).channel_type;
     if (ct === "im") return "dm";
     if (ct === "group" || ct === "mpim") return "private_channel";
+    if (ct === "slack_list_item") return "slack_list_item";
     return "public_channel";
   }
   return "public_channel";

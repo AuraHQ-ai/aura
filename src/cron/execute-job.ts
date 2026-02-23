@@ -6,6 +6,7 @@ import { jobs, notes, jobExecutions } from "../db/schema.js";
 import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
+import { safePostMessage } from "../lib/slack-messaging.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -293,7 +294,7 @@ export async function executeJob(
             users: job.requestedBy,
           });
           if (dmResult.channel?.id) {
-            await slackClient.chat.postMessage({
+            await safePostMessage(slackClient, {
               channel: dmResult.channel.id,
               text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
             });

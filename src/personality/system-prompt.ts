@@ -6,6 +6,7 @@ import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
 import { buildSkillIndex } from "../lib/skill-index.js";
 import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
+import type { ChannelType } from "../pipeline/context.js";
 
 interface SystemPromptContext {
   /** Retrieved memories relevant to this conversation */
@@ -17,7 +18,7 @@ interface SystemPromptContext {
   /** Channel name or "DM" */
   channelContext: string;
   /** Channel type */
-  channelType: "dm" | "public_channel" | "private_channel";
+  channelType: ChannelType;
   /** User's timezone (from profile or Slack) */
   userTimezone?: string;
   /** Recent thread or channel messages for context */

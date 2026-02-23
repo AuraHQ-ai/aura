@@ -1,6 +1,7 @@
 import { db } from "../db/client.js";
 import { errorEvents } from "../db/schema.js";
 import { logger } from "./logger.js";
+import { safePostMessage } from "./slack-messaging.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -152,7 +153,7 @@ async function postToSlack(params: LogErrorParams): Promise<void> {
 
   slackWindows.set(code, { lastPostTime: now, batchedCount: 0 });
   try {
-    await slack.chat.postMessage({ channel: channelId, text });
+    await safePostMessage(slack, { channel: channelId, text });
   } catch {
     logger.warn("Failed to post error to #aura-errors");
   }

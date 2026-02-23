@@ -7,6 +7,7 @@ import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { formatForSlack } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
+import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLong } from "../lib/slack-messaging.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -270,6 +271,10 @@ interface RespondOptions {
   teamId?: string;
   /** Slack user ID of the message author — required for chatStream in channels */
   recipientUserId?: string;
+  /** Channel type for smart routing (skip streaming on unsupported types) */
+  channelType?: import("./context.js").ChannelType;
+  /** Whether this is a headless/job execution (skip streaming, go straight to safePostMessage) */
+  isHeadless?: boolean;
 }
 
 export interface LLMResponse {
@@ -288,33 +293,6 @@ export interface LLMResponse {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Detect Slack's `channel_type_not_supported` error, which is thrown when
- * an API method (e.g. `chat.startStream`, `chat.postMessage`) is called on
- * a channel type that doesn't support it (e.g. Slack List internal channels).
- */
-export function isChannelTypeNotSupported(error: any): boolean {
-  const msg = error?.message || "";
-  const code = error?.data?.error || "";
-  return (
-    msg.includes("channel_type_not_supported") ||
-    code === "channel_type_not_supported"
-  );
-}
-
-function isInvalidBlocks(error: any): boolean {
-  const msg = error?.message || "";
-  const code = error?.data?.error || "";
-  return msg.includes("invalid_blocks") || code === "invalid_blocks";
-}
-
-function isMsgTooLong(error: any): boolean {
-  const msg = error?.message || "";
-  const code = error?.data?.error || "";
-  return msg.includes("msg_too_long") || code === "msg_too_long";
-}
-
 
 function isUnsupportedFileError(error: any): boolean {
   const msg = error?.message || error?.toString() || "";
@@ -399,6 +377,11 @@ export async function generateResponse(
   const model = await getMainModel();
   const hasFiles = options.files && options.files.length > 0;
 
+  // ── Smart routing: skip streaming when it's known to fail ──────────
+  const skipStreaming =
+    options.isHeadless === true ||
+    options.channelType === "slack_list_item";
+
   // ── Start native Slack stream ───────────────────────────────────────
   // thread_ts is required by chat.startStream — the caller must always
   // provide it (even for DMs, use the user's message ts).
@@ -416,13 +399,16 @@ export async function generateResponse(
   if (options.teamId) streamParams.recipient_team_id = options.teamId;
   if (options.recipientUserId) streamParams.recipient_user_id = options.recipientUserId;
 
-  let streamer = slackClient.chatStream(streamParams as any);
+  let streamer: any = null;
+  if (!skipStreaming) {
+    streamer = slackClient.chatStream(streamParams as any);
+  }
 
   // ── Streaming fallback ──────────────────────────────────────────────
   // Some channel types (e.g. Slack List internal channels) don't support
   // chat.startStream. When we detect this, we flip to buffer-only mode
   // and post the final result via chat.postMessage.
-  let streamingFailed = false;
+  let streamingFailed = skipStreaming;
 
   async function tryStreamAppend(payload: any): Promise<void> {
     if (streamingFailed) return;
@@ -811,9 +797,11 @@ export async function generateResponse(
 
     if (streamingFailed) {
       // Stop the current streamer to avoid leaving an orphaned stream on Slack
-      try { await streamer.stop(); } catch { /* stream may already be broken */ }
+      if (streamer) {
+        try { await streamer.stop(); } catch { /* stream may already be broken */ }
+      }
 
-      // Fallback: post the unsent portion via chat.postMessage.
+      // Fallback: post the unsent portion via safePostMessage.
       // If a continuation split partially succeeded, only post text that
       // wasn't already streamed (fallbackStartIdx marks the boundary).
       const unsentText = fallbackStartIdx > 0
@@ -847,56 +835,27 @@ export async function generateResponse(
       const toolMeta = buildToolMetadata(toolCallRecords);
       const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
 
-      try {
-        await slackClient.chat.postMessage({
-          channel: channelId,
-          text: fallbackText,
-          thread_ts: threadTs,
-          blocks,
-          ...(toolMeta && { metadata: toolMeta }),
-        });
-      } catch (postErr: any) {
-        if (isChannelTypeNotSupported(postErr)) {
-          if (toolCallRecords.length > 0) {
-            logger.info("Fallback postMessage not supported for this channel type — response already delivered via tool calls", {
-              channelId,
-              slackError: postErr?.data?.error,
-              toolCallCount: toolCallRecords.length,
-            });
-          } else {
-            logger.warn("Fallback postMessage not supported and no tool calls were made — response lost", {
-              channelId,
-              slackError: postErr?.data?.error,
-            });
-          }
-        } else if (isInvalidBlocks(postErr)) {
-          logger.warn("Fallback postMessage rejected blocks, retrying as plain text", {
-            channelId,
-            slackError: postErr?.data?.error,
-            blockTypes: blocks.map((b: any) => b.type),
-          });
-          logError({
-            errorName: "FallbackInvalidBlocks",
-            errorMessage: postErr?.message || "invalid_blocks on fallback postMessage",
-            errorCode: postErr?.data?.error || "invalid_blocks",
-            channelId,
-            context: { blockTypes: blocks.map((b: any) => b.type) },
-          });
-          await slackClient.chat.postMessage({
-            channel: channelId,
-            text: fallbackText,
-            thread_ts: threadTs,
-          });
-        } else {
-          throw postErr;
-        }
-      }
-
-      logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
-        rawLength: finalText.length,
-        channelId,
-        usage: { inputTokens, outputTokens, totalTokens },
+      const fallbackResult = await safePostMessage(slackClient, {
+        channel: channelId,
+        text: fallbackText,
+        thread_ts: threadTs,
+        blocks,
+        ...(toolMeta && { metadata: toolMeta }),
       });
+
+      if (!fallbackResult.ok) {
+        logger.warn("LLM response lost — channel does not support posting", {
+          channelId,
+          rawLength: finalText.length,
+          usage: { inputTokens, outputTokens, totalTokens },
+        });
+      } else {
+        logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
+          rawLength: finalText.length,
+          channelId,
+          usage: { inputTokens, outputTokens, totalTokens },
+        });
+      }
     } else {
       // Happy path: finalize the stream on Slack's side.
       // Attach tool I/O metadata (invisible to users) for follow-up context,
@@ -1025,10 +984,10 @@ export async function generateResponse(
         const retryOutputTokens = retryUsage.outputTokens ?? 0;
 
         if (!streamingFailed) {
-          try { await streamer.stop(); } catch { /* already closed */ }
+          try { if (streamer) await streamer.stop(); } catch { /* already closed */ }
         } else {
           const fallbackText = retryText || "_I processed your request but had nothing to say._";
-          await slackClient.chat.postMessage({
+          await safePostMessage(slackClient, {
             channel: channelId,
             text: fallbackText,
             thread_ts: threadTs,
@@ -1071,7 +1030,7 @@ export async function generateResponse(
     });
 
     // If streaming was never established, don't try to stop it
-    if (!streamingFailed) {
+    if (!streamingFailed && streamer) {
       try {
         const errorText = accumulatedText
           ? "\n\n_...interrupted. Something went wrong._"

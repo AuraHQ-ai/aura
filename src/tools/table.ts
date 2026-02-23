@@ -55,6 +55,9 @@ async function postTable(
   message?: string,
   threadTs?: string,
 ) {
+  // Use chat.postMessage directly (not safePostMessage) because for tables
+  // the block IS the content — stripping blocks on error would silently
+  // discard the table data and mislead the caller into thinking it succeeded.
   return client.chat.postMessage({
     channel: channelId,
     text: formatForSlack(message || "Here's a table:"),

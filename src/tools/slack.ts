@@ -18,6 +18,7 @@ import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
+import { safePostMessage } from "../lib/slack-messaging.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { downloadSlackFile, MAX_FILE_SIZE } from "../lib/files.js";
 
@@ -967,10 +968,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          const result = await client.chat.postMessage({
+          const result = await safePostMessage(client, {
             channel: channel.id,
             text: formatForSlack(message),
           });
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to send message to #${channel.name}: channel type not supported.`,
+            };
+          }
 
           logger.info("send_channel_message tool called", {
             channel: channel.name,
@@ -1289,13 +1297,20 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          const result = await client.chat.postMessage({
+          const result = await safePostMessage(client, {
             channel: dmChannelId,
             text: formatForSlack(message),
           });
 
           const isGroup = users.length > 1;
           const userNames = users.map((u) => u.name).join(", ");
+
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to send DM to ${userNames}: channel type not supported.`,
+            };
+          }
 
           logger.info("send_direct_message tool called", {
             users: userNames,
@@ -2473,11 +2488,17 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          const result = await client.chat.postMessage({
+          const result = await safePostMessage(client, {
             channel: channel.id,
             text: formatForSlack(message),
             thread_ts,
           });
+          if (!result.ok) {
+            return {
+              ok: false,
+              error: `Failed to send thread reply in #${channel.name}: channel type not supported.`,
+            };
+          }
           logger.info("send_thread_reply tool called", {
             channel: channel.name,
             thread_ts,
