@@ -175,13 +175,12 @@ export function createBrowserTools(context?: ScheduleContext) {
             }
           }
 
-          try {
-            await browser.close();
-          } catch {
-            // best-effort
-          }
-
           if (!keep_alive) {
+            try {
+              await browser.close();
+            } catch {
+              // best-effort
+            }
             releaseSession(sessionId).catch(() => {});
           }
 
