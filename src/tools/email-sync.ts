@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -171,14 +171,37 @@ export function createEmailSyncTools(
 
           const userId = user.id;
 
+          // Get one representative state per thread (preferring non-null states)
           const stateStats = await db
             .select({
-              threadState: emailsRaw.threadState,
-              count: sql<number>`count(DISTINCT ${emailsRaw.gmailThreadId})::int`,
+              threadState: sql<string | null>`COALESCE(
+                MIN(CASE WHEN ${emailsRaw.threadState} IS NOT NULL THEN ${emailsRaw.threadState} END),
+                NULL
+              )`,
+              count: sql<number>`1::int`,
             })
             .from(emailsRaw)
             .where(eq(emailsRaw.userId, userId))
-            .groupBy(emailsRaw.threadState);
+            .groupBy(emailsRaw.gmailThreadId)
+            .then((threadStates) => {
+              // Now group by the representative state and count
+              const stateCounts: { threadState: string | null; count: number }[] = [];
+              const stateMap = new Map<string, number>();
+
+              for (const { threadState } of threadStates) {
+                const key = threadState || "unclassified";
+                stateMap.set(key, (stateMap.get(key) || 0) + 1);
+              }
+
+              for (const [threadState, count] of stateMap.entries()) {
+                stateCounts.push({
+                  threadState: threadState === "unclassified" ? null : threadState,
+                  count
+                });
+              }
+
+              return stateCounts;
+            });
 
           const statsMap: Record<string, number> = {};
           for (const s of stateStats) {
@@ -232,10 +255,35 @@ export function createEmailSyncTools(
               });
             } else {
               existing.count++;
+              // Keep the email with the best state (non-null over null)
+              if (!existing.latest.threadState && email.threadState) {
+                existing.latest = email;
+              }
             }
           }
 
-          const threads = [...threadMap.values()].map(({ latest: t, count }) => ({
+          // Get actual message counts per thread
+          const threadIds = [...threadMap.keys()];
+          const threadCounts = await db
+            .select({
+              gmailThreadId: emailsRaw.gmailThreadId,
+              messageCount: sql<number>`count(*)::int`,
+            })
+            .from(emailsRaw)
+            .where(
+              and(
+                eq(emailsRaw.userId, userId),
+                inArray(emailsRaw.gmailThreadId, threadIds)
+              )
+            )
+            .groupBy(emailsRaw.gmailThreadId);
+
+          const threadCountMap = new Map<string, number>();
+          for (const tc of threadCounts) {
+            threadCountMap.set(tc.gmailThreadId, tc.messageCount);
+          }
+
+          const threads = [...threadMap.values()].map(({ latest: t }) => ({
             subject: t.subject || "(no subject)",
             from: t.fromName
               ? `${t.fromName} <${t.fromEmail}>`
@@ -243,7 +291,7 @@ export function createEmailSyncTools(
             thread_state: t.threadState || "unclassified",
             thread_state_reason: t.threadStateReason || "",
             direction: t.direction,
-            message_count: count,
+            message_count: threadCountMap.get(t.gmailThreadId) || 1,
             last_message: t.date
               ? formatDistanceToNow(t.date, { addSuffix: true })
               : "unknown",
