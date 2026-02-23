@@ -43,7 +43,7 @@ export interface SlackAppMentionEvent {
 
 export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
-export type ChannelType = "dm" | "public_channel" | "private_channel";
+export type ChannelType = "dm" | "public_channel" | "private_channel" | "slack_list_item";
 
 export interface MessageContext {
   /** The text of the user's message (with @mention stripped) */
