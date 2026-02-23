@@ -55,6 +55,6 @@ Prefer **fewer, better primitives** over specialized one-shot tools. If the use 
 5. **If using an external SDK (e2b, tavily, etc.): use dynamic `import()` NEVER static `import`** -- static imports of ESM-only packages crash the entire Vercel function
 6. **If the tool needs an API key, check it exists** and return a graceful error if missing (don't crash)
 7. Spread into `createSlackTools` in `src/tools/slack.ts`
-8. Add to the tools list in `src/personality/system-prompt.ts`
-9. Add usage guidance in the system prompt
+8. **Put ALL usage guidance in the tool's `description` field** -- the description is the primary source of "when/how to use" for the LLM. Don't add per-tool docs to the system prompt.
+9. If the tool introduces a cross-cutting behavioral rule (e.g. privacy, access control), add that rule to the system prompt's "Tools — cross-cutting behavioral rules" section.
 10. Document any new Slack scopes or env vars needed in README

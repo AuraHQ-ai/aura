@@ -18,9 +18,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
     dispatch_cursor_agent: tool({
       description:
         "Dispatch an async Cursor Cloud Agent to work on a code task in the Aura repo. " +
-        "Use for complex multi-file fixes that would take >5 minutes in the sandbox. " +
-        "The agent runs in the background (3-30 min) and results arrive via webhook DM. " +
-        "Returns immediately with the agent ID. Admin-only.",
+        "Use for complex multi-file changes that would take >5 minutes in the sandbox (refactors, new features, multi-step bug fixes). " +
+        "Do NOT use for simple one-line fixes or tasks that run_command handles in <2 minutes. " +
+        "The agent runs in the background (3-30 min), creates a branch, makes changes, opens a PR, and results arrive via webhook DM. " +
+        "Returns immediately with the agent ID — don't wait for it or poll in a loop. Save the agent ID in your reply so you can reference it later. Admin-only.",
       inputSchema: z.object({
         issue_description: z
           .string()
@@ -189,7 +190,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
     check_cursor_agent: tool({
       description:
         "Check the status of a previously dispatched Cursor Cloud Agent. " +
-        "Returns the current status, PR URL (if finished), and summary.",
+        "Returns the current status, PR URL (if finished), and summary. Use when someone asks for a status update on a dispatched agent.",
       inputSchema: z.object({
         agent_id: z
           .string()

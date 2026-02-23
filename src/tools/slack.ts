@@ -505,7 +505,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
   return {
     list_channels: tool({
       description:
-        "List Slack channels that Aura is currently a member of. Important: this only shows channels Aura has already joined, NOT all public channels in the workspace. To join a channel not shown here, use join_channel with the exact channel name or ID.",
+        "List Slack channels that Aura is currently a member of (names, topics, member count). Important: this only shows channels Aura has already joined, NOT all public channels in the workspace. Many public channels exist that aren't listed here. To find or join others, use search_channels to fuzzy-search by name, or join_channel with the exact channel name.",
       inputSchema: z.object({
         limit: z
           .number()
@@ -569,7 +569,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     get_channel_info: tool({
       description:
-        "Get detailed information about a Slack channel by name or ID. Returns the channel name, topic, purpose, privacy status, and member count. Works for any channel — not just ones Aura has joined. Use this to resolve a channel ID (like C0BNVKS77) to its human-readable name.",
+        "Get detailed information about a Slack channel by name or ID. Returns the channel name, topic, purpose, privacy status, and member count. Works for any channel — not just ones Aura has joined. Use this to resolve a channel ID (like C0BNVKS77) to its human-readable name — never guess channel names or return raw IDs to users.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -619,7 +619,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     search_channels: tool({
       description:
-        "Search for Slack channels by partial name match. Returns matching channels from both joined and public channels. Useful when you don't know the exact channel name.",
+        "Fuzzy-search for Slack channels by partial name match. Returns matching channels from both joined and all public channels. Useful when you don't know the exact channel name — searches more broadly than list_channels.",
       inputSchema: z.object({
         query: z
           .string()
@@ -699,7 +699,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     join_channel: tool({
       description:
-        "Join a public Slack channel by name or ID. Aura must join a channel before she can read its history or post messages there. Only works for public channels. This tool can find and join channels that don't appear in list_channels results, since list_channels only shows channels Aura is already in.",
+        "Join a public Slack channel by name or ID. Aura must join a channel before she can read its history or post messages there. Only works for public channels — for private channels, someone must /invite @Aura. This tool can find and join channels that don't appear in list_channels results, since list_channels only shows channels Aura has already joined. If a channel doesn't appear in list_channels, that does NOT mean it's private or doesn't exist — try join_channel first.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -757,7 +757,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     read_channel_history: tool({
       description:
-        "Read recent messages from a Slack channel. Aura must be a member of the channel. Use join_channel first if needed.",
+        "Read recent messages from a Slack channel. Includes reactions on each message. Aura must be a member of the channel — use join_channel first if needed. Use this instead of web_search for finding workspace content.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -846,7 +846,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     read_thread_replies: tool({
       description:
-        "Read replies from a specific thread in a channel. Works for regular channel threads and Slack List item comment threads. Aura must be a member of the channel (except for list channels like C088REN54FM where posting access is implicit).",
+        "Read replies from a specific thread in a channel. Works for regular channel threads and Slack List item comment threads. Use this to check what's been discussed in a thread before posting — especially for bug list item threads, to prevent duplicate comments and reference what's already been said. Aura must be a member of the channel.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -944,7 +944,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     send_channel_message: tool({
       description:
-        "Send a message to a Slack channel. Aura must be a member of the channel. Use join_channel first if needed.",
+        "Send a message to a Slack channel. Aura must be a member of the channel — use join_channel first if needed. Write as yourself — same personality, same tone. Don't suddenly become formal just because you're posting somewhere new.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -1172,7 +1172,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     search_messages: tool({
       description:
-        "Search for messages across the entire Slack workspace. Supports Slack's search syntax: use 'in:#channel' to filter by channel, 'from:@user' to filter by sender. Requires SLACK_USER_TOKEN to be configured.",
+        "Search for messages across the entire Slack workspace using Slack's search index. Supports Slack search syntax: 'in:#channel' to filter by channel, 'from:@user' to filter by sender. For DM threads and conversations Aura has been part of, prefer search_my_conversations instead — it searches Aura's stored database which has better coverage of her own conversations. Requires SLACK_USER_TOKEN.",
       inputSchema: z.object({
         query: z
           .string()
@@ -1240,7 +1240,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     send_direct_message: tool({
       description:
-        "Send a direct message to one user or a group of users. Pass a single name for a 1:1 DM, or an array of names to open/find a group DM (MPIM). Opens the conversation if it doesn't exist.",
+        "Send a direct message to one user or a group of users. Pass a single name for a 1:1 DM, or an array of names to open/find a group DM (MPIM). Opens the conversation if it doesn't exist. Write as yourself — same tone as in channels.",
       inputSchema: z.object({
         user_name: z
           .union([z.string(), z.array(z.string()).min(1)])
@@ -1327,7 +1327,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     read_dm_history: tool({
       description:
-        "Read messages from a direct message conversation with a specific user. Supports optional time-window filtering via oldest_ts/latest_ts (Unix epoch seconds) so you can fetch only messages within a specific period (e.g. a single CET day). Use this to check past DM conversations, follow up on earlier messages, or compute per-user message counts for a time range.",
+        "Read messages from a direct message conversation with a specific user. Supports optional time-window filtering via oldest_ts/latest_ts (Unix epoch seconds) so you can fetch only messages within a specific period (e.g. a single CET day). Use this to check past DM conversations, follow up on outreach, check if someone replied, or recall what was discussed. DM history is private — never share contents with non-participants unless explicitly asked by a founder or the person involved. Returns has_more and next_cursor for pagination.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -1517,7 +1517,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     list_dm_conversations: tool({
       description:
-        "List DM conversations Aura has had. Returns the list of users Aura has open DM channels with. Supports cursor pagination — pass the returned next_cursor to fetch subsequent pages and enumerate ALL DM channels. Admin-only.",
+        "List DM conversations Aura has had. Returns the list of users Aura has open DM channels with. Supports cursor pagination — pass the returned next_cursor in follow-up calls to paginate through ALL DM channels. Admin-only.",
       inputSchema: z.object({
         limit: z
           .number()
@@ -1618,7 +1618,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     list_slack_list_items: tool({
       description:
-        "Retrieve items (rows) from a Slack List. Use this to read bug trackers, project lists, task lists, or any Slack List. Requires the list ID.",
+        "Retrieve items (rows) from a Slack List. Use this to read bug trackers, project lists, task lists, or any Slack List. Each item includes thread_channel_id and thread_ts — use these with send_thread_reply to comment on a List item's thread. Use read_thread_replies to check a thread before posting to prevent duplicate comments.",
       inputSchema: z.object({
         list_id: z
           .string()
@@ -1693,7 +1693,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     get_slack_list_item: tool({
       description:
-        "Get details about a specific item (row) in a Slack List by its record ID. Returns all fields/columns for that item.",
+        "Get details about a specific item (row) in a Slack List by its record ID. Returns all fields/columns for that item, plus thread_channel_id and thread_ts for commenting. ALWAYS call this before update_slack_list_item to discover the exact column IDs and value formats, then pass values in the same format.",
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         item_id: z
@@ -1765,7 +1765,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     read_canvas: tool({
       description:
-        "Read the content of a Slack Canvas. Returns the title and readable markdown content.",
+        "Read the content of a Slack Canvas by its canvas/file ID. Returns the title and readable markdown content, plus section IDs for use with edit_canvas.",
       inputSchema: z.object({
         canvas_id: z.string().describe("The ID of the Canvas to read"),
       }),
@@ -2204,7 +2204,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     upload_file: tool({
       description:
-        "Upload a file to Slack. Can share it to a channel or thread. Supports text files (CSV, JSON, code, etc.) and binary files (images, PDFs) via base64 encoding.",
+        "Upload a file to Slack, optionally sharing to a channel or thread. Supports text files (CSV, JSON, code, etc.) directly and binary files (images, PDFs) via base64 encoding (set is_binary=true).",
       inputSchema: z.object({
         content: z
           .string()
@@ -2308,7 +2308,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     download_slack_file: tool({
       description:
-        "Download a file from Slack by its file ID. Returns the file content as base64-encoded string along with metadata (filename, mimetype, size). Use this to inspect files shared in messages. Max 20MB.",
+        "Download a file from Slack by its file ID (e.g. F0ABC123). Returns base64-encoded content plus metadata (filename, mimetype, size). Use when you need to inspect or process a file someone shared in a message. 20MB limit.",
       inputSchema: z.object({
         file_id: z
           .string()
@@ -2387,7 +2387,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     edit_message: tool({
       description:
-        "Edit one of Aura's own messages. Bots can only edit their own messages.",
+        "Edit one of Aura's own messages. Can only edit messages Aura posted — not other people's. Use to fix typos, update a posted summary, or correct information.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2424,7 +2424,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     delete_message: tool({
       description:
-        "Delete one of Aura's own messages. Bots can only delete their own messages.",
+        "Delete one of Aura's own messages. Can only delete messages Aura posted — not other people's. Use to clean up test posts or mistakes.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2456,7 +2456,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     send_thread_reply: tool({
       description:
-        "Reply in a specific thread in a channel. Use this instead of send_channel_message when you want to respond in a thread. Also used to comment on Slack List items — each List item has an associated channel_id and ts, so pass those here.",
+        "Reply in a specific thread in a channel. Use this instead of send_channel_message when responding in an existing thread — avoids cluttering the main channel. Also used to comment on Slack List items: each List item has an associated channel_id and ts (from get_slack_list_item), so pass those here to post in the item's comment thread.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2503,7 +2503,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     add_reaction: tool({
       description:
-        "Add an emoji reaction to a message. Use this to acknowledge, vote, triage, or signal without a full text reply.",
+        "Add an emoji reaction to a message. Use when acknowledgment doesn't need a full text reply — a :eyes: or :white_check_mark: is often the right response. Also useful for voting, triage, or signaling status.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2546,7 +2546,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     }),
 
     remove_reaction: tool({
-      description: "Remove an emoji reaction from a message.",
+      description: "Remove an emoji reaction Aura previously added to a message.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2587,7 +2587,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Channel Management Tools ────────────────────────────────────────────
 
     create_channel: tool({
-      description: "Create a new Slack channel.",
+      description: "Create a new public or private Slack channel. Use when someone asks to set up a project channel or organize a conversation space.",
       inputSchema: z.object({
         channel_name: z
           .string()
@@ -2635,7 +2635,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     set_channel_topic: tool({
       description:
-        "Set or update a channel's topic. Aura must be a member of the channel.",
+        "Set or update a channel's topic text. Aura must be a member of the channel.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2666,7 +2666,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     invite_to_channel: tool({
       description:
-        "Invite a user to a channel. Aura must be a member of the channel.",
+        "Invite a user to a channel. Aura must be a member of the channel. Use when someone asks to pull someone into a conversation.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2715,7 +2715,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     }),
 
     leave_channel: tool({
-      description: "Leave a channel Aura is currently a member of.",
+      description: "Leave a channel Aura is currently a member of. Use when you no longer need to monitor a channel.",
       inputSchema: z.object({
         channel: z
           .string()
@@ -2746,7 +2746,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     set_my_status: tool({
       description:
-        "Set Aura's own Slack status. Use this to signal what you're doing (e.g. 'Running morning digest', 'Monitoring #bugs').",
+        "Set Aura's own Slack status (text + emoji, optional auto-expire). Use during long-running background work to signal what you're doing (e.g. ':mag: Running morning digest'). Always set expiration_minutes so the status auto-clears when done.",
       inputSchema: z.object({
         status_text: z
           .string()

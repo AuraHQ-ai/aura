@@ -108,7 +108,7 @@ export function createWebTools() {
   return {
     web_search: tool({
       description:
-        "Search the web for current information. Use this when someone asks about external topics, current events, documentation, or anything outside the Slack workspace. Requires TAVILY_API_KEY to be configured.",
+        "Search the web for current information, documentation, news, or anything outside the Slack workspace. Don't search the web for things you can find in the workspace — use search_messages or read_channel_history instead. Requires TAVILY_API_KEY.",
       inputSchema: z.object({
         query: z
           .string()
@@ -169,7 +169,7 @@ export function createWebTools() {
 
     read_url: tool({
       description:
-        "Fetch a URL and extract its readable text content. Use this when someone pastes a link and wants you to read it, or to check if a site is up. If TAVILY_API_KEY is configured, uses Tavily extract for cleaner results; otherwise falls back to basic HTML stripping.",
+        "Fetch a URL and extract its readable text content. Use when someone pastes a link and asks 'what does this say?' or 'can you read this?', or to check if a site is up. For simple text extraction, prefer this over browse. If TAVILY_API_KEY is configured, uses Tavily extract for cleaner results; otherwise falls back to basic HTML stripping.",
       inputSchema: z.object({
         url: z
           .string()

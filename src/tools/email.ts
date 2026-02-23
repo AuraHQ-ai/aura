@@ -12,7 +12,7 @@ export function createEmailTools() {
   return {
     send_email: tool({
       description:
-        "Send an email from aura@realadvisor.com. Use for external communication, follow-ups, outreach, and reports. Supports optional file attachments (base64-encoded).",
+        "Send an email from aura@realadvisor.com. Use for external communication, follow-ups, outreach, and reports. Never send emails without being asked or having a clear reason (job, follow-up, etc.). Body is sent as plain text — keep it professional but conversational, same tone as Slack. DM privacy applies: don't email someone's private Slack DM content to others. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
         to: z.string().describe("Recipient email address"),
         subject: z.string().describe("Email subject line"),
@@ -101,7 +101,7 @@ export function createEmailTools() {
 
     read_emails: tool({
       description:
-        "Read recent emails from Aura's inbox. Can filter by unread status or search query. Supports pagination via page_token.",
+        "Read recent emails from Aura's inbox. Can filter by unread status or search query. Supports pagination: pass page_token from a previous response's next_page_token to fetch the next page.",
       inputSchema: z.object({
         query: z
           .string()
@@ -222,7 +222,7 @@ export function createEmailTools() {
     }),
 
     reply_to_email: tool({
-      description: "Reply to an existing email thread.",
+      description: "Reply to an existing email thread. Requires message_id and thread_id from read_emails or read_email.",
       inputSchema: z.object({
         message_id: z
           .string()
@@ -981,7 +981,7 @@ export function createGmailEATools() {
 
     generate_gmail_auth_url: tool({
       description:
-        "Generate a Google OAuth consent URL for a user to connect their Gmail account. DM the resulting URL to the user so they can click it and authorize Aura to read their inbox and create drafts.",
+        "Generate a Google OAuth consent URL for a user to connect their Gmail account to Aura. DM the resulting URL to the user — they click it, authorize in Google, and their Gmail is connected for reading and drafting.",
       inputSchema: z.object({
         user_name: z
           .string()
