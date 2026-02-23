@@ -8,6 +8,7 @@ import { publishHomeTab, ACTION_TO_SETTING, CREDENTIAL_ACTIONS, isAdmin, openCre
 import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
+import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "./db/client.js";
@@ -627,7 +628,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       if (dmChannelId) {
         const useThreadTs =
           channelId === dmChannelId && threadTs ? threadTs : undefined;
-        await slackClient.chat.postMessage({
+        await safePostMessage(slackClient, {
           channel: dmChannelId,
           thread_ts: useThreadTs,
           text: message,
@@ -644,7 +645,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         channelId !== "unknown" &&
         channelId !== dmChannelId
       ) {
-        await slackClient.chat.postMessage({
+        await safePostMessage(slackClient, {
           channel: channelId,
           thread_ts: threadTs || undefined,
           text: message,
