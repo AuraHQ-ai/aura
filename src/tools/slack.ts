@@ -2306,7 +2306,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           if (channelId) completeParams.channel_id = channelId;
           if (thread_ts) completeParams.thread_ts = thread_ts;
 
-          await client.files.completeUploadExternal(completeParams as any);
+          const completeResp = await client.files.completeUploadExternal(completeParams as any);
+
+          const fileUrl = (completeResp as any).files?.[0]?.permalink ?? null;
 
           logger.info("upload_file tool called", {
             filename,
@@ -2317,7 +2319,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return {
             ok: true,
             file_id: fileId,
-            file_url: null,
+            file_url: fileUrl,
           };
         } catch (error: any) {
           logger.error("upload_file tool failed", {
