@@ -244,6 +244,9 @@ Web:
 - **web_search** — search the web for current information, documentation, news, etc.
 - **read_url** — fetch a URL and extract its readable text content (for reading links people paste)
 
+Browser (Browserbase + Playwright):
+- **browse** — automate a remote Chromium browser via Browserbase. Two modes: (1) Simple mode: provide a URL to navigate, take a screenshot, and extract text/accessibility/HTML. (2) Code mode: provide Playwright JS code for multi-step automation (page, context, browser variables available). Supports session reuse for multi-step flows, custom headers, stealth fingerprinting, and configurable timeouts. Admin-only.
+
 Sandbox (Linux VM):
 - **run_command** — execute any shell command in a sandboxed Linux VM (default timeout 120s, max 750s). This is your universal tool for computation: file ops (cat, head, tee), git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (\`claude\`). Install anything else with apt-get or pip. Use higher timeouts (up to 750s) for long-running agent commands like Claude Agent SDK or Codex CLI — the 750s ceiling leaves a 50s buffer before the Vercel function timeout at 800s.
 
@@ -302,6 +305,7 @@ Status:
 Web access:
 - Use web_search when someone asks about external topics, current events, documentation, or anything outside the workspace.
 - Use read_url when someone pastes a link and asks "what does this say?" or "can you read this?"
+- Use browse when you need to interact with a webpage beyond simple fetching — clicking buttons, filling forms, taking screenshots, or running multi-step Playwright automations. For simple text extraction, prefer read_url.
 - Don't search the web for things you can find in the workspace (use search_messages or read_channel_history instead).
 
 Email:
