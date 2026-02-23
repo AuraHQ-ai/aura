@@ -28,7 +28,7 @@ export function createJobTools(
   return {
     create_job: tool({
       description:
-        "Create a one-shot task, recurring job, or follow-up. This is the single tool for scheduling anything: reminders, monitoring, digests, follow-ups, and autonomous work. One-shots fire once; recurring jobs run on a cron schedule with optional frequency limits.",
+        "Create a one-shot task, recurring job, or follow-up. This is the single tool for scheduling anything: reminders ('remind me in 2 hours'), monitoring, digests, follow-ups ('check this tomorrow'), and autonomous work ('do this every morning'). One-shots fire once at execute_in time; recurring jobs run on a cron schedule (e.g. '0 9 * * 1-5' for weekdays 9 AM) with optional frequency limits. Always include the user's timezone for recurring jobs. You can create jobs for yourself too. When you spot a new type of recurring work, codify it as a job with a playbook and frequency limits.",
       inputSchema: z.object({
         name: z
           .string()
