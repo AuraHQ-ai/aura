@@ -5,6 +5,7 @@ A Slack bot with persistent memory, personality, cross-user awareness, and auton
 ## What it does
 
 - **Responds** in Slack DMs and channels (when @mentioned or addressed by name)
+- **Passively** listens to channels and decides whether to participate
 - **Remembers** everything -- facts, decisions, personal details, relationships, sentiments
 - **Recalls** relevant context via semantic search across all past conversations
 - **Adapts** its tone to each person's communication style
