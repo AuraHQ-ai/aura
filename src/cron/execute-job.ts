@@ -7,6 +7,7 @@ import { getMainModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
+import { createHeadlessPrepareStep, HEADLESS_STEP_LIMIT } from "../pipeline/prepare-step.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -160,7 +161,8 @@ export async function executeJob(
         channelId: job.channelId || undefined,
         threadTs: job.threadTs || undefined,
       }),
-      stopWhen: stepCountIs(350),
+      stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
+      prepareStep: createHeadlessPrepareStep(systemPrompt),
     });
 
     const { text, steps, totalUsage: usage } = generateResult;
