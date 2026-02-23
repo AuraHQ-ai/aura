@@ -4,6 +4,7 @@ import { getFastModel } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
 import { resolveChannelById } from "../tools/slack.js";
+import { getSettingJSON } from "../lib/settings.js";
 
 // ── Slack Event Types ────────────────────────────────────────────────────────
 // Minimal local types — replaces the @slack/bolt dependency that was only used
@@ -152,17 +153,23 @@ export interface ShouldRespondResult {
   reason: string;
 }
 
+// ── Channel-level override ───────────────────────────────────────────────────
+// Channels in this list always process new messages without LLM gating (Tier 4
+// is bypassed). Managed via DB setting "always_process_channels" (comma-separated
+// channel IDs). Change at runtime — no redeploy needed.
+
+
 /**
- * Determine if Aura should respond to this message (Tiers 2–3 only).
+ * Determine if Aura should respond to this message (Tiers 2–4).
  *
  * Tier 1 (DMs, explicit @mention, addressed by name) is handled inline
  * by the pipeline before this function is called — see `runPipeline` in
  * `index.ts`. This function is only invoked when Tier 1 did NOT match.
  *
  * Tiers handled here:
- * 2. LLM gate: Aura is a thread participant or it's her thread
- * 3. LLM gate: Aura posted recently in the channel (non-threaded, within 1h)
- * 4. Default: don't respond
+ * 2. LLM gate: Aura is a thread participant or it's her thread (fail-open)
+ * 3. LLM gate: Aura posted recently in the channel (fail-closed)
+ * 4. Cold observation: Aura monitors but hasn't been active (fail-closed, high bar)
  */
 export async function shouldRespond(
   context: MessageContext,
@@ -186,8 +193,20 @@ export async function shouldRespond(
     };
   }
 
-  // Default: don't respond
-  return { respond: false, reason: "no_trigger" };
+  // Channel-level override: always process messages in designated channels
+  const channelList = await getSettingJSON<string[]>("always_process_channels", []);
+  const alwaysProcess = new Set(channelList ?? []);
+  if (alwaysProcess.has(context.channelId)) {
+    return { respond: true, reason: "always_process_channel" };
+  }
+
+  // Tier 4: Cold observation — Aura is in the channel but hasn't been active.
+  // Use a conservative LLM gate (fail-closed, high bar).
+  const shouldReply = await llmShouldRespond(context, conversation, false, true);
+  return {
+    respond: shouldReply,
+    reason: shouldReply ? "cold_observation_llm_yes" : "cold_observation_llm_no",
+  };
 }
 
 // ── LLM Gate ─────────────────────────────────────────────────────────────────
@@ -214,20 +233,43 @@ Rules:
 
 Answer with a single word: RESPOND or SKIP.`;
 
+const SHOULD_RESPOND_PROMPT_COLD_OBSERVATION = `You are deciding whether Aura (a Slack bot and team assistant) should respond to this message in a channel she monitors but hasn't recently participated in.
+
+This is COLD observation — Aura is passively watching. The bar to respond is HIGH.
+
+Answer RESPOND only if:
+- Someone is reporting a bug, error, or something broken
+- There's an urgent issue that needs immediate attention
+- Someone is explicitly asking a question Aura could answer (data, metrics, status)
+- The message directly relates to Aura's active work (bug triage, OKRs, team ops)
+
+Answer SKIP for:
+- General conversation, banter, casual chat
+- Messages directed at specific people
+- Status updates that don't need a response
+- Anything where Aura jumping in uninvited would be annoying
+
+When in doubt, SKIP. Being quiet is better than being noisy.
+
+Answer with a single word: RESPOND or SKIP.`;
+
 /**
- * Ask the fast model (Haiku) whether Aura should respond to a message
- * in a conversation she's participating in.
+ * Ask the fast model (Haiku) whether Aura should respond to a message.
  *
  * @param isParticipant - true if Aura is a direct participant in this thread/conversation (Tier 2),
- *   false if she's only recently active in the channel (Tier 3).
+ *   false if she's only recently active in the channel (Tier 3) or cold-observing (Tier 4).
+ * @param coldObservation - true for Tier 4 cold observation (highest bar, most conservative).
  *
  * Returns true if the model says RESPOND, false if SKIP.
- * Defaults to true on any failure (better to over-respond than miss).
+ * Failure behavior:
+ * - Tier 2 (participant): fail open — better to over-respond than miss.
+ * - Tier 3 (recently active) / Tier 4 (cold observation): fail closed.
  */
 async function llmShouldRespond(
   context: MessageContext,
   conversation: ConversationContext,
   isParticipant: boolean,
+  coldObservation: boolean = false,
 ): Promise<boolean> {
   try {
     // Build a concise view of the last few messages
@@ -244,9 +286,11 @@ async function llmShouldRespond(
     const senderEntry = messages.find((m) => m.user === context.userId);
     const senderName = senderEntry?.displayName ?? context.userId;
 
-    const systemPrompt = isParticipant
-      ? SHOULD_RESPOND_PROMPT_PARTICIPANT
-      : SHOULD_RESPOND_PROMPT_RECENTLY_ACTIVE;
+    const systemPrompt = coldObservation
+      ? SHOULD_RESPOND_PROMPT_COLD_OBSERVATION
+      : isParticipant
+        ? SHOULD_RESPOND_PROMPT_PARTICIPANT
+        : SHOULD_RESPOND_PROMPT_RECENTLY_ACTIVE;
 
     const userMessage = `Recent conversation:\n${conversationText}\n\nLatest message from ${senderName}:\n${context.text}\n\nShould Aura respond?`;
 
@@ -266,17 +310,19 @@ async function llmShouldRespond(
       shouldReply,
       userId: context.userId,
       channelId: context.channelId,
+      tier: coldObservation ? "cold_observation" : isParticipant ? "participant" : "recently_active",
     });
 
     return shouldReply;
   } catch (error: any) {
     // Tier 2 (participant): fail open — better to over-respond than miss.
-    // Tier 3 (recently active): fail closed — don't intrude on unrelated conversations.
-    const fallback = isParticipant;
+    // Tier 3 (recently active) / Tier 4 (cold observation): fail closed.
+    const fallback = isParticipant && !coldObservation;
     logger.error("LLM shouldRespond gate failed", {
       error: error.message,
       fallback: fallback ? "RESPOND" : "SKIP",
       isParticipant,
+      coldObservation,
     });
     return fallback;
   }

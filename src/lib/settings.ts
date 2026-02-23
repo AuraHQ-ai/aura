@@ -61,3 +61,37 @@ export async function getAllSettings(): Promise<Record<string, string>> {
     return {};
   }
 }
+
+// ── JSON settings (with short TTL cache) ────────────────────────────────────
+
+const jsonSettingsCache = new Map<string, { value: unknown; expiresAt: number }>();
+const JSON_CACHE_TTL_MS = 60_000; // 1 minute
+
+/**
+ * Read a setting as parsed JSON. Cached for 60s to avoid DB hits on hot paths.
+ * Returns the parsed value, or `fallback` if the key is unset or invalid JSON.
+ */
+export async function getSettingJSON<T = unknown>(
+  key: string,
+  fallback: T | null = null,
+): Promise<T | null> {
+  const now = Date.now();
+  const cached = jsonSettingsCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.value as T;
+
+  const raw = await getSetting(key);
+  if (raw === null) {
+    jsonSettingsCache.set(key, { value: fallback, expiresAt: now + JSON_CACHE_TTL_MS });
+    return fallback;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as T;
+    jsonSettingsCache.set(key, { value: parsed, expiresAt: now + JSON_CACHE_TTL_MS });
+    return parsed;
+  } catch {
+    logger.warn("Failed to parse JSON setting", { key, raw });
+    jsonSettingsCache.set(key, { value: fallback, expiresAt: now + JSON_CACHE_TTL_MS });
+    return fallback;
+  }
+}
