@@ -216,9 +216,9 @@ async function gatherPRContext(payload: any): Promise<string> {
 
   const tracking = await lookupTrackingInfo([
     pr.html_url,
-    pr.head.ref,
+    pr.head?.ref,
     `#${number}`,
-  ]);
+  ].filter((t): t is string => t != null));
 
   parts.push(``, `## Tracking`);
   parts.push(`- Is our PR: ${isOurPR(payload) ? "yes" : "no"}`);
@@ -444,7 +444,10 @@ function shouldHandleEvent(
 ): boolean {
   switch (eventType) {
     case "pull_request":
-      return HANDLED_PR_ACTIONS.has(payload.action);
+      return (
+        HANDLED_PR_ACTIONS.has(payload.action) &&
+        payload.sender?.login !== GITHUB_BOT_USER
+      );
 
     case "pull_request_review_comment":
       return (
