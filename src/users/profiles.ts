@@ -12,14 +12,14 @@ import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 /**
- * Get or create a user profile.
+ * Get or create a user profile by Slack user ID.
+ * Existing Slack callers continue to use this unchanged.
  */
 export async function getOrCreateProfile(
   slackUserId: string,
   displayName: string,
   timezone?: string,
 ): Promise<UserProfile> {
-  // Try to find existing
   const existing = await db
     .select()
     .from(userProfiles)
@@ -38,13 +38,13 @@ export async function getOrCreateProfile(
     return profile;
   }
 
-  // Create new profile (upsert to handle concurrent inserts)
   const result = await db
     .insert(userProfiles)
     .values({
       slackUserId,
       displayName,
       timezone,
+      source: "slack",
     })
     .onConflictDoNothing({ target: userProfiles.slackUserId })
     .returning();
@@ -54,7 +54,6 @@ export async function getOrCreateProfile(
     return result[0];
   }
 
-  // Another concurrent request inserted first — fetch the existing row
   const [concurrentlyCreated] = await db
     .select()
     .from(userProfiles)
@@ -62,6 +61,65 @@ export async function getOrCreateProfile(
     .limit(1);
 
   return concurrentlyCreated;
+}
+
+/**
+ * Get or create a user profile by email address.
+ * Used for email-originated contacts and non-Slack identities.
+ */
+export async function getOrCreateProfileByEmail(
+  email: string,
+  displayName: string,
+  source: string = "email",
+): Promise<UserProfile> {
+  const existing = await db
+    .select()
+    .from(userProfiles)
+    .where(eq(userProfiles.email, email))
+    .limit(1);
+
+  if (existing.length > 0) {
+    return existing[0];
+  }
+
+  const result = await db
+    .insert(userProfiles)
+    .values({
+      email,
+      displayName,
+      source,
+    })
+    .onConflictDoNothing({ target: userProfiles.email })
+    .returning();
+
+  if (result.length > 0) {
+    logger.info("Created new email-based user profile", { email, displayName, source });
+    return result[0];
+  }
+
+  const [concurrentlyCreated] = await db
+    .select()
+    .from(userProfiles)
+    .where(eq(userProfiles.email, email))
+    .limit(1);
+
+  return concurrentlyCreated;
+}
+
+/**
+ * Look up an existing profile by email.
+ * Useful for linking an email address to a known Slack user.
+ */
+export async function resolvePersonByEmail(
+  email: string,
+): Promise<UserProfile | null> {
+  const results = await db
+    .select()
+    .from(userProfiles)
+    .where(eq(userProfiles.email, email))
+    .limit(1);
+
+  return results[0] || null;
 }
 
 /**
@@ -78,6 +136,22 @@ export async function recordInteraction(slackUserId: string): Promise<void> {
     })
     .where(eq(userProfiles.slackUserId, slackUserId));
 }
+
+/**
+ * Increment interaction count by email address.
+ */
+export async function recordInteractionByEmail(email: string): Promise<void> {
+  await db
+    .update(userProfiles)
+    .set({
+      interactionCount: sql`${userProfiles.interactionCount} + 1`,
+      lastInteractionAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(userProfiles.email, email));
+}
+
+// TODO: backfillEmailsFromWorkspace() — run manually via list_workspace_users + lookup_workspace_user tools after migration is deployed
 
 /**
  * Schema for LLM-generated profile updates.
