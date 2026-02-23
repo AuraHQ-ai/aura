@@ -7,26 +7,17 @@ import type { ScheduleContext } from "../db/schema.js";
 /**
  * Create browser automation tools for the AI SDK.
  * Uses Browserbase (remote Chromium) + Playwright for web automation.
- * Admin-only — runs arbitrary Playwright code in code mode.
+ * Admin-only.
  */
 export function createBrowserTools(context?: ScheduleContext) {
   return {
     browse: tool({
       description:
-        "Browse a web page using a remote Chromium browser (Browserbase + Playwright). Two modes: (1) Simple mode — navigate to a URL, optionally take a screenshot and extract content. (2) Code mode — execute arbitrary Playwright JS code for multi-step flows (login, click, fill forms, scrape). Admin-only.",
+        "Browse a web page using a remote Chromium browser (Browserbase + Playwright). Navigate to a URL, take a screenshot, and extract content (text, accessibility tree, or HTML). For multi-step interactive flows, write a Playwright script and run it via run_command instead. Admin-only.",
       inputSchema: z.object({
         url: z
           .string()
-          .optional()
-          .describe(
-            "URL to navigate to (simple mode). E.g. 'https://example.com'",
-          ),
-        code: z
-          .string()
-          .optional()
-          .describe(
-            "Playwright JS code to execute (code mode). Has access to `page`, `context`, and `browser` variables. Return a value to include it in the result. E.g. 'await page.goto(\"https://example.com\"); return await page.title();'",
-          ),
+          .describe("URL to navigate to. E.g. 'https://example.com'"),
         session_id: z
           .string()
           .optional()
@@ -68,7 +59,6 @@ export function createBrowserTools(context?: ScheduleContext) {
       }),
       execute: async ({
         url,
-        code,
         session_id,
         screenshot,
         extract,
@@ -81,14 +71,6 @@ export function createBrowserTools(context?: ScheduleContext) {
           return {
             ok: false,
             error: "Only admins can use the browse tool.",
-          };
-        }
-
-        if (!url && !code) {
-          return {
-            ok: false,
-            error:
-              "Provide either `url` (simple mode) or `code` (code mode).",
           };
         }
 
@@ -141,51 +123,16 @@ export function createBrowserTools(context?: ScheduleContext) {
             await ctx.setExtraHTTPHeaders(headers);
           }
 
-          let resultUrl = page.url();
-          let resultTitle = "";
+          await page.goto(url, {
+            waitUntil: "domcontentloaded",
+            timeout: timeoutMs,
+          });
+
+          const resultUrl = page.url();
+          const resultTitle = await page.title();
           let screenshotBase64: string | undefined;
           let extractedContent: string | undefined;
-          let codeResult: unknown;
 
-          if (code) {
-            const vm = await import("node:vm");
-            const sandbox = { page, context: ctx, browser };
-            const wrappedCode = `(async () => { ${code} })()`;
-            const codePromise = vm.runInNewContext(wrappedCode, sandbox, {
-              timeout: timeoutMs,
-              filename: "browse-code-mode",
-            });
-            let timer: ReturnType<typeof setTimeout>;
-            const timeoutPromise = new Promise<never>((_, reject) => {
-              timer = setTimeout(
-                () => reject(new Error(`Timeout ${timeout_seconds}s exceeded`)),
-                timeoutMs,
-              );
-            });
-            try {
-              codeResult = await Promise.race([codePromise, timeoutPromise]);
-            } finally {
-              clearTimeout(timer!);
-            }
-
-            resultUrl = page.url();
-            try {
-              resultTitle = await page.title();
-            } catch {
-              resultTitle = "";
-            }
-          } else if (url) {
-            // Simple mode: navigate and extract
-            await page.goto(url, {
-              waitUntil: "domcontentloaded",
-              timeout: timeoutMs,
-            });
-
-            resultUrl = page.url();
-            resultTitle = await page.title();
-          }
-
-          // Screenshot
           if (screenshot) {
             try {
               const buf = await page.screenshot({
@@ -201,7 +148,6 @@ export function createBrowserTools(context?: ScheduleContext) {
             }
           }
 
-          // Content extraction (only in simple mode, or after code mode)
           if (extract) {
             try {
               if (extract === "text") {
@@ -229,7 +175,6 @@ export function createBrowserTools(context?: ScheduleContext) {
             }
           }
 
-          // Disconnect Playwright (doesn't close the session)
           try {
             await browser.close();
           } catch {
@@ -241,7 +186,6 @@ export function createBrowserTools(context?: ScheduleContext) {
           }
 
           logger.info("browse tool completed", {
-            mode: code ? "code" : "simple",
             url: resultUrl,
             sessionId,
             hasScreenshot: !!screenshotBase64,
@@ -256,9 +200,6 @@ export function createBrowserTools(context?: ScheduleContext) {
               : {}),
             ...(extractedContent
               ? { extracted_content: extractedContent }
-              : {}),
-            ...(codeResult !== undefined
-              ? { code_result: String(codeResult) }
               : {}),
             session_id: sessionId,
             console_errors:
