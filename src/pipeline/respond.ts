@@ -294,9 +294,6 @@ export interface LLMResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Re-export error helpers from the shared module for backwards compatibility
-export { isChannelTypeNotSupported } from "../lib/slack-messaging.js";
-
 function isUnsupportedFileError(error: any): boolean {
   const msg = error?.message || error?.toString() || "";
   const name = error?.name || "";
@@ -838,7 +835,7 @@ export async function generateResponse(
       const toolMeta = buildToolMetadata(toolCallRecords);
       const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
 
-      await safePostMessage(slackClient, {
+      const fallbackResult = await safePostMessage(slackClient, {
         channel: channelId,
         text: fallbackText,
         thread_ts: threadTs,
@@ -846,11 +843,19 @@ export async function generateResponse(
         ...(toolMeta && { metadata: toolMeta }),
       });
 
-      logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
-        rawLength: finalText.length,
-        channelId,
-        usage: { inputTokens, outputTokens, totalTokens },
-      });
+      if (!fallbackResult.ok) {
+        logger.warn("LLM response lost — channel does not support posting", {
+          channelId,
+          rawLength: finalText.length,
+          usage: { inputTokens, outputTokens, totalTokens },
+        });
+      } else {
+        logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
+          rawLength: finalText.length,
+          channelId,
+          usage: { inputTokens, outputTokens, totalTokens },
+        });
+      }
     } else {
       // Happy path: finalize the stream on Slack's side.
       // Attach tool I/O metadata (invisible to users) for follow-up context,
