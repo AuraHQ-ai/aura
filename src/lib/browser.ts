@@ -101,6 +101,7 @@ export async function connectSession(sessionId: string) {
  */
 export async function releaseSession(sessionId: string): Promise<void> {
   const apiKey = getApiKey();
+  const projectId = getProjectId();
 
   try {
     const response = await fetch(
@@ -111,7 +112,7 @@ export async function releaseSession(sessionId: string): Promise<void> {
           "x-bb-api-key": apiKey,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ status: "REQUEST_RELEASE" }),
+        body: JSON.stringify({ projectId, status: "REQUEST_RELEASE" }),
         signal: AbortSignal.timeout(10_000),
       },
     );

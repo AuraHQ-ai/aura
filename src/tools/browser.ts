@@ -151,10 +151,22 @@ export function createBrowserTools(context?: ScheduleContext) {
             const vm = await import("node:vm");
             const sandbox = { page, context: ctx, browser };
             const wrappedCode = `(async () => { ${code} })()`;
-            codeResult = await vm.runInNewContext(wrappedCode, sandbox, {
+            const codePromise = vm.runInNewContext(wrappedCode, sandbox, {
               timeout: timeoutMs,
               filename: "browse-code-mode",
             });
+            let timer: ReturnType<typeof setTimeout>;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error(`Timeout ${timeout_seconds}s exceeded`)),
+                timeoutMs,
+              );
+            });
+            try {
+              codeResult = await Promise.race([codePromise, timeoutPromise]);
+            } finally {
+              clearTimeout(timer!);
+            }
 
             resultUrl = page.url();
             try {
@@ -224,7 +236,7 @@ export function createBrowserTools(context?: ScheduleContext) {
             // best-effort
           }
 
-          if (ownsSession && !keep_alive) {
+          if (!keep_alive) {
             releaseSession(sessionId).catch(() => {});
           }
 
@@ -261,7 +273,7 @@ export function createBrowserTools(context?: ScheduleContext) {
             error: error.message,
           });
 
-          if (ownsSession && sessionId) {
+          if (sessionId && (ownsSession || !keep_alive)) {
             releaseSession(sessionId).catch(() => {});
           }
 
