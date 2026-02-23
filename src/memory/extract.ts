@@ -10,6 +10,11 @@ import type { ChannelType } from "../pipeline/context.js";
 
 type DbChannelType = "dm" | "public_channel" | "private_channel";
 
+function toDbChannelType(ct: ChannelType): DbChannelType {
+  if (ct === "dm" || ct === "public_channel" || ct === "private_channel") return ct;
+  return "public_channel";
+}
+
 // ── User ID Normalization ───────────────────────────────────────────────────
 
 const SLACK_USER_ID_RE = /^[UW][A-Z0-9]+$/;
@@ -239,7 +244,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       content: m.content,
       type: m.type,
       sourceMessageId: context.sourceMessageId || undefined,
-      sourceChannelType: context.channelType as DbChannelType,
+      sourceChannelType: toDbChannelType(context.channelType),
       relatedUserIds: m.relatedUserIds.length > 0 ? m.relatedUserIds : [context.userId],
       embedding: embeddings[i] ?? null,
       shareable: m.shareable ? 1 : 0,

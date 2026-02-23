@@ -3,7 +3,6 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { formatForSlack } from "../lib/format.js";
-import { safePostMessage } from "../lib/slack-messaging.js";
 import { resolveChannelByName, resolveUserByName } from "./slack.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatTimestamp } from "../lib/temporal.js";
@@ -56,7 +55,10 @@ async function postTable(
   message?: string,
   threadTs?: string,
 ) {
-  return safePostMessage(client, {
+  // Use chat.postMessage directly (not safePostMessage) because for tables
+  // the block IS the content — stripping blocks on error would silently
+  // discard the table data and mislead the caller into thinking it succeeded.
+  return client.chat.postMessage({
     channel: channelId,
     text: formatForSlack(message || "Here's a table:"),
     blocks: [tableBlock as any],

@@ -335,6 +335,7 @@ function resolveChannelType(
     const ct = (event as any).channel_type;
     if (ct === "im") return "dm";
     if (ct === "group" || ct === "mpim") return "private_channel";
+    if (ct === "slack_list_item") return "slack_list_item";
     return "public_channel";
   }
   return "public_channel";
