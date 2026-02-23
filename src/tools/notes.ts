@@ -64,7 +64,7 @@ export function createNoteTools(context?: ScheduleContext) {
   return {
     save_note: tool({
       description:
-        "Create a new note or fully overwrite an existing one. Use for new notes or complete rewrites. For partial edits, use edit_note instead.",
+        "Create a new note or fully overwrite an existing one. Notes use a three-tier hierarchy: 'skill' (durable playbooks/protocols), 'plan' (ephemeral work-in-progress with expiry), 'knowledge' (general reference, default). Use for new notes or complete rewrites. For partial edits, use edit_note instead.",
       inputSchema: z.object({
         topic: z
           .string()
@@ -162,7 +162,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
     read_note: tool({
       description:
-        "Read a note by topic. Returns the content with line numbers so you can reference specific lines for edit_note operations.",
+        "Read a note by topic. Returns the content with line numbers so you can reference specific lines for edit_note's replace_lines or insert_after_line operations. Check the notes-index first to orient, then use search_notes to find, then read_note to load.",
       inputSchema: z.object({
         topic: z.string().describe("The topic key of the note to read"),
       }),
@@ -265,7 +265,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
     edit_note: tool({
       description:
-        "Surgically edit an existing note. Supports: 'append' (add to end), 'prepend' (add to start), 'replace_lines' (replace a range of lines), 'insert_after_line' (insert after a specific line). Use read_note first to see line numbers.",
+        "Surgically edit an existing note without rewriting the whole thing. Supports: 'append' (add to end), 'prepend' (add to start), 'replace_lines' (replace a range of lines), 'insert_after_line' (insert after a specific line). Always use read_note first to see line numbers. Prefer this over save_note for partial updates.",
       inputSchema: z.object({
         topic: z.string().describe("The topic key of the note to edit"),
         operation: z
@@ -461,7 +461,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
     search_notes: tool({
       description:
-        "Search across all notes content. Supports two modes: 'text' (default) uses full-text keyword search, 'semantic' uses vector similarity to find conceptually related notes even without exact keyword matches.",
+        "Full-text search across all notes content. Use this before reading individual notes when looking for a keyword or term — saves tool calls vs. list_notes + sequential read_note. Supports two modes: 'text' (default, keyword search) and 'semantic' (vector similarity for conceptual matches). The navigation pattern is: notes-index (orient) → search_notes (find) → read_note (load).",
       inputSchema: z.object({
         query: z
           .string()

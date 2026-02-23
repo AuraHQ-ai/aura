@@ -109,7 +109,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
   return {
     list_datasets: tool({
       description:
-        "List all datasets in the BigQuery data warehouse. Use this to discover what data is available.",
+        "List all datasets in the BigQuery data warehouse. Use this to discover what data is available. After exploring, save findings to a 'data-warehouse-map' knowledge note for future reference.",
       inputSchema: z.object({}),
       execute: async () => {
         const client = await getBigQueryClient();
@@ -177,7 +177,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
 
     inspect_table: tool({
       description:
-        "Get a table's full schema, metadata, and sample rows. Use this before querying an unfamiliar table — the sample rows show actual data values, formats, and sparsity.",
+        "Get a table's full schema, metadata, and sample rows. Always use this before querying an unfamiliar table — the sample rows show actual data values, formats, and sparsity, which is much more useful than schema alone. After exploring, update the 'data-warehouse-map' knowledge note with what you learn about datasets, key tables, useful columns, common joins, and data quirks.",
       inputSchema: z.object({
         dataset: z.string().describe("The dataset ID"),
         table: z.string().describe("The table ID"),
@@ -302,7 +302,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
 
     execute_query: tool({
       description:
-        "Run a read-only SQL query against BigQuery. DML/DDL statements are blocked. Uses standard SQL (not legacy). Has a 1 GB scan limit to prevent runaway costs.",
+        "Run a read-only SQL query against BigQuery. Only SELECT/WITH queries are allowed — DML/DDL is blocked. Uses standard SQL (not legacy). Has a 1 GB scan limit to prevent runaway costs. Use LIMIT for large result sets to keep responses manageable. Read the 'data-warehouse-map' note before re-exploring from scratch.",
       inputSchema: z.object({
         sql: z
           .string()
