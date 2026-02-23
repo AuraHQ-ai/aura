@@ -44,26 +44,55 @@ function isOurPRSync(pr: { head?: { ref?: string }; user?: { login?: string } })
   return OUR_GITHUB_USERNAMES.includes(author);
 }
 
-async function isOurPR(pr: { head?: { ref?: string }; user?: { login?: string } }): Promise<boolean> {
+async function isOurPR(pr: { number?: number; head?: { ref?: string }; user?: { login?: string } }): Promise<boolean> {
   if (isOurPRSync(pr)) return true;
 
   // Check if this branch was created by a Cursor agent we dispatched
   // Cursor agents create PRs under joanrodriguez's account, but we track them via notes
   const branch = pr.head?.ref || "";
-  if (!branch) return false;
-
-  const trackingNotes = await db
-    .select({ topic: notes.topic })
-    .from(notes)
-    .where(
-      and(
-        like(notes.topic, 'cursor-agent:%'),
-        like(notes.content, `%${branch.replace(/[\\%_]/g, "\\$&")}%`)
+  if (branch) {
+    const trackingNotes = await db
+      .select({ topic: notes.topic })
+      .from(notes)
+      .where(
+        and(
+          like(notes.topic, 'cursor-agent:%'),
+          like(notes.content, `%${branch.replace(/[\\%_]/g, "\\$&")}%`)
+        )
       )
-    )
-    .limit(1);
+      .limit(1);
 
-  return trackingNotes.length > 0;
+    if (trackingNotes.length > 0) return true;
+  }
+
+  // check_run PR objects lack the user field — fetch full PR to check authorship
+  if (!pr.user && pr.number) {
+    try {
+      const ghToken = await getGitHubToken();
+      if (ghToken) {
+        const res = await fetch(
+          `https://api.github.com/repos/${REPO}/pulls/${pr.number}`,
+          {
+            headers: {
+              Authorization: `token ${ghToken}`,
+              Accept: "application/vnd.github.v3+json",
+            },
+          },
+        );
+        if (res.ok) {
+          const fullPr = (await res.json()) as { user?: { login?: string } };
+          return isOurPRSync(fullPr);
+        }
+      }
+    } catch (err) {
+      logger.warn("isOurPR: failed to fetch full PR details", {
+        pr: pr.number,
+        error: String(err),
+      });
+    }
+  }
+
+  return false;
 }
 
 async function getGitHubToken(): Promise<string | null> {
