@@ -47,10 +47,7 @@ interface EmailRow {
   threadStateUpdatedAt: Date | null;
 }
 
-function reconstructThread(
-  emails: EmailRow[],
-  userName: string,
-): string {
+function reconstructThread(emails: EmailRow[]): string {
   const sorted = [...emails].sort(
     (a, b) => a.date.getTime() - b.date.getTime(),
   );
@@ -196,9 +193,13 @@ export async function computeThreadStates(
 
   const model = await getFastModel();
 
-  for (const [threadId, emails] of threadsToProcess) {
+  const MAX_THREADS_PER_RUN = 100;
+  const CONCURRENCY = 8;
+  const batch = threadsToProcess.slice(0, MAX_THREADS_PER_RUN);
+
+  const processThread = async ([threadId, emails]: [string, EmailRow[]]) => {
     try {
-      const threadText = reconstructThread(emails, userName);
+      const threadText = reconstructThread(emails);
       const prompt = buildPrompt(threadText, userName);
 
       const { object } = await generateObject({
@@ -231,6 +232,10 @@ export async function computeThreadStates(
       summary.errors++;
       summary.lastError = errStr;
     }
+  };
+
+  for (let i = 0; i < batch.length; i += CONCURRENCY) {
+    await Promise.all(batch.slice(i, i + CONCURRENCY).map(processThread));
   }
 
   logger.info("Thread state computation completed", { userId, ...summary });
