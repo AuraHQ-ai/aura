@@ -253,4 +253,16 @@ export function buildCachedSystemMessages(
     messages.push({ role: 'system', content: dynamicContext });
   }
   return messages;
+
+}
+
+/**
+ * Get the Cohere reranking model for semantic reranking.
+ * Returns null if COHERE_API_KEY is not configured.
+ */
+export async function getRerankingModel() {
+  if (!process.env.COHERE_API_KEY) return null;
+  const { createCohere } = await import("@ai-sdk/cohere");
+  const cohere = createCohere({ apiKey: process.env.COHERE_API_KEY });
+  return cohere.reranking("rerank-v3.5");
 }
