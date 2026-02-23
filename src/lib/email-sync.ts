@@ -379,6 +379,10 @@ export async function syncEmails(
       synced: result.synced,
       skipped: result.skipped,
     });
+
+    if (i + BATCH_SIZE < allMessageIds.length) {
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   }
 
   // Retry batch_api_miss errors once after a cooldown
@@ -393,20 +397,19 @@ export async function syncEmails(
     const retryMap = await batchGetMessages(accessToken, missedIds);
 
     const retryRows: NewEmailRaw[] = [];
-    result.errorDetails = result.errorDetails.filter((e) => {
-      if (!e.reason.startsWith("batch_api_miss")) return true;
+    const recoveredIds: Set<string> = new Set();
+    for (const e of result.errorDetails) {
+      if (!e.reason.startsWith("batch_api_miss")) continue;
       const msg = retryMap.get(e.gmailMessageId);
-      if (!msg) return true;
+      if (!msg) continue;
       try {
         const row = messageToRow(msg, userId, userEmail);
         if (row) {
           retryRows.push(row);
-          result.errors--;
-          return false;
+          recoveredIds.add(e.gmailMessageId);
         }
       } catch {}
-      return true;
-    });
+    }
 
     if (retryRows.length > 0) {
       try {
@@ -418,10 +421,14 @@ export async function syncEmails(
           });
         result.synced += insertResult.rowCount ?? 0;
         result.skipped += retryRows.length - (insertResult.rowCount ?? 0);
+        result.errorDetails = result.errorDetails.filter(
+          (e) => !recoveredIds.has(e.gmailMessageId),
+        );
+        result.errors -= recoveredIds.size;
+        logger.info("Retry recovered messages", { recovered: retryRows.length });
       } catch (err) {
         logger.error("Retry batch insert failed", { error: String(err) });
       }
-      logger.info("Retry recovered messages", { recovered: retryRows.length });
     }
   }
 
