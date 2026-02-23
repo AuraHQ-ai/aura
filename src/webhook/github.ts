@@ -58,7 +58,7 @@ async function isOurPR(pr: { head?: { ref?: string }; user?: { login?: string } 
     .where(
       and(
         like(notes.topic, 'cursor-agent:%'),
-        like(notes.content, `%${branch}%`)
+        like(notes.content, `%${branch.replace(/[\\%_]/g, "\\$&")}%`)
       )
     )
     .limit(1);
