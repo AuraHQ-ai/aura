@@ -46,7 +46,7 @@ export async function getOrCreateProfile(
       timezone,
       source: "slack",
     })
-    .onConflictDoNothing({ target: userProfiles.slackUserId })
+    .onConflictDoNothing({ target: userProfiles.slackUserId, where: sql`slack_user_id IS NOT NULL` })
     .returning();
 
   if (result.length > 0) {
@@ -89,7 +89,7 @@ export async function getOrCreateProfileByEmail(
       displayName,
       source,
     })
-    .onConflictDoNothing({ target: userProfiles.email })
+    .onConflictDoNothing({ target: userProfiles.email, where: sql`email IS NOT NULL` })
     .returning();
 
   if (result.length > 0) {
