@@ -62,6 +62,9 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
   if (process.env.OPENAI_API_KEY) {
     envs.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   }
+  if (process.env.POSTHOG_API_KEY) {
+    envs.POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
+  }
   return envs;
 }
 
