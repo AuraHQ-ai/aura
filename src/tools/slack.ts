@@ -18,6 +18,7 @@ import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
+import { safePostMessage } from "../lib/slack-messaging.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { downloadSlackFile, MAX_FILE_SIZE } from "../lib/files.js";
 
@@ -967,7 +968,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          const result = await client.chat.postMessage({
+          const result = await safePostMessage(client, {
             channel: channel.id,
             text: formatForSlack(message),
           });
@@ -1289,7 +1290,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
-          const result = await client.chat.postMessage({
+          const result = await safePostMessage(client, {
             channel: dmChannelId,
             text: formatForSlack(message),
           });
@@ -2473,7 +2474,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const channel = await resolveChannelByName(client, channelInput);
           if (!channel)
             return { ok: false, error: `Channel "${channelInput}" not found.` };
-          const result = await client.chat.postMessage({
+          const result = await safePostMessage(client, {
             channel: channel.id,
             text: formatForSlack(message),
             thread_ts,
