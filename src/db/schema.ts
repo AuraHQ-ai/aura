@@ -422,6 +422,37 @@ export const oauthTokens = pgTable(
     index("oauth_tokens_email_idx").on(table.email),
   ],
 );
+// ── Voice Calls ─────────────────────────────────────────────────────────────
+
+export const voiceCalls = pgTable(
+  "voice_calls",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    conversationId: text("conversation_id").notNull().unique(),
+    agentId: text("agent_id"),
+    direction: text("direction").notNull().default("outbound"),
+    phoneNumber: text("phone_number"),
+    personName: text("person_name"),
+    slackUserId: text("slack_user_id"),
+    status: text("status").notNull().default("in_progress"),
+    durationSeconds: integer("duration_seconds"),
+    transcript: jsonb("transcript"),
+    summary: text("summary"),
+    callContext: text("call_context"),
+    dynamicVariables: jsonb("dynamic_variables").$type<Record<string, unknown>>(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("voice_calls_agent_id_idx").on(table.agentId),
+    index("voice_calls_status_idx").on(table.status),
+    index("voice_calls_created_at_idx").on(table.createdAt),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -450,6 +481,8 @@ export type Person = typeof people.$inferSelect;
 export type NewPerson = typeof people.$inferInsert;
 export type Address = typeof addresses.$inferSelect;
 export type NewAddress = typeof addresses.$inferInsert;
+export type VoiceCall = typeof voiceCalls.$inferSelect;
+export type NewVoiceCall = typeof voiceCalls.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
