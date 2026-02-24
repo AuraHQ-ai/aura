@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { eq, and, isNull, ilike, sql } from "drizzle-orm";
+import { eq, and, isNull, ilike, sql, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   people,
@@ -71,19 +71,24 @@ export async function createPersonWithAddress(
   }
 
   if (insertedAddress.length === 0) {
-    await db.delete(people).where(eq(people.id, person.id));
     const existingPersonId = await resolvePersonByAddress(channel, value);
-    if (!existingPersonId) {
-      throw new Error(
-        `Address conflict but could not resolve person for ${channel}:${value}`,
-      );
+    if (existingPersonId) {
+      await db.delete(people).where(eq(people.id, person.id));
+      const [existingPerson] = await db
+        .select()
+        .from(people)
+        .where(eq(people.id, existingPersonId))
+        .limit(1);
+      return existingPerson;
     }
-    const [existingPerson] = await db
-      .select()
-      .from(people)
-      .where(eq(people.id, existingPersonId))
-      .limit(1);
-    return existingPerson;
+    // Address exists but has no person — claim it for the new person
+    await db
+      .update(addresses)
+      .set({ personId: person.id })
+      .where(
+        and(eq(addresses.channel, channel), eq(addresses.value, normalised)),
+      );
+    return person;
   }
 
   return person;
@@ -387,9 +392,7 @@ export async function distillPeopleFromAddresses(): Promise<{
         await db
           .update(addresses)
           .set({ personId: person.id })
-          .where(
-            sql`${addresses.id} IN ${sql.raw(`('${validIds.join("','")}')`)}`,
-          );
+          .where(inArray(addresses.id, validIds));
 
         totalGrouped += validIds.length;
         totalPeopleCreated++;
