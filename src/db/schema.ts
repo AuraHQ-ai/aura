@@ -131,6 +131,7 @@ export const userProfiles = pgTable(
     slackUserId: text("slack_user_id").notNull(),
     displayName: text("display_name").notNull(),
     timezone: text("timezone"),
+    personId: uuid("person_id").references(() => people.id),
     communicationStyle: jsonb("communication_style")
       .$type<CommunicationStyle>()
       .default({
@@ -148,6 +149,41 @@ export const userProfiles = pgTable(
   },
   (table) => [
     uniqueIndex("user_profiles_slack_user_id_idx").on(table.slackUserId),
+  ],
+);
+
+// ── People ─────────────────────────────────────────────────────────────────
+
+export const people = pgTable("people", {
+  id: uuid("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  displayName: text("display_name"),
+  createdAt: timestamptz("created_at").notNull().defaultNow(),
+  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+});
+
+// ── Addresses ──────────────────────────────────────────────────────────────
+
+export const addresses = pgTable(
+  "addresses",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    personId: uuid("person_id")
+      .notNull()
+      .references(() => people.id),
+    channel: text("channel").notNull(),
+    value: text("value").notNull(),
+    confidence: real("confidence").default(1.0),
+    source: text("source"),
+    verifiedAt: timestamptz("verified_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("addresses_channel_value_idx").on(table.channel, table.value),
+    index("addresses_person_id_idx").on(table.personId),
   ],
 );
 
@@ -410,6 +446,10 @@ export type OAuthToken = typeof oauthTokens.$inferSelect;
 export type NewOAuthToken = typeof oauthTokens.$inferInsert;
 export type EmailRaw = typeof emailsRaw.$inferSelect;
 export type NewEmailRaw = typeof emailsRaw.$inferInsert;
+export type Person = typeof people.$inferSelect;
+export type NewPerson = typeof people.$inferInsert;
+export type Address = typeof addresses.$inferSelect;
+export type NewAddress = typeof addresses.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
