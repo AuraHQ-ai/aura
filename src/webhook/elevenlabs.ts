@@ -6,15 +6,15 @@ import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { db } from "../db/client.js";
-import { voiceCalls, notes } from "../db/schema.js";
-import { getUserList } from "../tools/slack.js";
+import { voiceCalls, notes, userProfiles } from "../db/schema.js";
+import { ilike } from "drizzle-orm";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
 
-const VOICE_TESTING_CHANNEL = process.env.ELEVENLABS_VOICE_CHANNEL || "";
+const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID || "";
 
 const slackClient = new WebClient(botToken);
 
@@ -68,16 +68,8 @@ function verifyElevenLabsSignature(
 
 // ── Inbound/Outbound Detection ──────────────────────────────────────────────
 
-function isOutboundCall(dynamicVariables?: Record<string, unknown>): boolean {
-  if (!dynamicVariables) return false;
-  const defaultPlaceholders = ["", "unknown", "default", "N/A", "n/a", "none"];
-  return Object.values(dynamicVariables).some(
-    (v) =>
-      v != null &&
-      typeof v === "string" &&
-      v.trim() !== "" &&
-      !defaultPlaceholders.includes(v.trim().toLowerCase()),
-  );
+function isOutboundCall(metadata: any): boolean {
+  return metadata?.dynamic_variables?.direction === "outbound";
 }
 
 // ── Tool Handlers ───────────────────────────────────────────────────────────
@@ -94,31 +86,36 @@ async function handleLookupContext(
       return `User asked about "${person_name}". I can confirm their name but cannot share internal details for inbound calls.`;
     }
 
-    const users = await getUserList(slackClient);
-    const nameLower = person_name.toLowerCase();
-    const match = users.find((u) => {
-      const name = (u.displayName || u.realName || u.username || "").toLowerCase();
-      return name.includes(nameLower);
-    });
+    const escapedName = person_name
+      .replace(/%/g, "\\%")
+      .replace(/_/g, "\\_");
 
-    if (!match) {
-      return `No Slack user found matching "${person_name}".`;
+    const matches = await db
+      .select({
+        slackUserId: userProfiles.slackUserId,
+        displayName: userProfiles.displayName,
+      })
+      .from(userProfiles)
+      .where(ilike(userProfiles.displayName, `%${escapedName}%`))
+      .limit(1);
+
+    if (matches.length === 0) {
+      return `No user found matching "${person_name}".`;
     }
 
-    const displayName = match.displayName || match.realName || match.username || "Unknown";
-
-    let context = `*${displayName}* (Slack ID: ${match.id})`;
+    const match = matches[0];
+    let context = `*${match.displayName}* (Slack ID: ${match.slackUserId})`;
 
     try {
       const { like } = await import("drizzle-orm");
-      const escapedName = person_name
+      const escapedTopic = person_name
         .toLowerCase()
         .replace(/%/g, "\\%")
         .replace(/_/g, "\\_");
       const relatedNotes = await db
         .select({ topic: notes.topic, content: notes.content })
         .from(notes)
-        .where(like(notes.topic, `%${escapedName}%`))
+        .where(like(notes.topic, `%${escapedTopic}%`))
         .limit(3);
 
       if (relatedNotes.length > 0) {
@@ -188,8 +185,8 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     return c.json({ error: "Invalid JSON" }, 400);
   }
 
-  const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
-  const outbound = isOutboundCall(dynamic_variables);
+  const { tool_call_id, tool_name, parameters } = body;
+  const outbound = isOutboundCall(body);
 
   logger.info("ElevenLabs server tool called", {
     tool_call_id,
@@ -271,7 +268,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       const agentId = data.agent_id;
       const phoneNumber = data.metadata?.phone_number;
       const dynVars = data.metadata?.dynamic_variables;
-      const outbound = isOutboundCall(dynVars);
+      const outbound = isOutboundCall(data.metadata);
       const direction = outbound ? "outbound" : "inbound";
       const personName = dynVars?.person_name as string | undefined;
       const callContext = dynVars?.call_context as string | undefined;
@@ -349,14 +346,14 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           ? `\n\n*Transcript excerpt:*\n>${truncatedTranscript}`
           : "");
 
-      if (VOICE_TESTING_CHANNEL) {
+      if (VOICE_CHANNEL_ID) {
         await safePostMessage(slackClient, {
-          channel: VOICE_TESTING_CHANNEL,
+          channel: VOICE_CHANNEL_ID,
           text: slackMessage,
         });
-        logger.info("Post-call summary sent to #voice-testing", { conversationId });
+        logger.info("Post-call summary sent to voice channel", { conversationId });
       } else {
-        logger.warn("ELEVENLABS_VOICE_CHANNEL not configured — skipping Slack notification");
+        logger.warn("VOICE_CHANNEL_ID not set, skipping Slack post");
       }
     } catch (err) {
       recordError("elevenlabs_post_call", err, {
