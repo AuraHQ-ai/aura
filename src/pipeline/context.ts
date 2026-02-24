@@ -328,7 +328,8 @@ async function llmShouldRespond(
   }
 }
 
-function resolveChannelType(
+/** @internal — exported for testing */
+export function resolveChannelType(
   event: SlackEvent,
 ): ChannelType {
   if ("channel_type" in event) {

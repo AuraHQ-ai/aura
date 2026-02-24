@@ -14,8 +14,8 @@ function getTavilyClient() {
 
 // ── HTML Stripping ───────────────────────────────────────────────────────────
 
-/** Strip HTML tags and clean up whitespace for readable text extraction. */
-function stripHtml(html: string): string {
+/** @internal — exported for testing */
+export function stripHtml(html: string): string {
   return html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -35,8 +35,9 @@ function stripHtml(html: string): string {
 /**
  * Returns true if the URL resolves to a private/internal network address.
  * Fails closed: if DNS lookup fails, the URL is considered private (blocked).
+ * @internal — exported for testing
  */
-async function isPrivateUrl(url: string): Promise<boolean> {
+export async function isPrivateUrl(url: string): Promise<boolean> {
   let hostname: string;
   try {
     hostname = new URL(url).hostname;
