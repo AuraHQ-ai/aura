@@ -205,11 +205,11 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           direction: "outbound",
         };
 
+        let ElevenLabsError: any;
         try {
-          const { ElevenLabsClient } = await import(
-            "@elevenlabs/elevenlabs-js"
-          );
-          const client = new ElevenLabsClient({ apiKey });
+          const mod = await import("@elevenlabs/elevenlabs-js");
+          ElevenLabsError = mod.ElevenLabsError;
+          const client = new mod.ElevenLabsClient({ apiKey });
 
           const data =
             await client.conversationalAi.twilio.outboundCall({
@@ -255,10 +255,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
             conversation_id: data.conversationId as string,
           };
         } catch (error: any) {
-          const { ElevenLabsError } = await import(
-            "@elevenlabs/elevenlabs-js"
-          );
-          if (error instanceof ElevenLabsError) {
+          if (ElevenLabsError && error instanceof ElevenLabsError) {
             logger.error("make_call ElevenLabs API error", {
               statusCode: error.statusCode,
               body:
