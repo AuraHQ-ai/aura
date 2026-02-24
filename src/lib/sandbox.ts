@@ -65,6 +65,12 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
   if (process.env.POSTHOG_API_KEY) {
     envs.POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
   }
+  if (process.env.TWILIO_API_KEY_SID) {
+    envs.TWILIO_API_KEY_SID = process.env.TWILIO_API_KEY_SID;
+  }
+  if (process.env.TWILIO_API_KEY_SECRET) {
+    envs.TWILIO_API_KEY_SECRET = process.env.TWILIO_API_KEY_SECRET;
+  }
   return envs;
 }
 
