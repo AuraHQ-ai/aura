@@ -239,19 +239,26 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
           const data = (await response.json()) as Record<string, unknown>;
 
-          await db
-            .insert(voiceCalls)
-            .values({
-              conversationId: data.conversation_id as string,
-              agentId: process.env.ELEVENLABS_AGENT_ID,
-              direction: "outbound",
-              phoneNumber: resolvedPhone,
-              personName: resolvedName || null,
-              status: "in_progress",
-              callContext: callContext || null,
-              dynamicVariables: dynamicVars,
-            })
-            .onConflictDoNothing();
+          try {
+            await db
+              .insert(voiceCalls)
+              .values({
+                conversationId: data.conversation_id as string,
+                agentId: process.env.ELEVENLABS_AGENT_ID,
+                direction: "outbound",
+                phoneNumber: resolvedPhone,
+                personName: resolvedName || null,
+                status: "in_progress",
+                callContext: callContext || null,
+                dynamicVariables: dynamicVars,
+              })
+              .onConflictDoNothing();
+          } catch (dbError: any) {
+            logger.error("make_call DB insert failed (call was placed)", {
+              conversationId: data.conversation_id,
+              error: dbError.message,
+            });
+          }
 
           logger.info("make_call tool called", {
             to: resolvedPhone,
