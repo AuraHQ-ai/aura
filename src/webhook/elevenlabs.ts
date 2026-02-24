@@ -13,7 +13,7 @@ import { getUserList } from "../tools/slack.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
-const JOAN_USER_ID = "U0678NQJ2";
+const ELEVENLABS_DM_USER_ID = process.env.ELEVENLABS_DM_USER_ID || "";
 
 const slackClient = new WebClient(botToken);
 
@@ -68,11 +68,11 @@ function verifyElevenLabsSignature(
 // ── Tool Handlers ───────────────────────────────────────────────────────────
 
 async function handleLookupContext(
-  params: { person_name: string },
+  params: { person_name: string } | undefined,
 ): Promise<string> {
-  const { person_name } = params;
-
   try {
+    const { person_name } = params ?? { person_name: "" };
+    if (!person_name) return "Missing required parameter: person_name";
     const users = await getUserList(slackClient);
     const nameLower = person_name.toLowerCase();
     const match = users.find((u) => {
@@ -113,20 +113,21 @@ async function handleLookupContext(
 
     return context;
   } catch (err) {
+    const name = params?.person_name ?? "unknown";
     logger.error("lookup_context failed", {
-      person_name,
+      person_name: name,
       error: err instanceof Error ? err.message : String(err),
     });
-    return `Error looking up "${person_name}": ${err instanceof Error ? err.message : "unknown error"}`;
+    return `Error looking up "${name}": ${err instanceof Error ? err.message : "unknown error"}`;
   }
 }
 
 async function handlePostToSlack(
-  params: { channel: string; message: string },
+  params: { channel: string; message: string } | undefined,
 ): Promise<string> {
-  const { channel, message } = params;
-
   try {
+    const { channel, message } = params ?? { channel: "", message: "" };
+    if (!channel || !message) return "Missing required parameters: channel, message";
     await safePostMessage(slackClient, {
       channel,
       text: message,
@@ -134,7 +135,7 @@ async function handlePostToSlack(
     return "Message posted successfully";
   } catch (err) {
     logger.error("post_to_slack failed", {
-      channel,
+      channel: params?.channel,
       error: err instanceof Error ? err.message : String(err),
     });
     return `Error posting to channel: ${err instanceof Error ? err.message : "unknown error"}`;
@@ -175,13 +176,13 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
   switch (tool_name) {
     case "lookup_context":
       result = await handleLookupContext(
-        parameters as { person_name: string },
+        parameters as { person_name: string } | undefined,
       );
       break;
 
     case "post_to_slack":
       result = await handlePostToSlack(
-        parameters as { channel: string; message: string },
+        parameters as { channel: string; message: string } | undefined,
       );
       break;
 
@@ -204,12 +205,15 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
   }
 
   let body: {
-    agent_id?: string;
-    conversation_id?: string;
-    status?: string;
-    transcript?: string;
-    analysis?: { summary?: string; data_points?: Record<string, unknown> };
-    metadata?: { call_duration_secs?: number };
+    type?: string;
+    data?: {
+      agent_id?: string;
+      conversation_id?: string;
+      status?: string;
+      transcript?: string;
+      analysis?: { summary?: string; data_points?: Record<string, unknown> };
+      metadata?: { call_duration_secs?: number };
+    };
   };
   try {
     body = JSON.parse(rawBody);
@@ -217,19 +221,22 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
     return c.json({ error: "Invalid JSON" }, 400);
   }
 
+  const data = body.data ?? {};
+
   logger.info("ElevenLabs post-call webhook received", {
-    agent_id: body.agent_id,
-    conversation_id: body.conversation_id,
-    status: body.status,
-    duration: body.metadata?.call_duration_secs,
+    type: body.type,
+    agent_id: data.agent_id,
+    conversation_id: data.conversation_id,
+    status: data.status,
+    duration: data.metadata?.call_duration_secs,
   });
 
   const processPostCall = async () => {
     try {
-      const duration = body.metadata?.call_duration_secs;
-      const summary = body.analysis?.summary || "No summary available";
-      const transcript = body.transcript || "";
-      const conversationId = body.conversation_id || "unknown";
+      const duration = data.metadata?.call_duration_secs;
+      const summary = data.analysis?.summary || "No summary available";
+      const transcript = data.transcript || "";
+      const conversationId = data.conversation_id || "unknown";
 
       // Extract caller info from transcript if available
       const durationStr =
@@ -246,24 +253,27 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           ? `\n\n*Transcript excerpt:*\n>${transcript.slice(0, 500)}${transcript.length > 500 ? "..." : ""}`
           : "");
 
-      // DM Joan with the call summary
-      const dmResult = await slackClient.conversations.open({
-        users: JOAN_USER_ID,
-      });
-      const dmChannelId = dmResult.channel?.id;
-
-      if (dmChannelId) {
-        await safePostMessage(slackClient, {
-          channel: dmChannelId,
-          text: slackMessage,
+      if (ELEVENLABS_DM_USER_ID) {
+        const dmResult = await slackClient.conversations.open({
+          users: ELEVENLABS_DM_USER_ID,
         });
-        logger.info("Post-call summary sent to Joan", { conversationId });
+        const dmChannelId = dmResult.channel?.id;
+
+        if (dmChannelId) {
+          await safePostMessage(slackClient, {
+            channel: dmChannelId,
+            text: slackMessage,
+          });
+          logger.info("Post-call summary sent", { conversationId, userId: ELEVENLABS_DM_USER_ID });
+        }
+      } else {
+        logger.warn("ELEVENLABS_DM_USER_ID not configured — skipping post-call DM");
       }
 
       // Store call log as a note
       const noteContent =
         `**Call Duration:** ${durationStr}\n` +
-        `**Status:** ${body.status || "unknown"}\n` +
+        `**Status:** ${data.status || "unknown"}\n` +
         `**Summary:** ${summary}\n` +
         `**Transcript:** ${transcript.slice(0, 2000)}`;
 
@@ -285,7 +295,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       logger.info("Post-call note stored", { conversationId });
     } catch (err) {
       recordError("elevenlabs_post_call", err, {
-        conversation_id: body.conversation_id,
+        conversation_id: data.conversation_id,
       });
     }
   };
