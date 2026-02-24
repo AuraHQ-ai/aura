@@ -2,12 +2,15 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import crypto from "node:crypto";
+import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
+import { formatForSlack } from "../lib/format.js";
+import { embedText } from "../lib/embeddings.js";
 import { db } from "../db/client.js";
 import { voiceCalls, notes } from "../db/schema.js";
-import { getUserList } from "../tools/slack.js";
+import { getUserList, resolveUserByName } from "../tools/slack.js";
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -44,88 +47,110 @@ function isOutboundCall(metadata: any): boolean {
 // ── Tool Handlers ───────────────────────────────────────────────────────────
 
 async function handleLookupContext(
-  params: { person_name: string } | undefined,
-  outbound: boolean,
+  params: { person_name?: string; query?: string },
 ): Promise<string> {
   try {
-    const { person_name } = params ?? { person_name: "" };
-    if (!person_name) return "Missing required parameter: person_name";
+    const { person_name, query } = params;
 
-    if (!outbound) {
-      return `User asked about "${person_name}". I can confirm their name but cannot share internal details for inbound calls.`;
-    }
-
-    const users = await getCachedUserList(slackClient);
-    const nameLower = person_name.toLowerCase();
-    const match = users.find((u) => {
-      const name = (u.displayName || u.realName || u.username || "").toLowerCase();
-      return name.includes(nameLower);
-    });
-
-    if (!match) {
-      return `No Slack user found matching "${person_name}".`;
-    }
-
-    const displayName = match.displayName || match.realName || match.username || "Unknown";
-
-    let context = `*${displayName}* (Slack ID: ${match.id})`;
-
-    try {
-      const { ilike } = await import("drizzle-orm");
-      const escapedName = person_name
-        .replace(/%/g, "\\%")
-        .replace(/_/g, "\\_");
-      const relatedNotes = await db
+    if (query) {
+      const vector = await embedText(query);
+      const results = await db
         .select({ topic: notes.topic, content: notes.content })
         .from(notes)
-        .where(ilike(notes.topic, `%${escapedName}%`))
-        .limit(3);
+        .where(sql`embedding IS NOT NULL`)
+        .orderBy(sql`embedding <=> ${JSON.stringify(vector)}::vector`)
+        .limit(5);
 
-      if (relatedNotes.length > 0) {
-        context += "\n\nRelated notes:";
-        for (const note of relatedNotes) {
-          context += `\n- ${note.topic}: ${note.content.slice(0, 200)}`;
-        }
+      if (results.length === 0) {
+        return `No relevant context found for "${query}".`;
       }
-    } catch {
-      // Notes lookup is non-critical
+
+      let context = `Context for "${query}":\n`;
+      for (const note of results) {
+        context += `\n- ${note.topic}: ${note.content.slice(0, 300)}`;
+      }
+      return context;
     }
 
-    return context;
+    if (person_name) {
+      const users = await getCachedUserList(slackClient);
+      const nameLower = person_name.toLowerCase();
+      const match = users.find((u) => {
+        const name = (u.displayName || u.realName || u.username || "").toLowerCase();
+        return name.includes(nameLower);
+      });
+
+      if (!match) {
+        return `No Slack user found matching "${person_name}".`;
+      }
+
+      const displayName = match.displayName || match.realName || match.username || "Unknown";
+      let context = `*${displayName}* (Slack ID: ${match.id})`;
+
+      try {
+        const { ilike } = await import("drizzle-orm");
+        const escapedName = person_name
+          .replace(/%/g, "\\%")
+          .replace(/_/g, "\\_");
+        const relatedNotes = await db
+          .select({ topic: notes.topic, content: notes.content })
+          .from(notes)
+          .where(ilike(notes.topic, `%${escapedName}%`))
+          .limit(3);
+
+        if (relatedNotes.length > 0) {
+          context += "\n\nRelated notes:";
+          for (const note of relatedNotes) {
+            context += `\n- ${note.topic}: ${note.content.slice(0, 200)}`;
+          }
+        }
+      } catch {
+        // Notes lookup is non-critical
+      }
+
+      return context;
+    }
+
+    return "Missing required parameter: provide either 'query' or 'person_name'.";
   } catch (err) {
-    const name = params?.person_name ?? "unknown";
     logger.error("lookup_context failed", {
-      person_name: name,
+      person_name: params.person_name,
+      query: params.query,
       error: err instanceof Error ? err.message : String(err),
     });
-    return `Error looking up "${name}": ${err instanceof Error ? err.message : "unknown error"}`;
+    return `Error in lookup_context: ${err instanceof Error ? err.message : "unknown error"}`;
   }
 }
 
-async function handlePostToSlack(
-  params: { channel: string; message: string } | undefined,
+async function handleSendDm(
+  params: { user_name?: string; message?: string },
 ): Promise<string> {
   try {
-    const { channel, message } = params ?? { channel: "", message: "" };
-    if (!channel || !message) return "Missing required parameters: channel, message";
+    const { user_name, message } = params;
+    if (!user_name || !message) return "Missing required parameters: user_name, message";
 
-    const allowedChannels = VOICE_TESTING_CHANNEL ? [VOICE_TESTING_CHANNEL] : [];
-    if (!allowedChannels.includes(channel)) {
-      logger.warn("post_to_slack blocked: channel not in allowlist", { channel });
-      return `Channel "${channel}" is not in the allowed channels list`;
+    const user = await resolveUserByName(slackClient, user_name);
+    if (!user) {
+      return `Could not find a Slack user matching "${user_name}".`;
+    }
+
+    const dm = await slackClient.conversations.open({ users: user.id });
+    if (!dm.channel?.id) {
+      return `Failed to open DM conversation with ${user.name}.`;
     }
 
     await safePostMessage(slackClient, {
-      channel,
-      text: message,
+      channel: dm.channel.id,
+      text: formatForSlack(message),
     });
-    return "Message posted successfully";
+
+    return `Message sent to ${user.name} successfully.`;
   } catch (err) {
-    logger.error("post_to_slack failed", {
-      channel: params?.channel,
+    logger.error("send_dm failed", {
+      user_name: params.user_name,
       error: err instanceof Error ? err.message : String(err),
     });
-    return `Error posting to channel: ${err instanceof Error ? err.message : "unknown error"}`;
+    return `Error sending DM: ${err instanceof Error ? err.message : "unknown error"}`;
   }
 }
 
@@ -133,63 +158,51 @@ async function handlePostToSlack(
 
 export const elevenlabsWebhookApp = new Hono();
 
-// Server tool endpoint — called by ElevenLabs during a voice conversation
-// NOTE: Server tool calls use a shared secret header (x-webhook-secret),
-// NOT the HMAC-signed elevenlabs-signature used by post-call webhooks.
-// The secret is stored as a Workspace Secret in ElevenLabs and referenced
-// by ID in the tool's request_headers config.
-elevenlabsWebhookApp.post("/tool", async (c) => {
-  const rawBody = await c.req.text();
+// Server tool endpoint — called by ElevenLabs during a voice conversation.
+// Each tool has its own route: /tool/lookup_context, /tool/send_dm, etc.
+// ElevenLabs sends parameters flat in the request body (no tool_name wrapper).
+// Auth: shared secret via x-webhook-secret header, stored as a Workspace
+// Secret in ElevenLabs and referenced by ID in the tool's request_headers.
+elevenlabsWebhookApp.post("/tool/:toolName", async (c) => {
   const headerSecret = c.req.header("x-webhook-secret") || "";
 
   if (!webhookSecret || headerSecret !== webhookSecret) {
-    logger.warn("Invalid or missing x-webhook-secret on /tool", {
+    logger.warn("Invalid or missing x-webhook-secret on /tool/:toolName", {
       hasSecret: !!headerSecret,
       hasExpected: !!webhookSecret,
     });
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  let body: {
-    tool_call_id?: string;
-    tool_name?: string;
-    parameters?: Record<string, unknown>;
-    dynamic_variables?: Record<string, unknown>;
-  };
+  let body: Record<string, unknown>;
   try {
-    body = JSON.parse(rawBody);
+    body = await c.req.json();
   } catch {
     return c.json({ error: "Invalid JSON" }, 400);
   }
 
-  const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
-  const outbound = isOutboundCall({ dynamic_variables });
+  const toolName = c.req.param("toolName");
 
-  logger.info("ElevenLabs server tool called", {
-    tool_call_id,
-    tool_name,
-    direction: outbound ? "outbound" : "inbound",
-  });
+  logger.info("ElevenLabs server tool called", { toolName, bodyKeys: Object.keys(body) });
 
   let result: string;
 
-  switch (tool_name) {
+  switch (toolName) {
     case "lookup_context":
       result = await handleLookupContext(
-        parameters as { person_name: string } | undefined,
-        outbound,
+        body as { person_name?: string; query?: string },
       );
       break;
 
-    case "post_to_slack":
-      result = await handlePostToSlack(
-        parameters as { channel: string; message: string } | undefined,
+    case "send_dm":
+      result = await handleSendDm(
+        body as { user_name?: string; message?: string },
       );
       break;
 
     default:
-      logger.warn("Unknown ElevenLabs tool", { tool_name });
-      result = `Unknown tool: ${tool_name}`;
+      logger.warn("Unknown ElevenLabs tool", { toolName });
+      result = `Unknown tool: ${toolName}`;
   }
 
   return c.json({ result });
