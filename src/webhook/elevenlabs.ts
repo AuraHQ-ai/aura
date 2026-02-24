@@ -14,7 +14,7 @@ import { getUserList } from "../tools/slack.js";
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
 
-const VOICE_TESTING_CHANNEL = "C0AGTACJL6N";
+const VOICE_TESTING_CHANNEL = process.env.ELEVENLABS_VOICE_CHANNEL || "";
 
 const slackClient = new WebClient(botToken);
 
@@ -267,7 +267,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       const duration = data.metadata?.call_duration_secs;
       const summary = data.analysis?.summary || "No summary available";
       const transcript = data.transcript;
-      const conversationId = data.conversation_id || "unknown";
+      const conversationId = data.conversation_id || crypto.randomUUID();
       const agentId = data.agent_id;
       const phoneNumber = data.metadata?.phone_number;
       const dynVars = data.metadata?.dynamic_variables;
@@ -349,12 +349,15 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           ? `\n\n*Transcript excerpt:*\n>${truncatedTranscript}`
           : "");
 
-      await safePostMessage(slackClient, {
-        channel: VOICE_TESTING_CHANNEL,
-        text: slackMessage,
-      });
-
-      logger.info("Post-call summary sent to #voice-testing", { conversationId });
+      if (VOICE_TESTING_CHANNEL) {
+        await safePostMessage(slackClient, {
+          channel: VOICE_TESTING_CHANNEL,
+          text: slackMessage,
+        });
+        logger.info("Post-call summary sent to #voice-testing", { conversationId });
+      } else {
+        logger.warn("ELEVENLABS_VOICE_CHANNEL not configured — skipping Slack notification");
+      }
     } catch (err) {
       recordError("elevenlabs_post_call", err, {
         conversation_id: data.conversation_id,
