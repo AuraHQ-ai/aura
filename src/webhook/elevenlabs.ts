@@ -134,9 +134,21 @@ async function handlePostToSlack(
 export const elevenlabsWebhookApp = new Hono();
 
 // Server tool endpoint — called by ElevenLabs during a voice conversation
+// NOTE: Server tool calls use a shared secret header (x-webhook-secret),
+// NOT the HMAC-signed elevenlabs-signature used by post-call webhooks.
+// The secret is stored as a Workspace Secret in ElevenLabs and referenced
+// by ID in the tool's request_headers config.
 elevenlabsWebhookApp.post("/tool", async (c) => {
   const rawBody = await c.req.text();
-  const signature = c.req.header("elevenlabs-signature") || "";
+  const headerSecret = c.req.header("x-webhook-secret") || "";
+
+  if (!webhookSecret || headerSecret !== webhookSecret) {
+    logger.warn("Invalid or missing x-webhook-secret on /tool", {
+      hasSecret: !!headerSecret,
+      hasExpected: !!webhookSecret,
+    });
+    return c.json({ error: "Unauthorized" }, 401);
+  }
 
   let body: {
     tool_call_id?: string;
@@ -145,12 +157,9 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     dynamic_variables?: Record<string, unknown>;
   };
   try {
-    body = await elevenlabs.webhooks.constructEvent(rawBody, signature, webhookSecret);
-  } catch (err) {
-    logger.warn("Invalid ElevenLabs webhook signature on /tool", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return c.json({ error: "Invalid signature" }, 401);
+    body = JSON.parse(rawBody);
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400);
   }
 
   const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
