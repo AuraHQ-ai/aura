@@ -171,13 +171,13 @@ export const addresses = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    personId: uuid("person_id")
-      .notNull()
-      .references(() => people.id),
+    personId: uuid("person_id").references(() => people.id),
     channel: text("channel").notNull(),
     value: text("value").notNull(),
     confidence: real("confidence").default(1.0),
     source: text("source"),
+    isDiscarded: boolean("is_discarded").notNull().default(false),
+    discardReason: text("discard_reason"),
     verifiedAt: timestamptz("verified_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
