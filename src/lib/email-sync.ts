@@ -9,6 +9,7 @@ import {
 } from "./gmail.js";
 import { logger } from "./logger.js";
 import { logError } from "./error-logger.js";
+import { resolveOrCreateFromEmail } from "./person-resolution.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -294,6 +295,8 @@ export async function syncEmails(
     query,
   });
 
+  const uniqueSenders = new Map<string, string | null>();
+
   const BATCH_SIZE = 50;
   for (let i = 0; i < allMessageIds.length; i += BATCH_SIZE) {
     const batchIds = allMessageIds.slice(i, i + BATCH_SIZE);
@@ -320,6 +323,9 @@ export async function syncEmails(
         const row = messageToRow(msg, userId, userEmail);
         if (row) {
           rows.push(row);
+          if (!uniqueSenders.has(row.fromEmail)) {
+            uniqueSenders.set(row.fromEmail, row.fromName ?? null);
+          }
         } else {
           const reason = "messageToRow_null: missing required fields";
           result.errorDetails.push({ gmailMessageId: id, reason });
@@ -430,6 +436,27 @@ export async function syncEmails(
         logger.error("Retry batch insert failed", { error: String(err) });
       }
     }
+  }
+
+  // Post-sync: resolve email senders to people (non-blocking)
+  if (uniqueSenders.size > 0) {
+    let resolved = 0;
+    for (const [senderEmail, senderName] of uniqueSenders) {
+      try {
+        await resolveOrCreateFromEmail(senderEmail, senderName);
+        resolved++;
+      } catch (err) {
+        logger.warn("Failed to resolve email sender", {
+          email: senderEmail,
+          error: String(err),
+        });
+      }
+    }
+    logger.info("Email sync: sender resolution complete", {
+      userId,
+      resolved,
+      total: uniqueSenders.size,
+    });
   }
 
   logger.info("Email sync completed", { userId, ...result });

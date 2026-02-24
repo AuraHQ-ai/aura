@@ -1,9 +1,10 @@
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, ilike, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   people,
   addresses,
   userProfiles,
+  emailsRaw,
   type Person,
   type Address,
 } from "../db/schema.js";
@@ -150,6 +151,102 @@ export async function backfillExistingProfiles(): Promise<number> {
 
   logger.info("Backfill complete", { linked, total: unlinked.length });
   return linked;
+}
+
+/**
+ * Resolve or create a person for a given email address.
+ * 1. Check if the email already maps to a person via addresses table.
+ * 2. For @realadvisor.com emails, try fuzzy-matching the name part against
+ *    existing people display names (avoids duplicating internal team members).
+ * 3. Otherwise, create a new person with the email address.
+ * Returns the person ID.
+ */
+export async function resolveOrCreateFromEmail(
+  email: string,
+  displayName: string | null,
+  source = "email_header",
+): Promise<string> {
+  const normEmail = email.toLowerCase();
+
+  const existingPersonId = await resolvePersonByAddress("email", normEmail);
+  if (existingPersonId) return existingPersonId;
+
+  if (normEmail.endsWith("@realadvisor.com")) {
+    const namePart = normEmail.split("@")[0];
+    if (namePart) {
+      const fuzzyMatches = await db
+        .select({ id: people.id })
+        .from(people)
+        .where(ilike(people.displayName, `%${namePart}%`))
+        .limit(1);
+
+      if (fuzzyMatches.length > 0) {
+        const matchedPersonId = fuzzyMatches[0].id;
+        await db
+          .insert(addresses)
+          .values({
+            personId: matchedPersonId,
+            channel: "email",
+            value: normEmail,
+            source,
+            confidence: 0.9,
+          })
+          .onConflictDoNothing();
+        logger.info("Linked @realadvisor.com email to existing person via fuzzy match", {
+          email: normEmail,
+          personId: matchedPersonId,
+        });
+        return matchedPersonId;
+      }
+    }
+  }
+
+  const person = await createPersonWithAddress(
+    displayName,
+    "email",
+    normEmail,
+    source,
+  );
+  return person.id;
+}
+
+/**
+ * Backfill: find all distinct email senders in emails_raw that don't have
+ * a corresponding address record, and resolve/create a person for each.
+ * Returns the count of senders processed.
+ */
+export async function backfillEmailSenders(): Promise<number> {
+  const unresolved = await db
+    .selectDistinctOn([emailsRaw.fromEmail], {
+      fromEmail: emailsRaw.fromEmail,
+      fromName: emailsRaw.fromName,
+    })
+    .from(emailsRaw)
+    .where(
+      sql`${emailsRaw.fromEmail} NOT IN (
+        SELECT ${addresses.value} FROM ${addresses} WHERE ${addresses.channel} = 'email'
+      )`,
+    );
+
+  let processed = 0;
+
+  for (const row of unresolved) {
+    try {
+      await resolveOrCreateFromEmail(row.fromEmail, row.fromName);
+      processed++;
+    } catch (error) {
+      logger.error("Failed to backfill email sender", {
+        email: row.fromEmail,
+        error: String(error),
+      });
+    }
+  }
+
+  logger.info("Email sender backfill complete", {
+    processed,
+    total: unresolved.length,
+  });
+  return processed;
 }
 
 function normaliseValue(channel: string, value: string): string {
