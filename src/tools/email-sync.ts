@@ -9,6 +9,7 @@ import { db } from "../db/client.js";
 import { emailsRaw } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { resolveUserByName } from "./slack.js";
+import { threadStateValues } from "../lib/email-triage.js";
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -396,13 +397,7 @@ export function createEmailSyncTools(
               "Search by subject (partial match) if thread ID unknown",
             ),
           thread_state: z
-            .enum([
-              "junk",
-              "resolved",
-              "awaiting_your_reply",
-              "awaiting_their_reply",
-              "fyi",
-            ])
+            .enum(threadStateValues)
             .describe("New state"),
           reason: z
             .string()
@@ -442,7 +437,8 @@ export function createEmailSyncTools(
           if (gmail_thread_id) {
             conditions.push(eq(emailsRaw.gmailThreadId, gmail_thread_id));
           } else if (subject_search) {
-            conditions.push(ilike(emailsRaw.subject, `%${subject_search}%`));
+            const escaped = subject_search.replace(/[\\%_]/g, "\\$&");
+            conditions.push(ilike(emailsRaw.subject, `%${escaped}%`));
           }
 
           // Find distinct threads that match
