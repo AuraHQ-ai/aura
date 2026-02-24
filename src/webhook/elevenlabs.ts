@@ -8,7 +8,6 @@ import { safePostMessage } from "../lib/slack-messaging.js";
 import { db } from "../db/client.js";
 import { voiceCalls, notes } from "../db/schema.js";
 import { getUserList } from "../tools/slack.js";
-import { eq } from "drizzle-orm";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
