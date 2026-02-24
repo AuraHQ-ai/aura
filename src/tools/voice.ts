@@ -206,44 +206,26 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         };
 
         try {
-          const response = await fetch(
-            "https://api.elevenlabs.io/v1/convai/twilio/outbound-call",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "xi-api-key": apiKey,
-              },
-              body: JSON.stringify({
-                agent_id: agentId,
-                agent_phone_number_id: phoneNumberId,
-                to_number: resolvedPhone,
-                conversation_initiation_client_data: {
-                  dynamic_variables: dynamicVars,
-                },
-              }),
-            },
+          const { ElevenLabsClient } = await import(
+            "@elevenlabs/elevenlabs-js"
           );
+          const client = new ElevenLabsClient({ apiKey });
 
-          if (!response.ok) {
-            const errorBody = await response.text();
-            logger.error("make_call ElevenLabs API error", {
-              status: response.status,
-              body: errorBody.substring(0, 500),
+          const data =
+            await client.conversationalAi.twilio.outboundCall({
+              agentId: agentId,
+              agentPhoneNumberId: phoneNumberId,
+              toNumber: resolvedPhone,
+              conversationInitiationClientData: {
+                dynamicVariables: dynamicVars,
+              },
             });
-            return {
-              ok: false,
-              error: `ElevenLabs API returned ${response.status}: ${errorBody.substring(0, 200)}`,
-            };
-          }
-
-          const data = (await response.json()) as Record<string, unknown>;
 
           try {
             await db
               .insert(voiceCalls)
               .values({
-                conversationId: data.conversation_id as string,
+                conversationId: data.conversationId as string,
                 agentId: process.env.ELEVENLABS_AGENT_ID,
                 direction: "outbound",
                 phoneNumber: resolvedPhone,
@@ -257,22 +239,38 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           } catch (dbError: any) {
             logger.error("make_call DB insert failed (call was placed)", {
               error: dbError.message,
-              conversationId: data.conversation_id,
+              conversationId: data.conversationId,
             });
           }
 
           logger.info("make_call tool called", {
             to: resolvedPhone,
             person: resolvedName,
-            conversationId: data.conversation_id,
+            conversationId: data.conversationId,
           });
 
           return {
             ok: true,
             message: `Call initiated to ${resolvedName} (${resolvedPhone})`,
-            conversation_id: data.conversation_id as string,
+            conversation_id: data.conversationId as string,
           };
         } catch (error: any) {
+          const { ElevenLabsError } = await import(
+            "@elevenlabs/elevenlabs-js"
+          );
+          if (error instanceof ElevenLabsError) {
+            logger.error("make_call ElevenLabs API error", {
+              statusCode: error.statusCode,
+              body:
+                typeof error.body === "string"
+                  ? error.body.substring(0, 500)
+                  : JSON.stringify(error.body)?.substring(0, 500),
+            });
+            return {
+              ok: false,
+              error: `ElevenLabs API error (${error.statusCode ?? "unknown"}): ${error.message}`,
+            };
+          }
           logger.error("make_call tool failed", { error: error.message });
           return {
             ok: false,
