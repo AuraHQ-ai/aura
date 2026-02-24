@@ -7,14 +7,55 @@ import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 
-// ── Language Detection ──────────────────────────────────────────────────────
+// ── Language Config ──────────────────────────────────────────────────────────
+
+interface LanguageConfig {
+  languageCode: string;
+  firstMessage: string;
+}
+
+const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
+  es: {
+    languageCode: "es",
+    firstMessage:
+      "Hola {{person_name}}, soy Aura de RealAdvisor. {{call_opener}}",
+  },
+  fr: {
+    languageCode: "fr",
+    firstMessage:
+      "Bonjour {{person_name}}, c'est Aura de RealAdvisor. {{call_opener}}",
+  },
+  it: {
+    languageCode: "it",
+    firstMessage:
+      "Ciao {{person_name}}, sono Aura di RealAdvisor. {{call_opener}}",
+  },
+  en: {
+    languageCode: "en",
+    firstMessage:
+      "Hi {{person_name}}, this is Aura from RealAdvisor. {{call_opener}}",
+  },
+  de: {
+    languageCode: "de",
+    firstMessage:
+      "Hallo {{person_name}}, hier ist Aura von RealAdvisor. {{call_opener}}",
+  },
+};
+
+const DEFAULT_LANGUAGE = "en";
+
+function getLanguageConfig(lang: string): LanguageConfig {
+  const key = lang.toLowerCase().slice(0, 2);
+  return LANGUAGE_CONFIGS[key] ?? LANGUAGE_CONFIGS[DEFAULT_LANGUAGE];
+}
 
 function detectLanguageFromPhone(phone: string): string {
-  if (phone.startsWith("+34")) return "Spanish";
-  if (phone.startsWith("+33")) return "French";
-  if (phone.startsWith("+39")) return "Italian";
-  if (phone.startsWith("+41")) return "English";
-  return "English";
+  if (phone.startsWith("+34")) return "es";
+  if (phone.startsWith("+33")) return "fr";
+  if (phone.startsWith("+39")) return "it";
+  if (phone.startsWith("+41")) return "de";
+  if (phone.startsWith("+44") || phone.startsWith("+1")) return "en";
+  return DEFAULT_LANGUAGE;
 }
 
 // ── Person Phone Resolution ──────────────────────────────────────────────────
@@ -122,7 +163,13 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
             .string()
             .optional()
             .describe(
-              "Language for the call (e.g. 'Spanish', 'French'). Auto-detected from phone number country code if omitted.",
+              "Language code for the call (e.g. 'es', 'fr', 'it', 'en', 'de'). Auto-detected from phone number country code if omitted.",
+            ),
+          voice_id: z
+            .string()
+            .optional()
+            .describe(
+              "ElevenLabs voice ID to use for this call. Uses the agent's default voice if omitted.",
             ),
         })
         .refine((data) => data.phone_number || data.person_name, {
@@ -134,6 +181,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         context: callContext,
         opener,
         language,
+        voice_id: voiceId,
       }) => {
         if (!isAdmin(context?.userId)) {
           return {
@@ -194,14 +242,14 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           };
         }
 
-        const personLanguage =
-          language || detectLanguageFromPhone(resolvedPhone);
+        const langKey = language || detectLanguageFromPhone(resolvedPhone);
+        const langConfig = getLanguageConfig(langKey);
 
         const dynamicVars = {
           person_name: resolvedName,
           call_context: callContext,
           call_opener: opener || "I wanted to check in with you.",
-          person_language: personLanguage,
+          person_language: langConfig.languageCode,
           direction: "outbound",
         };
 
@@ -218,6 +266,13 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
               toNumber: resolvedPhone,
               conversationInitiationClientData: {
                 dynamicVariables: dynamicVars,
+                conversationConfigOverride: {
+                  tts: voiceId ? { voiceId } : undefined,
+                  agent: {
+                    language: langConfig.languageCode,
+                    firstMessage: langConfig.firstMessage,
+                  },
+                },
               },
             });
 
