@@ -147,6 +147,13 @@ async function handlePostToSlack(
   try {
     const { channel, message } = params ?? { channel: "", message: "" };
     if (!channel || !message) return "Missing required parameters: channel, message";
+
+    const allowedChannels = VOICE_TESTING_CHANNEL ? [VOICE_TESTING_CHANNEL] : [];
+    if (!allowedChannels.includes(channel)) {
+      logger.warn("post_to_slack blocked: channel not in allowlist", { channel });
+      return `Channel "${channel}" is not in the allowed channels list`;
+    }
+
     await safePostMessage(slackClient, {
       channel,
       text: message,
@@ -266,7 +273,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       const duration = data.metadata?.call_duration_secs;
       const summary = data.analysis?.summary || "No summary available";
       const transcript = data.transcript;
-      const conversationId = data.conversation_id || "unknown";
+      const conversationId = data.conversation_id || crypto.randomUUID();
       const agentId = data.agent_id;
       const phoneNumber = data.metadata?.phone_number;
       const dynVars = data.metadata?.dynamic_variables;
