@@ -54,7 +54,8 @@ export async function getOrCreateProfile(
     const profile = result[0];
     logger.info("Created new user profile", { slackUserId, displayName });
     try {
-      await ensurePersonLinked(profile);
+      const personId = await ensurePersonLinked(profile);
+      return { ...profile, personId };
     } catch (error) {
       logger.error("Failed to link profile to person", {
         profileId: profile.id,

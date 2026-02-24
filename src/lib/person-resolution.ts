@@ -99,8 +99,8 @@ export async function ensurePersonLinked(profile: {
   slackUserId: string;
   displayName: string | null;
   personId: string | null;
-}): Promise<void> {
-  if (profile.personId) return;
+}): Promise<string | null> {
+  if (profile.personId) return profile.personId;
   let personId = await resolvePersonByAddress("slack", profile.slackUserId);
   if (!personId) {
     const person = await createPersonWithAddress(
@@ -112,6 +112,7 @@ export async function ensurePersonLinked(profile: {
     personId = person.id;
   }
   await linkProfileToPerson(profile.id, personId);
+  return personId;
 }
 
 /**
