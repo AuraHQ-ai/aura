@@ -136,7 +136,16 @@ export const elevenlabsWebhookApp = new Hono();
 // Server tool endpoint — called by ElevenLabs during a voice conversation
 elevenlabsWebhookApp.post("/tool", async (c) => {
   const rawBody = await c.req.text();
-  const signature = c.req.header("elevenlabs-signature") || "";
+
+  // Server tool calls are NOT signed like post-call webhooks.
+  // Authenticate via a shared secret in the x-webhook-secret header instead.
+  const headerSecret = c.req.header("x-webhook-secret") || "";
+  if (!webhookSecret || headerSecret !== webhookSecret) {
+    logger.warn("Invalid or missing x-webhook-secret on /tool", {
+      hasSecret: !!headerSecret,
+    });
+    return c.json({ error: "Unauthorized" }, 401);
+  }
 
   let body: {
     tool_call_id?: string;
@@ -145,12 +154,12 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     dynamic_variables?: Record<string, unknown>;
   };
   try {
-    body = await elevenlabs.webhooks.constructEvent(rawBody, signature, webhookSecret);
+    body = JSON.parse(rawBody);
   } catch (err) {
-    logger.warn("Invalid ElevenLabs webhook signature on /tool", {
+    logger.warn("Invalid JSON body on /tool", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return c.json({ error: "Invalid signature" }, 401);
+    return c.json({ error: "Invalid body" }, 400);
   }
 
   const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
