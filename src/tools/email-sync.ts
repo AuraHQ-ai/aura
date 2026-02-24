@@ -428,6 +428,14 @@ export function createEmailSyncTools(
             };
           }
 
+          if (user.id !== context?.userId && !isAdmin(context?.userId)) {
+            return {
+              ok: false as const,
+              error:
+                "You can only update your own email threads. Ask an admin to update other users' threads.",
+            };
+          }
+
           const userId = user.id;
 
           const conditions = [eq(emailsRaw.userId, userId)];
