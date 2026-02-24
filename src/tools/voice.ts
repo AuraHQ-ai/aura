@@ -50,6 +50,15 @@ const VOICE_MAP: Record<string, string> = {
   fr: "OOiDJrD1goukqfTpiySr", // Greg - French (Parisian)
   it: "o4b57JYAECRMJyCEXyIE", // Brando - Italian (Natural)
   en: "SAz9YHcvj6GT2YYXdXww", // River - English (default)
+  de: "onwK4e9ZLuTAKqWW03F9", // Daniel - German (Natural)
+};
+
+const LANGUAGE_NAMES: Record<string, string> = {
+  es: "Spanish",
+  fr: "French",
+  it: "Italian",
+  en: "English",
+  de: "German",
 };
 
 const DEFAULT_LANGUAGE = "en";
@@ -265,7 +274,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           person_name: resolvedName,
           call_context: callContext,
           call_opener: resolvedOpener,
-          person_language: langConfig.languageCode,
+          person_language: LANGUAGE_NAMES[langConfig.languageCode] ?? langConfig.languageCode,
           direction: "outbound",
         };
 
