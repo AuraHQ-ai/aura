@@ -107,15 +107,13 @@ async function handleLookupContext(
     let context = `*${match.displayName}* (Slack ID: ${match.slackUserId})`;
 
     try {
-      const { like } = await import("drizzle-orm");
       const escapedTopic = person_name
-        .toLowerCase()
         .replace(/%/g, "\\%")
         .replace(/_/g, "\\_");
       const relatedNotes = await db
         .select({ topic: notes.topic, content: notes.content })
         .from(notes)
-        .where(like(notes.topic, `%${escapedTopic}%`))
+        .where(ilike(notes.topic, `%${escapedTopic}%`))
         .limit(3);
 
       if (relatedNotes.length > 0) {
