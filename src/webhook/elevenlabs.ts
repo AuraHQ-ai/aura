@@ -7,6 +7,7 @@ import { recordError } from "../lib/metrics.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { db } from "../db/client.js";
 import { notes } from "../db/schema.js";
+import { getUserList } from "../tools/slack.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -24,9 +25,9 @@ function verifyElevenLabsSignature(
 ): boolean {
   if (!webhookSecret) {
     logger.warn(
-      "ELEVENLABS_WEBHOOK_SECRET not configured — skipping signature verification",
+      "ELEVENLABS_WEBHOOK_SECRET not configured — rejecting request",
     );
-    return true;
+    return false;
   }
 
   if (!signatureHeader) return false;
@@ -72,38 +73,32 @@ async function handleLookupContext(
   const { person_name } = params;
 
   try {
-    const result = await slackClient.users.list({});
-    const users = result.members || [];
+    const users = await getUserList(slackClient);
+    const nameLower = person_name.toLowerCase();
     const match = users.find((u) => {
-      const name = (
-        u.profile?.display_name ||
-        u.real_name ||
-        u.name ||
-        ""
-      ).toLowerCase();
-      return name.includes(person_name.toLowerCase());
+      const name = (u.displayName || u.realName || u.username || "").toLowerCase();
+      return name.includes(nameLower);
     });
 
     if (!match) {
       return `No Slack user found matching "${person_name}".`;
     }
 
-    const profile = match.profile;
-    const displayName =
-      profile?.display_name || match.real_name || match.name || "Unknown";
-    const title = profile?.title || "No title";
-    const email = profile?.email || "No email";
-    const tz = match.tz_label || match.tz || "Unknown timezone";
+    const displayName = match.displayName || match.realName || match.username || "Unknown";
 
-    let context = `*${displayName}*\nTitle: ${title}\nEmail: ${email}\nTimezone: ${tz}`;
+    let context = `*${displayName}* (Slack ID: ${match.id})`;
 
     // Look up any stored notes about this person
     try {
       const { like } = await import("drizzle-orm");
+      const escapedName = person_name
+        .toLowerCase()
+        .replace(/%/g, "\\%")
+        .replace(/_/g, "\\_");
       const relatedNotes = await db
         .select({ topic: notes.topic, content: notes.content })
         .from(notes)
-        .where(like(notes.topic, `%${person_name.toLowerCase()}%`))
+        .where(like(notes.topic, `%${escapedName}%`))
         .limit(3);
 
       if (relatedNotes.length > 0) {
