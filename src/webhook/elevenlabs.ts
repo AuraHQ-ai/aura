@@ -40,39 +40,44 @@ function verifyElevenLabsSignature(
 ): boolean {
   if (!webhookSecret) {
     logger.warn(
-      "ELEVENLABS_WEBHOOK_SECRET not configured — rejecting request",
+      "ELEVENLABS_WEBHOOK_SECRET not configured -- rejecting request",
     );
     return false;
   }
 
   if (!signatureHeader) return false;
 
-  // ElevenLabs-Signature header format: t=<timestamp>,v1=<signature>
-  const parts: Record<string, string> = {};
+  // ElevenLabs-Signature header format: t=<timestamp>,v0=<hash>
+  // See: ElevenLabs Python SDK _webhooks.construct_event()
+  let timestamp: string | null = null;
+  let signature: string | null = null;
+
   for (const part of signatureHeader.split(",")) {
-    const [key, ...rest] = part.split("=");
-    if (key && rest.length) {
-      parts[key.trim()] = rest.join("=").trim();
+    if (part.startsWith("t=")) {
+      timestamp = part.slice(2);
+    } else if (part.startsWith("v0=")) {
+      signature = part; // keep the "v0=" prefix for comparison
     }
   }
 
-  const timestamp = parts["t"];
-  const signature = parts["v1"];
   if (!timestamp || !signature) return false;
 
-  // Reject requests older than 5 minutes
-  const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 300;
-  if (parseInt(timestamp) < fiveMinutesAgo) return false;
+  // Reject requests older than 30 minutes (matching SDK tolerance)
+  const toleranceMs = 30 * 60 * 1000;
+  const reqTimestampMs = parseInt(timestamp) * 1000;
+  if (reqTimestampMs < Date.now() - toleranceMs) return false;
 
-  const signedPayload = `${timestamp}.${rawBody}`;
-  const expected = crypto
-    .createHmac("sha256", webhookSecret)
-    .update(signedPayload, "utf8")
-    .digest("hex");
+  const message = `${timestamp}.${rawBody}`;
+  const digest =
+    "v0=" +
+    crypto
+      .createHmac("sha256", webhookSecret)
+      .update(message, "utf8")
+      .digest("hex");
 
   try {
     return crypto.timingSafeEqual(
-      Buffer.from(expected, "utf8"),
+      Buffer.from(digest, "utf8"),
       Buffer.from(signature, "utf8"),
     );
   } catch {
