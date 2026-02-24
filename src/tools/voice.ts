@@ -14,28 +14,34 @@ const COMPANY_NAME = process.env.COMPANY_NAME ?? "RealAdvisor";
 interface LanguageConfig {
   languageCode: string;
   firstMessage: string;
+  defaultOpener: string;
 }
 
 const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
   es: {
     languageCode: "es",
     firstMessage: `Hola {{person_name}}, soy Aura de ${COMPANY_NAME}. {{call_opener}}`,
+    defaultOpener: "Quería ponerme en contacto contigo.",
   },
   fr: {
     languageCode: "fr",
     firstMessage: `Bonjour {{person_name}}, c'est Aura de ${COMPANY_NAME}. {{call_opener}}`,
+    defaultOpener: "Je voulais prendre de vos nouvelles.",
   },
   it: {
     languageCode: "it",
     firstMessage: `Ciao {{person_name}}, sono Aura di ${COMPANY_NAME}. {{call_opener}}`,
+    defaultOpener: "Volevo mettermi in contatto con te.",
   },
   en: {
     languageCode: "en",
     firstMessage: `Hi {{person_name}}, this is Aura from ${COMPANY_NAME}. {{call_opener}}`,
+    defaultOpener: "I wanted to check in with you.",
   },
   de: {
     languageCode: "de",
     firstMessage: `Hallo {{person_name}}, hier ist Aura von ${COMPANY_NAME}. {{call_opener}}`,
+    defaultOpener: "Ich wollte mich bei Ihnen melden.",
   },
 };
 
@@ -250,11 +256,15 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         const langConfig = getLanguageConfig(langKey);
 
         const resolvedVoiceId = voiceId ?? VOICE_MAP[langConfig.languageCode];
+        const resolvedOpener = opener || langConfig.defaultOpener;
+        const resolvedFirstMessage = langConfig.firstMessage
+          .replace("{{person_name}}", resolvedName)
+          .replace("{{call_opener}}", resolvedOpener);
 
         const dynamicVars = {
           person_name: resolvedName,
           call_context: callContext,
-          call_opener: opener || "I wanted to check in with you.",
+          call_opener: resolvedOpener,
           person_language: langConfig.languageCode,
           direction: "outbound",
         };
@@ -278,7 +288,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
                     : undefined,
                   agent: {
                     language: langConfig.languageCode,
-                    firstMessage: langConfig.firstMessage,
+                    firstMessage: resolvedFirstMessage,
                   },
                 },
               },
