@@ -16,7 +16,8 @@ const STALE_RUNNING_THRESHOLD_MS = 15 * 60 * 1000;
 
 // ── Job Eligibility (recurring jobs) ─────────────────────────────────────────
 
-function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
+/** @internal — exported for testing */
+export function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
   const now = new Date();
 
   if (job.cronSchedule) {
