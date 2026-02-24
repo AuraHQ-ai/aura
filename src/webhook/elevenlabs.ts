@@ -6,14 +6,15 @@ import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { db } from "../db/client.js";
-import { notes } from "../db/schema.js";
+import { voiceCalls, notes } from "../db/schema.js";
 import { getUserList } from "../tools/slack.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
-const ELEVENLABS_DM_USER_ID = process.env.ELEVENLABS_DM_USER_ID || "";
+
+const VOICE_TESTING_CHANNEL = "C0AGTACJL6N";
 
 const slackClient = new WebClient(botToken);
 
@@ -65,14 +66,34 @@ function verifyElevenLabsSignature(
   }
 }
 
+// ── Inbound/Outbound Detection ──────────────────────────────────────────────
+
+function isOutboundCall(dynamicVariables?: Record<string, unknown>): boolean {
+  if (!dynamicVariables) return false;
+  const defaultPlaceholders = ["", "unknown", "default", "N/A", "n/a", "none"];
+  return Object.values(dynamicVariables).some(
+    (v) =>
+      v != null &&
+      typeof v === "string" &&
+      v.trim() !== "" &&
+      !defaultPlaceholders.includes(v.trim().toLowerCase()),
+  );
+}
+
 // ── Tool Handlers ───────────────────────────────────────────────────────────
 
 async function handleLookupContext(
   params: { person_name: string } | undefined,
+  outbound: boolean,
 ): Promise<string> {
   try {
     const { person_name } = params ?? { person_name: "" };
     if (!person_name) return "Missing required parameter: person_name";
+
+    if (!outbound) {
+      return `User asked about "${person_name}". I can confirm their name but cannot share internal details for inbound calls.`;
+    }
+
     const users = await getUserList(slackClient);
     const nameLower = person_name.toLowerCase();
     const match = users.find((u) => {
@@ -88,7 +109,6 @@ async function handleLookupContext(
 
     let context = `*${displayName}* (Slack ID: ${match.id})`;
 
-    // Look up any stored notes about this person
     try {
       const { like } = await import("drizzle-orm");
       const escapedName = person_name
@@ -160,6 +180,7 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     tool_call_id?: string;
     tool_name?: string;
     parameters?: Record<string, unknown>;
+    dynamic_variables?: Record<string, unknown>;
   };
   try {
     body = JSON.parse(rawBody);
@@ -167,9 +188,14 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     return c.json({ error: "Invalid JSON" }, 400);
   }
 
-  const { tool_call_id, tool_name, parameters } = body;
+  const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
+  const outbound = isOutboundCall(dynamic_variables);
 
-  logger.info("ElevenLabs server tool called", { tool_call_id, tool_name });
+  logger.info("ElevenLabs server tool called", {
+    tool_call_id,
+    tool_name,
+    direction: outbound ? "outbound" : "inbound",
+  });
 
   let result: string;
 
@@ -177,6 +203,7 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     case "lookup_context":
       result = await handleLookupContext(
         parameters as { person_name: string } | undefined,
+        outbound,
       );
       break;
 
@@ -210,9 +237,13 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       agent_id?: string;
       conversation_id?: string;
       status?: string;
-      transcript?: string;
+      transcript?: unknown;
       analysis?: { summary?: string; data_points?: Record<string, unknown> };
-      metadata?: { call_duration_secs?: number };
+      metadata?: {
+        call_duration_secs?: number;
+        phone_number?: string;
+        dynamic_variables?: Record<string, unknown>;
+      };
     };
   };
   try {
@@ -235,64 +266,95 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
     try {
       const duration = data.metadata?.call_duration_secs;
       const summary = data.analysis?.summary || "No summary available";
-      const transcript = data.transcript || "";
+      const transcript = data.transcript;
       const conversationId = data.conversation_id || "unknown";
+      const agentId = data.agent_id;
+      const phoneNumber = data.metadata?.phone_number;
+      const dynVars = data.metadata?.dynamic_variables;
+      const outbound = isOutboundCall(dynVars);
+      const direction = outbound ? "outbound" : "inbound";
+      const personName = dynVars?.person_name as string | undefined;
+      const callContext = dynVars?.call_context as string | undefined;
 
-      // Extract caller info from transcript if available
+      const transcriptText =
+        typeof transcript === "string"
+          ? transcript
+          : transcript != null
+            ? JSON.stringify(transcript)
+            : "";
+
       const durationStr =
         duration != null
           ? `${Math.floor(duration / 60)}m ${duration % 60}s`
           : "unknown duration";
 
-      const slackMessage =
-        `:telephone_receiver: *Voice call ended*\n` +
-        `*Duration:* ${durationStr}\n` +
-        `*Conversation ID:* \`${conversationId}\`\n` +
-        `*Summary:* ${summary}` +
-        (transcript
-          ? `\n\n*Transcript excerpt:*\n>${transcript.slice(0, 500)}${transcript.length > 500 ? "..." : ""}`
-          : "");
-
-      if (ELEVENLABS_DM_USER_ID) {
-        const dmResult = await slackClient.conversations.open({
-          users: ELEVENLABS_DM_USER_ID,
-        });
-        const dmChannelId = dmResult.channel?.id;
-
-        if (dmChannelId) {
-          await safePostMessage(slackClient, {
-            channel: dmChannelId,
-            text: slackMessage,
-          });
-          logger.info("Post-call summary sent", { conversationId, userId: ELEVENLABS_DM_USER_ID });
-        }
-      } else {
-        logger.warn("ELEVENLABS_DM_USER_ID not configured — skipping post-call DM");
-      }
-
-      // Store call log as a note
-      const noteContent =
-        `**Call Duration:** ${durationStr}\n` +
-        `**Status:** ${data.status || "unknown"}\n` +
-        `**Summary:** ${summary}\n` +
-        `**Transcript:** ${transcript.slice(0, 2000)}`;
+      // Store in voice_calls table
+      const callStatus =
+        data.status === "error" || data.status === "failed"
+          ? "failed"
+          : "completed";
 
       await db
-        .insert(notes)
+        .insert(voiceCalls)
         .values({
-          topic: `elevenlabs-call:${conversationId}`,
-          content: noteContent,
-          category: "knowledge",
+          conversationId,
+          agentId: agentId ?? null,
+          direction,
+          phoneNumber: phoneNumber ?? null,
+          personName: personName ?? null,
+          status: callStatus,
+          durationSeconds: duration ?? null,
+          transcript: transcript ?? null,
+          summary,
+          callContext: callContext ?? null,
+          dynamicVariables: dynVars ?? null,
+          metadata: data as Record<string, unknown>,
         })
         .onConflictDoUpdate({
-          target: notes.topic,
+          target: voiceCalls.conversationId,
           set: {
-            content: noteContent,
+            status: callStatus,
+            durationSeconds: duration ?? null,
+            transcript: transcript ?? null,
+            summary,
+            metadata: data as Record<string, unknown>,
             updatedAt: new Date(),
           },
         });
 
-      logger.info("Post-call note stored", { conversationId });
+      logger.info("Voice call stored", { conversationId, direction, callStatus });
+
+      // Post summary to #voice-testing channel
+      const directionEmoji = outbound ? ":telephone_receiver:" : ":phone:";
+      const directionLabel = outbound ? "Outbound" : "Inbound";
+      const callerInfo = personName
+        ? `*${directionLabel} — ${personName}*`
+        : phoneNumber
+          ? `*${directionLabel} — ${phoneNumber}*`
+          : `*${directionLabel} call*`;
+
+      const truncatedTranscript =
+        transcriptText.length > 500
+          ? transcriptText.slice(0, 500) + "..."
+          : transcriptText;
+
+      const slackMessage =
+        `${directionEmoji} *Voice call ended*\n` +
+        `${callerInfo}\n` +
+        `*Duration:* ${durationStr}\n` +
+        `*Status:* ${callStatus}\n` +
+        `*Conversation ID:* \`${conversationId}\`\n` +
+        `*Summary:* ${summary}` +
+        (truncatedTranscript
+          ? `\n\n*Transcript excerpt:*\n>${truncatedTranscript}`
+          : "");
+
+      await safePostMessage(slackClient, {
+        channel: VOICE_TESTING_CHANNEL,
+        text: slackMessage,
+      });
+
+      logger.info("Post-call summary sent to #voice-testing", { conversationId });
     } catch (err) {
       recordError("elevenlabs_post_call", err, {
         conversation_id: data.conversation_id,
