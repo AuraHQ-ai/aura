@@ -18,6 +18,20 @@ const VOICE_TESTING_CHANNEL = process.env.ELEVENLABS_VOICE_CHANNEL || "";
 
 const slackClient = new WebClient(botToken);
 
+// ── Cached User List ─────────────────────────────────────────────────────────
+
+let cachedUsers: Awaited<ReturnType<typeof getUserList>> | null = null;
+let cacheTime = 0;
+const CACHE_TTL = 10 * 60 * 1000; // 10 min
+
+async function getCachedUserList(client: WebClient) {
+  if (!cachedUsers || Date.now() - cacheTime > CACHE_TTL) {
+    cachedUsers = await getUserList(client);
+    cacheTime = Date.now();
+  }
+  return cachedUsers;
+}
+
 // ── Signature Verification ──────────────────────────────────────────────────
 
 function verifyElevenLabsSignature(
@@ -68,20 +82,9 @@ function verifyElevenLabsSignature(
 
 // ── Inbound/Outbound Detection ──────────────────────────────────────────────
 
-const OUTBOUND_INDICATOR_KEYS = ["person_name", "call_context"] as const;
-
-function isOutboundCall(dynamicVariables?: Record<string, unknown>): boolean {
-  if (!dynamicVariables) return false;
-  const defaultPlaceholders = ["", "unknown", "default", "N/A", "n/a", "none"];
-  return OUTBOUND_INDICATOR_KEYS.some((key) => {
-    const v = dynamicVariables[key];
-    return (
-      v != null &&
-      typeof v === "string" &&
-      v.trim() !== "" &&
-      !defaultPlaceholders.includes(v.trim().toLowerCase())
-    );
-  });
+function isOutboundCall(metadata: any): boolean {
+  const dynVars = metadata?.dynamic_variables || metadata?.dynamicVariables || {};
+  return dynVars.direction === "outbound";
 }
 
 // ── Tool Handlers ───────────────────────────────────────────────────────────
@@ -98,7 +101,7 @@ async function handleLookupContext(
       return `User asked about "${person_name}". I can confirm their name but cannot share internal details for inbound calls.`;
     }
 
-    const users = await getUserList(slackClient);
+    const users = await getCachedUserList(slackClient);
     const nameLower = person_name.toLowerCase();
     const match = users.find((u) => {
       const name = (u.displayName || u.realName || u.username || "").toLowerCase();
@@ -199,7 +202,7 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
   }
 
   const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
-  const outbound = isOutboundCall(dynamic_variables);
+  const outbound = isOutboundCall({ dynamic_variables });
 
   logger.info("ElevenLabs server tool called", {
     tool_call_id,
@@ -281,7 +284,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       const agentId = data.agent_id;
       const phoneNumber = data.metadata?.phone_number;
       const dynVars = data.metadata?.dynamic_variables;
-      const outbound = isOutboundCall(dynVars);
+      const outbound = isOutboundCall(data.metadata);
       const direction = outbound ? "outbound" : "inbound";
       const personName = dynVars?.person_name as string | undefined;
       const callContext = dynVars?.call_context as string | undefined;
