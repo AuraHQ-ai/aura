@@ -10,6 +10,9 @@ import {
 } from "../db/schema.js";
 import { logger } from "./logger.js";
 
+// Configurable internal domain for fuzzy-matching team members
+const INTERNAL_DOMAIN = process.env.INTERNAL_EMAIL_DOMAIN || "realadvisor.com";
+
 /**
  * Resolve a person by channel + value.
  * Returns the person ID if found, null otherwise.
@@ -156,7 +159,7 @@ export async function backfillExistingProfiles(): Promise<number> {
 /**
  * Resolve or create a person for a given email address.
  * 1. Check if the email already maps to a person via addresses table.
- * 2. For @realadvisor.com emails, try fuzzy-matching the name part against
+ * 2. For emails matching the internal domain (INTERNAL_EMAIL_DOMAIN env var), try fuzzy-matching the name part against
  *    existing people display names (avoids duplicating internal team members).
  * 3. Otherwise, create a new person with the email address.
  * Returns the person ID.
@@ -171,7 +174,7 @@ export async function resolveOrCreateFromEmail(
   const existingPersonId = await resolvePersonByAddress("email", normEmail);
   if (existingPersonId) return existingPersonId;
 
-  if (normEmail.endsWith("@realadvisor.com")) {
+  if (normEmail.endsWith(`@${INTERNAL_DOMAIN}`)) {
     const namePart = normEmail.split("@")[0];
     if (namePart) {
       const fuzzyMatches = await db
@@ -192,7 +195,7 @@ export async function resolveOrCreateFromEmail(
             confidence: 0.9,
           })
           .onConflictDoNothing();
-        logger.info("Linked @realadvisor.com email to existing person via fuzzy match", {
+        logger.info("Linked internal domain email to existing person via fuzzy match", {
           email: normEmail,
           personId: matchedPersonId,
         });
