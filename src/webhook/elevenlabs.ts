@@ -44,62 +44,84 @@ function isOutboundCall(metadata: any): boolean {
 // ── Tool Handlers ───────────────────────────────────────────────────────────
 
 async function handleLookupContext(
-  params: { person_name: string } | undefined,
+  params: { person_name?: string; query?: string } | undefined,
   outbound: boolean,
 ): Promise<string> {
   try {
-    const { person_name } = params ?? { person_name: "" };
-    if (!person_name) return "Missing required parameter: person_name";
+    const { person_name, query } = params ?? {};
 
     if (!outbound) {
-      return `User asked about "${person_name}". I can confirm their name but cannot share internal details for inbound calls.`;
+      return "Cannot share internal details for inbound calls.";
     }
 
-    const users = await getCachedUserList(slackClient);
-    const nameLower = person_name.toLowerCase();
-    const match = users.find((u) => {
-      const name = (u.displayName || u.realName || u.username || "").toLowerCase();
-      return name.includes(nameLower);
-    });
+    const parts: string[] = [];
 
-    if (!match) {
-      return `No Slack user found matching "${person_name}".`;
-    }
+    // 1. If there's a query, search notes for it (OKRs, team info, bugs, etc.)
+    if (query) {
+      try {
+        const { ilike, or, sql } = await import("drizzle-orm");
+        const searchTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+        const relatedNotes = await db
+          .select({ topic: notes.topic, content: notes.content })
+          .from(notes)
+          .where(
+            or(
+              ...searchTerms.map((term) =>
+                ilike(notes.topic, `%${term}%`),
+              ),
+              ...searchTerms.map((term) =>
+                sql`${notes.content} ILIKE ${`%${term}%`}`,
+              ),
+            ),
+          )
+          .limit(5);
 
-    const displayName = match.displayName || match.realName || match.username || "Unknown";
-
-    let context = `*${displayName}* (Slack ID: ${match.id})`;
-
-    try {
-      const { ilike } = await import("drizzle-orm");
-      const escapedName = person_name
-        .replace(/%/g, "\\%")
-        .replace(/_/g, "\\_");
-      const relatedNotes = await db
-        .select({ topic: notes.topic, content: notes.content })
-        .from(notes)
-        .where(ilike(notes.topic, `%${escapedName}%`))
-        .limit(3);
-
-      if (relatedNotes.length > 0) {
-        context += "\n\nRelated notes:";
-        for (const note of relatedNotes) {
-          context += `\n- ${note.topic}: ${note.content.slice(0, 200)}`;
+        if (relatedNotes.length > 0) {
+          parts.push("Relevant notes:");
+          for (const note of relatedNotes) {
+            parts.push(`- ${note.topic}: ${note.content.slice(0, 500)}`);
+          }
+        } else {
+          parts.push(`No notes found matching "${query}".`);
         }
+      } catch (err) {
+        logger.warn("Note search failed in lookup_context", {
+          query,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-    } catch {
-      // Notes lookup is non-critical
     }
 
-    return context;
+    // 2. If there's a person_name, look up the user
+    if (person_name) {
+      const users = await getCachedUserList(slackClient);
+      const nameLower = person_name.toLowerCase();
+      const match = users.find((u) => {
+        const name = (u.displayName || u.realName || u.username || "").toLowerCase();
+        return name.includes(nameLower);
+      });
+
+      if (match) {
+        const displayName = match.displayName || match.realName || match.username || "Unknown";
+        parts.push(`Person: ${displayName} (Slack: ${match.id})`);
+      } else {
+        parts.push(`No user found matching "${person_name}".`);
+      }
+    }
+
+    if (parts.length === 0) {
+      return "No person_name or query provided.";
+    }
+
+    return parts.join("\n\n");
   } catch (err) {
-    const name = params?.person_name ?? "unknown";
     logger.error("lookup_context failed", {
-      person_name: name,
+      params,
       error: err instanceof Error ? err.message : String(err),
     });
-    return `Error looking up "${name}": ${err instanceof Error ? err.message : "unknown error"}`;
+    return "Error looking up context.";
   }
+}
 }
 
 async function handlePostToSlack(
@@ -150,47 +172,25 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  let body: {
-    tool_call_id?: string;
-    tool_name?: string;
-    parameters?: Record<string, unknown>;
-    dynamic_variables?: Record<string, unknown>;
-  };
+  // ElevenLabs server tools send parameters as top-level body fields.
+  // There is no tool_name or tool_call_id wrapper — the URL IS the tool identity.
+  let body: Record<string, unknown>;
   try {
     body = JSON.parse(rawBody);
   } catch {
     return c.json({ error: "Invalid JSON" }, 400);
   }
 
-  const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
-  const outbound = isOutboundCall({ dynamic_variables });
-
-  logger.info("ElevenLabs server tool called", {
-    tool_call_id,
-    tool_name,
-    direction: outbound ? "outbound" : "inbound",
+  logger.info("ElevenLabs server tool called (lookup_context)", {
+    params: Object.keys(body),
   });
 
-  let result: string;
-
-  switch (tool_name) {
-    case "lookup_context":
-      result = await handleLookupContext(
-        parameters as { person_name: string } | undefined,
-        outbound,
-      );
-      break;
-
-    case "post_to_slack":
-      result = await handlePostToSlack(
-        parameters as { channel: string; message: string } | undefined,
-      );
-      break;
-
-    default:
-      logger.warn("Unknown ElevenLabs tool", { tool_name });
-      result = `Unknown tool: ${tool_name}`;
-  }
+  // This endpoint is exclusively for lookup_context.
+  // Parameters arrive as top-level fields: { person_name, query }
+  const result = await handleLookupContext(
+    body as { person_name?: string; query?: string },
+    true, // tool webhooks only fire on our outbound calls
+  );
 
   return c.json({ result });
 });
