@@ -17,6 +17,7 @@ import { createEmailTools, createGmailEATools } from "./email.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
 import { createSubagentTools } from "./subagents.js";
+import { createVoiceTools } from "./voice.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -2877,5 +2878,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Subagent Tools (isolated context subtask delegation) ─────────
     ...createSubagentTools(client, context),
+
+    // ── Voice & SMS Tools (ElevenLabs + Twilio) ─────────────────────
+    ...createVoiceTools(context),
   };
 }

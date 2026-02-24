@@ -173,6 +173,9 @@ const TOOL_STATUS: Record<string, string> = {
   patch_own_code: "Dispatching a coding agent (this may take a few minutes)...",
   // Google Sheets
   read_google_sheet: "Reading Google Sheet...",
+  // Voice & SMS
+  make_call: "Initiating a phone call...",
+  send_sms: "Sending an SMS...",
   // Misc
   set_my_status: "Updating status...",
   draw_table: "Drawing a table...",
