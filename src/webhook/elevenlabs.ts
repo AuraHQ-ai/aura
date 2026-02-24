@@ -232,9 +232,10 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       const conversationId = body.conversation_id || "unknown";
 
       // Extract caller info from transcript if available
-      const durationStr = duration
-        ? `${Math.floor(duration / 60)}m ${duration % 60}s`
-        : "unknown duration";
+      const durationStr =
+        duration != null
+          ? `${Math.floor(duration / 60)}m ${duration % 60}s`
+          : "unknown duration";
 
       const slackMessage =
         `:telephone_receiver: *Voice call ended*\n` +
@@ -260,25 +261,23 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       }
 
       // Store call log as a note
+      const noteContent =
+        `**Call Duration:** ${durationStr}\n` +
+        `**Status:** ${body.status || "unknown"}\n` +
+        `**Summary:** ${summary}\n` +
+        `**Transcript:** ${transcript.slice(0, 2000)}`;
+
       await db
         .insert(notes)
         .values({
           topic: `elevenlabs-call:${conversationId}`,
-          content:
-            `**Call Duration:** ${durationStr}\n` +
-            `**Status:** ${body.status || "unknown"}\n` +
-            `**Summary:** ${summary}\n` +
-            `**Transcript:** ${transcript.slice(0, 2000)}`,
+          content: noteContent,
           category: "knowledge",
         })
         .onConflictDoUpdate({
           target: notes.topic,
           set: {
-            content:
-              `**Call Duration:** ${durationStr}\n` +
-              `**Status:** ${body.status || "unknown"}\n` +
-              `**Summary:** ${summary}\n` +
-              `**Transcript:** ${transcript.slice(0, 2000)}`,
+            content: noteContent,
             updatedAt: new Date(),
           },
         });
