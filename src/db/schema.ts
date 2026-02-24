@@ -159,6 +159,7 @@ export const people = pgTable("people", {
     .primaryKey()
     .default(sql`gen_random_uuid()`),
   displayName: text("display_name"),
+  type: text("type").default("person"),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
   updatedAt: timestamptz("updated_at").notNull().defaultNow(),
 });
