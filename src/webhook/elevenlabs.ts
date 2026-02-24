@@ -2,12 +2,14 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import crypto from "node:crypto";
+import { sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { db } from "../db/client.js";
 import { voiceCalls, notes } from "../db/schema.js";
 import { getUserList } from "../tools/slack.js";
+import { embedText } from "../lib/embeddings.js";
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -44,17 +46,18 @@ function isOutboundCall(metadata: any): boolean {
 // ── Tool Handlers ───────────────────────────────────────────────────────────
 
 async function handleLookupContext(
-  params: { person_name: string } | undefined,
-  outbound: boolean,
-): Promise<string> {
-  try {
-    const { person_name } = params ?? { person_name: "" };
-    if (!person_name) return "Missing required parameter: person_name";
+  params: { person_name?: string; query?: string },
+): Promise<{ context?: string; person?: { name: string } }> {
+  const { person_name, query } = params;
 
-    if (!outbound) {
-      return `User asked about "${person_name}". I can confirm their name but cannot share internal details for inbound calls.`;
-    }
+  if (!person_name && !query) {
+    return { context: "Provide person_name or query to look up context." };
+  }
 
+  const result: { context?: string; person?: { name: string } } = {};
+  const contextParts: string[] = [];
+
+  if (person_name) {
     const users = await getCachedUserList(slackClient);
     const nameLower = person_name.toLowerCase();
     const match = users.find((u) => {
@@ -62,44 +65,79 @@ async function handleLookupContext(
       return name.includes(nameLower);
     });
 
-    if (!match) {
-      return `No Slack user found matching "${person_name}".`;
+    if (match) {
+      const displayName = match.displayName || match.realName || match.username || "Unknown";
+      result.person = { name: displayName };
     }
 
-    const displayName = match.displayName || match.realName || match.username || "Unknown";
+    if (!query) {
+      try {
+        const { ilike } = await import("drizzle-orm");
+        const escapedName = person_name
+          .replace(/%/g, "\\%")
+          .replace(/_/g, "\\_");
+        const relatedNotes = await db
+          .select({ topic: notes.topic, content: notes.content })
+          .from(notes)
+          .where(ilike(notes.topic, `%${escapedName}%`))
+          .limit(3);
 
-    let context = `*${displayName}* (Slack ID: ${match.id})`;
-
-    try {
-      const { ilike } = await import("drizzle-orm");
-      const escapedName = person_name
-        .replace(/%/g, "\\%")
-        .replace(/_/g, "\\_");
-      const relatedNotes = await db
-        .select({ topic: notes.topic, content: notes.content })
-        .from(notes)
-        .where(ilike(notes.topic, `%${escapedName}%`))
-        .limit(3);
-
-      if (relatedNotes.length > 0) {
-        context += "\n\nRelated notes:";
-        for (const note of relatedNotes) {
-          context += `\n- ${note.topic}: ${note.content.slice(0, 200)}`;
+        if (relatedNotes.length > 0) {
+          contextParts.push(
+            relatedNotes
+              .map((n, i) => `${i + 1}. ${n.topic}: ${n.content.slice(0, 500)}`)
+              .join("\n"),
+          );
         }
+      } catch {
+        // Name-based note lookup is non-critical
       }
-    } catch {
-      // Notes lookup is non-critical
     }
-
-    return context;
-  } catch (err) {
-    const name = params?.person_name ?? "unknown";
-    logger.error("lookup_context failed", {
-      person_name: name,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return `Error looking up "${name}": ${err instanceof Error ? err.message : "unknown error"}`;
   }
+
+  if (query) {
+    try {
+      const queryEmbedding = await embedText(query);
+      const embeddingLiteral = JSON.stringify(queryEmbedding);
+
+      const noteResults = await db
+        .select({
+          topic: notes.topic,
+          content: notes.content,
+        })
+        .from(notes)
+        .where(sql`${notes.embedding} IS NOT NULL`)
+        .orderBy(sql`${notes.embedding} <=> ${embeddingLiteral}::vector`)
+        .limit(5);
+
+      if (noteResults.length > 0) {
+        const formatted = noteResults
+          .map((n, i) => `${i + 1}. ${n.topic}: ${n.content.slice(0, 500)}`)
+          .join("\n");
+        contextParts.push(`Found ${noteResults.length} relevant notes:\n${formatted}`);
+      } else {
+        contextParts.push(`No notes found matching "${query}".`);
+      }
+    } catch (err) {
+      logger.error("Semantic note search failed", {
+        query,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      contextParts.push(`Note search failed for "${query}".`);
+    }
+  }
+
+  if (contextParts.length > 0) {
+    result.context = contextParts.join("\n\n");
+  }
+
+  if (!result.context && !result.person) {
+    result.context = person_name
+      ? `No information found for "${person_name}".`
+      : `No results found for query "${query}".`;
+  }
+
+  return result;
 }
 
 async function handlePostToSlack(
@@ -150,49 +188,31 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  let body: {
-    tool_call_id?: string;
-    tool_name?: string;
-    parameters?: Record<string, unknown>;
-    dynamic_variables?: Record<string, unknown>;
-  };
+  let body: { person_name?: string; query?: string };
   try {
     body = JSON.parse(rawBody);
   } catch {
     return c.json({ error: "Invalid JSON" }, 400);
   }
 
-  const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
-  const outbound = isOutboundCall({ dynamic_variables });
+  const { person_name, query } = body;
 
-  logger.info("ElevenLabs server tool called", {
-    tool_call_id,
-    tool_name,
-    direction: outbound ? "outbound" : "inbound",
+  logger.info("ElevenLabs lookup_context tool called", {
+    person_name,
+    query,
   });
 
-  let result: string;
-
-  switch (tool_name) {
-    case "lookup_context":
-      result = await handleLookupContext(
-        parameters as { person_name: string } | undefined,
-        outbound,
-      );
-      break;
-
-    case "post_to_slack":
-      result = await handlePostToSlack(
-        parameters as { channel: string; message: string } | undefined,
-      );
-      break;
-
-    default:
-      logger.warn("Unknown ElevenLabs tool", { tool_name });
-      result = `Unknown tool: ${tool_name}`;
+  try {
+    const result = await handleLookupContext({ person_name, query });
+    return c.json(result);
+  } catch (err) {
+    logger.error("lookup_context failed", {
+      person_name,
+      query,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ context: "Error looking up context." }, 500);
   }
-
-  return c.json({ result });
 });
 
 // Post-call webhook — called by ElevenLabs after every call ends
