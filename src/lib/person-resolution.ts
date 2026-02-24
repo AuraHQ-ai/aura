@@ -1,4 +1,4 @@
-import { eq, and, isNull, sql } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   people,
@@ -28,7 +28,8 @@ export async function resolvePersonByAddress(
 
 /**
  * Create a person with an initial address.
- * Returns the new person record.
+ * If the address already exists (conflict), cleans up the orphaned person
+ * and returns the existing person that owns the address.
  */
 export async function createPersonWithAddress(
   displayName: string | null,
@@ -43,7 +44,7 @@ export async function createPersonWithAddress(
     .returning();
 
   const normalised = normaliseValue(channel, value);
-  await db
+  const insertedAddress = await db
     .insert(addresses)
     .values({
       personId: person.id,
@@ -52,33 +53,26 @@ export async function createPersonWithAddress(
       source,
       confidence,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning();
+
+  if (insertedAddress.length === 0) {
+    await db.delete(people).where(eq(people.id, person.id));
+    const existingPersonId = await resolvePersonByAddress(channel, value);
+    if (!existingPersonId) {
+      throw new Error(
+        `Address conflict but could not resolve person for ${channel}:${value}`,
+      );
+    }
+    const [existingPerson] = await db
+      .select()
+      .from(people)
+      .where(eq(people.id, existingPersonId))
+      .limit(1);
+    return existingPerson;
+  }
 
   return person;
-}
-
-/**
- * Add an address to an existing person.
- * ON CONFLICT DO NOTHING (if address already exists for another person, skip).
- */
-export async function addAddressToPerson(
-  personId: string,
-  channel: string,
-  value: string,
-  source: string,
-  confidence = 1.0,
-): Promise<void> {
-  const normalised = normaliseValue(channel, value);
-  await db
-    .insert(addresses)
-    .values({
-      personId,
-      channel,
-      value: normalised,
-      source,
-      confidence,
-    })
-    .onConflictDoNothing();
 }
 
 /**
@@ -96,6 +90,31 @@ export async function linkProfileToPerson(
 }
 
 /**
+ * Resolve or create a person for the given profile's Slack address,
+ * then link the profile to that person. No-op if already linked.
+ * Throws on failure — callers should catch if non-fatal.
+ */
+export async function ensurePersonLinked(profile: {
+  id: string;
+  slackUserId: string;
+  displayName: string | null;
+  personId: string | null;
+}): Promise<void> {
+  if (profile.personId) return;
+  let personId = await resolvePersonByAddress("slack", profile.slackUserId);
+  if (!personId) {
+    const person = await createPersonWithAddress(
+      profile.displayName,
+      "slack",
+      profile.slackUserId,
+      "slack",
+    );
+    personId = person.id;
+  }
+  await linkProfileToPerson(profile.id, personId);
+}
+
+/**
  * Backfill: for every existing user_profiles row that has no person_id,
  * create a person + slack address, and link the profile.
  * Returns count of profiles linked.
@@ -110,25 +129,7 @@ export async function backfillExistingProfiles(): Promise<number> {
 
   for (const profile of unlinked) {
     try {
-      const existingPersonId = await resolvePersonByAddress(
-        "slack",
-        profile.slackUserId,
-      );
-
-      let personId: string;
-      if (existingPersonId) {
-        personId = existingPersonId;
-      } else {
-        const person = await createPersonWithAddress(
-          profile.displayName,
-          "slack",
-          profile.slackUserId,
-          "slack",
-        );
-        personId = person.id;
-      }
-
-      await linkProfileToPerson(profile.id, personId);
+      await ensurePersonLinked(profile);
       linked++;
     } catch (error) {
       logger.error("Failed to backfill profile", {
