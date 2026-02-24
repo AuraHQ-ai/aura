@@ -221,15 +221,19 @@ export async function resolveOrCreateFromEmail(
     }
   }
 
-  if (existingRows.length === 0) {
+  if (existingRows.length > 0) {
+    // Existing address with null personId — create a person and link it
+    const [person] = await db
+      .insert(people)
+      .values({ displayName })
+      .returning();
     await db
-      .insert(addresses)
-      .values({
-        channel: "email",
-        value: normEmail,
-        source: "auto-created-pending-clustering",
-      })
-      .onConflictDoNothing();
+      .update(addresses)
+      .set({ personId: person.id, source })
+      .where(
+        and(eq(addresses.channel, "email"), eq(addresses.value, normEmail)),
+      );
+    return person.id;
   }
 
   const person = await createPersonWithAddress(
@@ -349,12 +353,16 @@ export async function distillPeopleFromAddresses(): Promise<{
   for (let i = 0; i < unclustered.length; i += CLUSTER_BATCH_SIZE) {
     const batch = unclustered.slice(i, i + CLUSTER_BATCH_SIZE);
 
-    const addressList = batch.map((a) => ({
-      id: a.id,
-      channel: a.channel,
-      value: a.value,
-      displayName: a.source || undefined,
-    }));
+    const addressList = batch.map((a) => {
+      const isInternalSource =
+        !a.source || a.source.startsWith("auto-created-");
+      return {
+        id: a.id,
+        channel: a.channel,
+        value: a.value,
+        displayName: isInternalSource ? undefined : a.source,
+      };
+    });
 
     try {
       const { object } = await generateObject({
@@ -425,31 +433,16 @@ export async function distillPeopleFromAddresses(): Promise<{
   };
 }
 
-// Manual address overrides for known team members
+// Manual address overrides — set via MANUAL_ADDRESSES_JSON env var
 const MANUAL_ADDRESSES: Array<{
   name: string;
   addresses: Array<{ channel: string; value: string }>;
-}> = [
-  {
-    name: "Joan Rodriguez",
-    addresses: [
-      { channel: "email", value: "rodriguezjoan@gmail.com" },
-      { channel: "phone", value: "+41797920344" },
-    ],
-  },
-  {
-    name: "Jonas Wiesel",
-    addresses: [
-      { channel: "email", value: "wieseljonas@gmail.com" },
-      { channel: "phone", value: "+41797377217" },
-    ],
-  },
-];
+}> = [];
 
 /**
  * Full rebuild of the people table using Haiku-powered identity clustering.
- * 1. Truncates people (cascade deletes addresses via FK)
- * 2. Nulls out user_profiles.person_id
+ * 1. Nulls out user_profiles.person_id
+ * 2. Deletes all addresses and people
  * 3. Re-inserts addresses from source data (Slack profiles, email senders, manual, directory)
  * 4. Runs distillPeopleFromAddresses() to cluster
  * 5. Re-links user_profiles to their new person records
@@ -461,14 +454,17 @@ export async function rebuildPeopleFromScratch(): Promise<{
 }> {
   logger.info("Starting full people table rebuild");
 
-  // 1. Truncate people (cascades to addresses)
-  await db.execute(sql`TRUNCATE people CASCADE`);
-
-  // 2. Null out user_profiles.person_id
+  // 1. Null out user_profiles.person_id (must happen before deleting people
+  //    to avoid losing profiles — TRUNCATE CASCADE would wipe user_profiles too)
   await db
     .update(userProfiles)
     .set({ personId: null, updatedAt: new Date() })
     .where(sql`${userProfiles.personId} IS NOT NULL`);
+
+  // 2. Delete addresses then people (avoids TRUNCATE CASCADE which would
+  //    also truncate user_profiles via its FK to people)
+  await db.delete(addresses);
+  await db.delete(people);
 
   let addressesInserted = 0;
 
