@@ -2,7 +2,10 @@
  * One-time script to register server tools on the ElevenLabs voice agent.
  *
  * Usage:
- *   ELEVENLABS_API_KEY=... ELEVENLABS_AGENT_ID=... npx tsx scripts/register-elevenlabs-tools.ts
+ *   ELEVENLABS_API_KEY=... ELEVENLABS_AGENT_ID=... \\
+ *   ELEVENLABS_WEBHOOK_BASE_URL=https://aura-alpha-five.vercel.app/api/webhook/elevenlabs \\
+ *   ELEVENLABS_WEBHOOK_SECRET_ID=<secret-id> \\
+ *   npx tsx scripts/register-elevenlabs-tools.ts
  *
  * This registers the lookup_context and send_dm tools with the ElevenLabs
  * conversational AI agent so it can call them during voice conversations.
@@ -12,14 +15,15 @@
 
 const AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
 const API_KEY = process.env.ELEVENLABS_API_KEY;
+const BASE_URL = process.env.ELEVENLABS_WEBHOOK_BASE_URL;
+const WEBHOOK_SECRET_ID = process.env.ELEVENLABS_WEBHOOK_SECRET_ID;
 
-if (!AGENT_ID || !API_KEY) {
-  console.error("Required env vars: ELEVENLABS_AGENT_ID, ELEVENLABS_API_KEY");
+if (!AGENT_ID || !API_KEY || !BASE_URL || !WEBHOOK_SECRET_ID) {
+  console.error(
+    "Required env vars: ELEVENLABS_AGENT_ID, ELEVENLABS_API_KEY, ELEVENLABS_WEBHOOK_BASE_URL, ELEVENLABS_WEBHOOK_SECRET_ID",
+  );
   process.exit(1);
 }
-
-const BASE_URL = "https://aura-alpha-five.vercel.app/api/webhook/elevenlabs";
-const WEBHOOK_SECRET_ID = "DJ9ZKLscvCzYUjyuJhPA";
 
 const tools = [
   {
