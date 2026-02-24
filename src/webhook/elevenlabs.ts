@@ -68,16 +68,20 @@ function verifyElevenLabsSignature(
 
 // ── Inbound/Outbound Detection ──────────────────────────────────────────────
 
+const OUTBOUND_INDICATOR_KEYS = ["person_name", "call_context"] as const;
+
 function isOutboundCall(dynamicVariables?: Record<string, unknown>): boolean {
   if (!dynamicVariables) return false;
   const defaultPlaceholders = ["", "unknown", "default", "N/A", "n/a", "none"];
-  return Object.values(dynamicVariables).some(
-    (v) =>
+  return OUTBOUND_INDICATOR_KEYS.some((key) => {
+    const v = dynamicVariables[key];
+    return (
       v != null &&
       typeof v === "string" &&
       v.trim() !== "" &&
-      !defaultPlaceholders.includes(v.trim().toLowerCase()),
-  );
+      !defaultPlaceholders.includes(v.trim().toLowerCase())
+    );
+  });
 }
 
 // ── Tool Handlers ───────────────────────────────────────────────────────────
