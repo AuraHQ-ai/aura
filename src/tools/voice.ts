@@ -1,28 +1,20 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { userProfiles, people, addresses } from "../db/schema.js";
+import { userProfiles, people, addresses, voiceCalls } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 
-// ── Rate Limiting (in-memory, per cold start) ────────────────────────────────
+// ── Language Detection ──────────────────────────────────────────────────────
 
-const callTimestamps: number[] = [];
-const MAX_CALLS_PER_HOUR = 5;
-
-function isRateLimited(): boolean {
-  const oneHourAgo = Date.now() - 60 * 60 * 1000;
-  // Prune old entries
-  while (callTimestamps.length > 0 && callTimestamps[0] < oneHourAgo) {
-    callTimestamps.shift();
-  }
-  return callTimestamps.length >= MAX_CALLS_PER_HOUR;
-}
-
-function recordCall(): void {
-  callTimestamps.push(Date.now());
+function detectLanguageFromPhone(phone: string): string {
+  if (phone.startsWith("+34")) return "Spanish";
+  if (phone.startsWith("+33")) return "French";
+  if (phone.startsWith("+39")) return "Italian";
+  if (phone.startsWith("+41")) return "English";
+  return "English";
 }
 
 // ── Person Phone Resolution ──────────────────────────────────────────────────
@@ -32,20 +24,17 @@ async function resolvePhoneByName(
 ): Promise<{ phone: string; displayName: string } | null> {
   const nameLower = personName.toLowerCase();
 
-  // Look up user_profiles by display name, then resolve through people -> addresses
   const profiles = await db
     .select({
       displayName: userProfiles.displayName,
       personId: userProfiles.personId,
     })
     .from(userProfiles)
-    .limit(200);
+    .where(sql`lower(${userProfiles.displayName}) LIKE ${"%" + nameLower + "%"}`)
+    .limit(5);
 
   for (const profile of profiles) {
-    if (
-      profile.displayName.toLowerCase().includes(nameLower) &&
-      profile.personId
-    ) {
+    if (profile.personId) {
       const phoneAddresses = await db
         .select({ value: addresses.value })
         .from(addresses)
@@ -66,31 +55,29 @@ async function resolvePhoneByName(
     }
   }
 
-  // Also try matching against people.displayName directly
   const peopleRows = await db
     .select({ id: people.id, displayName: people.displayName })
     .from(people)
-    .limit(200);
+    .where(sql`lower(${people.displayName}) LIKE ${"%" + nameLower + "%"}`)
+    .limit(5);
 
   for (const person of peopleRows) {
-    if (person.displayName?.toLowerCase().includes(nameLower)) {
-      const phoneAddresses = await db
-        .select({ value: addresses.value })
-        .from(addresses)
-        .where(
-          and(
-            eq(addresses.personId, person.id),
-            eq(addresses.channel, "phone"),
-          ),
-        )
-        .limit(1);
+    const phoneAddresses = await db
+      .select({ value: addresses.value })
+      .from(addresses)
+      .where(
+        and(
+          eq(addresses.personId, person.id),
+          eq(addresses.channel, "phone"),
+        ),
+      )
+      .limit(1);
 
-      if (phoneAddresses.length > 0) {
-        return {
-          phone: phoneAddresses[0].value,
-          displayName: person.displayName || personName,
-        };
-      }
+    if (phoneAddresses.length > 0) {
+      return {
+        phone: phoneAddresses[0].value,
+        displayName: person.displayName || personName,
+      };
     }
   }
 
@@ -99,7 +86,9 @@ async function resolvePhoneByName(
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
-export function createVoiceTools(context?: ScheduleContext) {
+export function createVoiceTools(context?: ScheduleContext): Record<string, any> {
+  if (!process.env.ELEVENLABS_API_KEY) return {};
+
   return {
     make_call: tool({
       description:
@@ -129,11 +118,23 @@ export function createVoiceTools(context?: ScheduleContext) {
             .describe(
               'Custom greeting for the call. Defaults to "I wanted to check in with you."',
             ),
+          language: z
+            .string()
+            .optional()
+            .describe(
+              "Language for the call (e.g. 'Spanish', 'French'). Auto-detected from phone number country code if omitted.",
+            ),
         })
         .refine((data) => data.phone_number || data.person_name, {
           message: "At least one of phone_number or person_name must be provided",
         }),
-      execute: async ({ phone_number, person_name, context: callContext, opener }) => {
+      execute: async ({
+        phone_number,
+        person_name,
+        context: callContext,
+        opener,
+        language,
+      }) => {
         if (!isAdmin(context?.userId)) {
           return {
             ok: false,
@@ -141,10 +142,20 @@ export function createVoiceTools(context?: ScheduleContext) {
           };
         }
 
-        if (isRateLimited()) {
+        // DB-based rate limiting
+        const recentCalls = await db
+          .select({ count: sql`count(*)` })
+          .from(voiceCalls)
+          .where(
+            and(
+              gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
+              eq(voiceCalls.direction, "outbound"),
+            ),
+          );
+        if (Number(recentCalls[0]?.count || 0) >= 10) {
           return {
             ok: false,
-            error: `Rate limit reached: maximum ${MAX_CALLS_PER_HOUR} calls per hour. Try again later.`,
+            error: "Rate limit: too many outbound calls in the last hour.",
           };
         }
 
@@ -160,7 +171,6 @@ export function createVoiceTools(context?: ScheduleContext) {
           };
         }
 
-        // Resolve phone number
         let resolvedPhone = phone_number;
         let resolvedName = person_name || "Unknown";
 
@@ -184,6 +194,17 @@ export function createVoiceTools(context?: ScheduleContext) {
           };
         }
 
+        const personLanguage =
+          language || detectLanguageFromPhone(resolvedPhone);
+
+        const dynamicVars = {
+          person_name: resolvedName,
+          call_context: callContext,
+          call_opener: opener || "I wanted to check in with you.",
+          person_language: personLanguage,
+          direction: "outbound",
+        };
+
         try {
           const response = await fetch(
             "https://api.elevenlabs.io/v1/convai/twilio/outbound-call",
@@ -198,13 +219,7 @@ export function createVoiceTools(context?: ScheduleContext) {
                 agent_phone_number_id: phoneNumberId,
                 to_number: resolvedPhone,
                 conversation_initiation_client_data: {
-                  dynamic_variables: {
-                    person_name: resolvedName,
-                    call_context: callContext,
-                    call_opener:
-                      opener || "I wanted to check in with you.",
-                    person_language: "English",
-                  },
+                  dynamic_variables: dynamicVars,
                 },
               }),
             },
@@ -223,7 +238,20 @@ export function createVoiceTools(context?: ScheduleContext) {
           }
 
           const data = (await response.json()) as Record<string, unknown>;
-          recordCall();
+
+          await db
+            .insert(voiceCalls)
+            .values({
+              conversationId: data.conversation_id as string,
+              agentId: process.env.ELEVENLABS_AGENT_ID,
+              direction: "outbound",
+              phoneNumber: resolvedPhone,
+              personName: resolvedName || null,
+              status: "in_progress",
+              callContext: callContext || null,
+              dynamicVariables: dynamicVars,
+            })
+            .onConflictDoNothing();
 
           logger.info("make_call tool called", {
             to: resolvedPhone,
@@ -269,7 +297,15 @@ export function createVoiceTools(context?: ScheduleContext) {
 
         const accountSid = process.env.TWILIO_ACCOUNT_SID;
         const authToken = process.env.TWILIO_AUTH_TOKEN;
-        const fromNumber = process.env.TWILIO_PHONE_NUMBER || "+14158860211";
+        const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+        if (!fromNumber) {
+          return {
+            ok: false,
+            error:
+              "TWILIO_PHONE_NUMBER env var not set. Cannot send SMS without a configured phone number.",
+          };
+        }
 
         if (!accountSid || !authToken) {
           return {
