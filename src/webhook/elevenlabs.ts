@@ -14,7 +14,7 @@ import { getUserList } from "../tools/slack.js";
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
 
-const VOICE_TESTING_CHANNEL = "C0AGTACJL6N";
+const VOICE_TESTING_CHANNEL = process.env.ELEVENLABS_VOICE_CHANNEL || "";
 
 const slackClient = new WebClient(botToken);
 
@@ -110,15 +110,14 @@ async function handleLookupContext(
     let context = `*${displayName}* (Slack ID: ${match.id})`;
 
     try {
-      const { like } = await import("drizzle-orm");
+      const { ilike } = await import("drizzle-orm");
       const escapedName = person_name
-        .toLowerCase()
         .replace(/%/g, "\\%")
         .replace(/_/g, "\\_");
       const relatedNotes = await db
         .select({ topic: notes.topic, content: notes.content })
         .from(notes)
-        .where(like(notes.topic, `%${escapedName}%`))
+        .where(ilike(notes.topic, `%${escapedName}%`))
         .limit(3);
 
       if (relatedNotes.length > 0) {
@@ -349,12 +348,22 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           ? `\n\n*Transcript excerpt:*\n>${truncatedTranscript}`
           : "");
 
-      await safePostMessage(slackClient, {
-        channel: VOICE_TESTING_CHANNEL,
-        text: slackMessage,
-      });
-
-      logger.info("Post-call summary sent to #voice-testing", { conversationId });
+      try {
+        if (VOICE_TESTING_CHANNEL) {
+          await safePostMessage(slackClient, {
+            channel: VOICE_TESTING_CHANNEL,
+            text: slackMessage,
+          });
+          logger.info("Post-call summary sent to voice channel", { conversationId });
+        } else {
+          logger.warn("ELEVENLABS_VOICE_CHANNEL not configured — skipping post-call message");
+        }
+      } catch (slackErr) {
+        logger.error("Failed to post call summary to Slack", {
+          conversationId,
+          error: slackErr instanceof Error ? slackErr.message : String(slackErr),
+        });
+      }
     } catch (err) {
       recordError("elevenlabs_post_call", err, {
         conversation_id: data.conversation_id,
