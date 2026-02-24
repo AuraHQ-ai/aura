@@ -10,6 +10,7 @@ import {
 } from "../db/schema.js";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
+import { ensurePersonLinked } from "../lib/person-resolution.js";
 
 /**
  * Get or create a user profile.
@@ -50,8 +51,18 @@ export async function getOrCreateProfile(
     .returning();
 
   if (result.length > 0) {
+    const profile = result[0];
     logger.info("Created new user profile", { slackUserId, displayName });
-    return result[0];
+    try {
+      const personId = await ensurePersonLinked(profile);
+      return { ...profile, personId };
+    } catch (error) {
+      logger.error("Failed to link profile to person", {
+        profileId: profile.id,
+        error: String(error),
+      });
+    }
+    return profile;
   }
 
   // Another concurrent request inserted first — fetch the existing row
