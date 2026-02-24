@@ -1,0 +1,1 @@
+ALTER TABLE "people" ADD COLUMN "type" text DEFAULT 'person';

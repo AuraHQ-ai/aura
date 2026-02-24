@@ -386,7 +386,7 @@ export async function distillPeopleFromAddresses(): Promise<{
 
         const [person] = await db
           .insert(people)
-          .values({ displayName: group.displayName })
+          .values({ displayName: group.displayName, type: group.type })
           .returning();
 
         await db
@@ -475,15 +475,16 @@ export async function rebuildPeopleFromScratch(): Promise<{
   const profiles = await db.select().from(userProfiles);
   for (const profile of profiles) {
     try {
-      await db
+      const inserted = await db
         .insert(addresses)
         .values({
           channel: "slack",
           value: profile.slackUserId,
           source: profile.displayName,
         })
-        .onConflictDoNothing();
-      addressesInserted++;
+        .onConflictDoNothing()
+        .returning();
+      addressesInserted += inserted.length;
     } catch (error) {
       logger.error("Failed to insert Slack address", {
         slackUserId: profile.slackUserId,
@@ -502,15 +503,16 @@ export async function rebuildPeopleFromScratch(): Promise<{
 
   for (const sender of emailSenders) {
     try {
-      await db
+      const inserted = await db
         .insert(addresses)
         .values({
           channel: "email",
           value: sender.fromEmail.toLowerCase(),
           source: sender.fromName,
         })
-        .onConflictDoNothing();
-      addressesInserted++;
+        .onConflictDoNothing()
+        .returning();
+      addressesInserted += inserted.length;
     } catch (error) {
       logger.error("Failed to insert email address", {
         email: sender.fromEmail,
@@ -527,15 +529,16 @@ export async function rebuildPeopleFromScratch(): Promise<{
   for (const entry of manualOverrides) {
     for (const addr of entry.addresses) {
       try {
-        await db
+        const inserted = await db
           .insert(addresses)
           .values({
             channel: addr.channel,
             value: normaliseValue(addr.channel, addr.value),
             source: entry.name,
           })
-          .onConflictDoNothing();
-        addressesInserted++;
+          .onConflictDoNothing()
+          .returning();
+        addressesInserted += inserted.length;
       } catch (error) {
         logger.error("Failed to insert manual address", {
           name: entry.name,
@@ -554,15 +557,16 @@ export async function rebuildPeopleFromScratch(): Promise<{
     if (directoryUsers) {
       for (const user of directoryUsers) {
         try {
-          await db
+          const inserted = await db
             .insert(addresses)
             .values({
               channel: "email",
               value: user.email.toLowerCase(),
               source: user.name,
             })
-            .onConflictDoNothing();
-          addressesInserted++;
+            .onConflictDoNothing()
+            .returning();
+          addressesInserted += inserted.length;
         } catch (error) {
           logger.error("Failed to insert directory email", {
             email: user.email,

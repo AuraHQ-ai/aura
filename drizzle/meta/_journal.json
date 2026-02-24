@@ -155,6 +155,13 @@
       "when": 1772092800000,
       "tag": "0021_address_identity_clustering",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1771946307517,
+      "tag": "0022_complete_prowler",
+      "breakpoints": true
     }
   ]
 }
