@@ -8,6 +8,7 @@ import { safePostMessage } from "../lib/slack-messaging.js";
 import { db } from "../db/client.js";
 import { voiceCalls, notes } from "../db/schema.js";
 import { getUserList } from "../tools/slack.js";
+import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,7 @@ const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
 const VOICE_TESTING_CHANNEL = process.env.ELEVENLABS_VOICE_CHANNEL || "";
 
 const slackClient = new WebClient(botToken);
+const elevenlabs = new ElevenLabsClient();
 
 // ── Cached User List ─────────────────────────────────────────────────────────
 
@@ -30,54 +32,6 @@ async function getCachedUserList(client: WebClient) {
     cacheTime = Date.now();
   }
   return cachedUsers;
-}
-
-// ── Signature Verification ──────────────────────────────────────────────────
-
-function verifyElevenLabsSignature(
-  rawBody: string,
-  signatureHeader: string,
-): boolean {
-  if (!webhookSecret) {
-    logger.warn(
-      "ELEVENLABS_WEBHOOK_SECRET not configured — rejecting request",
-    );
-    return false;
-  }
-
-  if (!signatureHeader) return false;
-
-  // ElevenLabs-Signature header format: t=<timestamp>,v1=<signature>
-  const parts: Record<string, string> = {};
-  for (const part of signatureHeader.split(",")) {
-    const [key, ...rest] = part.split("=");
-    if (key && rest.length) {
-      parts[key.trim()] = rest.join("=").trim();
-    }
-  }
-
-  const timestamp = parts["t"];
-  const signature = parts["v1"];
-  if (!timestamp || !signature) return false;
-
-  // Reject requests older than 5 minutes
-  const fiveMinutesAgo = Math.floor(Date.now() / 1000) - 300;
-  if (parseInt(timestamp) < fiveMinutesAgo) return false;
-
-  const signedPayload = `${timestamp}.${rawBody}`;
-  const expected = crypto
-    .createHmac("sha256", webhookSecret)
-    .update(signedPayload, "utf8")
-    .digest("hex");
-
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(expected, "utf8"),
-      Buffer.from(signature, "utf8"),
-    );
-  } catch {
-    return false;
-  }
 }
 
 // ── Inbound/Outbound Detection ──────────────────────────────────────────────
@@ -184,11 +138,6 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
   const rawBody = await c.req.text();
   const signature = c.req.header("elevenlabs-signature") || "";
 
-  if (!verifyElevenLabsSignature(rawBody, signature)) {
-    logger.warn("Invalid ElevenLabs webhook signature on /tool");
-    return c.json({ error: "Invalid signature" }, 401);
-  }
-
   let body: {
     tool_call_id?: string;
     tool_name?: string;
@@ -196,9 +145,12 @@ elevenlabsWebhookApp.post("/tool", async (c) => {
     dynamic_variables?: Record<string, unknown>;
   };
   try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return c.json({ error: "Invalid JSON" }, 400);
+    body = await elevenlabs.webhooks.constructEvent(rawBody, signature, webhookSecret);
+  } catch (err) {
+    logger.warn("Invalid ElevenLabs webhook signature on /tool", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: "Invalid signature" }, 401);
   }
 
   const { tool_call_id, tool_name, parameters, dynamic_variables } = body;
@@ -239,11 +191,6 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
   const rawBody = await c.req.text();
   const signature = c.req.header("elevenlabs-signature") || "";
 
-  if (!verifyElevenLabsSignature(rawBody, signature)) {
-    logger.warn("Invalid ElevenLabs webhook signature on /post-call");
-    return c.json({ error: "Invalid signature" }, 401);
-  }
-
   let body: {
     type?: string;
     data?: {
@@ -260,9 +207,12 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
     };
   };
   try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return c.json({ error: "Invalid JSON" }, 400);
+    body = await elevenlabs.webhooks.constructEvent(rawBody, signature, webhookSecret);
+  } catch (err) {
+    logger.warn("Invalid ElevenLabs webhook signature on /post-call", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return c.json({ error: "Invalid signature" }, 401);
   }
 
   const data = body.data ?? {};
