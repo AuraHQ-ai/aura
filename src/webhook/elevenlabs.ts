@@ -304,6 +304,9 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           ? "failed"
           : "completed";
 
+      const { transcript: _t, analysis: _a, ...metadataRest } = data;
+      const strippedMetadata = metadataRest as Record<string, unknown>;
+
       await db
         .insert(voiceCalls)
         .values({
@@ -318,7 +321,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           summary,
           callContext: callContext ?? null,
           dynamicVariables: dynVars ?? null,
-          metadata: data as Record<string, unknown>,
+          metadata: strippedMetadata,
         })
         .onConflictDoUpdate({
           target: voiceCalls.conversationId,
@@ -327,7 +330,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
             durationSeconds: duration ?? null,
             transcript: transcript ?? null,
             summary,
-            metadata: data as Record<string, unknown>,
+            metadata: strippedMetadata,
             updatedAt: new Date(),
           },
         });
