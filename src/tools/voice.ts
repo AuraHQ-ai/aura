@@ -9,6 +9,8 @@ import { logger } from "../lib/logger.js";
 
 // ── Language Config ──────────────────────────────────────────────────────────
 
+const COMPANY_NAME = process.env.COMPANY_NAME ?? "RealAdvisor";
+
 interface LanguageConfig {
   languageCode: string;
   firstMessage: string;
@@ -17,29 +19,31 @@ interface LanguageConfig {
 const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
   es: {
     languageCode: "es",
-    firstMessage:
-      "Hola {{person_name}}, soy Aura de RealAdvisor. {{call_opener}}",
+    firstMessage: `Hola {{person_name}}, soy Aura de ${COMPANY_NAME}. {{call_opener}}`,
   },
   fr: {
     languageCode: "fr",
-    firstMessage:
-      "Bonjour {{person_name}}, c'est Aura de RealAdvisor. {{call_opener}}",
+    firstMessage: `Bonjour {{person_name}}, c'est Aura de ${COMPANY_NAME}. {{call_opener}}`,
   },
   it: {
     languageCode: "it",
-    firstMessage:
-      "Ciao {{person_name}}, sono Aura di RealAdvisor. {{call_opener}}",
+    firstMessage: `Ciao {{person_name}}, sono Aura di ${COMPANY_NAME}. {{call_opener}}`,
   },
   en: {
     languageCode: "en",
-    firstMessage:
-      "Hi {{person_name}}, this is Aura from RealAdvisor. {{call_opener}}",
+    firstMessage: `Hi {{person_name}}, this is Aura from ${COMPANY_NAME}. {{call_opener}}`,
   },
   de: {
     languageCode: "de",
-    firstMessage:
-      "Hallo {{person_name}}, hier ist Aura von RealAdvisor. {{call_opener}}",
+    firstMessage: `Hallo {{person_name}}, hier ist Aura von ${COMPANY_NAME}. {{call_opener}}`,
   },
+};
+
+const VOICE_MAP: Record<string, string> = {
+  es: "hvjsm0LgwcoD1EyrNAJI", // Carlos - Spanish (Peninsular)
+  fr: "OOiDJrD1goukqfTpiySr", // Greg - French (Parisian)
+  it: "o4b57JYAECRMJyCEXyIE", // Brando - Italian (Natural)
+  en: "SAz9YHcvj6GT2YYXdXww", // River - English (default)
 };
 
 const DEFAULT_LANGUAGE = "en";
@@ -245,6 +249,8 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         const langKey = language || detectLanguageFromPhone(resolvedPhone);
         const langConfig = getLanguageConfig(langKey);
 
+        const resolvedVoiceId = voiceId ?? VOICE_MAP[langConfig.languageCode];
+
         const dynamicVars = {
           person_name: resolvedName,
           call_context: callContext,
@@ -267,7 +273,9 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
               conversationInitiationClientData: {
                 dynamicVariables: dynamicVars,
                 conversationConfigOverride: {
-                  tts: voiceId ? { voiceId } : undefined,
+                  tts: resolvedVoiceId
+                    ? { voiceId: resolvedVoiceId }
+                    : undefined,
                   agent: {
                     language: langConfig.languageCode,
                     firstMessage: langConfig.firstMessage,
