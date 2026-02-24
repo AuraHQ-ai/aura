@@ -10,11 +10,7 @@ import {
 } from "../db/schema.js";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
-import {
-  resolvePersonByAddress,
-  createPersonWithAddress,
-  linkProfileToPerson,
-} from "../lib/person-resolution.js";
+import { ensurePersonLinked } from "../lib/person-resolution.js";
 
 /**
  * Get or create a user profile.
@@ -57,7 +53,14 @@ export async function getOrCreateProfile(
   if (result.length > 0) {
     const profile = result[0];
     logger.info("Created new user profile", { slackUserId, displayName });
-    await ensurePersonLinked(profile);
+    try {
+      await ensurePersonLinked(profile);
+    } catch (error) {
+      logger.error("Failed to link profile to person", {
+        profileId: profile.id,
+        error: String(error),
+      });
+    }
     return profile;
   }
 
@@ -69,28 +72,6 @@ export async function getOrCreateProfile(
     .limit(1);
 
   return concurrentlyCreated;
-}
-
-async function ensurePersonLinked(profile: UserProfile): Promise<void> {
-  if (profile.personId) return;
-  try {
-    let personId = await resolvePersonByAddress("slack", profile.slackUserId);
-    if (!personId) {
-      const person = await createPersonWithAddress(
-        profile.displayName,
-        "slack",
-        profile.slackUserId,
-        "slack",
-      );
-      personId = person.id;
-    }
-    await linkProfileToPerson(profile.id, personId);
-  } catch (error) {
-    logger.error("Failed to link profile to person", {
-      profileId: profile.id,
-      error: String(error),
-    });
-  }
 }
 
 /**
