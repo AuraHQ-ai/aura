@@ -46,10 +46,10 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
 };
 
 const VOICE_MAP: Record<string, string> = {
-  es: "hvjsm0LgwcoD1EyrNAJI", // Carlos - Spanish (Peninsular)
-  fr: "OOiDJrD1goukqfTpiySr", // Greg - French (Parisian)
-  it: "o4b57JYAECRMJyCEXyIE", // Brando - Italian (Natural)
-  en: "SAz9YHcvj6GT2YYXdXww", // River - English (default)
+  es: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
+  fr: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
+  it: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
+  en: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
 };
 
 const DEFAULT_LANGUAGE = "en";
