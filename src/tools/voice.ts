@@ -87,10 +87,10 @@ async function resolvePhoneByName(
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
 export function createVoiceTools(context?: ScheduleContext): Record<string, any> {
-  if (!process.env.ELEVENLABS_API_KEY) return {};
+  const tools: Record<string, any> = {};
 
-  return {
-    make_call: tool({
+  if (process.env.ELEVENLABS_API_KEY) {
+    tools.make_call = tool({
       description:
         "Initiate an outbound phone call via ElevenLabs + Twilio. Aura's voice agent handles the conversation with the person's context injected. Use when a phone call would be more effective than a DM. Admin-only.",
       inputSchema: z
@@ -272,104 +272,133 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           };
         }
       },
-    }),
+    });
+  }
 
-    send_sms: tool({
-      description:
-        "Send an SMS text message via Twilio. Use for quick notifications or when someone isn't responding to Slack. Admin-only.",
-      inputSchema: z.object({
-        phone_number: z
-          .string()
-          .describe(
-            "Recipient phone number in E.164 format (e.g. +41791234567).",
+  tools.send_sms = tool({
+    description:
+      "Send an SMS text message via Twilio. Use for quick notifications or when someone isn't responding to Slack. Admin-only.",
+    inputSchema: z.object({
+      phone_number: z
+        .string()
+        .describe(
+          "Recipient phone number in E.164 format (e.g. +41791234567).",
+        ),
+      message: z
+        .string()
+        .describe("The SMS message body to send."),
+    }),
+    execute: async ({ phone_number, message }) => {
+      if (!isAdmin(context?.userId)) {
+        return {
+          ok: false,
+          error: "Only admins can send SMS messages.",
+        };
+      }
+
+      const recentSms = await db
+        .select({ count: sql`count(*)` })
+        .from(voiceCalls)
+        .where(
+          and(
+            gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
+            eq(voiceCalls.direction, "sms_outbound"),
           ),
-        message: z
-          .string()
-          .describe("The SMS message body to send."),
-      }),
-      execute: async ({ phone_number, message }) => {
-        if (!isAdmin(context?.userId)) {
-          return {
-            ok: false,
-            error: "Only admins can send SMS messages.",
-          };
-        }
+        );
+      if (Number(recentSms[0]?.count || 0) >= 10) {
+        return {
+          ok: false,
+          error: "Rate limit: too many outbound SMS messages in the last hour.",
+        };
+      }
 
-        const accountSid = process.env.TWILIO_ACCOUNT_SID;
-        const authToken = process.env.TWILIO_AUTH_TOKEN;
-        const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+      const accountSid = process.env.TWILIO_ACCOUNT_SID;
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
+      const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
-        if (!fromNumber) {
-          return {
-            ok: false,
-            error:
-              "TWILIO_PHONE_NUMBER env var not set. Cannot send SMS without a configured phone number.",
-          };
-        }
+      if (!fromNumber) {
+        return {
+          ok: false,
+          error:
+            "TWILIO_PHONE_NUMBER env var not set. Cannot send SMS without a configured phone number.",
+        };
+      }
 
-        if (!accountSid || !authToken) {
-          return {
-            ok: false,
-            error:
-              "Twilio config is incomplete. Required env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN.",
-          };
-        }
+      if (!accountSid || !authToken) {
+        return {
+          ok: false,
+          error:
+            "Twilio config is incomplete. Required env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN.",
+        };
+      }
 
-        try {
-          const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
-          const credentials = Buffer.from(
-            `${accountSid}:${authToken}`,
-          ).toString("base64");
+      try {
+        const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+        const credentials = Buffer.from(
+          `${accountSid}:${authToken}`,
+        ).toString("base64");
 
-          const body = new URLSearchParams({
-            To: phone_number,
-            From: fromNumber,
-            Body: message,
+        const body = new URLSearchParams({
+          To: phone_number,
+          From: fromNumber,
+          Body: message,
+        });
+
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${credentials}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: body.toString(),
+        });
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          logger.error("send_sms Twilio API error", {
+            status: response.status,
+            body: errorBody.substring(0, 500),
           });
-
-          const response = await fetch(url, {
-            method: "POST",
-            headers: {
-              Authorization: `Basic ${credentials}`,
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: body.toString(),
-          });
-
-          if (!response.ok) {
-            const errorBody = await response.text();
-            logger.error("send_sms Twilio API error", {
-              status: response.status,
-              body: errorBody.substring(0, 500),
-            });
-            return {
-              ok: false,
-              error: `Twilio API returned ${response.status}: ${errorBody.substring(0, 200)}`,
-            };
-          }
-
-          const data = (await response.json()) as Record<string, unknown>;
-
-          logger.info("send_sms tool called", {
-            to: phone_number,
-            messageSid: data.sid,
-            status: data.status,
-          });
-
-          return {
-            ok: true,
-            message: `SMS sent to ${phone_number}`,
-            message_sid: data.sid as string,
-            status: data.status as string,
-          };
-        } catch (error: any) {
-          logger.error("send_sms tool failed", { error: error.message });
           return {
             ok: false,
-            error: `Failed to send SMS: ${error.message}`,
+            error: `Twilio API returned ${response.status}: ${errorBody.substring(0, 200)}`,
           };
         }
-      },
-    }),
-  };
+
+        const data = (await response.json()) as Record<string, unknown>;
+
+        await db
+          .insert(voiceCalls)
+          .values({
+            conversationId: data.sid as string,
+            direction: "sms_outbound",
+            phoneNumber: phone_number,
+            status: "completed",
+            callContext: message,
+          })
+          .onConflictDoNothing();
+
+        logger.info("send_sms tool called", {
+          to: phone_number,
+          messageSid: data.sid,
+          status: data.status,
+        });
+
+        return {
+          ok: true,
+          message: `SMS sent to ${phone_number}`,
+          message_sid: data.sid as string,
+          status: data.status as string,
+        };
+      } catch (error: any) {
+        logger.error("send_sms tool failed", { error: error.message });
+        return {
+          ok: false,
+          error: `Failed to send SMS: ${error.message}`,
+        };
+      }
+    },
+  });
+
+  return tools;
 }
