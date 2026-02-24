@@ -5,6 +5,7 @@ import {
   addresses,
   userProfiles,
   type Person,
+  type Address,
 } from "../db/schema.js";
 import { logger } from "./logger.js";
 
@@ -44,17 +45,23 @@ export async function createPersonWithAddress(
     .returning();
 
   const normalised = normaliseValue(channel, value);
-  const insertedAddress = await db
-    .insert(addresses)
-    .values({
-      personId: person.id,
-      channel,
-      value: normalised,
-      source,
-      confidence,
-    })
-    .onConflictDoNothing()
-    .returning();
+  let insertedAddress: Address[];
+  try {
+    insertedAddress = await db
+      .insert(addresses)
+      .values({
+        personId: person.id,
+        channel,
+        value: normalised,
+        source,
+        confidence,
+      })
+      .onConflictDoNothing()
+      .returning();
+  } catch (error) {
+    await db.delete(people).where(eq(people.id, person.id)).catch(() => {});
+    throw error;
+  }
 
   if (insertedAddress.length === 0) {
     await db.delete(people).where(eq(people.id, person.id));
