@@ -44,6 +44,7 @@ const VOICE_MAP: Record<string, string> = {
   fr: "OOiDJrD1goukqfTpiySr", // Greg - French (Parisian)
   it: "o4b57JYAECRMJyCEXyIE", // Brando - Italian (Natural)
   en: "SAz9YHcvj6GT2YYXdXww", // River - English (default)
+  de: "onwK4e9ZLuTAKqWW03F9", // Daniel - German (Natural)
 };
 
 const DEFAULT_LANGUAGE = "en";
