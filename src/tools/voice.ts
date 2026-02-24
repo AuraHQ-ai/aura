@@ -239,19 +239,27 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
           const data = (await response.json()) as Record<string, unknown>;
 
-          await db
-            .insert(voiceCalls)
-            .values({
-              conversationId: data.conversation_id as string,
-              agentId: process.env.ELEVENLABS_AGENT_ID,
-              direction: "outbound",
-              phoneNumber: resolvedPhone,
-              personName: resolvedName || null,
-              status: "in_progress",
-              callContext: callContext || null,
-              dynamicVariables: dynamicVars,
-            })
-            .onConflictDoNothing();
+          try {
+            await db
+              .insert(voiceCalls)
+              .values({
+                conversationId: data.conversation_id as string,
+                agentId: process.env.ELEVENLABS_AGENT_ID,
+                direction: "outbound",
+                phoneNumber: resolvedPhone,
+                personName: resolvedName || null,
+                slackUserId: context?.userId ?? null,
+                status: "in_progress",
+                callContext: callContext || null,
+                dynamicVariables: dynamicVars,
+              })
+              .onConflictDoNothing();
+          } catch (dbError: any) {
+            logger.error("make_call DB insert failed (call was placed)", {
+              error: dbError.message,
+              conversationId: data.conversation_id,
+            });
+          }
 
           logger.info("make_call tool called", {
             to: resolvedPhone,
@@ -367,16 +375,24 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
         const data = (await response.json()) as Record<string, unknown>;
 
-        await db
-          .insert(voiceCalls)
-          .values({
-            conversationId: data.sid as string,
-            direction: "sms_outbound",
-            phoneNumber: phone_number,
-            status: "completed",
-            callContext: message,
-          })
-          .onConflictDoNothing();
+        try {
+          await db
+            .insert(voiceCalls)
+            .values({
+              conversationId: data.sid as string,
+              direction: "sms_outbound",
+              phoneNumber: phone_number,
+              slackUserId: context?.userId ?? null,
+              status: "completed",
+              callContext: message,
+            })
+            .onConflictDoNothing();
+        } catch (dbError: any) {
+          logger.error("send_sms DB insert failed (SMS was sent)", {
+            error: dbError.message,
+            messageSid: data.sid,
+          });
+        }
 
         logger.info("send_sms tool called", {
           to: phone_number,
