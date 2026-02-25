@@ -42,9 +42,9 @@ export async function getMainModelId(): Promise<string> {
  * Priority: DB setting > env var > default
  */
 export async function getMainModel() {
-  const gatewayId = await getMainModelId();
-  const gatewayModel = gateway(gatewayId);
-  return withAnthropicFallback(gatewayModel, gatewayId);
+  const modelId = await getMainModelId();
+  const gatewayModel = gateway(modelId);
+  return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
 }
 
 /**

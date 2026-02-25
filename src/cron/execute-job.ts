@@ -3,7 +3,7 @@ import { generateText, stepCountIs } from "ai";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
-import { getMainModel, getMainModelId, isAnthropicModel, getEscalationModel, withCacheControl } from "../lib/ai.js";
+import { getMainModel, isAnthropicModel, getEscalationModel, withCacheControl } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -150,8 +150,7 @@ export async function executeJob(
       });
     }
 
-    const modelId = await getMainModelId();
-    const model = await getMainModel();
+    const { modelId, model } = await getMainModel();
 
     const generateResult = await generateText({
       model,
