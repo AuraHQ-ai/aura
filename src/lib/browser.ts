@@ -17,6 +17,8 @@ export interface CreateSessionOptions {
   };
   /** Session timeout in seconds */
   timeoutSeconds?: number;
+  /** Keep the session alive after the CDP connection drops (default true) */
+  keepAlive?: boolean;
 }
 
 /** Browser session information */
@@ -67,6 +69,7 @@ export async function createSession(
 
   const requestBody = {
     projectId: config.projectId,
+    keepAlive: options.keepAlive ?? true,
     browserSettings: {
       fingerprint: {
         locales: ["en-US"],
