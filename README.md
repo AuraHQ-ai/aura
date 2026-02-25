@@ -214,6 +214,7 @@ Go to your Vercel project dashboard -> **Settings** -> **Environment Variables**
 | `E2B_API_KEY` | No | E2B sandbox API key (for shell execution) |
 | `E2B_TEMPLATE_ID` | No | Custom E2B template ID (uses default if unset) |
 | `GITHUB_TOKEN` | No | GitHub PAT for self-access (read code, open PRs) |
+| `CLAAP_API_KEY` | No | Claap API key for call recording integration |
 | `LOG_LEVEL` | No | `debug`, `info` (default), `warn`, `error` |
 
 #### Redeploy after setting env vars:
