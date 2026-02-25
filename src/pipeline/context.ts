@@ -45,6 +45,15 @@ export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
 export type ChannelType = "dm" | "public_channel" | "private_channel" | "slack_list_item";
 
+export interface SlackListItemContext {
+  /** The message ts that doubles as the list item's thread_ts */
+  messageTs: string;
+  /** Channel where the notification appeared */
+  channelId: string;
+  /** Original notification text (e.g. "A comment was added") */
+  notificationText: string;
+}
+
 export interface MessageContext {
   /** The text of the user's message (with @mention stripped) */
   text: string;
@@ -64,6 +73,8 @@ export interface MessageContext {
   isMentioned: boolean;
   /** Whether Aura was addressed by name */
   isAddressedByName: boolean;
+  /** When set, this message is a Slackbot notification about a Slack List item */
+  slackListItemContext?: SlackListItemContext;
 }
 
 /**
@@ -421,4 +432,28 @@ export async function resolveChannelName(
   } catch {
     return channelId;
   }
+}
+
+// ── USLACKBOT Notification Detection ─────────────────────────────────────────
+
+const USLACKBOT_NOTIFICATION_PATTERNS = [
+  /^a comment was added$/i,
+  /^a field was updated$/i,
+  /^an item was (created|moved|completed|deleted)$/i,
+  /^a status was changed$/i,
+  /^an item was added$/i,
+  /^a due date was (set|changed|removed)$/i,
+];
+
+/**
+ * Detect whether a message is a generic USLACKBOT notification about a Slack
+ * List item. These notifications contain minimal text (e.g. "A comment was
+ * added") and the message ts doubles as the list item's thread_ts.
+ */
+export function isSlackbotListNotification(
+  event: SlackEvent,
+): boolean {
+  if (!("user" in event) || event.user !== "USLACKBOT") return false;
+  const text = ("text" in event ? event.text || "" : "").trim();
+  return USLACKBOT_NOTIFICATION_PATTERNS.some((p) => p.test(text));
 }
