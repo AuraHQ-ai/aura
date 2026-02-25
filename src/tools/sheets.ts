@@ -192,6 +192,10 @@ export function createSheetsTools() {
       slack: {
         status: "Reading spreadsheet...",
         detail: (i) => i.spreadsheet_id?.slice(0, 40),
+        output: (r) => {
+          if (r.ok === false && typeof r.error === "string") return r.error;
+          return `${Number(r.total_rows) || 0} rows`;
+        },
       },
     }),
   };

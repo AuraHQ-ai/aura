@@ -136,7 +136,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to list datasets: ${error.message}` };
         }
       },
-      slack: { status: "Listing datasets..." },
+      slack: { status: "Listing datasets...", output: (r) => r.ok === false ? r.error : `${(r.datasets ?? []).length} datasets` },
     }),
 
     list_tables: defineTool({
@@ -174,7 +174,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Listing tables...", detail: (i) => i.dataset },
+      slack: { status: "Listing tables...", detail: (i) => i.dataset, output: (r) => r.ok === false ? r.error : `${(r.tables ?? []).length} tables` },
     }),
 
     inspect_table: defineTool({
@@ -300,7 +300,15 @@ export function createBigQueryTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Inspecting table...", detail: (i) => `${i.dataset}.${i.table}` },
+      slack: {
+        status: "Inspecting table...",
+        detail: (i) => `${i.dataset}.${i.table}`,
+        output: (r) => {
+          if ("error" in r && typeof r.error === "string") return r.error;
+          if ("row_count" in r) return `${r.row_count ?? "?"} rows, ${(r.schema ?? []).length} columns`;
+          return undefined;
+        },
+      },
     }),
 
     execute_query: defineTool({

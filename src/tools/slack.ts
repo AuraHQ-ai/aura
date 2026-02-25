@@ -571,7 +571,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Listing channels...", output: (r) => `${r.channels?.length ?? 0} channels` },
+      slack: { status: "Listing channels...", output: (r) => r.ok === false ? r.error : `${r.channels?.length ?? 0} channels` },
     }),
 
     get_channel_info: defineTool({
@@ -852,7 +852,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Reading channel...", detail: (i) => i.channel, output: (r) => `${r.messages?.length ?? 0} messages` },
+      slack: { status: "Reading channel...", detail: (i) => i.channel, output: (r) => r.ok === false ? r.error : `${r.messages?.length ?? 0} messages` },
     }),
 
     read_thread_replies: defineTool({
@@ -1064,7 +1064,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return { ok: false, error: `Failed to list users: ${error.message}` };
         }
       },
-      slack: { status: "Listing users...", output: (r) => `${r.users?.length ?? 0} users` },
+      slack: { status: "Listing users...", output: (r) => r.ok === false ? r.error : `${r.users?.length ?? 0} users` },
     }),
 
     get_user_info: defineTool({
@@ -1259,7 +1259,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Searching messages...", detail: (i) => i.query, output: (r) => `${r.results?.length ?? 0} results` },
+      slack: { status: "Searching messages...", detail: (i) => i.query, output: (r) => r.ok === false ? r.error : `${r.results?.length ?? 0} results` },
     }),
 
     send_direct_message: defineTool({
@@ -1545,7 +1545,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Reading DMs...", detail: (i) => i.user_name, output: (r) => `${r.messages?.length ?? 0} messages` },
+      slack: { status: "Reading DMs...", detail: (i) => i.user_name, output: (r) => r.ok === false ? r.error : `${r.messages?.length ?? 0} messages` },
     }),
 
     list_dm_conversations: defineTool({
@@ -1723,7 +1723,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Reading list...", output: (r) => `${r.items?.length ?? 0} items` },
+      slack: { status: "Reading list...", output: (r) => r.ok === false ? r.error : `${r.items?.length ?? 0} items` },
     }),
 
     get_slack_list_item: defineTool({
@@ -2239,7 +2239,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Listing canvases...", output: (r) => `${r.files?.length ?? 0} canvases` },
+      slack: { status: "Listing canvases...", output: (r) => r.ok === false ? r.error : `${r.files?.length ?? 0} canvases` },
     }),
 
     // ── File Upload Tools ─────────────────────────────────────────────────

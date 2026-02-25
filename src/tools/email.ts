@@ -172,7 +172,7 @@ export function createEmailTools() {
           };
         }
       },
-      slack: { status: "Reading emails...", output: (r) => `${r.emails?.length ?? r.count ?? 0} emails` },
+      slack: { status: "Reading emails...", output: (r) => r.ok === false ? r.error : `${r.emails?.length ?? r.count ?? 0} emails` },
     }),
 
     read_email: defineTool({
@@ -483,7 +483,7 @@ export function createEmailTools() {
           };
         }
       },
-      slack: { status: "Checking calendar...", output: (r) => `${r.events?.length ?? r.count ?? 0} events` },
+      slack: { status: "Checking calendar...", output: (r) => r.ok === false ? r.error : `${r.events?.length ?? r.count ?? 0} events` },
     }),
 
     create_event: defineTool({
