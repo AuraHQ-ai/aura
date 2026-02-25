@@ -319,13 +319,9 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           const shouldRelease = release_session || (ownSession && failed);
           if (browser) {
             try {
-              if (shouldRelease) {
-                await browser.close();
-              } else {
-                await browser.disconnect();
-              }
+              await browser.close();
             } catch {
-              // ignore disconnect/close errors
+              // ignore close errors
             }
           }
           if (shouldRelease && currentSessionId) {
