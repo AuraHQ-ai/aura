@@ -116,12 +116,8 @@ export async function assemblePrompt(
     userProfile,
     channelContext,
     channelType: context.channelType,
-    channelId: context.channelId,
-    threadTs: context.threadTs,
-    userTimezone: userProfile?.timezone || undefined,
     threadContext,
     isChannelHistory,
-    modelId,
   });
 
   // Dynamic per-call context — separated so the stable prompt stays cache-friendly

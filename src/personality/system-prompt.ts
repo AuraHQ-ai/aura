@@ -19,18 +19,10 @@ interface SystemPromptContext {
   channelContext: string;
   /** Channel type */
   channelType: ChannelType;
-  /** Current channel ID (e.g. C0BNVKS77) */
-  channelId?: string;
-  /** Current thread timestamp (e.g. 1234567890.123456) */
-  threadTs?: string;
-  /** User's timezone (from profile or Slack) */
-  userTimezone?: string;
   /** Recent thread or channel messages for context */
   threadContext?: string;
   /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
   isChannelHistory?: boolean;
-  /** Active model ID, e.g. "anthropic/claude-sonnet-4-6" */
-  modelId?: string;
 }
 
 /**

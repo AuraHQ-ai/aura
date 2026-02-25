@@ -531,6 +531,7 @@ export async function generateResponse(
     stopWhen: stepCountIs(STEP_LIMIT),
     prepareStep: createInteractivePrepareStep({
       systemPrompt: options.systemPrompt,
+      dynamicContext: options.dynamicContext,
       modelId,
       defaultEffort: "medium",
       getEscalationModel,
