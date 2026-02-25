@@ -250,13 +250,13 @@ async function resolvePhoneNumberIdFromCache(
   try {
     const apiKey = process.env.ELEVENLABS_API_KEY;
     if (!apiKey) return null;
-    const res = await safeFetch(
+    const res = await fetch(
       `${ELEVENLABS_API_BASE}/convai/agents?page_size=50`,
-      { headers: { "xi-api-key": apiKey } },
+      { headers: { "xi-api-key": apiKey }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
     );
-    if (res) {
-      const agents: Array<{ phone_numbers?: Array<{ phone_number: string; phone_number_id: string }> }> =
-        (res as { agents?: unknown[] }).agents ?? [];
+    if (res.ok) {
+      const json = (await res.json()) as { agents?: Array<{ phone_numbers?: Array<{ phone_number: string; phone_number_id: string }> }> };
+      const agents = json.agents ?? [];
       for (const agent of agents) {
         const match = (agent.phone_numbers ?? []).find(
           (p) => p.phone_number === fromNumber,
