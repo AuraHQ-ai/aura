@@ -3,7 +3,7 @@ import { generateText, stepCountIs } from "ai";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
-import { getMainModel, getEscalationModel, withCacheControl } from "../lib/ai.js";
+import { getMainModel, getEscalationModel, withCacheControl, isAnthropicModel } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -152,15 +152,26 @@ export async function executeJob(
 
     const { modelId, model } = await getMainModel();
 
+    const slackTools = createSlackTools(slackClient, {
+      userId: job.requestedBy,
+      channelId: job.channelId || undefined,
+      threadTs: job.threadTs || undefined,
+    });
+
+    let tools: Record<string, any> = slackTools;
+    if (isAnthropicModel(modelId)) {
+      const { anthropic: anthropicProvider } = await import("@ai-sdk/anthropic");
+      tools = {
+        ...tools,
+        toolSearchBm25_20251119: anthropicProvider.tools.toolSearchBm25_20251119(),
+      };
+    }
+
     const generateResult = await generateText({
       model,
       system: withCacheControl(systemPrompt),
       prompt,
-      tools: createSlackTools(slackClient, {
-        userId: job.requestedBy,
-        channelId: job.channelId || undefined,
-        threadTs: job.threadTs || undefined,
-      }),
+      tools,
       stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
       prepareStep: createHeadlessPrepareStep({
         systemPrompt,
