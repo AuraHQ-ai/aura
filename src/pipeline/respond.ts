@@ -532,6 +532,15 @@ export async function generateResponse(
     abortSignal: abortController.signal,
   };
 
+  // Only inject toolSearchBm25 for direct Anthropic — Vertex/Bedrock don't support the beta flag
+  if (isAnthropicModel(modelId)) {
+    const { anthropic: anthropicProvider } = await import("@ai-sdk/anthropic");
+    streamOptions.tools = {
+      ...streamOptions.tools,
+      toolSearchBm25_20251119: anthropicProvider.tools.toolSearchBm25_20251119(),
+    };
+  }
+
   if (hasFiles) {
     const content: any[] = [
       { type: "text", text: options.userMessage },
