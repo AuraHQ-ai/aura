@@ -12,8 +12,11 @@ import { logger } from "../lib/logger.js";
 import { getMainModelId } from "../lib/ai.js";
 
 export interface AssembledPrompt {
-  systemPrompt: string;
-  /** Dynamic per-call context (channel + user + memory + thread + time/model metadata), uncached */
+  /** Stable prefix: personality + directives + notes/skills (cached across all conversations) */
+  stablePrefix: string;
+  /** Per-conversation context: channel/profile/memory/thread (cached within multi-step loops) */
+  conversationContext: string;
+  /** Dynamic per-call context (time/model/channel/thread), uncached */
   dynamicContext: string;
   memories: Memory[];
   conversations: ConversationThread[];
@@ -27,7 +30,7 @@ export interface AssembledPrompt {
  * 1. Embed the query once, then retrieve memories + conversations in parallel
  * 2. Fetch user profile for tone adaptation
  * 3. Format live conversation context from Slack API (already fetched)
- * 4. Build a stable cacheable system prompt + dynamic per-call context
+ * 4. Build split system prompt parts + dynamic per-call context
  */
 export async function assemblePrompt(
   context: MessageContext,
@@ -109,11 +112,8 @@ export async function assemblePrompt(
   // Resolve active model ID for self-awareness in system prompt
   const modelId = await getMainModelId();
 
-  // Build the stable system prompt (async: loads durable directives/skills from DB)
-  const systemPrompt = await buildSystemPrompt();
-
-  // Dynamic per-call context — uncached, includes volatile conversation state
-  const dynamicContext = buildDynamicContext({
+  // Build system prompt parts (stable prefix + per-conversation context)
+  const { stablePrefix, conversationContext } = await buildSystemPrompt({
     memories,
     conversations,
     userProfile,
@@ -121,6 +121,10 @@ export async function assemblePrompt(
     channelType: context.channelType,
     threadContext,
     isChannelHistory,
+  });
+
+  // Dynamic per-call context — uncached and invocation-specific
+  const dynamicContext = buildDynamicContext({
     userTimezone: userProfile?.timezone || undefined,
     modelId,
     channelId: context.channelId,
@@ -134,5 +138,5 @@ export async function assemblePrompt(
     hasThread: !!threadContext,
   });
 
-  return { systemPrompt, dynamicContext, memories, conversations, userProfile };
+  return { stablePrefix, conversationContext, dynamicContext, memories, conversations, userProfile };
 }

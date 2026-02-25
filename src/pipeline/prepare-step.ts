@@ -43,6 +43,8 @@ export function createPrepareStep(opts: {
   stepLimit?: number;
   warningThreshold?: number;
   systemPrompt: string;
+  /** Optional prebuilt cached system messages (e.g., multiple cache breakpoints). */
+  cachedSystem?: SystemModelMessage | Array<SystemModelMessage>;
   dynamicContext?: string;
   defaultEffort?: EffortLevel;
   modelId?: string;
@@ -140,8 +142,12 @@ export function createPrepareStep(opts: {
         .replace("{stepCount}", String(stepNumber))
         .replace("{limit}", String(limit));
 
+      const cachedBase = opts.cachedSystem
+        ? (Array.isArray(opts.cachedSystem) ? opts.cachedSystem : [opts.cachedSystem])
+        : [withCacheControl(opts.systemPrompt)];
+
       systemOverride = [
-        withCacheControl(opts.systemPrompt),
+        ...cachedBase,
         {
           role: "system",
           content: opts.dynamicContext
@@ -173,6 +179,7 @@ export function createPrepareStep(opts: {
 /** Factory for interactive Slack agent prepareStep (250-step limit). */
 export function createInteractivePrepareStep(opts: {
   systemPrompt: string;
+  cachedSystem?: SystemModelMessage | Array<SystemModelMessage>;
   dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
@@ -182,6 +189,7 @@ export function createInteractivePrepareStep(opts: {
     stepLimit: STEP_LIMIT,
     warningThreshold: WARNING_THRESHOLD,
     systemPrompt: opts.systemPrompt,
+    cachedSystem: opts.cachedSystem,
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
@@ -192,6 +200,7 @@ export function createInteractivePrepareStep(opts: {
 /** Factory for headless job execution prepareStep (350-step limit). */
 export function createHeadlessPrepareStep(opts: {
   systemPrompt: string;
+  cachedSystem?: SystemModelMessage | Array<SystemModelMessage>;
   dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
@@ -201,6 +210,7 @@ export function createHeadlessPrepareStep(opts: {
     stepLimit: HEADLESS_STEP_LIMIT,
     warningThreshold: HEADLESS_WARNING_THRESHOLD,
     systemPrompt: opts.systemPrompt,
+    cachedSystem: opts.cachedSystem,
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,

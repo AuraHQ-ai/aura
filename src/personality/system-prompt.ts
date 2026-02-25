@@ -8,7 +8,7 @@ import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
 
-interface DynamicPromptContext {
+interface SystemPromptContext {
   /** Retrieved memories relevant to this conversation */
   memories: Memory[];
   /** Retrieved conversation threads relevant to this conversation */
@@ -23,14 +23,6 @@ interface DynamicPromptContext {
   threadContext?: string;
   /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
   isChannelHistory?: boolean;
-  /** User's timezone (from profile or Slack) */
-  userTimezone?: string;
-  /** Active model ID, e.g. "anthropic/claude-sonnet-4-6" */
-  modelId?: string;
-  /** Current channel ID (e.g. C0BNVKS77) */
-  channelId?: string;
-  /** Current thread timestamp (e.g. 1234567890.123456) */
-  threadTs?: string;
 }
 
 /**
@@ -338,17 +330,38 @@ function formatConversations(conversations: ConversationThread[]): string {
 }
 
 /**
- * Build the stable, cacheable system prompt for an LLM call.
- * Async because it queries persistent notes + skill index from the database.
+ * The two halves of the system prompt, split for Anthropic prompt caching.
+ *
+ * `stablePrefix` — personality, self-directive, notes-index, skill-index.
+ *   Identical across ALL conversations → cached once, reused everywhere.
+ *
+ * `conversationContext` — channel, user profile, memories, conversations,
+ *   thread context. Changes per conversation but stays constant within a
+ *   single multi-step tool-use loop → cached across steps.
  */
-export async function buildSystemPrompt(): Promise<string> {
-  const parts: string[] = [];
+export interface SystemPromptParts {
+  stablePrefix: string;
+  conversationContext: string;
+}
 
-  // Core personality (always present)
-  parts.push(PERSONALITY);
+/**
+ * Build the full system prompt for an LLM call, split into a stable prefix
+ * and per-conversation context so each part can be a separate Anthropic
+ * cache breakpoint.
+ *
+ * Async because it queries the skill index and persistent notes from the DB.
+ */
+export async function buildSystemPrompt(
+  context: SystemPromptContext,
+): Promise<SystemPromptParts> {
+  const stableParts: string[] = [];
+  const contextParts: string[] = [];
+
+  // ── Stable prefix (same across ALL conversations) ──────────────────
+
+  stableParts.push(PERSONALITY);
 
   // Self-directive: agent's own persistent context, loaded every invocation
-  // Hard cap at ~2000 tokens (~8000 chars) to prevent context-window overflow
   const SELF_DIRECTIVE_MAX_CHARS = 8000;
   try {
     const rows = await db
@@ -367,7 +380,7 @@ export async function buildSystemPrompt(): Promise<string> {
           limit: SELF_DIRECTIVE_MAX_CHARS,
         });
       }
-      parts.push(
+      stableParts.push(
         `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}`,
       );
     }
@@ -394,7 +407,7 @@ export async function buildSystemPrompt(): Promise<string> {
           limit: NOTES_INDEX_MAX_CHARS,
         });
       }
-      parts.push(
+      stableParts.push(
         `\n## Notes index\n\nMaster index of all your notes. Use read_note() to load full content, search_notes() to grep across all notes.\n\n${indexContent}`,
       );
     }
@@ -405,52 +418,58 @@ export async function buildSystemPrompt(): Promise<string> {
   // Skill index (progressive disclosure -- lightweight topic + first line)
   const skillIndex = await buildSkillIndex();
   if (skillIndex) {
-    parts.push(skillIndex);
+    stableParts.push(skillIndex);
   }
 
-  return parts.join("\n\n");
-}
-
-/**
- * Build the dynamic (uncached) context block for the current invocation.
- * Separated from the stable system prompt so it can be passed as an uncached
- * second system message, preserving Anthropic prompt-cache hits.
- */
-export function buildDynamicContext(context: DynamicPromptContext): string {
-  const parts: string[] = [];
-
-  let current = `## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
-  if (context.modelId) current += `\nActive model: \`${context.modelId}\``;
-  if (context.channelId) current += `\nCurrent channel: ${context.channelId}`;
-  if (context.threadTs) current += `\nCurrent thread_ts: ${context.threadTs}`;
-  parts.push(current);
+  // ── Conversation context (varies per conversation) ─────────────────
 
   if (context.channelType === "dm") {
-    parts.push(`You're in a private DM. Be conversational and personal.`);
+    contextParts.push(`You're in a private DM. Be conversational and personal.`);
   } else {
-    parts.push(
+    contextParts.push(
       `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`,
     );
   }
 
   if (context.userProfile) {
-    parts.push(formatUserProfile(context.userProfile));
+    contextParts.push(formatUserProfile(context.userProfile));
   }
 
   if (context.memories.length > 0) {
-    parts.push(formatMemories(context.memories));
+    contextParts.push(formatMemories(context.memories));
   }
 
   if (context.conversations && context.conversations.length > 0) {
-    parts.push(formatConversations(context.conversations));
+    contextParts.push(formatConversations(context.conversations));
   }
 
   if (context.threadContext) {
     const heading = context.isChannelHistory
       ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
       : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
-    parts.push(heading);
+    contextParts.push(heading);
   }
 
-  return parts.join("\n\n");
+  return {
+    stablePrefix: stableParts.join("\n\n"),
+    conversationContext: contextParts.join("\n\n"),
+  };
+}
+
+/**
+ * Build the dynamic context block (current time, model, channel, thread).
+ * Separated from the stable/conversation prompt blocks so it can be passed
+ * as an uncached system message.
+ */
+export function buildDynamicContext(context: {
+  userTimezone?: string;
+  modelId?: string;
+  channelId?: string;
+  threadTs?: string;
+}): string {
+  let s = `## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
+  if (context.modelId) s += `\nActive model: \`${context.modelId}\``;
+  if (context.channelId) s += `\nCurrent channel: ${context.channelId}`;
+  if (context.threadTs) s += `\nCurrent thread_ts: ${context.threadTs}`;
+  return s;
 }
