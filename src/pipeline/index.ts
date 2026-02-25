@@ -279,7 +279,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { systemPrompt, memories, conversations } = await assemblePrompt(
+    const { systemPrompt, dynamicContext, memories, conversations } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
@@ -300,6 +300,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     const llmStart = Date.now();
     const response = await generateResponse({
       systemPrompt,
+      dynamicContext,
       userMessage: messageText,
       slackClient: client,
       context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs, timezone: userTimezone },

@@ -19,18 +19,10 @@ interface SystemPromptContext {
   channelContext: string;
   /** Channel type */
   channelType: ChannelType;
-  /** Current channel ID (e.g. C0BNVKS77) */
-  channelId?: string;
-  /** Current thread timestamp (e.g. 1234567890.123456) */
-  threadTs?: string;
-  /** User's timezone (from profile or Slack) */
-  userTimezone?: string;
   /** Recent thread or channel messages for context */
   threadContext?: string;
   /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
   isChannelHistory?: boolean;
-  /** Active model ID, e.g. "anthropic/claude-sonnet-4-6" */
-  modelId?: string;
 }
 
 /**
@@ -404,11 +396,6 @@ export async function buildSystemPrompt(
     logger.warn("Failed to load notes-index note", { error });
   }
 
-  // Temporal awareness
-  parts.push(
-    `\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}${context.modelId ? `\nActive model: \`${context.modelId}\`` : ''}${context.channelId ? `\nCurrent channel: ${context.channelId}` : ''}${context.threadTs ? `\nCurrent thread_ts: ${context.threadTs}` : ''}`,
-  );
-
   // Channel context
   if (context.channelType === "dm") {
     parts.push(`You're in a private DM. Be conversational and personal.`);
@@ -448,4 +435,22 @@ export async function buildSystemPrompt(
   }
 
   return parts.join("\n\n");
+}
+
+/**
+ * Build the dynamic context block (current time, model, channel, thread).
+ * Separated from the stable system prompt so it can be passed as an uncached
+ * second system message, preserving Anthropic prompt-cache hits.
+ */
+export function buildDynamicContext(context: {
+  userTimezone?: string;
+  modelId?: string;
+  channelId?: string;
+  threadTs?: string;
+}): string {
+  let s = `## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
+  if (context.modelId) s += `\nActive model: \`${context.modelId}\``;
+  if (context.channelId) s += `\nCurrent channel: ${context.channelId}`;
+  if (context.threadTs) s += `\nCurrent thread_ts: ${context.threadTs}`;
+  return s;
 }
