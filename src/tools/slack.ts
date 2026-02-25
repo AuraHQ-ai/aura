@@ -1354,6 +1354,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Sending DM...", detail: (i) => Array.isArray(i.user_name) ? i.user_name.join(', ') : i.user_name },
     }),
 
     read_dm_history: defineTool({
@@ -1544,6 +1545,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Reading DMs...", detail: (i) => i.user_name, output: (r) => `${r.messages?.length ?? 0} messages` },
     }),
 
     list_dm_conversations: defineTool({
@@ -2100,6 +2102,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Deleting canvas..." },
     }),
 
     share_canvas: defineTool({
@@ -2193,6 +2196,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Sharing canvas..." },
     }),
 
     list_canvases: defineTool({
@@ -2235,6 +2239,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Listing canvases...", output: (r) => `${r.files?.length ?? 0} canvases` },
     }),
 
     // ── File Upload Tools ─────────────────────────────────────────────────
@@ -2373,6 +2378,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Uploading file...", detail: (i) => i.filename },
     }),
 
     // ── File Download Tools ──────────────────────────────────────────────
@@ -2452,6 +2458,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Downloading file...", detail: (i) => i.file_id },
     }),
 
     // ── Message Management Tools ──────────────────────────────────────────
@@ -2663,6 +2670,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Removing reaction...", detail: (i) => `:${i.emoji}:` },
     }),
 
     // ── Channel Management Tools ────────────────────────────────────────────
@@ -2712,6 +2720,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Creating channel...", detail: (i) => i.channel_name },
     }),
 
     set_channel_topic: defineTool({
@@ -2743,6 +2752,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return { ok: false, error: `Failed to set topic: ${error.message}` };
         }
       },
+      slack: { status: "Setting topic...", detail: (i) => i.channel },
     }),
 
     invite_to_channel: defineTool({
@@ -2793,6 +2803,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return { ok: false, error: `Failed to invite: ${error.message}` };
         }
       },
+      slack: { status: "Inviting to channel...", detail: (i) => i.user_name },
     }),
 
     leave_channel: defineTool({
