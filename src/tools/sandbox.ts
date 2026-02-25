@@ -1,4 +1,3 @@
-import { tool } from "ai";
 import { z } from "zod";
 import {
   getOrCreateSandbox,
@@ -8,6 +7,7 @@ import {
 } from "../lib/sandbox.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
+import { defineTool } from "../lib/tool.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 /**
@@ -18,7 +18,7 @@ import type { ScheduleContext } from "../db/schema.js";
  */
 export function createSandboxTools(context?: ScheduleContext) {
   return {
-    run_command: tool({
+    run_command: defineTool({
       description:
         "Execute a shell command in a sandboxed Linux VM. This is the universal primitive for computation: file ops, git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (claude). Pre-installed: git, node, python, gh, gcloud, vercel CLI, ripgrep, curl, jq, claude. Install more with apt-get or pip. The sandbox persists between conversations — files and state are preserved across messages. Output is truncated; use head, tail, grep to filter. Break complex tasks into smaller commands. For complex workflows, check your skill notes first. Use higher timeouts (up to 750s) for long-running agent commands like Claude Code — the 750s ceiling leaves a 50s buffer before the Vercel function timeout at 800s.",
       inputSchema: z.object({
@@ -128,6 +128,27 @@ export function createSandboxTools(context?: ScheduleContext) {
             error: `Command execution failed: ${error.message}`,
           };
         }
+      },
+      slack: {
+        status: "Running a command in the sandbox...",
+        detail: (input) =>
+          input.command.length <= 120
+            ? input.command
+            : input.command.slice(0, 119) + "…",
+        output: (result) => {
+          if ("ok" in result && !result.ok) return result.error;
+          if (!("exit_code" in result)) return undefined;
+          const r = result as { exit_code: number; stdout?: string; stderr?: string };
+          if (r.exit_code === 0) return undefined;
+          const stderr = typeof r.stderr === "string" ? r.stderr.trim() : "";
+          const stdout = typeof r.stdout === "string" ? r.stdout.trim() : "";
+          const detail = stderr || stdout;
+          if (detail) {
+            const truncated = detail.length <= 180 ? detail : detail.slice(0, 179) + "…";
+            return `Exit code ${r.exit_code}: ${truncated}`;
+          }
+          return `Exit code ${r.exit_code}`;
+        },
       },
     }),
   };
