@@ -165,6 +165,15 @@ export function supportsEffort(modelId: string): boolean {
 }
 
 /**
+ * Check if a model is known to actively use the effort parameter.
+ * Only these models should use effort-based escalation (max out effort before
+ * switching models). Other models fall back to failure-count-based escalation.
+ */
+export function supportsEffortEscalation(modelId: string): boolean {
+  return /claude-(?:opus-4-[56]|sonnet-4-6)/.test(modelId);
+}
+
+/**
  * Get the escalation model for automatic model escalation.
  * Used when the default model is struggling — prepareStep can swap to this mid-conversation.
  * Priority: DB setting > env var > default (Opus 4.6)
