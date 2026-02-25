@@ -19,7 +19,6 @@ import { extractMemories } from "../memory/extract.js";
 import {
   getKnowledgeAboutUser,
   formatKnowledgeSummary,
-  forgetMemories,
 } from "../memory/transparency.js";
 import {
   getOrCreateProfile,
@@ -469,56 +468,6 @@ async function handleTransparencyCommands(
       await safePostMessage(client, {
         channel: context.channelId,
         text: "I hit a snag pulling that together. Try again in a moment.",
-        thread_ts: replyThreadTs,
-      });
-      return true;
-    }
-  }
-
-  // "Forget X" command
-  const forgetMatch = text.match(
-    /^(?:please\s+)?forget\s+(?:about\s+)?(?:that\s+)?(.+)/i,
-  );
-  if (forgetMatch) {
-    const whatToForget = forgetMatch[1].trim();
-    try {
-      const result = await forgetMemories(context.userId, whatToForget);
-      if (result.forgottenCount === 0) {
-        await safePostMessage(client, {
-          channel: context.channelId,
-          text: `I looked, but I couldn't find anything matching "${whatToForget}" in what I know about you. Maybe I never stored it, or it might be phrased differently in my memory.`,
-          thread_ts: replyThreadTs,
-        });
-      } else {
-        const examplesText =
-          result.examples.length > 0
-            ? `\n\nRemoved things like:\n${result.examples.map((e) => `- ${e}`).join("\n")}`
-            : "";
-        await safePostMessage(client, {
-          channel: context.channelId,
-          text: `Done. I forgot ${result.forgottenCount} thing${result.forgottenCount === 1 ? "" : "s"} related to "${whatToForget}".${examplesText}`,
-          thread_ts: replyThreadTs,
-        });
-      }
-      return true;
-    } catch (error: any) {
-      recordError("transparency.forget", error, {
-        userId: context.userId,
-        whatToForget,
-      });
-      logError({
-        errorName: error?.name || "TransparencyForgetError",
-        errorMessage: error?.message || String(error),
-        errorCode: "transparency_forget",
-        userId: context.userId,
-        channelId: context.channelId,
-        channelType: context.channelType,
-        context: { whatToForget },
-        stackTrace: error?.stack,
-      });
-      await safePostMessage(client, {
-        channel: context.channelId,
-        text: "Something went wrong trying to forget that. Try again?",
         thread_ts: replyThreadTs,
       });
       return true;
