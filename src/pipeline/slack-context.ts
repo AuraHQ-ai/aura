@@ -311,29 +311,61 @@ function formatMessage(m: SlackThreadMessage, timezone?: string, isOld = false):
  *   messages, false for non-threaded channel messages (to avoid mislabeling
  *   unrelated channel history as "thread context" in the system prompt).
  */
-export function formatConversationContext(
+export async function formatConversationContext(
   conversation: ConversationContext,
   includeChannelFallback: boolean = true,
   timezone?: string,
-): string | undefined {
+): Promise<string | undefined> {
   const RECENT_TOOL_IO_COUNT = 10;
 
   // Prefer thread context if available
   if (conversation.thread && conversation.thread.length > 0) {
-    // Cap thread context to avoid inflating the system prompt for long threads.
-    // Keep the parent message (first) plus the most recent messages.
     const MAX_THREAD_MESSAGES = 50;
     const thread = conversation.thread;
-    const capped =
-      thread.length <= MAX_THREAD_MESSAGES
-        ? thread
-        : [thread[0], ...thread.slice(-MAX_THREAD_MESSAGES + 1)];
-    const threadFormatted = capped
-      .map((m, i) => {
-        const isOld = i < capped.length - RECENT_TOOL_IO_COUNT;
-        return formatMessage(m, timezone, isOld);
-      })
-      .join("\n\n");
+
+    let threadFormatted: string;
+
+    if (thread.length <= MAX_THREAD_MESSAGES) {
+      threadFormatted = thread
+        .map((m, i) => {
+          const isOld = i < thread.length - RECENT_TOOL_IO_COUNT;
+          return formatMessage(m, timezone, isOld);
+        })
+        .join("\n\n");
+    } else {
+      const droppedMessages = thread.slice(1, thread.length - (MAX_THREAD_MESSAGES - 2));
+      const recentMessages = thread.slice(-(MAX_THREAD_MESSAGES - 2));
+
+      let summaryEntry: string;
+      try {
+        const { getFastModel } = await import("../lib/ai.js");
+        const { generateText } = await import("ai");
+        const fastModel = await getFastModel();
+
+        const droppedText = droppedMessages
+          .map((m) => `${m.displayName}: ${m.text.slice(0, 200)}`)
+          .join("\n");
+
+        const { text: summary } = await generateText({
+          model: fastModel,
+          prompt: `These are messages from an ongoing conversation (${droppedMessages.length} messages). Summarize the key decisions, facts, tasks completed/merged, and open threads in 3-5 sentences. Focus on: what was decided, what was built or merged, what tasks were assigned, what is still pending.\n\nMessages:\n${droppedText.slice(0, 8000)}`,
+          maxOutputTokens: 200,
+        });
+
+        summaryEntry = `[Context: ${droppedMessages.length} earlier messages summarized: ${summary.trim()}]`;
+      } catch {
+        summaryEntry = `[${droppedMessages.length} earlier messages not shown]`;
+      }
+
+      const parts: string[] = [];
+      parts.push(formatMessage(thread[0], timezone, true));
+      parts.push(summaryEntry);
+      recentMessages.forEach((m, i) => {
+        const isOld = i < recentMessages.length - RECENT_TOOL_IO_COUNT;
+        parts.push(formatMessage(m, timezone, isOld));
+      });
+      threadFormatted = parts.join("\n\n");
+    }
 
     // Include channel messages posted before the thread root for broader context.
     // recentMessages are in chronological order (oldest-first after the reverse
