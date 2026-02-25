@@ -8,6 +8,7 @@ import {
 } from "../lib/browser.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
+import { uploadFileToSlack } from "../lib/slack-upload.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -104,6 +105,20 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           .describe(
             "Timeout for the operation in seconds (default 30, max 120).",
           ),
+        upload_channel: z
+          .string()
+          .optional()
+          .describe(
+            "Channel name, ID, or username to upload the screenshot to. When set, the screenshot PNG is automatically uploaded to Slack.",
+          ),
+        upload_thread_ts: z
+          .string()
+          .optional()
+          .describe("Thread timestamp to attach the uploaded screenshot to."),
+        upload_title: z
+          .string()
+          .optional()
+          .describe("Title for the uploaded screenshot file in Slack."),
       }),
       execute: async ({
         url,
@@ -114,6 +129,9 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
         headers,
         stealth,
         timeout_seconds,
+        upload_channel,
+        upload_thread_ts,
+        upload_title,
       }) => {
         // Admin-only check
         if (!isAdmin(context?.userId) && context?.userId !== "aura") {
@@ -284,6 +302,60 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
               typeof codeResult === "string"
                 ? codeResult
                 : JSON.stringify(codeResult);
+          }
+
+          if (upload_channel && screenshotBase64) {
+            try {
+              const token = process.env.SLACK_BOT_TOKEN;
+              if (!token) {
+                result.upload_error = "SLACK_BOT_TOKEN not configured";
+              } else {
+                const { WebClient } = await import("@slack/web-api");
+                const slackClient = new WebClient(token);
+
+                const { resolveChannelByName, resolveUserByName } = await import("../tools/slack.js");
+
+                let channelId: string | undefined;
+                if (/^[CDG][A-Z0-9]+$/.test(upload_channel)) {
+                  channelId = upload_channel;
+                } else {
+                  const resolved = await resolveChannelByName(slackClient, upload_channel);
+                  if (resolved) {
+                    channelId = resolved.id;
+                  } else {
+                    const user = await resolveUserByName(slackClient, upload_channel);
+                    if (user?.id) {
+                      const dm = await slackClient.conversations.open({ users: user.id });
+                      channelId = dm.channel?.id;
+                    }
+                  }
+                }
+
+                if (!channelId) {
+                  result.upload_error = `Could not resolve channel or user "${upload_channel}"`;
+                } else {
+                  const screenshotBuffer = Buffer.from(screenshotBase64, "base64");
+                  const filename = upload_title
+                    ? `${upload_title.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`
+                    : "screenshot.png";
+
+                  const { fileId, fileUrl } = await uploadFileToSlack(slackClient, {
+                    buffer: screenshotBuffer,
+                    filename,
+                    title: upload_title || `Screenshot of ${resultTitle || resultUrl}`,
+                    channelId,
+                    threadTs: upload_thread_ts,
+                  });
+                  result.file_id = fileId;
+                  result.file_url = fileUrl;
+                }
+              }
+            } catch (uploadErr: any) {
+              logger.error("browse tool: screenshot upload failed", {
+                error: uploadErr.message,
+              });
+              result.upload_error = `Screenshot upload failed: ${uploadErr.message}`;
+            }
           }
 
           logger.info("browse tool: completed", {

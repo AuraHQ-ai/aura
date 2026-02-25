@@ -21,6 +21,7 @@ import { createVoiceTools } from "./voice.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
+import { uploadFileToSlack } from "../lib/slack-upload.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { downloadSlackFile, MAX_FILE_SIZE } from "../lib/files.js";
 
@@ -2301,39 +2302,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             }
           }
 
-          // 1. Get upload URL
-          const uploadUrlResp = await client.files.getUploadURLExternal({
+          const { fileId, fileUrl } = await uploadFileToSlack(client, {
+            buffer: fileBuffer,
             filename,
-            length: fileBuffer.length,
-          });
-          const uploadUrl = uploadUrlResp.upload_url!;
-          const fileId = uploadUrlResp.file_id!;
-
-          // 2. Upload the file content to the presigned URL
-          const uploadResp = await fetch(uploadUrl, {
-            method: "POST",
-            body: fileBuffer,
-            headers: { "Content-Type": "application/octet-stream" },
-          });
-          if (!uploadResp.ok) {
-            throw new Error(`File upload failed: ${uploadResp.status} ${uploadResp.statusText}`);
-          }
-
-          // 3. Complete upload and share to channel
-          const completeParams: Record<string, unknown> = {
-            files: [{ id: fileId, title: title || filename }],
-          };
-          if (channelId) completeParams.channel_id = channelId;
-          if (thread_ts) completeParams.thread_ts = thread_ts;
-
-          const completeResp = await client.files.completeUploadExternal(completeParams as any);
-
-          const fileUrl = (completeResp as any).files?.[0]?.permalink ?? null;
-
-          logger.info("upload_file tool called", {
-            filename,
-            channel,
-            fileId,
+            title: title || undefined,
+            channelId,
+            threadTs: thread_ts,
           });
 
           return {
