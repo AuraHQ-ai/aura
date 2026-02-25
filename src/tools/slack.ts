@@ -1259,7 +1259,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Searching messages...", detail: (i) => i.query, output: (r) => `${r.messages?.length ?? 0} results` },
+      slack: { status: "Searching messages...", detail: (i) => i.query, output: (r) => `${r.results?.length ?? 0} results` },
     }),
 
     send_direct_message: defineTool({
@@ -2862,6 +2862,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           return { ok: false, error: `Failed to set status: ${error.message}` };
         }
       },
+      slack: { status: "Setting status...", detail: (i) => i.status_text },
     }),
 
     // ── Slack Lists Write Tools ────────────────────────────────────────────
