@@ -50,22 +50,26 @@ export function createPrepareStep(opts: {
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
   let escalatedModel: LanguageModel | null = null;
+  let failureCount = 0;
 
   return async ({ stepNumber, steps }) => {
     let systemOverride: string | undefined;
     let providerOptions: ProviderOptions | undefined;
     let modelOverride: LanguageModel | undefined;
 
-    // --- Effort escalation (Anthropic only) ---
+    // --- Tool failure detection (always active) ---
+    const lastStep = Array.isArray(steps) && steps.length > 0
+      ? steps[steps.length - 1]
+      : null;
+
+    const hadToolFailure = lastStep?.toolResults?.some(
+      (r: any) => r.output?.ok === false || r.output?.error,
+    ) ?? false;
+
+    if (hadToolFailure) failureCount++;
+
+    // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
     if (isAnthropic) {
-      const lastStep = Array.isArray(steps) && steps.length > 0
-        ? steps[steps.length - 1]
-        : null;
-
-      const hadToolFailure = lastStep?.toolResults?.some(
-        (r: any) => r.output?.ok === false || r.output?.error,
-      ) ?? false;
-
       let newEffort = currentEffort;
 
       if (stepNumber > 8 || hadToolFailure) {
@@ -82,31 +86,36 @@ export function createPrepareStep(opts: {
       }
 
       providerOptions = { anthropic: { effort: currentEffort } };
+    }
 
-      // --- Model escalation: deep into task + still failing at high effort → Opus ---
-      if (
-        stepNumber > 15 &&
-        hadToolFailure &&
-        currentEffort === "high" &&
-        !hasEscalatedModel &&
-        opts.getEscalationModel
-      ) {
-        try {
-          escalatedModel = await opts.getEscalationModel();
-          hasEscalatedModel = true;
-          modelOverride = escalatedModel;
-          logger.warn("prepareStep: escalating model to Opus", { stepNumber });
-        } catch (err: any) {
-          logger.error("prepareStep: failed to load escalation model", {
-            stepNumber,
-            error: err?.message,
-          });
-        }
-      }
+    // --- Model escalation: persistent failures → escalation model ---
+    // For effort-supporting models: escalate after reaching max effort and still failing.
+    // For other models: escalate after 3+ cumulative tool failures.
+    const readyToEscalateModel = isAnthropic
+      ? (currentEffort === "high" && hadToolFailure)
+      : (failureCount >= 3);
 
-      if (hasEscalatedModel && escalatedModel && !modelOverride) {
+    if (
+      stepNumber > 15 &&
+      readyToEscalateModel &&
+      !hasEscalatedModel &&
+      opts.getEscalationModel
+    ) {
+      try {
+        escalatedModel = await opts.getEscalationModel();
+        hasEscalatedModel = true;
         modelOverride = escalatedModel;
+        logger.warn("prepareStep: escalating model to Opus", { stepNumber });
+      } catch (err: any) {
+        logger.error("prepareStep: failed to load escalation model", {
+          stepNumber,
+          error: err?.message,
+        });
       }
+    }
+
+    if (hasEscalatedModel && escalatedModel && !modelOverride) {
+      modelOverride = escalatedModel;
     }
 
     // --- Step limit warning (existing behavior) ---
