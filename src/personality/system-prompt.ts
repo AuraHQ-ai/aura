@@ -404,11 +404,6 @@ export async function buildSystemPrompt(
     logger.warn("Failed to load notes-index note", { error });
   }
 
-  // Temporal awareness
-  parts.push(
-    `\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}${context.modelId ? `\nActive model: \`${context.modelId}\`` : ''}${context.channelId ? `\nCurrent channel: ${context.channelId}` : ''}${context.threadTs ? `\nCurrent thread_ts: ${context.threadTs}` : ''}`,
-  );
-
   // Channel context
   if (context.channelType === "dm") {
     parts.push(`You're in a private DM. Be conversational and personal.`);
@@ -449,3 +444,22 @@ export async function buildSystemPrompt(
 
   return parts.join("\n\n");
 }
+
+/**
+ * Returns the per-call dynamic context that must NOT be part of the cached system prompt.
+ * Inject this as a second system message (no cacheControl) in respond.ts.
+ */
+export function buildDynamicContext(context: {
+  userTimezone?: string;
+  modelId?: string;
+  channelId?: string;
+  threadTs?: string;
+}): string {
+  const parts: string[] = [];
+  parts.push(`Current time: ${getCurrentTimeContext(context.userTimezone)}`);
+  if (context.modelId) parts.push(`Active model: \`${context.modelId}\``);
+  if (context.channelId) parts.push(`Current channel: ${context.channelId}`);
+  if (context.threadTs) parts.push(`Current thread_ts: ${context.threadTs}`);
+  return parts.join('\n');
+}
+
