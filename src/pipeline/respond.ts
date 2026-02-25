@@ -750,7 +750,7 @@ export async function generateResponse(
           pendingToolInputs.delete(chunk.toolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
-          if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+          if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
@@ -794,7 +794,7 @@ export async function generateResponse(
           pendingToolInputs.delete(errToolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
-          if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+          if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
