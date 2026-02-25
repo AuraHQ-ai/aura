@@ -2,7 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { userProfiles, people, addresses, voiceCalls } from "../db/schema.js";
+import { voiceCalls } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -45,13 +45,6 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
   },
 };
 
-const VOICE_MAP: Record<string, string> = {
-  es: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  fr: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  it: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  en: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-};
-
 const DEFAULT_LANGUAGE = "en";
 
 function getLanguageConfig(lang: string): LanguageConfig {
@@ -66,73 +59,6 @@ function detectLanguageFromPhone(phone: string): string {
   if (phone.startsWith("+41")) return "de";
   if (phone.startsWith("+44") || phone.startsWith("+1")) return "en";
   return DEFAULT_LANGUAGE;
-}
-
-// ── Person Phone Resolution ──────────────────────────────────────────────────
-
-async function resolvePhoneByName(
-  personName: string,
-): Promise<{ phone: string; displayName: string } | null> {
-  const nameLower = personName.toLowerCase();
-
-  const profiles = await db
-    .select({
-      displayName: userProfiles.displayName,
-      personId: userProfiles.personId,
-    })
-    .from(userProfiles)
-    .where(sql`lower(${userProfiles.displayName}) LIKE ${"%" + nameLower + "%"}`)
-    .limit(5);
-
-  for (const profile of profiles) {
-    if (profile.personId) {
-      const phoneAddresses = await db
-        .select({ value: addresses.value })
-        .from(addresses)
-        .where(
-          and(
-            eq(addresses.personId, profile.personId),
-            eq(addresses.channel, "phone"),
-          ),
-        )
-        .limit(1);
-
-      if (phoneAddresses.length > 0) {
-        return {
-          phone: phoneAddresses[0].value,
-          displayName: profile.displayName,
-        };
-      }
-    }
-  }
-
-  const peopleRows = await db
-    .select({ id: people.id, displayName: people.displayName })
-    .from(people)
-    .where(sql`lower(${people.displayName}) LIKE ${"%" + nameLower + "%"}`)
-    .limit(5);
-
-  for (const person of peopleRows) {
-    const phoneAddresses = await db
-      .select({ value: addresses.value })
-      .from(addresses)
-      .where(
-        and(
-          eq(addresses.personId, person.id),
-          eq(addresses.channel, "phone"),
-        ),
-      )
-      .limit(1);
-
-    if (phoneAddresses.length > 0) {
-      return {
-        phone: phoneAddresses[0].value,
-        displayName: person.displayName || personName,
-      };
-    }
-  }
-
-  return null;
 }
 
 // ── ElevenLabs Agent Config ──────────────────────────────────────────────────
@@ -266,14 +192,22 @@ async function fetchAgentConfig(
 
 function resolvePhoneNumberIdFromConfig(
   agentConfig: ElevenLabsAgentConfigResponse,
+  fromNumber?: string,
 ): string | undefined {
   const envId = process.env.ELEVENLABS_PHONE_NUMBER_ID;
   if (envId) return envId;
 
-  const twilioPhone = agentConfig.phone_numbers?.find(
+  const twilioPhones = agentConfig.phone_numbers?.filter(
     (p) => p.provider === "twilio",
   );
-  return twilioPhone?.phone_number_id;
+  if (!twilioPhones?.length) return undefined;
+
+  if (fromNumber) {
+    const match = twilioPhones.find((p) => p.phone_number === fromNumber);
+    if (match) return match.phone_number_id;
+  }
+
+  return twilioPhones[0].phone_number_id;
 }
 
 async function resolvePhoneNumberIdFromCache(
@@ -449,31 +383,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         const resolvedAgentId = agentIdParam || DEFAULT_AGENT_ID;
         const resolvedFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
 
-        // Resolve phone_number_id from the from_number via cache
-        let phoneNumberId = await resolvePhoneNumberIdFromCache(resolvedFromNumber);
-
-        if (!phoneNumberId) {
-          // Fall back to agent config for phone number ID
-          try {
-            const agentConfig = await fetchAgentConfig(apiKey, resolvedAgentId);
-            phoneNumberId = resolvePhoneNumberIdFromConfig(agentConfig) ?? null;
-          } catch (err: any) {
-            logger.error("make_call failed to fetch agent config for phone number", {
-              agentId: resolvedAgentId,
-              error: err.message,
-            });
-          }
-        }
-
-        if (!phoneNumberId) {
-          return {
-            ok: false,
-            error:
-              "Could not resolve phone_number_id for the from_number. Use list_voice_agents to find valid phone numbers.",
-          };
-        }
-
-        // Fetch agent config for dynamic variable validation
+        // Fetch agent config (used for phone number fallback + dynamic variable validation)
         let agentConfig: ElevenLabsAgentConfigResponse;
         try {
           agentConfig = await fetchAgentConfig(apiKey, resolvedAgentId);
@@ -485,6 +395,21 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           return {
             ok: false,
             error: `Failed to fetch agent config: ${err.message}`,
+          };
+        }
+
+        // Resolve phone_number_id from the from_number via cache
+        let phoneNumberId = await resolvePhoneNumberIdFromCache(resolvedFromNumber);
+
+        if (!phoneNumberId) {
+          phoneNumberId = resolvePhoneNumberIdFromConfig(agentConfig, resolvedFromNumber) ?? null;
+        }
+
+        if (!phoneNumberId) {
+          return {
+            ok: false,
+            error:
+              "Could not resolve phone_number_id for the from_number. Use list_voice_agents to find valid phone numbers.",
           };
         }
 
@@ -516,11 +441,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         for (const key of Object.keys(placeholders)) {
           if (dynamicVars[key] === undefined) {
             const defaultVal = placeholders[key];
-            if (
-              defaultVal !== undefined &&
-              defaultVal !== null &&
-              defaultVal !== ""
-            ) {
+            if (defaultVal !== undefined && defaultVal !== null) {
               dynamicVars[key] = defaultVal;
             } else {
               missingVars.push(key);
