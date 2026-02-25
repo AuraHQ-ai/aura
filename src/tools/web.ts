@@ -1,8 +1,8 @@
-import { tool } from "ai";
 import { z } from "zod";
 import { tavily } from "@tavily/core";
 import { lookup } from "node:dns/promises";
 import { logger } from "../lib/logger.js";
+import { defineTool } from "../lib/tool.js";
 
 // ── Tavily Client ────────────────────────────────────────────────────────────
 
@@ -106,7 +106,7 @@ async function isPrivateUrl(url: string): Promise<boolean> {
  */
 export function createWebTools() {
   return {
-    web_search: tool({
+    web_search: defineTool({
       description:
         "Search the web for current information, documentation, news, or anything outside the Slack workspace. Don't search the web for things you can find in the workspace — use search_messages or read_channel_history instead. Requires TAVILY_API_KEY.",
       inputSchema: z.object({
@@ -124,7 +124,7 @@ export function createWebTools() {
         const tvly = getTavilyClient();
         if (!tvly) {
           return {
-            ok: false,
+            ok: false as const,
             error: "Web search is not available. TAVILY_API_KEY is not configured.",
           };
         }
@@ -148,7 +148,7 @@ export function createWebTools() {
           });
 
           return {
-            ok: true,
+            ok: true as const,
             query,
             answer: response.answer || null,
             results,
@@ -160,14 +160,27 @@ export function createWebTools() {
             error: error.message,
           });
           return {
-            ok: false,
+            ok: false as const,
             error: `Web search failed: ${error.message}`,
           };
         }
       },
+      slack: {
+        status: "Searching the web...",
+        detail: (input) => input.query,
+        output: (result) => "ok" in result && result.ok ? `${result.count ?? 0} results` : result.error,
+        sources: (result) => {
+          if (!("ok" in result) || !result.ok || !Array.isArray(result.results)) return undefined;
+          return result.results.slice(0, 3).map((r) => ({
+            type: "url" as const,
+            url: r.url,
+            text: r.title || r.url,
+          }));
+        },
+      },
     }),
 
-    read_url: tool({
+    read_url: defineTool({
       description:
         "Fetch a URL and extract its readable text content. Use when someone pastes a link and asks 'what does this say?' or 'can you read this?', or to check if a site is up. For simple text extraction, prefer this over browse. If TAVILY_API_KEY is configured, uses Tavily extract for cleaner results; otherwise falls back to basic HTML stripping.",
       inputSchema: z.object({
@@ -182,7 +195,7 @@ export function createWebTools() {
           if (await isPrivateUrl(url)) {
             logger.warn("read_url SSRF blocked", { url });
             return {
-              ok: false,
+              ok: false as const,
               error: "Blocked: URL resolves to a private/internal network address",
               url,
             };
@@ -198,10 +211,10 @@ export function createWebTools() {
                 const content = (result.rawContent || "").substring(0, 4000);
                 logger.info("read_url tool called (tavily)", { url, contentLength: content.length });
                 return {
-                  ok: true,
+                  ok: true as const,
                   url,
                   content,
-                  source: "tavily",
+                  source: "tavily" as const,
                 };
               }
             } catch {
@@ -227,7 +240,7 @@ export function createWebTools() {
               if (await isPrivateUrl(currentUrl)) {
                 logger.warn("read_url SSRF blocked (redirect)", { url, redirectTo: currentUrl });
                 return {
-                  ok: false,
+                  ok: false as const,
                   error: "Blocked: redirect resolves to a private/internal network address",
                   url,
                 };
@@ -239,7 +252,7 @@ export function createWebTools() {
 
           if (!response.ok) {
             return {
-              ok: false,
+              ok: false as const,
               error: `HTTP ${response.status} ${response.statusText}`,
               url,
             };
@@ -260,24 +273,41 @@ export function createWebTools() {
           logger.info("read_url tool called (fetch)", { url, contentLength: content.length });
 
           return {
-            ok: true,
+            ok: true as const,
             url,
             content,
-            source: "fetch",
+            source: "fetch" as const,
           };
         } catch (error: any) {
           logger.error("read_url tool failed", { url, error: error.message });
 
           if (error.name === "TimeoutError" || error.name === "AbortError") {
-            return { ok: false, error: `Request timed out after 10 seconds`, url };
+            return { ok: false as const, error: `Request timed out after 10 seconds`, url };
           }
 
           return {
-            ok: false,
+            ok: false as const,
             error: `Failed to read URL: ${error.message}`,
             url,
           };
         }
+      },
+      slack: {
+        status: "Reading a link...",
+        detail: (input) => input.url,
+        output: (result) => {
+          if ("ok" in result && !result.ok) return result.error;
+          return undefined;
+        },
+        sources: (result) => {
+          if (!("ok" in result) || !result.ok || !("url" in result)) return undefined;
+          const url = (result as { url: string }).url;
+          try {
+            return [{ type: "url" as const, url, text: new URL(url).hostname }];
+          } catch {
+            return [{ type: "url" as const, url, text: url }];
+          }
+        },
       },
     }),
   };

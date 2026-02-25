@@ -3,6 +3,7 @@ import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
+import { defineTool } from "../lib/tool.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 /**
@@ -300,7 +301,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
       },
     }),
 
-    execute_query: tool({
+    execute_query: defineTool({
       description:
         "Run a read-only SQL query against BigQuery. Only SELECT/WITH queries are allowed — DML/DDL is blocked. Uses standard SQL (not legacy). Has a 1 GB scan limit to prevent runaway costs. Use LIMIT for large result sets to keep responses manageable. Read the 'data-warehouse-map' note before re-exploring from scratch.",
       inputSchema: z.object({
@@ -404,6 +405,18 @@ export function createBigQueryTools(context?: ScheduleContext) {
             error: `Query failed: ${error.message}`,
           };
         }
+      },
+      slack: {
+        status: "Running a SQL query...",
+        detail: (input) =>
+          input.sql.length <= 120
+            ? input.sql
+            : input.sql.slice(0, 119) + "…",
+        output: (result) => {
+          if ("error" in result && typeof result.error === "string") return result.error;
+          if ("total_rows" in result) return `${result.total_rows ?? 0} rows`;
+          return undefined;
+        },
       },
     }),
   };

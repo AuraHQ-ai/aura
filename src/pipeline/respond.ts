@@ -9,6 +9,7 @@ import { formatForSlack } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
 import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLong } from "../lib/slack-messaging.js";
 import { createInteractivePrepareStep, STEP_LIMIT } from "./prepare-step.js";
+import { getSlackMeta } from "../lib/tool.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -672,9 +673,10 @@ export async function generateResponse(
         }
 
         case "tool-call": {
-          const title = TOOL_STATUS[chunk.toolName] || "Working on it...";
+          const slackMeta = getSlackMeta(streamOptions.tools[chunk.toolName]);
+          const title = slackMeta?.status ?? TOOL_STATUS[chunk.toolName] ?? "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
-          const details = getToolDetails(chunk.toolName, inputArgs);
+          const details = slackMeta?.detail?.(inputArgs) ?? getToolDetails(chunk.toolName, inputArgs);
           const toolCallPayload = {
             chunks: [{
               type: "task_update",
@@ -716,7 +718,8 @@ export async function generateResponse(
         }
 
         case "tool-result": {
-          const title = TOOL_STATUS[chunk.toolName] || "Done";
+          const resultSlackMeta = getSlackMeta(streamOptions.tools[chunk.toolName]);
+          const title = resultSlackMeta?.status ?? TOOL_STATUS[chunk.toolName] ?? "Done";
           const output = chunk.output;
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
@@ -729,8 +732,8 @@ export async function generateResponse(
             pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
           }
 
-          const taskOutput = getToolOutput(chunk.toolName, output);
-          const sources = getToolSources(chunk.toolName, output);
+          const taskOutput = resultSlackMeta?.output?.(output) ?? getToolOutput(chunk.toolName, output);
+          const sources = resultSlackMeta?.sources?.(output) ?? getToolSources(chunk.toolName, output);
 
           const toolResultPayload = {
             chunks: [{
@@ -775,7 +778,8 @@ export async function generateResponse(
         case "tool-error": {
           const errToolName = (chunk as any).toolName;
           const errToolCallId = (chunk as any).toolCallId;
-          const title = TOOL_STATUS[errToolName] || "Failed";
+          const errSlackMeta = getSlackMeta(streamOptions.tools[errToolName]);
+          const title = errSlackMeta?.status ?? TOOL_STATUS[errToolName] ?? "Failed";
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
           const toolErrorPayload = {
