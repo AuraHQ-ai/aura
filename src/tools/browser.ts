@@ -320,6 +320,29 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           }
         }
       },
+      toModelOutput({ output }) {
+        if (!output || typeof output !== "object") {
+          return { type: "text", value: JSON.stringify(output) };
+        }
+
+        const { screenshot_base64, ...rest } = output as Record<string, unknown>;
+        const parts: Array<
+          | { type: "text"; text: string }
+          | { type: "image-data"; data: string; mediaType: string }
+        > = [];
+
+        parts.push({ type: "text", text: JSON.stringify(rest) });
+
+        if (screenshot_base64 && typeof screenshot_base64 === "string") {
+          parts.push({
+            type: "image-data",
+            data: screenshot_base64,
+            mediaType: "image/png",
+          });
+        }
+
+        return { type: "content", value: parts };
+      },
     }),
   };
   } catch (err) {
