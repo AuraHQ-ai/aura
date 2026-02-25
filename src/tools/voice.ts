@@ -373,7 +373,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
         const missingVars: string[] = [];
         for (const key of Object.keys(placeholders)) {
-          if (dynamicVars[key] === undefined || dynamicVars[key] === "") {
+          if (dynamicVars[key] === undefined) {
             const defaultVal = placeholders[key];
             if (
               defaultVal !== undefined &&
