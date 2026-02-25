@@ -235,13 +235,40 @@ async function resolvePhoneNumberIdFromCache(
   fromNumber: string | undefined,
 ): Promise<string | null> {
   if (!fromNumber) return null;
+
+  // First try: use cached phones list (populated from /convai/phone-numbers, may be [])
   try {
     const data = await getElevenLabsData();
     const match = data.phones.find((p) => p.phone_number === fromNumber);
-    return match?.phone_number_id ?? null;
+    if (match?.phone_number_id) return match.phone_number_id;
   } catch {
-    return null;
+    // fall through
   }
+
+  // Second try: search phone numbers embedded in each agent config via /convai/agents
+  // This endpoint is more reliable than /convai/phone-numbers
+  try {
+    const apiKey = process.env.ELEVENLABS_API_KEY;
+    if (!apiKey) return null;
+    const res = await safeFetch(
+      `${ELEVENLABS_API_BASE}/convai/agents?page_size=50`,
+      { headers: { "xi-api-key": apiKey } },
+    );
+    if (res) {
+      const agents: Array<{ phone_numbers?: Array<{ phone_number: string; phone_number_id: string }> }> =
+        (res as { agents?: unknown[] }).agents ?? [];
+      for (const agent of agents) {
+        const match = (agent.phone_numbers ?? []).find(
+          (p) => p.phone_number === fromNumber,
+        );
+        if (match?.phone_number_id) return match.phone_number_id;
+      }
+    }
+  } catch {
+    // no match found
+  }
+
+  return null;
 }
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
