@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, ilike } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -9,6 +9,7 @@ import { db } from "../db/client.js";
 import { emailsRaw } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { resolveUserByName } from "./slack.js";
+import { threadStateValues } from "../lib/email-triage.js";
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -371,6 +372,139 @@ export function createEmailSyncTools(
             error: error.message,
           });
           return { ok: false, error: `Digest failed: ${error.message}` };
+        }
+      },
+    }),
+
+    update_email_thread: tool({
+      description:
+        "Update the triage state of an email thread. Use when a user tells you a thread is spam, resolved, not actionable, etc. Updates all emails in the thread. Any user can update their own threads.",
+      inputSchema: z
+        .object({
+          user_name: z
+            .string()
+            .describe(
+              "Display name, username, or user ID of the Gmail account owner",
+            ),
+          gmail_thread_id: z
+            .string()
+            .optional()
+            .describe("Gmail thread ID to update"),
+          subject_search: z
+            .string()
+            .optional()
+            .describe(
+              "Search by subject (partial match) if thread ID unknown",
+            ),
+          thread_state: z
+            .enum(threadStateValues)
+            .describe("New state"),
+          reason: z
+            .string()
+            .optional()
+            .describe("Why the state was changed"),
+        })
+        .refine((d) => d.gmail_thread_id || d.subject_search, {
+          message: "Provide gmail_thread_id or subject_search",
+        }),
+      execute: async ({
+        user_name,
+        gmail_thread_id,
+        subject_search,
+        thread_state,
+        reason,
+      }) => {
+        try {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
+            return {
+              ok: false as const,
+              error: `Could not resolve user '${user_name}'.`,
+            };
+          }
+
+          if (user.id !== context?.userId && !isAdmin(context?.userId)) {
+            return {
+              ok: false as const,
+              error:
+                "You can only update your own email threads. Ask an admin to update other users' threads.",
+            };
+          }
+
+          const userId = user.id;
+
+          const conditions = [eq(emailsRaw.userId, userId)];
+          if (gmail_thread_id) {
+            conditions.push(eq(emailsRaw.gmailThreadId, gmail_thread_id));
+          } else if (subject_search) {
+            const escaped = subject_search.replace(/[\\%_]/g, "\\$&");
+            conditions.push(ilike(emailsRaw.subject, `%${escaped}%`));
+          }
+
+          // Find distinct threads that match
+          const matchingThreads = await db
+            .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId, subject: emailsRaw.subject })
+            .from(emailsRaw)
+            .where(and(...conditions));
+
+          if (matchingThreads.length === 0) {
+            return {
+              ok: false as const,
+              error: gmail_thread_id
+                ? `No emails found for thread ID '${gmail_thread_id}'.`
+                : `No emails found matching subject '${subject_search}'.`,
+            };
+          }
+
+          const threadIds = [
+            ...new Set(matchingThreads.map((t) => t.gmailThreadId)),
+          ];
+
+          const result = await db
+            .update(emailsRaw)
+            .set({
+              threadState: thread_state,
+              threadStateReason: reason ?? null,
+              threadStateUpdatedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(emailsRaw.userId, userId),
+                inArray(emailsRaw.gmailThreadId, threadIds),
+              ),
+            )
+            .returning({ gmailThreadId: emailsRaw.gmailThreadId });
+
+          const subjects = [
+            ...new Set(
+              matchingThreads.map((t) => t.subject || "(no subject)"),
+            ),
+          ];
+
+          logger.info("update_email_thread", {
+            userId,
+            threadIds,
+            thread_state,
+            updated: result.length,
+          });
+
+          return {
+            ok: true as const,
+            updated: result.length,
+            threads: subjects,
+            thread_state,
+            message: `Updated ${result.length} email(s) across ${threadIds.length} thread(s) to '${thread_state}': ${subjects.join(", ")}`,
+          };
+        } catch (error: any) {
+          logger.error("update_email_thread failed", {
+            userName: user_name,
+            error: error.message,
+          });
+          return {
+            ok: false as const,
+            error: `Update failed: ${error.message}`,
+          };
         }
       },
     }),
