@@ -255,12 +255,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // Any USLACKBOT message in a tracked List channel is a list activity
     // notification. We attach metadata so the prompt guides the LLM to
     // investigate the actual list item via tools.
-    if (!alwaysProcessChannels) {
-      alwaysProcessChannels = new Set(
-        (await getSettingJSON<string[]>("always_process_channels", [])) ?? [],
-      );
-    }
-    if (isSlackbotListNotification(event, alwaysProcessChannels)) {
+    const slackListChannels = new Set(
+      (await getSettingJSON<string[]>("slack_list_channels", [])) ?? [],
+    );
+    if (isSlackbotListNotification(event, slackListChannels)) {
       context.slackListItemContext = {
         messageTs: context.threadTs ?? context.messageTs,
         channelId: context.channelId,
