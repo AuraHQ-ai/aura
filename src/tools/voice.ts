@@ -2,7 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { userProfiles, people, addresses, voiceCalls } from "../db/schema.js";
+import { voiceCalls } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -45,13 +45,6 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
   },
 };
 
-const VOICE_MAP: Record<string, string> = {
-  es: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  fr: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  it: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  en: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-};
-
 const DEFAULT_LANGUAGE = "en";
 
 function getLanguageConfig(lang: string): LanguageConfig {
@@ -68,71 +61,174 @@ function detectLanguageFromPhone(phone: string): string {
   return DEFAULT_LANGUAGE;
 }
 
-// ── Person Phone Resolution ──────────────────────────────────────────────────
+// ── ElevenLabs Agent Config ──────────────────────────────────────────────────
 
-async function resolvePhoneByName(
-  personName: string,
-): Promise<{ phone: string; displayName: string } | null> {
-  const nameLower = personName.toLowerCase();
+const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
 
-  const profiles = await db
-    .select({
-      displayName: userProfiles.displayName,
-      personId: userProfiles.personId,
-    })
-    .from(userProfiles)
-    .where(sql`lower(${userProfiles.displayName}) LIKE ${"%" + nameLower + "%"}`)
-    .limit(5);
+interface AgentDynamicVarPlaceholders {
+  [key: string]: string | number | boolean;
+}
 
-  for (const profile of profiles) {
-    if (profile.personId) {
-      const phoneAddresses = await db
-        .select({ value: addresses.value })
-        .from(addresses)
-        .where(
-          and(
-            eq(addresses.personId, profile.personId),
-            eq(addresses.channel, "phone"),
-          ),
-        )
-        .limit(1);
-
-      if (phoneAddresses.length > 0) {
-        return {
-          phone: phoneAddresses[0].value,
-          displayName: profile.displayName,
-        };
-      }
-    }
-  }
-
-  const peopleRows = await db
-    .select({ id: people.id, displayName: people.displayName })
-    .from(people)
-    .where(sql`lower(${people.displayName}) LIKE ${"%" + nameLower + "%"}`)
-    .limit(5);
-
-  for (const person of peopleRows) {
-    const phoneAddresses = await db
-      .select({ value: addresses.value })
-      .from(addresses)
-      .where(
-        and(
-          eq(addresses.personId, person.id),
-          eq(addresses.channel, "phone"),
-        ),
-      )
-      .limit(1);
-
-    if (phoneAddresses.length > 0) {
-      return {
-        phone: phoneAddresses[0].value,
-        displayName: person.displayName || personName,
+interface ElevenLabsAgentConfigResponse {
+  agent_id: string;
+  conversation_config?: {
+    agent?: {
+      dynamic_variables?: {
+        dynamic_variable_placeholders?: AgentDynamicVarPlaceholders;
       };
-    }
+    };
+  };
+  phone_numbers?: Array<{
+    provider: string;
+    phone_number_id: string;
+    phone_number: string;
+  }>;
+}
+
+// ── ElevenLabs Discovery Cache ──────────────────────────────────────────────
+
+interface ElevenLabsAgent {
+  name: string;
+  agent_id: string;
+}
+
+interface ElevenLabsPhone {
+  phone_number: string;
+  label: string;
+  phone_number_id: string;
+  agent_id: string | null;
+}
+
+interface ElevenLabsVoice {
+  name: string;
+  voice_id: string;
+  category: string;
+}
+
+interface ElevenLabsCacheData {
+  agents: ElevenLabsAgent[];
+  phones: ElevenLabsPhone[];
+  voices: ElevenLabsVoice[];
+  ts: number;
+}
+
+let elevenLabsCache: ElevenLabsCacheData | null = null;
+
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 15_000;
+
+async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
+  if (elevenLabsCache && Date.now() - elevenLabsCache.ts < CACHE_TTL_MS) {
+    return elevenLabsCache;
   }
 
-  return null;
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) throw new Error("ELEVENLABS_API_KEY not set");
+
+  const headers = { "xi-api-key": apiKey };
+
+  const [agentsRes, phonesRes, voicesRes] = await Promise.all([
+    fetch(`${ELEVENLABS_API_BASE}/convai/agents`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
+    fetch(`${ELEVENLABS_API_BASE}/convai/phone-numbers`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
+    fetch(`${ELEVENLABS_API_BASE}/voices`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
+  ]);
+
+  const responses = [agentsRes, phonesRes, voicesRes];
+  const failed = responses.find((r) => !r.ok);
+  if (failed) {
+    const label =
+      failed === agentsRes ? "Agents" :
+      failed === phonesRes ? "Phone numbers" : "Voices";
+    const errorText = await failed.text();
+    for (const r of responses) {
+      if (r !== failed) { try { await r.body?.cancel(); } catch {} }
+    }
+    throw new Error(`${label} API error (${failed.status}): ${errorText.substring(0, 200)}`);
+  }
+
+  const agentsData = (await agentsRes.json()) as { agents?: Array<{ name: string; agent_id: string }> };
+  const phonesData = (await phonesRes.json()) as Array<{
+    phone_number: string;
+    label?: string;
+    phone_number_id: string;
+    assigned_agent?: { agent_id: string } | null;
+  }>;
+  const voicesData = (await voicesRes.json()) as { voices?: Array<{ name: string; voice_id: string; category?: string }> };
+
+  const agents: ElevenLabsAgent[] = (agentsData.agents ?? [])
+    .filter((a): a is NonNullable<typeof a> => a != null)
+    .map((a) => ({ name: a.name, agent_id: a.agent_id }));
+
+  const phones: ElevenLabsPhone[] = (Array.isArray(phonesData) ? phonesData : [])
+    .filter((p): p is NonNullable<typeof p> => p != null)
+    .map((p) => ({
+      phone_number: p.phone_number,
+      label: p.label ?? "",
+      phone_number_id: p.phone_number_id,
+      agent_id: p.assigned_agent?.agent_id ?? null,
+    }));
+
+  const voices: ElevenLabsVoice[] = (voicesData.voices ?? [])
+    .filter((v): v is NonNullable<typeof v> => v != null)
+    .map((v) => ({
+      name: v.name,
+      voice_id: v.voice_id,
+      category: v.category ?? "unknown",
+    }));
+
+  elevenLabsCache = { agents, phones, voices, ts: Date.now() };
+  return elevenLabsCache;
+}
+
+async function fetchAgentConfig(
+  apiKey: string,
+  agentId: string,
+): Promise<ElevenLabsAgentConfigResponse> {
+  const response = await fetch(
+    `${ELEVENLABS_API_BASE}/convai/agents/${agentId}`,
+    { headers: { "xi-api-key": apiKey }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `Failed to fetch agent config (${response.status}): ${text.substring(0, 200)}`,
+    );
+  }
+  return response.json() as Promise<ElevenLabsAgentConfigResponse>;
+}
+
+function resolvePhoneNumberIdFromConfig(
+  agentConfig: ElevenLabsAgentConfigResponse,
+  fromNumber?: string,
+): string | undefined {
+  const envId = process.env.ELEVENLABS_PHONE_NUMBER_ID;
+  if (envId) return envId;
+
+  const phones = Array.isArray(agentConfig.phone_numbers)
+    ? agentConfig.phone_numbers
+    : [];
+  const twilioPhones = phones.filter((p) => p.provider === "twilio");
+  if (!twilioPhones.length) return undefined;
+
+  if (fromNumber) {
+    const match = twilioPhones.find((p) => p.phone_number === fromNumber);
+    if (match) return match.phone_number_id;
+  }
+
+  return twilioPhones[0].phone_number_id;
+}
+
+async function resolvePhoneNumberIdFromCache(
+  fromNumber: string | undefined,
+): Promise<string | null> {
+  if (!fromNumber) return null;
+  try {
+    const data = await getElevenLabsData();
+    const match = data.phones.find((p) => p.phone_number === fromNumber);
+    return match?.phone_number_id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
@@ -141,57 +237,124 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
   const tools: Record<string, any> = {};
 
   if (process.env.ELEVENLABS_API_KEY) {
+    // ── list_voice_agents ───────────────────────────────────────────
+    tools.list_voice_agents = tool({
+      description:
+        "List available ElevenLabs voice agents, phone numbers, and voices. " +
+        "Call this BEFORE make_call when the user asks to call with a specific agent, " +
+        "voice, or phone number so you can resolve names to IDs. " +
+        "Results are cached for 10 minutes. Admin-only.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        if (!isAdmin(context?.userId)) {
+          return { ok: false, error: "Only admins can list voice agents." };
+        }
+
+        try {
+          const data = await getElevenLabsData();
+
+          const agentsSummary = data.agents.map((a) => `• ${a.name} → ${a.agent_id}`).join("\n");
+          const phonesSummary = data.phones
+            .map((p) => {
+              const label = p.label ? ` (${p.label})` : "";
+              const assigned = p.agent_id ? ` [assigned to ${p.agent_id}]` : "";
+              return `• ${p.phone_number}${label} → ${p.phone_number_id}${assigned}`;
+            })
+            .join("\n");
+          const voicesSummary = data.voices
+            .map((v) => `• ${v.name} (${v.category}) → ${v.voice_id}`)
+            .join("\n");
+
+          return {
+            ok: true,
+            agents: data.agents,
+            phones: data.phones,
+            voices: data.voices,
+            summary: [
+              `**Agents (${data.agents.length}):**`,
+              agentsSummary || "(none)",
+              "",
+              `**Phone Numbers (${data.phones.length}):**`,
+              phonesSummary || "(none)",
+              "",
+              `**Voices (${data.voices.length}):**`,
+              voicesSummary || "(none)",
+            ].join("\n"),
+          };
+        } catch (error: any) {
+          logger.error("list_voice_agents failed", { error: error.message });
+          return { ok: false, error: `Failed to list voice agents: ${error.message}` };
+        }
+      },
+    });
+
+    // ── make_call ───────────────────────────────────────────────────
+    const DEFAULT_AGENT_ID = process.env.ELEVENLABS_AGENT_ID ?? "agent_9301kj9tjcqaermrz71vvr0fpv4v";
+    const DEFAULT_FROM_NUMBER = process.env.ELEVENLABS_FROM_NUMBER ?? "+14158860211";
+    const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? "upcns7xCtWHwsgL2HKV5";
+
     tools.make_call = tool({
       description:
-        "Initiate an outbound phone call via ElevenLabs + Twilio. Aura's voice agent handles the conversation with the person's context injected. Use when a phone call would be more effective than a DM. Admin-only.",
-      inputSchema: z
-        .object({
-          phone_number: z
-            .string()
-            .optional()
-            .describe(
-              "Phone number to call in E.164 format (e.g. +41791234567). Required if person_name is not provided.",
-            ),
-          person_name: z
-            .string()
-            .optional()
-            .describe(
-              "Name of the person to call. Will resolve their phone number from the database. Required if phone_number is not provided.",
-            ),
-          context: z
-            .string()
-            .describe(
-              "Why we are calling — injected into the voice agent as context.",
-            ),
-          opener: z
-            .string()
-            .optional()
-            .describe(
-              'Custom greeting for the call. Defaults to "I wanted to check in with you."',
-            ),
-          language: z
-            .string()
-            .optional()
-            .describe(
-              "Language code for the call (e.g. 'es', 'fr', 'it', 'en', 'de'). Auto-detected from phone number country code if omitted.",
-            ),
-          voice_id: z
-            .string()
-            .optional()
-            .describe(
-              "ElevenLabs voice ID to use for this call. Uses the agent's default voice if omitted.",
-            ),
-        })
-        .refine((data) => data.phone_number || data.person_name, {
-          message: "At least one of phone_number or person_name must be provided",
-        }),
+        "Initiate an outbound phone call via ElevenLabs + Twilio. " +
+        "Use list_voice_agents first to discover available agents/phones/voices, " +
+        "then pass IDs here. Admin-only.",
+      inputSchema: z.object({
+        agent_id: z
+          .string()
+          .optional()
+          .describe(
+            "Agent ID from list_voice_agents. Default: Sales Booking agent",
+          ),
+        from_number: z
+          .string()
+          .optional()
+          .describe(
+            "Caller phone number from list_voice_agents. Default: +14158860211",
+          ),
+        to_number: z
+          .string()
+          .describe(
+            "Recipient phone in E.164 format, e.g. +34612345678",
+          ),
+        voice_id: z
+          .string()
+          .optional()
+          .describe(
+            "Voice ID from list_voice_agents. Default: Penelope",
+          ),
+        person_name: z
+          .string()
+          .optional()
+          .describe(
+            "Name of the person being called — injected as a dynamic variable.",
+          ),
+        context: z
+          .string()
+          .describe(
+            "Why we are calling — injected into the voice agent as context.",
+          ),
+        opener: z
+          .string()
+          .optional()
+          .describe(
+            "Custom greeting for the call. Defaults to a language-appropriate greeting.",
+          ),
+        language: z
+          .string()
+          .optional()
+          .describe(
+            "Language code (es/fr/it/en/de). Auto-detected from phone number if omitted.",
+          ),
+      }),
       execute: async ({
-        phone_number,
+        agent_id: agentIdParam,
+        from_number: fromNumber,
+        to_number: toNumber,
+        voice_id: voiceId,
         person_name,
         context: callContext,
         opener,
         language,
-        voice_id: voiceId,
       }) => {
         if (!isAdmin(context?.userId)) {
           return {
@@ -200,7 +363,14 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           };
         }
 
-        // DB-based rate limiting
+        const e164Regex = /^\+[1-9]\d{6,14}$/;
+        if (!e164Regex.test(toNumber)) {
+          return {
+            ok: false,
+            error: `Invalid phone number "${toNumber}". Must be E.164 format (e.g. +34612345678).`,
+          };
+        }
+
         const recentCalls = await db
           .select({ count: sql`count(*)` })
           .from(voiceCalls)
@@ -217,51 +387,52 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           };
         }
 
-        const apiKey = process.env.ELEVENLABS_API_KEY;
-        const agentId = process.env.ELEVENLABS_AGENT_ID;
-        const phoneNumberId = process.env.ELEVENLABS_PHONE_NUMBER_ID;
+        const apiKey = process.env.ELEVENLABS_API_KEY!;
+        const resolvedAgentId = agentIdParam || DEFAULT_AGENT_ID;
+        const resolvedFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
 
-        if (!apiKey || !agentId || !phoneNumberId) {
+        // Fetch agent config (used for phone number fallback + dynamic variable validation)
+        let agentConfig: ElevenLabsAgentConfigResponse;
+        try {
+          agentConfig = await fetchAgentConfig(apiKey, resolvedAgentId);
+        } catch (err: any) {
+          logger.error("make_call failed to fetch agent config", {
+            agentId: resolvedAgentId,
+            error: err.message,
+          });
           return {
             ok: false,
-            error:
-              "ElevenLabs voice config is incomplete. Required env vars: ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, ELEVENLABS_PHONE_NUMBER_ID.",
+            error: `Failed to fetch agent config: ${err.message}`,
           };
         }
 
-        let resolvedPhone = phone_number;
-        let resolvedName = person_name || "Unknown";
+        // Resolve phone_number_id from the from_number via cache
+        let phoneNumberId = await resolvePhoneNumberIdFromCache(resolvedFromNumber);
 
-        if (!resolvedPhone && person_name) {
-          const resolved = await resolvePhoneByName(person_name);
-          if (!resolved) {
-            return {
-              ok: false,
-              error: `Could not find a phone number for "${person_name}" in the database. Please provide the phone_number directly.`,
-            };
-          }
-          resolvedPhone = resolved.phone;
-          resolvedName = resolved.displayName;
+        if (!phoneNumberId) {
+          phoneNumberId = resolvePhoneNumberIdFromConfig(agentConfig, resolvedFromNumber) ?? null;
         }
 
-        if (!resolvedPhone) {
+        if (!phoneNumberId) {
           return {
             ok: false,
             error:
-              "No phone number available. Provide phone_number or a person_name that has a phone in the database.",
+              "Could not resolve phone_number_id for the from_number. Use list_voice_agents to find valid phone numbers.",
           };
         }
 
-        const langKey = language || detectLanguageFromPhone(resolvedPhone);
+        const resolvedName = person_name || "Unknown";
+        const langKey = language || detectLanguageFromPhone(toNumber);
         const langConfig = getLanguageConfig(langKey);
 
-        const resolvedVoiceId = voiceId ?? VOICE_MAP[langConfig.languageCode];
+        const resolvedVoiceId = voiceId ?? DEFAULT_VOICE_ID;
         const resolvedOpener = opener || langConfig.defaultOpener;
         const resolvedFirstMessage = langConfig.firstMessage
           .replace("{{person_name}}", resolvedName)
           .replace("{{call_opener}}", resolvedOpener);
 
-        const dynamicVars = {
+        // Build dynamic variables from tool params
+        const dynamicVars: Record<string, string | number | boolean> = {
           person_name: resolvedName,
           call_context: callContext,
           call_opener: resolvedOpener,
@@ -269,78 +440,148 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           direction: "outbound",
         };
 
-        let ElevenLabsError: any;
-        try {
-          const mod = await import("@elevenlabs/elevenlabs-js");
-          ElevenLabsError = mod.ElevenLabsError;
-          const client = new mod.ElevenLabsClient({ apiKey });
+        // Validate against agent's required dynamic variables
+        const placeholders =
+          agentConfig.conversation_config?.agent?.dynamic_variables
+            ?.dynamic_variable_placeholders ?? {};
 
-          const data =
-            await client.conversationalAi.twilio.outboundCall({
-              agentId: agentId,
-              agentPhoneNumberId: phoneNumberId,
-              toNumber: resolvedPhone,
-              conversationInitiationClientData: {
-                dynamicVariables: dynamicVars,
-                conversationConfigOverride: {
-                  tts: resolvedVoiceId
-                    ? { voiceId: resolvedVoiceId }
-                    : undefined,
-                  agent: {
-                    language: langConfig.languageCode,
-                    firstMessage: resolvedFirstMessage,
-                  },
-                },
+        const missingVars: string[] = [];
+        for (const key of Object.keys(placeholders)) {
+          if (dynamicVars[key] === undefined) {
+            const defaultVal = placeholders[key];
+            if (
+              defaultVal !== undefined &&
+              defaultVal !== null &&
+              (typeof defaultVal === "string" ||
+                typeof defaultVal === "number" ||
+                typeof defaultVal === "boolean")
+            ) {
+              dynamicVars[key] = defaultVal;
+            } else if (defaultVal !== undefined && defaultVal !== null) {
+              dynamicVars[key] = String(defaultVal);
+            } else {
+              missingVars.push(key);
+            }
+          }
+        }
+
+        if (missingVars.length > 0) {
+          return {
+            ok: false,
+            error: `Agent requires dynamic variables that are missing and have no defaults: ${missingVars.join(", ")}. Provide them via context or update the agent config.`,
+          };
+        }
+
+        // Build outbound call request
+        const outboundBody: Record<string, unknown> = {
+          agent_id: resolvedAgentId,
+          agent_phone_number_id: phoneNumberId,
+          to_number: toNumber,
+          conversation_initiation_client_data: {
+            dynamic_variables: dynamicVars,
+            conversation_config_override: {
+              agent: {
+                first_message: resolvedFirstMessage,
+                language: langConfig.languageCode,
               },
-            });
+              ...(resolvedVoiceId
+                ? { tts: { voice_id: resolvedVoiceId } }
+                : {}),
+            },
+          },
+        };
 
+        try {
+          const callResponse = await fetch(
+            `${ELEVENLABS_API_BASE}/convai/twilio/outbound-call`,
+            {
+              method: "POST",
+              headers: {
+                "xi-api-key": apiKey,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(outboundBody),
+              signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            },
+          );
+
+          if (!callResponse.ok) {
+            const errorText = await callResponse.text();
+            logger.error("make_call ElevenLabs API error", {
+              statusCode: callResponse.status,
+              body: errorText.substring(0, 500),
+            });
+            return {
+              ok: false,
+              error: `ElevenLabs API error (${callResponse.status}): ${errorText.substring(0, 200)}`,
+            };
+          }
+
+          let data: { conversation_id?: string };
           try {
-            await db
-              .insert(voiceCalls)
-              .values({
-                conversationId: data.conversationId as string,
-                agentId: process.env.ELEVENLABS_AGENT_ID,
-                direction: "outbound",
-                phoneNumber: resolvedPhone,
-                personName: resolvedName || null,
-                slackUserId: context?.userId ?? null,
-                status: "in_progress",
-                callContext: callContext || null,
-                dynamicVariables: dynamicVars,
-              })
-              .onConflictDoNothing();
-          } catch (dbError: any) {
-            logger.error("make_call DB insert failed (call was placed)", {
-              error: dbError.message,
-              conversationId: data.conversationId,
+            data = (await callResponse.json()) as {
+              conversation_id?: string;
+            };
+          } catch (parseError: any) {
+            try { await callResponse.body?.cancel(); } catch {}
+            logger.error("make_call response JSON parse failed (call may have been placed)", {
+              error: parseError.message,
+              to: toNumber,
+            });
+            return {
+              ok: true,
+              message: `Call likely placed to ${resolvedName} (${toNumber}), but the response could not be parsed. Do not retry — the call may already be in progress.`,
+              conversation_id: null,
+            };
+          }
+
+          const conversationId = data.conversation_id;
+          const trackingWarning = conversationId
+            ? undefined
+            : "ElevenLabs did not return a conversation_id; call tracking and webhooks may not work for this call.";
+
+          if (conversationId) {
+            try {
+              await db
+                .insert(voiceCalls)
+                .values({
+                  conversationId,
+                  agentId: resolvedAgentId,
+                  direction: "outbound",
+                  phoneNumber: toNumber,
+                  personName: resolvedName || null,
+                  slackUserId: context?.userId ?? null,
+                  status: "in_progress",
+                  callContext: callContext || null,
+                  dynamicVariables: dynamicVars,
+                })
+                .onConflictDoNothing({ target: voiceCalls.conversationId });
+            } catch (dbError: any) {
+              logger.error("make_call DB insert failed (call was placed)", {
+                error: dbError.message,
+                conversationId,
+              });
+            }
+          } else {
+            logger.warn("make_call: no conversation_id returned, skipping DB insert", {
+              to: toNumber,
             });
           }
 
           logger.info("make_call tool called", {
-            to: resolvedPhone,
+            to: toNumber,
             person: resolvedName,
-            conversationId: data.conversationId,
+            agentId: resolvedAgentId,
+            conversationId: conversationId ?? null,
           });
 
           return {
             ok: true,
-            message: `Call initiated to ${resolvedName} (${resolvedPhone})`,
-            conversation_id: data.conversationId as string,
+            message: `Call initiated to ${resolvedName} (${toNumber})`,
+            conversation_id: conversationId ?? null,
+            ...(trackingWarning ? { warning: trackingWarning } : {}),
           };
         } catch (error: any) {
-          if (ElevenLabsError && error instanceof ElevenLabsError) {
-            logger.error("make_call ElevenLabs API error", {
-              statusCode: error.statusCode,
-              body:
-                typeof error.body === "string"
-                  ? error.body.substring(0, 500)
-                  : JSON.stringify(error.body)?.substring(0, 500),
-            });
-            return {
-              ok: false,
-              error: `ElevenLabs API error (${error.statusCode ?? "unknown"}): ${error.message}`,
-            };
-          }
           logger.error("make_call tool failed", { error: error.message });
           return {
             ok: false,
@@ -454,7 +695,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
               status: "completed",
               callContext: message,
             })
-            .onConflictDoNothing();
+            .onConflictDoNothing({ target: voiceCalls.conversationId });
         } catch (dbError: any) {
           logger.error("send_sms DB insert failed (SMS was sent)", {
             error: dbError.message,
