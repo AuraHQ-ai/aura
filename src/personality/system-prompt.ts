@@ -434,13 +434,6 @@ export async function buildSystemPrompt(
     parts.push(skillIndex);
   }
 
-  // Conversation context (thread or recent channel messages)
-  if (context.threadContext) {
-    const heading = context.isChannelHistory
-      ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
-      : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
-    parts.push(heading);
-  }
 
   return parts.join("\n\n");
 }
@@ -454,12 +447,23 @@ export function buildDynamicContext(context: {
   modelId?: string;
   channelId?: string;
   threadTs?: string;
+  threadContext?: string;
+  isChannelHistory?: boolean;
 }): string {
   const parts: string[] = [];
   parts.push(`Current time: ${getCurrentTimeContext(context.userTimezone)}`);
   if (context.modelId) parts.push(`Active model: \`${context.modelId}\``);
   if (context.channelId) parts.push(`Current channel: ${context.channelId}`);
   if (context.threadTs) parts.push(`Current thread_ts: ${context.threadTs}`);
+
+  // Thread/channel context -- dynamic per conversation, must not be cached
+  if (context.threadContext) {
+    const heading = context.isChannelHistory
+      ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
+      : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
+    parts.push(heading);
+  }
+
   return parts.join('\n');
 }
 
