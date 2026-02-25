@@ -1,6 +1,7 @@
 import { streamText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
 import { getMainModel, isAnthropicModel, buildContextManagement, getEscalationModel, withCacheControl } from "../lib/ai.js";
+import { buildDynamicContext } from "../personality/system-prompt.js";
 import { createSlackTools } from "../tools/slack.js";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
@@ -520,7 +521,10 @@ export async function generateResponse(
   // ── Build stream options ─────────────────────────────────────────────
   const streamOptions: any = {
     model,
-    system: withCacheControl(options.systemPrompt),
+    system: [
+      withCacheControl(options.systemPrompt),
+      { role: 'system' as const, content: buildDynamicContext({ channelId: options.channelId, threadTs: options.threadTs, modelId, userTimezone: options.context?.timezone }) },
+    ],
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(STEP_LIMIT),
     prepareStep: createInteractivePrepareStep({
@@ -993,7 +997,10 @@ export async function generateResponse(
 
       const retryOptions: any = {
         model,
-        system: withCacheControl(options.systemPrompt),
+        system: [
+      withCacheControl(options.systemPrompt),
+      { role: 'system' as const, content: buildDynamicContext({ channelId: options.channelId, threadTs: options.threadTs, modelId, userTimezone: options.context?.timezone }) },
+    ],
         prompt: retryPrompt,
         abortSignal: retryAbortController.signal,
         ...(isAnthropicModel(modelId) && {
