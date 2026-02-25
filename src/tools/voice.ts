@@ -2,7 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { userProfiles, people, addresses, voiceCalls } from "../db/schema.js";
+import { voiceCalls } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -45,13 +45,6 @@ const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
   },
 };
 
-const VOICE_MAP: Record<string, string> = {
-  es: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  fr: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  it: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-  en: "SaqYcK3ZpDKBAImA8AdW", // Jane Doe
-};
-
 const DEFAULT_LANGUAGE = "en";
 
 function getLanguageConfig(lang: string): LanguageConfig {
@@ -66,73 +59,6 @@ function detectLanguageFromPhone(phone: string): string {
   if (phone.startsWith("+41")) return "de";
   if (phone.startsWith("+44") || phone.startsWith("+1")) return "en";
   return DEFAULT_LANGUAGE;
-}
-
-// ── Person Phone Resolution ──────────────────────────────────────────────────
-
-async function resolvePhoneByName(
-  personName: string,
-): Promise<{ phone: string; displayName: string } | null> {
-  const nameLower = personName.toLowerCase();
-
-  const profiles = await db
-    .select({
-      displayName: userProfiles.displayName,
-      personId: userProfiles.personId,
-    })
-    .from(userProfiles)
-    .where(sql`lower(${userProfiles.displayName}) LIKE ${"%" + nameLower + "%"}`)
-    .limit(5);
-
-  for (const profile of profiles) {
-    if (profile.personId) {
-      const phoneAddresses = await db
-        .select({ value: addresses.value })
-        .from(addresses)
-        .where(
-          and(
-            eq(addresses.personId, profile.personId),
-            eq(addresses.channel, "phone"),
-          ),
-        )
-        .limit(1);
-
-      if (phoneAddresses.length > 0) {
-        return {
-          phone: phoneAddresses[0].value,
-          displayName: profile.displayName,
-        };
-      }
-    }
-  }
-
-  const peopleRows = await db
-    .select({ id: people.id, displayName: people.displayName })
-    .from(people)
-    .where(sql`lower(${people.displayName}) LIKE ${"%" + nameLower + "%"}`)
-    .limit(5);
-
-  for (const person of peopleRows) {
-    const phoneAddresses = await db
-      .select({ value: addresses.value })
-      .from(addresses)
-      .where(
-        and(
-          eq(addresses.personId, person.id),
-          eq(addresses.channel, "phone"),
-        ),
-      )
-      .limit(1);
-
-    if (phoneAddresses.length > 0) {
-      return {
-        phone: phoneAddresses[0].value,
-        displayName: person.displayName || personName,
-      };
-    }
-  }
-
-  return null;
 }
 
 // ── ElevenLabs Agent Config ──────────────────────────────────────────────────
@@ -347,9 +273,9 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
     });
 
     // ── make_call ───────────────────────────────────────────────────
-    const DEFAULT_AGENT_ID = "agent_9301kj9tjcqaermrz71vvr0fpv4v";
-    const DEFAULT_FROM_NUMBER = "+14158860211";
-    const DEFAULT_VOICE_ID = "upcns7xCtWHwsgL2HKV5";
+    const DEFAULT_AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
+    const DEFAULT_FROM_NUMBER = process.env.ELEVENLABS_FROM_NUMBER;
+    const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
 
     tools.make_call = tool({
       description:
@@ -361,13 +287,13 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           .string()
           .optional()
           .describe(
-            "Agent ID from list_voice_agents. Default: Sales Booking agent",
+            "Agent ID from list_voice_agents. Falls back to ELEVENLABS_AGENT_ID env var.",
           ),
         from_number: z
           .string()
           .optional()
           .describe(
-            "Caller phone number from list_voice_agents. Default: +14158860211",
+            "Caller phone number from list_voice_agents. Falls back to ELEVENLABS_FROM_NUMBER env var.",
           ),
         to_number: z
           .string()
@@ -378,7 +304,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           .string()
           .optional()
           .describe(
-            "Voice ID from list_voice_agents. Default: Penelope",
+            "Voice ID from list_voice_agents. Falls back to ELEVENLABS_VOICE_ID env var.",
           ),
         person_name: z
           .string()
@@ -447,33 +373,19 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
         const apiKey = process.env.ELEVENLABS_API_KEY!;
         const resolvedAgentId = agentIdParam || DEFAULT_AGENT_ID;
+        if (!resolvedAgentId) {
+          return {
+            ok: false,
+            error:
+              "No agent ID available. Provide agent_id or set ELEVENLABS_AGENT_ID env var.",
+          };
+        }
         const resolvedFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
 
         // Resolve phone_number_id from the from_number via cache
         let phoneNumberId = await resolvePhoneNumberIdFromCache(resolvedFromNumber);
 
-        if (!phoneNumberId) {
-          // Fall back to agent config for phone number ID
-          try {
-            const agentConfig = await fetchAgentConfig(apiKey, resolvedAgentId);
-            phoneNumberId = resolvePhoneNumberIdFromConfig(agentConfig) ?? null;
-          } catch (err: any) {
-            logger.error("make_call failed to fetch agent config for phone number", {
-              agentId: resolvedAgentId,
-              error: err.message,
-            });
-          }
-        }
-
-        if (!phoneNumberId) {
-          return {
-            ok: false,
-            error:
-              "Could not resolve phone_number_id for the from_number. Use list_voice_agents to find valid phone numbers.",
-          };
-        }
-
-        // Fetch agent config for dynamic variable validation
+        // Fetch agent config (needed for phone number fallback and dynamic variable validation)
         let agentConfig: ElevenLabsAgentConfigResponse;
         try {
           agentConfig = await fetchAgentConfig(apiKey, resolvedAgentId);
@@ -485,6 +397,26 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           return {
             ok: false,
             error: `Failed to fetch agent config: ${err.message}`,
+          };
+        }
+
+        if (!phoneNumberId && fromNumber) {
+          return {
+            ok: false,
+            error:
+              `Could not resolve phone_number_id for from_number "${fromNumber}". Use list_voice_agents to find valid phone numbers.`,
+          };
+        }
+
+        if (!phoneNumberId) {
+          phoneNumberId = resolvePhoneNumberIdFromConfig(agentConfig) ?? null;
+        }
+
+        if (!phoneNumberId) {
+          return {
+            ok: false,
+            error:
+              "Could not resolve phone_number_id for the from_number. Use list_voice_agents to find valid phone numbers.",
           };
         }
 
