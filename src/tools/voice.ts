@@ -399,7 +399,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           agent_id: resolvedAgentId,
           agent_phone_number_id: phoneNumberId,
           to_number: resolvedPhone,
-          conversation_initiation_data: {
+          conversation_initiation_client_data: {
             conversation_config_override: {
               agent: {
                 dynamic_variables: dynamicVars,
@@ -441,7 +441,8 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           const data = (await callResponse.json()) as {
             conversation_id?: string;
           };
-          const conversationId = data.conversation_id ?? "unknown";
+          const conversationId =
+            data.conversation_id ?? `unknown-${crypto.randomUUID()}`;
 
           try {
             await db
