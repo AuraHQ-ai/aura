@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq, and, gt, or, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -62,7 +62,7 @@ function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
  */
 export function createNoteTools(context?: ScheduleContext) {
   return {
-    save_note: tool({
+    save_note: defineTool({
       description:
         "Create a new note or fully overwrite an existing one. Notes use a three-tier hierarchy: 'skill' (durable playbooks/protocols), 'plan' (ephemeral work-in-progress with expiry), 'knowledge' (general reference, default). Use for new notes or complete rewrites. For partial edits, use edit_note instead.",
       inputSchema: z.object({
@@ -158,9 +158,10 @@ export function createNoteTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to save note: ${error.message}` };
         }
       },
+      slack: { status: "Saving note...", detail: (i) => i.topic },
     }),
 
-    read_note: tool({
+    read_note: defineTool({
       description:
         "Read a note by topic. Returns the content with line numbers so you can reference specific lines for edit_note's replace_lines or insert_after_line operations. Check the notes-index first to orient, then use search_notes to find, then read_note to load.",
       inputSchema: z.object({
@@ -198,9 +199,10 @@ export function createNoteTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to read note: ${error.message}` };
         }
       },
+      slack: { status: "Reading note...", detail: (i) => i.topic },
     }),
 
-    list_notes: tool({
+    list_notes: defineTool({
       description:
         "List all saved notes with their topics, category, a short preview, and last updated time. Can filter by category.",
       inputSchema: z.object({
@@ -261,9 +263,10 @@ export function createNoteTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to list notes: ${error.message}` };
         }
       },
+      slack: { status: "Listing notes..." },
     }),
 
-    edit_note: tool({
+    edit_note: defineTool({
       description:
         "Surgically edit an existing note without rewriting the whole thing. Supports: 'append' (add to end), 'prepend' (add to start), 'replace_lines' (replace a range of lines), 'insert_after_line' (insert after a specific line). Always use read_note first to see line numbers. Prefer this over save_note for partial updates.",
       inputSchema: z.object({
@@ -411,9 +414,10 @@ export function createNoteTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to edit note: ${error.message}` };
         }
       },
+      slack: { status: "Editing note...", detail: (i) => i.topic },
     }),
 
-    delete_note: tool({
+    delete_note: defineTool({
       description: "Delete a note entirely by topic.",
       inputSchema: z.object({
         topic: z.string().describe("The topic key of the note to delete"),
@@ -455,11 +459,12 @@ export function createNoteTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Deleting note...", detail: (i) => i.topic },
     }),
 
     // ── Full-text Search ────────────────────────────────────────────────────
 
-    search_notes: tool({
+    search_notes: defineTool({
       description:
         "Full-text search across all notes content. Use this before reading individual notes when looking for a keyword or term — saves tool calls vs. list_notes + sequential read_note. Supports two modes: 'text' (default, keyword search) and 'semantic' (vector similarity for conceptual matches). The navigation pattern is: notes-index (orient) → search_notes (find) → read_note (load).",
       inputSchema: z.object({
@@ -588,11 +593,12 @@ export function createNoteTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Searching notes...", detail: (i) => i.query },
     }),
 
     // ── Plan Continuation ──────────────────────────────────────────────────
 
-    checkpoint_plan: tool({
+    checkpoint_plan: defineTool({
       description:
         "Save progress on a multi-step task and schedule a continuation. Use this when approaching your step limit and you won't finish in time. Atomically saves a plan note AND schedules a follow-up action.",
       inputSchema: z.object({
@@ -762,6 +768,7 @@ export function createNoteTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Saving checkpoint...", detail: (i) => i.topic },
     }),
   };
 }

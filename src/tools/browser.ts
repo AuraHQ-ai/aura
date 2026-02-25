@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import {
   createSession,
@@ -56,7 +56,7 @@ function setupConsoleCollector(page: any): string[] {
 export function createBrowserTools(context?: ScheduleContext): Record<string, any> {
   try {
     return {
-      browse: tool({
+      browse: defineTool({
       description:
         "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors. Admin-only.",
       inputSchema: z.object({
@@ -320,7 +320,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           }
         }
       },
-      toModelOutput({ output }) {
+      toModelOutput({ output }: { output: unknown }) {
         if (!output || typeof output !== "object") {
           return { type: "text", value: JSON.stringify(output) };
         }
@@ -343,6 +343,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
 
         return { type: "content", value: parts };
       },
+      slack: { status: "Browsing...", detail: (i) => i.url ?? "running code" },
     }),
   };
   } catch (err) {
