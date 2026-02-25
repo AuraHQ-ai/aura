@@ -998,9 +998,9 @@ export async function generateResponse(
       const retryOptions: any = {
         model,
         system: [
-      withCacheControl(options.systemPrompt),
-      { role: 'system' as const, content: buildDynamicContext({ channelId: options.channelId, threadTs: options.threadTs, modelId, userTimezone: options.context?.timezone }) },
-    ],
+          withCacheControl(options.systemPrompt),
+          { role: 'system' as const, content: buildDynamicContext({ channelId: options.channelId, threadTs: options.threadTs, modelId, userTimezone: options.context?.timezone }) },
+        ],
         prompt: retryPrompt,
         abortSignal: retryAbortController.signal,
         ...(isAnthropicModel(modelId) && {
