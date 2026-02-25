@@ -265,6 +265,8 @@ function getToolSources(
 
 interface RespondOptions {
   systemPrompt: string;
+  /** Dynamic per-call context (time, model, channel) — passed as uncached second system message */
+  dynamicContext?: string;
   userMessage: string;
   slackClient: WebClient;
   context?: { userId?: string; channelId?: string; threadTs?: string; timezone?: string };
@@ -518,9 +520,13 @@ export async function generateResponse(
   let streamKeepAlive: ReturnType<typeof setInterval> | null = null;
 
   // ── Build stream options ─────────────────────────────────────────────
+  const systemMessages = options.dynamicContext
+    ? [withCacheControl(options.systemPrompt), { role: 'system' as const, content: options.dynamicContext }]
+    : withCacheControl(options.systemPrompt);
+
   const streamOptions: any = {
     model,
-    system: withCacheControl(options.systemPrompt),
+    system: systemMessages,
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(STEP_LIMIT),
     prepareStep: createInteractivePrepareStep({
@@ -993,7 +999,7 @@ export async function generateResponse(
 
       const retryOptions: any = {
         model,
-        system: withCacheControl(options.systemPrompt),
+        system: systemMessages,
         prompt: retryPrompt,
         abortSignal: retryAbortController.signal,
         ...(isAnthropicModel(modelId) && {

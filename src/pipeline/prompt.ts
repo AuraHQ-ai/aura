@@ -1,5 +1,5 @@
 import type { WebClient } from "@slack/web-api";
-import { buildSystemPrompt } from "../personality/system-prompt.js";
+import { buildSystemPrompt, buildDynamicContext } from "../personality/system-prompt.js";
 import { retrieveMemories, retrieveConversations, type ConversationThread } from "../memory/retrieve.js";
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
@@ -13,6 +13,8 @@ import { getMainModelId } from "../lib/ai.js";
 
 export interface AssembledPrompt {
   systemPrompt: string;
+  /** Dynamic per-call context (time, model, channel, thread) — passed as a separate uncached system message */
+  dynamicContext: string;
   memories: Memory[];
   conversations: ConversationThread[];
   userProfile: UserProfile | null;
@@ -107,7 +109,7 @@ export async function assemblePrompt(
   // Resolve active model ID for self-awareness in system prompt
   const modelId = await getMainModelId();
 
-  // Build the system prompt (async: queries skill index from DB)
+  // Build the stable system prompt (async: queries skill index from DB)
   const systemPrompt = await buildSystemPrompt({
     memories,
     conversations,
@@ -122,6 +124,14 @@ export async function assemblePrompt(
     modelId,
   });
 
+  // Dynamic per-call context — separated so the stable prompt stays cache-friendly
+  const dynamicContext = buildDynamicContext({
+    userTimezone: userProfile?.timezone || undefined,
+    modelId,
+    channelId: context.channelId,
+    threadTs: context.threadTs,
+  });
+
   logger.debug(`Assembled prompt in ${Date.now() - start}ms`, {
     memoryCount: memories.length,
     conversationCount: conversations.length,
@@ -129,5 +139,5 @@ export async function assemblePrompt(
     hasThread: !!threadContext,
   });
 
-  return { systemPrompt, memories, conversations, userProfile };
+  return { systemPrompt, dynamicContext, memories, conversations, userProfile };
 }
