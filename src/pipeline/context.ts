@@ -50,7 +50,7 @@ export interface SlackListItemContext {
   messageTs: string;
   /** Channel where the notification appeared */
   channelId: string;
-  /** Original notification text (e.g. "A comment was added") */
+  /** Original notification text from USLACKBOT (locale-dependent) */
   notificationText: string;
 }
 
@@ -436,24 +436,15 @@ export async function resolveChannelName(
 
 // ── USLACKBOT Notification Detection ─────────────────────────────────────────
 
-const USLACKBOT_NOTIFICATION_PATTERNS = [
-  /^a comment was added$/i,
-  /^a field was updated$/i,
-  /^an item was (created|moved|completed|deleted)$/i,
-  /^a status was changed$/i,
-  /^an item was added$/i,
-  /^a due date was (set|changed|removed)$/i,
-];
-
 /**
- * Detect whether a message is a generic USLACKBOT notification about a Slack
- * List item. These notifications contain minimal text (e.g. "A comment was
- * added") and the message ts doubles as the list item's thread_ts.
+ * Detect whether a message is a USLACKBOT notification about a Slack List item.
+ * Uses sender identity + channel membership instead of brittle text matching,
+ * since Slack localizes notification strings per workspace locale.
  */
 export function isSlackbotListNotification(
   event: SlackEvent,
+  alwaysProcessChannels: Set<string>,
 ): boolean {
   if (!("user" in event) || event.user !== "USLACKBOT") return false;
-  const text = ("text" in event ? event.text || "" : "").trim();
-  return USLACKBOT_NOTIFICATION_PATTERNS.some((p) => p.test(text));
+  return alwaysProcessChannels.has(event.channel);
 }
