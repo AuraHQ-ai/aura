@@ -242,7 +242,7 @@ function extractFullMessageText(msg: any): string {
     for (const file of msg.files) {
       const fileName = file.title || file.name || "unnamed file";
       const fileType = file.filetype || "unknown";
-      parts.push(`[file: ${fileName} (${fileType})]`);
+      parts.push(`[file: ${fileName} (${fileType}) id:${file.id}]`);
     }
   }
   return parts.filter(Boolean).join("\n") || "";
