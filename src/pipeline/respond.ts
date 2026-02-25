@@ -922,6 +922,7 @@ export async function generateResponse(
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
         } else if (isChannelTypeNotSupported(stopErr)) {
+          streamingUnsupportedChannels.add(channelId);
           logger.warn("streamer.stop() hit channel_type_not_supported, finalizing gracefully", {
             channelId,
           });
@@ -1066,6 +1067,7 @@ export async function generateResponse(
     }
 
     if (isChannelTypeNotSupported(error) && accumulatedText) {
+      streamingUnsupportedChannels.add(channelId);
       try {
         await safePostMessage(slackClient, {
           channel: channelId,
