@@ -42,14 +42,14 @@ export function createPrepareStep(opts: {
   systemPrompt: string;
   defaultEffort?: EffortLevel;
   modelId?: string;
-  getEscalationModel?: () => Promise<LanguageModel>;
+  getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
   const isAnthropic = opts.modelId ? supportsEffort(opts.modelId) : false;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
-  let escalatedModel: LanguageModel | null = null;
+  let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
 
   return async ({ stepNumber, steps }) => {
@@ -104,8 +104,8 @@ export function createPrepareStep(opts: {
       try {
         escalatedModel = await opts.getEscalationModel();
         hasEscalatedModel = true;
-        modelOverride = escalatedModel;
-        logger.warn("prepareStep: escalating model to Opus", { stepNumber });
+        modelOverride = escalatedModel.model;
+        logger.warn("prepareStep: escalating to escalation model", { stepNumber, modelId: escalatedModel.modelId });
       } catch (err: any) {
         logger.error("prepareStep: failed to load escalation model", {
           stepNumber,
@@ -115,7 +115,7 @@ export function createPrepareStep(opts: {
     }
 
     if (hasEscalatedModel && escalatedModel && !modelOverride) {
-      modelOverride = escalatedModel;
+      modelOverride = escalatedModel.model;
     }
 
     // --- Step limit warning (existing behavior) ---
@@ -147,7 +147,7 @@ export function createInteractivePrepareStep(opts: {
   systemPrompt: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
-  getEscalationModel?: () => Promise<LanguageModel>;
+  getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: STEP_LIMIT,
@@ -164,7 +164,7 @@ export function createHeadlessPrepareStep(opts: {
   systemPrompt: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
-  getEscalationModel?: () => Promise<LanguageModel>;
+  getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: HEADLESS_STEP_LIMIT,
