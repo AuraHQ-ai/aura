@@ -19,6 +19,10 @@ interface SystemPromptContext {
   channelContext: string;
   /** Channel type */
   channelType: ChannelType;
+  /** Current channel ID (e.g. C0BNVKS77) */
+  channelId?: string;
+  /** Current thread timestamp (e.g. 1234567890.123456) */
+  threadTs?: string;
   /** User's timezone (from profile or Slack) */
   userTimezone?: string;
   /** Recent thread or channel messages for context */
@@ -402,7 +406,7 @@ export async function buildSystemPrompt(
 
   // Temporal awareness
   parts.push(
-    `\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}${context.modelId ? `\nActive model: \`${context.modelId}\`` : ''}`,
+    `\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}${context.modelId ? `\nActive model: \`${context.modelId}\`` : ''}${context.channelId ? `\nCurrent channel: ${context.channelId}` : ''}${context.threadTs ? `\nCurrent thread_ts: ${context.threadTs}` : ''}`,
   );
 
   // Channel context
