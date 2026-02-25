@@ -159,6 +159,8 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
 
         let browser: any = null;
         let currentSessionId = session_id || "";
+        const ownSession = !session_id;
+        let failed = false;
 
         try {
           if (session_id) {
@@ -303,6 +305,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
 
           return result;
         } catch (error: any) {
+          failed = true;
           logger.error("browse tool: failed", {
             error: error.message,
             sessionId: currentSessionId,
@@ -313,9 +316,10 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
             session_id: currentSessionId || undefined,
           };
         } finally {
+          const shouldRelease = release_session || (ownSession && failed);
           if (browser) {
             try {
-              if (release_session) {
+              if (shouldRelease) {
                 await browser.close();
               } else {
                 await browser.disconnect();
@@ -324,7 +328,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
               // ignore disconnect/close errors
             }
           }
-          if (release_session && currentSessionId) {
+          if (shouldRelease && currentSessionId) {
             await releaseSession(currentSessionId);
           }
         }
