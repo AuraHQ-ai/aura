@@ -13,7 +13,7 @@ import { getMainModelId } from "../lib/ai.js";
 
 export interface AssembledPrompt {
   systemPrompt: string;
-  /** Dynamic per-call context (time, model, channel, thread) — passed as a separate uncached system message */
+  /** Dynamic per-call context (channel + user + memory + thread + time/model metadata), uncached */
   dynamicContext: string;
   memories: Memory[];
   conversations: ConversationThread[];
@@ -27,7 +27,7 @@ export interface AssembledPrompt {
  * 1. Embed the query once, then retrieve memories + conversations in parallel
  * 2. Fetch user profile for tone adaptation
  * 3. Format live conversation context from Slack API (already fetched)
- * 4. Build the system prompt with all context injected
+ * 4. Build a stable cacheable system prompt + dynamic per-call context
  */
 export async function assemblePrompt(
   context: MessageContext,
@@ -109,8 +109,11 @@ export async function assemblePrompt(
   // Resolve active model ID for self-awareness in system prompt
   const modelId = await getMainModelId();
 
-  // Build the stable system prompt (async: queries skill index from DB)
-  const systemPrompt = await buildSystemPrompt({
+  // Build the stable system prompt (async: loads durable directives/skills from DB)
+  const systemPrompt = await buildSystemPrompt();
+
+  // Dynamic per-call context — uncached, includes volatile conversation state
+  const dynamicContext = buildDynamicContext({
     memories,
     conversations,
     userProfile,
@@ -118,10 +121,6 @@ export async function assemblePrompt(
     channelType: context.channelType,
     threadContext,
     isChannelHistory,
-  });
-
-  // Dynamic per-call context — separated so the stable prompt stays cache-friendly
-  const dynamicContext = buildDynamicContext({
     userTimezone: userProfile?.timezone || undefined,
     modelId,
     channelId: context.channelId,

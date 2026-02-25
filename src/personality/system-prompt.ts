@@ -8,7 +8,7 @@ import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
 
-interface SystemPromptContext {
+interface DynamicPromptContext {
   /** Retrieved memories relevant to this conversation */
   memories: Memory[];
   /** Retrieved conversation threads relevant to this conversation */
@@ -23,6 +23,14 @@ interface SystemPromptContext {
   threadContext?: string;
   /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
   isChannelHistory?: boolean;
+  /** User's timezone (from profile or Slack) */
+  userTimezone?: string;
+  /** Active model ID, e.g. "anthropic/claude-sonnet-4-6" */
+  modelId?: string;
+  /** Current channel ID (e.g. C0BNVKS77) */
+  channelId?: string;
+  /** Current thread timestamp (e.g. 1234567890.123456) */
+  threadTs?: string;
 }
 
 /**
@@ -330,12 +338,10 @@ function formatConversations(conversations: ConversationThread[]): string {
 }
 
 /**
- * Build the full system prompt for an LLM call.
- * Async because it queries the skill index from the database.
+ * Build the stable, cacheable system prompt for an LLM call.
+ * Async because it queries persistent notes + skill index from the database.
  */
-export async function buildSystemPrompt(
-  context: SystemPromptContext,
-): Promise<string> {
+export async function buildSystemPrompt(): Promise<string> {
   const parts: string[] = [];
 
   // Core personality (always present)
@@ -396,7 +402,29 @@ export async function buildSystemPrompt(
     logger.warn("Failed to load notes-index note", { error });
   }
 
-  // Channel context
+  // Skill index (progressive disclosure -- lightweight topic + first line)
+  const skillIndex = await buildSkillIndex();
+  if (skillIndex) {
+    parts.push(skillIndex);
+  }
+
+  return parts.join("\n\n");
+}
+
+/**
+ * Build the dynamic (uncached) context block for the current invocation.
+ * Separated from the stable system prompt so it can be passed as an uncached
+ * second system message, preserving Anthropic prompt-cache hits.
+ */
+export function buildDynamicContext(context: DynamicPromptContext): string {
+  const parts: string[] = [];
+
+  let current = `## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
+  if (context.modelId) current += `\nActive model: \`${context.modelId}\``;
+  if (context.channelId) current += `\nCurrent channel: ${context.channelId}`;
+  if (context.threadTs) current += `\nCurrent thread_ts: ${context.threadTs}`;
+  parts.push(current);
+
   if (context.channelType === "dm") {
     parts.push(`You're in a private DM. Be conversational and personal.`);
   } else {
@@ -405,28 +433,18 @@ export async function buildSystemPrompt(
     );
   }
 
-  // User profile (if available)
   if (context.userProfile) {
     parts.push(formatUserProfile(context.userProfile));
   }
 
-  // Retrieved memories
   if (context.memories.length > 0) {
     parts.push(formatMemories(context.memories));
   }
 
-  // Retrieved conversation threads
   if (context.conversations && context.conversations.length > 0) {
     parts.push(formatConversations(context.conversations));
   }
 
-  // Skill index (progressive disclosure -- lightweight topic + first line)
-  const skillIndex = await buildSkillIndex();
-  if (skillIndex) {
-    parts.push(skillIndex);
-  }
-
-  // Conversation context (thread or recent channel messages)
   if (context.threadContext) {
     const heading = context.isChannelHistory
       ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
@@ -435,22 +453,4 @@ export async function buildSystemPrompt(
   }
 
   return parts.join("\n\n");
-}
-
-/**
- * Build the dynamic context block (current time, model, channel, thread).
- * Separated from the stable system prompt so it can be passed as an uncached
- * second system message, preserving Anthropic prompt-cache hits.
- */
-export function buildDynamicContext(context: {
-  userTimezone?: string;
-  modelId?: string;
-  channelId?: string;
-  threadTs?: string;
-}): string {
-  let s = `## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
-  if (context.modelId) s += `\nActive model: \`${context.modelId}\``;
-  if (context.channelId) s += `\nCurrent channel: ${context.channelId}`;
-  if (context.threadTs) s += `\nCurrent thread_ts: ${context.threadTs}`;
-  return s;
 }

@@ -266,7 +266,7 @@ function getToolSources(
 
 interface RespondOptions {
   systemPrompt: string;
-  /** Dynamic per-call context (time, model, channel) — passed as uncached second system message */
+  /** Dynamic per-call context (conversation/user/memory + time/model metadata), uncached */
   dynamicContext?: string;
   userMessage: string;
   slackClient: WebClient;

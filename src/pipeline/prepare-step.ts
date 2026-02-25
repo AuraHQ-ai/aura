@@ -1,7 +1,7 @@
 import { pruneMessages } from "ai";
-import type { LanguageModel, ModelMessage } from "ai";
+import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort, isAnthropicModel, buildContextManagement } from "../lib/ai.js";
+import { supportsEffort, isAnthropicModel, buildContextManagement, withCacheControl } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -17,7 +17,7 @@ const WRAP_UP_MESSAGE =
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
-  system?: string;
+  system?: string | SystemModelMessage | Array<SystemModelMessage>;
   providerOptions?: ProviderOptions;
   model?: LanguageModel;
   messages?: Array<ModelMessage>;
@@ -58,7 +58,7 @@ export function createPrepareStep(opts: {
   let failureCount = 0;
 
   return async ({ stepNumber, steps, messages }) => {
-    let systemOverride: string | undefined;
+    let systemOverride: string | SystemModelMessage | Array<SystemModelMessage> | undefined;
     let providerOptions: ProviderOptions | undefined;
     let modelOverride: LanguageModel | undefined;
 
@@ -140,7 +140,15 @@ export function createPrepareStep(opts: {
         .replace("{stepCount}", String(stepNumber))
         .replace("{limit}", String(limit));
 
-      systemOverride = opts.systemPrompt + "\n\n" + (opts.dynamicContext ? opts.dynamicContext + "\n\n" : "") + nudge;
+      systemOverride = [
+        withCacheControl(opts.systemPrompt),
+        {
+          role: "system",
+          content: opts.dynamicContext
+            ? `${opts.dynamicContext}\n\n${nudge}`
+            : nudge,
+        },
+      ];
       logger.info("prepareStep: injecting wrap-up nudge", {
         stepNumber,
         limit,
