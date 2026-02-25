@@ -181,14 +181,14 @@ export function buildContextManagement() {
   return {
     edits: [
       {
+        type: "clear_thinking_20251015" as const,
+        keep: { type: "thinking_turns" as const, value: 3 },
+      },
+      {
         type: "clear_tool_uses_20250919" as const,
         trigger: { type: "input_tokens" as const, value: 60000 },
         keep: { type: "tool_uses" as const, value: 5 },
         clearToolInputs: true,
-      },
-      {
-        type: "clear_thinking_20251015" as const,
-        keep: { type: "thinking_turns" as const, value: 3 },
       },
       {
         type: "compact_20260112" as const,
