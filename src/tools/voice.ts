@@ -400,9 +400,9 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           agent_phone_number_id: phoneNumberId,
           to_number: resolvedPhone,
           conversation_initiation_client_data: {
+            dynamic_variables: dynamicVars,
             conversation_config_override: {
               agent: {
-                dynamic_variables: dynamicVars,
                 first_message: resolvedFirstMessage,
                 language: langConfig.languageCode,
               },
@@ -438,31 +438,53 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
             };
           }
 
-          const data = (await callResponse.json()) as {
-            conversation_id?: string;
-          };
-          const conversationId =
-            data.conversation_id ?? `unknown-${crypto.randomUUID()}`;
-
+          let data: { conversation_id?: string };
           try {
-            await db
-              .insert(voiceCalls)
-              .values({
+            data = (await callResponse.json()) as {
+              conversation_id?: string;
+            };
+          } catch (parseError: any) {
+            logger.error("make_call response JSON parse failed (call may have been placed)", {
+              error: parseError.message,
+              to: resolvedPhone,
+            });
+            return {
+              ok: true,
+              message: `Call likely placed to ${resolvedName} (${resolvedPhone}), but the response could not be parsed. Do not retry — the call may already be in progress.`,
+              conversation_id: null,
+            };
+          }
+
+          const conversationId = data.conversation_id;
+          const trackingWarning = conversationId
+            ? undefined
+            : "ElevenLabs did not return a conversation_id; call tracking and webhooks may not work for this call.";
+
+          if (conversationId) {
+            try {
+              await db
+                .insert(voiceCalls)
+                .values({
+                  conversationId,
+                  agentId: resolvedAgentId,
+                  direction: "outbound",
+                  phoneNumber: resolvedPhone,
+                  personName: resolvedName || null,
+                  slackUserId: context?.userId ?? null,
+                  status: "in_progress",
+                  callContext: callContext || null,
+                  dynamicVariables: dynamicVars,
+                })
+                .onConflictDoNothing({ target: voiceCalls.conversationId });
+            } catch (dbError: any) {
+              logger.error("make_call DB insert failed (call was placed)", {
+                error: dbError.message,
                 conversationId,
-                agentId: resolvedAgentId,
-                direction: "outbound",
-                phoneNumber: resolvedPhone,
-                personName: resolvedName || null,
-                slackUserId: context?.userId ?? null,
-                status: "in_progress",
-                callContext: callContext || null,
-                dynamicVariables: dynamicVars,
-              })
-              .onConflictDoNothing();
-          } catch (dbError: any) {
-            logger.error("make_call DB insert failed (call was placed)", {
-              error: dbError.message,
-              conversationId,
+              });
+            }
+          } else {
+            logger.warn("make_call: no conversation_id returned, skipping DB insert", {
+              to: resolvedPhone,
             });
           }
 
@@ -470,13 +492,14 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
             to: resolvedPhone,
             person: resolvedName,
             agentId: resolvedAgentId,
-            conversationId,
+            conversationId: conversationId ?? null,
           });
 
           return {
             ok: true,
             message: `Call initiated to ${resolvedName} (${resolvedPhone})`,
-            conversation_id: conversationId,
+            conversation_id: conversationId ?? null,
+            ...(trackingWarning ? { warning: trackingWarning } : {}),
           };
         } catch (error: any) {
           logger.error("make_call tool failed", { error: error.message });
