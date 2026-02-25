@@ -538,7 +538,9 @@ export async function generateResponse(
     systemMessages.push({ role: 'system' as const, content: options.dynamicContext });
   }
 
-  const fullSystemPrompt = [options.stablePrefix, options.conversationContext, options.dynamicContext]
+  // For the prepareStep wrap-up nudge: conversation context + dynamic context
+  // are combined into one uncached block; the stable prefix keeps its own cache breakpoint.
+  const uncachedContext = [options.conversationContext, options.dynamicContext]
     .filter(Boolean)
     .join("\n\n");
 
@@ -548,7 +550,8 @@ export async function generateResponse(
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(STEP_LIMIT),
     prepareStep: createInteractivePrepareStep({
-      systemPrompt: fullSystemPrompt,
+      stablePrefix: options.stablePrefix,
+      dynamicContext: uncachedContext || undefined,
       modelId,
       defaultEffort: "medium",
       getEscalationModel,
