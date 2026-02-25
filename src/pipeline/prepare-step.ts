@@ -1,6 +1,6 @@
 import type { LanguageModel } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort } from "../lib/ai.js";
+import { supportsEffort, supportsEffortEscalation } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -47,6 +47,7 @@ export function createPrepareStep(opts: {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
   const isAnthropic = opts.modelId ? supportsEffort(opts.modelId) : false;
+  const useEffortEscalation = opts.modelId ? supportsEffortEscalation(opts.modelId) : false;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
@@ -91,9 +92,9 @@ export function createPrepareStep(opts: {
     }
 
     // --- Model escalation: persistent failures → escalation model ---
-    // For effort-supporting models: escalate after reaching max effort and still failing.
+    // For models with native effort support: escalate after reaching max effort and still failing.
     // For other models: escalate after 3+ cumulative tool failures.
-    const readyToEscalateModel = isAnthropic
+    const readyToEscalateModel = useEffortEscalation
       ? (currentEffort === "high" && hadToolFailure)
       : (failureCount >= 3);
 
