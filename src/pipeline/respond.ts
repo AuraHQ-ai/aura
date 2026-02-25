@@ -514,6 +514,9 @@ export async function generateResponse(
   // Keepalive interval during long tool calls (e.g. Claude Code via run_command)
   let toolKeepAlive: ReturnType<typeof setInterval> | null = null;
 
+  // Slack stream keepalive — sends minimal payload to prevent ~30s idle timeout
+  let streamKeepAlive: ReturnType<typeof setInterval> | null = null;
+
   // ── Build stream options ─────────────────────────────────────────────
   const streamOptions: any = {
     model,
@@ -691,6 +694,18 @@ export async function generateResponse(
           // Keep resetting inactivity timer during long tool execution
           if (toolKeepAlive) clearInterval(toolKeepAlive);
           toolKeepAlive = setInterval(() => resetTimer(), 60_000);
+
+          // Keep Slack stream alive during long tool execution (~30s idle timeout)
+          if (!streamingFailed && streamKeepAlive == null) {
+            streamKeepAlive = setInterval(async () => {
+              if (streamingFailed) {
+                clearInterval(streamKeepAlive!);
+                streamKeepAlive = null;
+                return;
+              }
+              await tryStreamAppend({ markdown_text: " " });
+            }, 20_000);
+          }
           break;
         }
 
@@ -740,6 +755,7 @@ export async function generateResponse(
           pendingToolInputs.delete(chunk.toolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+          if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
@@ -783,6 +799,7 @@ export async function generateResponse(
           pendingToolInputs.delete(errToolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+          if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
@@ -798,6 +815,7 @@ export async function generateResponse(
     // ── Finalize ──────────────────────────────────────────────────────────
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+    if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
 
     const llmMs = Date.now() - start;
     const usage = await result.usage;
@@ -944,6 +962,7 @@ export async function generateResponse(
   } catch (error: any) {
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+    if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
 
     if (hasFiles && isUnsupportedFileError(error)) {
       logger.warn("LLM call failed due to unsupported file type, retrying without file parts", {
