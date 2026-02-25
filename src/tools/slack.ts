@@ -2259,7 +2259,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ content, filename, channel, title, is_binary, thread_ts }) => {
         const resolvedChannel = channel ?? context?.channelId;
-        const resolvedThreadTs = thread_ts ?? context?.threadTs;
+        const resolvedThreadTs = thread_ts ?? (channel ? undefined : context?.threadTs);
 
         try {
           const fileBuffer = is_binary
