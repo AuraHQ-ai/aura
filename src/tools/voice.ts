@@ -197,10 +197,11 @@ function resolvePhoneNumberIdFromConfig(
   const envId = process.env.ELEVENLABS_PHONE_NUMBER_ID;
   if (envId) return envId;
 
-  const twilioPhones = agentConfig.phone_numbers?.filter(
-    (p) => p.provider === "twilio",
-  );
-  if (!twilioPhones?.length) return undefined;
+  const phones = Array.isArray(agentConfig.phone_numbers)
+    ? agentConfig.phone_numbers
+    : [];
+  const twilioPhones = phones.filter((p) => p.provider === "twilio");
+  if (!twilioPhones.length) return undefined;
 
   if (fromNumber) {
     const match = twilioPhones.find((p) => p.phone_number === fromNumber);
