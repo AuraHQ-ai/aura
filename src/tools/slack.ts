@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
+import { anthropic as anthropicProvider } from "@ai-sdk/anthropic";
 import { logger } from "../lib/logger.js";
 import { isAdmin } from "../lib/permissions.js";
 import { createNoteTools } from "./notes.js";
@@ -508,7 +509,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     return result;
   }
 
-  return {
+  const tools: Record<string, any> = {
     list_channels: tool({
       description:
         "List Slack channels that Aura is currently a member of (names, topics, member count). Important: this only shows channels Aura has already joined, NOT all public channels in the workspace. Many public channels exist that aren't listed here. To find or join others, use search_channels to fuzzy-search by name, or join_channel with the exact channel name.",
@@ -2888,4 +2889,55 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Voice & SMS Tools (ElevenLabs + Twilio) ─────────────────────
     ...createVoiceTools(context),
   };
+
+  // ── Anthropic Tool Discovery ──────────────────────────────────────
+  // Mark infrequently-used tools as deferred so their schemas aren't
+  // sent upfront. Claude discovers them via toolSearch when needed.
+  // Non-Anthropic providers simply ignore providerOptions.anthropic.
+  const DEFERRED_TOOLS = new Set([
+    // BigQuery / Data
+    "list_datasets", "list_tables", "inspect_table", "execute_query",
+    // Google Sheets
+    "read_google_sheet",
+    // Calendar
+    "check_calendar", "create_event", "update_event", "delete_event", "find_available_slot",
+    // Canvas
+    "read_canvas", "create_canvas", "edit_canvas", "delete_canvas", "share_canvas", "list_canvases",
+    // Slack Lists
+    "list_slack_list_items", "get_slack_list_item", "create_slack_list_item", "update_slack_list_item", "delete_slack_list_item",
+    // Email (Aura's own inbox)
+    "read_emails", "read_email", "send_email", "reply_to_email",
+    // Email triage (per-user Gmail)
+    "sync_emails", "email_digest", "update_email_thread",
+    "read_user_emails", "read_user_email",
+    "generate_gmail_auth_url", "create_gmail_draft", "list_gmail_drafts", "delete_gmail_draft",
+    // Dev / Code
+    "run_command", "dispatch_headless", "read_job_trace",
+    "dispatch_cursor_agent", "check_cursor_agent", "followup_cursor_agent",
+    "stop_cursor_agent", "get_cursor_conversation", "list_cursor_agents",
+    // Browser
+    "browse", "download_slack_file",
+    // Voice / Calls
+    "list_voice_agents", "make_call", "send_sms",
+    // Directory / Contacts
+    "lookup_workspace_user", "list_workspace_users", "lookup_contact",
+    // Checkpoint
+    "checkpoint_plan",
+    // Subagent
+    "run_subagent",
+  ]);
+
+  const deferOpts = { anthropic: { deferLoading: true } };
+  for (const name of DEFERRED_TOOLS) {
+    if (name in tools) {
+      tools[name] = { ...tools[name], providerOptions: deferOpts };
+    }
+  }
+
+  // Provider-defined tool that lets Claude discover deferred tools mid-conversation.
+  // Non-Anthropic providers ignore provider-defined tools.
+  // Claude uses BM25 search over deferred tool names/descriptions to find them.
+  tools.toolSearch = anthropicProvider.tools.toolSearchBm25_20251119();
+
+  return tools;
 }
