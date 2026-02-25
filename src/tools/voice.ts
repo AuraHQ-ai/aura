@@ -115,7 +115,7 @@ interface ElevenLabsCacheData {
 let elevenLabsCache: ElevenLabsCacheData | null = null;
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_TIMEOUT_MS = 5_000;
 
 async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
   // Return fresh cache if available
