@@ -40,7 +40,7 @@ export interface EmailDetail {
   body: string;
   snippet: string;
   isUnread: boolean;
-  attachments: { filename: string; mimeType: string; size: number }[];
+  attachments: { filename: string; mimeType: string; size: number; attachmentId: string }[];
 }
 
 export interface ListEmailsOptions {
@@ -401,8 +401,8 @@ export function hasAttachmentParts(payload: any): boolean {
 
 function extractAttachments(
   payload: any,
-): { filename: string; mimeType: string; size: number }[] {
-  const attachments: { filename: string; mimeType: string; size: number }[] =
+): { filename: string; mimeType: string; size: number; attachmentId: string }[] {
+  const attachments: { filename: string; mimeType: string; size: number; attachmentId: string }[] =
     [];
 
   function walk(parts: any[]) {
@@ -412,6 +412,7 @@ function extractAttachments(
           filename: part.filename,
           mimeType: part.mimeType || "application/octet-stream",
           size: part.body?.size || 0,
+          attachmentId: part.body?.attachmentId || "",
         });
       }
       if (part.parts) walk(part.parts);
@@ -1019,6 +1020,49 @@ export async function deleteDraft(
 
   logger.info("Draft deleted", { userId, draftId });
   return true;
+}
+
+/**
+ * Download an attachment from a Gmail message.
+ * Returns standard base64-encoded data and size.
+ */
+async function getAttachmentWithClient(
+  gmailClient: any,
+  messageId: string,
+  attachmentId: string,
+): Promise<{ data: string; size: number }> {
+  const res = await gmailClient.users.messages.attachments.get({
+    userId: "me",
+    messageId,
+    id: attachmentId,
+  });
+
+  let data: string = res.data.data || "";
+  // Gmail API returns URL-safe base64; convert to standard base64
+  data = data.replace(/-/g, "+").replace(/_/g, "/");
+  // Restore padding stripped by base64url encoding
+  const pad = (4 - (data.length % 4)) % 4;
+  if (pad) data += "=".repeat(pad);
+
+  return {
+    data,
+    size: res.data.size || 0,
+  };
+}
+
+/**
+ * Download an attachment from a specific user's Gmail message.
+ * Returns standard base64-encoded data and size, or null if access is unavailable.
+ */
+export async function getUserEmailAttachment(
+  userId: string,
+  messageId: string,
+  attachmentId: string,
+): Promise<{ data: string; size: number } | null> {
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
+
+  return getAttachmentWithClient(result.client, messageId, attachmentId);
 }
 
 /**
