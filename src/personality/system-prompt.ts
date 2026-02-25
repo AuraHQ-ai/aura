@@ -8,13 +8,24 @@ import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
 
-interface SystemPromptContext {
+/** Fields for the stable (cacheable) system prompt — everything that doesn't change per-invocation. */
+export interface CachedPromptContext {
   /** Retrieved memories relevant to this conversation */
   memories: Memory[];
   /** Retrieved conversation threads relevant to this conversation */
   conversations?: ConversationThread[];
   /** The user's profile (if available) */
   userProfile: UserProfile | null;
+  /** User's timezone (from profile or Slack) */
+  userTimezone?: string;
+  /** Recent thread or channel messages for context */
+  threadContext?: string;
+  /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
+  isChannelHistory?: boolean;
+}
+
+/** Fields for the dynamic (per-invocation) context — changes every conversation, never cached. */
+export interface DynamicContextInput {
   /** Channel name or "DM" */
   channelContext: string;
   /** Channel type */
@@ -25,10 +36,6 @@ interface SystemPromptContext {
   threadTs?: string;
   /** User's timezone (from profile or Slack) */
   userTimezone?: string;
-  /** Recent thread or channel messages for context */
-  threadContext?: string;
-  /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
-  isChannelHistory?: boolean;
   /** Active model ID, e.g. "anthropic/claude-sonnet-4-6" */
   modelId?: string;
 }
@@ -338,11 +345,15 @@ function formatConversations(conversations: ConversationThread[]): string {
 }
 
 /**
- * Build the full system prompt for an LLM call.
- * Async because it queries the skill index from the database.
+ * Build the stable (cacheable) part of the system prompt.
+ * This includes personality, self-directive, notes index, user profile,
+ * memories, conversations, skill index, and thread context.
+ *
+ * The result should be identical across different conversations with the
+ * same user and similar context, enabling Anthropic prompt caching.
  */
-export async function buildSystemPrompt(
-  context: SystemPromptContext,
+export async function buildCachedSystemPrompt(
+  context: CachedPromptContext,
 ): Promise<string> {
   const parts: string[] = [];
 
@@ -404,20 +415,6 @@ export async function buildSystemPrompt(
     logger.warn("Failed to load notes-index note", { error });
   }
 
-  // Temporal awareness
-  parts.push(
-    `\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}${context.modelId ? `\nActive model: \`${context.modelId}\`` : ''}${context.channelId ? `\nCurrent channel: ${context.channelId}` : ''}${context.threadTs ? `\nCurrent thread_ts: ${context.threadTs}` : ''}`,
-  );
-
-  // Channel context
-  if (context.channelType === "dm") {
-    parts.push(`You're in a private DM. Be conversational and personal.`);
-  } else {
-    parts.push(
-      `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`,
-    );
-  }
-
   // User profile (if available)
   if (context.userProfile) {
     parts.push(formatUserProfile(context.userProfile));
@@ -445,6 +442,30 @@ export async function buildSystemPrompt(
       ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
       : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
     parts.push(heading);
+  }
+
+  return parts.join("\n\n");
+}
+
+/**
+ * Build the dynamic (per-invocation) context string.
+ * This includes current time, active model, channel ID, thread_ts,
+ * and channel type context. It changes every conversation and must NOT
+ * be wrapped in cacheControl.
+ */
+export function buildDynamicContext(context: DynamicContextInput): string {
+  const parts: string[] = [];
+
+  parts.push(
+    `## Current context\n\n${getCurrentTimeContext(context.userTimezone)}${context.modelId ? `\nActive model: \`${context.modelId}\`` : ""}${context.channelId ? `\nCurrent channel: ${context.channelId}` : ""}${context.threadTs ? `\nCurrent thread_ts: ${context.threadTs}` : ""}`,
+  );
+
+  if (context.channelType === "dm") {
+    parts.push(`You're in a private DM. Be conversational and personal.`);
+  } else {
+    parts.push(
+      `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`,
+    );
   }
 
   return parts.join("\n\n");

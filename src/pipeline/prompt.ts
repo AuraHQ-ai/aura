@@ -1,5 +1,5 @@
 import type { WebClient } from "@slack/web-api";
-import { buildSystemPrompt } from "../personality/system-prompt.js";
+import { buildCachedSystemPrompt, buildDynamicContext } from "../personality/system-prompt.js";
 import { retrieveMemories, retrieveConversations, type ConversationThread } from "../memory/retrieve.js";
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
@@ -13,6 +13,7 @@ import { getMainModelId } from "../lib/ai.js";
 
 export interface AssembledPrompt {
   systemPrompt: string;
+  dynamicContext: string;
   memories: Memory[];
   conversations: ConversationThread[];
   userProfile: UserProfile | null;
@@ -107,20 +108,29 @@ export async function assemblePrompt(
   // Resolve active model ID for self-awareness in system prompt
   const modelId = await getMainModelId();
 
-  // Build the system prompt (async: queries skill index from DB)
-  const systemPrompt = await buildSystemPrompt({
-    memories,
-    conversations,
-    userProfile,
-    channelContext,
-    channelType: context.channelType,
-    channelId: context.channelId,
-    threadTs: context.threadTs,
-    userTimezone: userProfile?.timezone || undefined,
-    threadContext,
-    isChannelHistory,
-    modelId,
-  });
+  // Build the stable (cacheable) system prompt and dynamic context separately.
+  // The system prompt is wrapped with cacheControl; the dynamic context is not,
+  // enabling Anthropic prompt cache hits across different conversations.
+  const [systemPrompt, dynamicContext] = await Promise.all([
+    buildCachedSystemPrompt({
+      memories,
+      conversations,
+      userProfile,
+      userTimezone: userProfile?.timezone || undefined,
+      threadContext,
+      isChannelHistory,
+    }),
+    Promise.resolve(
+      buildDynamicContext({
+        channelContext,
+        channelType: context.channelType,
+        channelId: context.channelId,
+        threadTs: context.threadTs,
+        userTimezone: userProfile?.timezone || undefined,
+        modelId,
+      }),
+    ),
+  ]);
 
   logger.debug(`Assembled prompt in ${Date.now() - start}ms`, {
     memoryCount: memories.length,
@@ -129,5 +139,5 @@ export async function assemblePrompt(
     hasThread: !!threadContext,
   });
 
-  return { systemPrompt, memories, conversations, userProfile };
+  return { systemPrompt, dynamicContext, memories, conversations, userProfile };
 }

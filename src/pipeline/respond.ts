@@ -265,6 +265,8 @@ function getToolSources(
 
 interface RespondOptions {
   systemPrompt: string;
+  /** Per-invocation dynamic context (time, model, channel, thread). Not cached. */
+  dynamicContext?: string;
   userMessage: string;
   slackClient: WebClient;
   context?: { userId?: string; channelId?: string; threadTs?: string; timezone?: string };
@@ -356,6 +358,24 @@ function findContinuationBreak(delta: string, streamLength: number): number {
 function estimateAppendSize(payload: any): number {
   if (payload.markdown_text) return payload.markdown_text.length;
   return JSON.stringify(payload).length;
+}
+
+// ── System Message Helpers ───────────────────────────────────────────────────
+
+/**
+ * Build the `system` parameter for streamText/generateText.
+ * Returns an array of system messages: the cached prompt with cacheControl,
+ * followed by the dynamic context without cacheControl (if provided).
+ * This split enables Anthropic prompt caching across conversations.
+ */
+function buildSystemMessages(systemPrompt: string, dynamicContext?: string) {
+  if (!dynamicContext) {
+    return withCacheControl(systemPrompt);
+  }
+  return [
+    withCacheControl(systemPrompt),
+    { role: 'system' as const, content: dynamicContext },
+  ] as const;
 }
 
 // ── Main Function ────────────────────────────────────────────────────────────
@@ -520,11 +540,12 @@ export async function generateResponse(
   // ── Build stream options ─────────────────────────────────────────────
   const streamOptions: any = {
     model,
-    system: withCacheControl(options.systemPrompt),
+    system: buildSystemMessages(options.systemPrompt, options.dynamicContext),
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(STEP_LIMIT),
     prepareStep: createInteractivePrepareStep({
       systemPrompt: options.systemPrompt,
+      dynamicContext: options.dynamicContext,
       modelId,
       defaultEffort: "medium",
       getEscalationModel,
@@ -993,7 +1014,7 @@ export async function generateResponse(
 
       const retryOptions: any = {
         model,
-        system: withCacheControl(options.systemPrompt),
+        system: buildSystemMessages(options.systemPrompt, options.dynamicContext),
         prompt: retryPrompt,
         abortSignal: retryAbortController.signal,
         ...(isAnthropicModel(modelId) && {

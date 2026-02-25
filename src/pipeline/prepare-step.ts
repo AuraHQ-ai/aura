@@ -1,7 +1,7 @@
 import { pruneMessages } from "ai";
-import type { LanguageModel, ModelMessage } from "ai";
+import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort, isAnthropicModel, buildContextManagement } from "../lib/ai.js";
+import { supportsEffort, isAnthropicModel, buildContextManagement, withCacheControl } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -17,7 +17,7 @@ const WRAP_UP_MESSAGE =
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
-  system?: string;
+  system?: string | SystemModelMessage | Array<SystemModelMessage>;
   providerOptions?: ProviderOptions;
   model?: LanguageModel;
   messages?: Array<ModelMessage>;
@@ -43,6 +43,7 @@ export function createPrepareStep(opts: {
   stepLimit?: number;
   warningThreshold?: number;
   systemPrompt: string;
+  dynamicContext?: string;
   defaultEffort?: EffortLevel;
   modelId?: string;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
@@ -57,7 +58,7 @@ export function createPrepareStep(opts: {
   let failureCount = 0;
 
   return async ({ stepNumber, steps, messages }) => {
-    let systemOverride: string | undefined;
+    let systemOverride: string | SystemModelMessage | Array<SystemModelMessage> | undefined;
     let providerOptions: ProviderOptions | undefined;
     let modelOverride: LanguageModel | undefined;
 
@@ -139,7 +140,16 @@ export function createPrepareStep(opts: {
         .replace("{stepCount}", String(stepNumber))
         .replace("{limit}", String(limit));
 
-      systemOverride = opts.systemPrompt + "\n\n" + nudge;
+      const augmentedPrompt = opts.systemPrompt + "\n\n" + nudge;
+      if (opts.dynamicContext) {
+        systemOverride = [
+          withCacheControl(augmentedPrompt),
+          { role: 'system' as const, content: opts.dynamicContext },
+        ];
+      } else {
+        systemOverride = augmentedPrompt;
+      }
+
       logger.info("prepareStep: injecting wrap-up nudge", {
         stepNumber,
         limit,
@@ -164,6 +174,7 @@ export function createPrepareStep(opts: {
 /** Factory for interactive Slack agent prepareStep (250-step limit). */
 export function createInteractivePrepareStep(opts: {
   systemPrompt: string;
+  dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
@@ -172,6 +183,7 @@ export function createInteractivePrepareStep(opts: {
     stepLimit: STEP_LIMIT,
     warningThreshold: WARNING_THRESHOLD,
     systemPrompt: opts.systemPrompt,
+    dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
     getEscalationModel: opts.getEscalationModel,
@@ -181,6 +193,7 @@ export function createInteractivePrepareStep(opts: {
 /** Factory for headless job execution prepareStep (350-step limit). */
 export function createHeadlessPrepareStep(opts: {
   systemPrompt: string;
+  dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
@@ -189,6 +202,7 @@ export function createHeadlessPrepareStep(opts: {
     stepLimit: HEADLESS_STEP_LIMIT,
     warningThreshold: HEADLESS_WARNING_THRESHOLD,
     systemPrompt: opts.systemPrompt,
+    dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
     getEscalationModel: opts.getEscalationModel,
