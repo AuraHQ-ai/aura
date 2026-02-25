@@ -3,6 +3,7 @@ import {
   buildMessageContext,
   shouldRespond,
   resolveSlackEntities,
+  isSlackbotListNotification,
   type MessageContext,
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
@@ -242,6 +243,24 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       logger.warn("Truncated long message", {
         originalLength: context.text.length,
         truncatedTo: MAX_MESSAGE_LENGTH,
+      });
+    }
+
+    // ── USLACKBOT list notification enrichment ───────────────────────────
+    // When USLACKBOT posts a generic notification (e.g. "A comment was
+    // added") in a monitored channel, the LLM gets no useful context.
+    // Detect this and attach metadata so the prompt can guide the LLM to
+    // investigate the actual list item via tools.
+    if (isSlackbotListNotification(event)) {
+      context.slackListItemContext = {
+        messageTs: context.messageTs,
+        channelId: context.channelId,
+        notificationText: messageText,
+      };
+      logger.info("Enriched USLACKBOT list notification", {
+        channelId: context.channelId,
+        messageTs: context.messageTs,
+        notificationText: messageText,
       });
     }
 
