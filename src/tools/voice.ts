@@ -115,6 +115,7 @@ interface ElevenLabsCacheData {
 let elevenLabsCache: ElevenLabsCacheData | null = null;
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 15_000;
 
 async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
   if (elevenLabsCache && Date.now() - elevenLabsCache.ts < CACHE_TTL_MS) {
@@ -127,19 +128,22 @@ async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
   const headers = { "xi-api-key": apiKey };
 
   const [agentsRes, phonesRes, voicesRes] = await Promise.all([
-    fetch(`${ELEVENLABS_API_BASE}/convai/agents`, { headers }),
-    fetch(`${ELEVENLABS_API_BASE}/convai/phone-numbers`, { headers }),
-    fetch(`${ELEVENLABS_API_BASE}/voices`, { headers }),
+    fetch(`${ELEVENLABS_API_BASE}/convai/agents`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
+    fetch(`${ELEVENLABS_API_BASE}/convai/phone-numbers`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
+    fetch(`${ELEVENLABS_API_BASE}/voices`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
   ]);
 
-  if (!agentsRes.ok) {
-    throw new Error(`Agents API error (${agentsRes.status}): ${(await agentsRes.text()).substring(0, 200)}`);
-  }
-  if (!phonesRes.ok) {
-    throw new Error(`Phone numbers API error (${phonesRes.status}): ${(await phonesRes.text()).substring(0, 200)}`);
-  }
-  if (!voicesRes.ok) {
-    throw new Error(`Voices API error (${voicesRes.status}): ${(await voicesRes.text()).substring(0, 200)}`);
+  const responses = [agentsRes, phonesRes, voicesRes];
+  const failed = responses.find((r) => !r.ok);
+  if (failed) {
+    const label =
+      failed === agentsRes ? "Agents" :
+      failed === phonesRes ? "Phone numbers" : "Voices";
+    const errorText = await failed.text();
+    for (const r of responses) {
+      if (r !== failed) { try { await r.body?.cancel(); } catch {} }
+    }
+    throw new Error(`${label} API error (${failed.status}): ${errorText.substring(0, 200)}`);
   }
 
   const agentsData = (await agentsRes.json()) as { agents?: Array<{ name: string; agent_id: string }> };
@@ -151,23 +155,26 @@ async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
   }>;
   const voicesData = (await voicesRes.json()) as { voices?: Array<{ name: string; voice_id: string; category?: string }> };
 
-  const agents: ElevenLabsAgent[] = (agentsData.agents ?? []).map((a) => ({
-    name: a.name,
-    agent_id: a.agent_id,
-  }));
+  const agents: ElevenLabsAgent[] = (agentsData.agents ?? [])
+    .filter((a): a is NonNullable<typeof a> => a != null)
+    .map((a) => ({ name: a.name, agent_id: a.agent_id }));
 
-  const phones: ElevenLabsPhone[] = (Array.isArray(phonesData) ? phonesData : []).map((p) => ({
-    phone_number: p.phone_number,
-    label: p.label ?? "",
-    phone_number_id: p.phone_number_id,
-    agent_id: p.assigned_agent?.agent_id ?? null,
-  }));
+  const phones: ElevenLabsPhone[] = (Array.isArray(phonesData) ? phonesData : [])
+    .filter((p): p is NonNullable<typeof p> => p != null)
+    .map((p) => ({
+      phone_number: p.phone_number,
+      label: p.label ?? "",
+      phone_number_id: p.phone_number_id,
+      agent_id: p.assigned_agent?.agent_id ?? null,
+    }));
 
-  const voices: ElevenLabsVoice[] = (voicesData.voices ?? []).map((v) => ({
-    name: v.name,
-    voice_id: v.voice_id,
-    category: v.category ?? "unknown",
-  }));
+  const voices: ElevenLabsVoice[] = (voicesData.voices ?? [])
+    .filter((v): v is NonNullable<typeof v> => v != null)
+    .map((v) => ({
+      name: v.name,
+      voice_id: v.voice_id,
+      category: v.category ?? "unknown",
+    }));
 
   elevenLabsCache = { agents, phones, voices, ts: Date.now() };
   return elevenLabsCache;
@@ -179,7 +186,7 @@ async function fetchAgentConfig(
 ): Promise<ElevenLabsAgentConfigResponse> {
   const response = await fetch(
     `${ELEVENLABS_API_BASE}/convai/agents/${agentId}`,
-    { headers: { "xi-api-key": apiKey } },
+    { headers: { "xi-api-key": apiKey }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
   );
   if (!response.ok) {
     const text = await response.text();
@@ -282,9 +289,9 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
     });
 
     // ── make_call ───────────────────────────────────────────────────
-    const DEFAULT_AGENT_ID = "agent_9301kj9tjcqaermrz71vvr0fpv4v";
-    const DEFAULT_FROM_NUMBER = "+14158860211";
-    const DEFAULT_VOICE_ID = "upcns7xCtWHwsgL2HKV5";
+    const DEFAULT_AGENT_ID = process.env.ELEVENLABS_AGENT_ID ?? "agent_9301kj9tjcqaermrz71vvr0fpv4v";
+    const DEFAULT_FROM_NUMBER = process.env.ELEVENLABS_FROM_NUMBER ?? "+14158860211";
+    const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? "upcns7xCtWHwsgL2HKV5";
 
     tools.make_call = tool({
       description:
@@ -494,6 +501,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
                 "Content-Type": "application/json",
               },
               body: JSON.stringify(outboundBody),
+              signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
             },
           );
 
@@ -687,7 +695,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
               status: "completed",
               callContext: message,
             })
-            .onConflictDoNothing();
+            .onConflictDoNothing({ target: voiceCalls.conversationId });
         } catch (dbError: any) {
           logger.error("send_sms DB insert failed (SMS was sent)", {
             error: dbError.message,
