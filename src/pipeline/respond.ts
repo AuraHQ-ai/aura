@@ -218,6 +218,9 @@ function estimateAppendSize(payload: any): number {
   return JSON.stringify(payload).length;
 }
 
+/** Channels known to not support streaming (persists for process lifetime) */
+const streamingUnsupportedChannels = new Set<string>();
+
 // ── Main Function ────────────────────────────────────────────────────────────
 
 /**
@@ -244,7 +247,8 @@ export async function generateResponse(
   // ── Smart routing: skip streaming when it's known to fail ──────────
   const skipStreaming =
     options.isHeadless === true ||
-    options.channelType === "slack_list_item";
+    options.channelType === "slack_list_item" ||
+    streamingUnsupportedChannels.has(channelId);
 
   // ── Start native Slack stream ───────────────────────────────────────
   // thread_ts is required by chat.startStream — the caller must always
@@ -281,6 +285,7 @@ export async function generateResponse(
     } catch (err: any) {
       if (isChannelTypeNotSupported(err)) {
         streamingFailed = true;
+        streamingUnsupportedChannels.add(channelId);
         logger.warn(
           "chatStream not supported for this channel, falling back to postMessage",
           { channelId },
@@ -817,6 +822,18 @@ export async function generateResponse(
             context: { currentStreamLength },
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
+        } else if (isChannelTypeNotSupported(stopErr)) {
+          streamingUnsupportedChannels.add(channelId);
+          logger.warn("streamer.stop() hit channel_type_not_supported, finalizing without payload", {
+            channelId,
+          });
+          logError({
+            errorName: "StreamStopChannelTypeNotSupported",
+            errorMessage: stopErr?.message || "channel_type_not_supported on streamer.stop()",
+            errorCode: "channel_type_not_supported",
+            channelId,
+          });
+          try { await streamer.stop(); } catch { /* already finalized */ }
         } else {
           throw stopErr;
         }
@@ -956,6 +973,29 @@ export async function generateResponse(
       } catch {
         // Stream may already be closed — nothing we can do
       }
+    }
+
+    if (isChannelTypeNotSupported(error) && accumulatedText) {
+      streamingUnsupportedChannels.add(channelId);
+      try {
+        const fallbackResult = await safePostMessage(slackClient, {
+          channel: channelId,
+          text: formatForSlack(accumulatedText) || accumulatedText,
+          thread_ts: threadTs,
+        });
+        if (fallbackResult.ok) {
+          return {
+            raw: accumulatedText,
+            alreadyPosted: true,
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            toolCalls: toolCallRecords,
+          };
+        }
+        logger.warn("LLM response lost — channel does not support posting", {
+          channelId,
+          rawLength: accumulatedText.length,
+        });
+      } catch { /* truly cannot post to this channel */ }
     }
 
     throw error;
