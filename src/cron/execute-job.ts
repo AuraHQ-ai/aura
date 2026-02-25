@@ -3,7 +3,7 @@ import { generateText, stepCountIs } from "ai";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
-import { getMainModel, withCacheControl } from "../lib/ai.js";
+import { getMainModel, getMainModelId, isAnthropicModel, getEscalationModel, withCacheControl } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -150,6 +150,7 @@ export async function executeJob(
       });
     }
 
+    const modelId = await getMainModelId();
     const model = await getMainModel();
 
     const generateResult = await generateText({
@@ -162,7 +163,15 @@ export async function executeJob(
         threadTs: job.threadTs || undefined,
       }),
       stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
-      prepareStep: createHeadlessPrepareStep(systemPrompt),
+      prepareStep: createHeadlessPrepareStep({
+        systemPrompt,
+        modelId,
+        defaultEffort: "medium",
+        getEscalationModel,
+      }),
+      ...(isAnthropicModel(modelId) && {
+        providerOptions: { anthropic: { effort: "medium" } },
+      }),
     });
 
     const { text, steps, totalUsage: usage } = generateResult;
