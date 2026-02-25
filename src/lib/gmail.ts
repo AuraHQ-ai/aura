@@ -1040,6 +1040,9 @@ async function getAttachmentWithClient(
   let data: string = res.data.data || "";
   // Gmail API returns URL-safe base64; convert to standard base64
   data = data.replace(/-/g, "+").replace(/_/g, "/");
+  // Restore padding stripped by base64url encoding
+  const pad = (4 - (data.length % 4)) % 4;
+  if (pad) data += "=".repeat(pad);
 
   return {
     data,
