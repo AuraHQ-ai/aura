@@ -173,3 +173,16 @@ export const fastModel = withAnthropicFallback(
 );
 
 export const embeddingModel = gateway.embedding(STATIC_EMBEDDING_MODEL_ID);
+
+/**
+ * Wrap a system prompt string with Anthropic cache control.
+ * Returns a SystemModelMessage with providerOptions that enable ephemeral caching.
+ * Safe for non-Anthropic models — they ignore the providerOptions.anthropic key.
+ */
+export function withCacheControl(systemPrompt: string) {
+  return {
+    role: 'system' as const,
+    content: systemPrompt,
+    providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+  };
+}

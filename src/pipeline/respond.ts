@@ -1,6 +1,6 @@
 import { streamText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
-import { getMainModel } from "../lib/ai.js";
+import { getMainModel, withCacheControl } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
@@ -517,7 +517,7 @@ export async function generateResponse(
   // ── Build stream options ─────────────────────────────────────────────
   const streamOptions: any = {
     model,
-    system: options.systemPrompt,
+    system: withCacheControl(options.systemPrompt),
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(STEP_LIMIT),
     prepareStep: createInteractivePrepareStep(options.systemPrompt),
@@ -960,7 +960,7 @@ export async function generateResponse(
 
       const retryOptions: any = {
         model,
-        system: options.systemPrompt,
+        system: withCacheControl(options.systemPrompt),
         prompt: retryPrompt,
         abortSignal: retryAbortController.signal,
       };
