@@ -85,6 +85,8 @@ export function createPrepareStep(opts: {
         });
       }
 
+      // Set providerOptions every step to maintain current effort level.
+      // The AI SDK does not carry forward providerOptions from previous steps.
       providerOptions = { anthropic: { effort: currentEffort } };
     }
 

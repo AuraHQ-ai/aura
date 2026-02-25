@@ -156,10 +156,12 @@ export async function getEmbeddingModel() {
 
 /**
  * Check if a model supports the Anthropic `effort` parameter.
- * Currently supported: Claude Opus 4.5, Opus 4.6, and Sonnet 4.6.
+ * The effort parameter is available on Anthropic models that support extended thinking.
+ * Currently: Claude Opus 4.x, Sonnet 4.6+. We match any Claude model via gateway
+ * to be forward-compatible — the API silently ignores the parameter if unsupported.
  */
 export function supportsEffort(modelId: string): boolean {
-  return /claude-(?:opus-4-[56]|sonnet-4-6)/.test(modelId);
+  return modelId.includes("anthropic/") && modelId.includes("claude");
 }
 
 /**
@@ -174,18 +176,6 @@ export async function getEscalationModel() {
   const gatewayModel = gateway(modelId);
   return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
 }
-
-
-
-
-
-
-
-
-
-
-
-
 
 /**
  * Static references kept for backward compatibility where async isn't feasible.
