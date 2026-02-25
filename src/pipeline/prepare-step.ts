@@ -63,16 +63,14 @@ export function createPrepareStep(opts: {
         : null;
 
       const hadToolFailure = lastStep?.toolResults?.some(
-        (r: any) => r.result?.ok === false || r.result?.error,
+        (r: any) => r.output?.ok === false || r.output?.error,
       ) ?? false;
 
       let newEffort = currentEffort;
 
-      if (stepNumber > 8 && currentEffort === "medium") {
-        newEffort = "high";
-      }
-      if (hadToolFailure && currentEffort === "medium") {
-        newEffort = "high";
+      if (stepNumber > 8 || hadToolFailure) {
+        if (currentEffort === "low") newEffort = "medium";
+        else if (currentEffort === "medium") newEffort = "high";
       }
 
       if (newEffort !== currentEffort) {
