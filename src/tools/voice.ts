@@ -451,8 +451,10 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           agentConfig.conversation_config?.agent?.dynamic_variables
             ?.dynamic_variable_placeholders ?? {};
 
+        const excludedVars = new Set(["call_context", "call_opener"]);
         const missingVars: string[] = [];
         for (const key of Object.keys(placeholders)) {
+          if (excludedVars.has(key)) continue;
           if (dynamicVars[key] === undefined) {
             const defaultVal = placeholders[key];
             if (
