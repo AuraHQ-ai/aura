@@ -695,10 +695,7 @@ export async function generateResponse(
                 streamKeepAlive = null;
                 return;
               }
-              await tryStreamAppend({
-                type: "rich_text",
-                elements: [{ type: "rich_text_section", elements: [{ type: "text", text: " " }] }],
-              });
+              await tryStreamAppend({ markdown_text: " " });
             }, 20_000);
           }
           break;
