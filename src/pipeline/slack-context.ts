@@ -264,10 +264,15 @@ export async function fetchConversationContext(
 // ── Formatting ───────────────────────────────────────────────────────────────
 
 /** Format rich tool I/O records into a structured block for context. */
-function formatToolIO(records: ToolIORecord[]): string {
+function formatToolIO(records: ToolIORecord[], isOld = false): string {
+  const trunc = (s: string, max: number) =>
+    s.length > max ? s.slice(0, max) + "..." : s;
+
   const parts = records.map((r) => {
     const error = r.is_error ? " [ERROR]" : "";
-    return `  - ${r.name}${error}\n    Input: ${r.input}\n    Output: ${r.output}`;
+    const inputStr = isOld ? trunc(String(r.input ?? ""), 500) : String(r.input ?? "");
+    const outputStr = isOld ? trunc(String(r.output ?? ""), 500) : String(r.output ?? "");
+    return `  - ${r.name}${error}\n    Input: ${inputStr}\n    Output: ${outputStr}`;
   });
   return `\n[Tool I/O]\n${parts.join("\n")}`;
 }
@@ -287,10 +292,10 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
 }
 
 /** Format a single message, preferring rich tool I/O over task_card summaries. */
-function formatMessage(m: SlackThreadMessage, timezone?: string): string {
+function formatMessage(m: SlackThreadMessage, timezone?: string, isOld = false): string {
   const time = formatTimestamp(m.ts, timezone);
   const base = `[${time}] ${m.displayName}: ${m.text}`;
-  if (m.toolIO?.length) return base + formatToolIO(m.toolIO);
+  if (m.toolIO?.length) return base + formatToolIO(m.toolIO, isOld);
   if (m.toolCalls?.length) return base + formatToolCalls(m.toolCalls);
   return base;
 }
@@ -311,6 +316,8 @@ export function formatConversationContext(
   includeChannelFallback: boolean = true,
   timezone?: string,
 ): string | undefined {
+  const RECENT_TOOL_IO_COUNT = 10;
+
   // Prefer thread context if available
   if (conversation.thread && conversation.thread.length > 0) {
     // Cap thread context to avoid inflating the system prompt for long threads.
@@ -322,7 +329,10 @@ export function formatConversationContext(
         ? thread
         : [thread[0], ...thread.slice(-MAX_THREAD_MESSAGES + 1)];
     const threadFormatted = capped
-      .map((m) => formatMessage(m, timezone))
+      .map((m, i) => {
+        const isOld = i < capped.length - RECENT_TOOL_IO_COUNT;
+        return formatMessage(m, timezone, isOld);
+      })
       .join("\n\n");
 
     // Include channel messages posted before the thread root for broader context.
@@ -339,7 +349,7 @@ export function formatConversationContext(
 
     if (surrounding.length > 0) {
       const channelFormatted = surrounding
-        .map((m) => formatMessage(m, timezone))
+        .map((m) => formatMessage(m, timezone, true))
         .join("\n\n");
       return (
         "Channel messages near the thread (for context):\n\n" +
@@ -354,8 +364,12 @@ export function formatConversationContext(
 
   // Fall back to recent channel/DM messages only when appropriate
   if (includeChannelFallback && conversation.recentMessages.length > 0) {
-    const formatted = conversation.recentMessages
-      .map((m) => formatMessage(m, timezone))
+    const msgs = conversation.recentMessages;
+    const formatted = msgs
+      .map((m, i) => {
+        const isOld = i < msgs.length - RECENT_TOOL_IO_COUNT;
+        return formatMessage(m, timezone, isOld);
+      })
       .join("\n\n");
     return formatted;
   }
