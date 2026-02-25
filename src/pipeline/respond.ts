@@ -923,7 +923,7 @@ export async function generateResponse(
           try { await streamer.stop(); } catch { /* already finalized */ }
         } else if (isChannelTypeNotSupported(stopErr)) {
           streamingUnsupportedChannels.add(channelId);
-          logger.warn("streamer.stop() hit channel_type_not_supported, finalizing gracefully", {
+          logger.warn("streamer.stop() hit channel_type_not_supported, finalizing without payload", {
             channelId,
           });
           logError({
@@ -932,6 +932,7 @@ export async function generateResponse(
             errorCode: "channel_type_not_supported",
             channelId,
           });
+          try { await streamer.stop(); } catch { /* already finalized */ }
         } else {
           throw stopErr;
         }
