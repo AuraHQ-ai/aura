@@ -1,6 +1,7 @@
-import type { LanguageModel } from "ai";
+import { pruneMessages } from "ai";
+import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort } from "../lib/ai.js";
+import { supportsEffort, isAnthropicModel, buildContextManagement } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -19,11 +20,13 @@ type PrepareStepResult = {
   system?: string;
   providerOptions?: ProviderOptions;
   model?: LanguageModel;
+  messages?: Array<ModelMessage>;
 } | undefined;
 
 type PrepareStepFn = (options: {
   stepNumber: number;
   steps: Array<any>;
+  messages: Array<ModelMessage>;
   [key: string]: unknown;
 }) => PrepareStepResult | PromiseLike<PrepareStepResult>;
 
@@ -46,13 +49,14 @@ export function createPrepareStep(opts: {
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
-  const isAnthropic = opts.modelId ? supportsEffort(opts.modelId) : false;
+  const hasEffortSupport = opts.modelId ? supportsEffort(opts.modelId) : false;
+  const modelIsAnthropic = opts.modelId ? isAnthropicModel(opts.modelId) : false;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
 
-  return async ({ stepNumber, steps }) => {
+  return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
     let providerOptions: ProviderOptions | undefined;
     let modelOverride: LanguageModel | undefined;
@@ -69,7 +73,7 @@ export function createPrepareStep(opts: {
     if (hadToolFailure) failureCount++;
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
-    if (isAnthropic) {
+    if (hasEffortSupport) {
       let newEffort = currentEffort;
 
       if (stepNumber > 8 || hadToolFailure) {
@@ -85,13 +89,24 @@ export function createPrepareStep(opts: {
         });
       }
 
-      providerOptions = { anthropic: { effort: currentEffort } };
+      providerOptions = {
+        anthropic: {
+          effort: currentEffort,
+          contextManagement: buildContextManagement(),
+        },
+      };
+    } else if (modelIsAnthropic) {
+      providerOptions = {
+        anthropic: {
+          contextManagement: buildContextManagement(),
+        },
+      };
     }
 
     // --- Model escalation: persistent failures → escalation model ---
     // For effort-supporting models: escalate after reaching max effort and still failing.
     // For other models: escalate after 3+ cumulative tool failures.
-    const readyToEscalateModel = isAnthropic
+    const readyToEscalateModel = hasEffortSupport
       ? (currentEffort === "high" && hadToolFailure)
       : (failureCount >= 3);
 
@@ -131,10 +146,14 @@ export function createPrepareStep(opts: {
       });
     }
 
-    const hasOverrides = systemOverride || providerOptions || modelOverride;
-    if (!hasOverrides) return undefined;
+    const prunedMessages = pruneMessages({
+      messages,
+      toolCalls: "before-last-5-messages",
+      reasoning: "before-last-message",
+    });
 
     return {
+      messages: prunedMessages,
       ...(systemOverride && { system: systemOverride }),
       ...(providerOptions && { providerOptions }),
       ...(modelOverride && { model: modelOverride }),
