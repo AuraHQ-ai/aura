@@ -589,7 +589,8 @@ export async function generateResponse(
             pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
           }
 
-          const taskOutput = resultSlackMeta?.output?.(output);
+          const taskOutput = resultSlackMeta?.output?.(output)
+            ?? (isError && output.error ? String(output.error) : undefined);
           const sources = resultSlackMeta?.sources?.(output);
 
           const toolResultPayload = {
