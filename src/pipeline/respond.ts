@@ -1,6 +1,6 @@
 import { streamText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
-import { getMainModel, isAnthropicModel, getEscalationModel, withCacheControl } from "../lib/ai.js";
+import { getMainModel, supportsEffort, getEscalationModel, withCacheControl } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
@@ -527,7 +527,7 @@ export async function generateResponse(
       getEscalationModel,
     }),
     abortSignal: abortController.signal,
-    ...(isAnthropicModel(modelId) && {
+    ...(supportsEffort(modelId) && {
       providerOptions: { anthropic: { effort: "medium" } },
     }),
   };

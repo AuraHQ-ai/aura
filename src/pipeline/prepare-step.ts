@@ -1,6 +1,6 @@
 import type { LanguageModel } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { isAnthropicModel } from "../lib/ai.js";
+import { supportsEffort } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -46,7 +46,7 @@ export function createPrepareStep(opts: {
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
-  const isAnthropic = opts.modelId ? isAnthropicModel(opts.modelId) : false;
+  const isAnthropic = opts.modelId ? supportsEffort(opts.modelId) : false;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
   let escalatedModel: LanguageModel | null = null;
