@@ -1068,17 +1068,23 @@ export async function generateResponse(
     if (isChannelTypeNotSupported(error) && accumulatedText) {
       streamingUnsupportedChannels.add(channelId);
       try {
-        await safePostMessage(slackClient, {
+        const fallbackResult = await safePostMessage(slackClient, {
           channel: channelId,
           text: formatForSlack(accumulatedText) || accumulatedText,
           thread_ts: threadTs,
         });
-        return {
-          raw: accumulatedText,
-          alreadyPosted: true,
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          toolCalls: toolCallRecords,
-        };
+        if (fallbackResult.ok) {
+          return {
+            raw: accumulatedText,
+            alreadyPosted: true,
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            toolCalls: toolCallRecords,
+          };
+        }
+        logger.warn("LLM response lost — channel does not support posting", {
+          channelId,
+          rawLength: accumulatedText.length,
+        });
       } catch { /* truly cannot post to this channel */ }
     }
 
