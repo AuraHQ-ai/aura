@@ -521,7 +521,6 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
             dynamic_variables: dynamicVars,
             conversation_config_override: {
               agent: {
-                first_message: resolvedFirstMessage,
                 language: langConfig.languageCode,
               },
               ...(resolvedVoiceId
