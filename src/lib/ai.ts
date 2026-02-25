@@ -160,11 +160,14 @@ export function isAnthropicModel(modelId: string): boolean {
 }
 
 /**
- * Get the escalation model (Opus 4.6) for automatic model escalation.
+ * Get the escalation model for automatic model escalation.
  * Used when Sonnet is struggling — prepareStep can swap to this mid-conversation.
+ * Priority: DB setting > env var > default (Opus 4.6)
  */
 export async function getEscalationModel() {
-  const gatewayId = "anthropic/claude-opus-4-6";
+  const override = await getSetting("model_escalation");
+  const gatewayId =
+    override || process.env.MODEL_ESCALATION || "anthropic/claude-opus-4-6";
   const gatewayModel = gateway(gatewayId);
   return withAnthropicFallback(gatewayModel, gatewayId);
 }
