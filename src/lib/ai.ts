@@ -5,7 +5,7 @@ import {
 } from "ai";
 
 /** The model type that wrapLanguageModel accepts (LanguageModelV3, not re-exported by "ai"). */
-type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
+export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
 import { logger } from "./logger.js";
 
@@ -42,9 +42,9 @@ export async function getMainModelId(): Promise<string> {
  * Priority: DB setting > env var > default
  */
 export async function getMainModel() {
-  const gatewayId = await getMainModelId();
-  const gatewayModel = gateway(gatewayId);
-  return withAnthropicFallback(gatewayModel, gatewayId);
+  const modelId = await getMainModelId();
+  const gatewayModel = gateway(modelId);
+  return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
 }
 
 /**
@@ -153,6 +153,39 @@ export async function getEmbeddingModel() {
     override || process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small";
   return gateway.embedding(gatewayId);
 }
+
+/**
+ * Check if a model supports the Anthropic `effort` parameter.
+ * Currently supported: Claude Opus 4.5, Opus 4.6, and Sonnet 4.6.
+ */
+export function supportsEffort(modelId: string): boolean {
+  return /claude-(?:opus-4-[56]|sonnet-4-6)/.test(modelId);
+}
+
+/**
+ * Get the escalation model for automatic model escalation.
+ * Used when the default model is struggling — prepareStep can swap to this mid-conversation.
+ * Priority: DB setting > env var > default (Opus 4.6)
+ */
+export async function getEscalationModel() {
+  const override = await getSetting("model_escalation");
+  const modelId =
+    override || process.env.MODEL_ESCALATION || "anthropic/claude-opus-4-6";
+  const gatewayModel = gateway(modelId);
+  return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 /**
  * Static references kept for backward compatibility where async isn't feasible.

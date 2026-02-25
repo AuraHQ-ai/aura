@@ -1,6 +1,6 @@
 import type { WebClient } from "@slack/web-api";
 import { generateText } from "ai";
-import { getFastModel } from "../lib/ai.js";
+import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
 import { resolveChannelById } from "../tools/slack.js";
@@ -297,7 +297,7 @@ async function llmShouldRespond(
     const model = await getFastModel();
     const result = await generateText({
       model,
-      system: systemPrompt,
+      system: withCacheControl(systemPrompt),
       prompt: userMessage,
       maxOutputTokens: 5,
     });
