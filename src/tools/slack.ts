@@ -315,18 +315,21 @@ export async function resolveChannelByName(
 ): Promise<{ id: string; name: string } | null> {
   const cleaned = name.replace(/^#/, "").trim();
 
-  // Extract parenthetical ID if present: "dev (C0BNVKS77)" -> use ID
-  const idInParens = cleaned.match(/\((C[A-Z0-9]+)\)/);
+  // Extract parenthetical ID if present: "dev (C0BNVKS77)" or "Joan (D0AF3AMBLLE)" -> use ID
+  const idInParens = cleaned.match(/\(([CDG][A-Z0-9]+)\)/);
   if (idInParens) {
     const id = idInParens[1];
-    const displayName = cleaned.replace(/\s*\(?C[A-Z0-9]+\)?/, "").trim();
+    const displayName = cleaned.replace(/\s*\(?[CDG][A-Z0-9]+\)?/, "").trim();
     return { id, name: displayName || id };
   }
 
-  // If it looks like a raw channel ID, resolve the actual name
-  if (/^C[A-Z0-9]+$/.test(cleaned)) {
-    const resolved = await resolveChannelById(client, cleaned);
-    return resolved ? { id: resolved.id, name: resolved.name } : { id: cleaned, name: cleaned };
+  // If it looks like a raw channel ID (C=channel, D=DM, G=group DM), pass through
+  if (/^[CDG][A-Z0-9]+$/.test(cleaned)) {
+    if (cleaned.startsWith("C")) {
+      const resolved = await resolveChannelById(client, cleaned);
+      return resolved ? { id: resolved.id, name: resolved.name } : { id: cleaned, name: cleaned };
+    }
+    return { id: cleaned, name: cleaned };
   }
 
   // Name-based lookup via bot's cache (channels bot is already in)
@@ -2435,12 +2438,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     edit_message: tool({
       description:
-        "Edit one of Aura's own messages. Can only edit messages Aura posted — not other people's. Use to fix typos, update a posted summary, or correct information.",
+        "Edit one of Aura's own messages. Can only edit messages Aura posted — not other people's. Use to fix typos, update a posted summary, or correct information. Works in channels and DMs — pass a DM channel ID (D...) or group DM ID (G...) directly.",
       inputSchema: z.object({
         channel: z
           .string()
           .describe(
-            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+            "Channel name (e.g. 'general'), channel ID (e.g. 'C0BNVKS77'), or DM channel ID (e.g. 'D0AF3AMBLLE')",
           ),
         message_ts: z.string().describe("Timestamp of the message to edit"),
         new_text: z.string().describe("The new message text"),
@@ -2472,12 +2475,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     delete_message: tool({
       description:
-        "Delete one of Aura's own messages. Can only delete messages Aura posted — not other people's. Use to clean up test posts or mistakes.",
+        "Delete one of Aura's own messages. Can only delete messages Aura posted — not other people's. Use to clean up test posts or mistakes. Works in channels and DMs — pass a DM channel ID (D...) or group DM ID (G...) directly.",
       inputSchema: z.object({
         channel: z
           .string()
           .describe(
-            "Channel name (e.g. 'general') or channel ID (e.g. 'C0BNVKS77')",
+            "Channel name (e.g. 'general'), channel ID (e.g. 'C0BNVKS77'), or DM channel ID (e.g. 'D0AF3AMBLLE')",
           ),
         message_ts: z.string().describe("Timestamp of the message to delete"),
       }),
