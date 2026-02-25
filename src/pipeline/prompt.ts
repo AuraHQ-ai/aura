@@ -114,6 +114,8 @@ export async function assemblePrompt(
     userProfile,
     channelContext,
     channelType: context.channelType,
+    channelId: context.channelId,
+    threadTs: context.threadTs,
     userTimezone: userProfile?.timezone || undefined,
     threadContext,
     isChannelHistory,
