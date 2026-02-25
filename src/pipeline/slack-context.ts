@@ -265,9 +265,14 @@ export async function fetchConversationContext(
 
 /** Format rich tool I/O records into a structured block for context. */
 function formatToolIO(records: ToolIORecord[]): string {
+  const trunc = (s: string, max: number) =>
+    s.length > max ? s.slice(0, max) + "..." : s;
+
   const parts = records.map((r) => {
     const error = r.is_error ? " [ERROR]" : "";
-    return `  - ${r.name}${error}\n    Input: ${r.input}\n    Output: ${r.output}`;
+    const inputStr = trunc(String(r.input ?? ""), 200);
+    const outputStr = trunc(String(r.output ?? ""), r.is_error ? 500 : 200);
+    return `  - ${r.name}${error}\n    Input: ${inputStr}\n    Output: ${outputStr}`;
   });
   return `\n[Tool I/O]\n${parts.join("\n")}`;
 }
