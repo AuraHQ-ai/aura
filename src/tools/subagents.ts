@@ -111,10 +111,11 @@ export function createSubagentTools(
           return { ok: false as const, error: "Admin-only tool" };
         }
 
-        const model =
+        const resolvedModel =
           model_preference === "main"
             ? await getMainModel()
-            : await getFastModel();
+            : { model: await getFastModel() };
+        const model = resolvedModel.model;
 
         const tools = await buildToolScope(scope, client, context);
 
