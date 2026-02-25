@@ -154,9 +154,12 @@ export async function getEmbeddingModel() {
   return gateway.embedding(gatewayId);
 }
 
-/** Check if a model ID refers to an Anthropic model (effort parameter supported). */
-export function isAnthropicModel(modelId: string): boolean {
-  return modelId.includes("anthropic") || modelId.includes("claude");
+/**
+ * Check if a model supports the Anthropic `effort` parameter.
+ * Currently supported: Claude Opus 4.5, Opus 4.6, and Sonnet 4.6.
+ */
+export function supportsEffort(modelId: string): boolean {
+  return /claude-(?:opus-4-[56]|sonnet-4-6)/.test(modelId);
 }
 
 /**
