@@ -164,16 +164,28 @@ export function supportsEffort(modelId: string): boolean {
 
 /**
  * Get the escalation model for automatic model escalation.
- * Used when Sonnet is struggling — prepareStep can swap to this mid-conversation.
+ * Used when the default model is struggling — prepareStep can swap to this mid-conversation.
  * Priority: DB setting > env var > default (Opus 4.6)
  */
 export async function getEscalationModel() {
   const override = await getSetting("model_escalation");
-  const gatewayId =
+  const modelId =
     override || process.env.MODEL_ESCALATION || "anthropic/claude-opus-4-6";
-  const gatewayModel = gateway(gatewayId);
-  return withAnthropicFallback(gatewayModel, gatewayId);
+  const gatewayModel = gateway(modelId);
+  return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 /**
  * Static references kept for backward compatibility where async isn't feasible.
