@@ -76,7 +76,13 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           .string()
           .optional()
           .describe(
-            "Reuse an existing Browserbase session ID. If omitted, a new session is created and released after.",
+            "Reuse an existing Browserbase session ID. If omitted, a new session is created with keepAlive=true and the session_id is returned for reuse in follow-up calls. Pass release_session: true on the final call to close it.",
+          ),
+        release_session: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Call REQUEST_RELEASE on the session after this action to close it. Use on the final call in a multi-turn chain. Default false.",
           ),
         screenshot: z
           .boolean()
@@ -109,6 +115,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
         url,
         code,
         session_id,
+        release_session,
         screenshot,
         extract,
         headers,
@@ -150,23 +157,24 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           };
         }
 
-        const ownSession = !session_id;
         let browser: any = null;
         let currentSessionId = session_id || "";
+        const ownSession = !session_id;
+        let failed = false;
 
         try {
-          // Create or reuse session
-          if (ownSession) {
+          if (session_id) {
+            browser = await connectSession(session_id);
+          } else {
+            // Create a new keepAlive session
             const session = await createSession({
               browserSettings: stealth
                 ? { fingerprint: { locales: ["en-US"] } }
                 : undefined,
             });
             currentSessionId = session.id;
+            browser = await connectSession(currentSessionId);
           }
-
-          // Connect to the session
-          browser = await connectSession(currentSessionId);
           if (!browser) {
             return { ok: false, error: "Failed to connect to browser session." };
           }
@@ -297,6 +305,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
 
           return result;
         } catch (error: any) {
+          failed = true;
           logger.error("browse tool: failed", {
             error: error.message,
             sessionId: currentSessionId,
@@ -307,7 +316,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
             session_id: currentSessionId || undefined,
           };
         } finally {
-          // Clean up
+          const shouldRelease = release_session || (ownSession && failed);
           if (browser) {
             try {
               await browser.close();
@@ -315,7 +324,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
               // ignore close errors
             }
           }
-          if (ownSession && currentSessionId) {
+          if (shouldRelease && currentSessionId) {
             await releaseSession(currentSessionId);
           }
         }
