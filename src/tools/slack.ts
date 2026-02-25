@@ -2258,12 +2258,15 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           ),
       }),
       execute: async ({ content, filename, channel, title, is_binary, thread_ts }) => {
+        const resolvedChannel = channel ?? context?.channelId;
+        const resolvedThreadTs = thread_ts ?? context?.threadTs;
+
         try {
           const fileBuffer = is_binary
             ? Buffer.from(content, "base64")
             : Buffer.from(content, "utf-8");
 
-          if (thread_ts && !channel) {
+          if (resolvedThreadTs && !resolvedChannel) {
             return {
               ok: false,
               error:
@@ -2272,18 +2275,18 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           }
 
           let channelId: string | undefined;
-          if (channel) {
-            if (/^D[A-Z0-9]+$/.test(channel)) {
-              channelId = channel;
-            } else if (/^[CG][A-Z0-9]+$/.test(channel)) {
-              channelId = channel;
+          if (resolvedChannel) {
+            if (/^D[A-Z0-9]+$/.test(resolvedChannel)) {
+              channelId = resolvedChannel;
+            } else if (/^[CG][A-Z0-9]+$/.test(resolvedChannel)) {
+              channelId = resolvedChannel;
             } else {
-              const resolved = await resolveChannelByName(client, channel);
+              const resolved = await resolveChannelByName(client, resolvedChannel);
               if (resolved) {
                 channelId = resolved.id;
               } else {
                 try {
-                  const user = await resolveUserByName(client, channel);
+                  const user = await resolveUserByName(client, resolvedChannel);
                   if (user?.id) {
                     const dm = await client.conversations.open({ users: user.id });
                     channelId = dm.channel?.id;
@@ -2294,7 +2297,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
                 if (!channelId) {
                   return {
                     ok: false,
-                    error: `Could not find channel or user "${channel}". Use list_channels to see available channels.`,
+                    error: `Could not find channel or user "${resolvedChannel}". Use list_channels to see available channels.`,
                   };
                 }
               }
@@ -2324,7 +2327,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             files: [{ id: fileId, title: title || filename }],
           };
           if (channelId) completeParams.channel_id = channelId;
-          if (thread_ts) completeParams.thread_ts = thread_ts;
+          if (resolvedThreadTs) completeParams.thread_ts = resolvedThreadTs;
 
           const completeResp = await client.files.completeUploadExternal(completeParams as any);
 
@@ -2332,7 +2335,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           logger.info("upload_file tool called", {
             filename,
-            channel,
+            channel: resolvedChannel,
             fileId,
           });
 
@@ -2344,7 +2347,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         } catch (error: any) {
           logger.error("upload_file tool failed", {
             filename,
-            channel,
+            channel: resolvedChannel,
             error: error.message,
           });
           return {
