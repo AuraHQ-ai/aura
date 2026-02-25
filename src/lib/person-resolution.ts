@@ -84,7 +84,7 @@ export async function createPersonWithAddress(
     // Address exists but has no person — claim it for the new person
     await db
       .update(addresses)
-      .set({ personId: person.id })
+      .set({ personId: person.id, isDiscarded: false, discardReason: null })
       .where(
         and(eq(addresses.channel, channel), eq(addresses.value, normalised)),
       );
