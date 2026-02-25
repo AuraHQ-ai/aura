@@ -172,18 +172,18 @@ export function supportsEffort(modelId: string): boolean {
 
 /**
  * Build Anthropic context management configuration.
- * Combines three strategies:
+ * Combines two strategies:
  * 1. Clear old tool uses at 60K tokens (keep last 5)
- * 2. Clear old thinking turns (keep last 3)
- * 3. Compact (summarize) at 80K tokens
+ * 2. Compact (summarize) at 80K tokens
+ *
+ * Note: clear_thinking_20251015 is omitted because it requires `thinking`
+ * to be explicitly enabled or adaptive. We use `effort` instead, which
+ * doesn't satisfy that requirement and causes 400 errors across all
+ * gateway providers.
  */
 export function buildContextManagement() {
   return {
     edits: [
-      {
-        type: "clear_thinking_20251015" as const,
-        keep: { type: "thinking_turns" as const, value: 3 },
-      },
       {
         type: "clear_tool_uses_20250919" as const,
         trigger: { type: "input_tokens" as const, value: 60000 },
