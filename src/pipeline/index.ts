@@ -256,7 +256,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     );
     if (isSlackbotListNotification(event, alwaysProcessChannels)) {
       context.slackListItemContext = {
-        messageTs: context.messageTs,
+        messageTs: context.threadTs ?? context.messageTs,
         channelId: context.channelId,
         notificationText: messageText,
       };
