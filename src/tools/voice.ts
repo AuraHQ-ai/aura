@@ -9,40 +9,16 @@ import { logger } from "../lib/logger.js";
 
 // ── Language Config ──────────────────────────────────────────────────────────
 
-const COMPANY_NAME = process.env.COMPANY_NAME ?? "RealAdvisor";
-
 interface LanguageConfig {
   languageCode: string;
-  firstMessage: string;
-  defaultOpener: string;
 }
 
 const LANGUAGE_CONFIGS: Record<string, LanguageConfig> = {
-  es: {
-    languageCode: "es",
-    firstMessage: `Hola {{person_name}}, soy Aura de ${COMPANY_NAME}. {{call_opener}}`,
-    defaultOpener: "Quería ponerme en contacto contigo.",
-  },
-  fr: {
-    languageCode: "fr",
-    firstMessage: `Bonjour {{person_name}}, c'est Aura de ${COMPANY_NAME}. {{call_opener}}`,
-    defaultOpener: "Je voulais prendre de vos nouvelles.",
-  },
-  it: {
-    languageCode: "it",
-    firstMessage: `Ciao {{person_name}}, sono Aura di ${COMPANY_NAME}. {{call_opener}}`,
-    defaultOpener: "Volevo mettermi in contatto con te.",
-  },
-  en: {
-    languageCode: "en",
-    firstMessage: `Hi {{person_name}}, this is Aura from ${COMPANY_NAME}. {{call_opener}}`,
-    defaultOpener: "I wanted to check in with you.",
-  },
-  de: {
-    languageCode: "de",
-    firstMessage: `Hallo {{person_name}}, hier ist Aura von ${COMPANY_NAME}. {{call_opener}}`,
-    defaultOpener: "Ich wollte mich bei Ihnen melden.",
-  },
+  es: { languageCode: "es" },
+  fr: { languageCode: "fr" },
+  it: { languageCode: "it" },
+  en: { languageCode: "en" },
+  de: { languageCode: "de" },
 };
 
 const DEFAULT_LANGUAGE = "en";
@@ -374,12 +350,6 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           .describe(
             "Why we are calling — injected into the voice agent as context.",
           ),
-        opener: z
-          .string()
-          .optional()
-          .describe(
-            "Custom greeting for the call. Defaults to a language-appropriate greeting.",
-          ),
         language: z
           .string()
           .optional()
@@ -394,7 +364,6 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         voice_id: voiceId,
         person_name,
         context: callContext,
-        opener,
         language,
       }) => {
         if (!isAdmin(context?.userId)) {
@@ -467,16 +436,12 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         const langConfig = getLanguageConfig(langKey);
 
         const resolvedVoiceId = voiceId ?? DEFAULT_VOICE_ID;
-        const resolvedOpener = opener || langConfig.defaultOpener;
-        const resolvedFirstMessage = langConfig.firstMessage
-          .replace("{{person_name}}", resolvedName)
-          .replace("{{call_opener}}", resolvedOpener);
 
-        // Build dynamic variables from tool params
+        // Only pass variables that don't trigger the agent to speak first.
+        // call_opener and call_context are deliberately excluded so the agent
+        // waits silently for the human to speak, matching sandbox curl behavior.
         const dynamicVars: Record<string, string | number | boolean> = {
           person_name: resolvedName,
-          call_context: callContext,
-          call_opener: resolvedOpener,
           person_language: langConfig.languageCode,
           direction: "outbound",
         };
