@@ -10,19 +10,23 @@
  * - Level 3 (lazy): referenced resources executed when needed
  */
 
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes } from "../db/schema.js";
 
 /**
  * Build a compact skill index for injection into system prompts.
  * Returns empty string if no skill notes exist.
+ *
+ * Ordered by topic to ensure deterministic output — PostgreSQL returns rows
+ * in arbitrary order without ORDER BY, which would bust the prompt cache.
  */
 export async function buildSkillIndex(): Promise<string> {
   const skills = await db
     .select({ topic: notes.topic, content: notes.content })
     .from(notes)
-    .where(eq(notes.category, "skill"));
+    .where(eq(notes.category, "skill"))
+    .orderBy(asc(notes.topic));
 
   if (skills.length === 0) return "";
 
