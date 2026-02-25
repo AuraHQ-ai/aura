@@ -84,7 +84,7 @@ export async function assemblePrompt(
   // would have no conversation context despite the shouldRespond gate seeing it.
   const useChannelFallback =
     context.isDm || !!context.threadTs || conversation.auraRecentlyActive;
-  const threadContext = formatConversationContext(
+  const threadContext = await formatConversationContext(
     conversation,
     useChannelFallback,
     userProfile?.timezone || undefined,
