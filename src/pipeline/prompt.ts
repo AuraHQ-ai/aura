@@ -131,10 +131,10 @@ export async function assemblePrompt(
   // Inject guidance for USLACKBOT list notifications so the LLM investigates
   // the actual list item instead of responding to the generic notification text.
   if (context.slackListItemContext) {
-    const { messageTs, channelId: listChannelId, notificationText } = context.slackListItemContext;
+    const { messageTs, channelId: listChannelId } = context.slackListItemContext;
     systemPrompt += `\n\n## Slack List Item Notification Context
 
-The incoming message is a Slackbot notification ("${notificationText}") about a Slack List item, NOT a real user message.
+The incoming message is a Slackbot notification about a Slack List item, NOT a real user message.
 Do NOT respond to or paraphrase the notification text. Instead, investigate the actual item:
 
 1. Use read_thread_replies(channel: "${listChannelId}", thread_ts: "${messageTs}") to read the item's comment thread and see what changed.
