@@ -155,11 +155,52 @@ export async function getEmbeddingModel() {
 }
 
 /**
+ * Check if a model ID refers to an Anthropic model.
+ * Matches gateway IDs (anthropic/claude-...) and direct IDs (claude-...).
+ */
+export function isAnthropicModel(modelId: string): boolean {
+  return modelId.startsWith("anthropic/") || modelId.includes("claude");
+}
+
+/**
  * Check if a model supports the Anthropic `effort` parameter.
  * Currently supported: Claude Opus 4.5, Opus 4.6, and Sonnet 4.6.
  */
 export function supportsEffort(modelId: string): boolean {
   return /claude-(?:opus-4-[56]|sonnet-4-6)/.test(modelId);
+}
+
+/**
+ * Build Anthropic context management configuration.
+ * Combines three strategies:
+ * 1. Clear old tool uses at 60K tokens (keep last 5)
+ * 2. Clear old thinking turns (keep last 3)
+ * 3. Compact (summarize) at 80K tokens
+ */
+export function buildContextManagement() {
+  return {
+    edits: [
+      {
+        type: "clear_tool_uses_20250919" as const,
+        trigger: { type: "input_tokens" as const, value: 60000 },
+        keep: { type: "tool_uses" as const, value: 5 },
+        clearToolInputs: true,
+      },
+      {
+        type: "clear_thinking_20251015" as const,
+        keep: { type: "thinking_turns" as const, value: 3 },
+      },
+      {
+        type: "compact_20260112" as const,
+        trigger: { type: "input_tokens" as const, value: 80000 },
+        instructions:
+          "Preserve: current task state and goal, key decisions made, error patterns found, " +
+          "file paths being investigated, user preferences learned, thread context (channel, thread_ts), " +
+          "and any data/metrics discovered. Drop: verbatim tool outputs that have been summarized, " +
+          "intermediate failed attempts, redundant search results.",
+      },
+    ],
+  };
 }
 
 /**
