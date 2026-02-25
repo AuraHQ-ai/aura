@@ -1,4 +1,3 @@
-import { tool } from "ai";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { formatTimestamp } from "../lib/temporal.js";
@@ -108,7 +107,7 @@ async function resolveDatasetLocation(
  */
 export function createBigQueryTools(context?: ScheduleContext) {
   return {
-    list_datasets: tool({
+    list_datasets: defineTool({
       description:
         "List all datasets in the BigQuery data warehouse. Use this to discover what data is available. After exploring, save findings to a 'data-warehouse-map' knowledge note for future reference.",
       inputSchema: z.object({}),
@@ -137,9 +136,10 @@ export function createBigQueryTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to list datasets: ${error.message}` };
         }
       },
+      slack: { status: "Listing datasets..." },
     }),
 
-    list_tables: tool({
+    list_tables: defineTool({
       description:
         "List all tables in a BigQuery dataset, including type, row count, and description.",
       inputSchema: z.object({
@@ -174,9 +174,10 @@ export function createBigQueryTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Listing tables...", detail: (i) => i.dataset },
     }),
 
-    inspect_table: tool({
+    inspect_table: defineTool({
       description:
         "Get a table's full schema, metadata, and sample rows. Always use this before querying an unfamiliar table — the sample rows show actual data values, formats, and sparsity, which is much more useful than schema alone. After exploring, update the 'data-warehouse-map' knowledge note with what you learn about datasets, key tables, useful columns, common joins, and data quirks.",
       inputSchema: z.object({
@@ -299,6 +300,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Inspecting table...", detail: (i) => `${i.dataset}.${i.table}` },
     }),
 
     execute_query: defineTool({
