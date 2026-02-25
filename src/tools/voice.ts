@@ -118,6 +118,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;
 
 async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
+  // Return fresh cache if available
   if (elevenLabsCache && Date.now() - elevenLabsCache.ts < CACHE_TTL_MS) {
     return elevenLabsCache;
   }
@@ -127,33 +128,45 @@ async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
 
   const headers = { "xi-api-key": apiKey };
 
+  // Use a helper that never throws -- returns null on timeout/error
+  async function safeFetch(url: string): Promise<Response | null> {
+    try {
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      return res.ok ? res : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Run all 3 in parallel; a single slow/down endpoint won't block the others
   const [agentsRes, phonesRes, voicesRes] = await Promise.all([
-    fetch(`${ELEVENLABS_API_BASE}/convai/agents`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
-    fetch(`${ELEVENLABS_API_BASE}/convai/phone-numbers`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
-    fetch(`${ELEVENLABS_API_BASE}/voices`, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }),
+    safeFetch(`${ELEVENLABS_API_BASE}/convai/agents`),
+    safeFetch(`${ELEVENLABS_API_BASE}/convai/phone-numbers`),
+    safeFetch(`${ELEVENLABS_API_BASE}/voices`),
   ]);
 
-  const responses = [agentsRes, phonesRes, voicesRes];
-  const failed = responses.find((r) => !r.ok);
-  if (failed) {
-    const label =
-      failed === agentsRes ? "Agents" :
-      failed === phonesRes ? "Phone numbers" : "Voices";
-    const errorText = await failed.text();
-    for (const r of responses) {
-      if (r !== failed) { try { await r.body?.cancel(); } catch {} }
-    }
-    throw new Error(`${label} API error (${failed.status}): ${errorText.substring(0, 200)}`);
+  // If ALL endpoints failed and we have stale cache, return it rather than throwing
+  if (!agentsRes && !phonesRes && !voicesRes && elevenLabsCache) {
+    return elevenLabsCache;
+  }
+
+  // Agents is the only mandatory endpoint
+  if (!agentsRes) {
+    throw new Error("ElevenLabs ConversationalAI API is unreachable (agents endpoint timed out)");
   }
 
   const agentsData = (await agentsRes.json()) as { agents?: Array<{ name: string; agent_id: string }> };
-  const phonesData = (await phonesRes.json()) as Array<{
-    phone_number: string;
-    label?: string;
-    phone_number_id: string;
-    assigned_agent?: { agent_id: string } | null;
-  }>;
-  const voicesData = (await voicesRes.json()) as { voices?: Array<{ name: string; voice_id: string; category?: string }> };
+  const phonesData = phonesRes
+    ? ((await phonesRes.json()) as Array<{
+        phone_number: string;
+        label?: string;
+        phone_number_id: string;
+        assigned_agent?: { agent_id: string } | null;
+      }>)
+    : [];
+  const voicesData = voicesRes
+    ? ((await voicesRes.json()) as { voices?: Array<{ name: string; voice_id: string; category?: string }> })
+    : { voices: [] };
 
   const agents: ElevenLabsAgent[] = (agentsData.agents ?? [])
     .filter((a): a is NonNullable<typeof a> => a != null)
