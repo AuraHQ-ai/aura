@@ -4,7 +4,6 @@ import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
 import { resolveChannelById } from "../tools/slack.js";
-import { getSettingJSON } from "../lib/settings.js";
 
 // ── Slack Event Types ────────────────────────────────────────────────────────
 // Minimal local types — replaces the @slack/bolt dependency that was only used
@@ -185,6 +184,7 @@ export interface ShouldRespondResult {
 export async function shouldRespond(
   context: MessageContext,
   conversation: ConversationContext,
+  alwaysProcessChannels: Set<string>,
 ): Promise<ShouldRespondResult> {
   // Tier 2: Aura is a thread participant or it's her thread
   if (conversation.isAuraParticipant || conversation.isAuraThread) {
@@ -205,9 +205,7 @@ export async function shouldRespond(
   }
 
   // Channel-level override: always process messages in designated channels
-  const channelList = await getSettingJSON<string[]>("always_process_channels", []);
-  const alwaysProcess = new Set(channelList ?? []);
-  if (alwaysProcess.has(context.channelId)) {
+  if (alwaysProcessChannels.has(context.channelId)) {
     return { respond: true, reason: "always_process_channel" };
   }
 

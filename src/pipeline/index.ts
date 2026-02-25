@@ -151,6 +151,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // conversation context from the Slack API when Tiers 2–3 need it.
   let conversation: ConversationContext | undefined;
   let decision: { respond: boolean; reason: string };
+  let alwaysProcessChannels: Set<string> | undefined;
 
   if (context.isDm) {
     decision = { respond: true, reason: "dm" };
@@ -166,7 +167,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       botUserId,
       context.threadTs,
     );
-    decision = await shouldRespond(context, conversation);
+    alwaysProcessChannels = new Set(
+      (await getSettingJSON<string[]>("always_process_channels", [])) ?? [],
+    );
+    decision = await shouldRespond(context, conversation, alwaysProcessChannels);
   }
 
   if (!decision.respond) {
@@ -251,9 +255,11 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // Any USLACKBOT message in a tracked List channel is a list activity
     // notification. We attach metadata so the prompt guides the LLM to
     // investigate the actual list item via tools.
-    const alwaysProcessChannels = new Set(
-      (await getSettingJSON<string[]>("always_process_channels", [])) ?? [],
-    );
+    if (!alwaysProcessChannels) {
+      alwaysProcessChannels = new Set(
+        (await getSettingJSON<string[]>("always_process_channels", [])) ?? [],
+      );
+    }
     if (isSlackbotListNotification(event, alwaysProcessChannels)) {
       context.slackListItemContext = {
         messageTs: context.threadTs ?? context.messageTs,
