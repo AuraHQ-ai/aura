@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq, and, desc, sql, inArray, ilike } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
@@ -18,7 +18,7 @@ export function createEmailSyncTools(
   context?: ScheduleContext,
 ) {
   return {
-    sync_emails: tool({
+    sync_emails: defineTool({
       description:
         "Sync emails from a user's Gmail into the staging pipeline. Supports date windows (after/before), relative dates (newer_than), or raw Gmail queries. Resumable — re-running with the same query skips already-synced emails. Admin-only.",
       inputSchema: z.object({
@@ -158,9 +158,10 @@ export function createEmailSyncTools(
           return { ok: false, error: `Sync failed: ${error.message}` };
         }
       },
+      slack: { status: "Syncing emails...", detail: (i) => i.user_name },
     }),
 
-    email_digest: tool({
+    email_digest: defineTool({
       description:
         "Get an email digest for a user: urgent items, threads awaiting reply, sorted by importance. Reads from the emails_raw staging table. Admin-only.",
       inputSchema: z.object({
@@ -374,9 +375,10 @@ export function createEmailSyncTools(
           return { ok: false, error: `Digest failed: ${error.message}` };
         }
       },
+      slack: { status: "Running email digest...", detail: (i) => i.user_name },
     }),
 
-    update_email_thread: tool({
+    update_email_thread: defineTool({
       description:
         "Update the triage state of an email thread. Use when a user tells you a thread is spam, resolved, not actionable, etc. Updates all emails in the thread. Any user can update their own threads.",
       inputSchema: z
@@ -507,6 +509,7 @@ export function createEmailSyncTools(
           };
         }
       },
+      slack: { status: "Updating email thread..." },
     }),
   };
 }

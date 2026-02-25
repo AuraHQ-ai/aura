@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
 
@@ -66,7 +66,7 @@ async function fetchJson<T>(url: string, token: string): Promise<T> {
 
 export function createSheetsTools() {
   return {
-    read_google_sheet: tool({
+    read_google_sheet: defineTool({
       description:
         "Read data from a Google Sheets spreadsheet. Accepts a spreadsheet ID or a full Google Sheets URL. The spreadsheet must be shared with aura@realadvisor.com (or be publicly accessible). Returns headers and rows.",
       inputSchema: z.object({
@@ -188,6 +188,14 @@ export function createSheetsTools() {
             error: `Failed to read Google Sheet: ${error.message}`,
           };
         }
+      },
+      slack: {
+        status: "Reading spreadsheet...",
+        detail: (i) => i.spreadsheet_id?.slice(0, 40),
+        output: (r) => {
+          if (r.ok === false && typeof r.error === "string") return r.error;
+          return `${Number(r.total_rows) || 0} rows`;
+        },
       },
     }),
   };

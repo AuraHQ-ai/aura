@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -68,7 +68,7 @@ async function postTable(
 
 export function createTableTools(client: WebClient, context?: ScheduleContext) {
   return {
-    draw_table: tool({
+    draw_table: defineTool({
       description:
         "Render structured data as a native Slack table. " +
         "Use this instead of markdown tables whenever you have tabular data " +
@@ -238,6 +238,7 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
           return { ok: false, error: `Failed to send table: ${err.message}` };
         }
       },
+      slack: { status: "Drawing table..." },
     }),
   };
 }

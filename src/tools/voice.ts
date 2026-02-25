@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -278,7 +278,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
   if (process.env.ELEVENLABS_API_KEY) {
     // ── list_voice_agents ───────────────────────────────────────────
-    tools.list_voice_agents = tool({
+    tools.list_voice_agents = defineTool({
       description:
         "List available ElevenLabs voice agents, phone numbers, and voices. " +
         "Call this BEFORE make_call when the user asks to call with a specific agent, " +
@@ -326,6 +326,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           return { ok: false, error: `Failed to list voice agents: ${error.message}` };
         }
       },
+      slack: { status: "Listing voice agents..." },
     });
 
     // ── make_call ───────────────────────────────────────────────────
@@ -333,7 +334,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
     const DEFAULT_FROM_NUMBER = process.env.ELEVENLABS_FROM_NUMBER ?? "+14158860211";
     const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? "upcns7xCtWHwsgL2HKV5";
 
-    tools.make_call = tool({
+    tools.make_call = defineTool({
       description:
         "Initiate an outbound phone call via ElevenLabs + Twilio. " +
         "Use list_voice_agents first to discover available agents/phones/voices, " +
@@ -629,10 +630,11 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           };
         }
       },
+      slack: { status: "Placing call...", detail: (i) => i.to_number },
     });
   }
 
-  tools.send_sms = tool({
+  tools.send_sms = defineTool({
     description:
       "Send an SMS text message via Twilio. Use for quick notifications or when someone isn't responding to Slack. Admin-only.",
     inputSchema: z.object({
@@ -763,6 +765,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         };
       }
     },
+    slack: { status: "Sending SMS...", detail: (i) => i.phone_number },
   });
 
   return tools;

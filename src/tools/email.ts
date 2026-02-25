@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
 
@@ -10,7 +10,7 @@ import { logger } from "../lib/logger.js";
  */
 export function createEmailTools() {
   return {
-    send_email: tool({
+    send_email: defineTool({
       description:
         "Send an email from aura@realadvisor.com. Use for external communication, follow-ups, outreach, and reports. Never send emails without being asked or having a clear reason (job, follow-up, etc.). Body is sent as plain text — keep it professional but conversational, same tone as Slack. DM privacy applies: don't email someone's private Slack DM content to others. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
@@ -97,9 +97,10 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Sending email...", detail: (i) => i.to },
     }),
 
-    read_emails: tool({
+    read_emails: defineTool({
       description:
         "Read recent emails from Aura's inbox. Can filter by unread status or search query. Supports pagination: pass page_token from a previous response's next_page_token to fetch the next page.",
       inputSchema: z.object({
@@ -171,9 +172,10 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Reading emails...", output: (r) => r.ok === false ? r.error : `${r.emails?.length ?? r.count ?? 0} emails` },
     }),
 
-    read_email: tool({
+    read_email: defineTool({
       description:
         "Read the full content of a specific email by its message ID.",
       inputSchema: z.object({
@@ -219,9 +221,10 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Reading email...", detail: (i) => i.message_id },
     }),
 
-    reply_to_email: tool({
+    reply_to_email: defineTool({
       description: "Reply to an existing email thread. Requires message_id and thread_id from read_emails or read_email.",
       inputSchema: z.object({
         message_id: z
@@ -274,11 +277,12 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Replying to email..." },
     }),
 
     // ── Workspace Directory Tools ───────────────────────────────────────────
 
-    lookup_workspace_user: tool({
+    lookup_workspace_user: defineTool({
       description:
         "Look up a person in the Google Workspace directory by name or email. Returns their email, title, department, and other org info. Use this to find someone's email address before sending them an email.",
       inputSchema: z.object({
@@ -335,9 +339,10 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Looking up user...", detail: (i) => i.query },
     }),
 
-    list_workspace_users: tool({
+    list_workspace_users: defineTool({
       description:
         "List all users in the Google Workspace directory. Returns emails, names, titles, and departments for everyone in the organization.",
       inputSchema: z.object({
@@ -385,11 +390,12 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Listing workspace users..." },
     }),
 
     // ── Contact Lookup ──────────────────────────────────────────────────────
 
-    lookup_contact: tool({
+    lookup_contact: defineTool({
       description:
         "Search for external contacts (agents, clients, partners) by name or email. Searches the RealAdvisor platform (3M+ users) and Close CRM (216K sales contacts across CH, ES, FR, IT). Returns name, email, phone, company, and source.",
       inputSchema: z.object({
@@ -421,11 +427,12 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Looking up contact...", detail: (i) => i.query },
     }),
 
     // ── Calendar Tools ──────────────────────────────────────────────────────
 
-    check_calendar: tool({
+    check_calendar: defineTool({
       description:
         "List upcoming calendar events for aura@realadvisor.com. Use to check schedule, find meetings, or see what's coming up.",
       inputSchema: z.object({
@@ -476,9 +483,10 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Checking calendar...", output: (r) => r.ok === false ? r.error : `${r.events?.length ?? r.count ?? 0} events` },
     }),
 
-    create_event: tool({
+    create_event: defineTool({
       description:
         "Create a calendar event with optional attendees. Sends email invitations to all attendees.",
       inputSchema: z.object({
@@ -523,9 +531,10 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Creating event...", detail: (i) => i.summary },
     }),
 
-    update_event: tool({
+    update_event: defineTool({
       description:
         "Update an existing calendar event. Only provided fields are changed.",
       inputSchema: z.object({
@@ -573,9 +582,10 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Updating event...", detail: (i) => i.event_id },
     }),
 
-    delete_event: tool({
+    delete_event: defineTool({
       description: "Delete a calendar event by its event ID.",
       inputSchema: z.object({
         event_id: z.string().describe("The calendar event ID to delete"),
@@ -600,9 +610,10 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Deleting event..." },
     }),
 
-    find_available_slot: tool({
+    find_available_slot: defineTool({
       description:
         "Find available meeting slots across multiple people's calendars. Uses the free/busy API to find gaps where everyone is free.",
       inputSchema: z.object({
@@ -648,6 +659,7 @@ export function createEmailTools() {
           };
         }
       },
+      slack: { status: "Finding availability..." },
     }),
   };
 }
@@ -660,7 +672,7 @@ export function createEmailTools() {
  */
 export function createGmailEATools() {
   return {
-    create_gmail_draft: tool({
+    create_gmail_draft: defineTool({
       description:
         "Create a draft email in a user's Gmail account. The user must have granted Aura OAuth access first. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
@@ -758,9 +770,10 @@ export function createGmailEATools() {
           };
         }
       },
+      slack: { status: "Creating draft...", detail: (i) => i.to },
     }),
 
-    list_gmail_drafts: tool({
+    list_gmail_drafts: defineTool({
       description:
         "List draft emails in a user's Gmail account. The user must have granted Aura OAuth access.",
       inputSchema: z.object({
@@ -810,9 +823,10 @@ export function createGmailEATools() {
           };
         }
       },
+      slack: { status: "Listing drafts...", detail: (i) => i.user_name },
     }),
 
-    read_user_emails: tool({
+    read_user_emails: defineTool({
       description:
         "Read recent emails from a specific user's Gmail inbox. The user must have granted Aura OAuth access. Supports pagination via page_token.",
       inputSchema: z.object({
@@ -883,9 +897,10 @@ export function createGmailEATools() {
           };
         }
       },
+      slack: { status: "Reading emails...", detail: (i) => i.user_name },
     }),
 
-    read_user_email: tool({
+    read_user_email: defineTool({
       description:
         "Read the full content of a specific email from a user's Gmail account by message ID.",
       inputSchema: z.object({
@@ -930,9 +945,10 @@ export function createGmailEATools() {
           };
         }
       },
+      slack: { status: "Reading email...", detail: (i) => i.user_name },
     }),
 
-    delete_gmail_draft: tool({
+    delete_gmail_draft: defineTool({
       description:
         "Delete a draft email from a user's Gmail account. The user must have granted Aura OAuth access.",
       inputSchema: z.object({
@@ -977,9 +993,10 @@ export function createGmailEATools() {
           };
         }
       },
+      slack: { status: "Deleting draft..." },
     }),
 
-    download_email_attachment: tool({
+    download_email_attachment: defineTool({
       description:
         "Download an attachment from a Gmail message. Returns base64-encoded file content. Use read_user_email first to get the message_id and attachment_id. The returned base64 can be passed directly to create_gmail_draft attachments or saved to the sandbox.",
       inputSchema: z.object({
@@ -1071,9 +1088,10 @@ export function createGmailEATools() {
           };
         }
       },
+      slack: { status: "Downloading attachment...", detail: (i) => i.filename ?? i.attachment_id },
     }),
 
-    generate_gmail_auth_url: tool({
+    generate_gmail_auth_url: defineTool({
       description:
         "Generate a Google OAuth consent URL for a user to connect their Gmail account to Aura. DM the resulting URL to the user — they click it, authorize in Google, and their Gmail is connected for reading and drafting.",
       inputSchema: z.object({
@@ -1113,6 +1131,7 @@ export function createGmailEATools() {
           return { ok: false, error: err?.message || String(err) };
         }
       },
+      slack: { status: "Generating auth URL..." },
     }),
   };
 }

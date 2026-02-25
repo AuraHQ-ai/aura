@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -15,7 +15,7 @@ const DEFAULT_REPO = "realadvisor/aura";
  */
 export function createCursorAgentTools(context?: ScheduleContext) {
   return {
-    dispatch_cursor_agent: tool({
+    dispatch_cursor_agent: defineTool({
       description:
         "Dispatch an async Cursor Cloud Agent to work on a code task in the Aura repo. " +
         "Use for complex multi-file changes that would take >5 minutes in the sandbox (refactors, new features, multi-step bug fixes). " +
@@ -185,9 +185,13 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: {
+        status: "Dispatching Cursor agent...",
+        detail: (i) => i.issue_description?.slice(0, 60),
+      },
     }),
 
-    check_cursor_agent: tool({
+    check_cursor_agent: defineTool({
       description:
         "Check the status of a previously dispatched Cursor Cloud Agent. " +
         "Returns the current status, PR URL (if finished), and summary. Use when someone asks for a status update on a dispatched agent.",
@@ -245,9 +249,13 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: {
+        status: "Checking agent status...",
+        detail: (i) => i.agent_id,
+      },
     }),
 
-    followup_cursor_agent: tool({
+    followup_cursor_agent: defineTool({
       description:
         "Send follow-up instructions to a finished Cursor agent. The agent continues working on the same branch/PR. " +
         "Use this instead of dispatching a new agent when iterating on the same task.",
@@ -337,9 +345,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Following up on agent..." },
     }),
 
-    get_cursor_conversation: tool({
+    get_cursor_conversation: defineTool({
       description:
         "Get the full conversation history of a Cursor agent — every step it took, files it read, changes it made.",
       inputSchema: z.object({
@@ -384,9 +393,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Reading agent conversation..." },
     }),
 
-    stop_cursor_agent: tool({
+    stop_cursor_agent: defineTool({
       description: "Stop a running Cursor agent.",
       inputSchema: z.object({
         agent_id: z.string().describe("The agent ID to stop"),
@@ -435,9 +445,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Stopping agent..." },
     }),
 
-    list_cursor_agents: tool({
+    list_cursor_agents: defineTool({
       description:
         "List Cursor agents. Optionally filter by PR URL to find agents that worked on a specific PR.",
       inputSchema: z.object({
@@ -484,6 +495,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
+      slack: { status: "Listing agents..." },
     }),
   };
 }

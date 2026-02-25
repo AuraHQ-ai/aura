@@ -56,6 +56,7 @@ export function defineTool<TInput, TOutput>(config: {
   inputSchema: ZodType<TInput, any, any>;
   execute: (input: TInput) => PromiseLike<TOutput>;
   slack?: SlackToolMetadata<TInput, TOutput>;
+  toModelOutput?: Tool<TInput, TOutput>["toModelOutput"];
 }) {
   const { slack, ...toolConfig } = config;
   // The spread loses the generic relationship between TInput/TOutput and the

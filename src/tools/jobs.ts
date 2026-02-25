@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq, and, or, desc, isNotNull, ne, sql } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
@@ -26,7 +26,7 @@ export function createJobTools(
   context?: ScheduleContext,
 ) {
   return {
-    create_job: tool({
+    create_job: defineTool({
       description:
         "Create a one-shot task, recurring job, or follow-up. This is the single tool for scheduling anything: reminders ('remind me in 2 hours'), monitoring, digests, follow-ups ('check this tomorrow'), and autonomous work ('do this every morning'). One-shots fire once at execute_in time; recurring jobs run on a cron schedule (e.g. '0 9 * * 1-5' for weekdays 9 AM) with optional frequency limits. Always include the user's timezone for recurring jobs. You can create jobs for yourself too. When you spot a new type of recurring work, codify it as a job with a playbook and frequency limits.",
       inputSchema: z.object({
@@ -260,9 +260,10 @@ export function createJobTools(
           return { ok: false, error: `Failed to create job: ${error.message}` };
         }
       },
+      slack: { status: "Creating job...", detail: (i) => i.name ?? i.description?.slice(0, 40) },
     }),
 
-    list_jobs: tool({
+    list_jobs: defineTool({
       description:
         "List jobs by status. See what's pending, completed, or failed. Shows both one-shot tasks and recurring jobs.",
       inputSchema: z.object({
@@ -328,9 +329,10 @@ export function createJobTools(
           return { ok: false, error: `Failed to list jobs: ${error.message}` };
         }
       },
+      slack: { status: "Listing jobs..." },
     }),
 
-    cancel_job: tool({
+    cancel_job: defineTool({
       description:
         "Cancel a pending one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Accepts a job ID or name.",
       inputSchema: z.object({
@@ -402,9 +404,10 @@ export function createJobTools(
           return { ok: false, error: `Failed to cancel job: ${error.message}` };
         }
       },
+      slack: { status: "Cancelling job..." },
     }),
 
-    dispatch_headless: tool({
+    dispatch_headless: defineTool({
       description:
         "Dispatch a task for immediate headless execution (no Slack streaming overhead). Creates a job and triggers it NOW — no waiting for the 30-min heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. The task runs as full Aura with all tools. Results are posted to the callback channel/thread when done. Admin-only.",
       inputSchema: z.object({
@@ -513,9 +516,10 @@ export function createJobTools(
           };
         }
       },
+      slack: { status: "Dispatching background task...", detail: (i) => i.name ?? i.task?.slice(0, 40) },
     }),
 
-    read_job_trace: tool({
+    read_job_trace: defineTool({
       description:
         "Read execution traces of jobs — reasoning steps, tool calls, results, token usage. Use to inspect what headless execution did, debug failed jobs, or review past autonomous work.",
       inputSchema: z.object({
@@ -608,6 +612,7 @@ export function createJobTools(
           };
         }
       },
+      slack: { status: "Reading job trace..." },
     }),
   };
 }

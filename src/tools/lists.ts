@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -9,7 +9,7 @@ import { logger } from "../lib/logger.js";
  */
 export function createListWriteTools(client: WebClient) {
   return {
-    create_slack_list_item: tool({
+    create_slack_list_item: defineTool({
       description:
         "Create a new item (row) in a Slack List. Useful for adding bugs, tasks, or records to a tracker.",
       inputSchema: z.object({
@@ -68,9 +68,10 @@ export function createListWriteTools(client: WebClient) {
           };
         }
       },
+      slack: { status: "Creating list item..." },
     }),
 
-    update_slack_list_item: tool({
+    update_slack_list_item: defineTool({
       description:
         "Update fields on an existing item (row) in a Slack List. Use this to change title, status, assignee, severity, etc. " +
         "IMPORTANT: First call get_slack_list_item to see the exact column IDs and value formats. " +
@@ -193,9 +194,10 @@ export function createListWriteTools(client: WebClient) {
           };
         }
       },
+      slack: { status: "Updating list item..." },
     }),
 
-    delete_slack_list_item: tool({
+    delete_slack_list_item: defineTool({
       description: "Delete an item (row) from a Slack List.",
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
@@ -235,6 +237,7 @@ export function createListWriteTools(client: WebClient) {
           };
         }
       },
+      slack: { status: "Deleting list item..." },
     }),
   };
 }

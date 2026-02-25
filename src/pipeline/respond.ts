@@ -110,77 +110,6 @@ function buildToolMetadata(
   return { event_type: TOOL_IO_EVENT_TYPE, event_payload: { tool_calls: trimmed } };
 }
 
-// ── Tool Status Messages ─────────────────────────────────────────────────────
-// Plain text titles for native Slack task cards (no markdown formatting).
-
-const TOOL_STATUS: Record<string, string> = {
-  // Web
-  web_search: "Searching the web...",
-  read_url: "Reading a link...",
-  // Slack channels
-  list_channels: "Looking at channels...",
-  join_channel: "Joining a channel...",
-  leave_channel: "Leaving a channel...",
-  create_channel: "Creating a channel...",
-  set_channel_topic: "Setting channel topic...",
-  read_channel_history: "Reading channel history...",
-  send_channel_message: "Sending a message...",
-  send_thread_reply: "Replying in thread...",
-  invite_to_channel: "Inviting someone...",
-  // Slack users
-  list_users: "Looking up users...",
-  search_users: "Looking up users...",
-  get_user_info: "Looking up a profile...",
-  // Slack DMs
-  send_direct_message: "Sending a DM...",
-  read_dm_history: "Reading DM history...",
-  list_dm_conversations: "Listing DM conversations...",
-  // Slack messages
-  search_messages: "Searching messages...",
-  edit_message: "Editing a message...",
-  delete_message: "Deleting a message...",
-  add_reaction: "Reacting...",
-  remove_reaction: "Removing a reaction...",
-  // Slack lists
-  list_slack_list_items: "Reading a list...",
-  get_slack_list_item: "Reading a list item...",
-  create_slack_list_item: "Adding a list item...",
-  update_slack_list_item: "Updating a list item...",
-  delete_slack_list_item: "Removing a list item...",
-  // Slack canvases
-  read_canvas: "Reading a canvas...",
-  create_canvas: "Creating a canvas...",
-  edit_canvas: "Editing a canvas...",
-  // Notes
-  save_note: "Saving a note...",
-  read_note: "Reading a note...",
-  edit_note: "Editing a note...",
-  list_notes: "Listing notes...",
-  delete_note: "Deleting a note...",
-  checkpoint_plan: "Saving progress...",
-  // Jobs
-  create_job: "Scheduling a job...",
-  list_jobs: "Checking jobs...",
-  cancel_job: "Cancelling a job...",
-  dispatch_headless: "Dispatching headless execution...",
-  read_job_trace: "Reading execution trace...",
-  // BigQuery
-  list_datasets: "Listing datasets...",
-  list_tables: "Listing tables...",
-  inspect_table: "Inspecting table schema...",
-  execute_query: "Running a SQL query...",
-  // Sandbox & code
-  run_command: "Running a command in the sandbox...",
-  patch_own_code: "Dispatching a coding agent (this may take a few minutes)...",
-  // Google Sheets
-  read_google_sheet: "Reading Google Sheet...",
-  // Voice & SMS
-  make_call: "Initiating a phone call...",
-  send_sms: "Sending an SMS...",
-  // Misc
-  set_my_status: "Updating status...",
-  draw_table: "Drawing a table...",
-};
 
 // ── Task Card Helpers ────────────────────────────────────────────────────────
 
@@ -189,78 +118,6 @@ function truncate(s: string | undefined, max: number): string | undefined {
   return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }
 
-/** Extract a short detail string from tool args for the in-progress card. */
-function getToolDetails(toolName: string, args: Record<string, any>): string | undefined {
-  switch (toolName) {
-    case "execute_query": return truncate(args.sql, 120);
-    case "run_command": return truncate(args.command, 120);
-    case "web_search": return args.query;
-    case "search_messages": return args.query;
-    case "read_url": return args.url;
-    case "inspect_table": return args.dataset && args.table ? `${args.dataset}.${args.table}` : args.dataset ?? args.table;
-    case "list_tables": return args.dataset;
-    case "read_channel_history": return args.channel;
-    case "read_note": case "save_note": case "edit_note": return args.topic;
-    case "read_google_sheet": return args.spreadsheet_id;
-    default: return undefined;
-  }
-}
-
-/** Extract a short output summary from tool results for the completed card. */
-function getToolOutput(toolName: string, output: any): string | undefined {
-  if (!output || typeof output !== "object") return undefined;
-  if (output.ok === false) return output.error;
-
-  switch (toolName) {
-    case "execute_query": return `${output.total_rows ?? 0} rows`;
-    case "web_search": return `${output.count ?? 0} results`;
-    case "search_messages": return `${output.count ?? 0} messages`;
-    case "run_command": {
-      if (output.exit_code === 0) return undefined;
-      const stderr = typeof output.stderr === "string" ? output.stderr.trim() : "";
-      const stdout = typeof output.stdout === "string" ? output.stdout.trim() : "";
-      if (stderr) {
-        const detail = truncate(stderr, 180);
-        return `Exit code ${output.exit_code}: ${detail}`;
-      }
-      if (stdout) {
-        const detail = truncate(stdout, 180);
-        return `Exit code ${output.exit_code}: ${detail}`;
-      }
-      return `Exit code ${output.exit_code}`;
-    }
-    case "read_channel_history": return `${output.count ?? 0} messages`;
-    case "inspect_table":
-      return `${output.row_count ?? "?"} rows, ${(output.schema ?? []).length} columns`;
-    case "list_tables": return `${(output.tables ?? []).length} tables`;
-    case "list_datasets": return `${(output.datasets ?? []).length} datasets`;
-    case "read_google_sheet": return `${output.total_rows ?? 0} rows`;
-    default: return undefined;
-  }
-}
-
-/** Extract URL sources from web tool results for card citations. */
-function getToolSources(
-  toolName: string,
-  output: any,
-): Array<{ type: "url"; url: string; text: string }> | undefined {
-  if (!output || typeof output !== "object" || output.ok === false) return undefined;
-  if (toolName === "web_search" && Array.isArray(output.results)) {
-    return output.results.slice(0, 3).map((r: any) => ({
-      type: "url" as const,
-      url: r.url,
-      text: r.title || r.url,
-    }));
-  }
-  if (toolName === "read_url" && output.url) {
-    try {
-      return [{ type: "url", url: output.url, text: new URL(output.url).hostname }];
-    } catch {
-      return [{ type: "url", url: output.url, text: output.url }];
-    }
-  }
-  return undefined;
-}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -681,9 +538,9 @@ export async function generateResponse(
 
         case "tool-call": {
           const slackMeta = getSlackMeta(streamOptions.tools[chunk.toolName]);
-          const title = slackMeta?.status ?? TOOL_STATUS[chunk.toolName] ?? "Working on it...";
+          const title = slackMeta?.status ?? "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
-          const details = slackMeta?.detail?.(inputArgs) ?? getToolDetails(chunk.toolName, inputArgs);
+          const details = slackMeta?.detail?.(inputArgs);
           const toolCallPayload = {
             chunks: [{
               type: "task_update",
@@ -726,7 +583,7 @@ export async function generateResponse(
 
         case "tool-result": {
           const resultSlackMeta = getSlackMeta(streamOptions.tools[chunk.toolName]);
-          const title = resultSlackMeta?.status ?? TOOL_STATUS[chunk.toolName] ?? "Done";
+          const title = resultSlackMeta?.status ?? "Done";
           const output = chunk.output;
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
@@ -739,8 +596,9 @@ export async function generateResponse(
             pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
           }
 
-          const taskOutput = resultSlackMeta?.output?.(output) ?? getToolOutput(chunk.toolName, output);
-          const sources = resultSlackMeta?.sources?.(output) ?? getToolSources(chunk.toolName, output);
+          const taskOutput = resultSlackMeta?.output?.(output)
+            ?? (isError && output.error ? String(output.error) : undefined);
+          const sources = resultSlackMeta?.sources?.(output);
 
           const toolResultPayload = {
             chunks: [{
@@ -786,7 +644,7 @@ export async function generateResponse(
           const errToolName = (chunk as any).toolName;
           const errToolCallId = (chunk as any).toolCallId;
           const errSlackMeta = getSlackMeta(streamOptions.tools[errToolName]);
-          const title = errSlackMeta?.status ?? TOOL_STATUS[errToolName] ?? "Failed";
+          const title = errSlackMeta?.status ?? "Failed";
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
           const toolErrorPayload = {
