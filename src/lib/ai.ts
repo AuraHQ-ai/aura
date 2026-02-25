@@ -5,7 +5,7 @@ import {
 } from "ai";
 
 /** The model type that wrapLanguageModel accepts (LanguageModelV3, not re-exported by "ai"). */
-type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
+export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
 import { logger } from "./logger.js";
 
@@ -152,6 +152,21 @@ export async function getEmbeddingModel() {
   const gatewayId =
     override || process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small";
   return gateway.embedding(gatewayId);
+}
+
+/** Check if a model ID refers to an Anthropic model (effort parameter supported). */
+export function isAnthropicModel(modelId: string): boolean {
+  return modelId.includes("anthropic") || modelId.includes("claude");
+}
+
+/**
+ * Get the escalation model (Opus 4.6) for automatic model escalation.
+ * Used when Sonnet is struggling — prepareStep can swap to this mid-conversation.
+ */
+export async function getEscalationModel() {
+  const gatewayId = "anthropic/claude-opus-4-6";
+  const gatewayModel = gateway(gatewayId);
+  return withAnthropicFallback(gatewayModel, gatewayId);
 }
 
 /**
