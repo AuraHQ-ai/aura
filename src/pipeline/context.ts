@@ -436,15 +436,28 @@ export async function resolveChannelName(
 
 // ── USLACKBOT Notification Detection ─────────────────────────────────────────
 
+const USLACKBOT_LIST_NOTIFICATION_PATTERNS = [
+  /^a comment was added$/i,
+  /^a field was updated$/i,
+  /^an item was (created|moved|completed|deleted)$/i,
+  /^a status was changed$/i,
+  /^an item was added$/i,
+  /^a due date was (set|changed|removed)$/i,
+];
+
 /**
  * Detect whether a message is a USLACKBOT notification about a Slack List item.
- * Uses sender identity + channel membership instead of brittle text matching,
- * since Slack localizes notification strings per workspace locale.
+ * Requires all three: sender is USLACKBOT, channel is in the always-process
+ * list, AND the message text matches a known list notification pattern.
+ * The text patterns are English-only for now; Slack localizes these strings
+ * per workspace locale, so additional patterns may be needed.
  */
 export function isSlackbotListNotification(
   event: SlackEvent,
   alwaysProcessChannels: Set<string>,
 ): boolean {
   if (!("user" in event) || event.user !== "USLACKBOT") return false;
-  return alwaysProcessChannels.has(event.channel);
+  if (!alwaysProcessChannels.has(event.channel)) return false;
+  const text = ("text" in event ? event.text || "" : "").trim();
+  return USLACKBOT_LIST_NOTIFICATION_PATTERNS.some((p) => p.test(text));
 }
