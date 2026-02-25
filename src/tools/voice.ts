@@ -442,8 +442,16 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         for (const key of Object.keys(placeholders)) {
           if (dynamicVars[key] === undefined) {
             const defaultVal = placeholders[key];
-            if (defaultVal !== undefined && defaultVal !== null) {
+            if (
+              defaultVal !== undefined &&
+              defaultVal !== null &&
+              (typeof defaultVal === "string" ||
+                typeof defaultVal === "number" ||
+                typeof defaultVal === "boolean")
+            ) {
               dynamicVars[key] = defaultVal;
+            } else if (defaultVal !== undefined && defaultVal !== null) {
+              dynamicVars[key] = String(defaultVal);
             } else {
               missingVars.push(key);
             }
@@ -507,6 +515,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
               conversation_id?: string;
             };
           } catch (parseError: any) {
+            try { await callResponse.body?.cancel(); } catch {}
             logger.error("make_call response JSON parse failed (call may have been placed)", {
               error: parseError.message,
               to: toNumber,
