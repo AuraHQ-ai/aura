@@ -272,6 +272,8 @@ interface RespondOptions {
   files?: FileContentPart[];
   channelId: string;
   threadTs?: string;
+  threadContext?: string;
+  isChannelHistory?: boolean;
   /** Slack team ID — required for chatStream in channels */
   teamId?: string;
   /** Slack user ID of the message author — required for chatStream in channels */
@@ -523,7 +525,7 @@ export async function generateResponse(
     model,
     system: [
       withCacheControl(options.systemPrompt),
-      { role: 'system' as const, content: buildDynamicContext({ channelId: options.channelId, threadTs: options.threadTs, modelId, userTimezone: options.context?.timezone }) },
+      { role: 'system' as const, content: buildDynamicContext({ channelId: options.channelId, threadTs: options.threadTs, modelId, userTimezone: options.context?.timezone, threadContext: options.threadContext, isChannelHistory: options.isChannelHistory }) },
     ],
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(STEP_LIMIT),
@@ -999,7 +1001,7 @@ export async function generateResponse(
         model,
         system: [
           withCacheControl(options.systemPrompt),
-          { role: 'system' as const, content: buildDynamicContext({ channelId: options.channelId, threadTs: options.threadTs, modelId, userTimezone: options.context?.timezone }) },
+          { role: 'system' as const, content: buildDynamicContext({ channelId: options.channelId, threadTs: options.threadTs, modelId, userTimezone: options.context?.timezone, threadContext: options.threadContext, isChannelHistory: options.isChannelHistory }) },
         ],
         prompt: retryPrompt,
         abortSignal: retryAbortController.signal,

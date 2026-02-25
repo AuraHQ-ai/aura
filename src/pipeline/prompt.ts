@@ -117,8 +117,6 @@ export async function assemblePrompt(
     channelId: context.channelId,
     threadTs: context.threadTs,
     userTimezone: userProfile?.timezone || undefined,
-    threadContext,
-    isChannelHistory,
     modelId,
   });
 
@@ -129,5 +127,5 @@ export async function assemblePrompt(
     hasThread: !!threadContext,
   });
 
-  return { systemPrompt, memories, conversations, userProfile };
+  return { systemPrompt, memories, conversations, userProfile, threadContext, isChannelHistory };
 }
