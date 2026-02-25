@@ -932,7 +932,6 @@ export async function generateResponse(
             errorCode: "channel_type_not_supported",
             channelId,
           });
-          try { await streamer.stop(); } catch { /* already finalized */ }
         } else {
           throw stopErr;
         }
@@ -1074,6 +1073,12 @@ export async function generateResponse(
           text: formatForSlack(accumulatedText) || accumulatedText,
           thread_ts: threadTs,
         });
+        return {
+          raw: accumulatedText,
+          alreadyPosted: true,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          toolCalls: toolCallRecords,
+        };
       } catch { /* truly cannot post to this channel */ }
     }
 
