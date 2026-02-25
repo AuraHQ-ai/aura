@@ -2224,7 +2224,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     upload_file: tool({
       description:
-        "Upload a file to Slack, optionally sharing to a channel or thread. Supports text files (CSV, JSON, code, etc.) directly and binary files (images, PDFs) via base64 encoding (set is_binary=true).",
+        "Upload a file to Slack, optionally sharing to a channel or thread. Supports text files (CSV, JSON, code, etc.) directly and binary files (images, PDFs) via base64 encoding (set is_binary=true). The channel parameter accepts any Slack destination: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID ('D0AF1K2EBH8'), group DM ID ('G01234'), or a username/display name ('Joan') to open a DM. Use thread_ts to post into a specific thread (including Slack List item comment threads).",
       inputSchema: z.object({
         content: z
           .string()
@@ -2238,7 +2238,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Channel name or ID to share the file to. If omitted, the file is uploaded but not shared to any channel.",
+            "Channel name (e.g. 'general'), channel ID ('C0BNVKS77'), DM channel ID ('D0AF1K2EBH8'), group DM ID ('G01234'), or username/display name ('Joan') to share the file to. For Slack List item threads, pass the thread_channel_id from get_slack_list_item. If omitted, the file is uploaded but not shared anywhere.",
           ),
         title: z
           .string()
@@ -2254,7 +2254,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Thread timestamp to attach the file to a specific thread",
+            "Thread timestamp to attach the file to a specific thread. For Slack List item threads, use the thread_ts from get_slack_list_item together with thread_channel_id as the channel.",
           ),
       }),
       execute: async ({ content, filename, channel, title, is_binary, thread_ts }) => {
