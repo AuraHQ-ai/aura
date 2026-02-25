@@ -979,6 +979,100 @@ export function createGmailEATools() {
       },
     }),
 
+    download_email_attachment: tool({
+      description:
+        "Download an attachment from a Gmail message. Returns base64-encoded file content. Use read_user_email first to get the message_id and attachment_id. The returned base64 can be passed directly to create_gmail_draft attachments or saved to the sandbox.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "The display name, real name, or username of the Gmail account owner",
+          ),
+        message_id: z
+          .string()
+          .describe("The Gmail message ID containing the attachment"),
+        attachment_id: z
+          .string()
+          .describe("The attachment ID from read_user_email results"),
+        filename: z
+          .string()
+          .optional()
+          .describe("Original filename (for display purposes)"),
+        mime_type: z
+          .string()
+          .optional()
+          .describe("MIME type of the attachment (for display purposes)"),
+      }),
+      execute: async ({ user_name, message_id, attachment_id, filename, mime_type }) => {
+        try {
+          const userId = await resolveSlackUserId(user_name);
+          if (!userId) {
+            return {
+              ok: false,
+              error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+            };
+          }
+
+          const { getUserEmailAttachment, readUserEmail } = await import(
+            "../lib/gmail.js"
+          );
+
+          let resolvedFilename = filename;
+          let resolvedMimeType = mime_type;
+
+          if (!resolvedFilename || !resolvedMimeType) {
+            const email = await readUserEmail(userId, message_id);
+            if (email) {
+              const att = email.attachments.find(
+                (a: any) => a.attachmentId === attachment_id,
+              );
+              if (att) {
+                resolvedFilename = resolvedFilename || att.filename;
+                resolvedMimeType = resolvedMimeType || att.mimeType;
+              }
+            }
+          }
+
+          const result = await getUserEmailAttachment(
+            userId,
+            message_id,
+            attachment_id,
+          );
+
+          if (!result) {
+            return {
+              ok: false,
+              error: `No Gmail access for user '${user_name}', or attachment not found.`,
+            };
+          }
+
+          logger.info("download_email_attachment called", {
+            userId,
+            messageId: message_id,
+            attachmentId: attachment_id,
+            filename: resolvedFilename,
+            size: result.size,
+          });
+
+          return {
+            ok: true,
+            filename: resolvedFilename || "attachment",
+            mimeType: resolvedMimeType || "application/octet-stream",
+            size: result.size,
+            content_base64: result.data,
+          };
+        } catch (error: any) {
+          logger.error("download_email_attachment failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to download attachment: ${error.message}`,
+          };
+        }
+      },
+    }),
+
     generate_gmail_auth_url: tool({
       description:
         "Generate a Google OAuth consent URL for a user to connect their Gmail account to Aura. DM the resulting URL to the user — they click it, authorize in Google, and their Gmail is connected for reading and drafting.",
