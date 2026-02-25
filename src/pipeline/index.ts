@@ -278,7 +278,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { systemPrompt, dynamicContext, memories, conversations } = await assemblePrompt(
+    const { stablePrefix, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
@@ -298,7 +298,8 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // 5. Call LLM (streams response directly to Slack via chat.update)
     const llmStart = Date.now();
     const response = await generateResponse({
-      systemPrompt,
+      stablePrefix,
+      conversationContext,
       dynamicContext,
       userMessage: messageText,
       slackClient: client,
