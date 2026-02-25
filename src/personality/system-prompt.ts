@@ -330,19 +330,38 @@ function formatConversations(conversations: ConversationThread[]): string {
 }
 
 /**
- * Build the full system prompt for an LLM call.
- * Async because it queries the skill index from the database.
+ * The two halves of the system prompt, split for Anthropic prompt caching.
+ *
+ * `stablePrefix` — personality, self-directive, notes-index, skill-index.
+ *   Identical across ALL conversations → cached once, reused everywhere.
+ *
+ * `conversationContext` — channel, user profile, memories, conversations,
+ *   thread context.  Changes per conversation but stays constant within
+ *   a single multi-step tool-use loop → cached across steps.
+ */
+export interface SystemPromptParts {
+  stablePrefix: string;
+  conversationContext: string;
+}
+
+/**
+ * Build the full system prompt for an LLM call, split into a stable prefix
+ * and per-conversation context so each part can be a separate Anthropic
+ * cache breakpoint.
+ *
+ * Async because it queries the skill index and persistent notes from the DB.
  */
 export async function buildSystemPrompt(
   context: SystemPromptContext,
-): Promise<string> {
-  const parts: string[] = [];
+): Promise<SystemPromptParts> {
+  const stableParts: string[] = [];
+  const contextParts: string[] = [];
 
-  // Core personality (always present)
-  parts.push(PERSONALITY);
+  // ── Stable prefix (same across ALL conversations) ──────────────────
+
+  stableParts.push(PERSONALITY);
 
   // Self-directive: agent's own persistent context, loaded every invocation
-  // Hard cap at ~2000 tokens (~8000 chars) to prevent context-window overflow
   const SELF_DIRECTIVE_MAX_CHARS = 8000;
   try {
     const rows = await db
@@ -361,7 +380,7 @@ export async function buildSystemPrompt(
           limit: SELF_DIRECTIVE_MAX_CHARS,
         });
       }
-      parts.push(
+      stableParts.push(
         `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}`,
       );
     }
@@ -388,7 +407,7 @@ export async function buildSystemPrompt(
           limit: NOTES_INDEX_MAX_CHARS,
         });
       }
-      parts.push(
+      stableParts.push(
         `\n## Notes index\n\nMaster index of all your notes. Use read_note() to load full content, search_notes() to grep across all notes.\n\n${indexContent}`,
       );
     }
@@ -396,45 +415,45 @@ export async function buildSystemPrompt(
     logger.warn("Failed to load notes-index note", { error });
   }
 
-  // Channel context
+  // Skill index (progressive disclosure — lightweight topic + first line)
+  const skillIndex = await buildSkillIndex();
+  if (skillIndex) {
+    stableParts.push(skillIndex);
+  }
+
+  // ── Conversation context (varies per conversation) ─────────────────
+
   if (context.channelType === "dm") {
-    parts.push(`You're in a private DM. Be conversational and personal.`);
+    contextParts.push(`You're in a private DM. Be conversational and personal.`);
   } else {
-    parts.push(
+    contextParts.push(
       `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`,
     );
   }
 
-  // User profile (if available)
   if (context.userProfile) {
-    parts.push(formatUserProfile(context.userProfile));
+    contextParts.push(formatUserProfile(context.userProfile));
   }
 
-  // Retrieved memories
   if (context.memories.length > 0) {
-    parts.push(formatMemories(context.memories));
+    contextParts.push(formatMemories(context.memories));
   }
 
-  // Retrieved conversation threads
   if (context.conversations && context.conversations.length > 0) {
-    parts.push(formatConversations(context.conversations));
+    contextParts.push(formatConversations(context.conversations));
   }
 
-  // Skill index (progressive disclosure -- lightweight topic + first line)
-  const skillIndex = await buildSkillIndex();
-  if (skillIndex) {
-    parts.push(skillIndex);
-  }
-
-  // Conversation context (thread or recent channel messages)
   if (context.threadContext) {
     const heading = context.isChannelHistory
       ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
       : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
-    parts.push(heading);
+    contextParts.push(heading);
   }
 
-  return parts.join("\n\n");
+  return {
+    stablePrefix: stableParts.join("\n\n"),
+    conversationContext: contextParts.join("\n\n"),
+  };
 }
 
 /**

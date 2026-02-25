@@ -12,8 +12,11 @@ import { logger } from "../lib/logger.js";
 import { getMainModelId } from "../lib/ai.js";
 
 export interface AssembledPrompt {
-  systemPrompt: string;
-  /** Dynamic per-call context (time, model, channel, thread) — passed as a separate uncached system message */
+  /** Stable prefix: personality, self-directive, notes-index, skill-index — cached across ALL conversations */
+  stablePrefix: string;
+  /** Per-conversation context: channel, profile, memories, threads — cached within multi-step loops */
+  conversationContext: string;
+  /** Dynamic per-call context (time, model, channel, thread) — uncached, changes every invocation */
   dynamicContext: string;
   memories: Memory[];
   conversations: ConversationThread[];
@@ -109,8 +112,8 @@ export async function assemblePrompt(
   // Resolve active model ID for self-awareness in system prompt
   const modelId = await getMainModelId();
 
-  // Build the stable system prompt (async: queries skill index from DB)
-  const systemPrompt = await buildSystemPrompt({
+  // Build system prompt parts (async: queries skill index + persistent notes from DB)
+  const { stablePrefix, conversationContext } = await buildSystemPrompt({
     memories,
     conversations,
     userProfile,
@@ -120,7 +123,7 @@ export async function assemblePrompt(
     isChannelHistory,
   });
 
-  // Dynamic per-call context — separated so the stable prompt stays cache-friendly
+  // Dynamic per-call context — separate uncached system message
   const dynamicContext = buildDynamicContext({
     userTimezone: userProfile?.timezone || undefined,
     modelId,
@@ -135,5 +138,5 @@ export async function assemblePrompt(
     hasThread: !!threadContext,
   });
 
-  return { systemPrompt, dynamicContext, memories, conversations, userProfile };
+  return { stablePrefix, conversationContext, dynamicContext, memories, conversations, userProfile };
 }
