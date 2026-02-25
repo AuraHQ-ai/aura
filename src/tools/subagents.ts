@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -66,7 +66,7 @@ export function createSubagentTools(
   context?: ScheduleContext,
 ) {
   return {
-    run_subagent: tool({
+    run_subagent: defineTool({
       description:
         "Launch a subagent for parallel fan-out. Call this tool MULTIPLE TIMES in the same tool-call block to run tasks concurrently — e.g. sweep 4 market channels simultaneously, or triage emails while analyzing data. Each subagent runs in its own isolated context with scoped tools, preventing context pollution. Returns a compressed summary. The primary value is parallelism and performance — use when you can split work into independent pieces that don't depend on each other's results. Admin-only.",
       inputSchema: z.object({
@@ -141,6 +141,10 @@ export function createSubagentTools(
           toolCallCount: result.toolCalls.length,
           errors: result.toolCalls.filter((tc) => tc.isError).length,
         };
+      },
+      slack: {
+        status: "Running subagent...",
+        detail: (i) => i.task?.slice(0, 60),
       },
     }),
   };

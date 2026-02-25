@@ -1,4 +1,4 @@
-import { tool } from "ai";
+import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { sql, and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -47,7 +47,7 @@ export interface ThreadGroup {
 
 export function createConversationSearchTools(context?: ScheduleContext) {
   return {
-    search_my_conversations: tool({
+    search_my_conversations: defineTool({
       description:
         "Search Aura's stored messages database (every message she has sent and received is saved in PostgreSQL). Use this to recall past conversations, find what was discussed about a topic, or look up what a specific person said. Supports two modes: 'text' (keyword/full-text, default) and 'semantic' (vector similarity — better for conceptual queries). Results are grouped by conversation thread with surrounding context. Prefer this over search_messages for DM threads and conversations Aura has been part of — it searches Aura's own database, not Slack's search index, so has better coverage of her conversations. Use offset for pagination.",
       inputSchema: z.object({
@@ -376,6 +376,10 @@ export function createConversationSearchTools(context?: ScheduleContext) {
             error: `Failed to search conversations: ${error.message}`,
           };
         }
+      },
+      slack: {
+        status: "Searching conversations...",
+        detail: (i) => i.query,
       },
     }),
   };
