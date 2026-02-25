@@ -162,11 +162,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
 
         try {
           if (session_id) {
-            // Reconnect to an existing keepAlive session via CDP
-            const apiKey = process.env.BROWSERBASE_API_KEY;
-            const { chromium } = await import("playwright-core");
-            const connectUrl = `wss://connect.browserbase.com?apiKey=${apiKey}&sessionId=${session_id}`;
-            browser = await chromium.connectOverCDP(connectUrl);
+            browser = await connectSession(session_id);
           } else {
             // Create a new keepAlive session
             const session = await createSession({
@@ -319,9 +315,13 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
         } finally {
           if (browser) {
             try {
-              await browser.close();
+              if (release_session) {
+                await browser.close();
+              } else {
+                await browser.disconnect();
+              }
             } catch {
-              // ignore close errors
+              // ignore disconnect/close errors
             }
           }
           if (release_session && currentSessionId) {
