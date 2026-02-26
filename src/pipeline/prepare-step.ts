@@ -99,7 +99,7 @@ interface CommandFailureRecord {
 /** Strip shell comments and collapse whitespace for semantic comparison. */
 function normalizeCommand(cmd: string): string {
   return cmd
-    .replace(/#[^\n]*/g, "")
+    .replace(/(^|\s)#[^\n]*/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
 }
