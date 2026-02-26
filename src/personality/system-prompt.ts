@@ -451,6 +451,5 @@ export function buildDynamicContext(context: {
   let s = `## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
   if (context.modelId) s += `\nActive model: \`${context.modelId}\``;
   if (context.channelId) s += `\nCurrent channel: ${context.channelId}`;
-  if (context.threadTs) s += `\nCurrent thread_ts: ${context.threadTs}`;
   return s;
 }
