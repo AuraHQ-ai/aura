@@ -18,6 +18,13 @@ export function formatForSlack(text: string): string {
     return `\x00INLINE${inlineCode.length - 1}\x00`;
   });
 
+  // Wrap bare markdown tables in code blocks so they render as monospace in Slack.
+  // Runs AFTER code-block protection, so tables already inside ``` are safe.
+  // A "table" = 2+ consecutive lines starting with |
+  result = result.replace(/((?:^[ \t]*\|.*\n?){2,})/gm, (table) => {
+    return "```\n" + table.trimEnd() + "\n```";
+  });
+
   // Headers → bold (### heading, ## heading, # heading)
   // Strip inline bold/emphasis markers within headers since the whole header becomes bold
   result = result.replace(/^#{1,6}\s+(.+)$/gm, (_, content) => {
