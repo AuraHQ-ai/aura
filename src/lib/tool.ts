@@ -33,7 +33,7 @@ export function getSlackMeta(t: unknown): SlackToolMetadata | undefined {
 
 /**
  * Wrapper around AI SDK's tool() that co-locates Slack card metadata with the
- * tool definition. The optional `slack` field is attached directly to the
+ * tool definition. The required `slack` field is attached directly to the
  * returned tool object so respond.ts can read it at runtime without maintaining
  * separate switch blocks.
  *
@@ -55,7 +55,7 @@ export function defineTool<TInput, TOutput>(config: {
   description: string;
   inputSchema: ZodType<TInput, any, any>;
   execute: (input: TInput) => PromiseLike<TOutput>;
-  slack?: SlackToolMetadata<TInput, TOutput>;
+  slack: SlackToolMetadata<TInput, TOutput>;
   toModelOutput?: Tool<TInput, TOutput>["toModelOutput"];
 }) {
   const { slack, ...toolConfig } = config;
@@ -64,10 +64,8 @@ export function defineTool<TInput, TOutput>(config: {
   const t = tool<TInput, TOutput>(
     toolConfig as unknown as Tool<TInput, TOutput>,
   );
-  if (slack) {
-    (t as any).slack = slack;
-  }
+  (t as any).slack = slack;
   return t as Tool<TInput, TOutput> & {
-    slack?: SlackToolMetadata<TInput, TOutput>;
+    slack: SlackToolMetadata<TInput, TOutput>;
   };
 }
