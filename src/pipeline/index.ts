@@ -3,6 +3,7 @@ import {
   buildMessageContext,
   shouldRespond,
   resolveSlackEntities,
+  isSlackbotListNotification,
   type MessageContext,
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
@@ -27,6 +28,7 @@ import {
 } from "../users/profiles.js";
 import { downloadEventFiles } from "../lib/files.js";
 import { pauseSandbox } from "../lib/sandbox.js";
+import { getSettingJSON } from "../lib/settings.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
@@ -149,6 +151,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // conversation context from the Slack API when Tiers 2–3 need it.
   let conversation: ConversationContext | undefined;
   let decision: { respond: boolean; reason: string };
+  let alwaysProcessChannels: Set<string> | undefined;
 
   if (context.isDm) {
     decision = { respond: true, reason: "dm" };
@@ -164,7 +167,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       botUserId,
       context.threadTs,
     );
-    decision = await shouldRespond(context, conversation);
+    alwaysProcessChannels = new Set(
+      (await getSettingJSON<string[]>("always_process_channels", [])) ?? [],
+    );
+    decision = await shouldRespond(context, conversation, alwaysProcessChannels);
   }
 
   if (!decision.respond) {
@@ -242,6 +248,26 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       logger.warn("Truncated long message", {
         originalLength: context.text.length,
         truncatedTo: MAX_MESSAGE_LENGTH,
+      });
+    }
+
+    // ── USLACKBOT list notification enrichment ───────────────────────────
+    // Any USLACKBOT message in a tracked List channel is a list activity
+    // notification. We attach metadata so the prompt guides the LLM to
+    // investigate the actual list item via tools.
+    const slackListChannels = new Set(
+      (await getSettingJSON<string[]>("slack_list_channels", [])) ?? [],
+    );
+    if (isSlackbotListNotification(event, slackListChannels)) {
+      context.slackListItemContext = {
+        messageTs: context.threadTs ?? context.messageTs,
+        channelId: context.channelId,
+        notificationText: messageText,
+      };
+      logger.info("Enriched USLACKBOT list notification", {
+        channelId: context.channelId,
+        messageTs: context.messageTs,
+        notificationText: messageText,
       });
     }
 

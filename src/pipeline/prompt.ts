@@ -110,7 +110,7 @@ export async function assemblePrompt(
   const modelId = await getMainModelId();
 
   // Build the stable system prompt (async: queries skill index from DB)
-  const systemPrompt = await buildSystemPrompt({
+  let systemPrompt = await buildSystemPrompt({
     memories,
     conversations,
     userProfile,
@@ -121,18 +121,34 @@ export async function assemblePrompt(
   });
 
   // Dynamic per-call context — separated so the stable prompt stays cache-friendly
-  const dynamicContext = buildDynamicContext({
+  let dynamicContext = buildDynamicContext({
     userTimezone: userProfile?.timezone || undefined,
     modelId,
     channelId: context.channelId,
     threadTs: context.threadTs,
   });
 
+  // Inject guidance for USLACKBOT list notifications so the LLM investigates
+  // the actual list item instead of responding to the generic notification text.
+  if (context.slackListItemContext) {
+    const { messageTs, channelId: listChannelId } = context.slackListItemContext;
+    dynamicContext += `\n\n## Slack List Item Notification Context
+
+The incoming message is a Slackbot notification about a Slack List item, NOT a real user message.
+Do NOT respond to or paraphrase the notification text. Instead, investigate the actual item:
+
+1. Use read_thread_replies(channel: "${listChannelId}", thread_ts: "${messageTs}") to read the item's comment thread and see what changed.
+2. Based on the thread content, provide useful triage, context, or follow-up — not a restatement of the notification.
+
+If the thread content is sparse, try list_slack_list_items to find the item by matching thread_ts and get its full field data.`;
+  }
+
   logger.debug(`Assembled prompt in ${Date.now() - start}ms`, {
     memoryCount: memories.length,
     conversationCount: conversations.length,
     hasProfile: !!userProfile,
     hasThread: !!threadContext,
+    hasSlackListItemContext: !!context.slackListItemContext,
   });
 
   return { systemPrompt, dynamicContext, memories, conversations, userProfile };

@@ -4,7 +4,6 @@ import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
 import { resolveChannelById } from "../tools/slack.js";
-import { getSettingJSON } from "../lib/settings.js";
 
 // ── Slack Event Types ────────────────────────────────────────────────────────
 // Minimal local types — replaces the @slack/bolt dependency that was only used
@@ -45,6 +44,15 @@ export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
 export type ChannelType = "dm" | "public_channel" | "private_channel" | "slack_list_item";
 
+export interface SlackListItemContext {
+  /** The message ts that doubles as the list item's thread_ts */
+  messageTs: string;
+  /** Channel where the notification appeared */
+  channelId: string;
+  /** Original notification text from USLACKBOT (locale-dependent) */
+  notificationText: string;
+}
+
 export interface MessageContext {
   /** The text of the user's message (with @mention stripped) */
   text: string;
@@ -64,6 +72,8 @@ export interface MessageContext {
   isMentioned: boolean;
   /** Whether Aura was addressed by name */
   isAddressedByName: boolean;
+  /** When set, this message is a Slackbot notification about a Slack List item */
+  slackListItemContext?: SlackListItemContext;
 }
 
 /**
@@ -174,6 +184,7 @@ export interface ShouldRespondResult {
 export async function shouldRespond(
   context: MessageContext,
   conversation: ConversationContext,
+  alwaysProcessChannels: Set<string>,
 ): Promise<ShouldRespondResult> {
   // Tier 2: Aura is a thread participant or it's her thread
   if (conversation.isAuraParticipant || conversation.isAuraThread) {
@@ -194,9 +205,7 @@ export async function shouldRespond(
   }
 
   // Channel-level override: always process messages in designated channels
-  const channelList = await getSettingJSON<string[]>("always_process_channels", []);
-  const alwaysProcess = new Set(channelList ?? []);
-  if (alwaysProcess.has(context.channelId)) {
+  if (alwaysProcessChannels.has(context.channelId)) {
     return { respond: true, reason: "always_process_channel" };
   }
 
@@ -421,4 +430,23 @@ export async function resolveChannelName(
   } catch {
     return channelId;
   }
+}
+
+// ── USLACKBOT Notification Detection ─────────────────────────────────────────
+
+/**
+ * Detect whether a message is a USLACKBOT notification about a Slack List item.
+ * Uses sender identity + channel membership instead of brittle text matching,
+ * since Slack localizes notification strings per workspace locale.
+ *
+ * @param slackListChannels - channel IDs known to be Slack List channels
+ *   (from the "slack_list_channels" DB setting, NOT the general-purpose
+ *   "always_process_channels" setting).
+ */
+export function isSlackbotListNotification(
+  event: SlackEvent,
+  slackListChannels: Set<string>,
+): boolean {
+  if (!("user" in event) || event.user !== "USLACKBOT") return false;
+  return slackListChannels.has(event.channel);
 }
