@@ -16,6 +16,7 @@ import { createConversationSearchTools } from "./conversations.js";
 import { createEmailTools, createGmailEATools } from "./email.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
+import { createDriveTools } from "./drive.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import type { ScheduleContext } from "../db/schema.js";
@@ -2907,6 +2908,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Google Sheets Tools ───────────────────────────────────────────────
     ...createSheetsTools(),
 
+    // ── Google Drive Tools ────────────────────────────────────────────────
+    ...createDriveTools(),
+
     // ── Table Tools (native Slack table blocks) ──────────────────────────
     ...createTableTools(client, context),
 
@@ -2932,6 +2936,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     "list_datasets", "list_tables", "inspect_table", "execute_query",
     // Google Sheets
     "read_google_sheet",
+    // Google Drive
+    "search_drive", "read_drive_file", "list_drive_folder",
     // Calendar
     "check_calendar", "create_event", "update_event", "delete_event", "find_available_slot",
     // Canvas
