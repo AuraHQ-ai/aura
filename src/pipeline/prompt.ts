@@ -121,7 +121,7 @@ export async function assemblePrompt(
   });
 
   // Dynamic per-call context — separated so the stable prompt stays cache-friendly
-  const dynamicContext = buildDynamicContext({
+  let dynamicContext = buildDynamicContext({
     userTimezone: userProfile?.timezone || undefined,
     modelId,
     channelId: context.channelId,
@@ -132,7 +132,7 @@ export async function assemblePrompt(
   // the actual list item instead of responding to the generic notification text.
   if (context.slackListItemContext) {
     const { messageTs, channelId: listChannelId } = context.slackListItemContext;
-    systemPrompt += `\n\n## Slack List Item Notification Context
+    dynamicContext += `\n\n## Slack List Item Notification Context
 
 The incoming message is a Slackbot notification about a Slack List item, NOT a real user message.
 Do NOT respond to or paraphrase the notification text. Instead, investigate the actual item:
