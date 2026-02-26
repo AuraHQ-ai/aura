@@ -379,7 +379,9 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         const resolvedName = person_name || "Unknown";
         const langConfig = getLanguageConfig(language || DEFAULT_LANGUAGE);
 
-        const dynamicVars: Record<string, string> = {};
+        const dynamicVars: Record<string, string> = {
+          direction: "outbound",
+        };
         if (resolvedName && resolvedName !== "Unknown") {
           dynamicVars.person_name = resolvedName;
         }
