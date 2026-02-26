@@ -171,45 +171,6 @@ export function supportsEffort(modelId: string): boolean {
 }
 
 /**
- * Build Anthropic context management configuration.
- * Combines two strategies:
- * 1. Clear old tool uses at 60K tokens (keep last 5)
- * 2. Compact (summarize) at 80K tokens
- *
- * Note: clear_thinking_20251015 is omitted because it requires `thinking`
- * to be explicitly enabled or adaptive. We use `effort` instead, which
- * doesn't satisfy that requirement and causes 400 errors across all
- * gateway providers.
- */
-export function buildContextManagement() {
-  return {
-    edits: [
-      {
-        type: "clear_tool_uses_20250919" as const,
-        trigger: { type: "input_tokens" as const, value: 60000 },
-        keep: { type: "tool_uses" as const, value: 5 },
-        clearToolInputs: true,
-      },
-      {
-        type: "compact_20260112" as const,
-        trigger: { type: "input_tokens" as const, value: 80000 },
-        instructions:
-          "CRITICAL — preserve in this exact priority order:\n" +
-          "1. The user's MOST RECENT request/question — quote it verbatim if short\n" +
-          "2. What you are currently doing to address that request and your next planned step\n" +
-          "3. What you have already tried and the outcome (succeeded/failed/partial)\n" +
-          "4. Key findings, data, metrics, or file paths discovered so far\n" +
-          "5. Error patterns found and things that did NOT work (to avoid repeating them)\n" +
-          "6. Thread context (channel, thread_ts) and user preferences learned\n" +
-          "Drop: verbatim tool outputs that have been summarized, " +
-          "intermediate failed attempts where the outcome is already captured above, " +
-          "redundant search results, and any earlier conversation topics that are no longer relevant.",
-      },
-    ],
-  };
-}
-
-/**
  * Get the escalation model for automatic model escalation.
  * Used when the default model is struggling — prepareStep can swap to this mid-conversation.
  * Priority: DB setting > env var > default (Opus 4.6)
