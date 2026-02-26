@@ -42,28 +42,18 @@ function truncateToBytes(s: string, maxBytes: number): string {
   return buf.subarray(0, end).toString("utf8") + "…";
 }
 
-/** Serialize tool output with per-tool truncation. */
-function serializeToolOutput(toolName: string, output: any): string {
+/** Serialize tool output with generic truncation (cap large row arrays). */
+function serializeToolOutput(_toolName: string, output: any): string {
   if (output == null) return "";
   if (typeof output !== "object") return String(output);
 
-  switch (toolName) {
-    case "execute_query": {
-      if (output.rows && Array.isArray(output.rows)) {
-        const capped = { ...output, rows: output.rows.slice(0, 50) };
-        if (output.rows.length > 50) capped._truncated = true;
-        return truncateToBytes(JSON.stringify(capped), 3000);
-      }
-      return truncateToBytes(JSON.stringify(output), 3000);
-    }
-    case "run_command":
-      return truncateToBytes(JSON.stringify(output), 2000);
-    case "web_search":
-    case "read_url":
-      return truncateToBytes(JSON.stringify(output), 2000);
-    default:
-      return truncateToBytes(JSON.stringify(output), 1500);
+  // Cap large row-like arrays to keep metadata size manageable
+  if (output.rows && Array.isArray(output.rows) && output.rows.length > 50) {
+    const capped = { ...output, rows: output.rows.slice(0, 50), _truncated: true };
+    return truncateToBytes(JSON.stringify(capped), 2000);
   }
+
+  return truncateToBytes(JSON.stringify(output), 2000);
 }
 
 /** Build Slack message metadata from accumulated tool call records. */
