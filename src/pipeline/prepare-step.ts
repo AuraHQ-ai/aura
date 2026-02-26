@@ -102,7 +102,9 @@ interface TrackedToolCall {
 function normalizeCommand(cmd: string): string {
   return cmd
     .replace(/\\[\r\n]+/g, " ")
-    .replace(/#[^\n]*/g, "")
+    .replace(/(["'])(?:\\[\s\S]|(?!\1).)*\1|#[^\n]*/g, (match) =>
+      match.startsWith("#") ? "" : match,
+    )
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -143,7 +145,7 @@ function normalizeToolArgs(toolName: string, args: unknown): string {
     if (typeof command === "string" && command) return extractCommandFingerprint(command);
   }
   try {
-    return JSON.stringify(args);
+    return JSON.stringify(args) ?? "undefined";
   } catch {
     return String(args);
   }
@@ -320,8 +322,12 @@ export function createPrepareStep(opts: {
           argsHash: hashArgs(args),
         });
 
-        // Semantic circuit breaker tracking
-        const result = resultById.get(tc.toolCallId) ?? toolResults[i];
+        // Semantic circuit breaker tracking — only fall back to index when
+        // the result at that position has no toolCallId (avoiding mis-association
+        // if results arrive in a different order than calls).
+        const resultByIndex = toolResults[i];
+        const result = resultById.get(tc.toolCallId)
+          ?? (resultByIndex && !resultByIndex.toolCallId ? resultByIndex : undefined);
         const output = result?.output ?? result?.result;
         const failed =
           output?.ok === false ||
