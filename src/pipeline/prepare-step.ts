@@ -70,6 +70,116 @@ function detectLoop(history: ToolCallSignature[]): {
   return { looping: false, count };
 }
 
+// ── Semantic Loop Detection (Circuit Breaker) ────────────────────────────────
+// Catches "same purpose, same failure" patterns that exact-string matching misses.
+// Tracks consecutive run_command failures and detects repetition via normalization
+// and URL extraction (e.g. 30 curl calls to the same endpoint with different comments).
+
+const SEMANTIC_LOOP_THRESHOLD = 3;
+const RAW_FAILURE_THRESHOLD = 5;
+
+const CIRCUIT_BREAKER_WARNING =
+  "WARNING: Circuit breaker — {count} consecutive `run_command` calls " +
+  "have failed ({reason}). The command or external service is not working. " +
+  "STOP retrying the same approach. Either try a fundamentally different " +
+  "strategy or report the failure to the user with what you've learned.";
+
+const CIRCUIT_BREAKER_STOP =
+  "CRITICAL: Circuit breaker triggered — {count} consecutive `run_command` " +
+  "calls have failed{detail}. You MUST stop retrying. Report the failure " +
+  "to the user, explain what went wrong, and suggest alternatives. " +
+  "Do NOT attempt the same command or endpoint again.";
+
+interface CommandFailureRecord {
+  normalizedCommand: string;
+  urls: string[];
+  baseCommand: string;
+}
+
+/** Strip shell comments and collapse whitespace for semantic comparison. */
+function normalizeCommand(cmd: string): string {
+  return cmd
+    .replace(/#[^\n]*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Extract HTTP(S) URLs from a command string, normalized to origin+pathname. */
+function extractUrls(cmd: string): string[] {
+  const matches = cmd.match(/https?:\/\/[^\s"'`)\]}>]+/g);
+  if (!matches) return [];
+  return [...new Set(matches.map((u) => {
+    try {
+      const url = new URL(u);
+      return url.origin + url.pathname;
+    } catch {
+      return u;
+    }
+  }))];
+}
+
+/** Extract the base command name (first token after env var assignments). */
+function extractBaseCommand(cmd: string): string {
+  const stripped = cmd.replace(/^\s*(\w+=\S+\s+)*/g, "").trim();
+  return stripped.split(/\s/)[0] || stripped;
+}
+
+function detectSemanticLoop(failures: CommandFailureRecord[]): {
+  isLoop: boolean;
+  severity: "warn" | "stop";
+  reason?: string;
+  count: number;
+} {
+  const count = failures.length;
+
+  if (count >= RAW_FAILURE_THRESHOLD) {
+    return { isLoop: true, severity: "stop", reason: "too many consecutive failures", count };
+  }
+
+  if (count < SEMANTIC_LOOP_THRESHOLD) {
+    return { isLoop: false, severity: "warn", count };
+  }
+
+  const recent = failures.slice(-SEMANTIC_LOOP_THRESHOLD);
+
+  if (recent.every((f) => f.normalizedCommand === recent[0].normalizedCommand)) {
+    return {
+      isLoop: true,
+      severity: count >= SEMANTIC_LOOP_THRESHOLD + 1 ? "stop" : "warn",
+      reason: "same normalized command repeated",
+      count,
+    };
+  }
+
+  if (recent.every((f) => f.urls.length > 0)) {
+    const sharedUrl = recent[0].urls.find((u) =>
+      recent.every((f) => f.urls.includes(u)),
+    );
+    if (sharedUrl) {
+      return {
+        isLoop: true,
+        severity: count >= SEMANTIC_LOOP_THRESHOLD + 1 ? "stop" : "warn",
+        reason: `same endpoint ${sharedUrl}`,
+        count,
+      };
+    }
+  }
+
+  if (
+    recent.every((f) => f.baseCommand === recent[0].baseCommand) &&
+    recent[0].baseCommand
+  ) {
+    return {
+      isLoop: true,
+      severity: count >= SEMANTIC_LOOP_THRESHOLD + 1 ? "stop" : "warn",
+      reason: `same base command (${recent[0].baseCommand}) failing repeatedly`,
+      count,
+    };
+  }
+
+  return { isLoop: false, severity: "warn", count };
+}
+
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
@@ -113,6 +223,7 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  const consecutiveCmdFailures: CommandFailureRecord[] = [];
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -162,6 +273,70 @@ export function createPrepareStep(opts: {
           stepNumber,
           toolName: loopResult.toolName,
           repeatCount: loopResult.count,
+        });
+      }
+    }
+
+    // --- Semantic loop detection (circuit breaker for run_command) ---
+    let circuitBreakerNudge: string | undefined;
+    if (lastStep?.toolCalls && lastStep?.toolResults) {
+      const toolCalls: any[] = Array.isArray(lastStep.toolCalls) ? lastStep.toolCalls : [];
+      const toolResults: any[] = Array.isArray(lastStep.toolResults) ? lastStep.toolResults : [];
+
+      let hasRunCommand = false;
+      let allRunCommandsFailed = true;
+
+      for (const tc of toolCalls) {
+        const name = tc.toolName ?? tc.name ?? "unknown";
+        if (name !== "run_command") continue;
+        hasRunCommand = true;
+
+        const result = toolResults.find((r: any) => r.toolCallId === tc.toolCallId);
+        const output = result?.output;
+        const exitCode = output?.exit_code;
+        const isFailed =
+          (output?.ok === false) ||
+          (typeof exitCode === "number" && exitCode !== 0);
+
+        if (isFailed) {
+          const command = tc.input?.command ?? tc.args?.command ?? "";
+          consecutiveCmdFailures.push({
+            normalizedCommand: normalizeCommand(command),
+            urls: extractUrls(command),
+            baseCommand: extractBaseCommand(normalizeCommand(command)),
+          });
+        } else {
+          allRunCommandsFailed = false;
+        }
+      }
+
+      if (hasRunCommand && !allRunCommandsFailed) {
+        consecutiveCmdFailures.length = 0;
+      }
+
+      if (!hasRunCommand && toolCalls.length > 0) {
+        consecutiveCmdFailures.length = 0;
+      }
+
+      const semanticResult = detectSemanticLoop(consecutiveCmdFailures);
+      if (semanticResult.isLoop) {
+        const detail = semanticResult.reason
+          ? ` (${semanticResult.reason})`
+          : "";
+        if (semanticResult.severity === "stop") {
+          circuitBreakerNudge = CIRCUIT_BREAKER_STOP
+            .replace("{count}", String(semanticResult.count))
+            .replace("{detail}", detail);
+        } else {
+          circuitBreakerNudge = CIRCUIT_BREAKER_WARNING
+            .replace("{count}", String(semanticResult.count))
+            .replace("{reason}", semanticResult.reason ?? "repeated failures");
+        }
+        logger.warn("prepareStep: semantic loop detected — circuit breaker", {
+          stepNumber,
+          severity: semanticResult.severity,
+          reason: semanticResult.reason,
+          consecutiveFailures: semanticResult.count,
         });
       }
     }
@@ -229,6 +404,10 @@ export function createPrepareStep(opts: {
 
     // --- Step limit warning and loop detection nudges ---
     const nudges: string[] = [];
+
+    if (circuitBreakerNudge) {
+      nudges.push(circuitBreakerNudge);
+    }
 
     if (loopNudge) {
       nudges.push(loopNudge);
