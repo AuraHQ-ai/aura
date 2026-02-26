@@ -48,7 +48,7 @@ const TEXT_MIME_TYPES = new Set([
   "application/xhtml+xml",
 ]);
 
-function isTextMimeType(mimeType: string): boolean {
+export function isTextMimeType(mimeType: string): boolean {
   return mimeType.startsWith("text/") || TEXT_MIME_TYPES.has(mimeType);
 }
 
