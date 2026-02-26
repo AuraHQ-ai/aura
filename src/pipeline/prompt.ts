@@ -110,7 +110,7 @@ export async function assemblePrompt(
   const modelId = await getMainModelId();
 
   // Build the stable system prompt (async: queries skill index from DB)
-  let systemPrompt = await buildSystemPrompt({
+  const systemPrompt = await buildSystemPrompt({
     memories,
     conversations,
     userProfile,
