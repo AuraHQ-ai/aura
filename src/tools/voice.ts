@@ -28,15 +28,6 @@ function getLanguageConfig(lang: string): LanguageConfig {
   return LANGUAGE_CONFIGS[key] ?? LANGUAGE_CONFIGS[DEFAULT_LANGUAGE];
 }
 
-function detectLanguageFromPhone(phone: string): string {
-  if (phone.startsWith("+34")) return "es";
-  if (phone.startsWith("+33")) return "fr";
-  if (phone.startsWith("+39")) return "it";
-  if (phone.startsWith("+41")) return "de";
-  if (phone.startsWith("+44") || phone.startsWith("+1")) return "en";
-  return DEFAULT_LANGUAGE;
-}
-
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
 
 // ── ElevenLabs Discovery Cache ──────────────────────────────────────────────
@@ -246,29 +237,27 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
     });
 
     // ── place_call ───────────────────────────────────────────────────
-    const DEFAULT_AGENT_ID = process.env.ELEVENLABS_AGENT_ID ?? "agent_9301kj9tjcqaermrz71vvr0fpv4v";
-    const DEFAULT_FROM_NUMBER = process.env.ELEVENLABS_FROM_NUMBER ?? "+14158860211";
-    const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? "upcns7xCtWHwsgL2HKV5";
+    const DEFAULT_AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
+    const DEFAULT_FROM_NUMBER = process.env.ELEVENLABS_FROM_NUMBER;
+    const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
 
     tools.place_call = defineTool({
       description:
         "Initiate an outbound phone call via ElevenLabs + Twilio. " +
-        "Use list_voice_agents first to discover available agents/phones/voices, " +
-        "then pass IDs here. When providing a prompt, bake the person's name directly " +
-        "into the text (don't use {{person_name}} placeholders — ElevenLabs only resolves " +
-        "dynamic variables in first_message, not in the prompt body). Admin-only.",
+        "Use list_voice_agents first to discover available agents/phones/voices. " +
+        "When providing a prompt, bake the person's name directly into the text " +
+        "(don't use {{person_name}} placeholders — ElevenLabs only resolves dynamic " +
+        "variables in first_message, not in the prompt body). Admin-only.",
       inputSchema: z.object({
         agent_id: z
           .string()
           .optional()
-          .describe(
-            "Agent ID from list_voice_agents. Default: Sales Booking agent",
-          ),
+          .describe("Agent ID. Defaults to ELEVENLABS_AGENT_ID env var."),
         from_number: z
           .string()
           .optional()
           .describe(
-            "Caller phone number from list_voice_agents. Default: +14158860211. " +
+            "Caller phone number. Defaults to ELEVENLABS_FROM_NUMBER env var. " +
             "Used to resolve the agent_phone_number_id via cache lookup.",
           ),
         agent_phone_number_id: z
@@ -286,9 +275,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         voice_id: z
           .string()
           .optional()
-          .describe(
-            "Voice ID from list_voice_agents. Default: Penelope",
-          ),
+          .describe("Voice ID. Defaults to ELEVENLABS_VOICE_ID env var."),
         person_name: z
           .string()
           .optional()
@@ -312,7 +299,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           .string()
           .optional()
           .describe(
-            "Language code (es/fr/it/en/de). Auto-detected from phone number if omitted.",
+            "Language code (es/fr/it/en/de). The LLM should always specify this explicitly based on context about the person.",
           ),
       }),
       execute: async ({
@@ -331,6 +318,23 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
             ok: false,
             error: "Only admins can initiate phone calls.",
           };
+        }
+
+        const apiKey = process.env.ELEVENLABS_API_KEY;
+        if (!apiKey) {
+          return { ok: false, error: "ELEVENLABS_API_KEY not configured." };
+        }
+
+        const resolvedAgentId = agentIdParam || DEFAULT_AGENT_ID;
+        if (!resolvedAgentId) {
+          return { ok: false, error: "No agent_id provided and ELEVENLABS_AGENT_ID env var not set." };
+        }
+
+        const resolvedVoiceId = voiceId ?? DEFAULT_VOICE_ID;
+
+        const defaultFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
+        if (!defaultFromNumber && !phoneNumberIdParam) {
+          return { ok: false, error: "No from_number provided and ELEVENLABS_FROM_NUMBER env var not set." };
         }
 
         const e164Regex = /^\+[1-9]\d{6,14}$/;
@@ -357,15 +361,10 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           };
         }
 
-        const apiKey = process.env.ELEVENLABS_API_KEY!;
-        const resolvedAgentId = agentIdParam || DEFAULT_AGENT_ID;
-
-        // Resolve phone_number_id: prefer direct param, then env var, then cache lookup
         let phoneNumberId = phoneNumberIdParam || process.env.ELEVENLABS_PHONE_NUMBER_ID || null;
 
         if (!phoneNumberId) {
-          const resolvedFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
-          phoneNumberId = await resolvePhoneNumberIdFromCache(resolvedFromNumber);
+          phoneNumberId = await resolvePhoneNumberIdFromCache(defaultFromNumber);
         }
 
         if (!phoneNumberId) {
@@ -378,36 +377,26 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         }
 
         const resolvedName = person_name || "Unknown";
-        const langKey = language || detectLanguageFromPhone(toNumber);
-        const langConfig = getLanguageConfig(langKey);
-        const resolvedVoiceId = voiceId ?? DEFAULT_VOICE_ID;
+        const langConfig = getLanguageConfig(language || DEFAULT_LANGUAGE);
 
-        const dynamicVars: Record<string, string | number | boolean> = {
-          person_name: resolvedName,
-          person_language: langConfig.languageCode,
-          direction: "outbound",
-        };
-
-        const agentOverride: Record<string, unknown> = {
-          first_message: "",
-          language: langConfig.languageCode,
-        };
-
-        if (prompt) {
-          agentOverride.prompt = { prompt };
+        const dynamicVars: Record<string, string> = {};
+        if (resolvedName && resolvedName !== "Unknown") {
+          dynamicVars.person_name = resolvedName;
         }
 
-        const outboundBody: Record<string, unknown> = {
+        const outboundBody = {
           agent_id: resolvedAgentId,
           agent_phone_number_id: phoneNumberId,
           to_number: toNumber,
           conversation_initiation_client_data: {
             dynamic_variables: dynamicVars,
             conversation_config_override: {
-              agent: agentOverride,
-              ...(resolvedVoiceId
-                ? { tts: { voice_id: resolvedVoiceId } }
-                : {}),
+              agent: {
+                prompt: prompt ? { prompt } : undefined,
+                first_message: "",
+                language: langConfig.languageCode,
+              },
+              ...(resolvedVoiceId ? { tts: { voice_id: resolvedVoiceId } } : {}),
             },
           },
         };
