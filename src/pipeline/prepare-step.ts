@@ -46,7 +46,6 @@ export function createPrepareStep(opts: {
   dynamicContext?: string;
   defaultEffort?: EffortLevel;
   modelId?: string;
-  anthropicProviderOptions?: Record<string, any>;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
@@ -75,9 +74,7 @@ export function createPrepareStep(opts: {
     if (hadToolFailure) failureCount++;
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
-    const anthropicOptions: Record<string, any> = {
-      ...(opts.anthropicProviderOptions ?? {}),
-    };
+    const anthropicOptions: Record<string, any> = {};
 
     if (hasEffortSupport) {
       let newEffort = currentEffort;
@@ -194,7 +191,6 @@ export function createHeadlessPrepareStep(opts: {
   dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
-  anthropicProviderOptions?: Record<string, any>;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   return createPrepareStep({
@@ -204,7 +200,6 @@ export function createHeadlessPrepareStep(opts: {
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
-    anthropicProviderOptions: opts.anthropicProviderOptions,
     getEscalationModel: opts.getEscalationModel,
   });
 }
