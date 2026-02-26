@@ -3,6 +3,12 @@ import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { supportsEffort, isAnthropicModel, buildContextManagement } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
+import {
+  normalizeCommand,
+  extractEndpoints,
+  detectCircuitBreaker,
+  type CommandFailureRecord,
+} from "./circuit-breaker.js";
 
 export const STEP_LIMIT = 250;
 export const HEADLESS_STEP_LIMIT = 350;
@@ -38,8 +44,14 @@ interface ToolCallSignature {
   argsHash: string;
 }
 
-function hashArgs(args: unknown): string {
+function hashArgs(toolName: string, args: unknown): string {
   try {
+    if (toolName === "run_command" && typeof args === "object" && args !== null) {
+      const { command, ...rest } = args as Record<string, unknown>;
+      if (typeof command === "string") {
+        return JSON.stringify({ command: normalizeCommand(command), ...rest });
+      }
+    }
     return JSON.stringify(args);
   } catch {
     return String(args);
@@ -113,6 +125,7 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  const consecutiveCommandFailures: CommandFailureRecord[] = [];
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -133,9 +146,10 @@ export function createPrepareStep(opts: {
     // --- Loop detection: track recent tool calls and detect repetition ---
     if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
       for (const tc of lastStep.toolCalls) {
+        const toolName = tc.toolName ?? tc.name ?? "unknown";
         recentToolCalls.push({
-          name: tc.toolName ?? tc.name ?? "unknown",
-          argsHash: hashArgs(tc.input ?? tc.args),
+          name: toolName,
+          argsHash: hashArgs(toolName, tc.input ?? tc.args),
         });
       }
       while (recentToolCalls.length > LOOP_WINDOW) {
@@ -143,7 +157,49 @@ export function createPrepareStep(opts: {
       }
     }
 
+    // --- Circuit breaker: track consecutive run_command failures ---
+    if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
+      const toolResults: any[] = lastStep.toolResults ?? [];
+      let hadRunCommand = false;
+      let anyRunCommandSucceeded = false;
+
+      for (const tc of lastStep.toolCalls) {
+        const toolName = tc.toolName ?? tc.name ?? "unknown";
+        if (toolName !== "run_command") continue;
+
+        hadRunCommand = true;
+        const args = tc.input ?? tc.args;
+        const command: string = (typeof args === "object" && args !== null)
+          ? (args as Record<string, unknown>).command as string ?? ""
+          : "";
+
+        const result = toolResults.find(
+          (r: any) => r.toolCallId === tc.toolCallId,
+        );
+        const output = result?.output;
+        const isFailed =
+          output?.ok === false ||
+          output?.error != null ||
+          (output?.exit_code != null && output.exit_code !== 0);
+
+        if (isFailed) {
+          consecutiveCommandFailures.push({
+            normalizedCommand: normalizeCommand(command),
+            endpoints: extractEndpoints(command),
+          });
+        } else {
+          anyRunCommandSucceeded = true;
+        }
+      }
+
+      if (hadRunCommand && anyRunCommandSucceeded) {
+        consecutiveCommandFailures.length = 0;
+      }
+    }
+
     const loopResult = detectLoop(recentToolCalls);
+    const circuitBreakerResult = detectCircuitBreaker(consecutiveCommandFailures);
+
     let loopNudge: string | undefined;
     if (loopResult.looping) {
       if (loopResult.count >= LOOP_STOP_THRESHOLD) {
@@ -164,6 +220,15 @@ export function createPrepareStep(opts: {
           repeatCount: loopResult.count,
         });
       }
+    }
+
+    let circuitBreakerNudge: string | undefined;
+    if (circuitBreakerResult.triggered) {
+      circuitBreakerNudge = circuitBreakerResult.message;
+      logger.warn("prepareStep: circuit breaker triggered", {
+        stepNumber,
+        consecutiveFailures: consecutiveCommandFailures.length,
+      });
     }
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
@@ -227,8 +292,12 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // --- Step limit warning and loop detection nudges ---
+    // --- Step limit warning, loop detection, and circuit breaker nudges ---
     const nudges: string[] = [];
+
+    if (circuitBreakerNudge) {
+      nudges.push(circuitBreakerNudge);
+    }
 
     if (loopNudge) {
       nudges.push(loopNudge);
