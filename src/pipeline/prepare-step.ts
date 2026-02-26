@@ -3,6 +3,10 @@ import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { supportsEffort, isAnthropicModel, buildContextManagement } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
+import {
+  normalizeToolArgs,
+  CircuitBreakerTracker,
+} from "./circuit-breaker.js";
 
 export const STEP_LIMIT = 250;
 export const HEADLESS_STEP_LIMIT = 350;
@@ -36,14 +40,6 @@ const LOOP_FORCE_STOP =
 interface ToolCallSignature {
   name: string;
   argsHash: string;
-}
-
-function hashArgs(args: unknown): string {
-  try {
-    return JSON.stringify(args);
-  } catch {
-    return String(args);
-  }
 }
 
 function detectLoop(history: ToolCallSignature[]): {
@@ -113,6 +109,7 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  const circuitBreaker = new CircuitBreakerTracker();
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -131,18 +128,35 @@ export function createPrepareStep(opts: {
     if (hadToolFailure) failureCount++;
 
     // --- Loop detection: track recent tool calls and detect repetition ---
+    // Also feeds the circuit breaker with correlated call+result data.
     if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
+      const resultMap = new Map<string, any>();
+      if (lastStep.toolResults && Array.isArray(lastStep.toolResults)) {
+        for (const r of lastStep.toolResults) {
+          resultMap.set(r.toolCallId, r.output);
+        }
+      }
+
       for (const tc of lastStep.toolCalls) {
+        const toolName = tc.toolName ?? tc.name ?? "unknown";
+        const args = tc.input ?? tc.args;
+
         recentToolCalls.push({
-          name: tc.toolName ?? tc.name ?? "unknown",
-          argsHash: hashArgs(tc.input ?? tc.args),
+          name: toolName,
+          argsHash: normalizeToolArgs(toolName, args),
         });
+
+        const output = resultMap.get(tc.toolCallId);
+        if (output !== undefined) {
+          circuitBreaker.record(toolName, args, output);
+        }
       }
       while (recentToolCalls.length > LOOP_WINDOW) {
         recentToolCalls.shift();
       }
     }
 
+    // --- Exact-match loop detection (now with normalized args) ---
     const loopResult = detectLoop(recentToolCalls);
     let loopNudge: string | undefined;
     if (loopResult.looping) {
@@ -164,6 +178,12 @@ export function createPrepareStep(opts: {
           repeatCount: loopResult.count,
         });
       }
+    }
+
+    // --- Circuit breaker: consecutive failures + semantic repetition ---
+    const cbResult = circuitBreaker.check();
+    if (cbResult.tripped && !loopNudge) {
+      loopNudge = cbResult.message;
     }
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
