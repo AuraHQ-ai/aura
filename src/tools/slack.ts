@@ -2937,7 +2937,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // Google Sheets
     "read_google_sheet",
     // Google Drive
-    "search_drive", "read_drive_file", "list_drive_folder",
+    "search_drive", "read_drive_file", "list_drive_folder", "list_shared_drives",
     // Calendar
     "check_calendar", "create_event", "update_event", "delete_event", "find_available_slot",
     // Canvas

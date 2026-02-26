@@ -258,13 +258,19 @@ export function createDriveTools() {
 
     list_drive_folder: defineTool({
       description:
-        "List files in a Google Drive folder. If no folder_id is provided, lists files in the root of My Drive. Returns file names, IDs, types, modification dates, and sizes. Useful for browsing Drive contents and discovering files before reading them.",
+        "List files in a Google Drive folder. If no folder_id is provided, lists files in the root of My Drive. To browse a shared drive, pass its drive_id (from list_shared_drives). Returns file names, IDs, types, modification dates, and sizes. Useful for browsing Drive contents and discovering files before reading them.",
       inputSchema: z.object({
         folder_id: z
           .string()
           .default("root")
           .describe(
             "The folder ID to list contents of. Defaults to 'root' (My Drive root).",
+          ),
+        drive_id: z
+          .string()
+          .optional()
+          .describe(
+            "Shared drive ID. When provided, lists files in this shared drive instead of My Drive. Get drive IDs from list_shared_drives.",
           ),
         limit: z
           .number()
@@ -275,7 +281,7 @@ export function createDriveTools() {
             "Maximum number of files to return (default 20, max 100)",
           ),
       }),
-      execute: async ({ folder_id, limit }) => {
+      execute: async ({ folder_id, drive_id, limit }) => {
         try {
           const drive = await getDriveClient();
           if (!drive) {
@@ -286,18 +292,28 @@ export function createDriveTools() {
             };
           }
 
-          if (folder_id !== "root" && !/^[\w-]+$/.test(folder_id)) {
+          const effectiveFolder =
+            drive_id && folder_id === "root" ? drive_id : folder_id;
+
+          if (effectiveFolder !== "root" && !/^[\w-]+$/.test(effectiveFolder)) {
             return { ok: false, error: "Invalid folder ID format." };
           }
 
-          const res = await drive.files.list({
-            q: `'${folder_id}' in parents and trashed = false`,
+          const listParams: Record<string, any> = {
+            q: `'${effectiveFolder}' in parents and trashed = false`,
             pageSize: limit,
             fields: FILE_FIELDS,
             orderBy: "folder,name",
             supportsAllDrives: true,
             includeItemsFromAllDrives: true,
-          });
+          };
+
+          if (drive_id) {
+            listParams.corpora = "drive";
+            listParams.driveId = drive_id;
+          }
+
+          const res = await drive.files.list(listParams);
 
           const files = (res.data.files || []).map((f: any) => ({
             id: f.id,
@@ -308,14 +324,22 @@ export function createDriveTools() {
           }));
 
           logger.info("list_drive_folder tool called", {
-            folder_id,
+            folder_id: effectiveFolder,
+            drive_id,
             resultCount: files.length,
           });
 
-          return { ok: true as const, folder_id, files, total: files.length };
+          return {
+            ok: true as const,
+            folder_id: effectiveFolder,
+            drive_id,
+            files,
+            total: files.length,
+          };
         } catch (error: any) {
           logger.error("list_drive_folder tool failed", {
             folder_id,
+            drive_id,
             error: error.message,
           });
           return {
@@ -326,9 +350,61 @@ export function createDriveTools() {
       },
       slack: {
         status: "Browsing Drive folder...",
-        detail: (i) => (i.folder_id === "root" ? "My Drive" : i.folder_id?.slice(0, 30)),
+        detail: (i) =>
+          i.drive_id
+            ? `Shared drive ${i.drive_id.slice(0, 15)}`
+            : i.folder_id === "root"
+              ? "My Drive"
+              : i.folder_id?.slice(0, 30),
         output: (r) =>
           r.ok === false ? r.error : `${r.files?.length ?? 0} items`,
+      },
+    }),
+
+    list_shared_drives: defineTool({
+      description:
+        "List all shared drives in the Google Workspace organization. Returns drive names and IDs. Use the drive ID with list_drive_folder to browse contents of a shared drive.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        try {
+          const drive = await getDriveClient();
+          if (!drive) {
+            return {
+              ok: false,
+              error:
+                "Google Drive is not configured. Ensure OAuth credentials and a refresh token with drive.readonly scope are set up.",
+            };
+          }
+
+          const res = await drive.drives.list({
+            pageSize: 100,
+            fields: "drives(id,name)",
+          });
+
+          const drives = (res.data.drives || []).map((d: any) => ({
+            id: d.id,
+            name: d.name,
+          }));
+
+          logger.info("list_shared_drives tool called", {
+            resultCount: drives.length,
+          });
+
+          return { ok: true as const, drives, total: drives.length };
+        } catch (error: any) {
+          logger.error("list_shared_drives tool failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to list shared drives: ${error.message}`,
+          };
+        }
+      },
+      slack: {
+        status: "Listing shared drives...",
+        output: (r) =>
+          r.ok === false ? r.error : `${r.drives?.length ?? 0} shared drives`,
       },
     }),
   };
