@@ -1,0 +1,335 @@
+import { z } from "zod";
+import { defineTool } from "../lib/tool.js";
+import { logger } from "../lib/logger.js";
+import { isTextMimeType } from "../lib/files.js";
+
+const MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024; // 10 MB
+
+const FILE_FIELDS =
+  "files(id,name,mimeType,modifiedTime,owners,size,parents)";
+
+async function getDriveClient() {
+  const { getOAuth2Client, getRefreshToken } = await import(
+    "../lib/gmail.js"
+  );
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) return null;
+
+  const client = await getOAuth2Client();
+  if (!client) return null;
+
+  const { drive } = await import("@googleapis/drive");
+  return drive({ version: "v3", auth: client });
+}
+
+export function createDriveTools() {
+  return {
+    search_drive: defineTool({
+      description:
+        "Search Google Drive for files and documents. Uses the Drive search query syntax (e.g. \"name contains 'budget'\", \"mimeType='application/vnd.google-apps.spreadsheet'\", \"fullText contains 'quarterly review'\"). Returns file names, IDs, types, modification dates, owners, and sizes. Use this to find documents before reading them with read_drive_file.",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe(
+            "Search query using Google Drive search syntax, e.g. \"name contains 'report'\" or \"fullText contains 'Q4 results'\"",
+          ),
+        limit: z
+          .number()
+          .min(1)
+          .max(50)
+          .default(10)
+          .describe("Maximum number of results to return (default 10, max 50)"),
+      }),
+      execute: async ({ query, limit }) => {
+        try {
+          const drive = await getDriveClient();
+          if (!drive) {
+            return {
+              ok: false,
+              error:
+                "Google Drive is not configured. Ensure OAuth credentials and a refresh token with drive.readonly scope are set up.",
+            };
+          }
+
+          const res = await drive.files.list({
+            q: `(${query}) and trashed = false`,
+            pageSize: limit,
+            fields: FILE_FIELDS,
+            orderBy: "modifiedTime desc",
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+          });
+
+          const files = (res.data.files || []).map((f: any) => ({
+            id: f.id,
+            name: f.name,
+            mimeType: f.mimeType,
+            modifiedTime: f.modifiedTime,
+            owner: f.owners?.[0]?.displayName || f.owners?.[0]?.emailAddress,
+            size: f.size ? parseInt(f.size, 10) : undefined,
+          }));
+
+          logger.info("search_drive tool called", {
+            query,
+            resultCount: files.length,
+          });
+
+          return { ok: true as const, files, total: files.length };
+        } catch (error: any) {
+          logger.error("search_drive tool failed", { query, error: error.message });
+          return {
+            ok: false,
+            error: `Failed to search Drive: ${error.message}`,
+          };
+        }
+      },
+      slack: {
+        status: "Searching Google Drive...",
+        detail: (i) => i.query?.slice(0, 60),
+        output: (r) =>
+          r.ok === false ? r.error : `${r.files?.length ?? 0} files found`,
+      },
+    }),
+
+    read_drive_file: defineTool({
+      description:
+        "Read the content of a file from Google Drive by its file ID. For Google Docs and Slides, exports as plain text. For Google Sheets, tells you to use the read_google_sheet tool instead. For PDFs and images, returns base64-encoded content. For other file types, returns text content or base64 depending on the mime type. Maximum file size: 10 MB.",
+      inputSchema: z.object({
+        file_id: z
+          .string()
+          .describe("The Google Drive file ID to read"),
+      }),
+      execute: async ({ file_id }) => {
+        try {
+          const drive = await getDriveClient();
+          if (!drive) {
+            return {
+              ok: false,
+              error:
+                "Google Drive is not configured. Ensure OAuth credentials and a refresh token with drive.readonly scope are set up.",
+            };
+          }
+
+          const meta = await drive.files.get({
+            fileId: file_id,
+            fields: "id,name,mimeType,size,modifiedTime,owners",
+            supportsAllDrives: true,
+          });
+
+          const file = meta.data;
+          const mimeType = file.mimeType || "application/octet-stream";
+          const name = file.name || "unknown";
+          const size = file.size ? parseInt(file.size, 10) : undefined;
+
+          const fileInfo = {
+            id: file.id,
+            name,
+            mimeType,
+            size,
+            modifiedTime: file.modifiedTime,
+            owner: file.owners?.[0]?.displayName || file.owners?.[0]?.emailAddress,
+          };
+
+          if (mimeType === "application/vnd.google-apps.spreadsheet") {
+            return {
+              ok: true,
+              ...fileInfo,
+              content: null,
+              note: "This is a Google Sheets spreadsheet. Use the read_google_sheet tool with this file ID to read its contents.",
+            };
+          }
+
+          if (
+            mimeType === "application/vnd.google-apps.document" ||
+            mimeType === "application/vnd.google-apps.presentation"
+          ) {
+            const exported = await drive.files.export({
+              fileId: file_id,
+              mimeType: "text/plain",
+            });
+            const content =
+              typeof exported.data === "string"
+                ? exported.data
+                : String(exported.data);
+
+            const label =
+              mimeType === "application/vnd.google-apps.document"
+                ? "Google Doc"
+                : "Google Slides";
+            logger.info(`read_drive_file: exported ${label}`, {
+              file_id,
+              name,
+              contentLength: content.length,
+            });
+
+            return { ok: true, ...fileInfo, content, encoding: "text" };
+          }
+
+          // For other Google Workspace types (drawings, forms, etc.), skip download
+          if (mimeType.startsWith("application/vnd.google-apps.")) {
+            return {
+              ok: true,
+              ...fileInfo,
+              content: null,
+              note: `This is a Google Workspace file (${mimeType}) that cannot be exported as text. Open it in Google Drive directly.`,
+            };
+          }
+
+          if (size && size > MAX_DOWNLOAD_SIZE) {
+            return {
+              ok: false,
+              error: `File is too large to download (${(size / 1024 / 1024).toFixed(1)} MB). Maximum is 10 MB.`,
+              ...fileInfo,
+            };
+          }
+
+          const downloaded = await drive.files.get(
+            { fileId: file_id, alt: "media", supportsAllDrives: true },
+            { responseType: "arraybuffer" },
+          );
+
+          const buffer = Buffer.from(downloaded.data as ArrayBuffer);
+
+          if (
+            mimeType === "application/pdf" ||
+            mimeType.startsWith("image/")
+          ) {
+            logger.info("read_drive_file: downloaded binary file", {
+              file_id,
+              name,
+              mimeType,
+              size: buffer.length,
+            });
+
+            return {
+              ok: true,
+              ...fileInfo,
+              content: buffer.toString("base64"),
+              encoding: "base64",
+            };
+          }
+
+          if (isTextMimeType(mimeType)) {
+            const content = buffer.toString("utf-8");
+            logger.info("read_drive_file: downloaded text file", {
+              file_id,
+              name,
+              mimeType,
+              contentLength: content.length,
+            });
+
+            return { ok: true, ...fileInfo, content, encoding: "text" };
+          }
+
+          logger.info("read_drive_file: downloaded binary file (non-image/pdf)", {
+            file_id,
+            name,
+            mimeType,
+            size: buffer.length,
+          });
+
+          return {
+            ok: true,
+            ...fileInfo,
+            content: buffer.toString("base64"),
+            encoding: "base64",
+          };
+        } catch (error: any) {
+          logger.error("read_drive_file tool failed", {
+            file_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read Drive file: ${error.message}`,
+          };
+        }
+      },
+      slack: {
+        status: "Reading file from Drive...",
+        detail: (i) => i.file_id?.slice(0, 30),
+        output: (r: any) => {
+          if (r.ok === false) return r.error;
+          if (r.note) return r.note;
+          return r.name || "File read";
+        },
+      },
+    }),
+
+    list_drive_folder: defineTool({
+      description:
+        "List files in a Google Drive folder. If no folder_id is provided, lists files in the root of My Drive. Returns file names, IDs, types, modification dates, and sizes. Useful for browsing Drive contents and discovering files before reading them.",
+      inputSchema: z.object({
+        folder_id: z
+          .string()
+          .default("root")
+          .describe(
+            "The folder ID to list contents of. Defaults to 'root' (My Drive root).",
+          ),
+        limit: z
+          .number()
+          .min(1)
+          .max(100)
+          .default(20)
+          .describe(
+            "Maximum number of files to return (default 20, max 100)",
+          ),
+      }),
+      execute: async ({ folder_id, limit }) => {
+        try {
+          const drive = await getDriveClient();
+          if (!drive) {
+            return {
+              ok: false,
+              error:
+                "Google Drive is not configured. Ensure OAuth credentials and a refresh token with drive.readonly scope are set up.",
+            };
+          }
+
+          if (folder_id !== "root" && !/^[\w-]+$/.test(folder_id)) {
+            return { ok: false, error: "Invalid folder ID format." };
+          }
+
+          const res = await drive.files.list({
+            q: `'${folder_id}' in parents and trashed = false`,
+            pageSize: limit,
+            fields: FILE_FIELDS,
+            orderBy: "folder,name",
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+          });
+
+          const files = (res.data.files || []).map((f: any) => ({
+            id: f.id,
+            name: f.name,
+            mimeType: f.mimeType,
+            modifiedTime: f.modifiedTime,
+            size: f.size ? parseInt(f.size, 10) : undefined,
+          }));
+
+          logger.info("list_drive_folder tool called", {
+            folder_id,
+            resultCount: files.length,
+          });
+
+          return { ok: true as const, folder_id, files, total: files.length };
+        } catch (error: any) {
+          logger.error("list_drive_folder tool failed", {
+            folder_id,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to list Drive folder: ${error.message}`,
+          };
+        }
+      },
+      slack: {
+        status: "Browsing Drive folder...",
+        detail: (i) => (i.folder_id === "root" ? "My Drive" : i.folder_id?.slice(0, 30)),
+        output: (r) =>
+          r.ok === false ? r.error : `${r.files?.length ?? 0} items`,
+      },
+    }),
+  };
+}
