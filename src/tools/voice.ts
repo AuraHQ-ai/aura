@@ -37,33 +37,7 @@ function detectLanguageFromPhone(phone: string): string {
   return DEFAULT_LANGUAGE;
 }
 
-// ── ElevenLabs Agent Config ──────────────────────────────────────────────────
-
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
-
-interface AgentDynamicVarPlaceholders {
-  [key: string]: string | number | boolean;
-}
-
-interface ElevenLabsAgentConfigResponse {
-  agent_id: string;
-  conversation_config?: {
-    agent?: {
-      prompt?: {
-        prompt?: string;
-      };
-      first_message?: string;
-      dynamic_variables?: {
-        dynamic_variable_placeholders?: AgentDynamicVarPlaceholders;
-      };
-    };
-  };
-  phone_numbers?: Array<{
-    provider: string;
-    phone_number_id: string;
-    phone_number: string;
-  }>;
-}
 
 // ── ElevenLabs Discovery Cache ──────────────────────────────────────────────
 
@@ -173,44 +147,6 @@ async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
   return elevenLabsCache;
 }
 
-async function fetchAgentConfig(
-  apiKey: string,
-  agentId: string,
-): Promise<ElevenLabsAgentConfigResponse> {
-  const response = await fetch(
-    `${ELEVENLABS_API_BASE}/convai/agents/${agentId}`,
-    { headers: { "xi-api-key": apiKey }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
-  );
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(
-      `Failed to fetch agent config (${response.status}): ${text.substring(0, 200)}`,
-    );
-  }
-  return response.json() as Promise<ElevenLabsAgentConfigResponse>;
-}
-
-function resolvePhoneNumberIdFromConfig(
-  agentConfig: ElevenLabsAgentConfigResponse,
-  fromNumber?: string,
-): string | undefined {
-  const envId = process.env.ELEVENLABS_PHONE_NUMBER_ID;
-  if (envId) return envId;
-
-  const phones = Array.isArray(agentConfig.phone_numbers)
-    ? agentConfig.phone_numbers
-    : [];
-  const twilioPhones = phones.filter((p) => p.provider === "twilio");
-  if (!twilioPhones.length) return undefined;
-
-  if (fromNumber) {
-    const match = twilioPhones.find((p) => p.phone_number === fromNumber);
-    if (match) return match.phone_number_id;
-  }
-
-  return twilioPhones[0].phone_number_id;
-}
-
 async function resolvePhoneNumberIdFromCache(
   fromNumber: string | undefined,
 ): Promise<string | null> {
@@ -318,7 +254,9 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
       description:
         "Initiate an outbound phone call via ElevenLabs + Twilio. " +
         "Use list_voice_agents first to discover available agents/phones/voices, " +
-        "then pass IDs here. Admin-only.",
+        "then pass IDs here. When providing a prompt, bake the person's name directly " +
+        "into the text (don't use {{person_name}} placeholders — ElevenLabs only resolves " +
+        "dynamic variables in first_message, not in the prompt body). Admin-only.",
       inputSchema: z.object({
         agent_id: z
           .string()
@@ -330,7 +268,15 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           .string()
           .optional()
           .describe(
-            "Caller phone number from list_voice_agents. Default: +14158860211",
+            "Caller phone number from list_voice_agents. Default: +14158860211. " +
+            "Used to resolve the agent_phone_number_id via cache lookup.",
+          ),
+        agent_phone_number_id: z
+          .string()
+          .optional()
+          .describe(
+            "ElevenLabs phone_number_id directly. If provided, skips from_number resolution. " +
+            "Get this from list_voice_agents.",
           ),
         to_number: z
           .string()
@@ -349,10 +295,18 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           .describe(
             "Name of the person being called — injected as a dynamic variable.",
           ),
+        prompt: z
+          .string()
+          .optional()
+          .describe(
+            "Full agent prompt with the person's name already baked in (no {{}} placeholders). " +
+            "Sent as conversation_config_override to replace the agent's default prompt for this call.",
+          ),
         context: z
           .string()
+          .optional()
           .describe(
-            "Why we are calling — injected into the voice agent as context.",
+            "Why we are calling — logged for tracking purposes.",
           ),
         language: z
           .string()
@@ -364,9 +318,11 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
       execute: async ({
         agent_id: agentIdParam,
         from_number: fromNumber,
+        agent_phone_number_id: phoneNumberIdParam,
         to_number: toNumber,
         voice_id: voiceId,
         person_name,
+        prompt,
         context: callContext,
         language,
       }) => {
@@ -403,128 +359,42 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
         const apiKey = process.env.ELEVENLABS_API_KEY!;
         const resolvedAgentId = agentIdParam || DEFAULT_AGENT_ID;
-        const resolvedFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
 
-        // Fetch agent config (used for phone number fallback + dynamic variable validation)
-        let agentConfig: ElevenLabsAgentConfigResponse;
-        try {
-          agentConfig = await fetchAgentConfig(apiKey, resolvedAgentId);
-        } catch (err: any) {
-          logger.error("make_call failed to fetch agent config", {
-            agentId: resolvedAgentId,
-            error: err.message,
-          });
-          return {
-            ok: false,
-            error: `Failed to fetch agent config: ${err.message}`,
-          };
-        }
-
-        // Resolve phone_number_id from the from_number via cache
-        let phoneNumberId = await resolvePhoneNumberIdFromCache(resolvedFromNumber);
+        // Resolve phone_number_id: prefer direct param, then env var, then cache lookup
+        let phoneNumberId = phoneNumberIdParam || process.env.ELEVENLABS_PHONE_NUMBER_ID || null;
 
         if (!phoneNumberId) {
-          phoneNumberId = resolvePhoneNumberIdFromConfig(agentConfig, resolvedFromNumber) ?? null;
+          const resolvedFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
+          phoneNumberId = await resolvePhoneNumberIdFromCache(resolvedFromNumber);
         }
 
         if (!phoneNumberId) {
           return {
             ok: false,
             error:
-              "Could not resolve phone_number_id for the from_number. Use list_voice_agents to find valid phone numbers.",
+              "Could not resolve phone_number_id. Pass agent_phone_number_id directly, " +
+              "or use list_voice_agents to find valid phone numbers.",
           };
         }
 
         const resolvedName = person_name || "Unknown";
         const langKey = language || detectLanguageFromPhone(toNumber);
         const langConfig = getLanguageConfig(langKey);
-
         const resolvedVoiceId = voiceId ?? DEFAULT_VOICE_ID;
 
-        // Resolve the agent's base prompt by replacing {{person_name}} with the
-        // actual name. This is necessary because ElevenLabs dynamic variable
-        // placeholders ({{var}}) only resolve in first_message, NOT in the prompt
-        // body. By fetching the base prompt and doing string replacement, we can
-        // inject it as a conversation_config_override with the name baked in.
-        const basePrompt =
-          agentConfig.conversation_config?.agent?.prompt?.prompt ?? "";
-        let resolvedPrompt = basePrompt;
-        if (resolvedName && resolvedName !== "Unknown") {
-          // Replace all {{person_name}} placeholders with the actual name
-          resolvedPrompt = basePrompt.replace(
-            /\{\{person_name\}\}/g,
-            resolvedName,
-          );
-          // Also replace {{interview_context}} with a pre-built context string
-          const interviewCtx = callContext
-            ? callContext
-            : `You are interviewing ${resolvedName}. Address them by name: ${resolvedName}.`;
-          resolvedPrompt = resolvedPrompt.replace(
-            /\{\{interview_context\}\}/g,
-            interviewCtx,
-          );
-        }
-
-        // Only pass variables that don't trigger the agent to speak first.
-        // call_opener and call_context are deliberately excluded so the agent
-        // waits silently for the human to speak, matching sandbox curl behavior.
         const dynamicVars: Record<string, string | number | boolean> = {
           person_name: resolvedName,
           person_language: langConfig.languageCode,
           direction: "outbound",
         };
 
-        // Validate against agent's required dynamic variables
-        const placeholders =
-          agentConfig.conversation_config?.agent?.dynamic_variables
-            ?.dynamic_variable_placeholders ?? {};
-
-        const excludedVars = new Set(["call_context", "call_opener"]);
-        const missingVars: string[] = [];
-        for (const key of Object.keys(placeholders)) {
-          if (excludedVars.has(key)) continue;
-          if (dynamicVars[key] === undefined) {
-            const defaultVal = placeholders[key];
-            if (
-              defaultVal !== undefined &&
-              defaultVal !== null &&
-              (typeof defaultVal === "string" ||
-                typeof defaultVal === "number" ||
-                typeof defaultVal === "boolean")
-            ) {
-              dynamicVars[key] = defaultVal;
-            } else if (defaultVal !== undefined && defaultVal !== null) {
-              dynamicVars[key] = String(defaultVal);
-            } else {
-              missingVars.push(key);
-            }
-          }
-        }
-
-        if (missingVars.length > 0) {
-          return {
-            ok: false,
-            error: `Agent requires dynamic variables that are missing and have no defaults: ${missingVars.join(", ")}. Provide them via context or update the agent config.`,
-          };
-        }
-
-        // Build outbound call request
-        // Include prompt override with name baked in so agent uses the person's
-        // name even though {{person_name}} doesn't resolve in the prompt body.
         const agentOverride: Record<string, unknown> = {
+          first_message: "",
           language: langConfig.languageCode,
         };
 
-        // Add prompt override with resolved name if we have a meaningful prompt
-        if (resolvedPrompt && resolvedPrompt !== basePrompt) {
-          agentOverride.prompt = { prompt: resolvedPrompt };
-        }
-
-        // Also pass interview_context as a dynamic var with name pre-resolved
-        if (resolvedName && resolvedName !== "Unknown") {
-          dynamicVars.interview_context = callContext
-            ? callContext
-            : `You are interviewing ${resolvedName}. Address them by name: ${resolvedName}.`;
+        if (prompt) {
+          agentOverride.prompt = { prompt };
         }
 
         const outboundBody: Record<string, unknown> = {
