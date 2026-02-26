@@ -64,7 +64,7 @@ export function createDriveTools() {
           }
 
           const res = await drive.files.list({
-            q: query,
+            q: `${query} and trashed = false`,
             pageSize: limit,
             fields: FILE_FIELDS,
             orderBy: "modifiedTime desc",
