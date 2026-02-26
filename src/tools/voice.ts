@@ -49,6 +49,10 @@ interface ElevenLabsAgentConfigResponse {
   agent_id: string;
   conversation_config?: {
     agent?: {
+      prompt?: {
+        prompt?: string;
+      };
+      first_message?: string;
       dynamic_variables?: {
         dynamic_variable_placeholders?: AgentDynamicVarPlaceholders;
       };
@@ -437,6 +441,30 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
         const resolvedVoiceId = voiceId ?? DEFAULT_VOICE_ID;
 
+        // Resolve the agent's base prompt by replacing {{person_name}} with the
+        // actual name. This is necessary because ElevenLabs dynamic variable
+        // placeholders ({{var}}) only resolve in first_message, NOT in the prompt
+        // body. By fetching the base prompt and doing string replacement, we can
+        // inject it as a conversation_config_override with the name baked in.
+        const basePrompt =
+          agentConfig.conversation_config?.agent?.prompt?.prompt ?? "";
+        let resolvedPrompt = basePrompt;
+        if (resolvedName && resolvedName !== "Unknown") {
+          // Replace all {{person_name}} placeholders with the actual name
+          resolvedPrompt = basePrompt.replace(
+            /\{\{person_name\}\}/g,
+            resolvedName,
+          );
+          // Also replace {{interview_context}} with a pre-built context string
+          const interviewCtx = callContext
+            ? callContext
+            : `You are interviewing ${resolvedName}. Address them by name: ${resolvedName}.`;
+          resolvedPrompt = resolvedPrompt.replace(
+            /\{\{interview_context\}\}/g,
+            interviewCtx,
+          );
+        }
+
         // Only pass variables that don't trigger the agent to speak first.
         // call_opener and call_context are deliberately excluded so the agent
         // waits silently for the human to speak, matching sandbox curl behavior.
@@ -481,6 +509,24 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         }
 
         // Build outbound call request
+        // Include prompt override with name baked in so agent uses the person's
+        // name even though {{person_name}} doesn't resolve in the prompt body.
+        const agentOverride: Record<string, unknown> = {
+          language: langConfig.languageCode,
+        };
+
+        // Add prompt override with resolved name if we have a meaningful prompt
+        if (resolvedPrompt && resolvedPrompt !== basePrompt) {
+          agentOverride.prompt = { prompt: resolvedPrompt };
+        }
+
+        // Also pass interview_context as a dynamic var with name pre-resolved
+        if (resolvedName && resolvedName !== "Unknown") {
+          dynamicVars.interview_context = callContext
+            ? callContext
+            : `You are interviewing ${resolvedName}. Address them by name: ${resolvedName}.`;
+        }
+
         const outboundBody: Record<string, unknown> = {
           agent_id: resolvedAgentId,
           agent_phone_number_id: phoneNumberId,
@@ -488,9 +534,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
           conversation_initiation_client_data: {
             dynamic_variables: dynamicVars,
             conversation_config_override: {
-              agent: {
-                language: langConfig.languageCode,
-              },
+              agent: agentOverride,
               ...(resolvedVoiceId
                 ? { tts: { voice_id: resolvedVoiceId } }
                 : {}),
