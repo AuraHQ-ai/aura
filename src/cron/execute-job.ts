@@ -3,7 +3,12 @@ import { generateText, stepCountIs } from "ai";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
-import { getMainModel, getEscalationModel, withCacheControl } from "../lib/ai.js";
+import {
+  getMainModel,
+  getEscalationModel,
+  withCacheControl,
+  buildContextManagement,
+} from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -168,6 +173,9 @@ export async function executeJob(
         systemPrompt,
         modelId,
         defaultEffort: "medium",
+        anthropicProviderOptions: {
+          contextManagement: buildContextManagement(),
+        },
         getEscalationModel,
       }),
     });
