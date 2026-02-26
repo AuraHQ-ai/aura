@@ -14,6 +14,62 @@ const WRAP_UP_MESSAGE =
   "Start wrapping up — summarize your findings and post results now. " +
   "Do not start new investigations or long tool chains.";
 
+// ── Loop Detection ───────────────────────────────────────────────────────────
+
+const LOOP_WINDOW = 8;
+const LOOP_WARN_THRESHOLD = 3;
+const LOOP_STOP_THRESHOLD = 5;
+
+const LOOP_WARNING =
+  "WARNING: You appear to be in a loop — you've made the same tool call " +
+  "with the same arguments {count} times in the last {window} steps. " +
+  "STOP repeating this call. Re-read the user's most recent message, " +
+  "reconsider your approach, and either try a different strategy or " +
+  "summarize what you've found so far and respond to the user.";
+
+const LOOP_FORCE_STOP =
+  "CRITICAL: You are stuck in an infinite loop — the same tool call has " +
+  "repeated {count} times. You MUST stop calling tools immediately. " +
+  "Summarize whatever you have and respond to the user NOW. " +
+  "Do NOT make any more tool calls.";
+
+interface ToolCallSignature {
+  name: string;
+  argsHash: string;
+}
+
+function hashArgs(args: unknown): string {
+  try {
+    return JSON.stringify(args);
+  } catch {
+    return String(args);
+  }
+}
+
+function detectLoop(history: ToolCallSignature[]): {
+  looping: boolean;
+  count: number;
+  toolName?: string;
+} {
+  if (history.length < LOOP_WARN_THRESHOLD) return { looping: false, count: 0 };
+
+  const last = history[history.length - 1];
+  let count = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].name === last.name && history[i].argsHash === last.argsHash) {
+      count++;
+    } else {
+      break;
+    }
+  }
+
+  if (count >= LOOP_WARN_THRESHOLD) {
+    return { looping: true, count, toolName: last.name };
+  }
+
+  return { looping: false, count };
+}
+
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
@@ -56,6 +112,7 @@ export function createPrepareStep(opts: {
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
+  const recentToolCalls: ToolCallSignature[] = [];
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -72,6 +129,42 @@ export function createPrepareStep(opts: {
     ) ?? false;
 
     if (hadToolFailure) failureCount++;
+
+    // --- Loop detection: track recent tool calls and detect repetition ---
+    if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
+      for (const tc of lastStep.toolCalls) {
+        recentToolCalls.push({
+          name: tc.toolName ?? tc.name ?? "unknown",
+          argsHash: hashArgs(tc.input ?? tc.args),
+        });
+      }
+      while (recentToolCalls.length > LOOP_WINDOW) {
+        recentToolCalls.shift();
+      }
+    }
+
+    const loopResult = detectLoop(recentToolCalls);
+    let loopNudge: string | undefined;
+    if (loopResult.looping) {
+      if (loopResult.count >= LOOP_STOP_THRESHOLD) {
+        loopNudge = LOOP_FORCE_STOP
+          .replace("{count}", String(loopResult.count));
+        logger.warn("prepareStep: loop detected — force stop", {
+          stepNumber,
+          toolName: loopResult.toolName,
+          repeatCount: loopResult.count,
+        });
+      } else {
+        loopNudge = LOOP_WARNING
+          .replace("{count}", String(loopResult.count))
+          .replace("{window}", String(LOOP_WINDOW));
+        logger.warn("prepareStep: loop detected — warning injected", {
+          stepNumber,
+          toolName: loopResult.toolName,
+          repeatCount: loopResult.count,
+        });
+      }
+    }
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
     if (hasEffortSupport) {
@@ -134,17 +227,29 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // --- Step limit warning (existing behavior) ---
+    // --- Step limit warning and loop detection nudges ---
+    const nudges: string[] = [];
+
+    if (loopNudge) {
+      nudges.push(loopNudge);
+    }
+
     if (stepNumber >= threshold) {
-      const nudge = WRAP_UP_MESSAGE
+      const wrapUp = WRAP_UP_MESSAGE
         .replace("{stepCount}", String(stepNumber))
         .replace("{limit}", String(limit));
-
-      systemOverride = opts.systemPrompt + "\n\n" + (opts.dynamicContext ? opts.dynamicContext + "\n\n" : "") + nudge;
+      nudges.push(wrapUp);
       logger.info("prepareStep: injecting wrap-up nudge", {
         stepNumber,
         limit,
       });
+    }
+
+    if (nudges.length > 0) {
+      systemOverride = opts.systemPrompt
+        + "\n\n"
+        + (opts.dynamicContext ? opts.dynamicContext + "\n\n" : "")
+        + nudges.join("\n\n");
     }
 
     const prunedMessages = pruneMessages({
