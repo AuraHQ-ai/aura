@@ -36,6 +36,7 @@ const LOOP_FORCE_STOP =
 interface ToolCallSignature {
   name: string;
   argsHash: string;
+  normalizedArgsHash: string;
 }
 
 function hashArgs(args: unknown): string {
@@ -46,28 +47,141 @@ function hashArgs(args: unknown): string {
   }
 }
 
+/**
+ * Normalize a shell command for semantic comparison.
+ * Strips comments, collapses whitespace, removes insignificant formatting
+ * differences so functionally-identical commands produce the same hash.
+ */
+function normalizeCommand(cmd: string): string {
+  return cmd
+    .split("\n")
+    .map((line) => line.replace(/(?<!['"\\])#[^!].*$/, "").trim())
+    .filter((line) => line.length > 0)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Compute a normalized hash for tool args. For `run_command`, normalizes
+ * the command string so that comments/whitespace differences don't prevent
+ * semantic loop detection.
+ */
+function normalizedHashArgs(toolName: string, args: unknown): string {
+  if (toolName === "run_command" && args && typeof args === "object") {
+    const a = args as Record<string, unknown>;
+    if (typeof a.command === "string") {
+      const normalized = { ...a, command: normalizeCommand(a.command) };
+      try {
+        return JSON.stringify(normalized);
+      } catch {
+        return String(normalized);
+      }
+    }
+  }
+  return hashArgs(args);
+}
+
 function detectLoop(history: ToolCallSignature[]): {
   looping: boolean;
   count: number;
   toolName?: string;
+  semantic?: boolean;
 } {
   if (history.length < LOOP_WARN_THRESHOLD) return { looping: false, count: 0 };
 
   const last = history[history.length - 1];
-  let count = 0;
+
+  // Exact match (original behavior)
+  let exactCount = 0;
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].name === last.name && history[i].argsHash === last.argsHash) {
+      exactCount++;
+    } else {
+      break;
+    }
+  }
+  if (exactCount >= LOOP_WARN_THRESHOLD) {
+    return { looping: true, count: exactCount, toolName: last.name };
+  }
+
+  // Semantic match (normalized args — catches comment/whitespace variations)
+  let normalizedCount = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (
+      history[i].name === last.name &&
+      history[i].normalizedArgsHash === last.normalizedArgsHash
+    ) {
+      normalizedCount++;
+    } else {
+      break;
+    }
+  }
+  if (normalizedCount >= LOOP_WARN_THRESHOLD) {
+    return { looping: true, count: normalizedCount, toolName: last.name, semantic: true };
+  }
+
+  return { looping: false, count: Math.max(exactCount, normalizedCount) };
+}
+
+// ── Circuit Breaker (consecutive tool-type failures) ─────────────────────────
+
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const CIRCUIT_BREAKER_STOP_THRESHOLD = 5;
+
+const CIRCUIT_BREAKER_WARNING =
+  "WARNING: Circuit breaker — {count} consecutive {toolName} calls have " +
+  "failed. Even though the commands differ slightly, they are all failing. " +
+  "STOP retrying variations of the same approach. Analyze WHY it's failing, " +
+  "try a fundamentally different strategy, or tell the user what's going wrong.";
+
+const CIRCUIT_BREAKER_STOP =
+  "CRITICAL: Circuit breaker — {count} consecutive {toolName} failures. " +
+  "You MUST stop calling this tool immediately. Summarize the failure " +
+  "pattern and respond to the user NOW. Do NOT retry.";
+
+interface ToolCallOutcome {
+  name: string;
+  failed: boolean;
+}
+
+/**
+ * Determine if a tool call result represents a failure.
+ * For `run_command`, non-zero exit codes and timeouts count as failures.
+ * For other tools, `ok === false` or the presence of `error` signals failure.
+ */
+function isToolCallFailure(toolName: string, output: unknown): boolean {
+  if (!output || typeof output !== "object") return false;
+  const o = output as Record<string, unknown>;
+  if (o.ok === false) return true;
+  if (toolName === "run_command" && "exit_code" in o && o.exit_code !== 0) return true;
+  return false;
+}
+
+function detectCircuitBreaker(outcomes: ToolCallOutcome[]): {
+  triggered: boolean;
+  count: number;
+  toolName?: string;
+} {
+  if (outcomes.length < CIRCUIT_BREAKER_THRESHOLD) return { triggered: false, count: 0 };
+
+  const last = outcomes[outcomes.length - 1];
+  if (!last.failed) return { triggered: false, count: 0 };
+
+  let count = 0;
+  for (let i = outcomes.length - 1; i >= 0; i--) {
+    if (outcomes[i].name === last.name && outcomes[i].failed) {
       count++;
     } else {
       break;
     }
   }
 
-  if (count >= LOOP_WARN_THRESHOLD) {
-    return { looping: true, count, toolName: last.name };
+  if (count >= CIRCUIT_BREAKER_THRESHOLD) {
+    return { triggered: true, count, toolName: last.name };
   }
 
-  return { looping: false, count };
+  return { triggered: false, count: 0 };
 }
 
 export type EffortLevel = "low" | "medium" | "high";
@@ -113,6 +227,8 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  const recentOutcomes: ToolCallOutcome[] = [];
+  const OUTCOME_WINDOW = 12;
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -130,19 +246,40 @@ export function createPrepareStep(opts: {
 
     if (hadToolFailure) failureCount++;
 
+    // --- Build failure map from tool results for circuit breaker ---
+    const resultFailureMap = new Map<string, boolean>();
+    if (lastStep?.toolResults && Array.isArray(lastStep.toolResults)) {
+      for (const tr of lastStep.toolResults as any[]) {
+        const trName = tr.toolName ?? "unknown";
+        const trOutput = tr.output ?? tr.result;
+        resultFailureMap.set(tr.toolCallId, isToolCallFailure(trName, trOutput));
+      }
+    }
+
     // --- Loop detection: track recent tool calls and detect repetition ---
     if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
       for (const tc of lastStep.toolCalls) {
+        const name = tc.toolName ?? tc.name ?? "unknown";
+        const args = tc.input ?? tc.args;
         recentToolCalls.push({
-          name: tc.toolName ?? tc.name ?? "unknown",
-          argsHash: hashArgs(tc.input ?? tc.args),
+          name,
+          argsHash: hashArgs(args),
+          normalizedArgsHash: normalizedHashArgs(name, args),
+        });
+        recentOutcomes.push({
+          name,
+          failed: resultFailureMap.get(tc.toolCallId) ?? false,
         });
       }
       while (recentToolCalls.length > LOOP_WINDOW) {
         recentToolCalls.shift();
       }
+      while (recentOutcomes.length > OUTCOME_WINDOW) {
+        recentOutcomes.shift();
+      }
     }
 
+    // --- Exact / semantic loop detection ---
     const loopResult = detectLoop(recentToolCalls);
     let loopNudge: string | undefined;
     if (loopResult.looping) {
@@ -153,6 +290,7 @@ export function createPrepareStep(opts: {
           stepNumber,
           toolName: loopResult.toolName,
           repeatCount: loopResult.count,
+          semantic: loopResult.semantic ?? false,
         });
       } else {
         loopNudge = LOOP_WARNING
@@ -162,6 +300,32 @@ export function createPrepareStep(opts: {
           stepNumber,
           toolName: loopResult.toolName,
           repeatCount: loopResult.count,
+          semantic: loopResult.semantic ?? false,
+        });
+      }
+    }
+
+    // --- Circuit breaker: consecutive failures of the same tool type ---
+    const cbResult = detectCircuitBreaker(recentOutcomes);
+    let circuitBreakerNudge: string | undefined;
+    if (cbResult.triggered && !loopNudge) {
+      if (cbResult.count >= CIRCUIT_BREAKER_STOP_THRESHOLD) {
+        circuitBreakerNudge = CIRCUIT_BREAKER_STOP
+          .replace("{count}", String(cbResult.count))
+          .replace("{toolName}", cbResult.toolName ?? "tool");
+        logger.warn("prepareStep: circuit breaker — force stop", {
+          stepNumber,
+          toolName: cbResult.toolName,
+          consecutiveFailures: cbResult.count,
+        });
+      } else {
+        circuitBreakerNudge = CIRCUIT_BREAKER_WARNING
+          .replace("{count}", String(cbResult.count))
+          .replace("{toolName}", cbResult.toolName ?? "tool");
+        logger.warn("prepareStep: circuit breaker — warning injected", {
+          stepNumber,
+          toolName: cbResult.toolName,
+          consecutiveFailures: cbResult.count,
         });
       }
     }
@@ -227,11 +391,15 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // --- Step limit warning and loop detection nudges ---
+    // --- Step limit warning, loop detection, and circuit breaker nudges ---
     const nudges: string[] = [];
 
     if (loopNudge) {
       nudges.push(loopNudge);
+    }
+
+    if (circuitBreakerNudge) {
+      nudges.push(circuitBreakerNudge);
     }
 
     if (stepNumber >= threshold) {
