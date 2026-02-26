@@ -70,6 +70,176 @@ function detectLoop(history: ToolCallSignature[]): {
   return { looping: false, count };
 }
 
+// ── Circuit Breaker ─────────────────────────────────────────────────────────
+// Catches semantic repetition: same tool + similar (not necessarily identical)
+// args failing repeatedly. Complements the string-exact loop detection above.
+
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const CIRCUIT_BREAKER_WINDOW = 12;
+
+const CIRCUIT_BREAKER_STOP =
+  "Circuit breaker: {count} consecutive failures detected for {pattern}. " +
+  "Stopping retries — this operation is failing consistently. " +
+  "Do NOT attempt this operation again. " +
+  "Explain the failure to the user and suggest alternatives or ask for help.";
+
+const SEMANTIC_LOOP_WARNING =
+  "WARNING: You appear to be in a semantic loop — you've called {toolName} " +
+  "{count} times with nearly identical arguments (differing only in comments, " +
+  "whitespace, or formatting). STOP and try a fundamentally different approach.";
+
+interface TrackedToolCall {
+  toolName: string;
+  fingerprint: string;
+  failed: boolean;
+  errorFingerprint?: string;
+}
+
+/**
+ * Normalize a shell command for semantic comparison:
+ * strip comments, collapse whitespace, remove line continuations.
+ */
+function normalizeCommand(cmd: string): string {
+  return cmd
+    .replace(/\\[\r\n]+/g, " ")
+    .replace(/#[^\n]*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extract a semantic fingerprint from a shell command.
+ * For curl/wget: method + base URL.
+ * For other commands: first few significant tokens.
+ */
+function extractCommandFingerprint(cmd: string): string {
+  const normalized = normalizeCommand(cmd);
+
+  const curlUrlMatch = normalized.match(
+    /curl\b.*?(https?:\/\/[^\s'"\\)]+)/,
+  );
+  if (curlUrlMatch) {
+    const url = curlUrlMatch[1].split("?")[0];
+    const methodMatch = normalized.match(/-X\s+(\w+)/i);
+    const method = methodMatch?.[1]?.toUpperCase() || "GET";
+    return `curl:${method}:${url}`;
+  }
+
+  const wgetMatch = normalized.match(/wget\b.*?(https?:\/\/[^\s'"\\)]+)/);
+  if (wgetMatch) {
+    return `wget:${wgetMatch[1].split("?")[0]}`;
+  }
+
+  return normalized.split(/\s+/).slice(0, 5).join(" ");
+}
+
+/**
+ * Build a semantic fingerprint for any tool's arguments.
+ * run_command gets special normalization; other tools use JSON.
+ */
+function normalizeToolArgs(toolName: string, args: unknown): string {
+  if (toolName === "run_command" && args && typeof args === "object") {
+    const { command } = args as { command?: string };
+    if (command) return extractCommandFingerprint(command);
+  }
+  try {
+    return JSON.stringify(args);
+  } catch {
+    return String(args);
+  }
+}
+
+/**
+ * Simplify an error message into a comparable fingerprint
+ * by lowercasing, replacing numbers, and collapsing whitespace.
+ */
+function extractErrorFingerprint(output: unknown): string | undefined {
+  if (!output || typeof output !== "object") return undefined;
+  const obj = output as Record<string, unknown>;
+  let text = "";
+  if (typeof obj.error === "string") text = obj.error;
+  else if (typeof obj.stderr === "string") text = obj.stderr;
+  else return undefined;
+  if (!text) return undefined;
+  return text
+    .toLowerCase()
+    .replace(/\d+/g, "N")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+/**
+ * Token-level Jaccard similarity — returns true when overlap >= 60%.
+ */
+function areSimilarFingerprints(a: string, b: string): boolean {
+  if (a === b) return true;
+  const tokensA = new Set(a.split(/[\s:\/]+/).filter(Boolean));
+  const tokensB = new Set(b.split(/[\s:\/]+/).filter(Boolean));
+  if (tokensA.size === 0 || tokensB.size === 0) return false;
+  let intersection = 0;
+  for (const t of tokensA) {
+    if (tokensB.has(t)) intersection++;
+  }
+  const union = tokensA.size + tokensB.size - intersection;
+  return union > 0 && intersection / union >= 0.6;
+}
+
+function checkCircuitBreaker(calls: TrackedToolCall[]): {
+  tripped: boolean;
+  count: number;
+  pattern?: string;
+  allFailed: boolean;
+} {
+  if (calls.length < CIRCUIT_BREAKER_THRESHOLD) {
+    return { tripped: false, count: 0, allFailed: false };
+  }
+
+  const last = calls[calls.length - 1];
+
+  // Count consecutive calls to the same tool with similar fingerprints
+  let count = 0;
+  let failCount = 0;
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const entry = calls[i];
+    if (entry.toolName !== last.toolName) break;
+    if (!areSimilarFingerprints(entry.fingerprint, last.fingerprint)) break;
+    count++;
+    if (entry.failed) failCount++;
+  }
+
+  if (count >= CIRCUIT_BREAKER_THRESHOLD) {
+    return {
+      tripped: true,
+      count,
+      pattern: `${last.toolName}(${last.fingerprint.slice(0, 80)})`,
+      allFailed: failCount === count,
+    };
+  }
+
+  // Check for repeated error patterns across any tools
+  if (last.failed && last.errorFingerprint) {
+    let errorCount = 0;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const entry = calls[i];
+      if (!entry.failed) break;
+      if (entry.errorFingerprint !== last.errorFingerprint) break;
+      errorCount++;
+    }
+
+    if (errorCount >= CIRCUIT_BREAKER_THRESHOLD) {
+      return {
+        tripped: true,
+        count: errorCount,
+        pattern: `repeated error: ${last.errorFingerprint.slice(0, 60)}`,
+        allFailed: true,
+      };
+    }
+  }
+
+  return { tripped: false, count: 0, allFailed: false };
+}
+
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
@@ -113,6 +283,7 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  const trackedCalls: TrackedToolCall[] = [];
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -130,19 +301,54 @@ export function createPrepareStep(opts: {
 
     if (hadToolFailure) failureCount++;
 
-    // --- Loop detection: track recent tool calls and detect repetition ---
+    // --- Loop detection + circuit breaker: track recent tool calls ---
     if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
-      for (const tc of lastStep.toolCalls) {
+      const toolResults: any[] = lastStep.toolResults || [];
+      const resultById = new Map<string, any>();
+      for (const r of toolResults) {
+        if (r.toolCallId) resultById.set(r.toolCallId, r);
+      }
+
+      for (let i = 0; i < lastStep.toolCalls.length; i++) {
+        const tc = lastStep.toolCalls[i];
+        const toolName = tc.toolName ?? tc.name ?? "unknown";
+        const args = tc.input ?? tc.args;
+
+        // Exact-match loop detection
         recentToolCalls.push({
-          name: tc.toolName ?? tc.name ?? "unknown",
-          argsHash: hashArgs(tc.input ?? tc.args),
+          name: toolName,
+          argsHash: hashArgs(args),
+        });
+
+        // Semantic circuit breaker tracking
+        const result = resultById.get(tc.toolCallId) ?? toolResults[i];
+        const output = result?.output ?? result?.result;
+        const failed =
+          output?.ok === false ||
+          !!output?.error ||
+          (toolName === "run_command" &&
+            output?.exit_code != null &&
+            output.exit_code !== 0);
+
+        trackedCalls.push({
+          toolName,
+          fingerprint: normalizeToolArgs(toolName, args),
+          failed,
+          errorFingerprint: failed
+            ? extractErrorFingerprint(output)
+            : undefined,
         });
       }
+
       while (recentToolCalls.length > LOOP_WINDOW) {
         recentToolCalls.shift();
       }
+      while (trackedCalls.length > CIRCUIT_BREAKER_WINDOW) {
+        trackedCalls.shift();
+      }
     }
 
+    // --- Exact-match loop detection ---
     const loopResult = detectLoop(recentToolCalls);
     let loopNudge: string | undefined;
     if (loopResult.looping) {
@@ -162,6 +368,29 @@ export function createPrepareStep(opts: {
           stepNumber,
           toolName: loopResult.toolName,
           repeatCount: loopResult.count,
+        });
+      }
+    }
+
+    // --- Semantic circuit breaker (fires even when exact-match misses) ---
+    let circuitBreakerNudge: string | undefined;
+    if (!loopNudge) {
+      const cbResult = checkCircuitBreaker(trackedCalls);
+      if (cbResult.tripped) {
+        if (cbResult.allFailed) {
+          circuitBreakerNudge = CIRCUIT_BREAKER_STOP
+            .replace("{count}", String(cbResult.count))
+            .replace("{pattern}", cbResult.pattern || "unknown");
+        } else {
+          circuitBreakerNudge = SEMANTIC_LOOP_WARNING
+            .replace("{toolName}", cbResult.pattern?.split("(")[0] || "a tool")
+            .replace("{count}", String(cbResult.count));
+        }
+        logger.warn("prepareStep: circuit breaker tripped", {
+          stepNumber,
+          pattern: cbResult.pattern,
+          count: cbResult.count,
+          allFailed: cbResult.allFailed,
         });
       }
     }
@@ -227,11 +456,15 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // --- Step limit warning and loop detection nudges ---
+    // --- Step limit warning, loop detection, and circuit breaker nudges ---
     const nudges: string[] = [];
 
     if (loopNudge) {
       nudges.push(loopNudge);
+    }
+
+    if (circuitBreakerNudge) {
+      nudges.push(circuitBreakerNudge);
     }
 
     if (stepNumber >= threshold) {
