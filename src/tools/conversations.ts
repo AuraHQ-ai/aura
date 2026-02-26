@@ -32,6 +32,7 @@ interface MessageRow {
 
 export interface ThreadGroup {
   thread_ts: string | null;
+  thread_started_at: string;
   channel_id: string;
   messages: Array<{
     id: string;
@@ -239,6 +240,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
             if (!group) {
               group = {
                 thread_ts: row.slack_thread_ts || row.slack_ts,
+                thread_started_at: formatTimestamp(row.slack_thread_ts || row.slack_ts, context?.timezone),
                 channel_id: row.channel_id,
                 messages: [],
               };
@@ -326,6 +328,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
                 );
                 const fullThread: ThreadGroup = {
                   thread_ts: thread.thread_ts,
+                  thread_started_at: thread.thread_started_at,
                   channel_id: thread.channel_id,
                   messages: allMessages as ThreadGroup["messages"],
                 };
