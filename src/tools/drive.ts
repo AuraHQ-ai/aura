@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "../lib/tool.js";
 import { logger } from "../lib/logger.js";
+import { isTextMimeType } from "../lib/files.js";
 
 const MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -19,19 +20,6 @@ async function getDriveClient() {
 
   const { drive } = await import("@googleapis/drive");
   return drive({ version: "v3", auth: client });
-}
-
-function isTextMimeType(mimeType: string): boolean {
-  if (mimeType.startsWith("text/")) return true;
-  const textTypes = [
-    "application/json",
-    "application/xml",
-    "application/javascript",
-    "application/typescript",
-    "application/x-yaml",
-    "application/csv",
-  ];
-  return textTypes.includes(mimeType);
 }
 
 export function createDriveTools() {
@@ -64,7 +52,7 @@ export function createDriveTools() {
           }
 
           const res = await drive.files.list({
-            q: `${query} and trashed = false`,
+            q: `(${query}) and trashed = false`,
             pageSize: limit,
             fields: FILE_FIELDS,
             orderBy: "modifiedTime desc",
@@ -298,9 +286,12 @@ export function createDriveTools() {
             };
           }
 
-          const safeFolderId = folder_id.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+          if (folder_id !== "root" && !/^[\w-]+$/.test(folder_id)) {
+            return { ok: false, error: "Invalid folder ID format." };
+          }
+
           const res = await drive.files.list({
-            q: `'${safeFolderId}' in parents and trashed = false`,
+            q: `'${folder_id}' in parents and trashed = false`,
             pageSize: limit,
             fields: FILE_FIELDS,
             orderBy: "folder,name",
