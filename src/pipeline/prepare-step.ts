@@ -70,6 +70,108 @@ function detectLoop(history: ToolCallSignature[]): {
   return { looping: false, count };
 }
 
+// ── Semantic Command Circuit Breaker ─────────────────────────────────────────
+// Catches cases where the LLM retries the same failing command with minor
+// variations (different comments, whitespace, formatting) that evade the
+// exact-match loop detector above.
+
+const CMD_FAILURE_THRESHOLD = 3;
+const CMD_FAILURE_WINDOW = 20;
+
+const CMD_CIRCUIT_BREAKER =
+  "CRITICAL: You have attempted the same failing command {count} consecutive " +
+  "times{domainInfo}. The external service or command is persistently failing — " +
+  "STOP retrying with variations. Report the failure to the user and move on. " +
+  "Do NOT attempt this command again with different comments, formatting, or " +
+  "minor tweaks.";
+
+interface CommandFailureRecord {
+  pattern: string;
+  domain: string | null;
+}
+
+/** Strip comments, join line continuations, collapse whitespace. */
+function normalizeCommand(command: string): string {
+  return command
+    .replace(/\\[\s]*\n/g, " ")
+    .replace(/#[^\n]*/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/** Extract the hostname from the first URL found in a command string. */
+function extractDomain(command: string): string | null {
+  const match = command.match(/https?:\/\/([^\/\s'"\\]+)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Derive a stable pattern from a shell command for fuzzy comparison.
+ * For curl/wget, extracts method + host + path.
+ * For other commands, takes the base command tokens.
+ */
+function extractCommandPattern(command: string): string {
+  const normalized = normalizeCommand(command);
+
+  const curlMatch = normalized.match(
+    /curl\s+(?:.*?(?:-x|--request)\s+(\w+)\s+)?.*?(https?:\/\/[^\s'"]+)/,
+  );
+  if (curlMatch) {
+    const method = curlMatch[1] || "get";
+    try {
+      const url = new URL(curlMatch[2]);
+      return `curl:${method}:${url.host}${url.pathname}`;
+    } catch {
+      return `curl:${curlMatch[2].slice(0, 80)}`;
+    }
+  }
+
+  const wgetMatch = normalized.match(/wget\s+.*?(https?:\/\/[^\s'"]+)/);
+  if (wgetMatch) {
+    try {
+      const url = new URL(wgetMatch[1]);
+      return `wget:${url.host}${url.pathname}`;
+    } catch {
+      return `wget:${wgetMatch[1].slice(0, 80)}`;
+    }
+  }
+
+  const parts = normalized.split(/\s+/);
+  let idx = 0;
+  while (idx < parts.length && /^[a-z_]\w*=/i.test(parts[idx])) idx++;
+  return parts.slice(idx, idx + 2).join(" ") || normalized.slice(0, 50);
+}
+
+/** Count consecutive tail entries that share the same pattern or domain. */
+function detectCommandLoop(failures: CommandFailureRecord[]): {
+  looping: boolean;
+  count: number;
+  domain?: string;
+} {
+  if (failures.length < CMD_FAILURE_THRESHOLD) {
+    return { looping: false, count: 0 };
+  }
+
+  const last = failures[failures.length - 1];
+  let count = 0;
+  for (let i = failures.length - 1; i >= 0; i--) {
+    const f = failures[i];
+    const samePattern = f.pattern === last.pattern;
+    const sameDomain = !!(last.domain && f.domain && f.domain === last.domain);
+    if (samePattern || sameDomain) {
+      count++;
+    } else {
+      break;
+    }
+  }
+
+  if (count >= CMD_FAILURE_THRESHOLD) {
+    return { looping: true, count, domain: last.domain ?? undefined };
+  }
+  return { looping: false, count };
+}
+
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
@@ -113,6 +215,7 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  const commandFailures: CommandFailureRecord[] = [];
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -164,6 +267,65 @@ export function createPrepareStep(opts: {
           repeatCount: loopResult.count,
         });
       }
+    }
+
+    // --- Semantic command circuit breaker: detect repeated failing commands ---
+    if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
+      let anyRunCmdSuccess = false;
+      const stepCmdFailures: CommandFailureRecord[] = [];
+
+      for (const tc of lastStep.toolCalls) {
+        const toolName = tc.toolName ?? tc.name ?? "unknown";
+        if (toolName !== "run_command") continue;
+
+        const args = tc.input ?? tc.args;
+        const command =
+          typeof args === "object" && args?.command ? String(args.command) : "";
+
+        const matchingResult = Array.isArray(lastStep.toolResults)
+          ? lastStep.toolResults.find(
+              (r: any) => r.toolCallId === tc.toolCallId,
+            )
+          : undefined;
+
+        const output = matchingResult?.output ?? matchingResult?.result;
+        const isFailed =
+          output?.ok === false ||
+          (typeof output?.exit_code === "number" && output.exit_code !== 0);
+
+        if (isFailed) {
+          stepCmdFailures.push({
+            pattern: extractCommandPattern(command),
+            domain: extractDomain(command),
+          });
+        } else if (matchingResult) {
+          anyRunCmdSuccess = true;
+        }
+      }
+
+      if (anyRunCmdSuccess) {
+        commandFailures.length = 0;
+      }
+      commandFailures.push(...stepCmdFailures);
+      while (commandFailures.length > CMD_FAILURE_WINDOW) {
+        commandFailures.shift();
+      }
+    }
+
+    let cmdCircuitNudge: string | undefined;
+    const cmdLoopResult = detectCommandLoop(commandFailures);
+    if (cmdLoopResult.looping) {
+      const domainInfo = cmdLoopResult.domain
+        ? ` targeting ${cmdLoopResult.domain}`
+        : "";
+      cmdCircuitNudge = CMD_CIRCUIT_BREAKER
+        .replace("{count}", String(cmdLoopResult.count))
+        .replace("{domainInfo}", domainInfo);
+      logger.warn("prepareStep: command circuit breaker triggered", {
+        stepNumber,
+        consecutiveFailures: cmdLoopResult.count,
+        domain: cmdLoopResult.domain,
+      });
     }
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
@@ -232,6 +394,10 @@ export function createPrepareStep(opts: {
 
     if (loopNudge) {
       nudges.push(loopNudge);
+    }
+
+    if (cmdCircuitNudge) {
+      nudges.push(cmdCircuitNudge);
     }
 
     if (stepNumber >= threshold) {
