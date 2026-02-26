@@ -70,6 +70,140 @@ function detectLoop(history: ToolCallSignature[]): {
   return { looping: false, count };
 }
 
+// ── Circuit Breaker (Semantic Repetition) ────────────────────────────────────
+// Catches repeated failures of the same tool with semantically similar arguments
+// even when the exact text differs (different comments, whitespace, formatting).
+
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const CIRCUIT_BREAKER_MAX_HISTORY = 20;
+
+const CIRCUIT_BREAKER_WARNING =
+  "CIRCUIT BREAKER: You've made {count} consecutive failing calls to " +
+  "`{toolName}` with the same pattern. This approach is NOT working — " +
+  "the same operation keeps failing. STOP retrying immediately. " +
+  "Report the failure to the user with the actual error details, " +
+  "explain what you tried, and suggest alternative approaches. " +
+  "Do NOT attempt this operation again.";
+
+interface FailureRecord {
+  toolName: string;
+  fingerprint: string;
+}
+
+/**
+ * Normalize a shell command for semantic comparison.
+ * Strips comments, echo/printf wrappers, line continuations,
+ * and collapses whitespace so cosmetic differences don't affect matching.
+ */
+function normalizeShellCommand(cmd: string): string {
+  return cmd
+    .replace(/#[^\n]*/g, "")
+    .replace(/^\s*(echo|printf)\s+["'][^"']*["']\s*;?\s*/gm, "")
+    .replace(/\\\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extract a stable fingerprint from a shell command.
+ * For HTTP commands: combines executable + hostname + path.
+ * For other commands: uses the full normalized command string.
+ */
+function extractCommandFingerprint(rawCmd: string): string {
+  const cmd = normalizeShellCommand(rawCmd);
+  const parts = cmd.split(" ");
+  const executable = parts[0] || "unknown";
+
+  const urls = cmd.match(/https?:\/\/[^\s'"\\)}>]+/g);
+  if (urls && urls.length > 0) {
+    const urlKeys = urls.map((u) => {
+      try {
+        const parsed = new URL(u);
+        return parsed.hostname + parsed.pathname.replace(/\/+$/, "");
+      } catch {
+        return u;
+      }
+    });
+    return `${executable}:${urlKeys.join("|")}`;
+  }
+
+  return `${executable}:${cmd}`;
+}
+
+/**
+ * Create a semantic fingerprint for tool arguments.
+ * For run_command: extracts command pattern (executable + URLs/paths).
+ * For other tools: uses normalized JSON of the arguments.
+ */
+function fingerprintToolArgs(toolName: string, args: unknown): string {
+  if (toolName === "run_command" && typeof args === "object" && args !== null) {
+    const cmd = (args as Record<string, unknown>).command;
+    if (typeof cmd === "string") {
+      return extractCommandFingerprint(cmd);
+    }
+  }
+  try {
+    const obj = args as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return JSON.stringify(obj, keys).replace(/\s+/g, " ").trim();
+  } catch {
+    return String(args);
+  }
+}
+
+/**
+ * Check if a tool result represents a failure.
+ * For run_command: non-zero exit code OR ok === false (timeout/sandbox error).
+ * For other tools: ok === false or error field present.
+ */
+function isToolResultFailure(toolName: string, output: unknown): boolean {
+  if (!output || typeof output !== "object") return false;
+  const out = output as Record<string, unknown>;
+  if (out.ok === false) return true;
+  if (out.error) return true;
+  if (toolName === "run_command" && out.exit_code != null && out.exit_code !== 0) return true;
+  return false;
+}
+
+function checkCircuitBreaker(failures: FailureRecord[]): {
+  tripped: boolean;
+  count: number;
+  toolName?: string;
+} {
+  if (failures.length < CIRCUIT_BREAKER_THRESHOLD) {
+    return { tripped: false, count: failures.length };
+  }
+
+  const last = failures[failures.length - 1];
+  let count = 0;
+  for (let i = failures.length - 1; i >= 0; i--) {
+    if (
+      failures[i].toolName === last.toolName &&
+      failures[i].fingerprint === last.fingerprint
+    ) {
+      count++;
+    } else {
+      break;
+    }
+  }
+
+  if (count >= CIRCUIT_BREAKER_THRESHOLD) {
+    return { tripped: true, count, toolName: last.toolName };
+  }
+
+  return { tripped: false, count };
+}
+
+// Exported for testing
+export {
+  normalizeShellCommand as _normalizeShellCommand,
+  extractCommandFingerprint as _extractCommandFingerprint,
+  fingerprintToolArgs as _fingerprintToolArgs,
+  isToolResultFailure as _isToolResultFailure,
+  checkCircuitBreaker as _checkCircuitBreaker,
+};
+export type { FailureRecord as _FailureRecord };
+
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
@@ -113,6 +247,7 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  const consecutiveFailures: FailureRecord[] = [];
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -164,6 +299,59 @@ export function createPrepareStep(opts: {
           repeatCount: loopResult.count,
         });
       }
+    }
+
+    // --- Circuit breaker: catch semantic repetition in failing tool calls ---
+    if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
+      const toolResults: any[] = Array.isArray(lastStep?.toolResults)
+        ? lastStep.toolResults
+        : [];
+
+      const resultByCallId = new Map<string, any>();
+      toolResults.forEach((tr: any, idx: number) => {
+        if (tr.toolCallId) resultByCallId.set(tr.toolCallId, tr);
+      });
+
+      let anyToolSucceeded = false;
+
+      for (let i = 0; i < lastStep.toolCalls.length; i++) {
+        const tc = lastStep.toolCalls[i];
+        const toolName: string = tc.toolName ?? tc.name ?? "unknown";
+        const args = tc.input ?? tc.args;
+
+        const tr = resultByCallId.get(tc.toolCallId) ?? toolResults[i];
+        const output = tr?.output ?? tr?.result;
+
+        if (isToolResultFailure(toolName, output)) {
+          consecutiveFailures.push({
+            toolName,
+            fingerprint: fingerprintToolArgs(toolName, args),
+          });
+        } else if (output !== undefined) {
+          anyToolSucceeded = true;
+        }
+      }
+
+      if (anyToolSucceeded) {
+        consecutiveFailures.length = 0;
+      }
+
+      while (consecutiveFailures.length > CIRCUIT_BREAKER_MAX_HISTORY) {
+        consecutiveFailures.shift();
+      }
+    }
+
+    let circuitBreakerNudge: string | undefined;
+    const cbResult = checkCircuitBreaker(consecutiveFailures);
+    if (cbResult.tripped) {
+      circuitBreakerNudge = CIRCUIT_BREAKER_WARNING
+        .replace("{count}", String(cbResult.count))
+        .replace("{toolName}", cbResult.toolName || "unknown");
+      logger.warn("prepareStep: circuit breaker tripped", {
+        stepNumber,
+        toolName: cbResult.toolName,
+        consecutiveFailures: cbResult.count,
+      });
     }
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
@@ -227,11 +415,15 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // --- Step limit warning and loop detection nudges ---
+    // --- Step limit warning, loop detection, and circuit breaker nudges ---
     const nudges: string[] = [];
 
     if (loopNudge) {
       nudges.push(loopNudge);
+    }
+
+    if (circuitBreakerNudge) {
+      nudges.push(circuitBreakerNudge);
     }
 
     if (stepNumber >= threshold) {
