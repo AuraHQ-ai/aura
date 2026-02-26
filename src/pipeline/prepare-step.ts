@@ -140,7 +140,7 @@ function extractCommandFingerprint(cmd: string): string {
 function normalizeToolArgs(toolName: string, args: unknown): string {
   if (toolName === "run_command" && args && typeof args === "object") {
     const { command } = args as { command?: string };
-    if (command) return extractCommandFingerprint(command);
+    if (typeof command === "string" && command) return extractCommandFingerprint(command);
   }
   try {
     return JSON.stringify(args);
@@ -223,7 +223,7 @@ function checkCircuitBreaker(calls: TrackedToolCall[]): {
     for (let i = calls.length - 1; i >= 0; i--) {
       const entry = calls[i];
       if (!entry.failed) break;
-      if (entry.errorFingerprint !== last.errorFingerprint) break;
+      if (!entry.errorFingerprint || !areSimilarFingerprints(entry.errorFingerprint, last.errorFingerprint)) break;
       errorCount++;
     }
 
