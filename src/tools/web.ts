@@ -12,6 +12,11 @@ function getTavilyClient() {
   return tavily({ apiKey });
 }
 
+// ── Browser Headers ─────────────────────────────────────────────────────────
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
 // ── HTML Stripping ───────────────────────────────────────────────────────────
 
 /** Strip HTML tags and clean up whitespace for readable text extraction. */
@@ -228,7 +233,11 @@ export function createWebTools() {
           for (let r = 0; r < 10; r++) {
             response = await fetch(currentUrl, {
               headers: {
-                "User-Agent": "Mozilla/5.0 (compatible; AuraBot/1.0)",
+                "User-Agent": BROWSER_UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Cache-Control": "no-cache",
               },
               signal: AbortSignal.timeout(10000),
               redirect: "manual",
@@ -251,9 +260,12 @@ export function createWebTools() {
           }
 
           if (!response.ok) {
+            const hint = response.status === 403
+              ? ". This may be Cloudflare bot protection — try using the `browse` tool instead, which uses a real browser."
+              : "";
             return {
               ok: false as const,
-              error: `HTTP ${response.status} ${response.statusText}`,
+              error: `HTTP ${response.status} ${response.statusText}${hint}`,
               url,
             };
           }
