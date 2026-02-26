@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import crypto from "node:crypto";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -312,7 +312,28 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
 
       logger.info("Voice call stored", { conversationId, direction, callStatus });
 
-      // Post summary to #voice-testing channel
+      // Look up originating Slack channel/thread from the voice_calls row
+      let originChannelId: string | null = null;
+      let originThreadTs: string | null = null;
+      try {
+        const [row] = await db
+          .select({
+            slackChannelId: voiceCalls.slackChannelId,
+            slackThreadTs: voiceCalls.slackThreadTs,
+          })
+          .from(voiceCalls)
+          .where(eq(voiceCalls.conversationId, conversationId))
+          .limit(1);
+        originChannelId = row?.slackChannelId ?? null;
+        originThreadTs = row?.slackThreadTs ?? null;
+      } catch (lookupErr) {
+        logger.warn("Failed to look up originating thread for post-call summary", {
+          conversationId,
+          error: lookupErr instanceof Error ? lookupErr.message : String(lookupErr),
+        });
+      }
+
+      // Build summary message
       const directionEmoji = outbound ? ":telephone_receiver:" : ":phone:";
       const directionLabel = outbound ? "Outbound" : "Inbound";
       const callerInfo = personName
@@ -337,6 +358,30 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           ? `\n\n*Transcript excerpt:*\n>${truncatedTranscript}`
           : "");
 
+      // Post summary back to the originating thread (if call was triggered from one)
+      if (originChannelId && originThreadTs) {
+        try {
+          await safePostMessage(slackClient, {
+            channel: originChannelId,
+            text: slackMessage,
+            thread_ts: originThreadTs,
+          });
+          logger.info("Post-call summary sent to originating thread", {
+            conversationId,
+            channelId: originChannelId,
+            threadTs: originThreadTs,
+          });
+        } catch (threadErr) {
+          logger.error("Failed to post call summary to originating thread", {
+            conversationId,
+            channelId: originChannelId,
+            threadTs: originThreadTs,
+            error: threadErr instanceof Error ? threadErr.message : String(threadErr),
+          });
+        }
+      }
+
+      // Always post a copy to #voice-testing for monitoring
       try {
         if (VOICE_TESTING_CHANNEL) {
           await safePostMessage(slackClient, {

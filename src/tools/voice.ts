@@ -602,6 +602,8 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
                   phoneNumber: toNumber,
                   personName: resolvedName || null,
                   slackUserId: context?.userId ?? null,
+                  slackChannelId: context?.channelId ?? null,
+                  slackThreadTs: context?.threadTs ?? null,
                   status: "in_progress",
                   callContext: callContext || null,
                   dynamicVariables: dynamicVars,

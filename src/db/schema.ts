@@ -436,6 +436,8 @@ export const voiceCalls = pgTable(
     phoneNumber: text("phone_number"),
     personName: text("person_name"),
     slackUserId: text("slack_user_id"),
+    slackChannelId: text("slack_channel_id"),
+    slackThreadTs: text("slack_thread_ts"),
     status: text("status").notNull().default("in_progress"),
     durationSeconds: integer("duration_seconds"),
     transcript: jsonb("transcript"),
