@@ -33,6 +33,35 @@ const LOOP_FORCE_STOP =
   "Summarize whatever you have and respond to the user NOW. " +
   "Do NOT make any more tool calls.";
 
+// ── Circuit Breaker (consecutive tool failures) ─────────────────────────────
+
+export const DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 3;
+
+const CIRCUIT_BREAKER_MESSAGE =
+  "Circuit breaker: {count} consecutive {toolName} failures detected. " +
+  "Stop retrying this tool and report the failure to the user. " +
+  "Explain what you were trying to do, what went wrong, and suggest " +
+  "an alternative approach or ask for help.";
+
+/**
+ * Determine whether a tool result represents a failure.
+ *
+ * For `run_command`: non-zero exit_code or ok === false (timeout/crash).
+ * For all other tools: ok === false.
+ */
+function isToolResultFailure(toolName: string, output: unknown): boolean {
+  if (!output || typeof output !== "object") return false;
+  const o = output as Record<string, unknown>;
+
+  if (o.ok === false) return true;
+
+  if (toolName === "run_command" && "exit_code" in o && o.exit_code !== 0) {
+    return true;
+  }
+
+  return false;
+}
+
 interface ToolCallSignature {
   name: string;
   argsHash: string;
@@ -89,11 +118,13 @@ type PrepareStepFn = (options: {
 /**
  * Build a `prepareStep` callback for AI SDK's streamText/generateText.
  *
- * Handles two concerns:
+ * Handles three concerns:
  * 1. Effort escalation (Anthropic only): starts at defaultEffort (usually "medium"),
  *    bumps to "high" when the agent is deep into a task or hitting tool failures,
  *    and optionally escalates the model from Sonnet to Opus for persistent failures.
  * 2. Step limit warning: injects a system-level wrap-up nudge near the step limit.
+ * 3. Circuit breaker: tracks consecutive failures per tool type and injects guidance
+ *    after a configurable threshold (default: 3) to stop retrying and report failure.
  */
 export function createPrepareStep(opts: {
   stepLimit?: number;
@@ -103,9 +134,11 @@ export function createPrepareStep(opts: {
   defaultEffort?: EffortLevel;
   modelId?: string;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  circuitBreakerThreshold?: number;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
+  const cbThreshold = opts.circuitBreakerThreshold ?? DEFAULT_CIRCUIT_BREAKER_THRESHOLD;
   const hasEffortSupport = opts.modelId ? supportsEffort(opts.modelId) : false;
   const modelIsAnthropic = opts.modelId ? isAnthropicModel(opts.modelId) : false;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
@@ -113,6 +146,7 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  const consecutiveFailures = new Map<string, number>();
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -129,6 +163,34 @@ export function createPrepareStep(opts: {
     ) ?? false;
 
     if (hadToolFailure) failureCount++;
+
+    // --- Circuit breaker: track consecutive failures per tool type ---
+    if (lastStep?.toolResults && Array.isArray(lastStep.toolResults)) {
+      for (const tr of lastStep.toolResults as Array<{ toolName?: string; name?: string; output?: unknown }>) {
+        const toolName = tr.toolName ?? tr.name ?? "unknown";
+        if (isToolResultFailure(toolName, tr.output)) {
+          consecutiveFailures.set(toolName, (consecutiveFailures.get(toolName) ?? 0) + 1);
+        } else {
+          consecutiveFailures.set(toolName, 0);
+        }
+      }
+    }
+
+    let circuitBreakerNudge: string | undefined;
+    for (const [toolName, count] of consecutiveFailures) {
+      if (count >= cbThreshold) {
+        circuitBreakerNudge = CIRCUIT_BREAKER_MESSAGE
+          .replace("{count}", String(count))
+          .replace("{toolName}", toolName);
+        logger.warn("prepareStep: circuit breaker triggered", {
+          stepNumber,
+          toolName,
+          consecutiveFailures: count,
+          threshold: cbThreshold,
+        });
+        break;
+      }
+    }
 
     // --- Loop detection: track recent tool calls and detect repetition ---
     if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
@@ -227,8 +289,12 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // --- Step limit warning and loop detection nudges ---
+    // --- Step limit warning, loop detection, and circuit breaker nudges ---
     const nudges: string[] = [];
+
+    if (circuitBreakerNudge) {
+      nudges.push(circuitBreakerNudge);
+    }
 
     if (loopNudge) {
       nudges.push(loopNudge);
@@ -274,6 +340,7 @@ export function createInteractivePrepareStep(opts: {
   modelId?: string;
   defaultEffort?: EffortLevel;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  circuitBreakerThreshold?: number;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: STEP_LIMIT,
@@ -283,6 +350,7 @@ export function createInteractivePrepareStep(opts: {
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
     getEscalationModel: opts.getEscalationModel,
+    circuitBreakerThreshold: opts.circuitBreakerThreshold,
   });
 }
 
@@ -293,6 +361,7 @@ export function createHeadlessPrepareStep(opts: {
   modelId?: string;
   defaultEffort?: EffortLevel;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  circuitBreakerThreshold?: number;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: HEADLESS_STEP_LIMIT,
@@ -302,5 +371,6 @@ export function createHeadlessPrepareStep(opts: {
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
     getEscalationModel: opts.getEscalationModel,
+    circuitBreakerThreshold: opts.circuitBreakerThreshold,
   });
 }
