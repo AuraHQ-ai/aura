@@ -151,7 +151,10 @@ export function createDriveTools() {
             };
           }
 
-          if (mimeType === "application/vnd.google-apps.document") {
+          if (
+            mimeType === "application/vnd.google-apps.document" ||
+            mimeType === "application/vnd.google-apps.presentation"
+          ) {
             const exported = await drive.files.export({
               fileId: file_id,
               mimeType: "text/plain",
@@ -161,26 +164,11 @@ export function createDriveTools() {
                 ? exported.data
                 : String(exported.data);
 
-            logger.info("read_drive_file: exported Google Doc", {
-              file_id,
-              name,
-              contentLength: content.length,
-            });
-
-            return { ok: true, ...fileInfo, content, encoding: "text" };
-          }
-
-          if (mimeType === "application/vnd.google-apps.presentation") {
-            const exported = await drive.files.export({
-              fileId: file_id,
-              mimeType: "text/plain",
-            });
-            const content =
-              typeof exported.data === "string"
-                ? exported.data
-                : String(exported.data);
-
-            logger.info("read_drive_file: exported Google Slides", {
+            const label =
+              mimeType === "application/vnd.google-apps.document"
+                ? "Google Doc"
+                : "Google Slides";
+            logger.info(`read_drive_file: exported ${label}`, {
               file_id,
               name,
               contentLength: content.length,
@@ -310,8 +298,9 @@ export function createDriveTools() {
             };
           }
 
+          const safeFolderId = folder_id.replace(/'/g, "\\'");
           const res = await drive.files.list({
-            q: `'${folder_id}' in parents and trashed = false`,
+            q: `'${safeFolderId}' in parents and trashed = false`,
             pageSize: limit,
             fields: FILE_FIELDS,
             orderBy: "folder,name",
