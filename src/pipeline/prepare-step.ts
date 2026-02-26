@@ -1,7 +1,7 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort, isAnthropicModel, buildContextManagement } from "../lib/ai.js";
+import { supportsEffort } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -38,8 +38,6 @@ type PrepareStepFn = (options: {
  *    bumps to "high" when the agent is deep into a task or hitting tool failures,
  *    and optionally escalates the model from Sonnet to Opus for persistent failures.
  * 2. Step limit warning: injects a system-level wrap-up nudge near the step limit.
- * 3. Context management (headless only): Anthropic compaction/clear_tool_uses for
- *    long-running headless jobs that genuinely need 200+ tool calls.
  */
 export function createPrepareStep(opts: {
   stepLimit?: number;
@@ -48,14 +46,11 @@ export function createPrepareStep(opts: {
   dynamicContext?: string;
   defaultEffort?: EffortLevel;
   modelId?: string;
-  isHeadless?: boolean;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
   const hasEffortSupport = opts.modelId ? supportsEffort(opts.modelId) : false;
-  const modelIsAnthropic = opts.modelId ? isAnthropicModel(opts.modelId) : false;
-  const useContextManagement = opts.isHeadless === true && modelIsAnthropic;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
@@ -95,16 +90,7 @@ export function createPrepareStep(opts: {
       }
 
       providerOptions = {
-        anthropic: {
-          effort: currentEffort,
-          ...(useContextManagement && { contextManagement: buildContextManagement() }),
-        },
-      };
-    } else if (useContextManagement) {
-      providerOptions = {
-        anthropic: {
-          contextManagement: buildContextManagement(),
-        },
+        anthropic: { effort: currentEffort },
       };
     }
 
@@ -181,7 +167,6 @@ export function createInteractivePrepareStep(opts: {
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
-    isHeadless: false,
     getEscalationModel: opts.getEscalationModel,
   });
 }
@@ -201,7 +186,6 @@ export function createHeadlessPrepareStep(opts: {
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
-    isHeadless: true,
     getEscalationModel: opts.getEscalationModel,
   });
 }
