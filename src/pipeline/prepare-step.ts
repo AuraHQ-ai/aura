@@ -33,13 +33,67 @@ const LOOP_FORCE_STOP =
   "Summarize whatever you have and respond to the user NOW. " +
   "Do NOT make any more tool calls.";
 
+// ── Circuit Breaker ───────────────────────────────────────────────────────────
+// Tracks consecutive run_command failures (non-zero exit or timeout) and stops
+// the agent from retrying a fundamentally broken command.
+
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+
+const CIRCUIT_BREAKER_STOP =
+  "CIRCUIT BREAKER: I've failed {count} consecutive `run_command` calls " +
+  "(non-zero exit code or timeout). The external service may be down or " +
+  "the command is fundamentally wrong. Last failed command:\n" +
+  "  {pattern}\n\n" +
+  "STOP retrying this approach. Either:\n" +
+  "1. Try a completely different strategy\n" +
+  "2. Tell the user what failed and why\n" +
+  "3. Move on to other tasks\n\n" +
+  "Do NOT run the same command or minor variations of it again.";
+
+// ── Same-Tool Repetition ─────────────────────────────────────────────────────
+// Catches same tool called 5+ times in a row regardless of parameters —
+// may indicate a read-loop or other stuck pattern.
+
+const SAME_TOOL_REPEAT_THRESHOLD = 5;
+
+const SAME_TOOL_REPEAT_WARNING =
+  "WARNING: You've called `{toolName}` {count} times in a row (even with " +
+  "different parameters). This pattern suggests you may be stuck in a " +
+  "loop. STOP and reconsider: Are you making meaningful progress? If not, " +
+  "summarize your findings and respond to the user.";
+
 interface ToolCallSignature {
   name: string;
   argsHash: string;
 }
 
-function hashArgs(args: unknown): string {
+/**
+ * Normalize a shell command for semantic comparison.
+ * Strips comments, collapses whitespace, removes empty lines so that
+ * minor formatting differences (added comments, indentation) don't
+ * prevent duplicate detection.
+ */
+function normalizeCommand(cmd: string): string {
+  return cmd
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => !line.startsWith("#"))
+    .map(line => line.replace(/\s+#\s+.*$/, ""))
+    .filter(line => line.length > 0)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hashArgs(toolName: string, args: unknown): string {
   try {
+    if (toolName === "run_command" && args && typeof args === "object" && "command" in args) {
+      const a = args as Record<string, unknown>;
+      return JSON.stringify({
+        command: normalizeCommand(String(a.command || "")),
+        workdir: a.workdir,
+      });
+    }
     return JSON.stringify(args);
   } catch {
     return String(args);
@@ -68,6 +122,32 @@ function detectLoop(history: ToolCallSignature[]): {
   }
 
   return { looping: false, count };
+}
+
+function detectSameToolRepetition(history: ToolCallSignature[]): {
+  repeating: boolean;
+  count: number;
+  toolName?: string;
+} {
+  if (history.length < SAME_TOOL_REPEAT_THRESHOLD) {
+    return { repeating: false, count: 0 };
+  }
+
+  const lastName = history[history.length - 1].name;
+  let count = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].name === lastName) {
+      count++;
+    } else {
+      break;
+    }
+  }
+
+  if (count >= SAME_TOOL_REPEAT_THRESHOLD) {
+    return { repeating: true, count, toolName: lastName };
+  }
+
+  return { repeating: false, count: 0 };
 }
 
 export type EffortLevel = "low" | "medium" | "high";
@@ -113,6 +193,8 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
   const recentToolCalls: ToolCallSignature[] = [];
+  let consecutiveCmdFailures = 0;
+  let lastFailedCommandPattern = "";
 
   return async ({ stepNumber, steps, messages }) => {
     let systemOverride: string | undefined;
@@ -132,12 +214,38 @@ export function createPrepareStep(opts: {
 
     // --- Loop detection: track recent tool calls and detect repetition ---
     if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
-      for (const tc of lastStep.toolCalls) {
+      const stepResults = (lastStep.toolResults || []) as any[];
+
+      for (let i = 0; i < lastStep.toolCalls.length; i++) {
+        const tc = lastStep.toolCalls[i] as any;
+        const name: string = tc.toolName ?? tc.name ?? "unknown";
+
         recentToolCalls.push({
-          name: tc.toolName ?? tc.name ?? "unknown",
-          argsHash: hashArgs(tc.input ?? tc.args),
+          name,
+          argsHash: hashArgs(name, tc.input ?? tc.args),
         });
+
+        // --- Circuit breaker: track consecutive run_command failures ---
+        if (name === "run_command" && i < stepResults.length) {
+          const output = stepResults[i].output ?? stepResults[i].result;
+          if (output) {
+            const exitCode = output.exit_code;
+            const isFailed = output.ok === false ||
+              (typeof exitCode === "number" && exitCode !== 0);
+            if (isFailed) {
+              consecutiveCmdFailures++;
+              const input = tc.input ?? tc.args;
+              lastFailedCommandPattern = normalizeCommand(
+                String(input?.command || "unknown"),
+              );
+            } else {
+              consecutiveCmdFailures = 0;
+              lastFailedCommandPattern = "";
+            }
+          }
+        }
       }
+
       while (recentToolCalls.length > LOOP_WINDOW) {
         recentToolCalls.shift();
       }
@@ -164,6 +272,36 @@ export function createPrepareStep(opts: {
           repeatCount: loopResult.count,
         });
       }
+    }
+
+    // --- Circuit breaker nudge ---
+    let circuitBreakerNudge: string | undefined;
+    if (consecutiveCmdFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+      const pattern = lastFailedCommandPattern.length <= 120
+        ? lastFailedCommandPattern
+        : lastFailedCommandPattern.slice(0, 119) + "…";
+      circuitBreakerNudge = CIRCUIT_BREAKER_STOP
+        .replace("{count}", String(consecutiveCmdFailures))
+        .replace("{pattern}", pattern);
+      logger.warn("prepareStep: circuit breaker triggered", {
+        stepNumber,
+        consecutiveFailures: consecutiveCmdFailures,
+        lastCommand: pattern,
+      });
+    }
+
+    // --- Same-tool repetition nudge ---
+    const sameToolResult = detectSameToolRepetition(recentToolCalls);
+    let sameToolNudge: string | undefined;
+    if (sameToolResult.repeating) {
+      sameToolNudge = SAME_TOOL_REPEAT_WARNING
+        .replace("{toolName}", sameToolResult.toolName || "unknown")
+        .replace("{count}", String(sameToolResult.count));
+      logger.warn("prepareStep: same-tool repetition detected", {
+        stepNumber,
+        toolName: sameToolResult.toolName,
+        repeatCount: sameToolResult.count,
+      });
     }
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
@@ -227,11 +365,19 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // --- Step limit warning and loop detection nudges ---
+    // --- Step limit warning, loop detection, and circuit breaker nudges ---
     const nudges: string[] = [];
 
     if (loopNudge) {
       nudges.push(loopNudge);
+    }
+
+    if (circuitBreakerNudge) {
+      nudges.push(circuitBreakerNudge);
+    }
+
+    if (sameToolNudge) {
+      nudges.push(sameToolNudge);
     }
 
     if (stepNumber >= threshold) {
