@@ -333,7 +333,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
         const resolvedVoiceId = voiceId ?? DEFAULT_VOICE_ID;
 
         const defaultFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
-        if (!defaultFromNumber && !phoneNumberIdParam) {
+        if (!defaultFromNumber && !phoneNumberIdParam && !process.env.ELEVENLABS_PHONE_NUMBER_ID) {
           return { ok: false, error: "No from_number provided and ELEVENLABS_FROM_NUMBER env var not set." };
         }
 
