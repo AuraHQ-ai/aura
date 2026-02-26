@@ -33,6 +33,16 @@ const LOOP_FORCE_STOP =
   "Summarize whatever you have and respond to the user NOW. " +
   "Do NOT make any more tool calls.";
 
+// ── Circuit Breaker (consecutive command failures) ───────────────────────────
+
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+
+const CIRCUIT_BREAKER_MESSAGE =
+  "Circuit breaker: {count} consecutive command failures detected. " +
+  "Stop retrying and report the failure to the user. " +
+  "Explain what you were trying to do, what went wrong, and suggest next steps. " +
+  "Do NOT attempt the same command again.";
+
 interface ToolCallSignature {
   name: string;
   argsHash: string;
@@ -112,6 +122,7 @@ export function createPrepareStep(opts: {
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
+  let consecutiveRunCommandFailures = 0;
   const recentToolCalls: ToolCallSignature[] = [];
 
   return async ({ stepNumber, steps, messages }) => {
@@ -130,6 +141,36 @@ export function createPrepareStep(opts: {
 
     if (hadToolFailure) failureCount++;
 
+    // --- Circuit breaker: count consecutive run_command failures ---
+    if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls) && lastStep.toolResults) {
+      const toolCalls = lastStep.toolCalls as Array<{ toolName?: string; name?: string }>;
+      const toolResults = lastStep.toolResults as Array<{ toolName?: string; name?: string; output?: any }>;
+
+      const hasRunCommand = toolCalls.some(
+        (tc) => (tc.toolName ?? tc.name) === "run_command",
+      );
+
+      if (hasRunCommand) {
+        const runCommandFailed = toolResults.some((r) => {
+          const name = (r as any).toolName ?? (r as any).name;
+          if (name !== "run_command") return false;
+          const out = r.output;
+          if (!out) return false;
+          if (out.ok === false) return true;
+          if (typeof out.exit_code === "number" && out.exit_code !== 0) return true;
+          return false;
+        });
+
+        if (runCommandFailed) {
+          consecutiveRunCommandFailures++;
+        } else {
+          consecutiveRunCommandFailures = 0;
+        }
+      } else {
+        consecutiveRunCommandFailures = 0;
+      }
+    }
+
     // --- Loop detection: track recent tool calls and detect repetition ---
     if (lastStep?.toolCalls && Array.isArray(lastStep.toolCalls)) {
       for (const tc of lastStep.toolCalls) {
@@ -145,6 +186,7 @@ export function createPrepareStep(opts: {
 
     const loopResult = detectLoop(recentToolCalls);
     let loopNudge: string | undefined;
+    let circuitBreakerNudge: string | undefined;
     if (loopResult.looping) {
       if (loopResult.count >= LOOP_STOP_THRESHOLD) {
         loopNudge = LOOP_FORCE_STOP
@@ -164,6 +206,16 @@ export function createPrepareStep(opts: {
           repeatCount: loopResult.count,
         });
       }
+    }
+
+    // --- Circuit breaker nudge ---
+    if (consecutiveRunCommandFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+      circuitBreakerNudge = CIRCUIT_BREAKER_MESSAGE
+        .replace("{count}", String(consecutiveRunCommandFailures));
+      logger.warn("prepareStep: circuit breaker triggered", {
+        stepNumber,
+        consecutiveRunCommandFailures,
+      });
     }
 
     // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
@@ -227,11 +279,15 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // --- Step limit warning and loop detection nudges ---
+    // --- Step limit warning, loop detection, and circuit breaker nudges ---
     const nudges: string[] = [];
 
     if (loopNudge) {
       nudges.push(loopNudge);
+    }
+
+    if (circuitBreakerNudge) {
+      nudges.push(circuitBreakerNudge);
     }
 
     if (stepNumber >= threshold) {
