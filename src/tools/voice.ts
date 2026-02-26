@@ -197,7 +197,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
     tools.list_voice_agents = defineTool({
       description:
         "List available ElevenLabs voice agents, phone numbers, and voices. " +
-        "Call this BEFORE make_call when the user asks to call with a specific agent, " +
+        "Call this BEFORE place_call when the user asks to call with a specific agent, " +
         "voice, or phone number so you can resolve names to IDs. " +
         "Results are cached for 10 minutes. Admin-only.",
       inputSchema: z.object({}),
@@ -245,12 +245,12 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
       slack: { status: "Listing voice agents..." },
     });
 
-    // ── make_call ───────────────────────────────────────────────────
+    // ── place_call ───────────────────────────────────────────────────
     const DEFAULT_AGENT_ID = process.env.ELEVENLABS_AGENT_ID ?? "agent_9301kj9tjcqaermrz71vvr0fpv4v";
     const DEFAULT_FROM_NUMBER = process.env.ELEVENLABS_FROM_NUMBER ?? "+14158860211";
     const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? "upcns7xCtWHwsgL2HKV5";
 
-    tools.make_call = defineTool({
+    tools.place_call = defineTool({
       description:
         "Initiate an outbound phone call via ElevenLabs + Twilio. " +
         "Use list_voice_agents first to discover available agents/phones/voices, " +
@@ -428,7 +428,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
 
           if (!callResponse.ok) {
             const errorText = await callResponse.text();
-            logger.error("make_call ElevenLabs API error", {
+            logger.error("place_call ElevenLabs API error", {
               statusCode: callResponse.status,
               body: errorText.substring(0, 500),
             });
@@ -445,7 +445,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
             };
           } catch (parseError: any) {
             try { await callResponse.body?.cancel(); } catch {}
-            logger.error("make_call response JSON parse failed (call may have been placed)", {
+            logger.error("place_call response JSON parse failed (call may have been placed)", {
               error: parseError.message,
               to: toNumber,
             });
@@ -478,18 +478,18 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
                 })
                 .onConflictDoNothing({ target: voiceCalls.conversationId });
             } catch (dbError: any) {
-              logger.error("make_call DB insert failed (call was placed)", {
+              logger.error("place_call DB insert failed (call was placed)", {
                 error: dbError.message,
                 conversationId,
               });
             }
           } else {
-            logger.warn("make_call: no conversation_id returned, skipping DB insert", {
+            logger.warn("place_call: no conversation_id returned, skipping DB insert", {
               to: toNumber,
             });
           }
 
-          logger.info("make_call tool called", {
+          logger.info("place_call tool called", {
             to: toNumber,
             person: resolvedName,
             agentId: resolvedAgentId,
@@ -503,7 +503,7 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
             ...(trackingWarning ? { warning: trackingWarning } : {}),
           };
         } catch (error: any) {
-          logger.error("make_call tool failed", { error: error.message });
+          logger.error("place_call tool failed", { error: error.message });
           return {
             ok: false,
             error: `Failed to initiate call: ${error.message}`,
