@@ -298,7 +298,7 @@ export function createDriveTools() {
             };
           }
 
-          const safeFolderId = folder_id.replace(/'/g, "\\'");
+          const safeFolderId = folder_id.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
           const res = await drive.files.list({
             q: `'${safeFolderId}' in parents and trashed = false`,
             pageSize: limit,
