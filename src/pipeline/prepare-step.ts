@@ -139,7 +139,6 @@ export function createPrepareStep(opts: {
 
     const prunedMessages = pruneMessages({
       messages,
-      toolCalls: "before-last-5-messages",
       reasoning: "before-last-message",
     });
 
