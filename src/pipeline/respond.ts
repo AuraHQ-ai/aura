@@ -428,6 +428,12 @@ export async function generateResponse(
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   let continuationCount = 0;
 
+  // Track compaction block IDs so their text-deltas are filtered from Slack output.
+  // When Anthropic context management fires compaction, it emits text-start with
+  // providerMetadata.anthropic.type === "compaction", followed by text-deltas
+  // containing the compaction summary — internal context, not user-facing.
+  const compactionBlockIds = new Set<string>();
+
   async function splitToNewStream(): Promise<boolean> {
     if (streamingFailed || continuationCount >= MAX_CONTINUATIONS) {
       if (continuationCount >= MAX_CONTINUATIONS) {
@@ -472,7 +478,26 @@ export async function generateResponse(
       resetTimer();
 
       switch (chunk.type) {
+        case "text-start": {
+          const anthropicMeta = (chunk as any).providerMetadata?.anthropic;
+          if (anthropicMeta?.type === "compaction") {
+            compactionBlockIds.add((chunk as any).id);
+            logger.info("Compaction block detected, filtering from Slack output", {
+              blockId: (chunk as any).id,
+            });
+          }
+          break;
+        }
+
+        case "text-end": {
+          compactionBlockIds.delete((chunk as any).id);
+          break;
+        }
+
         case "text-delta": {
+          if (compactionBlockIds.has((chunk as any).id)) {
+            break;
+          }
           accumulatedText += chunk.text;
           let remaining = chunk.text;
 

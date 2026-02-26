@@ -194,10 +194,16 @@ export function buildContextManagement() {
         type: "compact_20260112" as const,
         trigger: { type: "input_tokens" as const, value: 80000 },
         instructions:
-          "Preserve: current task state and goal, key decisions made, error patterns found, " +
-          "file paths being investigated, user preferences learned, thread context (channel, thread_ts), " +
-          "and any data/metrics discovered. Drop: verbatim tool outputs that have been summarized, " +
-          "intermediate failed attempts, redundant search results.",
+          "CRITICAL — preserve in this exact priority order:\n" +
+          "1. The user's MOST RECENT request/question — quote it verbatim if short\n" +
+          "2. What you are currently doing to address that request and your next planned step\n" +
+          "3. What you have already tried and the outcome (succeeded/failed/partial)\n" +
+          "4. Key findings, data, metrics, or file paths discovered so far\n" +
+          "5. Error patterns found and things that did NOT work (to avoid repeating them)\n" +
+          "6. Thread context (channel, thread_ts) and user preferences learned\n" +
+          "Drop: verbatim tool outputs that have been summarized, " +
+          "intermediate failed attempts where the outcome is already captured above, " +
+          "redundant search results, and any earlier conversation topics that are no longer relevant.",
       },
     ],
   };
