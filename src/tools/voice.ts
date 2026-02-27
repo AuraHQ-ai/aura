@@ -6,6 +6,8 @@ import { voiceCalls } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
+import type { WebClient } from "@slack/web-api";
+import { resolveSlackDestination } from "./slack.js";
 
 // ── Language Config ──────────────────────────────────────────────────────────
 
@@ -180,7 +182,7 @@ async function resolvePhoneNumberIdFromCache(
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
-export function createVoiceTools(context?: ScheduleContext): Record<string, any> {
+export function createVoiceTools(client: WebClient, context?: ScheduleContext): Record<string, any> {
   const tools: Record<string, any> = {};
 
   if (process.env.ELEVENLABS_API_KEY) {
@@ -638,6 +640,202 @@ export function createVoiceTools(context?: ScheduleContext): Record<string, any>
     },
     slack: { status: "Sending SMS...", detail: (i) => i.phone_number },
   });
+
+  // ── send_voice_note ─────────────────────────────────────────────
+  if (process.env.ELEVENLABS_API_KEY) {
+    tools.send_voice_note = defineTool({
+      description:
+        "Generate a voice note from text using ElevenLabs TTS and upload it to Slack as an mp3. " +
+        "Great for sending audio messages, pronunciation demos, or adding a personal touch. " +
+        "The channel parameter accepts any Slack destination: channel name ('general'), channel ID ('C0BNVKS77'), " +
+        "DM channel ID, or a username/display name ('Joan') to open a DM. Admin-only.",
+      inputSchema: z.object({
+        text: z.string().describe("The text to convert to speech."),
+        voice_id: z
+          .string()
+          .optional()
+          .describe("ElevenLabs voice ID. Defaults to ELEVENLABS_VOICE_ID env var."),
+        language: z
+          .string()
+          .optional()
+          .describe("Optional language hint for the TTS model (e.g. 'en', 'es', 'fr')."),
+        channel: z
+          .string()
+          .optional()
+          .describe(
+            "Channel name, ID, or username to send the voice note to. " +
+            "Falls back to the current conversation channel if omitted.",
+          ),
+        thread_ts: z
+          .string()
+          .optional()
+          .describe("Thread timestamp to attach the voice note to a specific thread."),
+      }),
+      execute: async ({ text, voice_id, language, channel, thread_ts }) => {
+        if (!isAdmin(context?.userId)) {
+          return { ok: false, error: "Only admins can send voice notes." };
+        }
+
+        const recentNotes = await db
+          .select({ count: sql`count(*)` })
+          .from(voiceCalls)
+          .where(
+            and(
+              gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
+              eq(voiceCalls.direction, "voice_note"),
+            ),
+          );
+        if (Number(recentNotes[0]?.count || 0) >= 10) {
+          return {
+            ok: false,
+            error: "Rate limit: too many voice notes in the last hour.",
+          };
+        }
+
+        const apiKey = process.env.ELEVENLABS_API_KEY!;
+        const resolvedVoiceId = voice_id || process.env.ELEVENLABS_VOICE_ID;
+        if (!resolvedVoiceId) {
+          return {
+            ok: false,
+            error: "No voice_id provided and ELEVENLABS_VOICE_ID env var not set.",
+          };
+        }
+
+        try {
+          // 1. Resolve channel — validate before paid API call
+          const resolvedChannel = channel ?? context?.channelId;
+          const resolvedThreadTs = thread_ts ?? (channel ? undefined : context?.threadTs);
+
+          if (!resolvedChannel) {
+            return {
+              ok: false,
+              error:
+                "No channel specified and no conversation context available. " +
+                "Provide a channel name, ID, or username.",
+            };
+          }
+
+          const channelId = (await resolveSlackDestination(client, resolvedChannel)) ?? undefined;
+          if (!channelId) {
+            return {
+              ok: false,
+              error: `Could not find channel or user "${resolvedChannel}". Use list_channels to see available channels.`,
+            };
+          }
+
+          // 2. Generate speech via ElevenLabs TTS
+          const ttsBody: Record<string, unknown> = {
+            text,
+            model_id: "eleven_turbo_v2_5",
+            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+          };
+          if (language) {
+            ttsBody.language_code = language;
+          }
+
+          const ttsResponse = await fetch(
+            `${ELEVENLABS_API_BASE}/text-to-speech/${resolvedVoiceId}`,
+            {
+              method: "POST",
+              headers: {
+                "xi-api-key": apiKey,
+                "Content-Type": "application/json",
+                Accept: "audio/mpeg",
+              },
+              body: JSON.stringify(ttsBody),
+            },
+          );
+
+          if (!ttsResponse.ok) {
+            const errorText = await ttsResponse.text();
+            logger.error("send_voice_note TTS error", {
+              status: ttsResponse.status,
+              body: errorText.substring(0, 500),
+            });
+            return {
+              ok: false,
+              error: `ElevenLabs TTS error (${ttsResponse.status}): ${errorText.substring(0, 200)}`,
+            };
+          }
+
+          const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
+
+          // 3. Upload mp3 to Slack via 3-step upload API
+          const uploadUrlResp = await client.files.getUploadURLExternal({
+            filename: "voice_note.mp3",
+            length: audioBuffer.length,
+          });
+          const uploadUrl = uploadUrlResp.upload_url!;
+          const fileId = uploadUrlResp.file_id!;
+
+          const uploadResp = await fetch(uploadUrl, {
+            method: "POST",
+            body: audioBuffer,
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+          if (!uploadResp.ok) {
+            return {
+              ok: false,
+              error: `Slack file upload failed: ${uploadResp.status} ${uploadResp.statusText}`,
+            };
+          }
+
+          const completeParams: Record<string, unknown> = {
+            files: [{ id: fileId, title: "Voice Note" }],
+          };
+          if (channelId) completeParams.channel_id = channelId;
+          if (resolvedThreadTs) completeParams.thread_ts = resolvedThreadTs;
+
+          const completeResp = await client.files.completeUploadExternal(
+            completeParams as any,
+          );
+          const fileUrl =
+            (completeResp as any).files?.[0]?.permalink ?? null;
+
+          const durationEstimate = Math.round(text.length / 15);
+
+          try {
+            await db
+              .insert(voiceCalls)
+              .values({
+                conversationId: `voice_note_${fileId}`,
+                direction: "voice_note",
+                slackUserId: context?.userId ?? null,
+                status: "completed",
+                callContext: text.substring(0, 500),
+              })
+              .onConflictDoNothing({ target: voiceCalls.conversationId });
+          } catch (dbError: any) {
+            logger.error("send_voice_note DB insert failed (voice note was sent)", {
+              error: dbError.message,
+              fileId,
+            });
+          }
+
+          logger.info("send_voice_note tool called", {
+            channel: resolvedChannel,
+            textLength: text.length,
+            fileId,
+            durationEstimate,
+          });
+
+          return {
+            ok: true,
+            file_id: fileId,
+            file_url: fileUrl,
+            duration_estimate: durationEstimate,
+          };
+        } catch (error: any) {
+          logger.error("send_voice_note tool failed", { error: error.message });
+          return {
+            ok: false,
+            error: `Failed to send voice note: ${error.message}`,
+          };
+        }
+      },
+      slack: { status: "Generating voice note..." },
+    });
+  }
 
   return tools;
 }

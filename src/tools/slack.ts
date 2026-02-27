@@ -403,6 +403,34 @@ export async function resolveUserByName(
 }
 
 /**
+ * Resolve a channel name, user name, or Slack ID to a channel ID.
+ * Handles D-prefixed DM IDs, C/G-prefixed channel IDs, channel names,
+ * and user names (opening a DM if needed). Returns null if unresolvable.
+ */
+export async function resolveSlackDestination(
+  client: WebClient,
+  destination: string,
+): Promise<string | null> {
+  if (/^D[A-Z0-9]+$/.test(destination)) return destination;
+  if (/^[CG][A-Z0-9]+$/.test(destination)) return destination;
+
+  const resolved = await resolveChannelByName(client, destination);
+  if (resolved) return resolved.id;
+
+  try {
+    const user = await resolveUserByName(client, destination);
+    if (user?.id) {
+      const dm = await client.conversations.open({ users: user.id });
+      if (dm.channel?.id) return dm.channel.id;
+    }
+  } catch {
+    // fall through
+  }
+
+  return null;
+}
+
+/**
  * Resolve a Slack user ID to a display name.
  * Caches results for the duration of the invocation.
  */
@@ -2299,31 +2327,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           let channelId: string | undefined;
           if (resolvedChannel) {
-            if (/^D[A-Z0-9]+$/.test(resolvedChannel)) {
-              channelId = resolvedChannel;
-            } else if (/^[CG][A-Z0-9]+$/.test(resolvedChannel)) {
-              channelId = resolvedChannel;
-            } else {
-              const resolved = await resolveChannelByName(client, resolvedChannel);
-              if (resolved) {
-                channelId = resolved.id;
-              } else {
-                try {
-                  const user = await resolveUserByName(client, resolvedChannel);
-                  if (user?.id) {
-                    const dm = await client.conversations.open({ users: user.id });
-                    channelId = dm.channel?.id;
-                  }
-                } catch {
-                  // fall through to error
-                }
-                if (!channelId) {
-                  return {
-                    ok: false,
-                    error: `Could not find channel or user "${resolvedChannel}". Use list_channels to see available channels.`,
-                  };
-                }
-              }
+            channelId = (await resolveSlackDestination(client, resolvedChannel)) ?? undefined;
+            if (!channelId) {
+              return {
+                ok: false,
+                error: `Could not find channel or user "${resolvedChannel}". Use list_channels to see available channels.`,
+              };
             }
           }
 
@@ -2924,7 +2933,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createSubagentTools(client, context),
 
     // ── Voice & SMS Tools (ElevenLabs + Twilio) ─────────────────────
-    ...createVoiceTools(context),
+    ...createVoiceTools(client, context),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
@@ -2957,7 +2966,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // Browser
     "browse", "download_slack_file",
     // Voice / Calls
-    "list_voice_agents", "place_call", "send_sms",
+    "list_voice_agents", "place_call", "send_sms", "send_voice_note",
     // Directory / Contacts
     "lookup_workspace_user", "list_workspace_users", "lookup_contact",
     // Checkpoint
