@@ -686,44 +686,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         }
 
         try {
-          // 1. Generate speech via ElevenLabs TTS
-          const ttsBody: Record<string, unknown> = {
-            text,
-            model_id: "eleven_turbo_v2_5",
-            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-          };
-          if (language) {
-            ttsBody.language_code = language;
-          }
-
-          const ttsResponse = await fetch(
-            `${ELEVENLABS_API_BASE}/text-to-speech/${resolvedVoiceId}`,
-            {
-              method: "POST",
-              headers: {
-                "xi-api-key": apiKey,
-                "Content-Type": "application/json",
-                Accept: "audio/mpeg",
-              },
-              body: JSON.stringify(ttsBody),
-            },
-          );
-
-          if (!ttsResponse.ok) {
-            const errorText = await ttsResponse.text();
-            logger.error("send_voice_note TTS error", {
-              status: ttsResponse.status,
-              body: errorText.substring(0, 500),
-            });
-            return {
-              ok: false,
-              error: `ElevenLabs TTS error (${ttsResponse.status}): ${errorText.substring(0, 200)}`,
-            };
-          }
-
-          const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
-
-          // 2. Resolve channel (same logic as upload_file)
+          // 1. Resolve channel (same logic as upload_file) — validate before paid API call
           const resolvedChannel = channel ?? context?.channelId;
           const resolvedThreadTs = thread_ts ?? (channel ? undefined : context?.threadTs);
 
@@ -763,6 +726,43 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
               }
             }
           }
+
+          // 2. Generate speech via ElevenLabs TTS
+          const ttsBody: Record<string, unknown> = {
+            text,
+            model_id: "eleven_turbo_v2_5",
+            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+          };
+          if (language) {
+            ttsBody.language_code = language;
+          }
+
+          const ttsResponse = await fetch(
+            `${ELEVENLABS_API_BASE}/text-to-speech/${resolvedVoiceId}`,
+            {
+              method: "POST",
+              headers: {
+                "xi-api-key": apiKey,
+                "Content-Type": "application/json",
+                Accept: "audio/mpeg",
+              },
+              body: JSON.stringify(ttsBody),
+            },
+          );
+
+          if (!ttsResponse.ok) {
+            const errorText = await ttsResponse.text();
+            logger.error("send_voice_note TTS error", {
+              status: ttsResponse.status,
+              body: errorText.substring(0, 500),
+            });
+            return {
+              ok: false,
+              error: `ElevenLabs TTS error (${ttsResponse.status}): ${errorText.substring(0, 200)}`,
+            };
+          }
+
+          const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
 
           // 3. Upload mp3 to Slack via 3-step upload API
           const uploadUrlResp = await client.files.getUploadURLExternal({
