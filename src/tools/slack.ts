@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { defineTool } from "../lib/tool.js";
+import { defineTool, binaryToModelOutput } from "../lib/tool.js";
 import { isAdmin } from "../lib/permissions.js";
 import { createNoteTools } from "./notes.js";
 import { createJobTools } from "./jobs.js";
@@ -2495,51 +2495,11 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         }
       },
       toModelOutput({ output }: { output: any }) {
-        if (
-          !output ||
-          typeof output !== "object" ||
-          !output.ok ||
-          !output.content_base64
-        ) {
+        if (!output?.ok || !output.content_base64) {
           return { type: "json" as const, value: output };
         }
-
         const { content_base64, ...meta } = output;
-        const parts: Array<
-          | { type: "text"; text: string }
-          | { type: "image-data"; data: string; mediaType: string }
-          | {
-              type: "file-data";
-              data: string;
-              mediaType: string;
-              filename?: string;
-            }
-        > = [];
-
-        parts.push({
-          type: "text",
-          text: JSON.stringify({
-            ...meta,
-            note: "Binary content attached as native file below",
-          }),
-        });
-
-        if (output.mimetype?.startsWith("image/")) {
-          parts.push({
-            type: "image-data",
-            data: content_base64,
-            mediaType: output.mimetype,
-          });
-        } else {
-          parts.push({
-            type: "file-data",
-            data: content_base64,
-            mediaType: output.mimetype || "application/octet-stream",
-            filename: output.filename,
-          });
-        }
-
-        return { type: "content" as const, value: parts };
+        return binaryToModelOutput({ base64: content_base64, mimeType: output.mimetype, filename: output.filename, meta });
       },
       slack: { status: "Downloading file...", detail: (i) => i.file_id },
     }),

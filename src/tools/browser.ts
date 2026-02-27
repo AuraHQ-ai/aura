@@ -1,4 +1,4 @@
-import { defineTool } from "../lib/tool.js";
+import { defineTool, binaryToModelOutput } from "../lib/tool.js";
 import { z } from "zod";
 import {
   createSession,
@@ -329,28 +329,15 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           }
         }
       },
-      toModelOutput({ output }: { output: unknown }) {
+      toModelOutput({ output }: { output: any }) {
         if (!output || typeof output !== "object") {
-          return { type: "text", value: JSON.stringify(output) };
+          return { type: "text" as const, value: JSON.stringify(output) };
         }
-
         const { screenshot_base64, ...rest } = output as Record<string, unknown>;
-        const parts: Array<
-          | { type: "text"; text: string }
-          | { type: "image-data"; data: string; mediaType: string }
-        > = [];
-
-        parts.push({ type: "text", text: JSON.stringify(rest) });
-
         if (screenshot_base64 && typeof screenshot_base64 === "string") {
-          parts.push({
-            type: "image-data",
-            data: screenshot_base64,
-            mediaType: "image/png",
-          });
+          return binaryToModelOutput({ base64: screenshot_base64, mimeType: "image/png", meta: rest });
         }
-
-        return { type: "content", value: parts };
+        return { type: "json" as const, value: output };
       },
       slack: { status: "Browsing...", detail: (i) => i.url ?? "running code" },
     }),
