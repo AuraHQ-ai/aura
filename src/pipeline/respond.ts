@@ -5,7 +5,7 @@ import { createSlackTools } from "../tools/slack.js";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
-import { formatForSlack } from "../lib/format.js";
+import { formatForSlack, prettifyAndWrapTable } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
 import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLong } from "../lib/slack-messaging.js";
 import { createInteractivePrepareStep, STEP_LIMIT } from "./prepare-step.js";
@@ -451,7 +451,7 @@ export async function generateResponse(
       } else {
         if (tableBuffer.length > 0) {
           output += tableBuffer.length >= 2
-            ? "```\n" + tableBuffer.join("").trimEnd() + "\n```\n"
+            ? prettifyAndWrapTable(tableBuffer)
             : tableBuffer.join("");
           tableBuffer = [];
         }
@@ -465,7 +465,7 @@ export async function generateResponse(
         lineCarry = "";
       } else if (tableBuffer.length > 0 && !lineCarry.trimStart().startsWith("|")) {
         output += tableBuffer.length >= 2
-          ? "```\n" + tableBuffer.join("").trimEnd() + "\n```\n"
+          ? prettifyAndWrapTable(tableBuffer)
           : tableBuffer.join("");
         tableBuffer = [];
         output += lineCarry;
@@ -485,7 +485,7 @@ export async function generateResponse(
       } else {
         if (tableBuffer.length > 0) {
           output += tableBuffer.length >= 2
-            ? "```\n" + tableBuffer.join("").trimEnd() + "\n```\n"
+            ? prettifyAndWrapTable(tableBuffer)
             : tableBuffer.join("");
           tableBuffer = [];
         }
@@ -495,7 +495,7 @@ export async function generateResponse(
     }
     if (tableBuffer.length > 0) {
       output += tableBuffer.length >= 2
-        ? "```\n" + tableBuffer.join("").trimEnd() + "\n```\n"
+        ? prettifyAndWrapTable(tableBuffer)
         : tableBuffer.join("");
       tableBuffer = [];
     }
