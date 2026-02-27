@@ -2314,13 +2314,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
         const resolvedThreadTs = thread_ts ?? (channel ? undefined : context?.threadTs);
 
         try {
-          if (!content && !file_path) {
+          if (content === undefined && !file_path) {
             return {
               ok: false,
               error: "Exactly one of 'content' or 'file_path' must be provided.",
             };
           }
-          if (content && file_path) {
+          if (content !== undefined && file_path) {
             return {
               ok: false,
               error: "'content' and 'file_path' are mutually exclusive — provide one, not both.",
