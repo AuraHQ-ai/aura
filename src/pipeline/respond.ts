@@ -423,10 +423,84 @@ export async function generateResponse(
   let accumulatedText = "";
   let currentStreamLength = 0;
   let fallbackStartIdx = 0;
+  let streamedRawIdx = 0;
   let pendingTableBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   let continuationCount = 0;
+  let tableBuffer: string[] = [];
+  let lineCarry = "";
+
+  /**
+   * Process a text chunk through the table line buffer.
+   * Holds back lines starting with `|` until the table ends, then wraps
+   * completed tables (2+ rows) in triple-backtick fences so Slack renders
+   * them as monospace. Returns text ready to be flushed to the stream.
+   */
+  function processChunkForTables(chunkText: string): string {
+    lineCarry += chunkText;
+    let output = "";
+
+    let nlIdx: number;
+    while ((nlIdx = lineCarry.indexOf("\n")) !== -1) {
+      const line = lineCarry.slice(0, nlIdx + 1);
+      lineCarry = lineCarry.slice(nlIdx + 1);
+
+      if (line.trimStart().startsWith("|")) {
+        tableBuffer.push(line);
+      } else {
+        if (tableBuffer.length > 0) {
+          output += tableBuffer.length >= 2
+            ? "```\n" + tableBuffer.join("").trimEnd() + "\n```\n"
+            : tableBuffer.join("");
+          tableBuffer = [];
+        }
+        output += line;
+      }
+    }
+
+    if (lineCarry) {
+      if (tableBuffer.length === 0 && !lineCarry.trimStart().startsWith("|")) {
+        output += lineCarry;
+        lineCarry = "";
+      } else if (tableBuffer.length > 0 && !lineCarry.trimStart().startsWith("|")) {
+        output += tableBuffer.length >= 2
+          ? "```\n" + tableBuffer.join("").trimEnd() + "\n```\n"
+          : tableBuffer.join("");
+        tableBuffer = [];
+        output += lineCarry;
+        lineCarry = "";
+      }
+    }
+
+    return output;
+  }
+
+  /** Flush any content remaining in the table buffer at end-of-stream. */
+  function flushRemainingTableBuffer(): string {
+    let output = "";
+    if (lineCarry) {
+      if (lineCarry.trimStart().startsWith("|")) {
+        tableBuffer.push(lineCarry);
+      } else {
+        if (tableBuffer.length > 0) {
+          output += tableBuffer.length >= 2
+            ? "```\n" + tableBuffer.join("").trimEnd() + "\n```\n"
+            : tableBuffer.join("");
+          tableBuffer = [];
+        }
+        output += lineCarry;
+      }
+      lineCarry = "";
+    }
+    if (tableBuffer.length > 0) {
+      output += tableBuffer.length >= 2
+        ? "```\n" + tableBuffer.join("").trimEnd() + "\n```\n"
+        : tableBuffer.join("");
+      tableBuffer = [];
+    }
+    return output;
+  }
 
   async function splitToNewStream(): Promise<boolean> {
     if (streamingFailed || continuationCount >= MAX_CONTINUATIONS) {
@@ -474,7 +548,8 @@ export async function generateResponse(
       switch (chunk.type) {
         case "text-delta": {
           accumulatedText += chunk.text;
-          let remaining = chunk.text;
+          let remaining = processChunkForTables(chunk.text);
+          if (!remaining) break;
 
           while (remaining) {
             if (streamingFailed) break;
@@ -483,7 +558,7 @@ export async function generateResponse(
               currentStreamLength += remaining.length;
               await tryStreamAppend({ markdown_text: remaining });
               if (streamingFailed) {
-                fallbackStartIdx = accumulatedText.length - remaining.length;
+                fallbackStartIdx = streamedRawIdx;
               }
               break;
             }
@@ -494,7 +569,7 @@ export async function generateResponse(
               currentStreamLength += remaining.length;
               await tryStreamAppend({ markdown_text: remaining });
               if (streamingFailed) {
-                fallbackStartIdx = accumulatedText.length - remaining.length;
+                fallbackStartIdx = streamedRawIdx;
               }
               break;
             }
@@ -508,7 +583,7 @@ export async function generateResponse(
             }
 
             if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length - remaining.length - before.length;
+              fallbackStartIdx = streamedRawIdx;
               break;
             }
 
@@ -517,22 +592,40 @@ export async function generateResponse(
             if (await splitToNewStream()) {
               // Split succeeded, currentStreamLength reset, loop continues
             } else if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length - remaining.length;
+              fallbackStartIdx = streamedRawIdx;
               break;
             } else {
               // Max continuations reached, stream still active — flush remaining
               currentStreamLength += remaining.length;
               await tryStreamAppend({ markdown_text: remaining });
               if (streamingFailed) {
-                fallbackStartIdx = accumulatedText.length - remaining.length;
+                fallbackStartIdx = streamedRawIdx;
               }
               break;
             }
+          }
+
+          if (!streamingFailed) {
+            streamedRawIdx = accumulatedText.length;
           }
           break;
         }
 
         case "tool-call": {
+          // Flush any pending table buffer before tool cards
+          if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
+            const preToolFlush = flushRemainingTableBuffer();
+            if (preToolFlush) {
+              currentStreamLength += preToolFlush.length;
+              await tryStreamAppend({ markdown_text: preToolFlush });
+            }
+            if (streamingFailed) {
+              fallbackStartIdx = streamedRawIdx;
+            } else {
+              streamedRawIdx = accumulatedText.length;
+            }
+          }
+
           const slackMeta = getSlackMeta(streamOptions.tools[chunk.toolName]);
           const title = slackMeta?.status ?? "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
@@ -680,6 +773,16 @@ export async function generateResponse(
           }
           break;
         }
+      }
+    }
+
+    // Flush any remaining table buffer content before finalizing
+    const finalTableFlush = flushRemainingTableBuffer();
+    if (finalTableFlush && !streamingFailed) {
+      currentStreamLength += finalTableFlush.length;
+      await tryStreamAppend({ markdown_text: finalTableFlush });
+      if (streamingFailed) {
+        fallbackStartIdx = streamedRawIdx;
       }
     }
 
