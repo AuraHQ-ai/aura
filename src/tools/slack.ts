@@ -2924,7 +2924,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createSubagentTools(client, context),
 
     // ── Voice & SMS Tools (ElevenLabs + Twilio) ─────────────────────
-    ...createVoiceTools(context),
+    ...createVoiceTools(client, context),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
@@ -2957,7 +2957,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // Browser
     "browse", "download_slack_file",
     // Voice / Calls
-    "list_voice_agents", "place_call", "send_sms",
+    "list_voice_agents", "place_call", "send_sms", "send_voice_note",
     // Directory / Contacts
     "lookup_workspace_user", "list_workspace_users", "lookup_contact",
     // Checkpoint
