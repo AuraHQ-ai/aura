@@ -2282,9 +2282,21 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ content, filename, channel, title, is_binary, thread_ts }) => {
         const resolvedChannel = channel ?? context?.channelId;
-        const resolvedThreadTs = thread_ts ?? (channel ? undefined : context?.threadTs);
+        const resolvedThreadTs = thread_ts ?? context?.threadTs;
 
         try {
+          if (is_binary) {
+            const stripped = content.replace(/[\s\r\n]/g, "");
+            if (stripped.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(stripped)) {
+              return {
+                ok: false,
+                error:
+                  "Invalid base64 content — the string appears truncated or malformed. " +
+                  "For large binary files, consider uploading via the sandbox instead.",
+              };
+            }
+          }
+
           const fileBuffer = is_binary
             ? Buffer.from(content, "base64")
             : Buffer.from(content, "utf-8");
@@ -2327,7 +2339,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             }
           }
 
-          // 1. Get upload URL
+          // Step 1: Get a presigned upload URL from Slack
           const uploadUrlResp = await client.files.getUploadURLExternal({
             filename,
             length: fileBuffer.length,
@@ -2335,7 +2347,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           const uploadUrl = uploadUrlResp.upload_url!;
           const fileId = uploadUrlResp.file_id!;
 
-          // 2. Upload the file content to the presigned URL
+          // Step 2: POST the raw bytes to the presigned URL
           const uploadResp = await fetch(uploadUrl, {
             method: "POST",
             body: fileBuffer,
@@ -2345,7 +2357,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             throw new Error(`File upload failed: ${uploadResp.status} ${uploadResp.statusText}`);
           }
 
-          // 3. Complete upload and share to channel
+          // Step 3: Finalize the upload, sharing to channel/thread
           const completeParams: Record<string, unknown> = {
             files: [{ id: fileId, title: title || filename }],
           };
@@ -2356,21 +2368,25 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           const fileUrl = (completeResp as any).files?.[0]?.permalink ?? null;
 
-          logger.info("upload_file tool called", {
+          logger.info("upload_file completed", {
             filename,
-            channel: resolvedChannel,
             fileId,
+            channel: channelId,
+            thread_ts: resolvedThreadTs,
+            bytes: fileBuffer.length,
           });
 
           return {
             ok: true,
             file_id: fileId,
             file_url: fileUrl,
+            bytes: fileBuffer.length,
           };
         } catch (error: any) {
-          logger.error("upload_file tool failed", {
+          logger.error("upload_file failed", {
             filename,
             channel: resolvedChannel,
+            thread_ts: resolvedThreadTs,
             error: error.message,
           });
           return {
