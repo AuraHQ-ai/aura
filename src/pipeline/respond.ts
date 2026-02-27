@@ -619,7 +619,9 @@ export async function generateResponse(
               currentStreamLength += preToolFlush.length;
               await tryStreamAppend({ markdown_text: preToolFlush });
             }
-            if (!streamingFailed) {
+            if (streamingFailed) {
+              fallbackStartIdx = streamedRawIdx;
+            } else {
               streamedRawIdx = accumulatedText.length;
             }
           }
@@ -779,6 +781,9 @@ export async function generateResponse(
     if (finalTableFlush && !streamingFailed) {
       currentStreamLength += finalTableFlush.length;
       await tryStreamAppend({ markdown_text: finalTableFlush });
+      if (streamingFailed) {
+        fallbackStartIdx = streamedRawIdx;
+      }
     }
 
     // ── Finalize ──────────────────────────────────────────────────────────
