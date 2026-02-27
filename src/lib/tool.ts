@@ -71,3 +71,54 @@ export function defineTool<TInput, TOutput>(config: {
     slack?: SlackToolMetadata<TInput, TOutput>;
   };
 }
+
+/**
+ * Build a toModelOutput result for tools that return binary content (images, PDFs, etc).
+ * Converts base64 strings into native AI SDK content parts so the LLM can see the file.
+ */
+export function binaryToModelOutput(opts: {
+  base64: string;
+  mimeType: string;
+  filename?: string;
+  meta?: Record<string, unknown>;
+}): {
+  type: "content";
+  value: Array<
+    | { type: "text"; text: string }
+    | { type: "image-data"; data: string; mediaType: string }
+    | { type: "file-data"; data: string; mediaType: string; filename?: string }
+  >;
+} {
+  const parts: Array<
+    | { type: "text"; text: string }
+    | { type: "image-data"; data: string; mediaType: string }
+    | { type: "file-data"; data: string; mediaType: string; filename?: string }
+  > = [];
+
+  if (opts.meta && Object.keys(opts.meta).length > 0) {
+    parts.push({
+      type: "text",
+      text: JSON.stringify({
+        ...opts.meta,
+        note: "Binary content attached as native file below",
+      }),
+    });
+  }
+
+  if (opts.mimeType?.startsWith("image/")) {
+    parts.push({
+      type: "image-data",
+      data: opts.base64,
+      mediaType: opts.mimeType,
+    });
+  } else {
+    parts.push({
+      type: "file-data",
+      data: opts.base64,
+      mediaType: opts.mimeType || "application/octet-stream",
+      filename: opts.filename,
+    });
+  }
+
+  return { type: "content", value: parts };
+}
