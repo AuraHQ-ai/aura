@@ -2311,7 +2311,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
       }),
       execute: async ({ content, file_path, filename, channel, title, thread_ts }) => {
         const resolvedChannel = channel ?? context?.channelId;
-        const resolvedThreadTs = thread_ts ?? (channel ? undefined : context?.threadTs);
+        const resolvedThreadTs = thread_ts ?? (!channel || channel === context?.channelId ? context?.threadTs : undefined);
 
         try {
           if (content === undefined && !file_path) {
