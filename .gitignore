@@ -7,3 +7,8 @@ dist/
 .DS_Store
 .vercel
 .env*.local
+
+# Landing page
+apps/web/node_modules/
+apps/web/.next/
+apps/web/next-env.d.ts
