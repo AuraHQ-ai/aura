@@ -676,6 +676,22 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           return { ok: false, error: "Only admins can send voice notes." };
         }
 
+        const recentNotes = await db
+          .select({ count: sql`count(*)` })
+          .from(voiceCalls)
+          .where(
+            and(
+              gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
+              eq(voiceCalls.direction, "voice_note"),
+            ),
+          );
+        if (Number(recentNotes[0]?.count || 0) >= 10) {
+          return {
+            ok: false,
+            error: "Rate limit: too many voice notes in the last hour.",
+          };
+        }
+
         const apiKey = process.env.ELEVENLABS_API_KEY!;
         const resolvedVoiceId = voice_id || process.env.ELEVENLABS_VOICE_ID;
         if (!resolvedVoiceId) {
@@ -797,6 +813,24 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
             (completeResp as any).files?.[0]?.permalink ?? null;
 
           const durationEstimate = Math.round(text.length / 15);
+
+          try {
+            await db
+              .insert(voiceCalls)
+              .values({
+                conversationId: `voice_note_${fileId}`,
+                direction: "voice_note",
+                slackUserId: context?.userId ?? null,
+                status: "completed",
+                callContext: text.substring(0, 500),
+              })
+              .onConflictDoNothing({ target: voiceCalls.conversationId });
+          } catch (dbError: any) {
+            logger.error("send_voice_note DB insert failed (voice note was sent)", {
+              error: dbError.message,
+              fileId,
+            });
+          }
 
           logger.info("send_voice_note tool called", {
             channel: resolvedChannel,
