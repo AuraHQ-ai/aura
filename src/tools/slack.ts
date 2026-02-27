@@ -2327,6 +2327,14 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             };
           }
 
+          if (resolvedThreadTs && !resolvedChannel) {
+            return {
+              ok: false,
+              error:
+                "thread_ts requires a channel — provide the channel where the thread lives.",
+            };
+          }
+
           let fileBuffer: Buffer;
           if (file_path) {
             const { getOrCreateSandbox } = await import("../lib/sandbox.js");
@@ -2335,14 +2343,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             fileBuffer = Buffer.from(fileBytes);
           } else {
             fileBuffer = Buffer.from(content!, "utf-8");
-          }
-
-          if (resolvedThreadTs && !resolvedChannel) {
-            return {
-              ok: false,
-              error:
-                "thread_ts requires a channel — provide the channel where the thread lives.",
-            };
           }
 
           let channelId: string | undefined;
