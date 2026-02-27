@@ -7,7 +7,7 @@ import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import type { WebClient } from "@slack/web-api";
-import { resolveChannelByName, resolveUserByName } from "./slack.js";
+import { resolveSlackDestination } from "./slack.js";
 
 // ── Language Config ──────────────────────────────────────────────────────────
 
@@ -702,7 +702,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         }
 
         try {
-          // 1. Resolve channel (same logic as upload_file) — validate before paid API call
+          // 1. Resolve channel — validate before paid API call
           const resolvedChannel = channel ?? context?.channelId;
           const resolvedThreadTs = thread_ts ?? (channel ? undefined : context?.threadTs);
 
@@ -715,32 +715,12 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
             };
           }
 
-          let channelId: string | undefined;
-          if (/^D[A-Z0-9]+$/.test(resolvedChannel)) {
-            channelId = resolvedChannel;
-          } else if (/^[CG][A-Z0-9]+$/.test(resolvedChannel)) {
-            channelId = resolvedChannel;
-          } else {
-            const resolved = await resolveChannelByName(client, resolvedChannel);
-            if (resolved) {
-              channelId = resolved.id;
-            } else {
-              try {
-                const user = await resolveUserByName(client, resolvedChannel);
-                if (user?.id) {
-                  const dm = await client.conversations.open({ users: user.id });
-                  channelId = dm.channel?.id;
-                }
-              } catch {
-                // fall through
-              }
-              if (!channelId) {
-                return {
-                  ok: false,
-                  error: `Could not find channel or user "${resolvedChannel}". Use list_channels to see available channels.`,
-                };
-              }
-            }
+          const channelId = (await resolveSlackDestination(client, resolvedChannel)) ?? undefined;
+          if (!channelId) {
+            return {
+              ok: false,
+              error: `Could not find channel or user "${resolvedChannel}". Use list_channels to see available channels.`,
+            };
           }
 
           // 2. Generate speech via ElevenLabs TTS
