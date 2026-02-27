@@ -1,3 +1,12 @@
+import { CliPrettify } from "markdown-table-prettify";
+
+/** Prettify a markdown table (align columns) and wrap in triple-backtick fences. */
+export function prettifyAndWrapTable(tableLines: string[]): string {
+  const raw = tableLines.join("").trimEnd();
+  const prettified = CliPrettify.prettify(raw);
+  return "```\n" + prettified + "\n```\n";
+}
+
 /**
  * Convert LLM markdown to Slack mrkdwn.
  * Handles bold, italic, and heading syntax differences while preserving
@@ -22,7 +31,8 @@ export function formatForSlack(text: string): string {
   // Runs AFTER code-block protection, so tables already inside ``` are safe.
   // A "table" = 2+ consecutive lines starting with |
   result = result.replace(/((?:^[ \t]*\|.*\n?){2,})/gm, (table) => {
-    return "```\n" + table.trimEnd() + "\n```";
+    const prettified = CliPrettify.prettify(table.trimEnd());
+    return "```\n" + prettified + "\n```";
   });
 
   // Headers → bold (### heading, ## heading, # heading)
