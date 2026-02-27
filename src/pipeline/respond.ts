@@ -423,6 +423,7 @@ export async function generateResponse(
   let accumulatedText = "";
   let currentStreamLength = 0;
   let fallbackStartIdx = 0;
+  let streamedRawIdx = 0;
   let pendingTableBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
@@ -557,7 +558,7 @@ export async function generateResponse(
               currentStreamLength += remaining.length;
               await tryStreamAppend({ markdown_text: remaining });
               if (streamingFailed) {
-                fallbackStartIdx = accumulatedText.length - remaining.length;
+                fallbackStartIdx = streamedRawIdx;
               }
               break;
             }
@@ -568,7 +569,7 @@ export async function generateResponse(
               currentStreamLength += remaining.length;
               await tryStreamAppend({ markdown_text: remaining });
               if (streamingFailed) {
-                fallbackStartIdx = accumulatedText.length - remaining.length;
+                fallbackStartIdx = streamedRawIdx;
               }
               break;
             }
@@ -582,7 +583,7 @@ export async function generateResponse(
             }
 
             if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length - remaining.length - before.length;
+              fallbackStartIdx = streamedRawIdx;
               break;
             }
 
@@ -591,17 +592,21 @@ export async function generateResponse(
             if (await splitToNewStream()) {
               // Split succeeded, currentStreamLength reset, loop continues
             } else if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length - remaining.length;
+              fallbackStartIdx = streamedRawIdx;
               break;
             } else {
               // Max continuations reached, stream still active — flush remaining
               currentStreamLength += remaining.length;
               await tryStreamAppend({ markdown_text: remaining });
               if (streamingFailed) {
-                fallbackStartIdx = accumulatedText.length - remaining.length;
+                fallbackStartIdx = streamedRawIdx;
               }
               break;
             }
+          }
+
+          if (!streamingFailed) {
+            streamedRawIdx = accumulatedText.length;
           }
           break;
         }
@@ -613,6 +618,9 @@ export async function generateResponse(
             if (preToolFlush) {
               currentStreamLength += preToolFlush.length;
               await tryStreamAppend({ markdown_text: preToolFlush });
+            }
+            if (!streamingFailed) {
+              streamedRawIdx = accumulatedText.length;
             }
           }
 
