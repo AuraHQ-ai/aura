@@ -2275,12 +2275,19 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     upload_file: defineTool({
       description:
-        "Upload a file to Slack, optionally sharing to a channel or thread. Supports text files (CSV, JSON, code, etc.) directly and binary files (images, PDFs) via base64 encoding (set is_binary=true). The channel parameter accepts any Slack destination: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID ('D0AF1K2EBH8'), group DM ID ('G01234'), or a username/display name ('Joan') to open a DM. Use thread_ts to post into a specific thread (including Slack List item comment threads).",
+        "Upload a file to Slack, optionally sharing to a channel or thread. Two modes: (1) Pass `content` for text files (CSV, JSON, code) — inline string. (2) Pass `file_path` for binary files (images, audio, PDFs) — reads the file from the sandbox filesystem. Exactly one of `content` or `file_path` must be provided. The channel parameter accepts any Slack destination: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID ('D0AF1K2EBH8'), group DM ID ('G01234'), or a username/display name ('Joan') to open a DM. Use thread_ts to post into a specific thread (including Slack List item comment threads).",
       inputSchema: z.object({
         content: z
           .string()
+          .optional()
           .describe(
-            "File content. For text files, raw text. For binary files, base64-encoded string (set is_binary=true).",
+            "File content as text. For text files only (CSV, JSON, code). Mutually exclusive with file_path.",
+          ),
+        file_path: z
+          .string()
+          .optional()
+          .describe(
+            "Absolute path to a file on the sandbox filesystem (e.g. '/home/user/screenshot.png'). Use for binary files (images, audio, PDFs). Mutually exclusive with content.",
           ),
         filename: z
           .string()
@@ -2295,12 +2302,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           .string()
           .optional()
           .describe("Display title for the file in Slack"),
-        is_binary: z
-          .boolean()
-          .default(false)
-          .describe(
-            "If true, decode content from base64 before uploading. Use for images, PDFs, and other binary files.",
-          ),
         thread_ts: z
           .string()
           .optional()
@@ -2308,14 +2309,33 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
             "Thread timestamp to attach the file to a specific thread. For Slack List item threads, use the thread_ts from get_slack_list_item together with thread_channel_id as the channel.",
           ),
       }),
-      execute: async ({ content, filename, channel, title, is_binary, thread_ts }) => {
+      execute: async ({ content, file_path, filename, channel, title, thread_ts }) => {
         const resolvedChannel = channel ?? context?.channelId;
         const resolvedThreadTs = thread_ts ?? (channel ? undefined : context?.threadTs);
 
         try {
-          const fileBuffer = is_binary
-            ? Buffer.from(content, "base64")
-            : Buffer.from(content, "utf-8");
+          if (!content && !file_path) {
+            return {
+              ok: false,
+              error: "Exactly one of 'content' or 'file_path' must be provided.",
+            };
+          }
+          if (content && file_path) {
+            return {
+              ok: false,
+              error: "'content' and 'file_path' are mutually exclusive — provide one, not both.",
+            };
+          }
+
+          let fileBuffer: Buffer;
+          if (file_path) {
+            const { getOrCreateSandbox } = await import("../lib/sandbox.js");
+            const sandbox = await getOrCreateSandbox();
+            const fileBytes = await sandbox.files.read(file_path, { format: "bytes" });
+            fileBuffer = Buffer.from(fileBytes);
+          } else {
+            fileBuffer = Buffer.from(content!, "utf-8");
+          }
 
           if (resolvedThreadTs && !resolvedChannel) {
             return {
