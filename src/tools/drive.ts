@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool } from "../lib/tool.js";
+import { defineTool, binaryToModelOutput } from "../lib/tool.js";
 import { logger } from "../lib/logger.js";
 import { isTextMimeType } from "../lib/files.js";
 
@@ -246,51 +246,11 @@ export function createDriveTools() {
         }
       },
       toModelOutput({ output }: { output: any }) {
-        if (!output || typeof output !== "object" || !output.ok) {
+        if (!output?.ok || output.encoding !== "base64" || !output.content) {
           return { type: "json" as const, value: output };
         }
-
-        if (output.encoding === "base64" && output.content) {
-          const { content, ...meta } = output;
-          const parts: Array<
-            | { type: "text"; text: string }
-            | { type: "image-data"; data: string; mediaType: string }
-            | {
-                type: "file-data";
-                data: string;
-                mediaType: string;
-                filename?: string;
-              }
-          > = [];
-
-          parts.push({
-            type: "text",
-            text: JSON.stringify({
-              ...meta,
-              encoding: "base64",
-              note: "Binary content attached as native file below",
-            }),
-          });
-
-          if (output.mimeType?.startsWith("image/")) {
-            parts.push({
-              type: "image-data",
-              data: content,
-              mediaType: output.mimeType,
-            });
-          } else {
-            parts.push({
-              type: "file-data",
-              data: content,
-              mediaType: output.mimeType || "application/octet-stream",
-              filename: output.name,
-            });
-          }
-
-          return { type: "content" as const, value: parts };
-        }
-
-        return { type: "json" as const, value: output };
+        const { content, ...meta } = output;
+        return binaryToModelOutput({ base64: content, mimeType: output.mimeType, filename: output.name, meta });
       },
       slack: {
         status: "Reading file from Drive...",
