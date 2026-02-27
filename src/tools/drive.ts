@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool } from "../lib/tool.js";
+import { defineTool, binaryToModelOutput } from "../lib/tool.js";
 import { logger } from "../lib/logger.js";
 import { isTextMimeType } from "../lib/files.js";
 
@@ -244,6 +244,13 @@ export function createDriveTools() {
             error: `Failed to read Drive file: ${error.message}`,
           };
         }
+      },
+      toModelOutput({ output }: { output: any }) {
+        if (!output?.ok || output.encoding !== "base64" || !output.content) {
+          return { type: "json" as const, value: output };
+        }
+        const { content, ...meta } = output;
+        return binaryToModelOutput({ base64: content, mimeType: output.mimeType, filename: output.name, meta });
       },
       slack: {
         status: "Reading file from Drive...",
