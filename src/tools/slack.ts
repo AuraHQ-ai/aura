@@ -2337,6 +2337,12 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
           let fileBuffer: Buffer;
           if (file_path) {
+            if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+              return {
+                ok: false,
+                error: "Only admins can access sandbox files.",
+              };
+            }
             const { getOrCreateSandbox } = await import("../lib/sandbox.js");
             const sandbox = await getOrCreateSandbox();
             const fileBytes = await sandbox.files.read(file_path, { format: "bytes" });
