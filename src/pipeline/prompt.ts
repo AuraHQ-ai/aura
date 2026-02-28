@@ -12,7 +12,10 @@ import { logger } from "../lib/logger.js";
 import { getMainModelId } from "../lib/ai.js";
 
 export interface AssembledPrompt {
-  systemPrompt: string;
+  /** Stable across all requests: personality + self-directive + notes-index + skill-index (cached globally) */
+  stablePrefix: string;
+  /** Stable within a conversation thread: channel + user + memories + conversations + thread (cached per-thread) */
+  conversationContext: string;
   /** Dynamic per-call context (time, model, channel, thread) — passed as a separate uncached system message */
   dynamicContext: string;
   memories: Memory[];
@@ -109,8 +112,8 @@ export async function assemblePrompt(
   // Resolve active model ID for self-awareness in system prompt
   const modelId = await getMainModelId();
 
-  // Build the stable system prompt (async: queries skill index from DB)
-  let systemPrompt = await buildSystemPrompt({
+  // Build the system prompt layers (async: queries skill index from DB)
+  const { stablePrefix, conversationContext } = await buildSystemPrompt({
     memories,
     conversations,
     userProfile,
@@ -151,5 +154,5 @@ If the thread content is sparse, try list_slack_list_items to find the item by m
     hasSlackListItemContext: !!context.slackListItemContext,
   });
 
-  return { systemPrompt, dynamicContext, memories, conversations, userProfile };
+  return { stablePrefix, conversationContext, dynamicContext, memories, conversations, userProfile };
 }

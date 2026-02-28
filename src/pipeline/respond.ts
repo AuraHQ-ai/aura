@@ -1,6 +1,6 @@
 import { streamText, stepCountIs } from "ai";
 import type { WebClient } from "@slack/web-api";
-import { getMainModel, getEscalationModel, withCacheControl } from "../lib/ai.js";
+import { getMainModel, getEscalationModel, buildCachedSystemMessages } from "../lib/ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
@@ -122,8 +122,11 @@ function truncate(s: string | undefined, max: number): string | undefined {
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface RespondOptions {
-  systemPrompt: string;
-  /** Dynamic per-call context (time, model, channel) — passed as uncached second system message */
+  /** Stable across all requests (cached globally) */
+  stablePrefix: string;
+  /** Stable within a conversation thread (cached per-thread) */
+  conversationContext: string;
+  /** Dynamic per-call context (time, model, channel) — passed as uncached system message */
   dynamicContext?: string;
   userMessage: string;
   slackClient: WebClient;
@@ -383,9 +386,11 @@ export async function generateResponse(
   let streamKeepAlive: ReturnType<typeof setInterval> | null = null;
 
   // ── Build stream options ─────────────────────────────────────────────
-  const systemMessages = options.dynamicContext
-    ? [withCacheControl(options.systemPrompt), { role: 'system' as const, content: options.dynamicContext }]
-    : withCacheControl(options.systemPrompt);
+  const systemMessages = buildCachedSystemMessages(
+    options.stablePrefix,
+    options.conversationContext,
+    options.dynamicContext,
+  );
 
   const streamOptions: any = {
     model,
@@ -393,7 +398,8 @@ export async function generateResponse(
     tools: createSlackTools(options.slackClient, options.context),
     stopWhen: stepCountIs(STEP_LIMIT),
     prepareStep: createInteractivePrepareStep({
-      systemPrompt: options.systemPrompt,
+      stablePrefix: options.stablePrefix,
+      conversationContext: options.conversationContext,
       dynamicContext: options.dynamicContext,
       modelId,
       defaultEffort: "medium",
@@ -416,7 +422,7 @@ export async function generateResponse(
     model: model.modelId || "unknown",
     hasFiles,
     toolCount: Object.keys(streamOptions.tools || {}).length,
-    promptLength: options.systemPrompt.length,
+    promptLength: options.stablePrefix.length + options.conversationContext.length,
   });
 
   // ── Stream and send to Slack ────────────────────────────────────────
