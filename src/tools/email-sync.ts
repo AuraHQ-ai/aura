@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, desc, sql, inArray, ilike } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, ilike, isNotNull } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -10,6 +10,7 @@ import { emailsRaw } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { resolveUserByName } from "./slack.js";
 import { threadStateValues } from "../lib/email-triage.js";
+import { embedText } from "../lib/embeddings.js";
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -510,6 +511,263 @@ export function createEmailSyncTools(
         }
       },
       slack: { status: "Updating email thread..." },
+    }),
+
+    search_emails: defineTool({
+      description:
+        "Search synced emails by keyword (text mode) or meaning (semantic mode). Text mode uses PostgreSQL full-text search on subject + body. Semantic mode embeds the query and finds similar email threads via cosine similarity. Returns one result per thread (latest email). Admin-only.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "Display name, username, or user ID of the Gmail account owner",
+          ),
+        query: z.string().describe("Search query string"),
+        mode: z
+          .enum(["text", "semantic"])
+          .default("text")
+          .describe(
+            "Search mode: 'text' for keyword/full-text search, 'semantic' for meaning-based vector search. Default 'text'.",
+          ),
+        thread_state: z
+          .enum(threadStateValues)
+          .optional()
+          .describe("Optional filter by thread state"),
+        limit: z
+          .number()
+          .min(1)
+          .max(20)
+          .default(10)
+          .describe("Max results to return (default 10, max 20)"),
+      }),
+      execute: async ({ user_name, query, mode, thread_state, limit }) => {
+        if (!isAdmin(context?.userId)) {
+          return {
+            ok: false as const,
+            error: "This tool is restricted to admin users only.",
+          };
+        }
+
+        try {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
+            return {
+              ok: false as const,
+              error: `Could not resolve user '${user_name}'.`,
+            };
+          }
+
+          const userId = user.id;
+          const conditions = [eq(emailsRaw.userId, userId)];
+
+          if (thread_state) {
+            conditions.push(eq(emailsRaw.threadState, thread_state));
+          }
+
+          let results: {
+            gmailThreadId: string;
+            subject: string | null;
+            fromEmail: string;
+            fromName: string | null;
+            date: Date;
+            threadState: string | null;
+            bodyMarkdown: string | null;
+            similarity?: number;
+          }[];
+
+          if (mode === "semantic") {
+            const queryEmbedding = await embedText(query);
+            const embeddingStr = `[${queryEmbedding.join(",")}]`;
+
+            conditions.push(isNotNull(emailsRaw.embedding));
+
+            const rawResults = await db
+              .select({
+                gmailThreadId: emailsRaw.gmailThreadId,
+                subject: emailsRaw.subject,
+                fromEmail: emailsRaw.fromEmail,
+                fromName: emailsRaw.fromName,
+                date: emailsRaw.date,
+                threadState: emailsRaw.threadState,
+                bodyMarkdown: emailsRaw.bodyMarkdown,
+                similarity: sql<number>`1 - (${emailsRaw.embedding} <=> ${embeddingStr}::vector)`,
+              })
+              .from(emailsRaw)
+              .where(and(...conditions))
+              .orderBy(sql`${emailsRaw.embedding} <=> ${embeddingStr}::vector`)
+              .limit(limit * 3);
+
+            const threadMap = new Map<
+              string,
+              (typeof rawResults)[0]
+            >();
+            for (const row of rawResults) {
+              const existing = threadMap.get(row.gmailThreadId);
+              if (
+                !existing ||
+                row.date.getTime() > existing.date.getTime()
+              ) {
+                threadMap.set(row.gmailThreadId, row);
+              }
+            }
+
+            results = [...threadMap.values()]
+              .sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))
+              .slice(0, limit);
+          } else {
+            const tsQuery = query
+              .trim()
+              .split(/\s+/)
+              .filter(Boolean)
+              .map((w) => w.replace(/[^a-zA-Z0-9]/g, ""))
+              .filter(Boolean)
+              .join(" & ");
+
+            if (!tsQuery) {
+              return {
+                ok: false as const,
+                error: "Query is empty after sanitization.",
+              };
+            }
+
+            const rawResults = await db
+              .select({
+                gmailThreadId: emailsRaw.gmailThreadId,
+                subject: emailsRaw.subject,
+                fromEmail: emailsRaw.fromEmail,
+                fromName: emailsRaw.fromName,
+                date: emailsRaw.date,
+                threadState: emailsRaw.threadState,
+                bodyMarkdown: emailsRaw.bodyMarkdown,
+                rank: sql<number>`ts_rank(
+                  to_tsvector('english', coalesce(${emailsRaw.subject}, '') || ' ' || coalesce(${emailsRaw.bodyMarkdown}, '')),
+                  to_tsquery('english', ${tsQuery})
+                )`,
+              })
+              .from(emailsRaw)
+              .where(
+                and(
+                  ...conditions,
+                  sql`to_tsvector('english', coalesce(${emailsRaw.subject}, '') || ' ' || coalesce(${emailsRaw.bodyMarkdown}, '')) @@ to_tsquery('english', ${tsQuery})`,
+                ),
+              )
+              .orderBy(
+                desc(
+                  sql`ts_rank(
+                    to_tsvector('english', coalesce(${emailsRaw.subject}, '') || ' ' || coalesce(${emailsRaw.bodyMarkdown}, '')),
+                    to_tsquery('english', ${tsQuery})
+                  )`,
+                ),
+              )
+              .limit(limit * 3);
+
+            const threadMap = new Map<
+              string,
+              (typeof rawResults)[0]
+            >();
+            for (const row of rawResults) {
+              const existing = threadMap.get(row.gmailThreadId);
+              if (
+                !existing ||
+                row.date.getTime() > existing.date.getTime()
+              ) {
+                threadMap.set(row.gmailThreadId, row);
+              }
+            }
+
+            results = [...threadMap.values()]
+              .sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0))
+              .slice(0, limit);
+          }
+
+          const formatted = results.map((r) => ({
+            gmail_thread_id: r.gmailThreadId,
+            subject: r.subject || "(no subject)",
+            from_email: r.fromEmail,
+            from_name: r.fromName || "",
+            date: r.date.toISOString(),
+            thread_state: r.threadState || "unclassified",
+            snippet: (r.bodyMarkdown || "").slice(0, 200),
+            ...(mode === "semantic" && r.similarity != null
+              ? { similarity: Math.round(r.similarity * 1000) / 1000 }
+              : {}),
+          }));
+
+          return {
+            ok: true as const,
+            mode,
+            count: formatted.length,
+            results: formatted,
+            message: `Found ${formatted.length} thread(s) matching "${query}" (${mode} search)`,
+          };
+        } catch (error: any) {
+          logger.error("search_emails tool failed", {
+            userName: user_name,
+            query,
+            mode,
+            error: error.message,
+          });
+          return {
+            ok: false as const,
+            error: `Search failed: ${error.message}`,
+          };
+        }
+      },
+      slack: { status: "Searching emails...", detail: (i) => i.query },
+    }),
+
+    backfill_email_embeddings: defineTool({
+      description:
+        "Backfill vector embeddings for all email threads that don't have one yet. This enables semantic search on historical emails. May take a while for large mailboxes. Admin-only.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "Display name, username, or user ID of the Gmail account owner",
+          ),
+      }),
+      execute: async ({ user_name }) => {
+        if (!isAdmin(context?.userId)) {
+          return {
+            ok: false as const,
+            error: "This tool is restricted to admin users only.",
+          };
+        }
+
+        try {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
+            return {
+              ok: false as const,
+              error: `Could not resolve user '${user_name}'.`,
+            };
+          }
+
+          const { backfillEmailEmbeddings } = await import(
+            "../lib/email-sync.js"
+          );
+          const result = await backfillEmailEmbeddings(user.id);
+
+          return {
+            ok: true as const,
+            ...result,
+            message: `Backfilled ${result.embedded} thread embeddings (${result.errors} errors)`,
+          };
+        } catch (error: any) {
+          logger.error("backfill_email_embeddings tool failed", {
+            userName: user_name,
+            error: error.message,
+          });
+          return {
+            ok: false as const,
+            error: `Backfill failed: ${error.message}`,
+          };
+        }
+      },
+      slack: {
+        status: "Backfilling email embeddings...",
+        detail: (i) => i.user_name,
+      },
     }),
   };
 }
