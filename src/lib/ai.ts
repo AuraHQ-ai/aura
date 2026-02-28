@@ -219,3 +219,38 @@ export function withCacheControl(systemPrompt: string) {
     providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
   };
 }
+
+/**
+ * Build a multi-breakpoint cached system message array for Anthropic prompt caching.
+ *
+ * Returns 2–3 system messages with cache control on the stable layers:
+ *   1. stablePrefix (cached globally): personality + self-directive + notes-index + skill-index
+ *   2. conversationContext (cached per-thread): channel + user + memories + conversations + thread
+ *   3. dynamicContext (uncached, optional): time, model, channelId, threadTs
+ *
+ * Safe for non-Anthropic models — they ignore providerOptions.anthropic.
+ */
+export function buildCachedSystemMessages(
+  stablePrefix: string,
+  conversationContext: string,
+  dynamicContext?: string,
+) {
+  const messages: Array<{ role: 'system'; content: string; providerOptions?: Record<string, any> }> = [
+    {
+      role: 'system',
+      content: stablePrefix,
+      providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    },
+  ];
+  if (conversationContext) {
+    messages.push({
+      role: 'system',
+      content: conversationContext,
+      providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    });
+  }
+  if (dynamicContext) {
+    messages.push({ role: 'system', content: dynamicContext });
+  }
+  return messages;
+}

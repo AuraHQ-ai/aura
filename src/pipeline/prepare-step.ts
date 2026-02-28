@@ -42,7 +42,8 @@ type PrepareStepFn = (options: {
 export function createPrepareStep(opts: {
   stepLimit?: number;
   warningThreshold?: number;
-  systemPrompt: string;
+  stablePrefix: string;
+  conversationContext?: string;
   dynamicContext?: string;
   defaultEffort?: EffortLevel;
   modelId?: string;
@@ -123,14 +124,17 @@ export function createPrepareStep(opts: {
     }
 
     // --- Step limit warning ---
+    // Concatenates all layers into a single string override. This breaks
+    // cache for the wrap-up step only — acceptable tradeoff since it fires
+    // near the step limit (≥200) and only once per conversation.
     if (stepNumber >= threshold) {
       const wrapUp = WRAP_UP_MESSAGE
         .replace("{stepCount}", String(stepNumber))
         .replace("{limit}", String(limit));
-      systemOverride = opts.systemPrompt
-        + "\n\n"
-        + (opts.dynamicContext ? opts.dynamicContext + "\n\n" : "")
-        + wrapUp;
+      systemOverride = opts.stablePrefix
+        + (opts.conversationContext ? "\n\n" + opts.conversationContext : "")
+        + (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "")
+        + "\n\n" + wrapUp;
       logger.info("prepareStep: injecting wrap-up nudge", {
         stepNumber,
         limit,
@@ -153,7 +157,8 @@ export function createPrepareStep(opts: {
 
 /** Factory for interactive Slack agent prepareStep (250-step limit). */
 export function createInteractivePrepareStep(opts: {
-  systemPrompt: string;
+  stablePrefix: string;
+  conversationContext?: string;
   dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
@@ -162,7 +167,8 @@ export function createInteractivePrepareStep(opts: {
   return createPrepareStep({
     stepLimit: STEP_LIMIT,
     warningThreshold: WARNING_THRESHOLD,
-    systemPrompt: opts.systemPrompt,
+    stablePrefix: opts.stablePrefix,
+    conversationContext: opts.conversationContext,
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
@@ -172,7 +178,8 @@ export function createInteractivePrepareStep(opts: {
 
 /** Factory for headless job execution prepareStep (350-step limit). */
 export function createHeadlessPrepareStep(opts: {
-  systemPrompt: string;
+  stablePrefix: string;
+  conversationContext?: string;
   dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
@@ -181,7 +188,8 @@ export function createHeadlessPrepareStep(opts: {
   return createPrepareStep({
     stepLimit: HEADLESS_STEP_LIMIT,
     warningThreshold: HEADLESS_WARNING_THRESHOLD,
-    systemPrompt: opts.systemPrompt,
+    stablePrefix: opts.stablePrefix,
+    conversationContext: opts.conversationContext,
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
