@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, desc, sql, inArray, ilike } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -163,7 +163,7 @@ export function createEmailSyncTools(
 
     email_digest: defineTool({
       description:
-        "Get an email digest for a user: urgent items, threads awaiting reply, sorted by importance. Reads from the emails_raw staging table. Admin-only.",
+        "Get an email digest for a user: urgent items, threads awaiting reply, sorted by importance. Reads from the emails_raw staging table. Returns { markdown, threads[] } — use `markdown` for display and `threads[].gmail_thread_id` for follow-up actions like update_email_thread(s). Admin-only.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -307,14 +307,16 @@ export function createEmailSyncTools(
           }
 
           const threads = [...threadMap.values()].map(({ latest: t }) => ({
+            gmail_thread_id: t.gmailThreadId,
             subject: t.subject || "(no subject)",
             from: t.fromName
               ? `${t.fromName} <${t.fromEmail}>`
               : t.fromEmail,
+            from_email: t.fromEmail,
             thread_state: t.threadState || "unclassified",
             thread_state_reason: t.threadStateReason || "",
             direction: t.direction,
-            message_count: threadCountMap.get(t.gmailThreadId) || 1,
+            email_count: threadCountMap.get(t.gmailThreadId) || 1,
             last_message: t.date
               ? formatDistanceToNow(t.date, { addSuffix: true })
               : "unknown",
@@ -362,7 +364,7 @@ export function createEmailSyncTools(
 
           return {
             ok: true,
-            message: digestSummary,
+            markdown: digestSummary,
             stats: statsMap,
             threads,
             awaiting_reply_count: awaitingYourReply.length,
@@ -380,7 +382,7 @@ export function createEmailSyncTools(
 
     update_email_thread: defineTool({
       description:
-        "Update the triage state of an email thread. Use when a user tells you a thread is spam, resolved, not actionable, etc. Updates all emails in the thread. Any user can update their own threads.",
+        "Update the triage state of a single email thread. Prefer gmail_thread_id (from email_digest) over subject_search. Subject search uses trigram similarity for fuzzy matching. For bulk updates, use update_email_threads instead. Any user can update their own threads.",
       inputSchema: z
         .object({
           user_name: z
@@ -436,18 +438,36 @@ export function createEmailSyncTools(
           const userId = user.id;
 
           const conditions = [eq(emailsRaw.userId, userId)];
+
           if (gmail_thread_id) {
             conditions.push(eq(emailsRaw.gmailThreadId, gmail_thread_id));
           } else if (subject_search) {
-            const escaped = subject_search.replace(/[\\%_]/g, "\\$&");
-            conditions.push(ilike(emailsRaw.subject, `%${escaped}%`));
+            conditions.push(
+              sql`(
+                word_similarity(${subject_search}, ${emailsRaw.subject}) > 0.3
+                OR ${emailsRaw.subject} ILIKE ${"%" + subject_search.replace(/[\\%_]/g, "\\$&") + "%"}
+              )`,
+            );
           }
 
           // Find distinct threads that match
-          const matchingThreads = await db
+          let matchingThreads = await db
             .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId, subject: emailsRaw.subject })
             .from(emailsRaw)
             .where(and(...conditions));
+
+          // Fallback: use looser similarity() if word_similarity + ILIKE found nothing
+          if (matchingThreads.length === 0 && subject_search && !gmail_thread_id) {
+            matchingThreads = await db
+              .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId, subject: emailsRaw.subject })
+              .from(emailsRaw)
+              .where(
+                and(
+                  eq(emailsRaw.userId, userId),
+                  sql`similarity(${subject_search}, ${emailsRaw.subject}) > 0.2`,
+                ),
+              );
+          }
 
           if (matchingThreads.length === 0) {
             return {
@@ -510,6 +530,127 @@ export function createEmailSyncTools(
         }
       },
       slack: { status: "Updating email thread..." },
+    }),
+
+    update_email_threads: defineTool({
+      description:
+        "Batch-update triage states for multiple email threads at once. Accepts an array of {gmail_thread_id, thread_state, reason?}. Use after email_digest to dismiss/resolve/reclassify several threads in one call. Admin-only.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "Display name, username, or user ID of the Gmail account owner",
+          ),
+        updates: z
+          .array(
+            z.object({
+              gmail_thread_id: z.string().describe("Gmail thread ID"),
+              thread_state: z
+                .enum(threadStateValues)
+                .describe("New state for this thread"),
+              reason: z
+                .string()
+                .optional()
+                .describe("Why the state was changed"),
+            }),
+          )
+          .min(1)
+          .describe("Array of thread updates to apply"),
+      }),
+      execute: async ({ user_name, updates }) => {
+        if (!isAdmin(context?.userId)) {
+          return {
+            ok: false as const,
+            error: "This tool is restricted to admin users only.",
+          };
+        }
+
+        try {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
+            return {
+              ok: false as const,
+              error: `Could not resolve user '${user_name}'.`,
+            };
+          }
+
+          const userId = user.id;
+          let totalUpdated = 0;
+          let totalFailed = 0;
+          const details: Array<{
+            gmail_thread_id: string;
+            status: "updated" | "failed" | "not_found";
+            error?: string;
+          }> = [];
+
+          for (const update of updates) {
+            try {
+              const result = await db
+                .update(emailsRaw)
+                .set({
+                  threadState: update.thread_state,
+                  threadStateReason: update.reason ?? null,
+                  threadStateUpdatedAt: new Date(),
+                  updatedAt: new Date(),
+                })
+                .where(
+                  and(
+                    eq(emailsRaw.userId, userId),
+                    eq(emailsRaw.gmailThreadId, update.gmail_thread_id),
+                  ),
+                )
+                .returning({ gmailThreadId: emailsRaw.gmailThreadId });
+
+              if (result.length === 0) {
+                totalFailed++;
+                details.push({
+                  gmail_thread_id: update.gmail_thread_id,
+                  status: "not_found",
+                  error: "No emails found for this thread ID",
+                });
+              } else {
+                totalUpdated += result.length;
+                details.push({
+                  gmail_thread_id: update.gmail_thread_id,
+                  status: "updated",
+                });
+              }
+            } catch (err: any) {
+              totalFailed++;
+              details.push({
+                gmail_thread_id: update.gmail_thread_id,
+                status: "failed",
+                error: err.message,
+              });
+            }
+          }
+
+          logger.info("update_email_threads batch", {
+            userId,
+            requested: updates.length,
+            updated: totalUpdated,
+            failed: totalFailed,
+          });
+
+          return {
+            ok: true as const,
+            updated: totalUpdated,
+            failed: totalFailed,
+            details,
+            message: `Batch update: ${totalUpdated} email(s) updated across ${updates.length - totalFailed} thread(s), ${totalFailed} failed.`,
+          };
+        } catch (error: any) {
+          logger.error("update_email_threads failed", {
+            userName: user_name,
+            error: error.message,
+          });
+          return {
+            ok: false as const,
+            error: `Batch update failed: ${error.message}`,
+          };
+        }
+      },
+      slack: { status: "Updating email threads..." },
     }),
   };
 }
