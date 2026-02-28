@@ -1,4 +1,5 @@
 import TurndownService from "turndown";
+import { and, eq, isNull, sql, inArray, asc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { emailsRaw, type NewEmailRaw } from "../db/schema.js";
 import {
@@ -10,6 +11,7 @@ import {
 import { logger } from "./logger.js";
 import { logError } from "./error-logger.js";
 import { resolveOrCreateFromEmail } from "./person-resolution.js";
+import { embedTexts } from "./embeddings.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -459,6 +461,180 @@ export async function syncEmails(
     });
   }
 
+  // Post-sync: embed threads that got new emails (non-blocking)
+  try {
+    const threadIds = [...new Set(
+      result.synced > 0
+        ? await db
+            .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId })
+            .from(emailsRaw)
+            .where(
+              and(
+                eq(emailsRaw.userId, userId),
+                isNull(emailsRaw.embedding),
+              ),
+            )
+            .then((rows) => rows.map((r) => r.gmailThreadId))
+        : [],
+    )];
+
+    if (threadIds.length > 0) {
+      const embedded = await embedEmailThreads(userId, threadIds);
+      logger.info("Email sync: embedded threads", {
+        userId,
+        threadsEmbedded: embedded,
+        threadsTotal: threadIds.length,
+      });
+    }
+  } catch (err) {
+    logger.warn("Email sync: embedding failed (non-blocking)", {
+      userId,
+      error: String(err),
+    });
+  }
+
   logger.info("Email sync completed", { userId, ...result });
+  return result;
+}
+
+// ── Token truncation ────────────────────────────────────────────────────────
+
+const MAX_EMBED_CHARS = 30000;
+
+function truncateForEmbedding(text: string): string {
+  if (text.length <= MAX_EMBED_CHARS) return text;
+  return text.slice(0, MAX_EMBED_CHARS);
+}
+
+// ── Thread embedding ────────────────────────────────────────────────────────
+
+function buildThreadText(
+  emails: { fromName: string | null; date: Date; subject: string | null; bodyMarkdown: string | null }[],
+): string {
+  const sorted = [...emails].sort(
+    (a, b) => a.date.getTime() - b.date.getTime(),
+  );
+  return sorted
+    .map(
+      (e) =>
+        `From: ${e.fromName || "unknown"}\nDate: ${e.date.toISOString()}\nSubject: ${e.subject || "(no subject)"}\n\n${e.bodyMarkdown || ""}`,
+    )
+    .join("\n---\n");
+}
+
+async function embedEmailThreads(
+  userId: string,
+  threadIds: string[],
+): Promise<number> {
+  const BATCH_SIZE = 50;
+  let embedded = 0;
+
+  for (let i = 0; i < threadIds.length; i += BATCH_SIZE) {
+    const batchThreadIds = threadIds.slice(i, i + BATCH_SIZE);
+
+    const emails = await db
+      .select({
+        gmailThreadId: emailsRaw.gmailThreadId,
+        fromName: emailsRaw.fromName,
+        date: emailsRaw.date,
+        subject: emailsRaw.subject,
+        bodyMarkdown: emailsRaw.bodyMarkdown,
+      })
+      .from(emailsRaw)
+      .where(
+        and(
+          eq(emailsRaw.userId, userId),
+          inArray(emailsRaw.gmailThreadId, batchThreadIds),
+        ),
+      )
+      .orderBy(asc(emailsRaw.date));
+
+    const threadMap = new Map<string, typeof emails>();
+    for (const email of emails) {
+      const list = threadMap.get(email.gmailThreadId) || [];
+      list.push(email);
+      threadMap.set(email.gmailThreadId, list);
+    }
+
+    const orderedThreadIds: string[] = [];
+    const textsToEmbed: string[] = [];
+
+    for (const threadId of batchThreadIds) {
+      const threadEmails = threadMap.get(threadId);
+      if (!threadEmails || threadEmails.length === 0) continue;
+      orderedThreadIds.push(threadId);
+      textsToEmbed.push(truncateForEmbedding(buildThreadText(threadEmails)));
+    }
+
+    if (textsToEmbed.length === 0) continue;
+
+    try {
+      const embeddings = await embedTexts(textsToEmbed);
+
+      for (let j = 0; j < orderedThreadIds.length; j++) {
+        await db
+          .update(emailsRaw)
+          .set({
+            embedding: embeddings[j],
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(emailsRaw.userId, userId),
+              eq(emailsRaw.gmailThreadId, orderedThreadIds[j]),
+            ),
+          );
+        embedded++;
+      }
+    } catch (err) {
+      logger.error("Failed to embed email thread batch", {
+        userId,
+        batchOffset: i,
+        error: String(err),
+      });
+    }
+  }
+
+  return embedded;
+}
+
+// ── Backfill embeddings ─────────────────────────────────────────────────────
+
+/**
+ * Backfill embeddings for all email threads with NULL embeddings.
+ * Processes threads in batches of 50.
+ */
+export async function backfillEmailEmbeddings(
+  userId: string,
+): Promise<{ embedded: number; errors: number }> {
+  const result = { embedded: 0, errors: 0 };
+
+  const threadRows = await db
+    .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId })
+    .from(emailsRaw)
+    .where(
+      and(
+        eq(emailsRaw.userId, userId),
+        isNull(emailsRaw.embedding),
+      ),
+    );
+
+  const threadIds = threadRows.map((r) => r.gmailThreadId);
+
+  if (threadIds.length === 0) {
+    logger.info("Backfill: no threads with NULL embeddings", { userId });
+    return result;
+  }
+
+  logger.info("Backfill: starting", { userId, threads: threadIds.length });
+
+  try {
+    result.embedded = await embedEmailThreads(userId, threadIds);
+  } catch (err) {
+    logger.error("Backfill: failed", { userId, error: String(err) });
+    result.errors = threadIds.length - result.embedded;
+  }
+
+  logger.info("Backfill: completed", { userId, ...result });
   return result;
 }
