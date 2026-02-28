@@ -148,6 +148,13 @@
       "when": 1772006400000,
       "tag": "0020_add_voice_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1772265600000,
+      "tag": "0021_add_pg_trgm_extension",
+      "breakpoints": true
     }
   ]
 }
