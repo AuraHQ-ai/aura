@@ -10,6 +10,7 @@ import {
   boolean,
   index,
   uniqueIndex,
+  unique,
   serial,
   vector,
 } from "drizzle-orm/pg-core";
@@ -453,6 +454,25 @@ export const voiceCalls = pgTable(
   ],
 );
 
+// ── Feedback ────────────────────────────────────────────────────────────────
+
+export const feedback = pgTable(
+  "feedback",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    messageTs: text("message_ts").notNull(),
+    channelId: text("channel_id").notNull(),
+    userId: text("user_id").notNull(),
+    value: text("value").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("feedback_unique_vote").on(table.messageTs, table.channelId, table.userId),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -483,6 +503,8 @@ export type Address = typeof addresses.$inferSelect;
 export type NewAddress = typeof addresses.$inferInsert;
 export type VoiceCall = typeof voiceCalls.$inferSelect;
 export type NewVoiceCall = typeof voiceCalls.$inferInsert;
+export type Feedback = typeof feedback.$inferSelect;
+export type NewFeedback = typeof feedback.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
