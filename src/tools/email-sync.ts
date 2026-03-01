@@ -383,7 +383,7 @@ export function createEmailSyncTools(
 
     update_email_thread: defineTool({
       description:
-        "Update the triage state of a single email thread. Prefer gmail_thread_id (from email_digest) over subject_search. Subject search uses trigram similarity for fuzzy matching. For bulk updates, use update_email_threads instead. Any user can update their own threads.",
+        "Update the triage state of a single email thread. Prefer gmail_thread_id (from email_digest) over subject_search. For bulk updates, use update_email_threads instead. Any user can update their own threads.",
       inputSchema: z
         .object({
           user_name: z
@@ -444,31 +444,15 @@ export function createEmailSyncTools(
             conditions.push(eq(emailsRaw.gmailThreadId, gmail_thread_id));
           } else if (subject_search) {
             conditions.push(
-              sql`(
-                word_similarity(${subject_search}, ${emailsRaw.subject}) > 0.3
-                OR ${emailsRaw.subject} ILIKE ${"%" + subject_search.replace(/[\\%_]/g, "\\$&") + "%"}
-              )`,
+              ilike(emailsRaw.subject, "%" + subject_search.replace(/[\\%_]/g, "\\$&") + "%"),
             );
           }
 
           // Find distinct threads that match
-          let matchingThreads = await db
+          const matchingThreads = await db
             .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId, subject: emailsRaw.subject })
             .from(emailsRaw)
             .where(and(...conditions));
-
-          // Fallback: use looser similarity() if word_similarity + ILIKE found nothing
-          if (matchingThreads.length === 0 && subject_search && !gmail_thread_id) {
-            matchingThreads = await db
-              .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId, subject: emailsRaw.subject })
-              .from(emailsRaw)
-              .where(
-                and(
-                  eq(emailsRaw.userId, userId),
-                  sql`similarity(${subject_search}, ${emailsRaw.subject}) > 0.2`,
-                ),
-              );
-          }
 
           if (matchingThreads.length === 0) {
             return {
