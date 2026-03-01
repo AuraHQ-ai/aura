@@ -2989,7 +2989,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // Email (Aura's own inbox)
     "read_emails", "read_email", "send_email", "reply_to_email",
     // Email triage (per-user Gmail)
-    "sync_emails", "email_digest", "update_email_thread",
+    "sync_emails", "email_digest", "update_email_thread", "update_email_threads",
     "read_user_emails", "read_user_email",
     "generate_gmail_auth_url", "create_gmail_draft", "list_gmail_drafts", "delete_gmail_draft",
     // Dev / Code
