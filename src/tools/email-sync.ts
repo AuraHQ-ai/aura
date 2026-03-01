@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, desc, sql, inArray, ilike, isNotNull } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, isNotNull } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
@@ -383,7 +383,7 @@ export function createEmailSyncTools(
 
     update_email_thread: defineTool({
       description:
-        "Update the triage state of a single email thread. Prefer gmail_thread_id (from email_digest) over subject_search. For bulk updates, use update_email_threads instead. Any user can update their own threads.",
+        "Update the triage state of an email thread by gmail_thread_id. Get the thread ID from email_digest or search_emails. Any user can update their own threads.",
       inputSchema: z
         .object({
           user_name: z
@@ -393,14 +393,7 @@ export function createEmailSyncTools(
             ),
           gmail_thread_id: z
             .string()
-            .optional()
             .describe("Gmail thread ID to update"),
-          subject_search: z
-            .string()
-            .optional()
-            .describe(
-              "Search by subject (partial match) if thread ID unknown",
-            ),
           thread_state: z
             .enum(threadStateValues)
             .describe("New state"),
@@ -408,14 +401,10 @@ export function createEmailSyncTools(
             .string()
             .optional()
             .describe("Why the state was changed"),
-        })
-        .refine((d) => d.gmail_thread_id || d.subject_search, {
-          message: "Provide gmail_thread_id or subject_search",
         }),
       execute: async ({
         user_name,
         gmail_thread_id,
-        subject_search,
         thread_state,
         reason,
       }) => {
@@ -440,13 +429,7 @@ export function createEmailSyncTools(
 
           const conditions = [eq(emailsRaw.userId, userId)];
 
-          if (gmail_thread_id) {
-            conditions.push(eq(emailsRaw.gmailThreadId, gmail_thread_id));
-          } else if (subject_search) {
-            conditions.push(
-              ilike(emailsRaw.subject, "%" + subject_search.replace(/[\\%_]/g, "\\$&") + "%"),
-            );
-          }
+          conditions.push(eq(emailsRaw.gmailThreadId, gmail_thread_id));
 
           // Find distinct threads that match
           const matchingThreads = await db
@@ -457,9 +440,7 @@ export function createEmailSyncTools(
           if (matchingThreads.length === 0) {
             return {
               ok: false as const,
-              error: gmail_thread_id
-                ? `No emails found for thread ID '${gmail_thread_id}'.`
-                : `No emails found matching subject '${subject_search}'.`,
+              error: `No emails found for thread ID '${gmail_thread_id}'.`,
             };
           }
 
