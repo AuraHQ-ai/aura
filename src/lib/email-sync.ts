@@ -632,8 +632,8 @@ export async function backfillEmailEmbeddings(
     result.embedded = await embedEmailThreads(userId, threadIds);
   } catch (err) {
     logger.error("Backfill: failed", { userId, error: String(err) });
-    result.errors = threadIds.length - result.embedded;
   }
+  result.errors = threadIds.length - result.embedded;
 
   logger.info("Backfill: completed", { userId, ...result });
   return result;
