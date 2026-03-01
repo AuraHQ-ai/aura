@@ -722,59 +722,5 @@ export function createEmailSyncTools(
       },
       slack: { status: "Searching emails...", detail: (i) => i.query },
     }),
-
-    backfill_email_embeddings: defineTool({
-      description:
-        "Backfill vector embeddings for all email threads that don't have one yet. This enables semantic search on historical emails. May take a while for large mailboxes. Admin-only.",
-      inputSchema: z.object({
-        user_name: z
-          .string()
-          .describe(
-            "Display name, username, or user ID of the Gmail account owner",
-          ),
-      }),
-      execute: async ({ user_name }) => {
-        if (!isAdmin(context?.userId)) {
-          return {
-            ok: false as const,
-            error: "This tool is restricted to admin users only.",
-          };
-        }
-
-        try {
-          const user = await resolveUserByName(client, user_name);
-          if (!user) {
-            return {
-              ok: false as const,
-              error: `Could not resolve user '${user_name}'.`,
-            };
-          }
-
-          const { backfillEmailEmbeddings } = await import(
-            "../lib/email-sync.js"
-          );
-          const result = await backfillEmailEmbeddings(user.id);
-
-          return {
-            ok: true as const,
-            ...result,
-            message: `Backfilled ${result.embedded} thread embeddings (${result.errors} errors)`,
-          };
-        } catch (error: any) {
-          logger.error("backfill_email_embeddings tool failed", {
-            userName: user_name,
-            error: error.message,
-          });
-          return {
-            ok: false as const,
-            error: `Backfill failed: ${error.message}`,
-          };
-        }
-      },
-      slack: {
-        status: "Backfilling email embeddings...",
-        detail: (i) => i.user_name,
-      },
-    }),
   };
 }
