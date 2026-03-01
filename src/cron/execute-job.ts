@@ -165,7 +165,7 @@ export async function executeJob(
       tools: slackTools,
       stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
       prepareStep: createHeadlessPrepareStep({
-        systemPrompt,
+        stablePrefix: systemPrompt,
         modelId,
         defaultEffort: "medium",
         getEscalationModel,

@@ -329,17 +329,35 @@ function formatConversations(conversations: ConversationThread[]): string {
   return `\n## Relevant past conversations\n\nThese are past conversation threads retrieved from your message history. Use them for context if relevant — reference specific things people said.\n\n${formatted}`;
 }
 
+export interface SystemPromptLayers {
+  /** Stable across ALL requests: personality + self-directive + notes-index + skill-index */
+  stablePrefix: string;
+  /** Stable within a conversation thread: channel context + user profile + memories + conversations + thread context */
+  conversationContext: string;
+}
+
 /**
- * Build the full system prompt for an LLM call.
- * Async because it queries the skill index from the database.
+ * Build the system prompt split into two cached layers.
+ *
+ * Layer 1 (stablePrefix): content that is identical across all requests —
+ * personality, self-directive, notes-index, and skill index. Cached globally.
+ *
+ * Layer 2 (conversationContext): content that varies per conversation thread —
+ * channel context, user profile, memories, past conversations, thread context.
+ * Cached per-thread.
+ *
+ * Async because it queries the skill index and notes from the database.
  */
 export async function buildSystemPrompt(
   context: SystemPromptContext,
-): Promise<string> {
-  const parts: string[] = [];
+): Promise<SystemPromptLayers> {
+  const stableParts: string[] = [];
+  const conversationParts: string[] = [];
+
+  // ── Layer 1: Stable prefix ──────────────────────────────────────────
 
   // Core personality (always present)
-  parts.push(PERSONALITY);
+  stableParts.push(PERSONALITY);
 
   // Self-directive: agent's own persistent context, loaded every invocation
   // Hard cap at ~2000 tokens (~8000 chars) to prevent context-window overflow
@@ -361,7 +379,7 @@ export async function buildSystemPrompt(
           limit: SELF_DIRECTIVE_MAX_CHARS,
         });
       }
-      parts.push(
+      stableParts.push(
         `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}`,
       );
     }
@@ -388,7 +406,7 @@ export async function buildSystemPrompt(
           limit: NOTES_INDEX_MAX_CHARS,
         });
       }
-      parts.push(
+      stableParts.push(
         `\n## Notes index\n\nMaster index of all your notes. Use read_note() to load full content, search_notes() to grep across all notes.\n\n${indexContent}`,
       );
     }
@@ -396,34 +414,36 @@ export async function buildSystemPrompt(
     logger.warn("Failed to load notes-index note", { error });
   }
 
+  // Skill index (progressive disclosure -- lightweight topic + first line)
+  const skillIndex = await buildSkillIndex();
+  if (skillIndex) {
+    stableParts.push(skillIndex);
+  }
+
+  // ── Layer 2: Conversation context ───────────────────────────────────
+
   // Channel context
   if (context.channelType === "dm") {
-    parts.push(`You're in a private DM. Be conversational and personal.`);
+    conversationParts.push(`You're in a private DM. Be conversational and personal.`);
   } else {
-    parts.push(
+    conversationParts.push(
       `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`,
     );
   }
 
   // User profile (if available)
   if (context.userProfile) {
-    parts.push(formatUserProfile(context.userProfile));
+    conversationParts.push(formatUserProfile(context.userProfile));
   }
 
   // Retrieved memories
   if (context.memories.length > 0) {
-    parts.push(formatMemories(context.memories));
+    conversationParts.push(formatMemories(context.memories));
   }
 
   // Retrieved conversation threads
   if (context.conversations && context.conversations.length > 0) {
-    parts.push(formatConversations(context.conversations));
-  }
-
-  // Skill index (progressive disclosure -- lightweight topic + first line)
-  const skillIndex = await buildSkillIndex();
-  if (skillIndex) {
-    parts.push(skillIndex);
+    conversationParts.push(formatConversations(context.conversations));
   }
 
   // Conversation context (thread or recent channel messages)
@@ -431,10 +451,13 @@ export async function buildSystemPrompt(
     const heading = context.isChannelHistory
       ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
       : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
-    parts.push(heading);
+    conversationParts.push(heading);
   }
 
-  return parts.join("\n\n");
+  return {
+    stablePrefix: stableParts.join("\n\n"),
+    conversationContext: conversationParts.join("\n\n"),
+  };
 }
 
 /**
