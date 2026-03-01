@@ -385,6 +385,7 @@ export const emailsRaw = pgTable(
     hasAttachments: boolean("has_attachments").default(false),
     labels: jsonb("labels").$type<string[]>(),
     rawHeaders: jsonb("raw_headers").$type<Record<string, string>>(),
+    embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -397,6 +398,10 @@ export const emailsRaw = pgTable(
     index("emails_raw_user_triage_idx").on(table.userId, table.triage),
     index("emails_raw_user_thread_state_idx").on(table.userId, table.threadState),
     index("emails_raw_user_date_idx").on(table.userId, table.date),
+    index("emails_raw_embedding_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
   ],
 );
 
