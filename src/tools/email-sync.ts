@@ -164,7 +164,7 @@ export function createEmailSyncTools(
 
     email_digest: defineTool({
       description:
-        "Get an email digest for a user: urgent items, threads awaiting reply, sorted by importance. Reads from the emails_raw staging table. Returns { message, threads[] } — use `message` for display and `threads[].gmail_thread_id` for follow-up actions like update_email_thread(s). Admin-only.",
+        "Get an email digest for a user: returns structured data with counts and thread objects (each with gmail_thread_id). Use threads[].gmail_thread_id for follow-up actions. Admin-only.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -194,43 +194,6 @@ export function createEmailSyncTools(
           }
 
           const userId = user.id;
-
-          // Get one representative state per thread (preferring non-null states)
-          const stateStats = await db
-            .select({
-              threadState: sql<string | null>`COALESCE(
-                MIN(CASE WHEN ${emailsRaw.threadState} IS NOT NULL THEN ${emailsRaw.threadState} END),
-                NULL
-              )`,
-              count: sql<number>`1::int`,
-            })
-            .from(emailsRaw)
-            .where(eq(emailsRaw.userId, userId))
-            .groupBy(emailsRaw.gmailThreadId)
-            .then((threadStates) => {
-              // Now group by the representative state and count
-              const stateCounts: { threadState: string | null; count: number }[] = [];
-              const stateMap = new Map<string, number>();
-
-              for (const { threadState } of threadStates) {
-                const key = threadState || "unclassified";
-                stateMap.set(key, (stateMap.get(key) || 0) + 1);
-              }
-
-              for (const [threadState, count] of stateMap.entries()) {
-                stateCounts.push({
-                  threadState: threadState === "unclassified" ? null : threadState,
-                  count
-                });
-              }
-
-              return stateCounts;
-            });
-
-          const statsMap: Record<string, number> = {};
-          for (const s of stateStats) {
-            statsMap[s.threadState || "unclassified"] = s.count;
-          }
 
           const stateFilter = include_fyi
             ? sql`(${emailsRaw.threadState} IS NULL OR ${emailsRaw.threadState} != 'junk')`
@@ -337,38 +300,17 @@ export function createEmailSyncTools(
             (t) => t.thread_state === "unclassified",
           );
 
-          let digestSummary = `📧 **Email Digest** (${threads.length} threads)\n`;
-          if (awaitingYourReply.length > 0)
-            digestSummary += `📩 **${awaitingYourReply.length} awaiting your reply**\n`;
-          if (awaitingTheirReply.length > 0)
-            digestSummary += `⏳ **${awaitingTheirReply.length} awaiting their reply**\n`;
-          if (fyi.length > 0)
-            digestSummary += `ℹ️ **${fyi.length} FYI**\n`;
-          if (resolved.length > 0)
-            digestSummary += `✅ **${resolved.length} resolved**\n`;
-          if (unclassified.length > 0)
-            digestSummary += `❓ **${unclassified.length} unclassified**\n`;
-
-          if (awaitingYourReply.length > 0) {
-            digestSummary += "\n**Needs your reply:**\n";
-            awaitingYourReply.slice(0, 10).forEach((t) => {
-              digestSummary += `📩 **${t.subject}** from ${t.from} • ${t.last_message}\n`;
-            });
-          }
-
-          if (awaitingTheirReply.length > 0) {
-            digestSummary += "\n**Waiting on others:**\n";
-            awaitingTheirReply.slice(0, 5).forEach((t) => {
-              digestSummary += `⏳ **${t.subject}** from ${t.from} • ${t.last_message}\n`;
-            });
-          }
-
           return {
             ok: true,
-            message: digestSummary,
-            stats: statsMap,
+            counts: {
+              awaiting_your_reply: awaitingYourReply.length,
+              awaiting_their_reply: awaitingTheirReply.length,
+              fyi: fyi.length,
+              resolved: resolved.length,
+              unclassified: unclassified.length,
+              total: threads.length,
+            },
             threads,
-            awaiting_reply_count: awaitingYourReply.length,
           };
         } catch (error: any) {
           logger.error("email_digest tool failed", {
