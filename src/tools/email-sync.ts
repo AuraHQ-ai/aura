@@ -632,6 +632,16 @@ export function createEmailSyncTools(
             failed: totalFailed,
           });
 
+          if (totalUpdated === 0 && totalFailed > 0) {
+            return {
+              ok: false as const,
+              updated: totalUpdated,
+              failed: totalFailed,
+              details,
+              message: `Batch update failed: all ${totalFailed} thread(s) failed to update.`,
+            };
+          }
+
           return {
             ok: true as const,
             updated: totalUpdated,
