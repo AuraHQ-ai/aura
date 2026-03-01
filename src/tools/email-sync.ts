@@ -604,7 +604,7 @@ export function createEmailSyncTools(
               })
               .from(emailsRaw)
               .where(and(...conditions))
-              .orderBy(emailsRaw.gmailThreadId, distExpr)
+              .orderBy(emailsRaw.gmailThreadId, distExpr, desc(emailsRaw.date))
               .as("deduped");
 
             const rawResults = await db

@@ -298,6 +298,7 @@ export async function syncEmails(
   });
 
   const uniqueSenders = new Map<string, string | null>();
+  const syncedThreadIds = new Set<string>();
 
   const BATCH_SIZE = 50;
   for (let i = 0; i < allMessageIds.length; i += BATCH_SIZE) {
@@ -369,6 +370,9 @@ export async function syncEmails(
           });
         result.synced += insertResult.rowCount ?? 0;
         result.skipped += rows.length - (insertResult.rowCount ?? 0);
+        if ((insertResult.rowCount ?? 0) > 0) {
+          for (const row of rows) syncedThreadIds.add(row.gmailThreadId);
+        }
       } catch (err) {
         logger.error("Batch DB insert failed", {
           userId,
@@ -429,6 +433,9 @@ export async function syncEmails(
           });
         result.synced += insertResult.rowCount ?? 0;
         result.skipped += retryRows.length - (insertResult.rowCount ?? 0);
+        if ((insertResult.rowCount ?? 0) > 0) {
+          for (const row of retryRows) syncedThreadIds.add(row.gmailThreadId);
+        }
         result.errorDetails = result.errorDetails.filter(
           (e) => !recoveredIds.has(e.gmailMessageId),
         );
@@ -461,24 +468,10 @@ export async function syncEmails(
     });
   }
 
-  // Post-sync: embed threads that got new emails (non-blocking)
+  // Post-sync: embed threads that got new emails
   try {
-    const threadIds = [...new Set(
-      result.synced > 0
-        ? await db
-            .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId })
-            .from(emailsRaw)
-            .where(
-              and(
-                eq(emailsRaw.userId, userId),
-                isNull(emailsRaw.embedding),
-              ),
-            )
-            .then((rows) => rows.map((r) => r.gmailThreadId))
-        : [],
-    )];
-
-    if (threadIds.length > 0) {
+    if (syncedThreadIds.size > 0) {
+      const threadIds = [...syncedThreadIds];
       const embedded = await embedEmailThreads(userId, threadIds);
       logger.info("Email sync: embedded threads", {
         userId,
