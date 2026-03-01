@@ -576,13 +576,23 @@ export function createEmailSyncTools(
           }[];
 
           if (mode === "semantic") {
-            const queryEmbedding = await embedText(query);
+            const trimmedSemantic = query.trim();
+            if (!trimmedSemantic) {
+              return {
+                ok: false as const,
+                error: "Query is empty.",
+              };
+            }
+
+            const queryEmbedding = await embedText(trimmedSemantic);
             const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
             conditions.push(isNotNull(emailsRaw.embedding));
 
-            const rawResults = await db
-              .select({
+            const distExpr = sql`${emailsRaw.embedding} <=> ${embeddingStr}::vector`;
+
+            const deduped = db
+              .selectDistinctOn([emailsRaw.gmailThreadId], {
                 gmailThreadId: emailsRaw.gmailThreadId,
                 subject: emailsRaw.subject,
                 fromEmail: emailsRaw.fromEmail,
@@ -590,30 +600,29 @@ export function createEmailSyncTools(
                 date: emailsRaw.date,
                 threadState: emailsRaw.threadState,
                 bodyMarkdown: emailsRaw.bodyMarkdown,
-                similarity: sql<number>`1 - (${emailsRaw.embedding} <=> ${embeddingStr}::vector)`,
+                dist: distExpr.as("dist"),
               })
               .from(emailsRaw)
               .where(and(...conditions))
-              .orderBy(sql`${emailsRaw.embedding} <=> ${embeddingStr}::vector`)
-              .limit(limit * 3);
+              .orderBy(emailsRaw.gmailThreadId, distExpr)
+              .as("deduped");
 
-            const threadMap = new Map<
-              string,
-              (typeof rawResults)[0]
-            >();
-            for (const row of rawResults) {
-              const existing = threadMap.get(row.gmailThreadId);
-              if (
-                !existing ||
-                row.date.getTime() > existing.date.getTime()
-              ) {
-                threadMap.set(row.gmailThreadId, row);
-              }
-            }
+            const rawResults = await db
+              .select({
+                gmailThreadId: deduped.gmailThreadId,
+                subject: deduped.subject,
+                fromEmail: deduped.fromEmail,
+                fromName: deduped.fromName,
+                date: deduped.date,
+                threadState: deduped.threadState,
+                bodyMarkdown: deduped.bodyMarkdown,
+                similarity: sql<number>`1 - ${deduped.dist}`,
+              })
+              .from(deduped)
+              .orderBy(sql`${deduped.dist}`)
+              .limit(limit);
 
-            results = [...threadMap.values()]
-              .sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))
-              .slice(0, limit);
+            results = rawResults;
           } else {
             const trimmed = query.trim();
 
