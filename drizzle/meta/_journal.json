@@ -155,6 +155,13 @@
       "when": 1772320233594,
       "tag": "0021_long_rictor",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1772524800000,
+      "tag": "0022_add_pg_trgm_extension",
+      "breakpoints": true
     }
   ]
 }
