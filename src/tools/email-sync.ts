@@ -615,18 +615,12 @@ export function createEmailSyncTools(
               .sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))
               .slice(0, limit);
           } else {
-            const tsQuery = query
-              .trim()
-              .split(/\s+/)
-              .filter(Boolean)
-              .map((w) => w.replace(/[^a-zA-Z0-9]/g, ""))
-              .filter(Boolean)
-              .join(" & ");
+            const trimmed = query.trim();
 
-            if (!tsQuery) {
+            if (!trimmed) {
               return {
                 ok: false as const,
-                error: "Query is empty after sanitization.",
+                error: "Query is empty.",
               };
             }
 
@@ -641,21 +635,21 @@ export function createEmailSyncTools(
                 bodyMarkdown: emailsRaw.bodyMarkdown,
                 rank: sql<number>`ts_rank(
                   to_tsvector('english', coalesce(${emailsRaw.subject}, '') || ' ' || coalesce(${emailsRaw.bodyMarkdown}, '')),
-                  to_tsquery('english', ${tsQuery})
+                  websearch_to_tsquery('english', ${trimmed})
                 )`,
               })
               .from(emailsRaw)
               .where(
                 and(
                   ...conditions,
-                  sql`to_tsvector('english', coalesce(${emailsRaw.subject}, '') || ' ' || coalesce(${emailsRaw.bodyMarkdown}, '')) @@ to_tsquery('english', ${tsQuery})`,
+                  sql`to_tsvector('english', coalesce(${emailsRaw.subject}, '') || ' ' || coalesce(${emailsRaw.bodyMarkdown}, '')) @@ websearch_to_tsquery('english', ${trimmed})`,
                 ),
               )
               .orderBy(
                 desc(
                   sql`ts_rank(
                     to_tsvector('english', coalesce(${emailsRaw.subject}, '') || ' ' || coalesce(${emailsRaw.bodyMarkdown}, '')),
-                    to_tsquery('english', ${tsQuery})
+                    websearch_to_tsquery('english', ${trimmed})
                   )`,
                 ),
               )
@@ -667,11 +661,15 @@ export function createEmailSyncTools(
             >();
             for (const row of rawResults) {
               const existing = threadMap.get(row.gmailThreadId);
-              if (
-                !existing ||
-                row.date.getTime() > existing.date.getTime()
-              ) {
+              if (!existing) {
                 threadMap.set(row.gmailThreadId, row);
+              } else {
+                const bestRank = Math.max(row.rank ?? 0, existing.rank ?? 0);
+                if (row.date.getTime() > existing.date.getTime()) {
+                  threadMap.set(row.gmailThreadId, { ...row, rank: bestRank });
+                } else {
+                  existing.rank = bestRank;
+                }
               }
             }
 
