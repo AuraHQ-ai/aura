@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, desc, sql, inArray, isNotNull } from "drizzle-orm";
+import { eq, and, desc, sql, inArray, ilike, isNotNull } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
