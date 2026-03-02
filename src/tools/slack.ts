@@ -2941,8 +2941,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createBigQueryTools(context),
 
     // ── Email Tools (Gmail) ──────────────────────────────────────────────
-    ...createEmailTools(),
-    ...createGmailEATools(),
+    ...createEmailTools(context),
+    ...createGmailEATools(context),
 
     // ── Email Staging Pipeline (sync + triage + digest) ──────────────────
     ...createEmailSyncTools(client, context),
@@ -2986,8 +2986,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     "read_canvas", "create_canvas", "edit_canvas", "delete_canvas", "share_canvas", "list_canvases",
     // Slack Lists
     "list_slack_list_items", "get_slack_list_item", "create_slack_list_item", "update_slack_list_item", "delete_slack_list_item",
-    // Email (Aura's own inbox)
-    "read_emails", "read_email", "send_email", "reply_to_email",
+    // Email
+    "send_email", "reply_to_email",
     // Email triage (per-user Gmail)
     "sync_emails", "email_digest", "update_email_thread",
     "read_user_emails", "read_user_email",
