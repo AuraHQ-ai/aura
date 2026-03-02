@@ -34,7 +34,18 @@ export async function getOrCreateProfile(
         .update(userProfiles)
         .set({ timezone, updatedAt: new Date() })
         .where(eq(userProfiles.slackUserId, slackUserId));
-      return { ...profile, timezone };
+      Object.assign(profile, { timezone });
+    }
+    if (!profile.personId) {
+      try {
+        const personId = await ensurePersonLinked(profile);
+        return { ...profile, personId };
+      } catch (error) {
+        logger.error("Failed to link existing profile to person", {
+          profileId: profile.id,
+          error: String(error),
+        });
+      }
     }
     return profile;
   }
