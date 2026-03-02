@@ -26,6 +26,7 @@ interface RawPersonRow {
   preferred_language: string | null;
   birthdate: string | null;
   manager_id: string | null;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +41,7 @@ function mapRawPerson(row: RawPersonRow): typeof people.$inferSelect {
     preferredLanguage: row.preferred_language,
     birthdate: row.birthdate ? new Date(row.birthdate) : null,
     managerId: row.manager_id,
+    notes: row.notes,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -55,6 +57,7 @@ interface PersonResult {
   birthdate: string | null;
   manager_id: string | null;
   manager_name: string | null;
+  notes: string | null;
   addresses: { id: string; channel: string; value: string; is_primary: boolean }[];
   stats: {
     workspace_messages: number;
@@ -132,6 +135,7 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
     birthdate: person.birthdate ? person.birthdate.toISOString().split("T")[0] : null,
     manager_id: person.managerId,
     manager_name: managerName,
+    notes: person.notes,
     addresses: addrs.map((a) => ({
       id: a.id,
       channel: a.channel,
@@ -186,7 +190,7 @@ export function createPeopleTools(context?: ScheduleContext) {
     get_person: defineTool({
       description:
         "Look up a person in the people database by name, Slack user ID (e.g. 'U0678NQJ2'), or email address. " +
-        "Returns structured profile data including job title, gender, preferred language, birthdate, manager, " +
+        "Returns structured profile data including job title, gender, preferred language, birthdate, manager, notes/context, " +
         "all known addresses (email, phone, slack), and Slack activity stats (workspace_messages, aura_dm_messages, last_activity, last_aura_dm). " +
         "Use this before update_person to confirm identity. For ambiguous name searches, returns up to 3 fuzzy matches.",
       inputSchema: z.object({
@@ -230,7 +234,7 @@ export function createPeopleTools(context?: ScheduleContext) {
     update_person: defineTool({
       description:
         "Update a person's profile in the people database. Identify the person by person_id (UUID) or query (fuzzy name/Slack ID/email lookup — must resolve to exactly 1 person). " +
-        "Can update fields (display_name, job_title, gender, preferred_language, birthdate, manager_id), " +
+        "Can update fields (display_name, job_title, gender, preferred_language, birthdate, manager_id, notes), " +
         "add or remove addresses, and use phone/email shorthands to upsert primary contact info. " +
         "Always use get_person first to verify identity before updating.",
       inputSchema: z.object({
@@ -259,6 +263,10 @@ export function createPeopleTools(context?: ScheduleContext) {
               .string()
               .optional()
               .describe("UUID or name to fuzzy-resolve"),
+            notes: z
+              .string()
+              .optional()
+              .describe("Free-text notes/context about this person"),
             phone: z
               .string()
               .regex(E164_RE, "Must be E.164 format, e.g. +14155551234")
@@ -348,6 +356,8 @@ export function createPeopleTools(context?: ScheduleContext) {
                 updateSet.managerId = (mgrMatches[0] as any).id;
               }
             }
+
+            if (fields.notes !== undefined) updateSet.notes = fields.notes;
 
             if (fields.phone !== undefined) {
               await upsertPrimaryAddress(resolvedId, "phone", fields.phone.toLowerCase());
