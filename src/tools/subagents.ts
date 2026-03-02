@@ -28,8 +28,8 @@ async function buildToolScope(
   switch (scope) {
     case "email":
       return {
-        ...createEmailTools(),
-        ...createGmailEATools(),
+        ...createEmailTools(context),
+        ...createGmailEATools(context),
         ...createEmailSyncTools(client, context),
         ...createNoteTools(context),
       };

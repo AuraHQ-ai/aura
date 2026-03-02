@@ -403,22 +403,39 @@ function extractAttachments(
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Send an email.
+ * Send an email as a specific user (or Aura by default).
+ * When userId is provided, uses getGmailClientForUser(); otherwise falls back to getGmailClient().
  */
 export async function sendEmail(
   to: string,
   subject: string,
   body: string,
   options?: SendEmailOptions,
+  userId?: string,
 ): Promise<{ id: string; threadId: string } | null> {
-  const gmail = await getGmailClient();
-  if (!gmail) {
-    logger.error("Gmail client not available");
-    return null;
+  let gmailClient: any;
+  let fromEmail: string | undefined;
+
+  if (userId) {
+    const result = await getGmailClientForUser(userId);
+    if (!result) {
+      logger.error("Gmail client not available for user", { userId });
+      return null;
+    }
+    gmailClient = result.client;
+    fromEmail = result.email ?? undefined;
+  } else {
+    gmailClient = await getGmailClient();
+    if (!gmailClient) {
+      logger.error("Gmail client not available");
+      return null;
+    }
   }
 
   const raw = base64UrlEncode(
-    buildMimeMessage(to, subject, body, options, undefined, undefined, undefined, options?.attachments),
+    buildMimeMessage(to, subject, body, options, undefined, undefined,
+      fromEmail ? { from: fromEmail, includeSignature: false } : undefined,
+      options?.attachments),
   );
 
   const requestBody: { raw: string; threadId?: string } = { raw };
@@ -426,7 +443,7 @@ export async function sendEmail(
     requestBody.threadId = options.threadId;
   }
 
-  const res = await gmail.users.messages.send({
+  const res = await gmailClient.users.messages.send({
     userId: "me",
     requestBody,
   });
@@ -434,6 +451,7 @@ export async function sendEmail(
   logger.info("Email sent", {
     to,
     subject,
+    userId: userId || "aura",
     messageId: res.data.id,
     threadId: res.data.threadId,
   });
@@ -552,20 +570,34 @@ export async function getEmail(messageId: string): Promise<EmailDetail | null> {
 
 /**
  * Reply to an email in the same thread.
+ * When userId is provided, uses getGmailClientForUser(); otherwise falls back to getGmailClient().
  */
 export async function replyToEmail(
   messageId: string,
   threadId: string,
   body: string,
+  userId?: string,
 ): Promise<{ id: string; threadId: string } | null> {
-  const gmail = await getGmailClient();
-  if (!gmail) {
-    logger.error("Gmail client not available");
-    return null;
+  let gmailClient: any;
+  let fromEmail: string | undefined;
+
+  if (userId) {
+    const result = await getGmailClientForUser(userId);
+    if (!result) {
+      logger.error("Gmail client not available for user", { userId });
+      return null;
+    }
+    gmailClient = result.client;
+    fromEmail = result.email ?? undefined;
+  } else {
+    gmailClient = await getGmailClient();
+    if (!gmailClient) {
+      logger.error("Gmail client not available");
+      return null;
+    }
   }
 
-  // Get original message to extract headers
-  const original = await gmail.users.messages.get({
+  const original = await gmailClient.users.messages.get({
     userId: "me",
     id: messageId,
     format: "metadata",
@@ -585,10 +617,12 @@ export async function replyToEmail(
     buildMimeMessage(originalFrom, replySubject, body, {
       replyToMessageId: originalMessageId,
       threadId,
-    }),
+    }, undefined, undefined,
+      fromEmail ? { from: fromEmail, includeSignature: false } : undefined,
+    ),
   );
 
-  const res = await gmail.users.messages.send({
+  const res = await gmailClient.users.messages.send({
     userId: "me",
     requestBody: {
       raw,
@@ -599,6 +633,7 @@ export async function replyToEmail(
   logger.info("Email reply sent", {
     to: originalFrom,
     subject: replySubject,
+    userId: userId || "aura",
     messageId: res.data.id,
     threadId: res.data.threadId,
   });
