@@ -56,7 +56,14 @@ interface PersonResult {
   manager_id: string | null;
   manager_name: string | null;
   addresses: { id: string; channel: string; value: string; is_primary: boolean }[];
-  stats: { message_count: number; last_interaction: string | null; profile_created: string | null };
+  stats: {
+    message_count: number;
+    workspace_messages: number;
+    dm_messages: number;
+    last_interaction: string | null;
+    last_dm_interaction: string | null;
+    profile_created: string | null;
+  };
 }
 
 async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonResult> {
@@ -81,7 +88,10 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
   }
 
   let messageCount = 0;
+  let workspaceMessages = 0;
+  let dmMessages = 0;
   let lastInteraction: string | null = null;
+  let lastDmInteraction: string | null = null;
   let profileCreated: string | null = null;
 
   if (person.slackUserId) {
@@ -101,12 +111,18 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
         .select({
           count: count(),
           lastTs: sql<string>`max(${messages.createdAt})`,
+          workspaceMessages: sql<number>`count(*) filter (where ${messages.channelType} != 'dm')`,
+          dmMessages: sql<number>`count(*) filter (where ${messages.channelType} = 'dm' and ${messages.role} = 'user')`,
+          lastDmInteraction: sql<string>`max(${messages.createdAt}) filter (where ${messages.channelType} = 'dm')`,
         })
         .from(messages)
         .where(eq(messages.userId, profile.slackUserId));
 
       messageCount = msgStats?.count ?? 0;
+      workspaceMessages = Number(msgStats?.workspaceMessages ?? 0);
+      dmMessages = Number(msgStats?.dmMessages ?? 0);
       lastInteraction = msgStats?.lastTs ?? null;
+      lastDmInteraction = msgStats?.lastDmInteraction ?? null;
     }
   }
 
@@ -128,7 +144,10 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
     })),
     stats: {
       message_count: messageCount,
+      workspace_messages: workspaceMessages,
+      dm_messages: dmMessages,
       last_interaction: lastInteraction,
+      last_dm_interaction: lastDmInteraction,
       profile_created: profileCreated,
     },
   };
