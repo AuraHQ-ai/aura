@@ -36,7 +36,7 @@ async function buildToolScope(
     case "data":
       return {
         ...createBigQueryTools(context),
-        ...createSheetsTools(),
+        ...createSheetsTools(context),
         ...createNoteTools(context),
       };
     case "web":
