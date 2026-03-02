@@ -112,7 +112,7 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
           count: count(),
           lastTs: sql<string>`max(${messages.createdAt})`,
           workspaceMessages: sql<number>`count(*) filter (where ${messages.channelType} != 'dm')`,
-          dmMessages: sql<number>`count(*) filter (where ${messages.channelType} = 'dm' and ${messages.role} = 'user')`,
+          dmMessages: sql<number>`count(*) filter (where ${messages.channelType} = 'dm')`,
           lastDmInteraction: sql<string>`max(${messages.createdAt}) filter (where ${messages.channelType} = 'dm')`,
         })
         .from(messages)
