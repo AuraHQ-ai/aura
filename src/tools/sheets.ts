@@ -19,12 +19,7 @@ function extractGidFromUrl(input: string): number | null {
 }
 
 async function getAccessToken(): Promise<string | null> {
-  const { getOAuth2Client, getRefreshToken } = await import(
-    "../lib/gmail.js"
-  );
-  const refreshToken = await getRefreshToken();
-  if (!refreshToken) return null;
-
+  const { getOAuth2Client } = await import("../lib/gmail.js");
   const client = await getOAuth2Client();
   if (!client) return null;
 

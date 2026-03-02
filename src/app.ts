@@ -369,7 +369,7 @@ app.post("/api/slack/interactions", async (c) => {
 
 app.get("/api/oauth/google/auth-url", async (c) => {
   const userId = c.req.query("user_id");
-  const { generateAuthUrl, generateAuthUrlForUser } = await import("./lib/gmail.js");
+  const { generateAuthUrlForUser } = await import("./lib/gmail.js");
 
   if (userId) {
     const authHeader = c.req.header("authorization") || "";
@@ -379,7 +379,8 @@ app.get("/api/oauth/google/auth-url", async (c) => {
     }
   }
 
-  const url = userId ? generateAuthUrlForUser(userId) : generateAuthUrl();
+  const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
+  const url = generateAuthUrlForUser(resolvedUserId);
   if (!url) return c.json({ error: "Gmail OAuth not configured" }, 500);
 
   return c.json({
@@ -394,7 +395,7 @@ app.get("/api/oauth/google/callback", async (c) => {
   const code = c.req.query("code");
   if (!code) return c.json({ error: "No auth code received" }, 400);
 
-  // Parse state to check for user_id (multi-user OAuth flow)
+  // Parse state to get user_id — always required now
   const stateParam = c.req.query("state");
   let userId: string | undefined;
   if (stateParam) {
@@ -407,44 +408,29 @@ app.get("/api/oauth/google/callback", async (c) => {
     }
   }
 
-  const { exchangeCodeForTokens, saveRefreshToken, saveUserRefreshToken } = await import("./lib/gmail.js");
+  // Fallback for legacy auth URLs without state
+  if (!userId) {
+    userId = process.env.AURA_BOT_USER_ID || "aura";
+  }
+
+  const { exchangeCodeForTokens, saveUserRefreshToken } = await import("./lib/gmail.js");
   const result = await exchangeCodeForTokens(code);
   if (!result.refreshToken) return c.json({ error: "Token exchange failed", detail: result.error || "No refresh token returned" }, 500);
 
-  // Multi-user flow: save to oauth_tokens table
-  if (userId) {
-    try {
-      await saveUserRefreshToken(userId, result.refreshToken, result.email);
-      logger.info("User OAuth refresh token saved to database", { userId, email: result.email });
-      return c.json({
-        success: true,
-        message: `Gmail connected for user ${userId}! Refresh token saved. Aura can now access this Gmail account.`,
-      });
-    } catch (saveError: any) {
-      logger.error("Failed to save user refresh token", { userId, error: saveError.message });
-      return c.json({
-        success: false,
-        error: `Failed to save token for user ${userId}: ${saveError.message}`,
-      }, 500);
-    }
-  }
-
-  // Default flow: save to settings table (backward compatible — aura@realadvisor.com)
+  // Always save to oauth_tokens table, keyed by (user_id, provider)
   try {
-    await saveRefreshToken(result.refreshToken);
-    logger.info("OAuth refresh token saved to database");
+    await saveUserRefreshToken(userId, result.refreshToken, result.email);
+    logger.info("OAuth refresh token saved to oauth_tokens", { userId, email: result.email });
     return c.json({
       success: true,
-      message: "Gmail connected! Refresh token saved to database. Email is active immediately — no redeploy needed.",
+      message: `Gmail connected for ${userId}! Refresh token saved. Active immediately — no redeploy needed.`,
     });
   } catch (saveError: any) {
-    logger.error("Failed to save refresh token to database", { error: saveError.message });
+    logger.error("Failed to save refresh token to oauth_tokens", { userId, error: saveError.message });
     return c.json({
-      success: true,
-      refresh_token: result.refreshToken,
-      instructions:
-        "Auto-save to database failed. Add this refresh token as GOOGLE_EMAIL_REFRESH_TOKEN in Vercel env vars, then redeploy.",
-    });
+      success: false,
+      error: `Failed to save token: ${saveError.message}`,
+    }, 500);
   }
 });
 
