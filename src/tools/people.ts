@@ -283,6 +283,14 @@ export function createPeopleTools(context?: ScheduleContext) {
           let resolvedId: string;
 
           if (person_id) {
+            const [exists] = await db
+              .select({ id: people.id })
+              .from(people)
+              .where(eq(people.id, person_id))
+              .limit(1);
+            if (!exists) {
+              return { ok: false as const, error: `Person ${person_id} not found` };
+            }
             resolvedId = person_id;
           } else {
             const matched = await findPeople(query!.trim());
