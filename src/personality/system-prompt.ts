@@ -8,6 +8,16 @@ import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
 
+export interface MentionedPerson {
+  slackUserId: string;
+  displayName: string | null;
+  gender: string | null;
+  preferredLanguage: string | null;
+  jobTitle: string | null;
+  managerName: string | null;
+  notes: string | null;
+}
+
 interface SystemPromptContext {
   /** Retrieved memories relevant to this conversation */
   memories: Memory[];
@@ -23,6 +33,8 @@ interface SystemPromptContext {
   threadContext?: string;
   /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
   isChannelHistory?: boolean;
+  /** People @mentioned in the current message, looked up from the people DB */
+  mentionedPeople?: MentionedPerson[];
 }
 
 /**
@@ -285,6 +297,24 @@ function formatUserProfile(profile: UserProfile): string {
 }
 
 /**
+ * Format @mentioned people for compact injection into the conversation layer.
+ */
+function formatMentionedPeople(people: MentionedPerson[]): string {
+  if (!people.length) return '';
+  const lines = people.map(p => {
+    const parts = [`<@${p.slackUserId}>`];
+    if (p.displayName) parts.push(p.displayName);
+    if (p.gender) parts.push(p.gender);
+    if (p.preferredLanguage) parts.push(`lang: ${p.preferredLanguage}`);
+    if (p.jobTitle) parts.push(p.jobTitle);
+    if (p.managerName) parts.push(`reports to: ${p.managerName}`);
+    if (p.notes) parts.push(p.notes);
+    return `- ${parts.join(' | ')}`;
+  });
+  return `\n## Mentioned people\n${lines.join('\n')}`;
+}
+
+/**
  * Format retrieved conversation threads for injection into the prompt.
  */
 function formatConversations(conversations: ConversationThread[]): string {
@@ -418,6 +448,11 @@ export async function buildSystemPrompt(
   // User profile (if available)
   if (context.userProfile) {
     conversationParts.push(formatUserProfile(context.userProfile));
+  }
+
+  // Mentioned people context (from people DB)
+  if (context.mentionedPeople?.length) {
+    conversationParts.push(formatMentionedPeople(context.mentionedPeople));
   }
 
   // Retrieved memories
