@@ -162,6 +162,13 @@
       "when": 1772620800000,
       "tag": "0022_simplify_people_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1772707200000,
+      "tag": "0023_add_pg_trgm_extension",
+      "breakpoints": true
     }
   ]
 }
