@@ -17,6 +17,34 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const SLACK_ID_RE = /^U[A-Z0-9]+$/;
 const E164_RE = /^\+[1-9]\d{1,14}$/;
 
+interface RawPersonRow {
+  id: string;
+  display_name: string | null;
+  slack_user_id: string | null;
+  job_title: string | null;
+  gender: string | null;
+  preferred_language: string | null;
+  birthdate: string | null;
+  manager_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapRawPerson(row: RawPersonRow): typeof people.$inferSelect {
+  return {
+    id: row.id,
+    displayName: row.display_name,
+    slackUserId: row.slack_user_id,
+    jobTitle: row.job_title,
+    gender: row.gender,
+    preferredLanguage: row.preferred_language,
+    birthdate: row.birthdate ? new Date(row.birthdate) : null,
+    managerId: row.manager_id,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
 interface PersonResult {
   id: string;
   display_name: string | null;
@@ -133,7 +161,8 @@ async function findPeople(query: string): Promise<(typeof people.$inferSelect)[]
     LIMIT 3
   `);
 
-  return (rows.rows ?? rows) as unknown as (typeof people.$inferSelect)[];
+  const rawRows = ((rows as any).rows ?? rows) as RawPersonRow[];
+  return rawRows.map(mapRawPerson);
 }
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
