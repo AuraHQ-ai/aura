@@ -1,13 +1,10 @@
 import { WebClient } from "@slack/web-api";
-import { generateText, stepCountIs } from "ai";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
-import { getMainModel, getEscalationModel, withCacheControl } from "../lib/ai.js";
-import { createSlackTools } from "../tools/slack.js";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
-import { createHeadlessPrepareStep, HEADLESS_STEP_LIMIT } from "../pipeline/prepare-step.js";
+import { createHeadlessAgent } from "../lib/agents.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -150,27 +147,17 @@ export async function executeJob(
       });
     }
 
-    const { modelId, model } = await getMainModel();
-
-    const slackTools = createSlackTools(slackClient, {
-      userId: job.requestedBy,
-      channelId: job.channelId || undefined,
-      threadTs: job.threadTs || undefined,
+    const { agent } = await createHeadlessAgent({
+      slackClient,
+      context: {
+        userId: job.requestedBy,
+        channelId: job.channelId || undefined,
+        threadTs: job.threadTs || undefined,
+      },
+      systemPrompt,
     });
 
-    const generateResult = await generateText({
-      model,
-      system: withCacheControl(systemPrompt),
-      prompt,
-      tools: slackTools,
-      stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
-      prepareStep: createHeadlessPrepareStep({
-        stablePrefix: systemPrompt,
-        modelId,
-        defaultEffort: "medium",
-        getEscalationModel,
-      }),
-    });
+    const generateResult = await agent.generate({ prompt });
 
     const { text, steps, totalUsage: usage } = generateResult;
 

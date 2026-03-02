@@ -1,14 +1,12 @@
-import { generateText, stepCountIs, type ToolSet } from "ai";
+import { type ToolSet, type LanguageModel } from "ai";
 import { logger } from "./logger.js";
-
-/** Model type accepted by generateText */
-type GenerateTextModel = Parameters<typeof generateText>[0]["model"];
+import { createSubAgent } from "./agents.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface SubagentConfig {
   /** Model to use for the subagent (e.g. fast model for triage, main model for investigation) */
-  model: GenerateTextModel;
+  model: LanguageModel;
   /** Subset of tools the subagent can use */
   tools: ToolSet;
   /** System prompt scoped to the subagent's task */
@@ -43,7 +41,7 @@ export interface SubagentResult {
  * tools and their own context window. The parent agent only sees the compressed
  * result, keeping its context clean for the broader conversation.
  *
- * Uses `generateText` (non-streaming) with its own tool loop.
+ * Uses a `ToolLoopAgent` with `.generate()` (non-streaming) for its own tool loop.
  */
 export async function runSubagent(config: SubagentConfig): Promise<SubagentResult> {
   const {
@@ -62,13 +60,8 @@ export async function runSubagent(config: SubagentConfig): Promise<SubagentResul
     promptLength: userPrompt.length,
   });
 
-  const result = await generateText({
-    model,
-    system: systemPrompt,
-    prompt: userPrompt,
-    tools,
-    stopWhen: stepCountIs(maxSteps),
-  });
+  const agent = createSubAgent({ model, tools, systemPrompt, maxSteps });
+  const result = await agent.generate({ prompt: userPrompt });
 
   const { text, steps, totalUsage: usage } = result;
 
