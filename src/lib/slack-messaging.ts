@@ -27,6 +27,12 @@ export function isMsgTooLong(error: any): boolean {
   return msg.includes("msg_too_long") || code === "msg_too_long";
 }
 
+export function isInvalidArguments(error: any): boolean {
+  const msg = error?.message || "";
+  const code = error?.data?.error || "";
+  return msg.includes("invalid_arguments") || code === "invalid_arguments";
+}
+
 const MSG_TRUNCATE_LIMIT = 39_000;
 
 /**
@@ -36,7 +42,7 @@ const MSG_TRUNCATE_LIMIT = 39_000;
  *
  * Retry logic:
  * 1. Try posting with blocks (if provided)
- * 2. If `invalid_blocks` or `channel_type_not_supported`: retry WITHOUT blocks (plain text only)
+ * 2. If `invalid_blocks`, `invalid_arguments`, or `channel_type_not_supported`: retry WITHOUT blocks and metadata
  * 3. If the plain-text retry also gets `channel_type_not_supported`: log warning, don't crash
  * 4. If `msg_too_long` on retry: truncate text and retry once more
  * 5. All other errors: re-throw
@@ -69,11 +75,18 @@ export async function safePostMessage(
   } catch (err: any) {
     const hasBlocks = blocks && blocks.length > 0;
 
-    if ((isInvalidBlocks(err) || isChannelTypeNotSupported(err)) && hasBlocks) {
-      logger.warn("safePostMessage: retrying without blocks", {
+    if ((isInvalidBlocks(err) || isInvalidArguments(err) || isChannelTypeNotSupported(err)) && hasBlocks) {
+      const stripMetadata = isInvalidArguments(err);
+      const fallbackReason = isInvalidArguments(err)
+        ? "invalid_arguments"
+        : isInvalidBlocks(err)
+          ? "invalid_blocks"
+          : "channel_type_not_supported";
+
+      logger.warn("safePostMessage: retrying without blocks" + (stripMetadata ? " and metadata" : ""), {
         channel,
         originalError: err?.data?.error || err?.message,
-        fallbackReason: isInvalidBlocks(err) ? "invalid_blocks" : "channel_type_not_supported",
+        fallbackReason,
       });
 
       try {
@@ -81,7 +94,7 @@ export async function safePostMessage(
           channel,
           text,
           thread_ts,
-          metadata,
+          ...(!stripMetadata && metadata ? { metadata } : {}),
           unfurl_links,
           unfurl_media,
         });
@@ -119,6 +132,28 @@ export async function safePostMessage(
           }
         }
 
+        throw retryErr;
+      }
+    }
+
+    if (isInvalidArguments(err) && !hasBlocks) {
+      logger.warn("safePostMessage: invalid_arguments, retrying without metadata", {
+        channel,
+        originalError: err?.data?.error || err?.message,
+      });
+      try {
+        const result = await client.chat.postMessage({
+          channel,
+          text,
+          thread_ts,
+          unfurl_links,
+          unfurl_media,
+        });
+        return { ok: true, ts: result.ts, channel: result.channel };
+      } catch (retryErr: any) {
+        if (isChannelTypeNotSupported(retryErr)) {
+          return { ok: false };
+        }
         throw retryErr;
       }
     }
