@@ -434,7 +434,7 @@ export async function sendEmail(
 
   const raw = base64UrlEncode(
     buildMimeMessage(to, subject, body, options, undefined, undefined,
-      fromEmail ? { from: fromEmail } : undefined,
+      fromEmail ? { from: fromEmail, includeSignature: false } : undefined,
       options?.attachments),
   );
 
@@ -618,7 +618,7 @@ export async function replyToEmail(
       replyToMessageId: originalMessageId,
       threadId,
     }, undefined, undefined,
-      fromEmail ? { from: fromEmail } : undefined,
+      fromEmail ? { from: fromEmail, includeSignature: false } : undefined,
     ),
   );
 
