@@ -17,6 +17,7 @@ import { createEmailTools, createGmailEATools } from "./email.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
 import { createDriveTools } from "./drive.js";
+import { createPeopleTools } from "./people.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import type { ScheduleContext } from "../db/schema.js";
@@ -2967,6 +2968,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Voice & SMS Tools (ElevenLabs + Twilio) ─────────────────────
     ...createVoiceTools(client, context),
+
+    // ── People Data Tools (structured person records) ────────────────
+    ...createPeopleTools(context),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
@@ -3006,6 +3010,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     "checkpoint_plan",
     // Subagent
     "run_subagent",
+    // People
+    "get_person", "update_person",
   ]);
 
   const deferOpts = { anthropic: { deferLoading: true } };
