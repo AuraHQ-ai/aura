@@ -1,4 +1,4 @@
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   people,
@@ -42,10 +42,19 @@ export async function createPersonWithAddress(
     personValues.slackUserId = normalised;
   }
 
-  const [person] = await db
+  const insertQuery = db
     .insert(people)
-    .values(personValues as typeof people.$inferInsert)
-    .returning();
+    .values(personValues as typeof people.$inferInsert);
+
+  const [person] = personValues.slackUserId
+    ? await insertQuery
+        .onConflictDoUpdate({
+          target: people.slackUserId,
+          targetWhere: sql`slack_user_id IS NOT NULL`,
+          set: { updatedAt: new Date() },
+        })
+        .returning()
+    : await insertQuery.returning();
 
   try {
     const insertedAddress = await db
