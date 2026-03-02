@@ -97,6 +97,18 @@ function getRedirectUri(): string {
 }
 
 /**
+ * Create a bare OAuth2Client with client ID, secret, and redirect URI.
+ * No credentials are set. Returns null if env vars are missing.
+ */
+async function createBaseOAuth2Client() {
+  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  const { OAuth2Client } = await import("google-auth-library");
+  return new OAuth2Client(clientId, clientSecret, getRedirectUri());
+}
+
+/**
  * Get an authenticated OAuth2Client for a given user.
  * No args = Aura's own token. Pass a userId for per-user tokens.
  *
@@ -104,13 +116,6 @@ function getRedirectUri(): string {
  * falls back to the legacy settings table and auto-migrates the token.
  */
 export async function getOAuth2Client(userId?: string) {
-  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    return null;
-  }
-
   const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
   let tokenRow = await getUserRefreshToken(resolvedUserId);
 
@@ -136,12 +141,8 @@ export async function getOAuth2Client(userId?: string) {
 
   if (!tokenRow) return null;
 
-  const { OAuth2Client } = await import("google-auth-library");
-  const oauth2Client = new OAuth2Client(
-    clientId,
-    clientSecret,
-    getRedirectUri(),
-  );
+  const oauth2Client = await createBaseOAuth2Client();
+  if (!oauth2Client) return null;
   oauth2Client.setCredentials({ refresh_token: tokenRow.refreshToken });
 
   return oauth2Client;
@@ -654,7 +655,7 @@ export async function replyToEmail(
 export async function exchangeCodeForTokens(
   code: string,
 ): Promise<{ refreshToken: string | null; email?: string; error?: string }> {
-  const auth = await getOAuth2Client();
+  const auth = await createBaseOAuth2Client();
   if (!auth) return { refreshToken: null, error: "OAuth client not configured" };
 
   try {
@@ -789,15 +790,20 @@ export async function saveUserRefreshToken(
  * Returns null if the user has not authorized or credentials are missing.
  */
 export async function getGmailClientForUser(userId: string) {
-  const oauth2Client = await getOAuth2Client(userId);
-  if (!oauth2Client) {
-    logger.warn("Gmail: No OAuth client available for user", { userId });
+  const userToken = await getUserRefreshToken(userId);
+  if (!userToken) {
+    logger.warn("Gmail: No OAuth token for user", { userId });
     return null;
   }
 
-  const userToken = await getUserRefreshToken(userId);
-  const email = userToken?.email ?? null;
+  const oauth2Client = await createBaseOAuth2Client();
+  if (!oauth2Client) {
+    logger.warn("Gmail: OAuth client not configured");
+    return null;
+  }
+  oauth2Client.setCredentials({ refresh_token: userToken.refreshToken });
 
+  const email = userToken.email ?? null;
   const { gmail } = await import("@googleapis/gmail");
   const client = gmail({ version: "v1", auth: oauth2Client });
   return { client, email, oauth2Client };
