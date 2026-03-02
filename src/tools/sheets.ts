@@ -72,6 +72,41 @@ async function resolveSlackUserId(
   }
 }
 
+const AURA_BOT_USER_ID = "U0AFEC1C69F";
+
+async function resolveEffectiveUserId(
+  userName: string | undefined,
+  context?: ScheduleContext,
+): Promise<{ userId: string | undefined; error?: string }> {
+  if (userName) {
+    const slackId = await resolveSlackUserId(userName);
+    if (!slackId) {
+      return {
+        userId: undefined,
+        error: `Could not resolve Slack user '${userName}'. Make sure they exist in the workspace.`,
+      };
+    }
+    return { userId: slackId };
+  }
+  if (context?.userId) {
+    return { userId: context.userId };
+  }
+  return { userId: undefined };
+}
+
+function getSheetsNoAccessError(
+  userName: string | undefined,
+  context?: ScheduleContext,
+): string {
+  if (userName) {
+    return `No Google Sheets access for '${userName}'. They may need to authorize Aura via OAuth first.`;
+  }
+  if (context?.userId) {
+    return "You need to connect your Google account first. Ask me to generate an auth link.";
+  }
+  return "Google OAuth is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and a refresh token with spreadsheets.readonly scope.";
+}
+
 interface SheetMetadata {
   properties: { title: string; sheetId: number };
 }
@@ -108,7 +143,7 @@ export function createSheetsTools(context?: ScheduleContext) {
   return {
     read_google_sheet: defineTool({
       description:
-        "Read data from a Google Sheets spreadsheet. Defaults to Aura's access. Set user_name to read via another user's OAuth token. Accepts a spreadsheet ID or a full Google Sheets URL. Returns headers and rows.",
+        "Read data from a Google Sheets spreadsheet. Defaults to the caller's account. Set user_name to access another user's sheets (requires their OAuth access). Accepts a spreadsheet ID or a full Google Sheets URL. Returns headers and rows.",
       inputSchema: z.object({
         spreadsheet_id: z
           .string()
@@ -131,29 +166,22 @@ export function createSheetsTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Read using this user's Google access instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+            "Access another user's sheets instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
           ),
       }),
       execute: async ({ spreadsheet_id, range, max_rows, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const userId = await resolveSlackUserId(user_name);
-            if (!userId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const token = await getAccessToken(resolvedUserId);
           if (!token) {
             return {
               ok: false,
-              error:
-                "Google OAuth is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and a refresh token with spreadsheets.readonly scope.",
+              error: getSheetsNoAccessError(user_name, context),
             };
           }
 
