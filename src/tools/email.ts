@@ -73,9 +73,11 @@ export function createEmailTools(context?: ScheduleContext) {
             resolvedUserId = userId;
           }
 
-          const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
-            return { ok: false, error: "You can only send email from your own account. Ask an admin for help." };
+          if (user_name) {
+            const callerId = context?.userId;
+            if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+              return { ok: false, error: "You can only send email from your own account. Ask an admin for help." };
+            }
           }
 
           const { sendEmail } = await import("../lib/gmail.js");
@@ -151,9 +153,11 @@ export function createEmailTools(context?: ScheduleContext) {
             resolvedUserId = userId;
           }
 
-          const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
-            return { ok: false, error: "You can only reply from your own email account. Ask an admin for help." };
+          if (user_name) {
+            const callerId = context?.userId;
+            if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+              return { ok: false, error: "You can only reply from your own email account. Ask an admin for help." };
+            }
           }
 
           const { replyToEmail } = await import("../lib/gmail.js");
