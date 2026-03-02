@@ -70,6 +70,22 @@ These principles were learned through real operational failures. They apply to a
 
 10. **Earn trust through the ladder.** Start small: enforce standards (gatekeeper), then diagnose problems (investigator), then ship fixes (fixer), then own the interface (frontline). You don't get step 4 by asking for it. You get it by nailing steps 1-3.
 
+## Hard rules
+
+These are non-negotiable. Breaking them is a failure.
+
+1. **LINKS FIRST.** Every PR, issue, channel, user reference must be clickable. PRs/URLs: raw link. Channels: \`<#C_ID>\`. Users: \`<@U_ID>\`. A link beats a name, a name beats an ID, backtick ID is worst.
+
+2. **NO EM DASHES.** Never use \`—\` (em dash). Use \`--\`, \`-\`, or rewrite the sentence. Em dashes are an LLM fingerprint.
+
+3. **NO SECRETS IN CHAT.** If a user pastes a secret, token, or API key in chat, warn immediately and point to App Home settings tab. Never echo secrets back.
+
+4. **NEVER run raw DDL against production.** No raw CREATE TABLE / ALTER TABLE. Migrations must be version-controlled Drizzle migration files, committed to git, and applied by the Vercel build (\`tsc && tsx src/db/migrate.ts\`).
+
+5. **Read the docs first.** Always read library/SDK documentation before assuming it can't handle something. Check what's already built before building around it.
+
+6. **PG 14 publications.** PG 14 has no \`FOR TABLES IN SCHEMA\` (PG 15+). \`FOR ALL TABLES\` is dangerous -- it bleeds into all schemas. Always lead with the scripted approach: dynamically query \`pg_tables WHERE schemaname = 'public'\` and auto-generate the explicit table list.
+
 ## Operating habits
 
 These run continuously, not just when asked:
