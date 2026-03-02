@@ -1,15 +1,14 @@
-import { streamText, stepCountIs } from "ai";
+import { streamText } from "ai";
 import type { WebClient } from "@slack/web-api";
-import { getMainModel, getEscalationModel, buildCachedSystemMessages } from "../lib/ai.js";
-import { createSlackTools } from "../tools/slack.js";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { formatForSlack, prettifyAndWrapTable } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
 import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLong } from "../lib/slack-messaging.js";
-import { createInteractivePrepareStep, STEP_LIMIT } from "./prepare-step.js";
 import { getSlackMeta } from "../lib/tool.js";
+import { createInteractiveAgent } from "../lib/agents.js";
+import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -243,8 +242,6 @@ export async function generateResponse(
 ): Promise<LLMResponse> {
   const start = Date.now();
   const { slackClient, channelId, threadTs } = options;
-
-  const { modelId, model } = await getMainModel();
   const hasFiles = options.files && options.files.length > 0;
 
   // ── Smart routing: skip streaming when it's known to fail ──────────
@@ -385,26 +382,16 @@ export async function generateResponse(
   // Slack stream keepalive — sends minimal payload to prevent ~30s idle timeout
   let streamKeepAlive: ReturnType<typeof setInterval> | null = null;
 
-  // ── Build stream options ─────────────────────────────────────────────
-  const systemMessages = buildCachedSystemMessages(
-    options.stablePrefix,
-    options.conversationContext,
-    options.dynamicContext,
-  );
+  // ── Build agent ──────────────────────────────────────────────────────
+  const { agent, tools, modelId } = await createInteractiveAgent({
+    slackClient: options.slackClient,
+    context: options.context,
+    stablePrefix: options.stablePrefix,
+    conversationContext: options.conversationContext,
+    dynamicContext: options.dynamicContext,
+  });
 
-  const streamOptions: any = {
-    model,
-    system: systemMessages,
-    tools: createSlackTools(options.slackClient, options.context),
-    stopWhen: stepCountIs(STEP_LIMIT),
-    prepareStep: createInteractivePrepareStep({
-      stablePrefix: options.stablePrefix,
-      conversationContext: options.conversationContext,
-      dynamicContext: options.dynamicContext,
-      modelId,
-      defaultEffort: "medium",
-      getEscalationModel,
-    }),
+  const streamCallOptions: Record<string, any> = {
     abortSignal: abortController.signal,
   };
 
@@ -413,15 +400,15 @@ export async function generateResponse(
       { type: "text", text: options.userMessage },
       ...options.files!,
     ];
-    streamOptions.messages = [{ role: "user", content }];
+    streamCallOptions.messages = [{ role: "user", content }];
   } else {
-    streamOptions.prompt = options.userMessage;
+    streamCallOptions.prompt = options.userMessage;
   }
 
   logger.info("Starting LLM stream", {
-    model: model.modelId || "unknown",
+    model: modelId || "unknown",
     hasFiles,
-    toolCount: Object.keys(streamOptions.tools || {}).length,
+    toolCount: Object.keys(tools || {}).length,
     promptLength: options.stablePrefix.length + options.conversationContext.length,
   });
 
@@ -546,7 +533,7 @@ export async function generateResponse(
   }
 
   try {
-    const result = streamText(streamOptions);
+    const result = await agent.stream(streamCallOptions as any);
 
     for await (const chunk of result.fullStream) {
       resetTimer();
@@ -632,7 +619,7 @@ export async function generateResponse(
             }
           }
 
-          const slackMeta = getSlackMeta(streamOptions.tools[chunk.toolName]);
+          const slackMeta = getSlackMeta(tools[chunk.toolName]);
           const title = slackMeta?.status ?? "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
           const details = slackMeta?.detail?.(inputArgs);
@@ -677,7 +664,7 @@ export async function generateResponse(
         }
 
         case "tool-result": {
-          const resultSlackMeta = getSlackMeta(streamOptions.tools[chunk.toolName]);
+          const resultSlackMeta = getSlackMeta(tools[chunk.toolName]);
           const title = resultSlackMeta?.status ?? "Done";
           const output = chunk.output;
           const isError = output && typeof output === "object" &&
@@ -691,8 +678,9 @@ export async function generateResponse(
             pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
           }
 
+          const outputAny = output as any;
           const taskOutput = resultSlackMeta?.output?.(output)
-            ?? (isError && output.error ? String(output.error) : undefined);
+            ?? (isError && outputAny.error ? String(outputAny.error) : undefined);
           const sources = resultSlackMeta?.sources?.(output);
 
           const toolResultPayload = {
@@ -738,7 +726,7 @@ export async function generateResponse(
         case "tool-error": {
           const errToolName = (chunk as any).toolName;
           const errToolCallId = (chunk as any).toolCallId;
-          const errSlackMeta = getSlackMeta(streamOptions.tools[errToolName]);
+          const errSlackMeta = getSlackMeta(tools[errToolName]);
           const title = errSlackMeta?.status ?? "Failed";
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
@@ -977,15 +965,19 @@ export async function generateResponse(
         retryAbortController.abort();
       }, 180_000);
 
-      const retryOptions: any = {
-        model,
-        system: systemMessages,
-        prompt: retryPrompt,
-        abortSignal: retryAbortController.signal,
-      };
-
       try {
-        const retryResult = streamText(retryOptions);
+        const { model: retryModel } = await getMainModel();
+        const retrySystemMessages = buildCachedSystemMessages(
+          options.stablePrefix,
+          options.conversationContext,
+          options.dynamicContext,
+        );
+        const retryResult = streamText({
+          model: retryModel,
+          system: retrySystemMessages,
+          prompt: retryPrompt,
+          abortSignal: retryAbortController.signal,
+        });
         let retryText = "";
 
         for await (const chunk of retryResult.fullStream) {
