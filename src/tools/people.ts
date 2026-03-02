@@ -428,13 +428,25 @@ async function upsertPrimaryAddress(
       .set({ value, isPrimary: true })
       .where(eq(addresses.id, existing[0].id));
   } else {
-    const inserted = await db
-      .insert(addresses)
-      .values({ personId, channel, value, isPrimary: true })
-      .onConflictDoNothing()
-      .returning({ id: addresses.id });
-    if (inserted.length === 0) {
-      throw new Error(`Address ${value} is already assigned to another person`);
+    const byChannelValue = await db
+      .select()
+      .from(addresses)
+      .where(and(eq(addresses.channel, channel), eq(addresses.value, value)))
+      .limit(1);
+
+    if (byChannelValue.length > 0) {
+      if (byChannelValue[0].personId === personId) {
+        await db
+          .update(addresses)
+          .set({ isPrimary: true })
+          .where(eq(addresses.id, byChannelValue[0].id));
+      } else {
+        throw new Error(`Address ${value} is already assigned to another person`);
+      }
+    } else {
+      await db
+        .insert(addresses)
+        .values({ personId, channel, value, isPrimary: true });
     }
   }
 }
