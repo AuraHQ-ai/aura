@@ -336,15 +336,41 @@ export function createPeopleTools(context?: ScheduleContext) {
           }
 
           if (add_address) {
-            await db
-              .insert(addresses)
-              .values({
+            const normalizedValue =
+              add_address.channel === "email"
+                ? add_address.value.toLowerCase()
+                : add_address.value;
+
+            const existingAddr = await db
+              .select()
+              .from(addresses)
+              .where(
+                and(
+                  eq(addresses.channel, add_address.channel),
+                  eq(addresses.value, normalizedValue),
+                ),
+              )
+              .limit(1);
+
+            if (existingAddr.length > 0 && existingAddr[0].personId !== resolvedId) {
+              throw new Error(
+                `Address ${normalizedValue} is already assigned to another person`,
+              );
+            }
+
+            if (existingAddr.length === 0) {
+              await db.insert(addresses).values({
                 personId: resolvedId,
                 channel: add_address.channel,
-                value: add_address.value,
+                value: normalizedValue,
                 isPrimary: add_address.is_primary ?? false,
-              })
-              .onConflictDoNothing();
+              });
+            } else if (add_address.is_primary && !existingAddr[0].isPrimary) {
+              await db
+                .update(addresses)
+                .set({ isPrimary: true })
+                .where(eq(addresses.id, existingAddr[0].id));
+            }
           }
 
           if (remove_address) {
