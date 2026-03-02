@@ -12,6 +12,7 @@ import {
   uniqueIndex,
   serial,
   vector,
+  date,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -154,14 +155,28 @@ export const userProfiles = pgTable(
 
 // ── People ─────────────────────────────────────────────────────────────────
 
-export const people = pgTable("people", {
-  id: uuid("id")
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  displayName: text("display_name"),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-});
+export const people = pgTable(
+  "people",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    displayName: text("display_name"),
+    slackUserId: text("slack_user_id"),
+    jobTitle: text("job_title"),
+    gender: text("gender"),
+    preferredLanguage: text("preferred_language"),
+    birthdate: date("birthdate", { mode: "date" }),
+    managerId: uuid("manager_id").references((): any => people.id),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("people_slack_user_id_idx")
+      .on(table.slackUserId)
+      .where(sql`slack_user_id IS NOT NULL`),
+  ],
+);
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
@@ -176,9 +191,7 @@ export const addresses = pgTable(
       .references(() => people.id),
     channel: text("channel").notNull(),
     value: text("value").notNull(),
-    confidence: real("confidence").default(1.0),
-    source: text("source"),
-    verifiedAt: timestamptz("verified_at"),
+    isPrimary: boolean("is_primary").notNull().default(false),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
