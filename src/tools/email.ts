@@ -1,6 +1,10 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
+import { isAdmin } from "../lib/permissions.js";
+import type { ScheduleContext } from "../db/schema.js";
+
+const AURA_BOT_USER_ID = "U0AFEC1C69F";
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -8,11 +12,11 @@ import { logger } from "../lib/logger.js";
  * Create email tools for the AI SDK.
  * Uses dynamic import for gmail.js to avoid loading googleapis on every request.
  */
-export function createEmailTools() {
+export function createEmailTools(context?: ScheduleContext) {
   return {
     send_email: defineTool({
       description:
-        "Send an email from aura@realadvisor.com. Use for external communication, follow-ups, outreach, and reports. Never send emails without being asked or having a clear reason (job, follow-up, etc.). Body is sent as plain text — keep it professional but conversational, same tone as Slack. DM privacy applies: don't email someone's private Slack DM content to others. Supports optional file attachments (base64-encoded).",
+        "Send an email. Defaults to sending from aura@realadvisor.com. Set user_name to send from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Use for external communication, follow-ups, outreach, and reports. Never send emails without being asked or having a clear reason (job, follow-up, etc.). Body is sent as plain text — keep it professional but conversational, same tone as Slack. DM privacy applies: don't email someone's private Slack DM content to others. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
         to: z.string().describe("Recipient email address"),
         subject: z.string().describe("Email subject line"),
@@ -27,6 +31,12 @@ export function createEmailTools() {
           .string()
           .optional()
           .describe("Thread ID for reply threading"),
+        user_name: z
+          .string()
+          .optional()
+          .describe(
+            "Send from this user's account instead of Aura. The display name, real name, or username, e.g. 'Joan' or '@joan'. Omit to send from aura@realadvisor.com.",
+          ),
         attachments: z
           .array(
             z.object({
@@ -46,36 +56,45 @@ export function createEmailTools() {
         bcc,
         reply_to_message_id,
         thread_id,
+        user_name,
         attachments,
       }) => {
         try {
-          const { getGmailClient, sendEmail } = await import(
-            "../lib/gmail.js"
-          );
-          const client = await getGmailClient();
-          if (!client) {
-            return {
-              ok: false,
-              error:
-                "Gmail is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and GOOGLE_EMAIL_REFRESH_TOKEN.",
-            };
+          let resolvedUserId: string = process.env.AURA_BOT_USER_ID || AURA_BOT_USER_ID;
+
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
           }
 
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only send email from your own account. Ask an admin for help." };
+          }
+
+          const { sendEmail } = await import("../lib/gmail.js");
           const result = await sendEmail(to, subject, body, {
             cc,
             bcc,
             replyToMessageId: reply_to_message_id,
             threadId: thread_id,
             attachments,
-          });
+          }, resolvedUserId);
 
           if (!result) {
-            return { ok: false, error: "Failed to send email: no response from Gmail API" };
+            return { ok: false, error: `Failed to send email: no Gmail access for the resolved user. They may need to authorize Aura via OAuth first.` };
           }
 
           logger.info("send_email tool called", {
             to,
             subject,
+            userId: resolvedUserId,
             messageId: result.id,
           });
 
@@ -100,132 +119,8 @@ export function createEmailTools() {
       slack: { status: "Sending email...", detail: (i) => i.to },
     }),
 
-    read_emails: defineTool({
-      description:
-        "Read recent emails from Aura's inbox. Can filter by unread status or search query. Supports pagination: pass page_token from a previous response's next_page_token to fetch the next page.",
-      inputSchema: z.object({
-        query: z
-          .string()
-          .optional()
-          .describe(
-            "Gmail search query, e.g. 'from:someone@example.com' or 'is:unread'",
-          ),
-        max_results: z
-          .number()
-          .optional()
-          .default(10)
-          .describe("Maximum emails to return (max 20)"),
-        unread_only: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe("Only show unread emails"),
-        page_token: z
-          .string()
-          .optional()
-          .describe("Page token from a previous response to fetch the next page of results"),
-      }),
-      execute: async ({ query, max_results, unread_only, page_token }) => {
-        try {
-          const { getGmailClient, listEmails } = await import(
-            "../lib/gmail.js"
-          );
-          const client = await getGmailClient();
-          if (!client) {
-            return {
-              ok: false,
-              error:
-                "Gmail is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and GOOGLE_EMAIL_REFRESH_TOKEN.",
-            };
-          }
-
-          const result = await listEmails({
-            query,
-            maxResults: max_results,
-            unreadOnly: unread_only,
-            pageToken: page_token,
-          });
-
-          if (!result) {
-            return { ok: false, error: "Failed to list emails: no response from Gmail API" };
-          }
-
-          logger.info("read_emails tool called", {
-            query,
-            count: result.emails.length,
-          });
-
-          return {
-            ok: true,
-            emails: result.emails,
-            count: result.emails.length,
-            next_page_token: result.nextPageToken || undefined,
-          };
-        } catch (error: any) {
-          logger.error("read_emails tool failed", {
-            query,
-            error: error.message,
-          });
-          return {
-            ok: false,
-            error: `Failed to read emails: ${error.message}`,
-          };
-        }
-      },
-      slack: { status: "Reading emails...", output: (r) => r.ok === false ? r.error : `${r.emails?.length ?? r.count ?? 0} emails` },
-    }),
-
-    read_email: defineTool({
-      description:
-        "Read the full content of a specific email by its message ID.",
-      inputSchema: z.object({
-        message_id: z.string().describe("The Gmail message ID to read"),
-      }),
-      execute: async ({ message_id }) => {
-        try {
-          const { getGmailClient, getEmail } = await import(
-            "../lib/gmail.js"
-          );
-          const client = await getGmailClient();
-          if (!client) {
-            return {
-              ok: false,
-              error:
-                "Gmail is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and GOOGLE_EMAIL_REFRESH_TOKEN.",
-            };
-          }
-
-          const email = await getEmail(message_id);
-
-          if (!email) {
-            return { ok: false, error: `Email not found: ${message_id}` };
-          }
-
-          logger.info("read_email tool called", {
-            messageId: message_id,
-            subject: email.subject,
-          });
-
-          return {
-            ok: true,
-            email,
-          };
-        } catch (error: any) {
-          logger.error("read_email tool failed", {
-            messageId: message_id,
-            error: error.message,
-          });
-          return {
-            ok: false,
-            error: `Failed to read email: ${error.message}`,
-          };
-        }
-      },
-      slack: { status: "Reading email...", detail: (i) => i.message_id },
-    }),
-
     reply_to_email: defineTool({
-      description: "Reply to an existing email thread. Requires message_id and thread_id from read_emails or read_email.",
+      description: "Reply to an existing email thread. Defaults to replying from aura@realadvisor.com. Set user_name to reply from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Requires message_id and thread_id from read_user_emails or read_user_email.",
       inputSchema: z.object({
         message_id: z
           .string()
@@ -234,29 +129,43 @@ export function createEmailTools() {
           .string()
           .describe("Thread ID for proper threading"),
         body: z.string().describe("Reply body text"),
+        user_name: z
+          .string()
+          .optional()
+          .describe(
+            "Reply from this user's account instead of Aura. The display name, real name, or username, e.g. 'Joan' or '@joan'. Omit to reply from aura@realadvisor.com.",
+          ),
       }),
-      execute: async ({ message_id, thread_id, body }) => {
+      execute: async ({ message_id, thread_id, body, user_name }) => {
         try {
-          const { getGmailClient, replyToEmail } = await import(
-            "../lib/gmail.js"
-          );
-          const client = await getGmailClient();
-          if (!client) {
-            return {
-              ok: false,
-              error:
-                "Gmail is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and GOOGLE_EMAIL_REFRESH_TOKEN.",
-            };
+          let resolvedUserId: string = process.env.AURA_BOT_USER_ID || AURA_BOT_USER_ID;
+
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
           }
 
-          const result = await replyToEmail(message_id, thread_id, body);
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only reply from your own email account. Ask an admin for help." };
+          }
+
+          const { replyToEmail } = await import("../lib/gmail.js");
+          const result = await replyToEmail(message_id, thread_id, body, resolvedUserId);
 
           if (!result) {
-            return { ok: false, error: "Failed to reply to email: no response from Gmail API" };
+            return { ok: false, error: "Failed to reply to email: no Gmail access for the resolved user. They may need to authorize Aura via OAuth first." };
           }
 
           logger.info("reply_to_email tool called", {
             originalMessageId: message_id,
+            userId: resolvedUserId,
             replyId: result.id,
           });
 
@@ -669,17 +578,21 @@ export function createEmailTools() {
 /**
  * Create tools for managing Gmail as an Executive Assistant.
  * These tools operate on behalf of specific users who have granted Aura OAuth access.
+ * Caller identity enforcement: non-admin callers can only access their own email.
  */
-export function createGmailEATools() {
+export function createGmailEATools(context?: ScheduleContext) {
+  const callerDefault = context?.userId || process.env.AURA_BOT_USER_ID || AURA_BOT_USER_ID;
+
   return {
     create_gmail_draft: defineTool({
       description:
-        "Create a draft email in a user's Gmail account. The user must have granted Aura OAuth access first. Supports optional file attachments (base64-encoded).",
+        "Create a draft email in a user's Gmail account. Defaults to the caller's account. The user must have granted Aura OAuth access first. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
         user_name: z
           .string()
+          .optional()
           .describe(
-            "The display name, real name, or username of the Gmail account owner, e.g. 'Joan' or '@joan'",
+            "The display name, real name, or username of the Gmail account owner, e.g. 'Joan' or '@joan'. Defaults to the caller's account.",
           ),
         to: z.string().describe("Recipient email address"),
         subject: z.string().describe("Email subject line"),
@@ -727,16 +640,27 @@ export function createGmailEATools() {
         attachments,
       }) => {
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
-            return {
-              ok: false,
-              error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-            };
+          let resolvedUserId: string;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
+          } else {
+            resolvedUserId = callerDefault;
+          }
+
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
           const { createDraft } = await import("../lib/gmail.js");
-          const result = await createDraft(userId, {
+          const result = await createDraft(resolvedUserId, {
             to,
             subject,
             body,
@@ -752,7 +676,7 @@ export function createGmailEATools() {
           if (!result) {
             return {
               ok: false,
-              error: `No Gmail access for user '${user_name}'. They need to authorize Aura via the OAuth flow first.`,
+              error: `No Gmail access for the resolved user. They need to authorize Aura via the OAuth flow first.`,
             };
           }
 
@@ -760,7 +684,7 @@ export function createGmailEATools() {
             ok: true,
             draft_id: result.draftId,
             message_id: result.messageId,
-            message: `Draft created in ${user_name}'s Gmail: "${subject}" to ${to}`,
+            message: `Draft created: "${subject}" to ${to}`,
           };
         } catch (error: any) {
           logger.error("create_gmail_draft failed", { error: error.message });
@@ -775,12 +699,13 @@ export function createGmailEATools() {
 
     list_gmail_drafts: defineTool({
       description:
-        "List draft emails in a user's Gmail account. The user must have granted Aura OAuth access.",
+        "List draft emails in a user's Gmail account. Defaults to the caller's account. The user must have granted Aura OAuth access.",
       inputSchema: z.object({
         user_name: z
           .string()
+          .optional()
           .describe(
-            "The display name, real name, or username of the Gmail account owner",
+            "The display name, real name, or username of the Gmail account owner. Defaults to the caller's account.",
           ),
         max_results: z
           .number()
@@ -792,21 +717,32 @@ export function createGmailEATools() {
       }),
       execute: async ({ user_name, max_results }) => {
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
-            return {
-              ok: false,
-              error: `Could not resolve Slack user '${user_name}'.`,
-            };
+          let resolvedUserId: string;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'.`,
+              };
+            }
+            resolvedUserId = userId;
+          } else {
+            resolvedUserId = callerDefault;
+          }
+
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
           const { listDrafts } = await import("../lib/gmail.js");
-          const drafts = await listDrafts(userId, max_results);
+          const drafts = await listDrafts(resolvedUserId, max_results);
 
           if (!drafts) {
             return {
               ok: false,
-              error: `No Gmail access for user '${user_name}'. They need to authorize Aura via OAuth first.`,
+              error: `No Gmail access for the resolved user. They need to authorize Aura via OAuth first.`,
             };
           }
 
@@ -828,12 +764,13 @@ export function createGmailEATools() {
 
     read_user_emails: defineTool({
       description:
-        "Read recent emails from a specific user's Gmail inbox. The user must have granted Aura OAuth access. Supports pagination via page_token.",
+        "Read recent emails from a user's Gmail inbox. Defaults to the caller's account. The user must have granted Aura OAuth access. Supports pagination via page_token.",
       inputSchema: z.object({
         user_name: z
           .string()
+          .optional()
           .describe(
-            "The display name, real name, or username of the Gmail account owner",
+            "The display name, real name, or username of the Gmail account owner. Defaults to the caller's account.",
           ),
         query: z
           .string()
@@ -860,16 +797,27 @@ export function createGmailEATools() {
       }),
       execute: async ({ user_name, query, max_results, unread_only, page_token }) => {
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
-            return {
-              ok: false,
-              error: `Could not resolve Slack user '${user_name}'.`,
-            };
+          let resolvedUserId: string;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'.`,
+              };
+            }
+            resolvedUserId = userId;
+          } else {
+            resolvedUserId = callerDefault;
+          }
+
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
           const { readUserEmails } = await import("../lib/gmail.js");
-          const result = await readUserEmails(userId, {
+          const result = await readUserEmails(resolvedUserId, {
             query,
             maxResults: max_results,
             unreadOnly: unread_only,
@@ -879,7 +827,7 @@ export function createGmailEATools() {
           if (!result) {
             return {
               ok: false,
-              error: `No Gmail access for user '${user_name}'. They need to authorize Aura via OAuth first.`,
+              error: `No Gmail access for the resolved user. They need to authorize Aura via OAuth first.`,
             };
           }
 
@@ -902,12 +850,13 @@ export function createGmailEATools() {
 
     read_user_email: defineTool({
       description:
-        "Read the full content of a specific email from a user's Gmail account by message ID.",
+        "Read the full content of a specific email from a user's Gmail account by message ID. Defaults to the caller's account.",
       inputSchema: z.object({
         user_name: z
           .string()
+          .optional()
           .describe(
-            "The display name, real name, or username of the Gmail account owner",
+            "The display name, real name, or username of the Gmail account owner. Defaults to the caller's account.",
           ),
         message_id: z
           .string()
@@ -915,21 +864,32 @@ export function createGmailEATools() {
       }),
       execute: async ({ user_name, message_id }) => {
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
-            return {
-              ok: false,
-              error: `Could not resolve Slack user '${user_name}'.`,
-            };
+          let resolvedUserId: string;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'.`,
+              };
+            }
+            resolvedUserId = userId;
+          } else {
+            resolvedUserId = callerDefault;
+          }
+
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
           const { readUserEmail } = await import("../lib/gmail.js");
-          const email = await readUserEmail(userId, message_id);
+          const email = await readUserEmail(resolvedUserId, message_id);
 
           if (!email) {
             return {
               ok: false,
-              error: `No Gmail access for user '${user_name}', or message not found.`,
+              error: `No Gmail access for the resolved user, or message not found.`,
             };
           }
 
@@ -950,12 +910,13 @@ export function createGmailEATools() {
 
     delete_gmail_draft: defineTool({
       description:
-        "Delete a draft email from a user's Gmail account. The user must have granted Aura OAuth access.",
+        "Delete a draft email from a user's Gmail account. Defaults to the caller's account. The user must have granted Aura OAuth access.",
       inputSchema: z.object({
         user_name: z
           .string()
+          .optional()
           .describe(
-            "The display name, real name, or username of the Gmail account owner",
+            "The display name, real name, or username of the Gmail account owner. Defaults to the caller's account.",
           ),
         draft_id: z
           .string()
@@ -963,27 +924,38 @@ export function createGmailEATools() {
       }),
       execute: async ({ user_name, draft_id }) => {
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
-            return {
-              ok: false,
-              error: `Could not resolve Slack user '${user_name}'.`,
-            };
+          let resolvedUserId: string;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'.`,
+              };
+            }
+            resolvedUserId = userId;
+          } else {
+            resolvedUserId = callerDefault;
+          }
+
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
           const { deleteDraft } = await import("../lib/gmail.js");
-          const success = await deleteDraft(userId, draft_id);
+          const success = await deleteDraft(resolvedUserId, draft_id);
 
           if (!success) {
             return {
               ok: false,
-              error: `No Gmail access for user '${user_name}', or draft not found.`,
+              error: `No Gmail access for the resolved user, or draft not found.`,
             };
           }
 
           return {
             ok: true,
-            message: `Draft ${draft_id} deleted from ${user_name}'s Gmail.`,
+            message: `Draft ${draft_id} deleted.`,
           };
         } catch (error: any) {
           logger.error("delete_gmail_draft failed", { error: error.message });
@@ -998,12 +970,13 @@ export function createGmailEATools() {
 
     download_email_attachment: defineTool({
       description:
-        "Download an attachment from a Gmail message. Returns base64-encoded file content. Use read_user_email first to get the message_id and attachment_id. The returned base64 can be passed directly to create_gmail_draft attachments or saved to the sandbox.",
+        "Download an attachment from a Gmail message. Defaults to the caller's account. Returns base64-encoded file content. Use read_user_email first to get the message_id and attachment_id. The returned base64 can be passed directly to create_gmail_draft attachments or saved to the sandbox.",
       inputSchema: z.object({
         user_name: z
           .string()
+          .optional()
           .describe(
-            "The display name, real name, or username of the Gmail account owner",
+            "The display name, real name, or username of the Gmail account owner. Defaults to the caller's account.",
           ),
         message_id: z
           .string()
@@ -1022,12 +995,23 @@ export function createGmailEATools() {
       }),
       execute: async ({ user_name, message_id, attachment_id, filename, mime_type }) => {
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
-            return {
-              ok: false,
-              error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-            };
+          let resolvedUserId: string;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
+          } else {
+            resolvedUserId = callerDefault;
+          }
+
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
           const { getUserEmailAttachment, readUserEmail } = await import(
@@ -1038,7 +1022,7 @@ export function createGmailEATools() {
           let resolvedMimeType = mime_type;
 
           if (!resolvedFilename || !resolvedMimeType) {
-            const email = await readUserEmail(userId, message_id);
+            const email = await readUserEmail(resolvedUserId, message_id);
             if (email) {
               const att = email.attachments.find(
                 (a: any) => a.attachmentId === attachment_id,
@@ -1051,7 +1035,7 @@ export function createGmailEATools() {
           }
 
           const result = await getUserEmailAttachment(
-            userId,
+            resolvedUserId,
             message_id,
             attachment_id,
           );
@@ -1059,12 +1043,12 @@ export function createGmailEATools() {
           if (!result) {
             return {
               ok: false,
-              error: `No Gmail access for user '${user_name}', or attachment not found.`,
+              error: `No Gmail access for the resolved user, or attachment not found.`,
             };
           }
 
           logger.info("download_email_attachment called", {
-            userId,
+            userId: resolvedUserId,
             messageId: message_id,
             attachmentId: attachment_id,
             filename: resolvedFilename,
@@ -1097,22 +1081,34 @@ export function createGmailEATools() {
       inputSchema: z.object({
         user_name: z
           .string()
+          .optional()
           .describe(
-            "The display name, real name, or username of the Gmail account owner, e.g. 'Joan' or '@joan'",
+            "The display name, real name, or username of the Gmail account owner, e.g. 'Joan' or '@joan'. Defaults to the caller.",
           ),
       }),
       execute: async ({ user_name }) => {
         try {
-          const userId = await resolveSlackUserId(user_name);
-          if (!userId) {
-            return {
-              ok: false,
-              error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-            };
+          let resolvedUserId: string;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
+          } else {
+            resolvedUserId = callerDefault;
+          }
+
+          const callerId = context?.userId;
+          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            return { ok: false, error: "You can only generate an auth URL for your own account. Ask an admin for help." };
           }
 
           const { generateAuthUrlForUser } = await import("../lib/gmail.js");
-          const url = generateAuthUrlForUser(userId);
+          const url = generateAuthUrlForUser(resolvedUserId);
           if (!url) {
             return {
               ok: false,
@@ -1123,8 +1119,8 @@ export function createGmailEATools() {
           return {
             ok: true,
             url,
-            user_id: userId,
-            message: `OAuth consent URL generated for ${user_name}. DM this link to them — they click it, authorize in Google, and their Gmail is connected.`,
+            user_id: resolvedUserId,
+            message: `OAuth consent URL generated. DM this link to the user — they click it, authorize in Google, and their Gmail is connected.`,
           };
         } catch (err: any) {
           logger.error("generate_gmail_auth_url failed", { error: err?.message || String(err) });
