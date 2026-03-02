@@ -290,7 +290,7 @@ export function createPeopleTools(context?: ScheduleContext) {
               return { ok: false as const, error: `No person found matching '${query}'` };
             }
             if (matched.length > 1) {
-              const names = matched.map((p: any) => p.display_name || p.id).join(", ");
+              const names = matched.map((p: any) => p.displayName || p.id).join(", ");
               return {
                 ok: false as const,
                 error: `Ambiguous match: found ${matched.length} people (${names}). Use person_id or a more specific query.`,
@@ -317,7 +317,7 @@ export function createPeopleTools(context?: ScheduleContext) {
                   return { ok: false as const, error: `Could not resolve manager '${fields.manager_id}'` };
                 }
                 if (mgrMatches.length > 1) {
-                  const names = mgrMatches.map((p: any) => p.display_name || p.id).join(", ");
+                  const names = mgrMatches.map((p: any) => p.displayName || p.id).join(", ");
                   return {
                     ok: false as const,
                     error: `Ambiguous manager match: found ${mgrMatches.length} people (${names}). Use a UUID instead.`,
@@ -428,9 +428,13 @@ async function upsertPrimaryAddress(
       .set({ value, isPrimary: true })
       .where(eq(addresses.id, existing[0].id));
   } else {
-    await db
+    const inserted = await db
       .insert(addresses)
       .values({ personId, channel, value, isPrimary: true })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: addresses.id });
+    if (inserted.length === 0) {
+      throw new Error(`Address ${value} is already assigned to another person`);
+    }
   }
 }
