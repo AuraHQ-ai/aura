@@ -2,7 +2,7 @@ import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { isAdmin } from "../lib/permissions.js";
-import { resolveSlackUserId } from "../lib/resolve-user.js";
+import { resolveSlackUserId, resolveEffectiveUserId } from "../lib/resolve-user.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 const AURA_BOT_USER_ID = "U0AFEC1C69F";
@@ -386,18 +386,10 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ time_min, time_max, max_results, query, user_name, calendar_id }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const slackId = await resolveSlackUserId(user_name);
-            if (!slackId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = slackId;
-          } else if (context?.userId) {
-            resolvedUserId = context.userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { listEvents } = await import("../lib/calendar.js");
@@ -456,18 +448,10 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ summary, start, end, description, location, attendees, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const slackId = await resolveSlackUserId(user_name);
-            if (!slackId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = slackId;
-          } else if (context?.userId) {
-            resolvedUserId = context.userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { createEvent } = await import("../lib/calendar.js");
@@ -530,18 +514,10 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ event_id, summary, description, start, end, location, attendees, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const slackId = await resolveSlackUserId(user_name);
-            if (!slackId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = slackId;
-          } else if (context?.userId) {
-            resolvedUserId = context.userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { updateEvent } = await import("../lib/calendar.js");
@@ -588,18 +564,10 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ event_id, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const slackId = await resolveSlackUserId(user_name);
-            if (!slackId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = slackId;
-          } else if (context?.userId) {
-            resolvedUserId = context.userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { deleteEvent } = await import("../lib/calendar.js");
@@ -651,18 +619,10 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ emails, time_min, time_max, duration_minutes, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const slackId = await resolveSlackUserId(user_name);
-            if (!slackId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = slackId;
-          } else if (context?.userId) {
-            resolvedUserId = context.userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { findAvailableSlots } = await import("../lib/calendar.js");
