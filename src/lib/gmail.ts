@@ -110,35 +110,11 @@ async function createBaseOAuth2Client() {
 
 /**
  * Get an authenticated OAuth2Client for a given user.
- * No args = Aura's own token. Pass a userId for per-user tokens.
- *
- * Self-healing: if no oauth_tokens row exists for Aura's bot ID,
- * falls back to the legacy settings table and auto-migrates the token.
+ * No args = Aura's own token (U0AFEC1C69F). Pass a userId for per-user tokens.
  */
 export async function getOAuth2Client(userId?: string) {
   const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
-  let tokenRow = await getUserRefreshToken(resolvedUserId);
-
-  // Self-healing migration: if this is Aura's own token and not in oauth_tokens,
-  // check the legacy settings table and auto-migrate.
-  if (!tokenRow && resolvedUserId === (process.env.AURA_BOT_USER_ID || "aura")) {
-    const legacyToken = await getLegacyRefreshToken();
-    if (legacyToken) {
-      logger.info("Auto-migrating Aura refresh token from settings to oauth_tokens");
-      try {
-        await saveUserRefreshToken(resolvedUserId, legacyToken, process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com");
-        // Clean up legacy setting
-        const { deleteSetting } = await import("./settings.js");
-        await deleteSetting("google_refresh_token");
-        tokenRow = { refreshToken: legacyToken, email: process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com" };
-        logger.info("Successfully migrated Aura refresh token to oauth_tokens");
-      } catch (migrationError) {
-        logger.error("Failed to auto-migrate refresh token", { error: migrationError });
-        tokenRow = { refreshToken: legacyToken, email: null };
-      }
-    }
-  }
-
+  const tokenRow = await getUserRefreshToken(resolvedUserId);
   if (!tokenRow) return null;
 
   const oauth2Client = await createBaseOAuth2Client();
@@ -146,21 +122,6 @@ export async function getOAuth2Client(userId?: string) {
   oauth2Client.setCredentials({ refresh_token: tokenRow.refreshToken });
 
   return oauth2Client;
-}
-
-/**
- * Read the legacy refresh token from the settings table.
- * Used only for self-healing migration to oauth_tokens.
- */
-async function getLegacyRefreshToken(): Promise<string | null> {
-  try {
-    const { getSetting } = await import("./settings.js");
-    const dbToken = await getSetting("google_refresh_token");
-    if (dbToken) return dbToken;
-  } catch {
-    // DB unavailable
-  }
-  return process.env.GOOGLE_EMAIL_REFRESH_TOKEN || null;
 }
 
 /**
