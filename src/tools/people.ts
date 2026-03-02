@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, sql, count } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { defineTool } from "../lib/tool.js";
 import { logger } from "../lib/logger.js";
 import { db } from "../db/client.js";
@@ -56,7 +56,13 @@ interface PersonResult {
   manager_id: string | null;
   manager_name: string | null;
   addresses: { id: string; channel: string; value: string; is_primary: boolean }[];
-  stats: { message_count: number; last_interaction: string | null; profile_created: string | null };
+  stats: {
+    workspace_messages: number;
+    aura_dm_messages: number;
+    last_activity: string | null;
+    last_aura_dm: string | null;
+    profile_created: string | null;
+  };
 }
 
 async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonResult> {
@@ -80,8 +86,10 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
     managerName = mgr?.displayName ?? null;
   }
 
-  let messageCount = 0;
-  let lastInteraction: string | null = null;
+  let workspaceMessages = 0;
+  let auraDmMessages = 0;
+  let lastActivity: string | null = null;
+  let lastAuraDm: string | null = null;
   let profileCreated: string | null = null;
 
   if (person.slackUserId) {
@@ -99,14 +107,18 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
 
       const [msgStats] = await db
         .select({
-          count: count(),
           lastTs: sql<string>`max(${messages.createdAt})`,
+          workspaceMessages: sql<number>`count(*) filter (where ${messages.channelType} != 'dm')`,
+          auraDmMessages: sql<number>`count(*) filter (where ${messages.channelType} = 'dm')`,
+          lastAuraDm: sql<string>`max(${messages.createdAt}) filter (where ${messages.channelType} = 'dm')`,
         })
         .from(messages)
         .where(eq(messages.userId, profile.slackUserId));
 
-      messageCount = msgStats?.count ?? 0;
-      lastInteraction = msgStats?.lastTs ?? null;
+      workspaceMessages = Number(msgStats?.workspaceMessages ?? 0);
+      auraDmMessages = Number(msgStats?.auraDmMessages ?? 0);
+      lastActivity = msgStats?.lastTs ?? null;
+      lastAuraDm = msgStats?.lastAuraDm ?? null;
     }
   }
 
@@ -127,8 +139,10 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
       is_primary: a.isPrimary,
     })),
     stats: {
-      message_count: messageCount,
-      last_interaction: lastInteraction,
+      workspace_messages: workspaceMessages,
+      aura_dm_messages: auraDmMessages,
+      last_activity: lastActivity,
+      last_aura_dm: lastAuraDm,
       profile_created: profileCreated,
     },
   };
@@ -173,7 +187,7 @@ export function createPeopleTools(context?: ScheduleContext) {
       description:
         "Look up a person in the people database by name, Slack user ID (e.g. 'U0678NQJ2'), or email address. " +
         "Returns structured profile data including job title, gender, preferred language, birthdate, manager, " +
-        "all known addresses (email, phone, slack), and Slack activity stats (message count, last interaction). " +
+        "all known addresses (email, phone, slack), and Slack activity stats (workspace_messages, aura_dm_messages, last_activity, last_aura_dm). " +
         "Use this before update_person to confirm identity. For ambiguous name searches, returns up to 3 fuzzy matches.",
       inputSchema: z.object({
         query: z
