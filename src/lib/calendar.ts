@@ -27,9 +27,9 @@ export interface AvailableSlot {
 
 // ── Calendar Client ─────────────────────────────────────────────────────────
 
-async function getCalendarClient() {
+async function getCalendarClient(userId?: string) {
   const { getOAuth2Client } = await import("./gmail.js");
-  const auth = await getOAuth2Client();
+  const auth = await getOAuth2Client(userId);
   if (!auth) return null;
 
   const { calendar_v3 } = await import("@googleapis/calendar");
@@ -44,8 +44,8 @@ export async function listEvents(opts: {
   timeMax?: string;
   maxResults?: number;
   query?: string;
-}): Promise<CalendarEvent[] | null> {
-  const client = await getCalendarClient();
+}, userId?: string): Promise<CalendarEvent[] | null> {
+  const client = await getCalendarClient(userId);
   if (!client) return null;
 
   const calendarId = opts.calendarId || "primary";
@@ -93,8 +93,8 @@ export async function createEvent(opts: {
   attendees?: string[]; // email addresses
   location?: string;
   calendarId?: string;
-}): Promise<CalendarEvent | null> {
-  const client = await getCalendarClient();
+}, userId?: string): Promise<CalendarEvent | null> {
+  const client = await getCalendarClient(userId);
   if (!client) return null;
 
   const calendarId = opts.calendarId || "primary";
@@ -136,8 +136,8 @@ export async function createEvent(opts: {
 
 // ── Delete Event ─────────────────────────────────────────────────────────────
 
-export async function deleteEvent(eventId: string): Promise<boolean> {
-  const client = await getCalendarClient();
+export async function deleteEvent(eventId: string, userId?: string): Promise<boolean> {
+  const client = await getCalendarClient(userId);
   if (!client) return false;
 
   await client.events.delete({ calendarId: "primary", eventId, sendUpdates: "all" });
@@ -158,8 +158,9 @@ export async function updateEvent(
     location?: string;
     attendees?: string[];
   },
+  userId?: string,
 ): Promise<CalendarEvent | null> {
-  const client = await getCalendarClient();
+  const client = await getCalendarClient(userId);
   if (!client) return null;
 
   const requestBody: Record<string, unknown> = {};
@@ -205,8 +206,8 @@ export async function checkFreeBusy(opts: {
   emails: string[];
   timeMin: string;
   timeMax: string;
-}): Promise<Record<string, FreeBusySlot[]> | null> {
-  const client = await getCalendarClient();
+}, userId?: string): Promise<Record<string, FreeBusySlot[]> | null> {
+  const client = await getCalendarClient(userId);
   if (!client) return null;
 
   const res = await client.freebusy.query({
@@ -238,12 +239,12 @@ export async function findAvailableSlots(opts: {
   timeMin: string;
   timeMax: string;
   durationMinutes: number;
-}): Promise<AvailableSlot[] | null> {
+}, userId?: string): Promise<AvailableSlot[] | null> {
   const busyData = await checkFreeBusy({
     emails: opts.emails,
     timeMin: opts.timeMin,
     timeMax: opts.timeMax,
-  });
+  }, userId);
   if (!busyData) return null;
 
   // Merge all busy slots across all people

@@ -1,6 +1,7 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
+import type { ScheduleContext } from "../db/schema.js";
 
 const SHEETS_URL_REGEX =
   /docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/;
@@ -18,13 +19,57 @@ function extractGidFromUrl(input: string): number | null {
   return match ? parseInt(match[1], 10) : null;
 }
 
-async function getAccessToken(): Promise<string | null> {
+async function getAccessToken(userId?: string): Promise<string | null> {
   const { getOAuth2Client } = await import("../lib/gmail.js");
-  const client = await getOAuth2Client();
+  const client = await getOAuth2Client(userId);
   if (!client) return null;
 
   const { token } = await client.getAccessToken();
   return token ?? null;
+}
+
+async function resolveSlackUserId(
+  userName: string,
+): Promise<string | null> {
+  try {
+    const { WebClient } = await import("@slack/web-api");
+    const { getUserList } = await import("./slack.js");
+    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
+    const users = await getUserList(client);
+
+    const normalizedInput = userName
+      .replace(/^@/, "")
+      .toLowerCase()
+      .trim();
+
+    for (const user of users) {
+      if (
+        user.displayName.toLowerCase() === normalizedInput ||
+        user.realName.toLowerCase() === normalizedInput ||
+        user.username.toLowerCase() === normalizedInput
+      ) {
+        return user.id;
+      }
+    }
+
+    for (const user of users) {
+      if (
+        user.displayName.toLowerCase().startsWith(normalizedInput) ||
+        user.realName.toLowerCase().startsWith(normalizedInput) ||
+        user.username.toLowerCase().startsWith(normalizedInput)
+      ) {
+        return user.id;
+      }
+    }
+
+    return null;
+  } catch (error: any) {
+    logger.error("Failed to resolve Slack user ID", {
+      userName,
+      error: error.message,
+    });
+    return null;
+  }
 }
 
 interface SheetMetadata {
@@ -59,11 +104,11 @@ async function fetchJson<T>(url: string, token: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function createSheetsTools() {
+export function createSheetsTools(context?: ScheduleContext) {
   return {
     read_google_sheet: defineTool({
       description:
-        "Read data from a Google Sheets spreadsheet. Accepts a spreadsheet ID or a full Google Sheets URL. The spreadsheet must be shared with aura@realadvisor.com (or be publicly accessible). Returns headers and rows.",
+        "Read data from a Google Sheets spreadsheet. Defaults to Aura's access. Set user_name to read via another user's OAuth token. Accepts a spreadsheet ID or a full Google Sheets URL. Returns headers and rows.",
       inputSchema: z.object({
         spreadsheet_id: z
           .string()
@@ -82,10 +127,28 @@ export function createSheetsTools() {
           .max(1000)
           .default(100)
           .describe("Maximum data rows to return (default 100, max 1000)"),
+        user_name: z
+          .string()
+          .optional()
+          .describe(
+            "Read using this user's Google access instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+          ),
       }),
-      execute: async ({ spreadsheet_id, range, max_rows }) => {
+      execute: async ({ spreadsheet_id, range, max_rows, user_name }) => {
         try {
-          const token = await getAccessToken();
+          let resolvedUserId: string | undefined;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
+          }
+
+          const token = await getAccessToken(resolvedUserId);
           if (!token) {
             return {
               ok: false,

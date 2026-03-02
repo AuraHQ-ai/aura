@@ -2,26 +2,71 @@ import { z } from "zod";
 import { defineTool, binaryToModelOutput } from "../lib/tool.js";
 import { logger } from "../lib/logger.js";
 import { isTextMimeType } from "../lib/files.js";
+import type { ScheduleContext } from "../db/schema.js";
 
 const MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024; // 10 MB
 
 const FILE_FIELDS =
   "files(id,name,mimeType,modifiedTime,owners,size,parents)";
 
-async function getDriveClient() {
+async function getDriveClient(userId?: string) {
   const { getOAuth2Client } = await import("../lib/gmail.js");
-  const client = await getOAuth2Client();
+  const client = await getOAuth2Client(userId);
   if (!client) return null;
 
   const { drive } = await import("@googleapis/drive");
   return drive({ version: "v3", auth: client });
 }
 
-export function createDriveTools() {
+async function resolveSlackUserId(
+  userName: string,
+): Promise<string | null> {
+  try {
+    const { WebClient } = await import("@slack/web-api");
+    const { getUserList } = await import("./slack.js");
+    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
+    const users = await getUserList(client);
+
+    const normalizedInput = userName
+      .replace(/^@/, "")
+      .toLowerCase()
+      .trim();
+
+    for (const user of users) {
+      if (
+        user.displayName.toLowerCase() === normalizedInput ||
+        user.realName.toLowerCase() === normalizedInput ||
+        user.username.toLowerCase() === normalizedInput
+      ) {
+        return user.id;
+      }
+    }
+
+    for (const user of users) {
+      if (
+        user.displayName.toLowerCase().startsWith(normalizedInput) ||
+        user.realName.toLowerCase().startsWith(normalizedInput) ||
+        user.username.toLowerCase().startsWith(normalizedInput)
+      ) {
+        return user.id;
+      }
+    }
+
+    return null;
+  } catch (error: any) {
+    logger.error("Failed to resolve Slack user ID", {
+      userName,
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+export function createDriveTools(context?: ScheduleContext) {
   return {
     search_drive: defineTool({
       description:
-        "Search Google Drive for files and documents. Uses the Drive search query syntax (e.g. \"name contains 'budget'\", \"mimeType='application/vnd.google-apps.spreadsheet'\", \"fullText contains 'quarterly review'\"). Returns file names, IDs, types, modification dates, owners, and sizes. Use this to find documents before reading them with read_drive_file.",
+        "Search Google Drive for files and documents. Defaults to Aura's Drive. Set user_name to search another user's Drive. Uses the Drive search query syntax (e.g. \"name contains 'budget'\", \"mimeType='application/vnd.google-apps.spreadsheet'\", \"fullText contains 'quarterly review'\"). Returns file names, IDs, types, modification dates, owners, and sizes. Use this to find documents before reading them with read_drive_file.",
       inputSchema: z.object({
         query: z
           .string()
@@ -34,10 +79,28 @@ export function createDriveTools() {
           .max(50)
           .default(10)
           .describe("Maximum number of results to return (default 10, max 50)"),
+        user_name: z
+          .string()
+          .optional()
+          .describe(
+            "Search this user's Drive instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+          ),
       }),
-      execute: async ({ query, limit }) => {
+      execute: async ({ query, limit, user_name }) => {
         try {
-          const drive = await getDriveClient();
+          let resolvedUserId: string | undefined;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
+          }
+
+          const drive = await getDriveClient(resolvedUserId);
           if (!drive) {
             return {
               ok: false,
@@ -88,15 +151,33 @@ export function createDriveTools() {
 
     read_drive_file: defineTool({
       description:
-        "Read the content of a file from Google Drive by its file ID. For Google Docs and Slides, exports as plain text. For Google Sheets, tells you to use the read_google_sheet tool instead. For PDFs and images, returns base64-encoded content. For other file types, returns text content or base64 depending on the mime type. Maximum file size: 10 MB.",
+        "Read the content of a file from Google Drive by its file ID. Defaults to Aura's Drive. Set user_name to read from another user's Drive. For Google Docs and Slides, exports as plain text. For Google Sheets, tells you to use the read_google_sheet tool instead. For PDFs and images, returns base64-encoded content. For other file types, returns text content or base64 depending on the mime type. Maximum file size: 10 MB.",
       inputSchema: z.object({
         file_id: z
           .string()
           .describe("The Google Drive file ID to read"),
+        user_name: z
+          .string()
+          .optional()
+          .describe(
+            "Read from this user's Drive instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+          ),
       }),
-      execute: async ({ file_id }) => {
+      execute: async ({ file_id, user_name }) => {
         try {
-          const drive = await getDriveClient();
+          let resolvedUserId: string | undefined;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
+          }
+
+          const drive = await getDriveClient(resolvedUserId);
           if (!drive) {
             return {
               ok: false,
@@ -260,7 +341,7 @@ export function createDriveTools() {
 
     list_drive_folder: defineTool({
       description:
-        "List files in a Google Drive folder. If no folder_id is provided, lists files in the root of My Drive. To browse a shared drive, pass its drive_id (from list_shared_drives). Returns file names, IDs, types, modification dates, and sizes. Useful for browsing Drive contents and discovering files before reading them.",
+        "List files in a Google Drive folder. Defaults to Aura's Drive. Set user_name to list from another user's Drive. If no folder_id is provided, lists files in the root of My Drive. To browse a shared drive, pass its drive_id (from list_shared_drives). Returns file names, IDs, types, modification dates, and sizes.",
       inputSchema: z.object({
         folder_id: z
           .string()
@@ -282,10 +363,28 @@ export function createDriveTools() {
           .describe(
             "Maximum number of files to return (default 20, max 100)",
           ),
+        user_name: z
+          .string()
+          .optional()
+          .describe(
+            "List from this user's Drive instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+          ),
       }),
-      execute: async ({ folder_id, drive_id, limit }) => {
+      execute: async ({ folder_id, drive_id, limit, user_name }) => {
         try {
-          const drive = await getDriveClient();
+          let resolvedUserId: string | undefined;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
+          }
+
+          const drive = await getDriveClient(resolvedUserId);
           if (!drive) {
             return {
               ok: false,
@@ -365,11 +464,30 @@ export function createDriveTools() {
 
     list_shared_drives: defineTool({
       description:
-        "List all shared drives in the Google Workspace organization. Returns drive names and IDs. Use the drive ID with list_drive_folder to browse contents of a shared drive.",
-      inputSchema: z.object({}),
-      execute: async () => {
+        "List all shared drives in the Google Workspace organization. Defaults to Aura's Drive access. Set user_name to list via another user's OAuth token. Returns drive names and IDs. Use the drive ID with list_drive_folder to browse contents of a shared drive.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .optional()
+          .describe(
+            "Use this user's Drive access instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+          ),
+      }),
+      execute: async ({ user_name }) => {
         try {
-          const drive = await getDriveClient();
+          let resolvedUserId: string | undefined;
+          if (user_name) {
+            const userId = await resolveSlackUserId(user_name);
+            if (!userId) {
+              return {
+                ok: false,
+                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
+              };
+            }
+            resolvedUserId = userId;
+          }
+
+          const drive = await getDriveClient(resolvedUserId);
           if (!drive) {
             return {
               ok: false,

@@ -2948,10 +2948,10 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     ...createEmailSyncTools(client, context),
 
     // ── Google Sheets Tools ───────────────────────────────────────────────
-    ...createSheetsTools(),
+    ...createSheetsTools(context),
 
     // ── Google Drive Tools ────────────────────────────────────────────────
-    ...createDriveTools(),
+    ...createDriveTools(context),
 
     // ── Table Tools (native Slack table blocks) ──────────────────────────
     ...createTableTools(client, context),
