@@ -66,5 +66,9 @@ export async function resolveEffectiveUserId(
   if (context?.userId) {
     return { userId: context.userId };
   }
-  return { userId: undefined };
+  return {
+    userId: undefined,
+    error:
+      "No user context available. Unable to determine whose Google token to use.",
+  };
 }
