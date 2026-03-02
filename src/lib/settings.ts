@@ -46,6 +46,18 @@ export async function setSetting(
 }
 
 /**
+ * Delete a setting by key.
+ */
+export async function deleteSetting(key: string): Promise<void> {
+  try {
+    await db.delete(settings).where(eq(settings.key, key));
+    logger.info("Setting deleted", { key });
+  } catch (error) {
+    logger.error("Failed to delete setting", { key, error });
+  }
+}
+
+/**
  * Read all settings as a key-value record.
  */
 export async function getAllSettings(): Promise<Record<string, string>> {

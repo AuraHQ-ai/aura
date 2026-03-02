@@ -96,31 +96,14 @@ function getRedirectUri(): string {
   return `${protocol}://${host}/api/oauth/google/callback`;
 }
 
-const SETTINGS_KEY = "google_refresh_token";
-
-export async function getRefreshToken(): Promise<string | null> {
-  // DB is source of truth; env var is fallback for migration
-  try {
-    const { getSetting } = await import("./settings.js");
-    const dbToken = await getSetting(SETTINGS_KEY);
-    if (dbToken) return dbToken;
-  } catch {
-    // DB unavailable — fall back to env
-  }
-  return process.env.GOOGLE_EMAIL_REFRESH_TOKEN || null;
-}
-
 /**
- * Save a refresh token to the database.
- * Called by the OAuth callback after exchanging an auth code.
+ * Get an authenticated OAuth2Client for a given user.
+ * No args = Aura's own token. Pass a userId for per-user tokens.
+ *
+ * Self-healing: if no oauth_tokens row exists for Aura's bot ID,
+ * falls back to the legacy settings table and auto-migrates the token.
  */
-export async function saveRefreshToken(token: string): Promise<void> {
-  const { setSetting } = await import("./settings.js");
-  await setSetting(SETTINGS_KEY, token, "oauth-callback");
-  logger.info("Refresh token saved to database");
-}
-
-export async function getOAuth2Client() {
+export async function getOAuth2Client(userId?: string) {
   const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
 
@@ -128,7 +111,30 @@ export async function getOAuth2Client() {
     return null;
   }
 
-  const refreshToken = await getRefreshToken();
+  const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
+  let tokenRow = await getUserRefreshToken(resolvedUserId);
+
+  // Self-healing migration: if this is Aura's own token and not in oauth_tokens,
+  // check the legacy settings table and auto-migrate.
+  if (!tokenRow && resolvedUserId === (process.env.AURA_BOT_USER_ID || "aura")) {
+    const legacyToken = await getLegacyRefreshToken();
+    if (legacyToken) {
+      logger.info("Auto-migrating Aura refresh token from settings to oauth_tokens");
+      try {
+        await saveUserRefreshToken(resolvedUserId, legacyToken, process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com");
+        // Clean up legacy setting
+        const { deleteSetting } = await import("./settings.js");
+        await deleteSetting("google_refresh_token");
+        tokenRow = { refreshToken: legacyToken, email: process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com" };
+        logger.info("Successfully migrated Aura refresh token to oauth_tokens");
+      } catch (migrationError) {
+        logger.error("Failed to auto-migrate refresh token", { error: migrationError });
+        tokenRow = { refreshToken: legacyToken, email: null };
+      }
+    }
+  }
+
+  if (!tokenRow) return null;
 
   const { OAuth2Client } = await import("google-auth-library");
   const oauth2Client = new OAuth2Client(
@@ -136,25 +142,33 @@ export async function getOAuth2Client() {
     clientSecret,
     getRedirectUri(),
   );
-
-  if (refreshToken) {
-    oauth2Client.setCredentials({ refresh_token: refreshToken });
-  }
+  oauth2Client.setCredentials({ refresh_token: tokenRow.refreshToken });
 
   return oauth2Client;
 }
 
 /**
- * Returns an authenticated Gmail client, or null if credentials are missing.
+ * Read the legacy refresh token from the settings table.
+ * Used only for self-healing migration to oauth_tokens.
+ */
+async function getLegacyRefreshToken(): Promise<string | null> {
+  try {
+    const { getSetting } = await import("./settings.js");
+    const dbToken = await getSetting("google_refresh_token");
+    if (dbToken) return dbToken;
+  } catch {
+    // DB unavailable
+  }
+  return process.env.GOOGLE_EMAIL_REFRESH_TOKEN || null;
+}
+
+/**
+ * Returns an authenticated Gmail client for Aura, or null if credentials are missing.
  */
 export async function getGmailClient() {
   const auth = await getOAuth2Client();
-  if (!auth) return null;
-
-  // Verify we have a refresh token (check DB + env)
-  const refreshToken = await getRefreshToken();
-  if (!refreshToken) {
-    logger.warn("Gmail: No refresh token configured (checked DB and env)");
+  if (!auth) {
+    logger.warn("Gmail: No OAuth2 client available (checked oauth_tokens and env)");
     return null;
   }
 
@@ -634,31 +648,6 @@ export async function replyToEmail(
 }
 
 /**
- * Generate an OAuth consent URL for Gmail access.
- * Returns null if client ID/secret are not configured.
- */
-export function generateAuthUrl(): string | null {
-  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    return null;
-  }
-
-  const redirectUri = getRedirectUri();
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: "code",
-    scope: SCOPES.join(" "),
-    access_type: "offline",
-    prompt: "consent",
-  });
-
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-}
-
-/**
  * Exchange an authorization code for tokens.
  * Returns the refresh token, or null on failure.
  */
@@ -800,31 +789,18 @@ export async function saveUserRefreshToken(
  * Returns null if the user has not authorized or credentials are missing.
  */
 export async function getGmailClientForUser(userId: string) {
-  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
-    logger.warn("Gmail: OAuth client credentials not configured");
+  const oauth2Client = await getOAuth2Client(userId);
+  if (!oauth2Client) {
+    logger.warn("Gmail: No OAuth client available for user", { userId });
     return null;
   }
 
   const userToken = await getUserRefreshToken(userId);
-  if (!userToken) {
-    logger.warn("Gmail: No OAuth token found for user", { userId });
-    return null;
-  }
-
-  const { OAuth2Client } = await import("google-auth-library");
-  const oauth2Client = new OAuth2Client(
-    clientId,
-    clientSecret,
-    getRedirectUri(),
-  );
-  oauth2Client.setCredentials({ refresh_token: userToken.refreshToken });
+  const email = userToken?.email ?? null;
 
   const { gmail } = await import("@googleapis/gmail");
   const client = gmail({ version: "v1", auth: oauth2Client });
-  return { client, email: userToken.email, oauth2Client };
+  return { client, email, oauth2Client };
 }
 
 // ── OAuth State Signing (nonce + TTL) ───────────────────────────────────────
