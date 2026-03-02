@@ -1,5 +1,4 @@
 import { logger } from "./logger.js";
-import { getRefreshToken } from "./gmail.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -13,17 +12,6 @@ export interface DirectoryUser {
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
-async function getCredentials() {
-  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
-  const refreshToken = await getRefreshToken();
-
-  if (!clientId || !clientSecret || !refreshToken) {
-    return null;
-  }
-  return { clientId, clientSecret, refreshToken };
-}
-
 let cachedAccessToken: { token: string; expiresAt: number } | null = null;
 
 async function getAccessToken(): Promise<string | null> {
@@ -31,37 +19,19 @@ async function getAccessToken(): Promise<string | null> {
     return cachedAccessToken.token;
   }
 
-  const creds = await getCredentials();
-  if (!creds) return null;
+  const { getOAuth2Client } = await import("./gmail.js");
+  const client = await getOAuth2Client();
+  if (!client) return null;
 
-  const resp = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: creds.clientId,
-      client_secret: creds.clientSecret,
-      refresh_token: creds.refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
+  const tokenResponse = await client.getAccessToken();
+  const token = tokenResponse.token;
+  if (!token) return null;
 
-  if (!resp.ok) {
-    logger.error("Failed to refresh access token for directory", {
-      status: resp.status,
-      body: await resp.text(),
-    });
-    return null;
-  }
-
-  const data = (await resp.json()) as {
-    access_token: string;
-    expires_in: number;
-  };
   cachedAccessToken = {
-    token: data.access_token,
-    expiresAt: Date.now() + data.expires_in * 1000,
+    token,
+    expiresAt: Date.now() + 3500 * 1000,
   };
-  return data.access_token;
+  return token;
 }
 
 // ── People API ──────────────────────────────────────────────────────────────
