@@ -75,7 +75,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
           if (user_name) {
             const callerId = context?.userId;
-            if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            if (!callerId || (callerId !== resolvedUserId && !isAdmin(callerId))) {
               return { ok: false, error: "You can only send email from your own account. Ask an admin for help." };
             }
           }
@@ -155,7 +155,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
           if (user_name) {
             const callerId = context?.userId;
-            if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+            if (!callerId || (callerId !== resolvedUserId && !isAdmin(callerId))) {
               return { ok: false, error: "You can only reply from your own email account. Ask an admin for help." };
             }
           }
