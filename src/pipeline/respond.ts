@@ -1,3 +1,4 @@
+import { streamText } from "ai";
 import type { WebClient } from "@slack/web-api";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
@@ -7,6 +8,7 @@ import { TABLE_BLOCK_KEY } from "../tools/table.js";
 import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLong } from "../lib/slack-messaging.js";
 import { getSlackMeta } from "../lib/tool.js";
 import { createInteractiveAgent } from "../lib/agents.js";
+import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -964,14 +966,15 @@ export async function generateResponse(
       }, 180_000);
 
       try {
-        const { agent: retryAgent } = await createInteractiveAgent({
-          slackClient: options.slackClient,
-          context: options.context,
-          stablePrefix: options.stablePrefix,
-          conversationContext: options.conversationContext,
-          dynamicContext: options.dynamicContext,
-        });
-        const retryResult = await retryAgent.stream({
+        const { model: retryModel } = await getMainModel();
+        const retrySystemMessages = buildCachedSystemMessages(
+          options.stablePrefix,
+          options.conversationContext,
+          options.dynamicContext,
+        );
+        const retryResult = streamText({
+          model: retryModel,
+          system: retrySystemMessages,
           prompt: retryPrompt,
           abortSignal: retryAbortController.signal,
         });
