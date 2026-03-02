@@ -374,13 +374,18 @@ export function createPeopleTools(context?: ScheduleContext) {
           }
 
           if (remove_address) {
+            const normalizedRemoveValue =
+              remove_address.channel === "email"
+                ? remove_address.value.toLowerCase()
+                : remove_address.value;
+
             await db
               .delete(addresses)
               .where(
                 and(
                   eq(addresses.personId, resolvedId),
                   eq(addresses.channel, remove_address.channel),
-                  eq(addresses.value, remove_address.value),
+                  eq(addresses.value, normalizedRemoveValue),
                 ),
               );
           }
