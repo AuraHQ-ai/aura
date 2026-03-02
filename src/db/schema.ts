@@ -168,6 +168,7 @@ export const people = pgTable(
     preferredLanguage: text("preferred_language"),
     birthdate: date("birthdate", { mode: "date" }),
     managerId: uuid("manager_id").references((): any => people.id),
+    notes: text("notes"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
