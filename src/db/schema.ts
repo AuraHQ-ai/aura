@@ -11,6 +11,7 @@ import {
   index,
   uniqueIndex,
   serial,
+  unique,
   vector,
   date,
 } from "drizzle-orm/pg-core";
@@ -510,3 +511,24 @@ export interface ScheduleContext {
   threadTs?: string;
   timezone?: string;
 }
+// ── Feedback ────────────────────────────────────────────────────────────────
+
+export const feedback = pgTable(
+  "feedback",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    messageTs: text("message_ts").notNull(),
+    channelId: text("channel_id").notNull(),
+    userId: text("user_id").notNull(),
+    value: text("value").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("feedback_unique_vote").on(table.messageTs, table.channelId, table.userId),
+  ],
+);
+
+export type Feedback = typeof feedback.$inferSelect;
+export type NewFeedback = typeof feedback.$inferInsert;

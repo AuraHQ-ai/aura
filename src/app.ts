@@ -11,9 +11,9 @@ import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
 import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { notes } from "./db/schema.js";
+import { notes, feedback } from "./db/schema.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -282,12 +282,53 @@ app.post("/api/slack/interactions", async (c) => {
     for (const action of payload.actions) {
       // Feedback buttons — any user can submit
       if (action.action_id === "aura_feedback") {
+        const messageTs = payload.message?.ts;
+        const channelId = payload.channel?.id;
+
         logger.info("Response feedback received", {
           userId,
           feedback: action.value,
-          messageTs: payload.message?.ts,
-          channelId: payload.channel?.id,
+          messageTs,
+          channelId,
         });
+
+        if (messageTs && channelId && userId) {
+          const feedbackPromise = (async () => {
+            try {
+              await db.insert(feedback).values({
+                messageTs,
+                channelId,
+                userId,
+                value: action.value,
+              }).onConflictDoUpdate({
+                target: [feedback.messageTs, feedback.channelId, feedback.userId],
+                set: { value: sql`excluded.value` },
+              });
+
+              if (action.value === "negative") {
+                const threadTs = payload.message?.thread_ts || messageTs;
+                const replies = await slackClient.conversations.replies({
+                  channel: channelId,
+                  ts: threadTs,
+                  limit: 50,
+                });
+                const alreadyAsked = replies.messages?.some(
+                  (m) => m.bot_id && m.text?.includes("What could I have done better?"),
+                );
+                if (!alreadyAsked) {
+                  await safePostMessage(slackClient, {
+                    channel: channelId,
+                    thread_ts: threadTs,
+                    text: "What could I have done better?",
+                  });
+                }
+              }
+            } catch (err) {
+              recordError("feedback.persist", err, { userId, messageTs, channelId });
+            }
+          })();
+          waitUntil(feedbackPromise);
+        }
         continue;
       }
 
