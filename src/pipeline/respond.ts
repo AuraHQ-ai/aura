@@ -836,26 +836,43 @@ export async function generateResponse(
       const toolMeta = buildToolMetadata(toolCallRecords);
       const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
 
-      const fallbackResult = await safePostMessage(slackClient, {
-        channel: channelId,
-        text: fallbackText,
-        thread_ts: threadTs,
-        blocks,
-        ...(toolMeta && { metadata: toolMeta }),
-      });
+      try {
+        const fallbackResult = await safePostMessage(slackClient, {
+          channel: channelId,
+          text: fallbackText,
+          thread_ts: threadTs,
+          blocks,
+          ...(toolMeta && { metadata: toolMeta }),
+        });
 
-      if (!fallbackResult.ok) {
-        logger.warn("LLM response lost — channel does not support posting", {
+        if (!fallbackResult.ok) {
+          logger.warn("LLM response lost — channel does not support posting", {
+            channelId,
+            rawLength: finalText.length,
+            usage: { inputTokens, outputTokens, totalTokens },
+          });
+        } else {
+          logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
+            rawLength: finalText.length,
+            channelId,
+            usage: { inputTokens, outputTokens, totalTokens },
+          });
+        }
+      } catch (fallbackErr: any) {
+        logger.error("Fallback safePostMessage also failed — posting plain text", {
           channelId,
-          rawLength: finalText.length,
-          usage: { inputTokens, outputTokens, totalTokens },
+          error: fallbackErr?.message || String(fallbackErr),
+          slackError: fallbackErr?.data?.error,
         });
-      } else {
-        logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
-          rawLength: finalText.length,
-          channelId,
-          usage: { inputTokens, outputTokens, totalTokens },
-        });
+        try {
+          await slackClient.chat.postMessage({
+            channel: channelId,
+            text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
+            thread_ts: threadTs,
+          });
+        } catch {
+          logger.error("All message delivery paths failed", { channelId });
+        }
       }
     } else {
       // Happy path: finalize the stream on Slack's side.
