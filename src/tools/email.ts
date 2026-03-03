@@ -1069,7 +1069,7 @@ export function createGmailEATools(context?: ScheduleContext) {
 
     download_email_attachment: defineTool({
       description:
-        "Download an attachment from a Gmail message. Defaults to the caller's account. Returns base64-encoded file content. Use read_user_email first to get the message_id and attachment_id. The returned base64 can be passed directly to create_gmail_draft attachments or saved to the sandbox.",
+        "Download an attachment from a Gmail message. Defaults to the caller's account. Returns base64-encoded file content by default. When save_to_disk is true, the file is written to /home/user/downloads/{filename} on the sandbox filesystem and the path is returned instead of base64. Use save_to_disk when you need to process the file with shell tools like pdftotext, or pass it to other commands. Use read_user_email first to get the message_id and attachment_id. The returned base64 can be passed directly to create_gmail_draft attachments.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -1091,8 +1091,15 @@ export function createGmailEATools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe("MIME type of the attachment (for display purposes)"),
+        save_to_disk: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "When true, writes the file to /home/user/downloads/{filename} on the sandbox instead of returning base64. Use when you need to process the file with shell tools.",
+          ),
       }),
-      execute: async ({ user_name, message_id, attachment_id, filename, mime_type }) => {
+      execute: async ({ user_name, message_id, attachment_id, filename, mime_type, save_to_disk }) => {
         try {
           let resolvedUserId: string;
           if (user_name) {
@@ -1146,17 +1153,34 @@ export function createGmailEATools(context?: ScheduleContext) {
             };
           }
 
+          const resolvedName = resolvedFilename || "attachment";
+
           logger.info("download_email_attachment called", {
             userId: resolvedUserId,
             messageId: message_id,
             attachmentId: attachment_id,
-            filename: resolvedFilename,
+            filename: resolvedName,
             size: result.size,
+            save_to_disk,
           });
+
+          if (save_to_disk) {
+            const { writeToSandbox } = await import("../lib/sandbox.js");
+            const buf = Buffer.from(result.data, "base64");
+            const savedPath = await writeToSandbox(resolvedName, buf);
+            return {
+              ok: true,
+              saved_to_disk: true,
+              path: savedPath,
+              filename: resolvedName,
+              mimeType: resolvedMimeType || "application/octet-stream",
+              size: result.size,
+            };
+          }
 
           return {
             ok: true,
-            filename: resolvedFilename || "attachment",
+            filename: resolvedName,
             mimeType: resolvedMimeType || "application/octet-stream",
             size: result.size,
             content_base64: result.data,

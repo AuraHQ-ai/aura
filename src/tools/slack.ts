@@ -2422,13 +2422,20 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     download_slack_file: defineTool({
       description:
-        "Download a file from Slack by its file ID (e.g. F0ABC123). Returns base64-encoded content plus metadata (filename, mimetype, size). Use when you need to inspect or process a file someone shared in a message. 20MB limit.",
+        "Download a file from Slack by its file ID (e.g. F0ABC123). Returns base64-encoded content plus metadata (filename, mimetype, size) by default. When save_to_disk is true, the file is written to /home/user/downloads/{filename} on the sandbox filesystem and the path is returned instead of base64. Use save_to_disk when you need to process the file with shell tools like pdftotext, or pass it to other commands. 20MB limit.",
       inputSchema: z.object({
         file_id: z
           .string()
           .describe("Slack file ID (e.g. 'F0ABC123DEF')"),
+        save_to_disk: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "When true, writes the file to /home/user/downloads/{filename} on the sandbox instead of returning base64. Use when you need to process the file with shell tools.",
+          ),
       }),
-      execute: async ({ file_id }) => {
+      execute: async ({ file_id, save_to_disk }) => {
         try {
           const botToken = process.env.SLACK_BOT_TOKEN;
           if (!botToken) {
@@ -2468,14 +2475,30 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
           }
 
           const data = await downloadSlackFile(downloadUrl, botToken);
-          const content_base64 = Buffer.from(data).toString("base64");
 
           logger.info("download_slack_file tool called", {
             file_id,
             filename,
             mimetype,
             size,
+            save_to_disk,
           });
+
+          if (save_to_disk) {
+            const { writeToSandbox } = await import("../lib/sandbox.js");
+            const buf = Buffer.from(data);
+            const savedPath = await writeToSandbox(filename, buf);
+            return {
+              ok: true,
+              saved_to_disk: true,
+              path: savedPath,
+              filename,
+              mimetype,
+              size_bytes: size,
+            };
+          }
+
+          const content_base64 = Buffer.from(data).toString("base64");
 
           return {
             ok: true,
