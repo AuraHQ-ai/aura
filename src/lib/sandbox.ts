@@ -97,20 +97,35 @@ async function setupSandboxFilesystem(
     });
     if (gcsfuseCheck.exitCode !== 0) {
       const distro = "bookworm";
-      await sandbox.commands.run(
+      const installResult = await sandbox.commands.run(
         `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse`,
         { timeoutMs: 60_000, envs },
       );
+      if (installResult.exitCode !== 0) {
+        logger.warn("gcsfuse install failed", {
+          exitCode: installResult.exitCode,
+          stderr: installResult.stderr,
+        });
+        return;
+      }
     }
 
     if (envs.GOOGLE_SA_KEY_B64) {
-      await sandbox.commands.run(
+      const mountResult = await sandbox.commands.run(
         `echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs aura-files /mnt/aura-files`,
         { timeoutMs: 30_000, envs },
       );
+      if (mountResult.exitCode !== 0) {
+        logger.warn("gcsfuse mount failed", {
+          exitCode: mountResult.exitCode,
+          stderr: mountResult.stderr,
+        });
+        return;
+      }
+      logger.info("GCS bucket mounted at /mnt/aura-files");
+    } else {
+      logger.info("Skipping GCS mount — GOOGLE_SA_KEY_B64 not available");
     }
-
-    logger.info("GCS bucket mounted at /mnt/aura-files");
   } catch (error: any) {
     logger.warn("Failed to mount GCS bucket", { error: error.message });
   }
