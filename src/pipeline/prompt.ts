@@ -62,8 +62,9 @@ export async function assemblePrompt(
     });
   }
 
-  // Extract @mentioned user IDs from message text (excluding the sender)
-  const MENTION_RE = /<@(U[A-Z0-9]+)>/g;
+  // Extract @mentioned user IDs from message text (excluding the sender).
+  // By this point, resolveSlackEntities has converted <@U066V1AN6> to @name (U066V1AN6).
+  const MENTION_RE = /\((U[A-Z0-9]+)\)/g;
   const mentionedUserIds = [...new Set(
     [...(context.text || '').matchAll(MENTION_RE)].map(m => m[1])
   )].filter(id => id !== context.userId);
