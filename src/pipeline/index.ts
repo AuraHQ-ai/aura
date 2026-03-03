@@ -27,7 +27,6 @@ import {
   updateProfileFromConversation,
 } from "../users/profiles.js";
 import { downloadEventFiles } from "../lib/files.js";
-import { pauseSandbox } from "../lib/sandbox.js";
 import { getSettingJSON } from "../lib/settings.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
@@ -339,24 +338,8 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     });
     const llmMs = Date.now() - llmStart;
 
-    // Pause sandbox once after all tool calls are complete for this turn.
-    // This avoids the e2b multi-resume bug (e2b-dev/E2B#884) that causes
-    // filesystem state loss when pause/resume is called between every tool.
-    await pauseSandbox().catch((err: any) => {
-      logger.warn("Failed to pause sandbox after response", {
-        error: err.message,
-      });
-      logError({
-        errorName: "SandboxPauseError",
-        errorMessage: err?.message || String(err),
-        errorCode: "sandbox_pause_failed",
-        userId: context.userId,
-        channelId: context.channelId,
-        channelType: context.channelType,
-      });
-    });
-
     // Response is already posted to Slack via streaming updates
+    // (sandbox auto-pauses via autoPause when idle — no manual pause needed)
 
     const totalMs = Date.now() - pipelineStart;
 
@@ -406,9 +389,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       await backgroundTasks;
     }
   } catch (error: any) {
-    // Ensure sandbox is paused even on pipeline errors
-    await pauseSandbox().catch(() => {});
-
     const errorMessage = error?.message || String(error);
     const errorName = error?.name || "UnknownError";
 
