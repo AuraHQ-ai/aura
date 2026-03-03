@@ -1,7 +1,9 @@
 import { sql, and, eq, or, inArray } from "drizzle-orm";
+import { rerank } from "ai";
 import { db } from "../db/client.js";
 import { memories, messages, type Memory, type Message } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
+import { getRerankingModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 interface RetrievalOptions {
@@ -37,8 +39,8 @@ export async function retrieveMemories(
     // 1. Embed the query (use pre-computed if available)
     const queryEmbedding = precomputed ?? await embedText(query);
 
-    // 2. Query pgvector for nearest neighbors
-    const fetchLimit = limit;
+    // 2. Over-fetch candidates from pgvector (25 or more to give reranker good coverage)
+    const CANDIDATE_POOL_SIZE = Math.max(25, limit);
     const results = await db
       .select({
         memory: memories,
@@ -54,40 +56,76 @@ export async function retrieveMemories(
       .orderBy(
         sql`${memories.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector`,
       )
-      .limit(fetchLimit);
+      .limit(CANDIDATE_POOL_SIZE);
 
-    // 3. No privacy filtering — full transparency (corporate policy)
-    const filtered = results.map((r) => r.memory);
+    if (results.length === 0) {
+      logger.info(`No memory candidates found in ${Date.now() - start}ms`);
+      return [];
+    }
 
-    // 4. Score: combine cosine similarity with relevance_score and recency
+    // 3. Rerank with Cohere if available, otherwise fall back to legacy scoring
+    const rerankingModel = await getRerankingModel();
     const now = Date.now();
-    const scored = filtered.map((memory) => {
-      const result = results.find((r) => r.memory.id === memory.id);
-      const similarity = result?.similarity ?? 0;
+    let topMemories: Memory[];
 
-      // Recency boost: memories from the last 24h get a boost, older ones decay
-      const ageMs = now - new Date(memory.createdAt).getTime();
-      const ageDays = ageMs / (1000 * 60 * 60 * 24);
-      const recencyBoost = Math.max(0, 1 - ageDays / 365); // Linear decay over a year
+    if (rerankingModel && results.length > 0) {
+      const documents = results.map((r) => r.memory.content);
 
-      // Combined score
-      const score =
-        similarity * 0.6 +
-        memory.relevanceScore * 0.25 +
-        recencyBoost * 0.15;
+      const { ranking } = await rerank({
+        model: rerankingModel,
+        query,
+        documents,
+        topN: CANDIDATE_POOL_SIZE,
+      });
 
-      return { memory, score };
-    });
+      const scored = ranking.map((item) => {
+        const memory = results[item.originalIndex].memory;
+        const ageMs = now - new Date(memory.createdAt).getTime();
+        const ageDays = ageMs / (1000 * 60 * 60 * 24);
+        const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
-    // 5. Sort by combined score and return top-K
-    scored.sort((a, b) => b.score - a.score);
-    const topMemories = scored.slice(0, limit).map((s) => s.memory);
+        const score = item.score * 0.8 + recencyBoost * 0.2;
+        return { memory, score };
+      });
 
-    logger.info(`Retrieved ${topMemories.length} memories in ${Date.now() - start}ms`, {
-      query: query.substring(0, 100),
-      totalCandidates: results.length,
-      afterPrivacyFilter: filtered.length,
-    });
+      scored.sort((a, b) => b.score - a.score);
+      topMemories = scored.slice(0, limit).map((s) => s.memory);
+
+      logger.info(
+        `Retrieved ${topMemories.length} memories (reranked) in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          method: "cohere-rerank",
+        },
+      );
+    } else {
+      // Fallback: legacy hand-tuned scoring when COHERE_API_KEY is not configured
+      const scored = results.map(({ memory, similarity }) => {
+        const ageMs = now - new Date(memory.createdAt).getTime();
+        const ageDays = ageMs / (1000 * 60 * 60 * 24);
+        const recencyBoost = Math.max(0, 1 - ageDays / 365);
+
+        const score =
+          similarity * 0.6 +
+          memory.relevanceScore * 0.25 +
+          recencyBoost * 0.15;
+
+        return { memory, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      topMemories = scored.slice(0, limit).map((s) => s.memory);
+
+      logger.info(
+        `Retrieved ${topMemories.length} memories (legacy scoring) in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          method: "legacy",
+        },
+      );
+    }
 
     return topMemories;
   } catch (error) {
