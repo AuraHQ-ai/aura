@@ -140,6 +140,16 @@ export async function getOrCreateSandbox(): Promise<any> {
   cachedSandbox = sandbox;
   logger.info("E2B sandbox created", { sandboxId: sandbox.sandboxId });
 
+  // Ensure the downloads directory exists for file-to-disk tools
+  try {
+    await sandbox.commands.run("mkdir -p /home/user/downloads", {
+      timeoutMs: 5_000,
+      envs,
+    });
+  } catch {
+    logger.warn("Failed to create /home/user/downloads in sandbox");
+  }
+
   // Install Claude Code if not already present (persists across pause/resume)
   try {
     const check = await sandbox.commands.run("which claude", {
@@ -189,6 +199,24 @@ export async function pauseSandbox(): Promise<void> {
   } finally {
     cachedSandbox = null;
   }
+}
+
+/**
+ * Write binary data (as a Buffer) to the sandbox filesystem.
+ * Creates parent directories if needed.
+ * Returns the absolute path where the file was saved.
+ */
+export async function writeToSandbox(
+  filename: string,
+  data: Buffer,
+  subdir: string = "downloads",
+): Promise<string> {
+  const sandbox = await getOrCreateSandbox();
+  const dir = `/home/user/${subdir}`;
+  await sandbox.commands.run(`mkdir -p ${dir}`, { timeoutMs: 5_000 });
+  const path = `${dir}/${filename}`;
+  await sandbox.files.write(path, data);
+  return path;
 }
 
 /**
