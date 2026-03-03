@@ -2,6 +2,7 @@ import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { isAdmin } from "../lib/permissions.js";
+import { resolveSlackUserId, resolveEffectiveUserId } from "../lib/resolve-user.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 const AURA_BOT_USER_ID = "U0AFEC1C69F";
@@ -347,7 +348,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
     check_calendar: defineTool({
       description:
-        "List upcoming calendar events. Defaults to Aura's calendar (aura@realadvisor.com). Set user_name to check another user's calendar (requires their OAuth access).",
+        "List upcoming calendar events. Defaults to the caller's account. Set user_name to access another user's calendar (requires their OAuth access). Use calendar_id to check a specific calendar (e.g. a colleague's calendar via your own token).",
       inputSchema: z.object({
         time_min: z
           .string()
@@ -374,25 +375,26 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Check this user's calendar instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'. Defaults to aura@realadvisor.com.",
+            "Access another user's calendar instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+          ),
+        calendar_id: z
+          .string()
+          .optional()
+          .describe(
+            "Specific calendar ID to query, e.g. 'joan@realadvisor.com'. Lets you check another person's calendar using your own OAuth token. Defaults to 'primary'.",
           ),
       }),
-      execute: async ({ time_min, time_max, max_results, query, user_name }) => {
+      execute: async ({ time_min, time_max, max_results, query, user_name, calendar_id }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const userId = await resolveSlackUserId(user_name);
-            if (!userId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { listEvents } = await import("../lib/calendar.js");
           const events = await listEvents({
+            calendarId: calendar_id || undefined,
             timeMin: time_min,
             timeMax: time_max,
             maxResults: max_results,
@@ -403,7 +405,9 @@ export function createEmailTools(context?: ScheduleContext) {
               ok: false,
               error: user_name
                 ? `No calendar access for '${user_name}'. They may need to authorize Aura via OAuth first.`
-                : "Calendar is not configured. The OAuth token may need calendar scopes.",
+                : context?.userId
+                  ? "You need to connect your Google account first. Ask me to generate an auth link."
+                  : "Calendar is not configured. The OAuth token may need calendar scopes.",
             };
           }
           return { ok: true, count: events.length, events };
@@ -420,7 +424,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
     create_event: defineTool({
       description:
-        "Create a calendar event with optional attendees. Defaults to Aura's calendar. Set user_name to create on another user's calendar. Sends email invitations to all attendees.",
+        "Create a calendar event with optional attendees. Defaults to the caller's account. Set user_name to create on another user's calendar (requires their OAuth access). Sends email invitations to all attendees.",
       inputSchema: z.object({
         summary: z.string().describe("Event title"),
         start: z
@@ -439,21 +443,15 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Create event on this user's calendar instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+            "Access another user's calendar instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
           ),
       }),
       execute: async ({ summary, start, end, description, location, attendees, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const userId = await resolveSlackUserId(user_name);
-            if (!userId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { createEvent } = await import("../lib/calendar.js");
@@ -470,7 +468,9 @@ export function createEmailTools(context?: ScheduleContext) {
               ok: false,
               error: user_name
                 ? `No calendar access for '${user_name}'. They may need to authorize Aura via OAuth first.`
-                : "Calendar is not configured. The OAuth token may need calendar scopes.",
+                : context?.userId
+                  ? "You need to connect your Google account first. Ask me to generate an auth link."
+                  : "Calendar is not configured. The OAuth token may need calendar scopes.",
             };
           }
           return { ok: true, event };
@@ -487,7 +487,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
     update_event: defineTool({
       description:
-        "Update an existing calendar event. Only provided fields are changed. Defaults to Aura's calendar. Set user_name to update on another user's calendar.",
+        "Update an existing calendar event. Only provided fields are changed. Defaults to the caller's account. Set user_name to update on another user's calendar (requires their OAuth access).",
       inputSchema: z.object({
         event_id: z.string().describe("The calendar event ID to update"),
         summary: z.string().optional().describe("New event title"),
@@ -509,21 +509,15 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Update event on this user's calendar instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+            "Access another user's calendar instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
           ),
       }),
       execute: async ({ event_id, summary, description, start, end, location, attendees, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const userId = await resolveSlackUserId(user_name);
-            if (!userId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { updateEvent } = await import("../lib/calendar.js");
@@ -540,7 +534,9 @@ export function createEmailTools(context?: ScheduleContext) {
               ok: false,
               error: user_name
                 ? `No calendar access for '${user_name}'. They may need to authorize Aura via OAuth first.`
-                : "Calendar is not configured. The OAuth token may need calendar scopes.",
+                : context?.userId
+                  ? "You need to connect your Google account first. Ask me to generate an auth link."
+                  : "Calendar is not configured. The OAuth token may need calendar scopes.",
             };
           }
           return { ok: true, event };
@@ -556,28 +552,22 @@ export function createEmailTools(context?: ScheduleContext) {
     }),
 
     delete_event: defineTool({
-      description: "Delete a calendar event by its event ID. Defaults to Aura's calendar. Set user_name to delete from another user's calendar.",
+      description: "Delete a calendar event by its event ID. Defaults to the caller's account. Set user_name to delete from another user's calendar (requires their OAuth access).",
       inputSchema: z.object({
         event_id: z.string().describe("The calendar event ID to delete"),
         user_name: z
           .string()
           .optional()
           .describe(
-            "Delete event from this user's calendar instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+            "Access another user's calendar instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
           ),
       }),
       execute: async ({ event_id, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const userId = await resolveSlackUserId(user_name);
-            if (!userId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { deleteEvent } = await import("../lib/calendar.js");
@@ -587,7 +577,9 @@ export function createEmailTools(context?: ScheduleContext) {
               ok: false,
               error: user_name
                 ? `No calendar access for '${user_name}'. They may need to authorize Aura via OAuth first.`
-                : "Calendar is not configured. The OAuth token may need calendar scopes.",
+                : context?.userId
+                  ? "You need to connect your Google account first. Ask me to generate an auth link."
+                  : "Calendar is not configured. The OAuth token may need calendar scopes.",
             };
           }
           return { ok: true, message: `Event ${event_id} deleted successfully.` };
@@ -604,7 +596,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
     find_available_slot: defineTool({
       description:
-        "Find available meeting slots across multiple people's calendars. Uses the free/busy API to find gaps where everyone is free. Defaults to using Aura's calendar API access. Set user_name to query via another user's OAuth token.",
+        "Find available meeting slots across multiple people's calendars. Uses the free/busy API to find gaps where everyone is free. Defaults to the caller's account. Set user_name to query via another user's OAuth token (requires their OAuth access).",
       inputSchema: z.object({
         emails: z
           .array(z.string())
@@ -622,21 +614,15 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Use this user's calendar API access instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+            "Access via another user's calendar API instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
           ),
       }),
       execute: async ({ emails, time_min, time_max, duration_minutes, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const userId = await resolveSlackUserId(user_name);
-            if (!userId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const { findAvailableSlots } = await import("../lib/calendar.js");
@@ -651,7 +637,9 @@ export function createEmailTools(context?: ScheduleContext) {
               ok: false,
               error: user_name
                 ? `No calendar access for '${user_name}'. They may need to authorize Aura via OAuth first.`
-                : "Calendar is not configured. The OAuth token may need calendar scopes.",
+                : context?.userId
+                  ? "You need to connect your Google account first. Ask me to generate an auth link."
+                  : "Calendar is not configured. The OAuth token may need calendar scopes.",
             };
           }
           return {
@@ -1255,52 +1243,3 @@ export function createGmailEATools(context?: ScheduleContext) {
   };
 }
 
-/**
- * Resolve a user display name / username to a Slack user ID.
- * Reuses the paginated, cached getUserList from slack.ts.
- */
-async function resolveSlackUserId(
-  userName: string,
-): Promise<string | null> {
-  try {
-    const { WebClient } = await import("@slack/web-api");
-    const { getUserList } = await import("./slack.js");
-    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
-    const users = await getUserList(client);
-
-    const normalizedInput = userName
-      .replace(/^@/, "")
-      .toLowerCase()
-      .trim();
-
-    // Exact match
-    for (const user of users) {
-      if (
-        user.displayName.toLowerCase() === normalizedInput ||
-        user.realName.toLowerCase() === normalizedInput ||
-        user.username.toLowerCase() === normalizedInput
-      ) {
-        return user.id;
-      }
-    }
-
-    // Fuzzy match (starts with)
-    for (const user of users) {
-      if (
-        user.displayName.toLowerCase().startsWith(normalizedInput) ||
-        user.realName.toLowerCase().startsWith(normalizedInput) ||
-        user.username.toLowerCase().startsWith(normalizedInput)
-      ) {
-        return user.id;
-      }
-    }
-
-    return null;
-  } catch (error: any) {
-    logger.error("Failed to resolve Slack user ID", {
-      userName,
-      error: error.message,
-    });
-    return null;
-  }
-}

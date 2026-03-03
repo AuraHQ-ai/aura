@@ -1,6 +1,7 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
+import { resolveEffectiveUserId } from "../lib/resolve-user.js";
 import type { ScheduleContext } from "../db/schema.js";
 
 const SHEETS_URL_REGEX =
@@ -28,48 +29,17 @@ async function getAccessToken(userId?: string): Promise<string | null> {
   return token ?? null;
 }
 
-async function resolveSlackUserId(
-  userName: string,
-): Promise<string | null> {
-  try {
-    const { WebClient } = await import("@slack/web-api");
-    const { getUserList } = await import("./slack.js");
-    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
-    const users = await getUserList(client);
-
-    const normalizedInput = userName
-      .replace(/^@/, "")
-      .toLowerCase()
-      .trim();
-
-    for (const user of users) {
-      if (
-        user.displayName.toLowerCase() === normalizedInput ||
-        user.realName.toLowerCase() === normalizedInput ||
-        user.username.toLowerCase() === normalizedInput
-      ) {
-        return user.id;
-      }
-    }
-
-    for (const user of users) {
-      if (
-        user.displayName.toLowerCase().startsWith(normalizedInput) ||
-        user.realName.toLowerCase().startsWith(normalizedInput) ||
-        user.username.toLowerCase().startsWith(normalizedInput)
-      ) {
-        return user.id;
-      }
-    }
-
-    return null;
-  } catch (error: any) {
-    logger.error("Failed to resolve Slack user ID", {
-      userName,
-      error: error.message,
-    });
-    return null;
+function getSheetsNoAccessError(
+  userName: string | undefined,
+  context?: ScheduleContext,
+): string {
+  if (userName) {
+    return `No Google Sheets access for '${userName}'. They may need to authorize Aura via OAuth first.`;
   }
+  if (context?.userId) {
+    return "You need to connect your Google account first. Ask me to generate an auth link.";
+  }
+  return "Google OAuth is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and a refresh token with spreadsheets.readonly scope.";
 }
 
 interface SheetMetadata {
@@ -108,7 +78,7 @@ export function createSheetsTools(context?: ScheduleContext) {
   return {
     read_google_sheet: defineTool({
       description:
-        "Read data from a Google Sheets spreadsheet. Defaults to Aura's access. Set user_name to read via another user's OAuth token. Accepts a spreadsheet ID or a full Google Sheets URL. Returns headers and rows.",
+        "Read data from a Google Sheets spreadsheet. Defaults to the caller's account. Set user_name to access another user's sheets (requires their OAuth access). Accepts a spreadsheet ID or a full Google Sheets URL. Returns headers and rows.",
       inputSchema: z.object({
         spreadsheet_id: z
           .string()
@@ -131,29 +101,22 @@ export function createSheetsTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Read using this user's Google access instead of Aura's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+            "Access another user's sheets instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
           ),
       }),
       execute: async ({ spreadsheet_id, range, max_rows, user_name }) => {
         try {
-          let resolvedUserId: string | undefined;
-          if (user_name) {
-            const userId = await resolveSlackUserId(user_name);
-            if (!userId) {
-              return {
-                ok: false,
-                error: `Could not resolve Slack user '${user_name}'. Make sure they exist in the workspace.`,
-              };
-            }
-            resolvedUserId = userId;
+          const { userId: resolvedUserId, error: resolveError } =
+            await resolveEffectiveUserId(user_name, context);
+          if (resolveError) {
+            return { ok: false, error: resolveError };
           }
 
           const token = await getAccessToken(resolvedUserId);
           if (!token) {
             return {
               ok: false,
-              error:
-                "Google OAuth is not configured. Set GOOGLE_EMAIL_CLIENT_ID, GOOGLE_EMAIL_CLIENT_SECRET, and a refresh token with spreadsheets.readonly scope.",
+              error: getSheetsNoAccessError(user_name, context),
             };
           }
 
