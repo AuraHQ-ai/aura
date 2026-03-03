@@ -118,7 +118,7 @@ export async function safePostMessage(
               channel,
               text: text.slice(0, MSG_TRUNCATE_LIMIT),
               thread_ts,
-              metadata,
+              ...(!stripMetadata && metadata ? { metadata } : {}),
               unfurl_links,
               unfurl_media,
             });
@@ -153,6 +153,28 @@ export async function safePostMessage(
       } catch (retryErr: any) {
         if (isChannelTypeNotSupported(retryErr)) {
           return { ok: false };
+        }
+        if (isMsgTooLong(retryErr)) {
+          logger.warn("safePostMessage: msg_too_long on no-blocks retry, truncating", {
+            channel,
+            textLength: text.length,
+          });
+          try {
+            const result = await client.chat.postMessage({
+              channel,
+              text: text.slice(0, MSG_TRUNCATE_LIMIT),
+              thread_ts,
+              unfurl_links,
+              unfurl_media,
+            });
+            return { ok: true, ts: result.ts, channel: result.channel };
+          } catch (truncateErr: any) {
+            if (isChannelTypeNotSupported(truncateErr)) {
+              logger.warn("safePostMessage: channel type not supported after truncation", { channel });
+              return { ok: false };
+            }
+            throw truncateErr;
+          }
         }
         throw retryErr;
       }

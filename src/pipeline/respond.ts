@@ -5,7 +5,7 @@ import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { formatForSlack, prettifyAndWrapTable } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
-import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isInvalidArguments, isMsgTooLong } from "../lib/slack-messaging.js";
+import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLong } from "../lib/slack-messaging.js";
 import { getSlackMeta } from "../lib/tool.js";
 import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
