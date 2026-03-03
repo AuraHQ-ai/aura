@@ -180,13 +180,16 @@ export async function getOrCreateSandbox(): Promise<any> {
 
       cachedSandbox = sandbox;
       logger.info("E2B sandbox resumed", { sandboxId: savedId });
-      await setupSandboxFilesystem(sandbox, envs);
-      return sandbox;
     } catch (error: any) {
       logger.warn("Failed to resume sandbox, creating new one", {
         savedId,
         error: error.message,
       });
+    }
+
+    if (cachedSandbox) {
+      await setupSandboxFilesystem(cachedSandbox, envs);
+      return cachedSandbox;
     }
   }
 
