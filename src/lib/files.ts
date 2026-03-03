@@ -21,17 +21,20 @@ const AUDIO_MIME_TYPES = new Set([
   "audio/x-m4a",
 ]);
 
-const GATEWAY_SUPPORTED_FILE_TYPES = new Set([
-  "application/pdf",
+const SPREADSHEET_MIME_TYPES = new Set([
   "text/csv",
   "application/csv",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/html",
-  "text/plain",
-  "text/markdown",
+]);
+
+const DOC_MIME_TYPES = new Set([
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+const GATEWAY_SUPPORTED_FILE_TYPES = new Set([
+  "application/pdf",
 ]);
 
 const TEXT_MIME_TYPES = new Set([
@@ -135,6 +138,41 @@ async function toContentPart(
       return {
         type: "text",
         text: `[Voice message]: Audio transcription failed — ${error.message}`,
+      };
+    }
+  }
+
+  if (SPREADSHEET_MIME_TYPES.has(mimeType)) {
+    if (mimeType === "text/csv" || mimeType === "application/csv") {
+      const text = new TextDecoder().decode(data);
+      return { type: "text", text: `[File: ${name}]\n${text}` };
+    }
+    try {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(data);
+      const sheets = workbook.SheetNames.map((sheetName) => {
+        const sheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        return `## ${sheetName}\n${csv}`;
+      });
+      return { type: "text", text: `[File: ${name}]\n${sheets.join("\n\n")}` };
+    } catch (error: any) {
+      return {
+        type: "text",
+        text: `[File: ${name}] — Failed to parse spreadsheet: ${error.message}`,
+      };
+    }
+  }
+
+  if (DOC_MIME_TYPES.has(mimeType)) {
+    try {
+      const mammoth = await import("mammoth");
+      const result = await mammoth.extractRawText({ buffer: Buffer.from(data) });
+      return { type: "text", text: `[File: ${name}]\n${result.value}` };
+    } catch (error: any) {
+      return {
+        type: "text",
+        text: `[File: ${name}] — Failed to parse document: ${error.message}`,
       };
     }
   }
