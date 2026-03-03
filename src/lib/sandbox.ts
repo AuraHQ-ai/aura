@@ -1,3 +1,4 @@
+import * as nodePath from "node:path";
 import { getSetting, setSetting } from "./settings.js";
 import { getCredential } from "./credentials.js";
 import { logger } from "./logger.js";
@@ -213,8 +214,9 @@ export async function writeToSandbox(
 ): Promise<string> {
   const sandbox = await getOrCreateSandbox();
   const dir = `/home/user/${subdir}`;
-  await sandbox.commands.run(`mkdir -p ${dir}`, { timeoutMs: 5_000 });
-  const path = `${dir}/${filename}`;
+  await sandbox.commands.run(`mkdir -p "${dir}"`, { timeoutMs: 5_000 });
+  const safeName = nodePath.basename(filename);
+  const path = `${dir}/${safeName}`;
   await sandbox.files.write(path, data);
   return path;
 }
