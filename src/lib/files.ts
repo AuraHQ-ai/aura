@@ -29,7 +29,6 @@ const SPREADSHEET_MIME_TYPES = new Set([
 ]);
 
 const DOC_MIME_TYPES = new Set([
-  "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
 
