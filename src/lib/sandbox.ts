@@ -69,7 +69,10 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
     envs.CLAAP_API_KEY = process.env.CLAAP_API_KEY;
   }
   const saKeyB64 =
-    process.env.GOOGLE_SA_KEY_B64 || process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+    process.env.GOOGLE_SA_KEY_B64 ||
+    (process.env.GOOGLE_SERVICE_ACCOUNT_KEY
+      ? Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_KEY).toString("base64")
+      : undefined);
   if (saKeyB64) {
     envs.GOOGLE_SA_KEY_B64 = saKeyB64;
   }
@@ -92,6 +95,11 @@ async function setupSandboxFilesystem(
     );
     if (mountCheck.stdout?.trim() === "mounted") return;
 
+    if (!envs.GOOGLE_SA_KEY_B64) {
+      logger.info("Skipping GCS mount — GOOGLE_SA_KEY_B64 not available");
+      return;
+    }
+
     const gcsfuseCheck = await sandbox.commands.run("which gcsfuse", {
       timeoutMs: 5_000,
     });
@@ -110,22 +118,18 @@ async function setupSandboxFilesystem(
       }
     }
 
-    if (envs.GOOGLE_SA_KEY_B64) {
-      const mountResult = await sandbox.commands.run(
-        `echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs aura-files /mnt/aura-files`,
-        { timeoutMs: 30_000, envs },
-      );
-      if (mountResult.exitCode !== 0) {
-        logger.warn("gcsfuse mount failed", {
-          exitCode: mountResult.exitCode,
-          stderr: mountResult.stderr,
-        });
-        return;
-      }
-      logger.info("GCS bucket mounted at /mnt/aura-files");
-    } else {
-      logger.info("Skipping GCS mount — GOOGLE_SA_KEY_B64 not available");
+    const mountResult = await sandbox.commands.run(
+      `echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs aura-files /mnt/aura-files`,
+      { timeoutMs: 30_000, envs },
+    );
+    if (mountResult.exitCode !== 0) {
+      logger.warn("gcsfuse mount failed", {
+        exitCode: mountResult.exitCode,
+        stderr: mountResult.stderr,
+      });
+      return;
     }
+    logger.info("GCS bucket mounted at /mnt/aura-files");
   } catch (error: any) {
     logger.warn("Failed to mount GCS bucket", { error: error.message });
   }
