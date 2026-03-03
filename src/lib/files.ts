@@ -149,7 +149,7 @@ async function toContentPart(
     }
     try {
       const XLSX = await import("xlsx");
-      const workbook = XLSX.read(data, { type: "buffer" });
+      const workbook = XLSX.read(data);
       const sheets = workbook.SheetNames.map((sheetName) => {
         const sheet = workbook.Sheets[sheetName];
         const csv = XLSX.utils.sheet_to_csv(sheet);
@@ -169,8 +169,11 @@ async function toContentPart(
       const mammoth = await import("mammoth");
       const result = await mammoth.extractRawText({ buffer: Buffer.from(data) });
       return { type: "text", text: `[File: ${name}]\n${result.value}` };
-    } catch {
-      return { type: "file", data, mediaType: mimeType, filename: name };
+    } catch (error: any) {
+      return {
+        type: "text",
+        text: `[File: ${name}] — Failed to parse document: ${error.message}`,
+      };
     }
   }
 
