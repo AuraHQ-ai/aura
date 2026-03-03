@@ -35,6 +35,62 @@ export function isInvalidArguments(error: any): boolean {
 
 const MSG_TRUNCATE_LIMIT = 39_000;
 
+type PlainPostOptions = {
+  channel: string;
+  text: string;
+  thread_ts?: string;
+  metadata?: any;
+  unfurl_links?: boolean;
+  unfurl_media?: boolean;
+};
+
+/**
+ * Post a message and handle `channel_type_not_supported` / `msg_too_long`
+ * errors with automatic truncation.  Used internally by `safePostMessage`
+ * for every "retry without blocks/metadata" path so the retry-then-truncate
+ * logic lives in one place.
+ */
+async function postWithTruncationFallback(
+  client: WebClient,
+  options: PlainPostOptions,
+): Promise<{ ok: boolean; ts?: string; channel?: string }> {
+  try {
+    const result = await client.chat.postMessage(options);
+    return { ok: true, ts: result.ts, channel: result.channel };
+  } catch (err: any) {
+    if (isChannelTypeNotSupported(err)) {
+      logger.warn("safePostMessage: channel type not supported on fallback post", {
+        channel: options.channel,
+      });
+      return { ok: false };
+    }
+
+    if (isMsgTooLong(err)) {
+      logger.warn("safePostMessage: msg_too_long on fallback, truncating", {
+        channel: options.channel,
+        textLength: options.text.length,
+      });
+      try {
+        const result = await client.chat.postMessage({
+          ...options,
+          text: options.text.slice(0, MSG_TRUNCATE_LIMIT),
+        });
+        return { ok: true, ts: result.ts, channel: result.channel };
+      } catch (truncateErr: any) {
+        if (isChannelTypeNotSupported(truncateErr)) {
+          logger.warn("safePostMessage: channel type not supported after truncation", {
+            channel: options.channel,
+          });
+          return { ok: false };
+        }
+        throw truncateErr;
+      }
+    }
+
+    throw err;
+  }
+}
+
 /**
  * Post a message to Slack with automatic fallback for rejected blocks
  * and unsupported channel types. This is the ONLY way to call chat.postMessage
@@ -89,51 +145,14 @@ export async function safePostMessage(
         fallbackReason,
       });
 
-      try {
-        const result = await client.chat.postMessage({
-          channel,
-          text,
-          thread_ts,
-          ...(!stripMetadata && metadata ? { metadata } : {}),
-          unfurl_links,
-          unfurl_media,
-        });
-        return { ok: true, ts: result.ts, channel: result.channel };
-      } catch (retryErr: any) {
-        if (isChannelTypeNotSupported(retryErr)) {
-          logger.warn("safePostMessage: channel type not supported even without blocks, giving up", {
-            channel,
-            originalError: err?.data?.error || err?.message,
-          });
-          return { ok: false };
-        }
-
-        if (isMsgTooLong(retryErr)) {
-          logger.warn("safePostMessage: msg_too_long on retry, truncating", {
-            channel,
-            textLength: text.length,
-          });
-          try {
-            const result = await client.chat.postMessage({
-              channel,
-              text: text.slice(0, MSG_TRUNCATE_LIMIT),
-              thread_ts,
-              ...(!stripMetadata && metadata ? { metadata } : {}),
-              unfurl_links,
-              unfurl_media,
-            });
-            return { ok: true, ts: result.ts, channel: result.channel };
-          } catch (truncateErr: any) {
-            if (isChannelTypeNotSupported(truncateErr)) {
-              logger.warn("safePostMessage: channel type not supported after truncation", { channel });
-              return { ok: false };
-            }
-            throw truncateErr;
-          }
-        }
-
-        throw retryErr;
-      }
+      return await postWithTruncationFallback(client, {
+        channel,
+        text,
+        thread_ts,
+        ...(!stripMetadata && metadata ? { metadata } : {}),
+        unfurl_links,
+        unfurl_media,
+      });
     }
 
     if (isInvalidArguments(err) && !hasBlocks) {
@@ -141,43 +160,14 @@ export async function safePostMessage(
         channel,
         originalError: err?.data?.error || err?.message,
       });
-      try {
-        const result = await client.chat.postMessage({
-          channel,
-          text,
-          thread_ts,
-          unfurl_links,
-          unfurl_media,
-        });
-        return { ok: true, ts: result.ts, channel: result.channel };
-      } catch (retryErr: any) {
-        if (isChannelTypeNotSupported(retryErr)) {
-          return { ok: false };
-        }
-        if (isMsgTooLong(retryErr)) {
-          logger.warn("safePostMessage: msg_too_long on no-blocks retry, truncating", {
-            channel,
-            textLength: text.length,
-          });
-          try {
-            const result = await client.chat.postMessage({
-              channel,
-              text: text.slice(0, MSG_TRUNCATE_LIMIT),
-              thread_ts,
-              unfurl_links,
-              unfurl_media,
-            });
-            return { ok: true, ts: result.ts, channel: result.channel };
-          } catch (truncateErr: any) {
-            if (isChannelTypeNotSupported(truncateErr)) {
-              logger.warn("safePostMessage: channel type not supported after truncation", { channel });
-              return { ok: false };
-            }
-            throw truncateErr;
-          }
-        }
-        throw retryErr;
-      }
+
+      return await postWithTruncationFallback(client, {
+        channel,
+        text,
+        thread_ts,
+        unfurl_links,
+        unfurl_media,
+      });
     }
 
     if (isChannelTypeNotSupported(err) && !hasBlocks) {
