@@ -165,7 +165,9 @@ function isUnsupportedFileError(error: any): boolean {
   const name = error?.name || "";
   return (
     name === "AI_UnsupportedFunctionalityError" ||
+    name === "AI_NoOutputGeneratedError" ||
     msg.includes("UnsupportedFunctionality") ||
+    msg.includes("NoOutputGenerated") ||
     msg.includes("unsupported file") ||
     msg.includes("unsupported mime")
   );
