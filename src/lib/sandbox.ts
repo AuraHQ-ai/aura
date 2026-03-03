@@ -68,7 +68,52 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
   if (process.env.CLAAP_API_KEY) {
     envs.CLAAP_API_KEY = process.env.CLAAP_API_KEY;
   }
+  const saKeyB64 =
+    process.env.GOOGLE_SA_KEY_B64 || process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (saKeyB64) {
+    envs.GOOGLE_SA_KEY_B64 = saKeyB64;
+  }
   return envs;
+}
+
+/**
+ * Mount the GCS bucket `gs://aura-files` at `/mnt/aura-files`.
+ * Installs gcsfuse if needed and uses the base64-encoded SA key from envs.
+ * Non-fatal -- sandbox works fine without the mount.
+ */
+async function setupSandboxFilesystem(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<void> {
+  try {
+    const mountCheck = await sandbox.commands.run(
+      "mountpoint -q /mnt/aura-files && echo mounted || echo not",
+      { timeoutMs: 5_000, envs },
+    );
+    if (mountCheck.stdout?.trim() === "mounted") return;
+
+    const gcsfuseCheck = await sandbox.commands.run("which gcsfuse", {
+      timeoutMs: 5_000,
+    });
+    if (gcsfuseCheck.exitCode !== 0) {
+      const distro = "bookworm";
+      await sandbox.commands.run(
+        `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse`,
+        { timeoutMs: 60_000, envs },
+      );
+    }
+
+    if (envs.GOOGLE_SA_KEY_B64) {
+      await sandbox.commands.run(
+        `echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs aura-files /mnt/aura-files`,
+        { timeoutMs: 30_000, envs },
+      );
+    }
+
+    logger.info("GCS bucket mounted at /mnt/aura-files");
+  } catch (error: any) {
+    logger.warn("Failed to mount GCS bucket", { error: error.message });
+  }
 }
 
 /**
@@ -116,6 +161,7 @@ export async function getOrCreateSandbox(): Promise<any> {
 
       cachedSandbox = sandbox;
       logger.info("E2B sandbox resumed", { sandboxId: savedId });
+      await setupSandboxFilesystem(sandbox, envs);
       return sandbox;
     } catch (error: any) {
       logger.warn("Failed to resume sandbox, creating new one", {
@@ -166,6 +212,8 @@ export async function getOrCreateSandbox(): Promise<any> {
       error: error.message,
     });
   }
+
+  await setupSandboxFilesystem(sandbox, envs);
 
   return sandbox;
 }
