@@ -1,5 +1,5 @@
 import type { WebClient } from "@slack/web-api";
-import { buildSystemPrompt, buildDynamicContext } from "../personality/system-prompt.js";
+import { buildSystemPrompt, buildDynamicContext, type MentionedPerson } from "../personality/system-prompt.js";
 import { retrieveMemories, retrieveConversations, type ConversationThread } from "../memory/retrieve.js";
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
@@ -8,6 +8,10 @@ import { resolveChannelName } from "./context.js";
 import type { ConversationContext } from "./slack-context.js";
 import { formatConversationContext } from "./slack-context.js";
 import type { Memory, UserProfile } from "../db/schema.js";
+import { people } from "../db/schema.js";
+import { db } from "../db/client.js";
+import { inArray, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { logger } from "../lib/logger.js";
 import { getMainModelId } from "../lib/ai.js";
 
@@ -58,8 +62,15 @@ export async function assemblePrompt(
     });
   }
 
-  // Run memory retrieval, conversation retrieval, and profile fetch in parallel
-  const [memories, conversations, userProfile] = await Promise.all([
+  // Extract @mentioned user IDs from message text (excluding the sender).
+  // By this point, resolveSlackEntities has converted <@U066V1AN6> to @name (U066V1AN6).
+  const MENTION_RE = /\((U[A-Z0-9]+)\)/g;
+  const mentionedUserIds = [...new Set(
+    [...(context.text || '').matchAll(MENTION_RE)].map(m => m[1])
+  )].filter(id => id !== context.userId);
+
+  // Run memory retrieval, conversation retrieval, profile fetch, and mentioned-people lookup in parallel
+  const [memories, conversations, userProfile, mentionedPeople] = await Promise.all([
     queryEmbedding
       ? retrieveMemories({
           query: queryText,
@@ -79,6 +90,7 @@ export async function assemblePrompt(
         })
       : Promise.resolve([] as ConversationThread[]),
     getProfile(context.userId),
+    lookupMentionedPeople(mentionedUserIds),
   ]);
 
   // Format conversation context from live Slack data (already fetched by pipeline).
@@ -121,6 +133,7 @@ export async function assemblePrompt(
     channelType: context.channelType,
     threadContext,
     isChannelHistory,
+    mentionedPeople,
   });
 
   // Dynamic per-call context — separated so the stable prompt stays cache-friendly
@@ -152,7 +165,48 @@ If the thread content is sparse, try list_slack_list_items to find the item by m
     hasProfile: !!userProfile,
     hasThread: !!threadContext,
     hasSlackListItemContext: !!context.slackListItemContext,
+    mentionedPeopleCount: mentionedPeople.length,
   });
 
   return { stablePrefix, conversationContext, dynamicContext, memories, conversations, userProfile };
+}
+
+/**
+ * Look up @mentioned Slack users in the people DB.
+ * Uses a single query with a left-join to resolve manager names.
+ */
+async function lookupMentionedPeople(slackUserIds: string[]): Promise<MentionedPerson[]> {
+  if (slackUserIds.length === 0) return [];
+
+  try {
+    const manager = alias(people, 'manager');
+    const rows = await db
+      .select({
+        slackUserId: people.slackUserId,
+        displayName: people.displayName,
+        gender: people.gender,
+        preferredLanguage: people.preferredLanguage,
+        jobTitle: people.jobTitle,
+        managerName: manager.displayName,
+        notes: people.notes,
+      })
+      .from(people)
+      .leftJoin(manager, eq(people.managerId, manager.id))
+      .where(inArray(people.slackUserId, slackUserIds));
+
+    return rows
+      .filter((r): r is typeof r & { slackUserId: string } => r.slackUserId !== null)
+      .map(r => ({
+        slackUserId: r.slackUserId,
+        displayName: r.displayName,
+        gender: r.gender,
+        preferredLanguage: r.preferredLanguage,
+        jobTitle: r.jobTitle,
+        managerName: r.managerName,
+        notes: r.notes,
+      }));
+  } catch (error) {
+    logger.error("Failed to look up mentioned people", { error: String(error), slackUserIds });
+    return [];
+  }
 }
