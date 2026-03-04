@@ -91,3 +91,38 @@ export function maskCredential(value: string): string {
   if (value.length <= 12) return "••••••••";
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
+
+export async function listCredentials(): Promise<
+  { key: string; maskedValue: string }[]
+> {
+  const { db } = await import("../db/client.js");
+  const { sql } = await import("drizzle-orm");
+
+  try {
+    const rows = await db.execute(
+      sql\`SELECT key, value FROM settings WHERE key LIKE 'credential:%' ORDER BY key\`,
+    );
+    return rows.rows.map((row: any) => {
+      const key = (row.key as string).replace("credential:", "");
+      let masked = "••••••••";
+      try {
+        const plain = decryptCredential(row.value as string);
+        masked = maskCredential(plain);
+      } catch {}
+      return { key, maskedValue: masked };
+    });
+  } catch (error) {
+    logger.error("Failed to list credentials", { error });
+    return [];
+  }
+}
+
+export async function deleteCredential(key: string): Promise<void> {
+  const { db } = await import("../db/client.js");
+  const { sql } = await import("drizzle-orm");
+  await db.execute(
+    sql\`DELETE FROM settings WHERE key = \${"credential:" + key}\`,
+  );
+  logger.info("Credential deleted", { key });
+}
+
