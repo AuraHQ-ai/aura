@@ -115,6 +115,7 @@ export async function storeApiCredential(
   plaintext: string,
   expiresAt?: Date,
   type: "token" | "oauth_client" = "token",
+  tokenUrl?: string,
 ): Promise<Credential> {
   validateKey();
   validateName(name);
@@ -139,6 +140,7 @@ export async function storeApiCredential(
       ownerId,
       name,
       type,
+      tokenUrl: type === "oauth_client" ? (tokenUrl ?? null) : null,
       value: encrypted,
       expiresAt: expiresAt ?? null,
     })
@@ -147,6 +149,7 @@ export async function storeApiCredential(
       set: {
         value: encrypted,
         type,
+        tokenUrl: type === "oauth_client" ? (tokenUrl ?? null) : null,
         expiresAt: expiresAt ?? null,
         updatedAt: new Date(),
       },
@@ -210,12 +213,86 @@ export async function getApiCredentialWithType(
   ownerId: string,
   requestingUserId: string,
   intent: "read" | "write",
-): Promise<{ value: string; type: string } | null> {
+): Promise<{ value: string; type: string; access_token?: string; expires_in?: number } | null> {
   const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
   if (!cred) return null;
-  return { value: decryptCredential(cred.value), type: cred.type };
+
+  const decrypted = decryptCredential(cred.value);
+
+  if (cred.type === "oauth_client" && cred.tokenUrl) {
+    let parsed: { client_id: string; client_secret: string };
+    try {
+      parsed = JSON.parse(decrypted);
+    } catch {
+      throw new Error(`oauth_client credential "${name}" has invalid JSON value`);
+    }
+    if (!parsed.client_id || !parsed.client_secret) {
+      throw new Error(`oauth_client credential "${name}" missing client_id or client_secret`);
+    }
+    const tokenResponse = await exchangeOAuthToken(
+      cred.tokenUrl,
+      parsed.client_id,
+      parsed.client_secret,
+    );
+    return {
+      value: tokenResponse.access_token,
+      type: cred.type,
+      access_token: tokenResponse.access_token,
+      expires_in: tokenResponse.expires_in,
+    };
+  }
+
+  return { value: decrypted, type: cred.type };
 }
 
+async function exchangeOAuthToken(
+  tokenUrl: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<{ access_token: string; expires_in?: number }> {
+  let resp: Response;
+  try {
+    resp = await fetch(tokenUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
+    });
+  } catch (err: any) {
+    throw new Error(`Token exchange failed: could not reach ${tokenUrl}: ${err.message}`);
+  }
+
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(
+      `Token exchange failed: ${tokenUrl} returned ${resp.status}${body ? `: ${body}` : ""}`,
+    );
+  }
+
+  let data: any;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error(`Token exchange failed: ${tokenUrl} returned non-JSON response`);
+  }
+
+  if (!data.access_token || typeof data.access_token !== "string") {
+    throw new Error(
+      `Token exchange failed: response from ${tokenUrl} missing access_token field`,
+    );
+  }
+
+  return {
+    access_token: data.access_token,
+    expires_in: typeof data.expires_in === "number" ? data.expires_in : undefined,
+  };
+}
+
+/**
+ * Retrieve a credential for a scheduled job. Returns raw decrypted value.
+ * NOTE: Does not auto-exchange oauth_client tokens — jobs get raw client_id/client_secret JSON.
+ * This is intentional: jobs may need different exchange flows or caching strategies.
+ * Use getApiCredentialWithType for interactive tool calls that need auto-exchange.
+ */
 export async function getJobApiCredential(
   name: string,
   jobId: string,

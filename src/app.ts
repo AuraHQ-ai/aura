@@ -561,9 +561,11 @@ app.post("/api/slack/interactions", async (c) => {
       const credType = (payload.view?.state?.values?.cred_type_block?.cred_type?.selected_option?.value || "token") as "token" | "oauth_client";
 
       let value: string | undefined;
+      let tokenUrl: string | undefined;
       if (credType === "oauth_client") {
         const clientId = payload.view?.state?.values?.cred_client_id_block?.cred_client_id?.value;
         const clientSecret = payload.view?.state?.values?.cred_client_secret_block?.cred_client_secret?.value;
+        tokenUrl = payload.view?.state?.values?.cred_token_url_block?.cred_token_url?.value || undefined;
         if (clientId && clientSecret) {
           value = JSON.stringify({ client_id: clientId, client_secret: clientSecret });
         }
@@ -576,7 +578,7 @@ app.post("/api/slack/interactions", async (c) => {
         const expiresAt = expiryStr ? new Date(expiryStr) : undefined;
         const addPromise = (async () => {
           try {
-            await storeApiCredential(userId, name, value, expiresAt, credType);
+            await storeApiCredential(userId, name, value, expiresAt, credType, tokenUrl);
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.api_credential_add", err, { userId, name });
@@ -607,7 +609,7 @@ app.post("/api/slack/interactions", async (c) => {
               return;
             }
 
-            await storeApiCredential(cred.owner_id, cred.name, value, cred.expires_at ?? undefined);
+            await storeApiCredential(cred.owner_id, cred.name, value, cred.expires_at ?? undefined, (cred.type as "token" | "oauth_client") ?? "token");
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.api_credential_update", err, { userId, credentialId });
