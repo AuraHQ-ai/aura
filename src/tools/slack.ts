@@ -20,6 +20,7 @@ import { createDriveTools } from "./drive.js";
 import { createPeopleTools } from "./people.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
+import { createResourceTools } from "./resources.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -2994,6 +2995,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── People Data Tools (structured person records) ────────────────
     ...createPeopleTools(context),
+
+    // ── Resource Knowledge Base Tools (URL-based content storage) ───
+    ...createResourceTools(context),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
@@ -3035,6 +3039,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     "run_subagent",
     // People
     "get_person", "update_person",
+    // Resources
+    "ingest_resource", "get_resource", "list_resources",
   ]);
 
   const deferOpts = { anthropic: { deferLoading: true } };

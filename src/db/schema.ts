@@ -473,6 +473,45 @@ export const voiceCalls = pgTable(
   ],
 );
 
+// ── Resources (raw content storage: URLs, docs, transcripts) ────────────────
+
+export const resources = pgTable(
+  "resources",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    url: text("url").notNull().unique(),
+    parentUrl: text("parent_url"),
+    title: text("title"),
+    source: text("source").notNull(),
+    status: text("status").notNull().default("pending"),
+    content: text("content"),
+    summary: text("summary"),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .default({}),
+    embedding: vector("embedding", { dimensions: 1536 }),
+    contentHash: text("content_hash"),
+    errorMessage: text("error_message"),
+    crawledAt: timestamptz("crawled_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("resources_embedding_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+    index("resources_source_idx").on(table.source),
+    index("resources_parent_url_idx")
+      .on(table.parentUrl)
+      .where(sql`parent_url IS NOT NULL`),
+    index("resources_crawled_at_idx").on(table.crawledAt),
+    index("resources_status_idx").on(table.status),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Message = typeof messages.$inferSelect;
@@ -503,6 +542,8 @@ export type Address = typeof addresses.$inferSelect;
 export type NewAddress = typeof addresses.$inferInsert;
 export type VoiceCall = typeof voiceCalls.$inferSelect;
 export type NewVoiceCall = typeof voiceCalls.$inferInsert;
+export type Resource = typeof resources.$inferSelect;
+export type NewResource = typeof resources.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
