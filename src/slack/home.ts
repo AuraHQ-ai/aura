@@ -5,7 +5,7 @@ import { logger } from "../lib/logger.js";
 import { getCredential, maskCredential } from "../lib/credentials.js";
 import { db } from "../db/client.js";
 import { notes } from "../db/schema.js";
-import { desc, eq, and, or, isNull, gt } from "drizzle-orm";
+import { desc, eq, and, or, isNull, gt, sql } from "drizzle-orm";
 import { relativeTime } from "../lib/temporal.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
@@ -223,19 +223,28 @@ export async function buildNotesBrowserBlocks(
     conditions.push(eq(notes.category, category));
   }
 
-  const allRows = await db
-    .select({
-      topic: notes.topic,
-      category: notes.category,
-      updatedAt: notes.updatedAt,
-    })
-    .from(notes)
-    .where(and(...conditions))
-    .orderBy(desc(notes.updatedAt));
-
-  const totalCount = allRows.length;
+  const whereClause = and(...conditions);
   const offset = page * NOTES_PER_PAGE;
-  const pageRows = allRows.slice(offset, offset + NOTES_PER_PAGE);
+
+  const [countResult, pageRows] = await Promise.all([
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(notes)
+      .where(whereClause),
+    db
+      .select({
+        topic: notes.topic,
+        category: notes.category,
+        updatedAt: notes.updatedAt,
+      })
+      .from(notes)
+      .where(whereClause)
+      .orderBy(desc(notes.updatedAt))
+      .limit(NOTES_PER_PAGE)
+      .offset(offset),
+  ]);
+
+  const totalCount = countResult[0]?.count ?? 0;
   const hasMore = offset + NOTES_PER_PAGE < totalCount;
 
   const blocks: any[] = [
