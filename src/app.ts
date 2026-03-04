@@ -447,13 +447,13 @@ app.post("/api/slack/interactions", async (c) => {
         const token = action.action_id.replace("confirm_approve_", "");
         const approvePromise = (async () => {
           try {
-            const pending = resolveConfirmation(token);
-            if (pending && pending.userId === userId) {
+            const entry = resolveConfirmation(token, true);
+            if (entry && entry.userId === userId) {
               const channelId = payload.channel?.id;
               if (channelId) {
                 await slackClient.chat.postMessage({
                   channel: channelId,
-                  text: `Approved: ${pending.action}`,
+                  text: `Approved: ${entry.action}`,
                 });
               }
             }
@@ -468,13 +468,13 @@ app.post("/api/slack/interactions", async (c) => {
         const token = action.action_id.replace("confirm_deny_", "");
         const denyPromise = (async () => {
           try {
-            const pending = resolveConfirmation(token);
-            if (pending) {
+            const entry = resolveConfirmation(token, false);
+            if (entry) {
               const channelId = payload.channel?.id;
               if (channelId) {
                 await slackClient.chat.postMessage({
                   channel: channelId,
-                  text: `Denied: ${pending.action}`,
+                  text: `Denied: ${entry.action}`,
                 });
               }
             }
