@@ -3036,7 +3036,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // Checkpoint
     "checkpoint_plan",
     // Resources
-    "ingest_resource", "search_resources", "get_resource",
+    "ingest_resource", "search_resources", "get_resource", "list_resources",
     // Subagent
     "run_subagent",
     // People

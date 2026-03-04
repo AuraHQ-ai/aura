@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import TurndownService from "turndown";
 import { generateText } from "ai";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { resources } from "../db/schema.js";
@@ -44,6 +44,11 @@ function mergeMetadata(
 
 function normalizeMarkdown(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function truncate(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars - 1)}…`;
 }
 
 function extractHtmlTitle(html: string): string | null {
@@ -296,8 +301,18 @@ interface ResourceSearchRow {
   source: string;
   summary: string | null;
   crawled_at: Date | null;
+  snippet?: string | null;
   similarity?: number;
   rank?: number;
+}
+
+interface ResourceListRow {
+  url: string;
+  title: string | null;
+  source: string;
+  summary: string | null;
+  parent_url: string | null;
+  crawled_at: Date | null;
 }
 
 export function createResourceTools(context?: ScheduleContext) {
@@ -617,6 +632,12 @@ export function createResourceTools(context?: ScheduleContext) {
           try {
             const results = await db.execute(sql`
               SELECT url, title, source, summary, crawled_at,
+                     ts_headline(
+                       'english',
+                       coalesce(content, ''),
+                       websearch_to_tsquery('english', ${trimmed}),
+                       'StartSel=>>>, StopSel=<<<, MaxWords=35, MinWords=15'
+                     ) as snippet,
                      ts_rank(
                        to_tsvector('english', coalesce(content, '')),
                        websearch_to_tsquery('english', ${trimmed})
@@ -633,7 +654,12 @@ export function createResourceTools(context?: ScheduleContext) {
             const escaped = trimmed.replace(/[\\%_]/g, "\\$&");
             const pattern = `%${escaped.toLowerCase()}%`;
             const results = await db.execute(sql`
-              SELECT url, title, source, summary, crawled_at
+              SELECT url, title, source, summary, crawled_at,
+                     substring(
+                       coalesce(content, '')
+                       from greatest(1, position(lower(${trimmed}) in lower(coalesce(content, ''))) - 100)
+                       for 220
+                     ) as snippet
               FROM resources
               WHERE ${where}
                 AND lower(coalesce(content, '')) LIKE ${pattern} ESCAPE '\\'
@@ -658,6 +684,7 @@ export function createResourceTools(context?: ScheduleContext) {
               title: r.title,
               source: r.source,
               summary: r.summary,
+              snippet: r.snippet ?? null,
               crawled_at: r.crawled_at
                 ? formatTimestamp(r.crawled_at, context?.timezone)
                 : null,
@@ -748,6 +775,74 @@ export function createResourceTools(context?: ScheduleContext) {
         }
       },
       slack: { status: "Loading resource...", detail: (i) => i.url },
+    }),
+
+    list_resources: defineTool({
+      description:
+        "List resources currently in the knowledge base (ready only). Useful for browsing what has been ingested before doing targeted retrieval. Supports optional source filtering.",
+      inputSchema: z.object({
+        source: z
+          .enum(RESOURCE_SOURCES)
+          .optional()
+          .describe("Optional source filter."),
+        limit: z
+          .number()
+          .min(1)
+          .max(50)
+          .default(20)
+          .describe("Max resources to return (default 20, max 50)."),
+      }),
+      execute: async ({ source, limit }) => {
+        try {
+          const conditions = [eq(resources.status, RESOURCE_STATUSES[1])];
+          if (source) conditions.push(eq(resources.source, source));
+
+          const rows = await db
+            .select({
+              url: resources.url,
+              title: resources.title,
+              source: resources.source,
+              summary: resources.summary,
+              parent_url: resources.parentUrl,
+              crawled_at: resources.crawledAt,
+            })
+            .from(resources)
+            .where(and(...conditions))
+            .orderBy(desc(resources.crawledAt))
+            .limit(limit);
+
+          const typedRows = rows as ResourceListRow[];
+          logger.info("list_resources tool called", {
+            source,
+            resultCount: typedRows.length,
+          });
+
+          return {
+            ok: true,
+            count: typedRows.length,
+            resources: typedRows.map((r) => ({
+              url: r.url,
+              title: r.title,
+              source: r.source,
+              summary: r.summary ? truncate(r.summary, 150) : null,
+              parent_url: r.parent_url,
+              crawled_at: r.crawled_at
+                ? formatTimestamp(r.crawled_at, context?.timezone)
+                : null,
+            })),
+          };
+        } catch (error: any) {
+          logger.error("list_resources tool failed", {
+            source,
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to list resources: ${error.message}`,
+          };
+        }
+      },
+      slack: { status: "Listing resources..." },
     }),
   };
 }
