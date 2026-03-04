@@ -256,6 +256,53 @@ export const notes = pgTable(
   ],
 );
 
+// ── Resources (raw ingested source material) ─────────────────────────────────
+
+export const resources = pgTable(
+  "resources",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    url: text("url").notNull(),
+    parentUrl: text("parent_url"),
+    title: text("title"),
+    source: text("source").notNull(),
+    status: text("status")
+      .$type<"pending" | "ready" | "error">()
+      .notNull()
+      .default("pending"),
+    content: text("content"),
+    summary: text("summary"),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    embedding: vector("embedding", { dimensions: 1536 }),
+    contentHash: text("content_hash"),
+    errorMessage: text("error_message"),
+    crawledAt: timestamptz("crawled_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("resources_url_idx").on(table.url),
+    index("resources_embedding_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+    index("resources_content_fts_idx").using(
+      "gin",
+      sql`to_tsvector('english', coalesce(${table.content}, ''))`,
+    ),
+    index("resources_source_idx").on(table.source),
+    index("resources_parent_url_idx")
+      .on(table.parentUrl)
+      .where(sql`parent_url IS NOT NULL`),
+    index("resources_crawled_at_idx").on(table.crawledAt),
+  ],
+);
+
 // ── Jobs (unified: one-shot tasks, recurring work, continuations) ───────────
 
 export interface FrequencyConfig {
@@ -487,6 +534,8 @@ export type Setting = typeof settings.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
+export type Resource = typeof resources.$inferSelect;
+export type NewResource = typeof resources.$inferInsert;
 export type EventLock = typeof eventLocks.$inferSelect;
 export type NewEventLock = typeof eventLocks.$inferInsert;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
