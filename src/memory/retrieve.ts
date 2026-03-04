@@ -20,6 +20,7 @@ interface RetrievalOptions {
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
+const PER_TERM_FULLTEXT_LIMIT = 25;
 
 async function extractLexemes(
   query: string,
@@ -36,9 +37,10 @@ async function extractLexemes(
     `);
 
     const rows = ((result as any).rows ?? result) as Array<{ term?: string | null }>;
+    const SAFE_LEXEME = /^[a-z0-9]+$/;
     return rows
       .map((row) => row.term?.trim() ?? "")
-      .filter((term): term is string => term.length > 0);
+      .filter((term): term is string => term.length > 0 && SAFE_LEXEME.test(term));
   } catch (error) {
     logger.warn("Failed to extract positional lexemes; falling back to vector-only ranking", {
       error: String(error),
@@ -81,6 +83,11 @@ export async function retrieveMemories(
 
     const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore}`;
 
+    logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
+      lexemes,
+      query: query.substring(0, 100),
+    });
+
     const fulltextSearchCte = lexemes.length === 0
       ? sql`
         fulltext_search AS (
@@ -88,28 +95,42 @@ export async function retrieveMemories(
           WHERE FALSE
         )
       `
-      : sql`
-        fulltext_search AS (
-          SELECT id, MIN(rank) AS rank
-          FROM (
-            ${sql.join(
-              lexemes.map((lexeme) => sql`
-                SELECT id, ROW_NUMBER() OVER (
-                  ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
-                ) AS rank
-                FROM memories
-                WHERE search_vector @@ to_tsquery('english', ${lexeme})
-                  AND ${baseFilter}
-                  AND ${privacyFilter}
+      : (() => {
+        const perTermCtes = lexemes.map((lexeme, index) => {
+          const cteName = sql.raw(`ft_${index}`);
+          return sql`
+            ${cteName} AS (
+              SELECT id, ROW_NUMBER() OVER (
                 ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
-                LIMIT ${CANDIDATE_POOL_SIZE}
-              `),
-              sql` UNION ALL `,
-            )}
-          ) per_term
-          GROUP BY id
-        )
-      `;
+              ) AS rank
+              FROM memories
+              WHERE search_vector @@ to_tsquery('english', ${lexeme})
+                AND ${baseFilter}
+                AND ${privacyFilter}
+              ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+              LIMIT ${PER_TERM_FULLTEXT_LIMIT}
+            )
+          `;
+        });
+
+        const unionParts = sql.join(
+          lexemes.map((_, index) => sql.raw(`SELECT * FROM ft_${index}`)),
+          sql` UNION ALL `,
+        );
+
+        return sql`
+          ${sql.join(perTermCtes, sql`, `)},
+          ft_dedup AS (
+            SELECT id, MIN(rank) AS rank
+            FROM (${unionParts}) all_terms
+            GROUP BY id
+          ),
+          fulltext_search AS (
+            SELECT id, rank
+            FROM ft_dedup
+          )
+        `;
+      })();
 
     const hybridQuery = sql`
       WITH vector_search AS (
