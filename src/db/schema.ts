@@ -14,6 +14,7 @@ import {
   unique,
   vector,
   date,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -532,3 +533,88 @@ export const feedback = pgTable(
 
 export type Feedback = typeof feedback.$inferSelect;
 export type NewFeedback = typeof feedback.$inferInsert;
+
+// ── API Credentials (per-user encrypted credential storage) ─────────────────
+
+export const credentials = pgTable(
+  "credentials",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    ownerId: text("owner_id").notNull(),
+    name: text("name").notNull(),
+    value: text("value").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    expiresAt: timestamptz("expires_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("credentials_owner_id_name_unique").on(table.ownerId, table.name),
+    check(
+      "credentials_name_check",
+      sql`${table.name} ~ '^[a-z][a-z0-9_]{1,62}$'`,
+    ),
+  ],
+);
+
+export const credentialGrants = pgTable(
+  "credential_grants",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    credentialId: uuid("credential_id")
+      .notNull()
+      .references(() => credentials.id, { onDelete: "cascade" }),
+    granteeId: text("grantee_id").notNull(),
+    permission: text("permission").notNull(),
+    grantedBy: text("granted_by").notNull(),
+    grantedAt: timestamptz("granted_at").notNull().defaultNow(),
+    revokedAt: timestamptz("revoked_at"),
+  },
+  (table) => [
+    unique("credential_grants_credential_id_grantee_id_unique").on(
+      table.credentialId,
+      table.granteeId,
+    ),
+    index("idx_grants_grantee").on(table.granteeId),
+    check(
+      "credential_grants_permission_check",
+      sql`${table.permission} IN ('read', 'write', 'admin')`,
+    ),
+  ],
+);
+
+export const credentialAuditLog = pgTable(
+  "credential_audit_log",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "set null",
+    }),
+    credentialName: text("credential_name").notNull(),
+    accessedBy: text("accessed_by").notNull(),
+    action: text("action").notNull(),
+    context: text("context"),
+    timestamp: timestamptz("timestamp").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_audit_credential").on(table.credentialId, table.timestamp),
+    index("idx_audit_accessed_by").on(table.accessedBy, table.timestamp),
+    check(
+      "credential_audit_log_action_check",
+      sql`${table.action} IN ('read','create','update','delete','grant','revoke','use')`,
+    ),
+  ],
+);
+
+export type Credential = typeof credentials.$inferSelect;
+export type NewCredential = typeof credentials.$inferInsert;
+export type CredentialGrant = typeof credentialGrants.$inferSelect;
+export type NewCredentialGrant = typeof credentialGrants.$inferInsert;
+export type CredentialAuditEntry = typeof credentialAuditLog.$inferSelect;
+export type NewCredentialAuditEntry = typeof credentialAuditLog.$inferInsert;
