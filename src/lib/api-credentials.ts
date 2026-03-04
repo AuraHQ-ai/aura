@@ -31,6 +31,7 @@ function validateName(name: string): void {
 
 type AuditAction =
   | "read"
+  | "write"
   | "create"
   | "update"
   | "delete"
@@ -81,7 +82,7 @@ async function notifyOwnerExpired(
   }
 }
 
-async function hasPermission(
+export async function hasPermission(
   credentialOwnerId: string,
   credentialId: string,
   userId: string,
@@ -169,7 +170,7 @@ export async function getApiCredential(
 
   const allowed = await hasPermission(ownerId, cred.id, requestingUserId, intent);
   if (!allowed) {
-    await audit(cred.id, name, requestingUserId, "read", "access_denied");
+    await audit(cred.id, name, requestingUserId, intent, "access_denied");
     throw new Error(`Access denied: ${requestingUserId} cannot ${intent} credential "${name}" owned by ${ownerId}`);
   }
 
@@ -221,7 +222,7 @@ export async function listApiCredentials(
     name: string;
     owner_id: string;
     expires_at: Date | null;
-    permission: string;
+    permission: "owner" | "read" | "write" | "admin";
   }>
 > {
   const owned = await db
@@ -252,8 +253,8 @@ export async function listApiCredentials(
     );
 
   return [
-    ...owned.map((r) => ({ ...r, permission: "owner" })),
-    ...granted,
+    ...owned.map((r) => ({ ...r, permission: "owner" as const })),
+    ...granted.map((r) => ({ ...r, permission: r.permission as "read" | "write" | "admin" })),
   ];
 }
 
