@@ -3,6 +3,9 @@ import { getAllSettings } from "../lib/settings.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { getCredential, maskCredential } from "../lib/credentials.js";
+import {
+  listApiCredentials,
+} from "../lib/api-credentials.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
 
@@ -147,6 +150,274 @@ async function buildCredentialBlocks(): Promise<any[]> {
   return blocks;
 }
 
+// ── User API Credential Blocks ──────────────────────────────────────────────
+
+async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
+  const creds = await listApiCredentials(userId);
+
+  const blocks: any[] = [
+    { type: "divider" },
+    {
+      type: "header",
+      text: { type: "plain_text", text: "Your API Credentials" },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: "Manage your personal API tokens. Encrypted with AES-256-GCM. Share with teammates as needed.",
+        },
+      ],
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "➕ Add Credential" },
+          action_id: "api_credential_add",
+          style: "primary",
+        },
+      ],
+    },
+  ];
+
+  if (creds.length === 0) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "_No credentials stored yet. Add one to get started._",
+      },
+    });
+    return blocks;
+  }
+
+  for (const cred of creds) {
+    const isOwner = cred.owner_id === userId;
+    const source = isOwner ? "yours" : `shared with you`;
+    const permLabel = isOwner ? "owner" : cred.permission;
+
+    let expiryText = "";
+    if (cred.expires_at) {
+      const expiresAt = new Date(cred.expires_at);
+      const isExpired = expiresAt < new Date();
+      expiryText = isExpired
+        ? "  ·  :warning: *expired*"
+        : `  ·  expires ${expiresAt.toISOString().slice(0, 10)}`;
+    }
+
+    const overflowOptions: any[] = [
+      {
+        text: { type: "plain_text", text: "Update" },
+        value: `api_credential_update_${cred.id}`,
+      },
+    ];
+    if (isOwner) {
+      overflowOptions.push(
+        {
+          text: { type: "plain_text", text: "Share" },
+          value: `api_credential_share_${cred.id}`,
+        },
+        {
+          text: { type: "plain_text", text: "Delete" },
+          value: `api_credential_delete_${cred.id}`,
+        },
+      );
+    }
+
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*${cred.name}*  ·  _${source}_ (${permLabel})${expiryText}`,
+      },
+      accessory: {
+        type: "overflow",
+        action_id: `api_credential_overflow_${cred.id}`,
+        options: overflowOptions,
+      },
+    });
+  }
+
+  return blocks;
+}
+
+// ── User Credential Modals ──────────────────────────────────────────────────
+
+export async function openAddCredentialModal(
+  client: WebClient,
+  triggerId: string,
+): Promise<void> {
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "api_credential_add_submit",
+      title: { type: "plain_text", text: "Add API Credential" },
+      submit: { type: "plain_text", text: "Save" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "input",
+          block_id: "cred_name_block",
+          label: { type: "plain_text", text: "Name" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_name",
+            placeholder: {
+              type: "plain_text",
+              text: "e.g. airbyte_api_token",
+            },
+          },
+          hint: {
+            type: "plain_text",
+            text: "Lowercase, a-z, 0-9, underscores. e.g. airbyte_api_token",
+          },
+        },
+        {
+          type: "input",
+          block_id: "cred_value_block",
+          label: { type: "plain_text", text: "Value" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_value",
+            placeholder: { type: "plain_text", text: "Paste your API token" },
+          },
+        },
+        {
+          type: "input",
+          block_id: "cred_expiry_block",
+          label: { type: "plain_text", text: "Expiry Date (optional)" },
+          optional: true,
+          element: {
+            type: "datepicker",
+            action_id: "cred_expiry",
+            placeholder: { type: "plain_text", text: "Select a date" },
+          },
+        },
+      ],
+    },
+  });
+}
+
+export async function openUpdateCredentialModal(
+  client: WebClient,
+  triggerId: string,
+  credentialId: string,
+  credentialName: string,
+): Promise<void> {
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "api_credential_update_submit",
+      private_metadata: credentialId,
+      title: { type: "plain_text", text: `Update ${credentialName}` },
+      submit: { type: "plain_text", text: "Save" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "input",
+          block_id: "cred_value_block",
+          label: { type: "plain_text", text: "New Value" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_value",
+            placeholder: {
+              type: "plain_text",
+              text: "Paste the new token value",
+            },
+          },
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: `This will replace the current value of *${credentialName}*. Encrypted at rest with AES-256-GCM.`,
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
+export async function openShareCredentialModal(
+  client: WebClient,
+  triggerId: string,
+  credentialId: string,
+): Promise<void> {
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "api_credential_share_submit",
+      private_metadata: credentialId,
+      title: { type: "plain_text", text: "Share Credential" },
+      submit: { type: "plain_text", text: "Share" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "input",
+          block_id: "share_users_block",
+          label: { type: "plain_text", text: "Share with" },
+          element: {
+            type: "users_select",
+            action_id: "share_user",
+            placeholder: { type: "plain_text", text: "Select a user" },
+          },
+        },
+        {
+          type: "input",
+          block_id: "share_permission_block",
+          label: { type: "plain_text", text: "Permission" },
+          element: {
+            type: "radio_buttons",
+            action_id: "share_permission",
+            options: [
+              {
+                text: { type: "plain_text", text: "Read" },
+                value: "read",
+                description: {
+                  type: "plain_text",
+                  text: "Can use the credential value",
+                },
+              },
+              {
+                text: { type: "plain_text", text: "Write" },
+                value: "write",
+                description: {
+                  type: "plain_text",
+                  text: "Can use for write operations",
+                },
+              },
+              {
+                text: { type: "plain_text", text: "Admin" },
+                value: "admin",
+                description: {
+                  type: "plain_text",
+                  text: "Can re-share with others",
+                },
+              },
+            ],
+            initial_option: {
+              text: { type: "plain_text", text: "Read" },
+              value: "read",
+              description: {
+                type: "plain_text",
+                text: "Can use the credential value",
+              },
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
 /**
  * Open a modal for editing a credential value.
  */
@@ -278,6 +549,9 @@ export async function publishHomeTab(
         },
       );
     }
+
+    const userCredBlocks = await buildUserCredentialBlocks(userId);
+    blocks.push(...userCredBlocks);
 
     if (admin) {
       const credBlocks = await buildCredentialBlocks();

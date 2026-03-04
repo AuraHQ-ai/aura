@@ -36,7 +36,8 @@ type AuditAction =
   | "delete"
   | "grant"
   | "revoke"
-  | "use";
+  | "use"
+  | "expired_access_attempt";
 
 async function audit(
   credentialId: string | null,
@@ -59,6 +60,23 @@ async function audit(
       accessedBy,
       action,
       error,
+    });
+  }
+}
+
+async function notifyOwnerExpired(
+  ownerId: string,
+  credentialName: string,
+): Promise<void> {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) return;
+  const { WebClient } = await import("@slack/web-api");
+  const client = new WebClient(token);
+  const dm = await client.conversations.open({ users: ownerId });
+  if (dm.channel?.id) {
+    await client.chat.postMessage({
+      channel: dm.channel.id,
+      text: `Your credential *${credentialName}* has expired. Please update or rotate it in the App Home.`,
     });
   }
 }
@@ -130,7 +148,8 @@ export async function getApiCredential(
   if (!cred) return null;
 
   if (cred.expiresAt && cred.expiresAt < new Date()) {
-    await audit(cred.id, name, requestingUserId, "read", "expired");
+    await audit(cred.id, name, requestingUserId, "expired_access_attempt");
+    await notifyOwnerExpired(cred.ownerId, name).catch(() => {});
     return null;
   }
 
@@ -185,7 +204,8 @@ export async function getJobApiCredential(
   if (!cred) return null;
 
   if (cred.expiresAt && cred.expiresAt < new Date()) {
-    await audit(cred.id, name, `job:${jobId}`, "use", "expired");
+    await audit(cred.id, name, `job:${jobId}`, "expired_access_attempt");
+    await notifyOwnerExpired(creatorId, name).catch(() => {});
     return null;
   }
 
@@ -405,6 +425,11 @@ export async function withApiCredential<T>(
 }
 
 export function maskApiCredential(value: string): string {
+  if (value.length < 8) {
+    const first1 = value.slice(0, 1);
+    const last1 = value.slice(-1);
+    return `${first1}***${last1}`;
+  }
   if (value.length < 12) {
     const first2 = value.slice(0, 2);
     const last2 = value.slice(-2);

@@ -190,6 +190,13 @@
       "when": 1772880000000,
       "tag": "0026_resources_table",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1772966400000,
+      "tag": "0027_job_credential_ids",
+      "breakpoints": true
     }
   ]
 }

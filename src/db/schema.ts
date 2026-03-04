@@ -338,6 +338,7 @@ export const jobs = pgTable(
     todayExecutions: integer("today_executions").notNull().default(0),
     lastExecutionDate: text("last_execution_date"),
     enabled: integer("enabled").notNull().default(1),
+    requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -656,7 +657,7 @@ export const credentialAuditLog = pgTable(
     index("idx_audit_accessed_by").on(table.accessedBy, table.timestamp),
     check(
       "credential_audit_log_action_check",
-      sql`${table.action} IN ('read','create','update','delete','grant','revoke','use')`,
+      sql`${table.action} IN ('read','create','update','delete','grant','revoke','use','expired_access_attempt')`,
     ),
   ],
 );
