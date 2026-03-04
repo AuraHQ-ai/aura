@@ -247,6 +247,92 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
 
 // ── User Credential Modals ──────────────────────────────────────────────────
 
+export function buildAddCredentialBlocks(credType: "token" | "oauth_client" = "token"): any[] {
+  const typeBlock = {
+    type: "input",
+    block_id: "cred_type_block",
+    dispatch_action: true,
+    label: { type: "plain_text", text: "Type" },
+    element: {
+      type: "static_select",
+      action_id: "cred_type",
+      options: [
+        { text: { type: "plain_text", text: "Token" }, value: "token" },
+        { text: { type: "plain_text", text: "OAuth Client" }, value: "oauth_client" },
+      ],
+      initial_option: credType === "oauth_client"
+        ? { text: { type: "plain_text", text: "OAuth Client" }, value: "oauth_client" }
+        : { text: { type: "plain_text", text: "Token" }, value: "token" },
+    },
+  };
+
+  const valueBlocks = credType === "oauth_client"
+    ? [
+        {
+          type: "input",
+          block_id: "cred_client_id_block",
+          label: { type: "plain_text", text: "Client ID" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_client_id",
+            placeholder: { type: "plain_text", text: "Paste client ID" },
+          },
+        },
+        {
+          type: "input",
+          block_id: "cred_client_secret_block",
+          label: { type: "plain_text", text: "Client Secret" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_client_secret",
+            placeholder: { type: "plain_text", text: "Paste client secret" },
+          },
+        },
+      ]
+    : [
+        {
+          type: "input",
+          block_id: "cred_value_block",
+          label: { type: "plain_text", text: "Value" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_value",
+            placeholder: { type: "plain_text", text: "Paste your API token or key" },
+          },
+        },
+      ];
+
+  return [
+    {
+      type: "input",
+      block_id: "cred_name_block",
+      label: { type: "plain_text", text: "Name" },
+      element: {
+        type: "plain_text_input",
+        action_id: "cred_name",
+        placeholder: { type: "plain_text", text: "e.g. airbyte_api_token" },
+      },
+      hint: {
+        type: "plain_text",
+        text: "Lowercase, a-z, 0-9, underscores. e.g. airbyte_api_token",
+      },
+    },
+    typeBlock,
+    ...valueBlocks,
+    {
+      type: "input",
+      block_id: "cred_expiry_block",
+      label: { type: "plain_text", text: "Expiry Date (optional)" },
+      optional: true,
+      element: {
+        type: "datepicker",
+        action_id: "cred_expiry",
+        placeholder: { type: "plain_text", text: "Select a date" },
+      },
+    },
+  ];
+}
+
 export async function openAddCredentialModal(
   client: WebClient,
   triggerId: string,
@@ -259,73 +345,7 @@ export async function openAddCredentialModal(
       title: { type: "plain_text", text: "Add API Credential" },
       submit: { type: "plain_text", text: "Save" },
       close: { type: "plain_text", text: "Cancel" },
-      blocks: [
-        {
-          type: "input",
-          block_id: "cred_name_block",
-          label: { type: "plain_text", text: "Name" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_name",
-            placeholder: {
-              type: "plain_text",
-              text: "e.g. airbyte_api_token",
-            },
-          },
-          hint: {
-            type: "plain_text",
-            text: "Lowercase, a-z, 0-9, underscores. e.g. airbyte_api_token",
-          },
-        },
-        {
-          type: "input",
-          block_id: "cred_type_block",
-          label: { type: "plain_text", text: "Type" },
-          element: {
-            type: "static_select",
-            action_id: "cred_type",
-            options: [
-              {
-                text: { type: "plain_text", text: "Token" },
-                value: "token",
-              },
-              {
-                text: { type: "plain_text", text: "OAuth Client" },
-                value: "oauth_client",
-              },
-            ],
-            initial_option: {
-              text: { type: "plain_text", text: "Token" },
-              value: "token",
-            },
-          },
-        },
-        {
-          type: "input",
-          block_id: "cred_value_block",
-          label: { type: "plain_text", text: "Value" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_value",
-            placeholder: { type: "plain_text", text: "Paste your API token" },
-          },
-          hint: {
-            type: "plain_text",
-            text: "For OAuth Client type, use format: client_id:client_secret",
-          },
-        },
-        {
-          type: "input",
-          block_id: "cred_expiry_block",
-          label: { type: "plain_text", text: "Expiry Date (optional)" },
-          optional: true,
-          element: {
-            type: "datepicker",
-            action_id: "cred_expiry",
-            placeholder: { type: "plain_text", text: "Select a date" },
-          },
-        },
-      ],
+      blocks: buildAddCredentialBlocks("token"),
     },
   });
 }

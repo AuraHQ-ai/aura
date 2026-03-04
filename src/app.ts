@@ -12,6 +12,7 @@ import {
   isAdmin,
   openCredentialModal,
   openAddCredentialModal,
+  buildAddCredentialBlocks,
   openUpdateCredentialModal,
   openShareCredentialModal,
 } from "./slack/home.js";
@@ -397,6 +398,36 @@ app.post("/api/slack/interactions", async (c) => {
         waitUntil(addPromise);
       }
 
+      // Dynamic modal: swap fields when credential type changes
+      if (action.action_id === "cred_type" && payload.view) {
+        const selectedType = (action.selected_option?.value || "token") as "token" | "oauth_client";
+        // Preserve the name field value if already filled
+        const currentName = payload.view.state?.values?.cred_name_block?.cred_name?.value || "";
+        const blocks = buildAddCredentialBlocks(selectedType);
+        // Inject current name value into the block
+        if (currentName) {
+          const nameBlock = blocks.find((b: any) => b.block_id === "cred_name_block");
+          if (nameBlock) {
+            nameBlock.element.initial_value = currentName;
+          }
+        }
+        const updatePromise = slackClient.views.update({
+          view_id: payload.view.id,
+          hash: payload.view.hash,
+          view: {
+            type: "modal",
+            callback_id: "api_credential_add_submit",
+            title: { type: "plain_text", text: "Add API Credential" },
+            submit: { type: "plain_text", text: "Save" },
+            close: { type: "plain_text", text: "Cancel" },
+            blocks,
+          },
+        }).catch((err: unknown) => {
+          recordError("interactions.cred_type_switch", err, { userId, selectedType });
+        });
+        waitUntil(updatePromise);
+      }
+
       // Overflow menu actions (Update/Share/Delete)
       if (action.action_id?.startsWith("api_credential_overflow_") && action.selected_option?.value) {
         const selectedValue = action.selected_option.value as string;
@@ -526,41 +557,21 @@ app.post("/api/slack/interactions", async (c) => {
 
     if (callbackId === "api_credential_add_submit" && userId) {
       const name = payload.view?.state?.values?.cred_name_block?.cred_name?.value;
-      const rawValue = payload.view?.state?.values?.cred_value_block?.cred_value?.value;
       const expiryStr = payload.view?.state?.values?.cred_expiry_block?.cred_expiry?.selected_date;
       const credType = (payload.view?.state?.values?.cred_type_block?.cred_type?.selected_option?.value || "token") as "token" | "oauth_client";
 
-      if (name && rawValue) {
-        let value = rawValue;
-        if (credType === "oauth_client") {
-          try {
-            JSON.parse(rawValue);
-            value = rawValue;
-          } catch {
-            const parts = rawValue.split(":");
-            if (parts.length >= 2) {
-              const clientId = parts[0];
-              const clientSecret = parts.slice(1).join(":");
-              value = JSON.stringify({ client_id: clientId, client_secret: clientSecret });
-            } else {
-              const addErrPromise = (async () => {
-                try {
-                  const dm = await slackClient.conversations.open({ users: userId });
-                  if (dm.channel?.id) {
-                    await slackClient.chat.postMessage({
-                      channel: dm.channel.id,
-                      text: 'Invalid OAuth Client value. Use format `client_id:client_secret` or a JSON string with `client_id` and `client_secret` keys.',
-                    });
-                  }
-                } catch (err) {
-                  recordError("interactions.api_credential_add_validation", err, { userId, name });
-                }
-              })();
-              waitUntil(addErrPromise);
-              return c.json({ response_action: "clear" });
-            }
-          }
+      let value: string | undefined;
+      if (credType === "oauth_client") {
+        const clientId = payload.view?.state?.values?.cred_client_id_block?.cred_client_id?.value;
+        const clientSecret = payload.view?.state?.values?.cred_client_secret_block?.cred_client_secret?.value;
+        if (clientId && clientSecret) {
+          value = JSON.stringify({ client_id: clientId, client_secret: clientSecret });
         }
+      } else {
+        value = payload.view?.state?.values?.cred_value_block?.cred_value?.value;
+      }
+
+      if (name && value) {
 
         const expiresAt = expiryStr ? new Date(expiryStr) : undefined;
         const addPromise = (async () => {
