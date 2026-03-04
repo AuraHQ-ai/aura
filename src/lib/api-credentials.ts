@@ -159,12 +159,13 @@ export async function storeApiCredential(
   return row;
 }
 
-export async function getApiCredential(
+/** Shared credential fetch + permission check. Returns the full row or null. */
+async function fetchAndAuthorize(
   name: string,
   ownerId: string,
   requestingUserId: string,
   intent: "read" | "write",
-): Promise<string | null> {
+): Promise<typeof credentials.$inferSelect | null> {
   validateKey();
   validateName(name);
 
@@ -190,6 +191,17 @@ export async function getApiCredential(
   }
 
   await audit(cred.id, name, requestingUserId, "read");
+  return cred;
+}
+
+export async function getApiCredential(
+  name: string,
+  ownerId: string,
+  requestingUserId: string,
+  intent: "read" | "write",
+): Promise<string | null> {
+  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
+  if (!cred) return null;
   return decryptCredential(cred.value);
 }
 
@@ -199,31 +211,8 @@ export async function getApiCredentialWithType(
   requestingUserId: string,
   intent: "read" | "write",
 ): Promise<{ value: string; type: string } | null> {
-  validateKey();
-  validateName(name);
-
-  const rows = await db
-    .select()
-    .from(credentials)
-    .where(and(eq(credentials.ownerId, ownerId), eq(credentials.name, name)))
-    .limit(1);
-
-  const cred = rows[0];
+  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
   if (!cred) return null;
-
-  if (cred.expiresAt && cred.expiresAt < new Date()) {
-    await audit(cred.id, name, requestingUserId, "expired_access_attempt");
-    await notifyOwnerExpired(cred.ownerId, name).catch(() => {});
-    return null;
-  }
-
-  const allowed = await hasPermission(ownerId, cred.id, requestingUserId, intent);
-  if (!allowed) {
-    await audit(cred.id, name, requestingUserId, intent, "access_denied");
-    throw new Error(`Access denied: ${requestingUserId} cannot ${intent} credential "${name}" owned by ${ownerId}`);
-  }
-
-  await audit(cred.id, name, requestingUserId, "read");
   return { value: decryptCredential(cred.value), type: cred.type };
 }
 
