@@ -579,7 +579,14 @@ export function createResourceTools(context?: ScheduleContext) {
               LIMIT ${limit}
             `);
             rows = ((results as any).rows ?? results) as ResourceSearchRow[];
-          } catch {
+          } catch (err: any) {
+            const code = typeof err?.code === "string" ? err.code : "";
+            if (code && !code.startsWith("42") && !code.startsWith("22")) {
+              throw err;
+            }
+            logger.warn("tsvector search failed, falling back to ILIKE", {
+              error: err instanceof Error ? err.message : String(err),
+            });
             const escaped = trimmed.replace(/[\\%_]/g, "\\$&");
             const pattern = `%${escaped.toLowerCase()}%`;
             const results = await db.execute(sql`
