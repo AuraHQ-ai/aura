@@ -328,7 +328,9 @@ export function createResourceTools(context?: ScheduleContext) {
         }
 
         const now = new Date();
-        const fallbackSource = source ?? inferSourceFromUrl(normalizedUrl);
+        let resolvedSource: ResourceSource =
+          source ?? inferSourceFromUrl(normalizedUrl);
+        let previousStatus: string | undefined;
 
         try {
           const currentRows = await db
@@ -346,8 +348,9 @@ export function createResourceTools(context?: ScheduleContext) {
             .where(eq(resources.url, normalizedUrl))
             .limit(1);
           const current = currentRows[0];
+          previousStatus = current?.status ?? undefined;
 
-          const resolvedSource =
+          resolvedSource =
             source ??
             (current?.source as ResourceSource | undefined) ??
             inferSourceFromUrl(normalizedUrl);
@@ -487,20 +490,21 @@ export function createResourceTools(context?: ScheduleContext) {
         } catch (error: any) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
+          const errorStatus =
+            previousStatus === "ready" ? "ready" : "error";
           await db
             .update(resources)
             .set({
-              source: fallbackSource,
-              status: "error",
+              source: resolvedSource,
+              status: errorStatus,
               errorMessage,
-              crawledAt: now,
               updatedAt: now,
             })
             .where(eq(resources.url, normalizedUrl));
 
           logger.error("ingest_resource tool failed", {
             url: normalizedUrl,
-            source: fallbackSource,
+            source: resolvedSource,
             error: errorMessage,
           });
 
