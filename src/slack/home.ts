@@ -196,7 +196,7 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
 
   for (const cred of creds) {
     const isOwner = cred.owner_id === userId;
-    const source = isOwner ? "yours" : `shared with you`;
+    const source = isOwner ? "yours" : `shared by <@${cred.owner_id}>`;
     const permLabel = isOwner ? "owner" : cred.permission;
 
     let expiryText = "";
