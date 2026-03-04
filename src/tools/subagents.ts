@@ -15,6 +15,7 @@ import { createEmailTools, createGmailEATools } from "./email.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createSheetsTools } from "./sheets.js";
 import { createConversationSearchTools } from "./conversations.js";
+import { createResourceTools } from "./resources.js";
 
 /**
  * Scope presets map scope hints to tool subsets.
@@ -42,6 +43,7 @@ async function buildToolScope(
     case "web":
       return {
         ...createWebTools(),
+        ...createResourceTools(context),
         ...createSandboxTools(context),
       };
     case "slack": {
@@ -51,6 +53,7 @@ async function buildToolScope(
     case "notes":
       return {
         ...createNoteTools(context),
+        ...createResourceTools(context),
         ...createConversationSearchTools(context),
       };
     case "all":
