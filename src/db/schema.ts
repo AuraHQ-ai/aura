@@ -532,3 +532,83 @@ export const feedback = pgTable(
 
 export type Feedback = typeof feedback.$inferSelect;
 export type NewFeedback = typeof feedback.$inferInsert;
+
+// ── Credentials (encrypted per-user credential storage) ────────────────────
+
+export const credentials = pgTable(
+  "credentials",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    ownerId: text("owner_id").notNull(),
+    name: text("name").notNull(),
+    value: text("value").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    expiresAt: timestamptz("expires_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("credentials_owner_name_unique").on(table.ownerId, table.name),
+    index("credentials_owner_idx").on(table.ownerId),
+  ],
+);
+
+export const credentialGrants = pgTable(
+  "credential_grants",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    credentialId: uuid("credential_id")
+      .notNull()
+      .references(() => credentials.id, { onDelete: "cascade" }),
+    granteeId: text("grantee_id").notNull(),
+    permission: text("permission").notNull(),
+    grantedBy: text("granted_by"),
+    grantedAt: timestamptz("granted_at").notNull().defaultNow(),
+    revokedAt: timestamptz("revoked_at"),
+  },
+  (table) => [
+    unique("credential_grants_credential_grantee_unique").on(
+      table.credentialId,
+      table.granteeId,
+    ),
+    index("credential_grants_grantee_idx").on(table.granteeId),
+  ],
+);
+
+export const credentialAuditLog = pgTable(
+  "credential_audit_log",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "set null",
+    }),
+    credentialName: text("credential_name"),
+    accessedBy: text("accessed_by"),
+    action: text("action").notNull(),
+    context: text("context"),
+    timestamp: timestamptz("timestamp").notNull().defaultNow(),
+  },
+  (table) => [
+    index("credential_audit_log_credential_ts_idx").on(
+      table.credentialId,
+      table.timestamp,
+    ),
+    index("credential_audit_log_accessed_by_ts_idx").on(
+      table.accessedBy,
+      table.timestamp,
+    ),
+  ],
+);
+
+export type Credential = typeof credentials.$inferSelect;
+export type NewCredential = typeof credentials.$inferInsert;
+export type CredentialGrant = typeof credentialGrants.$inferSelect;
+export type NewCredentialGrant = typeof credentialGrants.$inferInsert;
+export type CredentialAuditLog = typeof credentialAuditLog.$inferSelect;
+export type NewCredentialAuditLog = typeof credentialAuditLog.$inferInsert;
