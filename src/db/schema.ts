@@ -94,6 +94,7 @@ export const memories = pgTable(
     embedding: vector("embedding", { dimensions: 1536 }),
     relevanceScore: real("relevance_score").notNull().default(1.0),
     shareable: integer("shareable").notNull().default(0),
+    searchVector: text("search_vector"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -105,6 +106,10 @@ export const memories = pgTable(
     index("memories_related_users_idx").using("gin", table.relatedUserIds),
     index("memories_type_idx").on(table.type),
     index("memories_created_at_idx").on(table.createdAt),
+    index("memories_search_vector_idx").using(
+      "gin",
+      sql`to_tsvector('english', coalesce(${table.content}, ''))`,
+    ),
   ],
 );
 
