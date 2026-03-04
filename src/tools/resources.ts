@@ -9,11 +9,18 @@ import type { ScheduleContext } from "../db/schema.js";
 import { getFastModel } from "../lib/ai.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
+import { tavily } from "@tavily/core";
 import { BROWSER_UA, isPrivateUrl } from "../lib/ssrf.js";
 import { defineTool } from "../lib/tool.js";
 import { formatTimestamp } from "../lib/temporal.js";
 
-const RESOURCE_SOURCES = ["youtube", "notion", "github", "web", "docs"] as const;
+function getTavilyClient() {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) return null;
+  return tavily({ apiKey });
+}
+
+const RESOURCE_SOURCES = ["youtube", "notion", "github", "web", "docs", "pdf", "slack"] as const;
 type ResourceSource = (typeof RESOURCE_SOURCES)[number];
 
 const turndown = new TurndownService({
@@ -260,7 +267,7 @@ export function createResourceTools(context?: ScheduleContext) {
           .enum(RESOURCE_SOURCES)
           .optional()
           .describe(
-            "Source type. Optional; inferred from URL when omitted. One of: youtube, notion, github, web, docs.",
+            "Source type. Optional; inferred from URL when omitted. One of: youtube, notion, github, web, docs, pdf, slack.",
           ),
         parent_url: z
           .string()
@@ -282,6 +289,13 @@ export function createResourceTools(context?: ScheduleContext) {
           .describe(
             "Optional pre-extracted markdown content. Provide this for binaries or non-HTTP URLs; if omitted, Aura fetches the URL and converts it to markdown.",
           ),
+        use_tavily: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "When true, try Tavily extract first for cleaner markdown from JS-heavy/SPA pages, then fall back to raw fetch. Requires TAVILY_API_KEY. Default false.",
+          ),
       }),
       execute: async ({
         url,
@@ -290,6 +304,7 @@ export function createResourceTools(context?: ScheduleContext) {
         title,
         metadata,
         content_markdown,
+        use_tavily,
       }) => {
         const normalizedUrl = url.trim();
         if (!normalizedUrl) {
@@ -360,11 +375,34 @@ export function createResourceTools(context?: ScheduleContext) {
               );
             }
 
-            const fetched = await fetchUrlAsMarkdown(normalizedUrl);
-            content = fetched.markdown;
-            if (!nextTitle && fetched.title) nextTitle = fetched.title;
-            ingestMetadata.resolved_url = fetched.resolvedUrl;
-            ingestMetadata.content_type = fetched.contentType;
+            let tavilySucceeded = false;
+            if (use_tavily) {
+              const tvly = getTavilyClient();
+              if (tvly) {
+                try {
+                  const response = await tvly.extract([normalizedUrl]);
+                  const result = response.results?.[0];
+                  if (result?.rawContent) {
+                    content = normalizeMarkdown(result.rawContent);
+                    ingestMetadata.extract_source = "tavily";
+                    tavilySucceeded = true;
+                  }
+                } catch (err) {
+                  logger.warn("ingest_resource tavily extract failed, falling back to fetch", {
+                    url: normalizedUrl,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              }
+            }
+
+            if (!tavilySucceeded) {
+              const fetched = await fetchUrlAsMarkdown(normalizedUrl);
+              content = fetched.markdown;
+              if (!nextTitle && fetched.title) nextTitle = fetched.title;
+              ingestMetadata.resolved_url = fetched.resolvedUrl;
+              ingestMetadata.content_type = fetched.contentType;
+            }
           }
 
           if (!content) {
@@ -719,12 +757,17 @@ export function createResourceTools(context?: ScheduleContext) {
 
     list_resources: defineTool({
       description:
-        "List resources currently in the knowledge base (ready only). Useful for browsing what has been ingested before doing targeted retrieval. Supports optional source filtering.",
+        "List resources in the knowledge base. Useful for browsing what has been ingested before doing targeted retrieval. Supports optional source and status filtering. Defaults to status=ready.",
       inputSchema: z.object({
         source: z
           .enum(RESOURCE_SOURCES)
           .optional()
           .describe("Optional source filter."),
+        status: z
+          .enum(["pending", "ready", "error"])
+          .optional()
+          .default("ready")
+          .describe("Optional status filter (default ready). Use to check what failed or is still processing."),
         limit: z
           .number()
           .min(1)
@@ -732,9 +775,9 @@ export function createResourceTools(context?: ScheduleContext) {
           .default(20)
           .describe("Max resources to return (default 20, max 50)."),
       }),
-      execute: async ({ source, limit }) => {
+      execute: async ({ source, status, limit }) => {
         try {
-          const conditions = [eq(resources.status, "ready")];
+          const conditions = [eq(resources.status, status)];
           if (source) conditions.push(eq(resources.source, source));
 
           const rows = await db
@@ -754,6 +797,7 @@ export function createResourceTools(context?: ScheduleContext) {
           const typedRows = rows as ResourceListRow[];
           logger.info("list_resources tool called", {
             source,
+            status,
             resultCount: typedRows.length,
           });
 
