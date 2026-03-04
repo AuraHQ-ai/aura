@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { tavily } from "@tavily/core";
-import { lookup } from "node:dns/promises";
 import { logger } from "../lib/logger.js";
+import { BROWSER_UA, isPrivateUrl } from "../lib/ssrf.js";
 import { defineTool } from "../lib/tool.js";
 
 // ── Tavily Client ────────────────────────────────────────────────────────────
@@ -11,11 +11,6 @@ function getTavilyClient() {
   if (!apiKey) return null;
   return tavily({ apiKey });
 }
-
-// ── Browser Headers ─────────────────────────────────────────────────────────
-
-const BROWSER_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 // ── HTML Stripping ───────────────────────────────────────────────────────────
 
@@ -33,75 +28,6 @@ function stripHtml(html: string): string {
     .replace(/&#39;/g, "'")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-// ── SSRF Protection ──────────────────────────────────────────────────────────
-
-/**
- * Returns true if the URL resolves to a private/internal network address.
- * Fails closed: if DNS lookup fails, the URL is considered private (blocked).
- */
-async function isPrivateUrl(url: string): Promise<boolean> {
-  let hostname: string;
-  try {
-    hostname = new URL(url).hostname;
-  } catch {
-    return true; // unparseable URL — block it
-  }
-
-  // Strip IPv6 brackets for comparison
-  const bare = hostname.startsWith("[") && hostname.endsWith("]")
-    ? hostname.slice(1, -1)
-    : hostname;
-
-  // Block known-private hostnames immediately (no DNS needed)
-  if (
-    bare === "localhost" ||
-    bare === "0.0.0.0" ||
-    bare === "::1" ||
-    bare.endsWith(".local") ||
-    bare.endsWith(".internal")
-  ) {
-    return true;
-  }
-
-  // Resolve hostname → IP and check against private ranges
-  let address: string;
-  let family: number;
-  try {
-    ({ address, family } = await lookup(bare));
-  } catch {
-    return true; // DNS failure — fail closed
-  }
-
-  if (family === 6) {
-    // IPv4-mapped IPv6 (::ffff:x.x.x.x) — extract and validate as IPv4
-    const v4Mapped = address.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
-    if (v4Mapped) {
-      address = v4Mapped[1];
-    } else {
-      if (address === "::1") return true;                          // loopback
-      const firstWord = parseInt(address.split(":")[0], 16);
-      if (firstWord >= 0xfe80 && firstWord <= 0xfebf) return true; // link-local (fe80::/10)
-      if (address.toLowerCase().startsWith("fc") ||
-          address.toLowerCase().startsWith("fd")) return true;     // ULA (fc00::/7)
-      return false;
-    }
-  }
-
-  // IPv4: parse octets and check private ranges
-  const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((p) => isNaN(p))) return true;
-  const [a, b] = parts;
-
-  if (a === 127) return true;                        // 127.0.0.0/8  loopback
-  if (a === 10) return true;                         // 10.0.0.0/8   RFC-1918
-  if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16.0.0/12 RFC-1918
-  if (a === 192 && b === 168) return true;            // 192.168.0.0/16 RFC-1918
-  if (a === 169 && b === 254) return true;            // 169.254.0.0/16 link-local
-  if (a === 0) return true;                          // 0.0.0.0/8
-
-  return false;
 }
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────

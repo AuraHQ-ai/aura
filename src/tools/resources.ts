@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import TurndownService from "turndown";
 import { generateText } from "ai";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -10,15 +9,12 @@ import type { ScheduleContext } from "../db/schema.js";
 import { getFastModel } from "../lib/ai.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
+import { BROWSER_UA, isPrivateUrl } from "../lib/ssrf.js";
 import { defineTool } from "../lib/tool.js";
 import { formatTimestamp } from "../lib/temporal.js";
 
 const RESOURCE_SOURCES = ["youtube", "notion", "github", "web", "docs"] as const;
-const RESOURCE_STATUSES = ["pending", "ready", "error"] as const;
 type ResourceSource = (typeof RESOURCE_SOURCES)[number];
-
-const BROWSER_UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -103,73 +99,6 @@ function isLikelyTextContentType(contentType: string): boolean {
     ct.includes("yaml") ||
     ct.includes("graphql")
   );
-}
-
-/**
- * Returns true if the URL resolves to a private/internal network address.
- * Fails closed: if DNS lookup fails, URL is considered private.
- */
-async function isPrivateUrl(url: string): Promise<boolean> {
-  let hostname: string;
-  try {
-    hostname = new URL(url).hostname;
-  } catch {
-    return true;
-  }
-
-  const bare =
-    hostname.startsWith("[") && hostname.endsWith("]")
-      ? hostname.slice(1, -1)
-      : hostname;
-
-  if (
-    bare === "localhost" ||
-    bare === "0.0.0.0" ||
-    bare === "::1" ||
-    bare.endsWith(".local") ||
-    bare.endsWith(".internal")
-  ) {
-    return true;
-  }
-
-  let address: string;
-  let family: number;
-  try {
-    ({ address, family } = await lookup(bare));
-  } catch {
-    return true;
-  }
-
-  if (family === 6) {
-    const v4Mapped = address.match(
-      /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i,
-    );
-    if (v4Mapped) {
-      address = v4Mapped[1];
-    } else {
-      if (address === "::1") return true;
-      const firstWord = parseInt(address.split(":")[0], 16);
-      if (firstWord >= 0xfe80 && firstWord <= 0xfebf) return true;
-      if (
-        address.toLowerCase().startsWith("fc") ||
-        address.toLowerCase().startsWith("fd")
-      ) {
-        return true;
-      }
-      return false;
-    }
-  }
-
-  const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return true;
-  const [a, b] = parts;
-  if (a === 127) return true;
-  if (a === 10) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 0) return true;
-  return false;
 }
 
 async function fetchUrlAsMarkdown(url: string): Promise<{
@@ -583,7 +512,7 @@ export function createResourceTools(context?: ScheduleContext) {
             const embeddingLiteral = JSON.stringify(queryEmbedding);
 
             const conditions = [
-              eq(resources.status, RESOURCE_STATUSES[1]),
+              eq(resources.status, "ready"),
               sql`${resources.embedding} IS NOT NULL`,
             ];
             if (source) conditions.push(eq(resources.source, source));
@@ -624,7 +553,7 @@ export function createResourceTools(context?: ScheduleContext) {
             };
           }
 
-          const conditions = [eq(resources.status, RESOURCE_STATUSES[1])];
+          const conditions = [eq(resources.status, "ready")];
           if (source) conditions.push(eq(resources.source, source));
           const where = and(...conditions);
 
@@ -794,7 +723,7 @@ export function createResourceTools(context?: ScheduleContext) {
       }),
       execute: async ({ source, limit }) => {
         try {
-          const conditions = [eq(resources.status, RESOURCE_STATUSES[1])];
+          const conditions = [eq(resources.status, "ready")];
           if (source) conditions.push(eq(resources.source, source));
 
           const rows = await db
