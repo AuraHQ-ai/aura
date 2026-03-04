@@ -288,10 +288,9 @@ async function exchangeOAuthToken(
 }
 
 /**
- * Retrieve a credential for a scheduled job. Returns raw decrypted value.
- * NOTE: Does not auto-exchange oauth_client tokens — jobs get raw client_id/client_secret JSON.
- * This is intentional: jobs may need different exchange flows or caching strategies.
- * Use getApiCredentialWithType for interactive tool calls that need auto-exchange.
+ * Retrieve a credential for a scheduled job. Returns the usable secret value.
+ * For oauth_client credentials with a tokenUrl, automatically exchanges
+ * client_id/client_secret for an access_token via the token endpoint.
  */
 export async function getJobApiCredential(
   name: string,
@@ -326,7 +325,27 @@ export async function getJobApiCredential(
   }
 
   await audit(cred.id, name, `job:${jobId}`, "use", `creator:${creatorId}`);
-  return decryptCredential(cred.value);
+  const decrypted = decryptCredential(cred.value);
+
+  if (cred.type === "oauth_client" && cred.tokenUrl) {
+    let parsed: { client_id: string; client_secret: string };
+    try {
+      parsed = JSON.parse(decrypted);
+    } catch {
+      throw new Error(`oauth_client credential "${name}" has invalid JSON value`);
+    }
+    if (!parsed.client_id || !parsed.client_secret) {
+      throw new Error(`oauth_client credential "${name}" missing client_id or client_secret`);
+    }
+    const tokenResponse = await exchangeOAuthToken(
+      cred.tokenUrl,
+      parsed.client_id,
+      parsed.client_secret,
+    );
+    return tokenResponse.access_token;
+  }
+
+  return decrypted;
 }
 
 export async function listApiCredentials(
