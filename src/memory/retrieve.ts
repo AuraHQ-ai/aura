@@ -101,13 +101,13 @@ export async function retrieveMemories(
           return sql`
             ${cteName} AS (
               SELECT id, ROW_NUMBER() OVER (
-                ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+                ORDER BY ts_rank_cd(search_vector, to_tsquery('simple', ${lexeme}), 4) DESC
               ) AS rank
               FROM memories
-              WHERE search_vector @@ to_tsquery('english', ${lexeme})
+              WHERE search_vector @@ to_tsquery('simple', ${lexeme})
                 AND ${baseFilter}
                 AND ${privacyFilter}
-              ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+              ORDER BY ts_rank_cd(search_vector, to_tsquery('simple', ${lexeme}), 4) DESC
               LIMIT ${PER_TERM_FULLTEXT_LIMIT}
             )
           `;
