@@ -3,6 +3,10 @@ import { getAllSettings } from "../lib/settings.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { getCredential, maskCredential } from "../lib/credentials.js";
+import { db } from "../db/client.js";
+import { notes } from "../db/schema.js";
+import { desc, eq, and, or, isNull, gt } from "drizzle-orm";
+import { relativeTime } from "../lib/temporal.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
 
@@ -195,6 +199,264 @@ export async function openCredentialModal(
   });
 }
 
+// ── Notes Browser ────────────────────────────────────────────────────────────
+
+const NOTES_PER_PAGE = 10;
+
+export interface HomeTabOptions {
+  notesPage?: number;
+  notesCategory?: string;
+}
+
+/**
+ * Build Block Kit blocks for the notes browser section.
+ */
+export async function buildNotesBrowserBlocks(
+  page: number,
+  category?: string,
+): Promise<any[]> {
+  const now = new Date();
+  const conditions = [
+    or(isNull(notes.expiresAt), gt(notes.expiresAt, now))!,
+  ];
+  if (category) {
+    conditions.push(eq(notes.category, category));
+  }
+
+  const allRows = await db
+    .select({
+      topic: notes.topic,
+      category: notes.category,
+      updatedAt: notes.updatedAt,
+    })
+    .from(notes)
+    .where(and(...conditions))
+    .orderBy(desc(notes.updatedAt));
+
+  const totalCount = allRows.length;
+  const offset = page * NOTES_PER_PAGE;
+  const pageRows = allRows.slice(offset, offset + NOTES_PER_PAGE);
+  const hasMore = offset + NOTES_PER_PAGE < totalCount;
+
+  const blocks: any[] = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: "My Notes" },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `${totalCount} note${totalCount === 1 ? "" : "s"} total`,
+        },
+      ],
+    },
+  ];
+
+  // Category filter dropdown
+  const categoryOptions = [
+    { text: { type: "plain_text" as const, text: "All" }, value: "all" },
+    { text: { type: "plain_text" as const, text: "Skill" }, value: "skill" },
+    { text: { type: "plain_text" as const, text: "Knowledge" }, value: "knowledge" },
+    { text: { type: "plain_text" as const, text: "Plan" }, value: "plan" },
+  ];
+  const initialCategoryOption =
+    categoryOptions.find((o) => o.value === (category || "all")) || categoryOptions[0];
+
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: "*Filter by category:*" },
+    accessory: {
+      type: "static_select",
+      action_id: "notes_category_filter",
+      placeholder: { type: "plain_text", text: "Category" },
+      options: categoryOptions,
+      initial_option: initialCategoryOption,
+    },
+  });
+
+  if (pageRows.length === 0) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "_No notes found._",
+      },
+    });
+  } else {
+    for (const row of pageRows) {
+      const rel = relativeTime(row.updatedAt);
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${row.topic}*  _${row.category}_  |  Updated ${rel}`,
+        },
+        accessory: {
+          type: "button",
+          text: { type: "plain_text", text: "View" },
+          action_id: "notes_view",
+          value: JSON.stringify({ topic: row.topic, page, category }),
+        },
+      });
+    }
+  }
+
+  // Pagination buttons
+  const paginationElements: any[] = [];
+  if (page > 0) {
+    paginationElements.push({
+      type: "button",
+      text: { type: "plain_text", text: "\u2190 Previous" },
+      action_id: "notes_page_prev",
+      value: JSON.stringify({ page: page - 1, category }),
+    });
+  }
+  if (hasMore) {
+    paginationElements.push({
+      type: "button",
+      text: { type: "plain_text", text: "Next \u2192" },
+      action_id: "notes_page_next",
+      value: JSON.stringify({ page: page + 1, category }),
+    });
+  }
+  if (paginationElements.length > 0) {
+    blocks.push({
+      type: "actions",
+      elements: paginationElements,
+    });
+  }
+
+  return blocks;
+}
+
+/**
+ * Split content into pages of approximately maxChars characters, breaking at newlines.
+ */
+function paginateContent(content: string, maxChars: number): string[] {
+  if (content.length <= maxChars) return [content];
+
+  const pages: string[] = [];
+  let remaining = content;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxChars) {
+      pages.push(remaining);
+      break;
+    }
+    let breakIdx = remaining.lastIndexOf("\n", maxChars);
+    if (breakIdx <= 0) {
+      breakIdx = maxChars;
+    }
+    pages.push(remaining.slice(0, breakIdx));
+    remaining = remaining.slice(breakIdx).replace(/^\n/, "");
+  }
+
+  return pages;
+}
+
+/**
+ * Open (or update) a modal showing note detail with content pagination.
+ */
+export async function openNoteDetailModal(
+  client: WebClient,
+  triggerId: string,
+  topic: string,
+  contentPage: number,
+  existingViewId?: string,
+): Promise<void> {
+  const rows = await db
+    .select()
+    .from(notes)
+    .where(eq(notes.topic, topic))
+    .limit(1);
+  const note = rows[0];
+  if (!note) return;
+
+  const pages = paginateContent(note.content, 2800);
+  const safePage = Math.max(0, Math.min(contentPage, pages.length - 1));
+  const pageContent = pages[safePage] || "";
+  const truncatedTitle =
+    topic.length > 24 ? topic.slice(0, 21) + "..." : topic;
+
+  const rel = relativeTime(note.updatedAt);
+
+  const blocks: any[] = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*Category:* _${note.category}_  |  *Updated:* ${rel}`,
+      },
+    },
+    { type: "divider" },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: pageContent || "_Empty note_",
+      },
+    },
+  ];
+
+  if (pages.length > 1) {
+    blocks.push({
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `Page ${safePage + 1} of ${pages.length}`,
+        },
+      ],
+    });
+
+    const navButtons: any[] = [];
+    if (safePage > 0) {
+      navButtons.push({
+        type: "button",
+        text: { type: "plain_text", text: "\u2190 Previous" },
+        action_id: "notes_modal_page_prev",
+        value: JSON.stringify({ topic, contentPage: safePage - 1 }),
+      });
+    }
+    if (safePage < pages.length - 1) {
+      navButtons.push({
+        type: "button",
+        text: { type: "plain_text", text: "Next \u2192" },
+        action_id: "notes_modal_page_next",
+        value: JSON.stringify({ topic, contentPage: safePage + 1 }),
+      });
+    }
+    if (navButtons.length > 0) {
+      blocks.push({
+        type: "actions",
+        elements: navButtons,
+      });
+    }
+  }
+
+  const view: any = {
+    type: "modal",
+    callback_id: "notes_detail_modal",
+    title: { type: "plain_text", text: truncatedTitle },
+    close: { type: "plain_text", text: "Close" },
+    blocks,
+  };
+
+  if (existingViewId) {
+    await client.views.update({
+      view_id: existingViewId,
+      view,
+    });
+  } else {
+    await client.views.open({
+      trigger_id: triggerId,
+      view,
+    });
+  }
+}
+
 // ── Publish Home Tab ─────────────────────────────────────────────────────────
 
 /**
@@ -204,6 +466,7 @@ export async function openCredentialModal(
 export async function publishHomeTab(
   client: WebClient,
   userId: string,
+  options?: HomeTabOptions,
 ): Promise<void> {
   try {
     const currentSettings = await getAllSettings();
@@ -283,6 +546,13 @@ export async function publishHomeTab(
       const credBlocks = await buildCredentialBlocks();
       blocks.push(...credBlocks);
     }
+
+    // Notes browser section
+    blocks.push({ type: "divider" });
+    const notesPage = options?.notesPage ?? 0;
+    const notesCategory = options?.notesCategory;
+    const notesBrowserBlocks = await buildNotesBrowserBlocks(notesPage, notesCategory);
+    blocks.push(...notesBrowserBlocks);
 
     blocks.push(
       { type: "divider" },

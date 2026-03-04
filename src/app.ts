@@ -5,7 +5,7 @@ import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { runPipeline } from "./pipeline/index.js";
-import { publishHomeTab, ACTION_TO_SETTING, CREDENTIAL_ACTIONS, isAdmin, openCredentialModal } from "./slack/home.js";
+import { publishHomeTab, ACTION_TO_SETTING, CREDENTIAL_ACTIONS, isAdmin, openCredentialModal, openNoteDetailModal } from "./slack/home.js";
 import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
@@ -329,6 +329,71 @@ app.post("/api/slack/interactions", async (c) => {
           })();
           waitUntil(feedbackPromise);
         }
+        continue;
+      }
+
+      // Notes browser — category filter
+      if (action.action_id === "notes_category_filter" && userId) {
+        const category = action.selected_option?.value;
+        const cat = category === "all" ? undefined : category;
+        const filterPromise = publishHomeTab(slackClient, userId, {
+          notesPage: 0,
+          notesCategory: cat,
+        }).catch((err) => {
+          recordError("interactions.notes_filter", err, { userId });
+        });
+        waitUntil(filterPromise);
+        continue;
+      }
+
+      // Notes browser — pagination
+      if (
+        (action.action_id === "notes_page_prev" || action.action_id === "notes_page_next") &&
+        userId
+      ) {
+        const state = JSON.parse(action.value);
+        const pagePromise = publishHomeTab(slackClient, userId, {
+          notesPage: state.page,
+          notesCategory: state.category,
+        }).catch((err) => {
+          recordError("interactions.notes_page", err, { userId });
+        });
+        waitUntil(pagePromise);
+        continue;
+      }
+
+      // Notes browser — view note detail
+      if (action.action_id === "notes_view" && payload.trigger_id) {
+        const state = JSON.parse(action.value);
+        const viewPromise = openNoteDetailModal(
+          slackClient,
+          payload.trigger_id,
+          state.topic,
+          0,
+        ).catch((err) => {
+          recordError("interactions.notes_view", err, { userId });
+        });
+        waitUntil(viewPromise);
+        continue;
+      }
+
+      // Notes modal — content pagination
+      if (
+        (action.action_id === "notes_modal_page_prev" ||
+          action.action_id === "notes_modal_page_next") &&
+        payload.view?.id
+      ) {
+        const state = JSON.parse(action.value);
+        const modalPagePromise = openNoteDetailModal(
+          slackClient,
+          payload.trigger_id || "",
+          state.topic,
+          state.contentPage,
+          payload.view.id,
+        ).catch((err) => {
+          recordError("interactions.notes_modal_page", err, { userId });
+        });
+        waitUntil(modalPagePromise);
         continue;
       }
 
