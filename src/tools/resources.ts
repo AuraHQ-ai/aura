@@ -312,30 +312,32 @@ export function createResourceTools(context?: ScheduleContext) {
         }
 
         const now = new Date();
-        const currentRows = await db
-          .select({
-            id: resources.id,
-            url: resources.url,
-            title: resources.title,
-            source: resources.source,
-            status: resources.status,
-            parentUrl: resources.parentUrl,
-            metadata: resources.metadata,
-            contentHash: resources.contentHash,
-          })
-          .from(resources)
-          .where(eq(resources.url, normalizedUrl))
-          .limit(1);
-        const current = currentRows[0];
-
-        const resolvedSource =
-          source ?? (current?.source as ResourceSource | undefined) ?? inferSourceFromUrl(normalizedUrl);
-        const mergedMetadata = mergeMetadata(current?.metadata, metadata);
-
-        const nextParentUrl = parent_url ?? current?.parentUrl ?? null;
-        let nextTitle = title?.trim() || current?.title || null;
+        let resolvedSource: ResourceSource = source ?? inferSourceFromUrl(normalizedUrl);
 
         try {
+          const currentRows = await db
+            .select({
+              id: resources.id,
+              url: resources.url,
+              title: resources.title,
+              source: resources.source,
+              status: resources.status,
+              parentUrl: resources.parentUrl,
+              metadata: resources.metadata,
+              contentHash: resources.contentHash,
+            })
+            .from(resources)
+            .where(eq(resources.url, normalizedUrl))
+            .limit(1);
+          const current = currentRows[0];
+
+          resolvedSource =
+            source ?? (current?.source as ResourceSource | undefined) ?? inferSourceFromUrl(normalizedUrl);
+          const mergedMetadata = mergeMetadata(current?.metadata, metadata);
+
+          const nextParentUrl = parent_url ?? current?.parentUrl ?? null;
+          let nextTitle = title?.trim() || current?.title || null;
+
           if (/^https?:\/\//i.test(normalizedUrl) && await isPrivateUrl(normalizedUrl)) {
             return { ok: false, error: "Blocked: URL resolves to a private/internal network address" };
           }
