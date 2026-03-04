@@ -1,4 +1,4 @@
-ALTER TABLE "jobs" ADD COLUMN "required_credential_ids" JSONB DEFAULT '[]';
+ALTER TABLE "jobs" ADD COLUMN IF NOT EXISTS "required_credential_ids" JSONB DEFAULT '[]';
 --> statement-breakpoint
 ALTER TABLE "credential_audit_log" DROP CONSTRAINT IF EXISTS "credential_audit_log_action_check";
 --> statement-breakpoint
