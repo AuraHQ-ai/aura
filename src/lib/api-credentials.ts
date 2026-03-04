@@ -81,17 +81,31 @@ async function notifyOwnerExpired(
   }
 }
 
-const PERMISSION_LEVELS: Record<string, number> = {
-  read: 1,
-  write: 2,
-  admin: 3,
-};
+async function hasPermission(
+  credentialOwnerId: string,
+  credentialId: string,
+  userId: string,
+  requiredPermission: "read" | "write" | "admin",
+): Promise<boolean> {
+  if (userId === credentialOwnerId) return true;
 
-function hasPermission(
-  granted: string,
-  required: "read" | "write",
-): boolean {
-  return (PERMISSION_LEVELS[granted] ?? 0) >= (PERMISSION_LEVELS[required] ?? 0);
+  const grant = await db
+    .select()
+    .from(credentialGrants)
+    .where(
+      and(
+        eq(credentialGrants.credentialId, credentialId),
+        eq(credentialGrants.granteeId, userId),
+        isNull(credentialGrants.revokedAt),
+      ),
+    )
+    .limit(1);
+
+  if (!grant.length) return false;
+
+  const grantPerm = grant[0].permission;
+  const hierarchy: Array<"read" | "write" | "admin"> = ["read", "write", "admin"];
+  return hierarchy.indexOf(grantPerm as typeof requiredPermission) >= hierarchy.indexOf(requiredPermission);
 }
 
 export async function storeApiCredential(
@@ -153,24 +167,10 @@ export async function getApiCredential(
     return null;
   }
 
-  if (ownerId !== requestingUserId) {
-    const grants = await db
-      .select()
-      .from(credentialGrants)
-      .where(
-        and(
-          eq(credentialGrants.credentialId, cred.id),
-          eq(credentialGrants.granteeId, requestingUserId),
-          isNull(credentialGrants.revokedAt),
-        ),
-      )
-      .limit(1);
-
-    const grant = grants[0];
-    if (!grant || !hasPermission(grant.permission, intent)) {
-      await audit(cred.id, name, requestingUserId, "read", "access_denied");
-      return null;
-    }
+  const allowed = await hasPermission(ownerId, cred.id, requestingUserId, intent);
+  if (!allowed) {
+    await audit(cred.id, name, requestingUserId, "read", "access_denied");
+    throw new Error(`Access denied: ${requestingUserId} cannot ${intent} credential "${name}" owned by ${ownerId}`);
   }
 
   await audit(cred.id, name, requestingUserId, "read");
@@ -295,23 +295,9 @@ export async function grantApiCredentialAccess(
   const cred = rows[0];
   if (!cred) throw new Error("Credential not found");
 
-  if (cred.ownerId !== granterId) {
-    const granterGrants = await db
-      .select()
-      .from(credentialGrants)
-      .where(
-        and(
-          eq(credentialGrants.credentialId, credentialId),
-          eq(credentialGrants.granteeId, granterId),
-          isNull(credentialGrants.revokedAt),
-          eq(credentialGrants.permission, "admin"),
-        ),
-      )
-      .limit(1);
-
-    if (granterGrants.length === 0) {
-      throw new Error("Only the owner or an admin grantee can grant access");
-    }
+  const allowed = await hasPermission(cred.ownerId, credentialId, granterId, "admin");
+  if (!allowed) {
+    throw new Error("Only the owner or an admin grantee can grant access");
   }
 
   await db
@@ -349,23 +335,9 @@ export async function revokeApiCredentialAccess(
   const cred = rows[0];
   if (!cred) throw new Error("Credential not found");
 
-  if (cred.ownerId !== revokerId) {
-    const revokerGrants = await db
-      .select()
-      .from(credentialGrants)
-      .where(
-        and(
-          eq(credentialGrants.credentialId, credentialId),
-          eq(credentialGrants.granteeId, revokerId),
-          isNull(credentialGrants.revokedAt),
-          eq(credentialGrants.permission, "admin"),
-        ),
-      )
-      .limit(1);
-
-    if (revokerGrants.length === 0) {
-      throw new Error("Only the owner or an admin grantee can revoke access");
-    }
+  const allowed = await hasPermission(cred.ownerId, credentialId, revokerId, "admin");
+  if (!allowed) {
+    throw new Error("Only the owner or an admin grantee can revoke access");
   }
 
   await db
@@ -401,7 +373,7 @@ export async function withApiCredential<T>(
 ): Promise<T> {
   const plaintext = await getApiCredential(name, ownerId, requestingUserId, intent);
   if (plaintext === null) {
-    throw new Error(`Credential "${name}" not found or access denied`);
+    throw new Error(`Credential "${name}" not found`);
   }
 
   try {
