@@ -321,6 +321,10 @@ export function createResourceTools(context?: ScheduleContext) {
         let nextTitle = title?.trim() || current?.title || null;
 
         try {
+          if (/^https?:\/\//i.test(normalizedUrl) && await isPrivateUrl(normalizedUrl)) {
+            return { ok: false, error: "Blocked: URL resolves to a private/internal network address" };
+          }
+
           await db
             .insert(resources)
             .values({
