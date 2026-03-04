@@ -1,6 +1,7 @@
 {
   "installCommand": "npm install",
   "framework": null,
+  "regions": ["fra1"],
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 800
