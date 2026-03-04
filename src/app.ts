@@ -20,6 +20,7 @@ import {
   deleteApiCredential,
   grantApiCredentialAccess,
   listApiCredentials,
+  hasPermission,
 } from "./lib/api-credentials.js";
 import { resolveConfirmation } from "./lib/confirmation.js";
 import { setSetting } from "./lib/settings.js";
@@ -469,12 +470,21 @@ app.post("/api/slack/interactions", async (c) => {
         const denyPromise = (async () => {
           try {
             const entry = resolveConfirmation(token, false);
-            if (entry) {
+            if (entry && entry.userId === userId) {
               const channelId = payload.channel?.id;
               if (channelId) {
                 await slackClient.chat.postMessage({
                   channel: channelId,
                   text: `Denied: ${entry.action}`,
+                });
+              }
+            } else if (entry && entry.userId !== userId) {
+              const channelId = payload.channel?.id;
+              if (channelId) {
+                await slackClient.chat.postEphemeral({
+                  channel: channelId,
+                  user: userId,
+                  text: "You can only deny your own confirmation requests.",
                 });
               }
             }
@@ -542,10 +552,20 @@ app.post("/api/slack/interactions", async (c) => {
           try {
             const creds = await listApiCredentials(userId);
             const cred = creds.find((c) => c.id === credentialId);
-            if (cred) {
-              await storeApiCredential(cred.owner_id, cred.name, value, cred.expires_at ?? undefined);
-              await publishHomeTab(slackClient, userId);
+            if (!cred) return;
+
+            const allowed = await hasPermission(cred.owner_id, cred.id, userId, "write");
+            if (!allowed) {
+              await slackClient.chat.postEphemeral({
+                channel: userId,
+                user: userId,
+                text: `Permission denied: you don't have write access to credential "${cred.name}".`,
+              });
+              return;
             }
+
+            await storeApiCredential(cred.owner_id, cred.name, value, cred.expires_at ?? undefined);
+            await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.api_credential_update", err, { userId, credentialId });
           }
