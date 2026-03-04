@@ -77,7 +77,8 @@ export async function retrieveMemories(
     const embeddingLiteral = JSON.stringify(queryEmbedding);
 
     const privacyFilter = sql`(
-      ${memories.shareable} = 1
+      ${memories.sourceChannelType} != 'dm'
+      OR ${memories.shareable} = 1
       OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
     )`;
 
