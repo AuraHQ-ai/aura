@@ -145,14 +145,15 @@ export async function retrieveMemories(
         },
       );
     } else {
-      const scored = results.map(({ memory, similarity }) => {
+      const scored = results.map(({ memory, similarity, rrfScore }) => {
         const ageMs = now - new Date(memory.createdAt).getTime();
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
         const score =
-          similarity * 0.6 +
-          memory.relevanceScore * 0.25 +
+          rrfScore * 0.5 +
+          similarity * 0.2 +
+          memory.relevanceScore * 0.15 +
           recencyBoost * 0.15;
 
         return { memory, score };

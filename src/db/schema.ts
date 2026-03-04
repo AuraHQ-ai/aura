@@ -94,7 +94,9 @@ export const memories = pgTable(
     embedding: vector("embedding", { dimensions: 1536 }),
     relevanceScore: real("relevance_score").notNull().default(1.0),
     shareable: integer("shareable").notNull().default(0),
-    searchVector: text("search_vector"),
+    searchVector: text("search_vector").generatedAlwaysAs(
+      sql`to_tsvector('english', coalesce(content, ''))`,
+    ),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
