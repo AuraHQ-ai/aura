@@ -3,6 +3,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
+import { getJobApiCredential } from "../lib/api-credentials.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 
@@ -16,6 +17,41 @@ export const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 30 * 60 * 1000;
 
 // ── System Prompts ───────────────────────────────────────────────────────────
+
+/**
+ * Resolve credentials required by a job, returning a map of credential_id → decrypted value.
+ * Used for credential containment — jobs only get access to explicitly listed credentials.
+ */
+async function resolveJobCredentials(
+  credentialIds: string[],
+  requestedBy: string,
+): Promise<Map<string, string>> {
+  const resolved = new Map<string, string>();
+  if (!credentialIds.length) return resolved;
+
+  const { eq } = await import("drizzle-orm");
+  const { credentials: credTable } = await import("../db/schema.js");
+  const { db: dbClient } = await import("../db/client.js");
+
+  for (const credId of credentialIds) {
+    try {
+      const [cred] = await dbClient
+        .select({ name: credTable.name, ownerId: credTable.ownerId })
+        .from(credTable)
+        .where(eq(credTable.id, credId))
+        .limit(1);
+
+      if (cred) {
+        const value = await getJobApiCredential(cred.name, cred.ownerId, `job:${requestedBy}`);
+        if (value) resolved.set(credId, value);
+      }
+    } catch (err) {
+      logger.warn("Failed to resolve job credential", { credId, error: err });
+    }
+  }
+
+  return resolved;
+}
 
 const JOB_SYSTEM_PROMPT = `You are Aura executing a job autonomously. You have full access to your tools.
 

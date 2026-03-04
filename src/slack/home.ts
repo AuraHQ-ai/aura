@@ -3,6 +3,17 @@ import { getAllSettings } from "../lib/settings.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { getCredential, maskCredential } from "../lib/credentials.js";
+import {
+  listApiCredentials,
+  maskApiCredential,
+  storeApiCredential,
+  deleteApiCredential,
+  grantApiCredentialAccess,
+  getApiCredential,
+} from "../lib/api-credentials.js";
+import { db } from "../db/client.js";
+import { credentials, credentialGrants } from "../db/schema.js";
+import { eq, and, isNull } from "drizzle-orm";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
 
@@ -41,122 +52,95 @@ const FAST_MODELS: ModelOption[] = [
 const EMBEDDING_MODELS: ModelOption[] = [
   { value: "openai/text-embedding-3-small", label: "OpenAI Embedding 3 Small (1536d)" },
   { value: "openai/text-embedding-3-large", label: "OpenAI Embedding 3 Large (3072d)" },
-  { value: "google/text-embedding-005", label: "Google Embedding 005" },
+  { value: "cohere/embed-v4.0", label: "Cohere Embed v4.0 (1024d)" },
 ];
 
-// ── Defaults ─────────────────────────────────────────────────────────────────
+// ── System Credentials (admin-only) ─────────────────────────────────────────
 
-const DEFAULTS: Record<string, string> = {
-  model_main: process.env.MODEL_MAIN || "anthropic/claude-sonnet-4-20250514",
-  model_fast: process.env.MODEL_FAST || "anthropic/claude-haiku-4-5",
-  model_embedding: process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
-};
-
-// ── Credential Definitions ───────────────────────────────────────────────────
-
-interface CredentialDef {
-  key: string;
-  label: string;
-  description: string;
-}
-
-const CREDENTIALS: CredentialDef[] = [
-  {
-    key: "github_token",
-    label: "GitHub Token",
-    description: "For issues, PRs, and code access",
-  },
+const CREDENTIALS = [
+  { key: "github_token", label: "GitHub Token", envFallback: "GH_TOKEN" },
 ];
 
-/** Map credential button action IDs to credential keys */
+/** Map of credential action_ids to credential keys (system credentials) */
 export const CREDENTIAL_ACTIONS: Record<string, string> = {
-  credential_edit_github_token: "github_token",
+  edit_credential_github_token: "github_token",
 };
-
-// ── Block Kit Helpers ────────────────────────────────────────────────────────
 
 function buildDropdown(
   actionId: string,
   label: string,
   options: ModelOption[],
   currentValue: string,
-) {
-  const slackOptions = options.map((opt) => ({
-    text: { type: "plain_text" as const, text: opt.label },
-    value: opt.value,
-  }));
-
-  // Find the initial option (current selection)
-  const initialOption = slackOptions.find((o) => o.value === currentValue) || slackOptions[0];
-
+): any {
   return {
-    type: "section" as const,
-    text: {
-      type: "mrkdwn" as const,
-      text: `*${label}*`,
-    },
-    accessory: {
-      type: "static_select" as const,
-      action_id: actionId,
-      placeholder: {
-        type: "plain_text" as const,
-        text: "Select a model",
+    type: "actions",
+    elements: [
+      {
+        type: "static_select",
+        action_id: actionId,
+        placeholder: { type: "plain_text", text: `Select ${label}` },
+        options: options.map((o) => ({
+          text: { type: "plain_text", text: o.label },
+          value: o.value,
+        })),
+        ...(options.some((o) => o.value === currentValue)
+          ? {
+              initial_option: {
+                text: {
+                  type: "plain_text",
+                  text: options.find((o) => o.value === currentValue)!.label,
+                },
+                value: currentValue,
+              },
+            }
+          : {}),
       },
-      options: slackOptions,
-      initial_option: initialOption,
-    },
+    ],
   };
 }
+
+// ── System Credential Blocks (admin-only) ───────────────────────────────────
 
 async function buildCredentialBlocks(): Promise<any[]> {
   const blocks: any[] = [
     { type: "divider" },
     {
       type: "header",
-      text: { type: "plain_text", text: "Credentials" },
-    },
-    {
-      type: "context",
-      elements: [
-        {
-          type: "mrkdwn",
-          text: "Encrypted and stored in the database. Values are never logged or displayed in full.",
-        },
-      ],
+      text: { type: "plain_text", text: "🔑 System Credentials" },
     },
   ];
 
   for (const cred of CREDENTIALS) {
     const value = await getCredential(cred.key);
-    const status = value ? `\`${maskCredential(value)}\`` : "_not set_";
+    const masked = value ? maskCredential(value) : "(not set)";
+    const envNote = !value && cred.envFallback ? ` — using $${cred.envFallback}` : "";
 
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*${cred.label}*  —  ${cred.description}\nCurrent: ${status}`,
+    blocks.push(
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${cred.label}*\n\`${masked}\`${envNote}`,
+        },
+        accessory: {
+          type: "button",
+          text: { type: "plain_text", text: "Edit" },
+          action_id: `edit_credential_${cred.key}`,
+        },
       },
-      accessory: {
-        type: "button",
-        text: { type: "plain_text", text: value ? "Update" : "Set" },
-        action_id: `credential_edit_${cred.key}`,
-      },
-    });
+    );
   }
 
   return blocks;
 }
 
-/**
- * Open a modal for editing a credential value.
- */
+/** Open a modal to edit a system credential */
 export async function openCredentialModal(
   client: WebClient,
   triggerId: string,
   credentialKey: string,
 ): Promise<void> {
-  const cred = CREDENTIALS.find((c) => c.key === credentialKey);
-  if (!cred) return;
+  const label = CREDENTIALS.find((c) => c.key === credentialKey)?.label || credentialKey;
 
   await client.views.open({
     trigger_id: triggerId,
@@ -164,95 +148,325 @@ export async function openCredentialModal(
       type: "modal",
       callback_id: "credential_submit",
       private_metadata: credentialKey,
-      title: { type: "plain_text", text: `Update ${cred.label}` },
+      title: { type: "plain_text", text: `Edit ${label}` },
       submit: { type: "plain_text", text: "Save" },
       close: { type: "plain_text", text: "Cancel" },
       blocks: [
         {
           type: "input",
           block_id: "credential_input_block",
-          label: { type: "plain_text", text: cred.label },
+          label: { type: "plain_text", text: `New value for ${label}` },
           element: {
             type: "plain_text_input",
             action_id: "credential_value",
-            placeholder: {
-              type: "plain_text",
-              text: "Paste the new token here",
-            },
+            placeholder: { type: "plain_text", text: "Paste new token value" },
           },
-        },
-        {
-          type: "context",
-          elements: [
-            {
-              type: "mrkdwn",
-              text: `This will replace the current ${cred.label}. The value is encrypted at rest with AES-256-GCM.`,
-            },
-          ],
         },
       ],
     },
   });
 }
 
-// ── Publish Home Tab ─────────────────────────────────────────────────────────
+// ── Per-User Credential Blocks ──────────────────────────────────────────────
 
 /**
- * Build and publish the App Home tab for a user.
- * Admins see editable dropdowns; everyone else sees a read-only view.
+ * Build blocks showing a user's own credentials + credentials shared with them.
  */
+export async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
+  const blocks: any[] = [
+    { type: "divider" },
+    {
+      type: "header",
+      text: { type: "plain_text", text: "🔐 Your API Credentials" },
+    },
+  ];
+
+  // 1) User's own credentials
+  const ownCreds = await listApiCredentials(userId);
+
+  // 2) Credentials shared with this user
+  const grants = await db
+    .select({
+      credentialId: credentialGrants.credentialId,
+      permission: credentialGrants.permission,
+      grantedBy: credentialGrants.grantedBy,
+      credName: credentials.name,
+      credOwnerId: credentials.ownerId,
+      credExpiresAt: credentials.expiresAt,
+      credValue: credentials.value,
+    })
+    .from(credentialGrants)
+    .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
+    .where(
+      and(
+        eq(credentialGrants.granteeId, userId),
+        isNull(credentialGrants.revokedAt),
+      ),
+    );
+
+  if (ownCreds.length === 0 && grants.length === 0) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "_No credentials stored yet. Add one to get started._",
+      },
+    });
+  }
+
+  // Own credentials
+  for (const cred of ownCreds) {
+    const expiryText = cred.expiresAt
+      ? `\n_Expires: ${cred.expiresAt.toISOString().split("T")[0]}_`
+      : "";
+
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*${cred.name}* (yours)${expiryText}\nKey v${cred.keyVersion} · Updated ${cred.updatedAt.toISOString().split("T")[0]}`,
+      },
+      accessory: {
+        type: "overflow",
+        action_id: `api_credential_overflow_${cred.id}`,
+        options: [
+          {
+            text: { type: "plain_text", text: "✏️ Update" },
+            value: `update_${cred.id}_${cred.name}`,
+          },
+          {
+            text: { type: "plain_text", text: "🔗 Share" },
+            value: `share_${cred.id}`,
+          },
+          {
+            text: { type: "plain_text", text: "🗑️ Delete" },
+            value: `delete_${cred.id}_${cred.name}`,
+          },
+        ],
+      },
+    });
+  }
+
+  // Shared credentials
+  for (const grant of grants) {
+    const expiryText = grant.credExpiresAt
+      ? `\n_Expires: ${grant.credExpiresAt.toISOString().split("T")[0]}_`
+      : "";
+
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*${grant.credName}* (shared by <@${grant.grantedBy}>) — ${grant.permission}${expiryText}`,
+      },
+    });
+  }
+
+  // Add credential button
+  blocks.push({
+    type: "actions",
+    elements: [
+      {
+        type: "button",
+        text: { type: "plain_text", text: "➕ Add Credential" },
+        action_id: "api_credential_add",
+        style: "primary",
+      },
+    ],
+  });
+
+  return blocks;
+}
+
+// ── User Credential Modals ──────────────────────────────────────────────────
+
+/** Open modal to add a new credential */
+export async function openAddCredentialModal(
+  client: WebClient,
+  triggerId: string,
+): Promise<void> {
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "api_credential_add_submit",
+      title: { type: "plain_text", text: "Add Credential" },
+      submit: { type: "plain_text", text: "Save" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "input",
+          block_id: "cred_name_block",
+          label: { type: "plain_text", text: "Credential Name" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_name",
+            placeholder: {
+              type: "plain_text",
+              text: "e.g. openai_key (lowercase, underscores)",
+            },
+          },
+          hint: {
+            type: "plain_text",
+            text: "Must start with a letter, lowercase + underscores only, max 63 chars",
+          },
+        },
+        {
+          type: "input",
+          block_id: "cred_value_block",
+          label: { type: "plain_text", text: "Value" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_value",
+            placeholder: { type: "plain_text", text: "Paste your API key or secret" },
+          },
+        },
+        {
+          type: "input",
+          block_id: "cred_expiry_block",
+          optional: true,
+          label: { type: "plain_text", text: "Expiration Date (optional)" },
+          element: {
+            type: "datepicker",
+            action_id: "cred_expiry",
+            placeholder: { type: "plain_text", text: "Select a date" },
+          },
+        },
+      ],
+    },
+  });
+}
+
+/** Open modal to update an existing credential's value */
+export async function openUpdateCredentialModal(
+  client: WebClient,
+  triggerId: string,
+  credentialId: string,
+  credentialName: string,
+): Promise<void> {
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "api_credential_update_submit",
+      private_metadata: credentialId,
+      title: { type: "plain_text", text: `Update ${credentialName}` },
+      submit: { type: "plain_text", text: "Save" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "input",
+          block_id: "cred_value_block",
+          label: { type: "plain_text", text: `New value for ${credentialName}` },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_value",
+            placeholder: { type: "plain_text", text: "Paste new API key or secret" },
+          },
+        },
+      ],
+    },
+  });
+}
+
+/** Open modal to share a credential with another user */
+export async function openShareCredentialModal(
+  client: WebClient,
+  triggerId: string,
+  credentialId: string,
+): Promise<void> {
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "api_credential_share_submit",
+      private_metadata: credentialId,
+      title: { type: "plain_text", text: "Share Credential" },
+      submit: { type: "plain_text", text: "Share" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "input",
+          block_id: "share_user_block",
+          label: { type: "plain_text", text: "Share with" },
+          element: {
+            type: "users_select",
+            action_id: "share_user",
+            placeholder: { type: "plain_text", text: "Select a user" },
+          },
+        },
+        {
+          type: "input",
+          block_id: "share_permission_block",
+          label: { type: "plain_text", text: "Permission level" },
+          element: {
+            type: "radio_buttons",
+            action_id: "share_permission",
+            options: [
+              {
+                text: { type: "plain_text", text: "Read — can use the credential" },
+                value: "read",
+              },
+              {
+                text: { type: "plain_text", text: "Write — can use and update" },
+                value: "write",
+              },
+              {
+                text: { type: "plain_text", text: "Admin — full access including sharing" },
+                value: "admin",
+              },
+            ],
+            initial_option: {
+              text: { type: "plain_text", text: "Read — can use the credential" },
+              value: "read",
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
+// ── Publish App Home Tab ────────────────────────────────────────────────────
+
 export async function publishHomeTab(
   client: WebClient,
   userId: string,
 ): Promise<void> {
   try {
-    const currentSettings = await getAllSettings();
     const admin = isAdmin(userId);
+    const settings = await getAllSettings();
 
-    const mainValue = currentSettings.model_main || DEFAULTS.model_main;
-    const fastValue = currentSettings.model_fast || DEFAULTS.model_fast;
-    const embeddingValue = currentSettings.model_embedding || DEFAULTS.model_embedding;
+    const mainValue = settings.model_main || MAIN_MODELS[0].value;
+    const fastValue = settings.model_fast || FAST_MODELS[0].value;
+    const embeddingValue = settings.model_embedding || EMBEDDING_MODELS[0].value;
 
     const blocks: any[] = [
       {
         type: "header",
-        text: { type: "plain_text", text: "Aura Settings" },
+        text: { type: "plain_text", text: "⚙️ Aura Settings" },
       },
-      {
-        type: "context",
-        elements: [
-          {
-            type: "mrkdwn",
-            text: admin
-              ? "You're an admin. Changes take effect on the next message."
-              : "Settings are managed by workspace admins. You're viewing read-only.",
-          },
-        ],
-      },
-      { type: "divider" },
     ];
 
     if (admin) {
-      // Editable dropdowns
+      // Editable dropdowns for admins
       blocks.push(
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "*:brain: Main Model*\nUsed for conversation responses. Quality matters most here.",
+            text: "*:brain: Main Model*\nUsed for complex reasoning, tool calls, and long conversations.",
           },
         },
         buildDropdown("select_model_main", "Main Model", MAIN_MODELS, mainValue),
-        { type: "divider" },
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: "*:zap: Fast Model*\nUsed for memory extraction and profile updates. Speed and cost matter most.",
+            text: "*:zap: Fast Model*\nUsed for triage, summaries, and quick tasks.",
           },
         },
         buildDropdown("select_model_fast", "Fast Model", FAST_MODELS, fastValue),
-        { type: "divider" },
         {
           type: "section",
           text: {
@@ -279,6 +493,11 @@ export async function publishHomeTab(
       );
     }
 
+    // Per-user credentials — available to ALL users (not admin-gated)
+    const userCredBlocks = await buildUserCredentialBlocks(userId);
+    blocks.push(...userCredBlocks);
+
+    // Admin-only system credentials
     if (admin) {
       const credBlocks = await buildCredentialBlocks();
       blocks.push(...credBlocks);
