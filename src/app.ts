@@ -12,6 +12,7 @@ import {
   isAdmin,
   openCredentialModal,
   openAddCredentialModal,
+  buildAddCredentialBlocks,
   openUpdateCredentialModal,
   openShareCredentialModal,
 } from "./slack/home.js";
