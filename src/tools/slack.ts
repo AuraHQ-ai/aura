@@ -21,6 +21,7 @@ import { createPeopleTools } from "./people.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createResourceTools } from "./resources.js";
+import { createCredentialTools } from "./credentials.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -2998,6 +2999,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── People Data Tools (structured person records) ────────────────
     ...createPeopleTools(context),
+
+    // ── Credential Tools (secure credential retrieval) ──────────────
+    ...createCredentialTools(context),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────

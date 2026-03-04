@@ -594,6 +594,7 @@ export const credentials = pgTable(
       .default(sql`gen_random_uuid()`),
     ownerId: text("owner_id").notNull(),
     name: text("name").notNull(),
+    type: text("type").notNull().default("token"),
     value: text("value").notNull(),
     keyVersion: integer("key_version").notNull().default(1),
     expiresAt: timestamptz("expires_at"),
@@ -605,6 +606,10 @@ export const credentials = pgTable(
     check(
       "credentials_name_check",
       sql`${table.name} ~ '^[a-z][a-z0-9_]{1,62}$'`,
+    ),
+    check(
+      "credentials_type_check",
+      sql`${table.type} IN ('token', 'oauth_client')`,
     ),
   ],
 );
