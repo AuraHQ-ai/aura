@@ -351,7 +351,13 @@ app.post("/api/slack/interactions", async (c) => {
         (action.action_id === "notes_page_prev" || action.action_id === "notes_page_next") &&
         userId
       ) {
-        const state = JSON.parse(action.value);
+        let state: any;
+        try {
+          state = JSON.parse(action.value);
+        } catch {
+          logger.warn("Invalid action value for notes pagination", { actionId: action.action_id });
+          continue;
+        }
         const pagePromise = publishHomeTab(slackClient, userId, {
           notesPage: state.page,
           notesCategory: state.category,
@@ -364,7 +370,13 @@ app.post("/api/slack/interactions", async (c) => {
 
       // Notes browser — view note detail
       if (action.action_id === "notes_view" && payload.trigger_id) {
-        const state = JSON.parse(action.value);
+        let state: any;
+        try {
+          state = JSON.parse(action.value);
+        } catch {
+          logger.warn("Invalid action value for notes_view", { actionId: action.action_id });
+          continue;
+        }
         const viewPromise = openNoteDetailModal(
           slackClient,
           payload.trigger_id,
@@ -383,7 +395,13 @@ app.post("/api/slack/interactions", async (c) => {
           action.action_id === "notes_modal_page_next") &&
         payload.view?.id
       ) {
-        const state = JSON.parse(action.value);
+        let state: any;
+        try {
+          state = JSON.parse(action.value);
+        } catch {
+          logger.warn("Invalid action value for notes modal pagination", { actionId: action.action_id });
+          continue;
+        }
         const modalPagePromise = openNoteDetailModal(
           slackClient,
           payload.trigger_id || "",

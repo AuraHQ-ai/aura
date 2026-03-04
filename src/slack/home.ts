@@ -199,6 +199,15 @@ export async function openCredentialModal(
   });
 }
 
+/** Escape Slack mrkdwn special characters in user/agent-generated text. */
+function escapeMrkdwn(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/([*_~`])/g, "\u200B$1");
+}
+
 // ── Notes Browser ────────────────────────────────────────────────────────────
 
 const NOTES_PER_PAGE = 10;
@@ -300,7 +309,7 @@ export async function buildNotesBrowserBlocks(
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*${row.topic}*  _${row.category}_  |  Updated ${rel}`,
+          text: `*${escapeMrkdwn(row.topic)}*  _${escapeMrkdwn(row.category)}_  |  Updated ${rel}`,
         },
         accessory: {
           type: "button",
@@ -396,7 +405,7 @@ export async function openNoteDetailModal(
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Category:* _${note.category}_  |  *Updated:* ${rel}`,
+        text: `*Category:* _${escapeMrkdwn(note.category)}_  |  *Updated:* ${rel}`,
       },
     },
     { type: "divider" },
