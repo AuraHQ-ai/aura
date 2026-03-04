@@ -114,9 +114,22 @@ export async function storeApiCredential(
   name: string,
   plaintext: string,
   expiresAt?: Date,
+  type: "token" | "oauth_client" = "token",
 ): Promise<Credential> {
   validateKey();
   validateName(name);
+
+  if (type === "oauth_client") {
+    try {
+      const parsed = JSON.parse(plaintext);
+      if (!parsed.client_id || !parsed.client_secret) {
+        throw new Error("oauth_client value must contain client_id and client_secret");
+      }
+    } catch (e: any) {
+      if (e.message.includes("client_id") || e.message.includes("client_secret")) throw e;
+      throw new Error("oauth_client value must be valid JSON with client_id and client_secret keys");
+    }
+  }
 
   const encrypted = encryptCredential(plaintext);
 
@@ -125,6 +138,7 @@ export async function storeApiCredential(
     .values({
       ownerId,
       name,
+      type,
       value: encrypted,
       expiresAt: expiresAt ?? null,
     })
@@ -132,6 +146,7 @@ export async function storeApiCredential(
       target: [credentials.ownerId, credentials.name],
       set: {
         value: encrypted,
+        type,
         expiresAt: expiresAt ?? null,
         updatedAt: new Date(),
       },
@@ -144,12 +159,13 @@ export async function storeApiCredential(
   return row;
 }
 
-export async function getApiCredential(
+/** Shared credential fetch + permission check. Returns the full row or null. */
+async function fetchAndAuthorize(
   name: string,
   ownerId: string,
   requestingUserId: string,
   intent: "read" | "write",
-): Promise<string | null> {
+): Promise<typeof credentials.$inferSelect | null> {
   validateKey();
   validateName(name);
 
@@ -175,7 +191,29 @@ export async function getApiCredential(
   }
 
   await audit(cred.id, name, requestingUserId, "read");
+  return cred;
+}
+
+export async function getApiCredential(
+  name: string,
+  ownerId: string,
+  requestingUserId: string,
+  intent: "read" | "write",
+): Promise<string | null> {
+  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
+  if (!cred) return null;
   return decryptCredential(cred.value);
+}
+
+export async function getApiCredentialWithType(
+  name: string,
+  ownerId: string,
+  requestingUserId: string,
+  intent: "read" | "write",
+): Promise<{ value: string; type: string } | null> {
+  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
+  if (!cred) return null;
+  return { value: decryptCredential(cred.value), type: cred.type };
 }
 
 export async function getJobApiCredential(
@@ -220,6 +258,7 @@ export async function listApiCredentials(
   Array<{
     id: string;
     name: string;
+    type: string;
     owner_id: string;
     expires_at: Date | null;
     permission: "owner" | "read" | "write" | "admin";
@@ -229,6 +268,7 @@ export async function listApiCredentials(
     .select({
       id: credentials.id,
       name: credentials.name,
+      type: credentials.type,
       owner_id: credentials.ownerId,
       expires_at: credentials.expiresAt,
     })
@@ -239,6 +279,7 @@ export async function listApiCredentials(
     .select({
       id: credentials.id,
       name: credentials.name,
+      type: credentials.type,
       owner_id: credentials.ownerId,
       expires_at: credentials.expiresAt,
       permission: credentialGrants.permission,

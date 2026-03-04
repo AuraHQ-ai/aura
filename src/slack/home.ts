@@ -198,6 +198,7 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
     const isOwner = cred.owner_id === userId;
     const source = isOwner ? "yours" : `shared by <@${cred.owner_id}>`;
     const permLabel = isOwner ? "owner" : cred.permission;
+    const typeBadge = cred.type !== "token" ? ` (${cred.type})` : "";
 
     let expiryText = "";
     if (cred.expires_at) {
@@ -231,7 +232,7 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*${cred.name}*  ·  _${source}_ (${permLabel})${expiryText}`,
+        text: `*${cred.name}*${typeBadge}  ·  _${source}_ (${permLabel})${expiryText}`,
       },
       accessory: {
         type: "overflow",
@@ -278,12 +279,39 @@ export async function openAddCredentialModal(
         },
         {
           type: "input",
+          block_id: "cred_type_block",
+          label: { type: "plain_text", text: "Type" },
+          element: {
+            type: "static_select",
+            action_id: "cred_type",
+            options: [
+              {
+                text: { type: "plain_text", text: "Token" },
+                value: "token",
+              },
+              {
+                text: { type: "plain_text", text: "OAuth Client" },
+                value: "oauth_client",
+              },
+            ],
+            initial_option: {
+              text: { type: "plain_text", text: "Token" },
+              value: "token",
+            },
+          },
+        },
+        {
+          type: "input",
           block_id: "cred_value_block",
           label: { type: "plain_text", text: "Value" },
           element: {
             type: "plain_text_input",
             action_id: "cred_value",
             placeholder: { type: "plain_text", text: "Paste your API token" },
+          },
+          hint: {
+            type: "plain_text",
+            text: "For OAuth Client type, use format: client_id:client_secret",
           },
         },
         {

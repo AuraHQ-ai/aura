@@ -526,14 +526,46 @@ app.post("/api/slack/interactions", async (c) => {
 
     if (callbackId === "api_credential_add_submit" && userId) {
       const name = payload.view?.state?.values?.cred_name_block?.cred_name?.value;
-      const value = payload.view?.state?.values?.cred_value_block?.cred_value?.value;
+      const rawValue = payload.view?.state?.values?.cred_value_block?.cred_value?.value;
       const expiryStr = payload.view?.state?.values?.cred_expiry_block?.cred_expiry?.selected_date;
+      const credType = (payload.view?.state?.values?.cred_type_block?.cred_type?.selected_option?.value || "token") as "token" | "oauth_client";
 
-      if (name && value) {
+      if (name && rawValue) {
+        let value = rawValue;
+        if (credType === "oauth_client") {
+          try {
+            JSON.parse(rawValue);
+            value = rawValue;
+          } catch {
+            const parts = rawValue.split(":");
+            if (parts.length >= 2) {
+              const clientId = parts[0];
+              const clientSecret = parts.slice(1).join(":");
+              value = JSON.stringify({ client_id: clientId, client_secret: clientSecret });
+            } else {
+              const addErrPromise = (async () => {
+                try {
+                  const dm = await slackClient.conversations.open({ users: userId });
+                  if (dm.channel?.id) {
+                    await slackClient.chat.postMessage({
+                      channel: dm.channel.id,
+                      text: 'Invalid OAuth Client value. Use format `client_id:client_secret` or a JSON string with `client_id` and `client_secret` keys.',
+                    });
+                  }
+                } catch (err) {
+                  recordError("interactions.api_credential_add_validation", err, { userId, name });
+                }
+              })();
+              waitUntil(addErrPromise);
+              return c.json({ response_action: "clear" });
+            }
+          }
+        }
+
         const expiresAt = expiryStr ? new Date(expiryStr) : undefined;
         const addPromise = (async () => {
           try {
-            await storeApiCredential(userId, name, value, expiresAt);
+            await storeApiCredential(userId, name, value, expiresAt, credType);
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.api_credential_add", err, { userId, name });
