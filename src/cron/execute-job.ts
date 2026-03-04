@@ -110,13 +110,19 @@ export async function executeJob(
     let prompt: string;
     let systemPrompt: string;
 
+    const credentialIds = job.requiredCredentialIds ?? [];
+    const credentialNote =
+      credentialIds.length > 0
+        ? `\n\nAuthorized credential IDs for this job: ${credentialIds.join(", ")}`
+        : "";
+
     if (isContinuation) {
       const planContent = await loadPlanNote(planTopic);
       const nextSteps = job.description.replace(CONTINUE_TAG_RE, "");
 
       prompt = planContent
-        ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}`
-        : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}`;
+        ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
+        : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
 
       systemPrompt = CONTINUATION_SYSTEM_PROMPT + skillIndex;
 
@@ -125,11 +131,12 @@ export async function executeJob(
         executionId,
         planTopic,
         hasPlanNote: !!planContent,
+        credentialCount: credentialIds.length,
       });
     } else {
       prompt = job.playbook
-        ? `Job: ${job.name}\nDescription: ${job.description}\n\nPlaybook:\n${job.playbook}`
-        : job.description;
+        ? `Job: ${job.name}\nDescription: ${job.description}\n\nPlaybook:\n${job.playbook}${credentialNote}`
+        : `${job.description}${credentialNote}`;
 
       if (job.lastResult) {
         prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
@@ -144,6 +151,7 @@ export async function executeJob(
         isRecurring,
         hasPlaybook: !!job.playbook,
         trigger: effectiveTrigger,
+        credentialCount: credentialIds.length,
       });
     }
 
