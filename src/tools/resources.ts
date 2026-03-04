@@ -328,32 +328,33 @@ export function createResourceTools(context?: ScheduleContext) {
         }
 
         const now = new Date();
-        const currentRows = await db
-          .select({
-            id: resources.id,
-            url: resources.url,
-            title: resources.title,
-            source: resources.source,
-            status: resources.status,
-            parentUrl: resources.parentUrl,
-            metadata: resources.metadata,
-            contentHash: resources.contentHash,
-          })
-          .from(resources)
-          .where(eq(resources.url, normalizedUrl))
-          .limit(1);
-        const current = currentRows[0];
-
-        const resolvedSource =
-          source ??
-          (current?.source as ResourceSource | undefined) ??
-          inferSourceFromUrl(normalizedUrl);
-        const mergedMetadata = mergeMetadata(current?.metadata, metadata);
-
-        const nextParentUrl = parent_url ?? current?.parentUrl ?? null;
-        let nextTitle = title?.trim() || current?.title || null;
+        const fallbackSource = source ?? inferSourceFromUrl(normalizedUrl);
 
         try {
+          const currentRows = await db
+            .select({
+              id: resources.id,
+              url: resources.url,
+              title: resources.title,
+              source: resources.source,
+              status: resources.status,
+              parentUrl: resources.parentUrl,
+              metadata: resources.metadata,
+              contentHash: resources.contentHash,
+            })
+            .from(resources)
+            .where(eq(resources.url, normalizedUrl))
+            .limit(1);
+          const current = currentRows[0];
+
+          const resolvedSource =
+            source ??
+            (current?.source as ResourceSource | undefined) ??
+            inferSourceFromUrl(normalizedUrl);
+          const mergedMetadata = mergeMetadata(current?.metadata, metadata);
+
+          const nextParentUrl = parent_url ?? current?.parentUrl ?? null;
+          let nextTitle = title?.trim() || current?.title || null;
           await db
             .insert(resources)
             .values({
@@ -489,7 +490,7 @@ export function createResourceTools(context?: ScheduleContext) {
           await db
             .update(resources)
             .set({
-              source: resolvedSource,
+              source: fallbackSource,
               status: "error",
               errorMessage,
               crawledAt: now,
@@ -499,7 +500,7 @@ export function createResourceTools(context?: ScheduleContext) {
 
           logger.error("ingest_resource tool failed", {
             url: normalizedUrl,
-            source: resolvedSource,
+            source: fallbackSource,
             error: errorMessage,
           });
 
