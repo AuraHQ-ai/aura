@@ -50,6 +50,14 @@ export function createCredentialTools(context?: ScheduleContext) {
           }
 
           if (result.type === "oauth_client") {
+            if (result.access_token) {
+              return {
+                ok: true,
+                type: "oauth_client" as const,
+                value: result.access_token,
+                ...(result.expires_in != null && { expires_in: result.expires_in }),
+              };
+            }
             try {
               const parsed = JSON.parse(result.value);
               return {

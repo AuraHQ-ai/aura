@@ -288,6 +288,26 @@ export function buildAddCredentialBlocks(credType: "token" | "oauth_client" = "t
             placeholder: { type: "plain_text", text: "Paste client secret" },
           },
         },
+        {
+          type: "input",
+          block_id: "cred_token_url_block",
+          optional: true,
+          label: { type: "plain_text", text: "Token URL (optional)" },
+          element: {
+            type: "plain_text_input",
+            action_id: "cred_token_url",
+            placeholder: { type: "plain_text", text: "https://cloud.airbyte.com/api/v1/applications/token" },
+          },
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: "If provided, credentials will be automatically exchanged for an access token when retrieved.",
+            },
+          ],
+        },
       ]
     : [
         {

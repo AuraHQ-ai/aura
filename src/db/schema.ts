@@ -595,6 +595,7 @@ export const credentials = pgTable(
     ownerId: text("owner_id").notNull(),
     name: text("name").notNull(),
     type: text("type").notNull().default("token"),
+    tokenUrl: text("token_url"),
     value: text("value").notNull(),
     keyVersion: integer("key_version").notNull().default(1),
     expiresAt: timestamptz("expires_at"),
