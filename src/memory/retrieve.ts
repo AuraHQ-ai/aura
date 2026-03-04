@@ -19,15 +19,47 @@ interface RetrievalOptions {
   minRelevanceScore?: number;
 }
 
+const MAX_FULLTEXT_LEXEMES = 8;
+const PER_TERM_FULLTEXT_LIMIT = 25;
+
+async function extractLexemes(
+  query: string,
+  maxLexemes = MAX_FULLTEXT_LEXEMES,
+): Promise<string[]> {
+  if (!query.trim()) return [];
+
+  try {
+    const result = await db.execute(sql`
+      SELECT lexeme AS term
+      FROM unnest(to_tsvector('english', ${query})) AS token(lexeme, positions, weights)
+      ORDER BY positions[1] ASC NULLS LAST, lexeme ASC
+      LIMIT ${maxLexemes}
+    `);
+
+    const rows = ((result as any).rows ?? result) as Array<{ term?: string | null }>;
+    const SAFE_LEXEME = /^[a-z0-9]+$/;
+    return rows
+      .map((row) => row.term?.trim() ?? "")
+      .filter((term): term is string => term.length > 0 && SAFE_LEXEME.test(term));
+  } catch (error) {
+    logger.warn("Failed to extract positional lexemes; falling back to vector-only ranking", {
+      error: String(error),
+      query: query.substring(0, 100),
+    });
+    return [];
+  }
+}
+
 /**
  * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
  *
  * Flow:
  * 1. Embed the user's message
- * 2. Run parallel CTE queries: pgvector cosine similarity + tsvector full-text match
- * 3. Fuse results via Reciprocal Rank Fusion (RRF) with FULL OUTER JOIN
- * 4. Rerank top candidates with Cohere (or fall back to legacy scoring)
- * 5. Return top-K memories
+ * 2. Extract up to 8 positional lexemes from Postgres full-text parsing
+ * 3. Run hybrid SQL: pgvector + per-term full-text lanes merged by best rank
+ * 4. Fuse results via Reciprocal Rank Fusion (RRF) with FULL OUTER JOIN
+ * 5. Rerank top candidates with Cohere (or fall back to legacy scoring)
+ * 6. Return top-K memories
  */
 export async function retrieveMemories(
   options: RetrievalOptions,
@@ -36,7 +68,11 @@ export async function retrieveMemories(
   const start = Date.now();
 
   try {
-    const queryEmbedding = precomputed ?? await embedText(query);
+    const [queryEmbedding, lexemes] = await Promise.all([
+      precomputed ? Promise.resolve(precomputed) : embedText(query),
+      extractLexemes(query),
+    ]);
+
     const CANDIDATE_POOL_SIZE = Math.max(25, limit);
     const embeddingLiteral = JSON.stringify(queryEmbedding);
 
@@ -47,6 +83,55 @@ export async function retrieveMemories(
 
     const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore}`;
 
+    logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
+      lexemes,
+      query: query.substring(0, 100),
+    });
+
+    const fulltextSearchCte = lexemes.length === 0
+      ? sql`
+        fulltext_search AS (
+          SELECT NULL::uuid AS id, NULL::bigint AS rank
+          WHERE FALSE
+        )
+      `
+      : (() => {
+        const perTermCtes = lexemes.map((lexeme, index) => {
+          const cteName = sql.raw(`ft_${index}`);
+          return sql`
+            ${cteName} AS (
+              SELECT id, ROW_NUMBER() OVER (
+                ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+              ) AS rank
+              FROM memories
+              WHERE search_vector @@ to_tsquery('english', ${lexeme})
+                AND ${baseFilter}
+                AND ${privacyFilter}
+              ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+              LIMIT ${PER_TERM_FULLTEXT_LIMIT}
+            )
+          `;
+        });
+
+        const unionParts = sql.join(
+          lexemes.map((_, index) => sql.raw(`SELECT * FROM ft_${index}`)),
+          sql` UNION ALL `,
+        );
+
+        return sql`
+          ${sql.join(perTermCtes, sql`, `)},
+          ft_dedup AS (
+            SELECT id, MIN(rank) AS rank
+            FROM (${unionParts}) all_terms
+            GROUP BY id
+          ),
+          fulltext_search AS (
+            SELECT id, rank
+            FROM ft_dedup
+          )
+        `;
+      })();
+
     const hybridQuery = sql`
       WITH vector_search AS (
         SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${embeddingLiteral}::vector) AS rank
@@ -55,16 +140,7 @@ export async function retrieveMemories(
         ORDER BY embedding <=> ${embeddingLiteral}::vector
         LIMIT ${CANDIDATE_POOL_SIZE}
       ),
-      fulltext_search AS (
-        SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank_cd(search_vector, query) DESC) AS rank
-        FROM memories, websearch_to_tsquery('english', ${query}) query
-        WHERE search_vector @@ query
-          AND ${memories.relevanceScore} >= ${minRelevanceScore}
-          AND ${memories.embedding} IS NOT NULL
-          AND ${privacyFilter}
-        ORDER BY ts_rank_cd(search_vector, query) DESC
-        LIMIT ${CANDIDATE_POOL_SIZE}
-      )
+      ${fulltextSearchCte}
       SELECT
         m.*,
         COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
@@ -141,6 +217,7 @@ export async function retrieveMemories(
         {
           query: query.substring(0, 100),
           totalCandidates: results.length,
+          lexemeCount: lexemes.length,
           method: "hybrid-rrf+cohere-rerank",
         },
       );
@@ -171,6 +248,7 @@ export async function retrieveMemories(
         {
           query: query.substring(0, 100),
           totalCandidates: results.length,
+          lexemeCount: lexemes.length,
           method: "hybrid-rrf+legacy",
         },
       );
