@@ -1,42 +1,95 @@
-import { z } from "zod";
+import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import TurndownService from "turndown";
 import { generateText } from "ai";
-import crypto from "node:crypto";
-import { eq, and, sql, desc } from "drizzle-orm";
-import { defineTool } from "../lib/tool.js";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../db/client.js";
 import { resources } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
-import { logger } from "../lib/logger.js";
-import { embedText } from "../lib/embeddings.js";
 import { getFastModel } from "../lib/ai.js";
+import { embedText } from "../lib/embeddings.js";
+import { logger } from "../lib/logger.js";
+import { defineTool } from "../lib/tool.js";
+import { formatTimestamp } from "../lib/temporal.js";
+
+const RESOURCE_SOURCES = [
+  "youtube",
+  "notion",
+  "github",
+  "web",
+  "docs",
+] as const;
+type ResourceSource = (typeof RESOURCE_SOURCES)[number];
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+const turndown = new TurndownService({
+  headingStyle: "atx",
+  codeBlockStyle: "fenced",
+});
+turndown.remove(["style", "script", "head"]);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function sha256(content: string): string {
-  return crypto.createHash("sha256").update(content, "utf8").digest("hex");
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
-/** Truncate text to roughly `maxChars` on a word boundary. */
-function truncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  const cut = text.lastIndexOf(" ", maxChars);
-  return text.substring(0, cut > 0 ? cut : maxChars) + "…";
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-/** Guess source type from URL if not explicitly provided. */
-function inferSource(url: string): string {
+function mergeMetadata(
+  existing: unknown,
+  incoming: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const base = isObjectRecord(existing) ? existing : {};
+  return { ...base, ...(incoming ?? {}) };
+}
+
+function normalizeMarkdown(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function extractHtmlTitle(html: string): string | null {
+  const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (!match) return null;
+  const raw = match[1]
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+  return raw || null;
+}
+
+function deriveTitleFromUrl(url: string): string {
   try {
-    const host = new URL(url).hostname.toLowerCase();
+    const parsed = new URL(url);
+    const lastPath = parsed.pathname
+      .split("/")
+      .filter(Boolean)
+      .at(-1);
+    return lastPath || parsed.hostname || url;
+  } catch {
+    return url;
+  }
+}
+
+function inferSourceFromUrl(url: string): ResourceSource {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
     if (host.includes("youtube.com") || host.includes("youtu.be"))
       return "youtube";
     if (host.includes("notion.so") || host.includes("notion.site"))
       return "notion";
-    if (host.includes("github.com")) return "github";
-    if (
-      host.includes("docs.") ||
-      host.includes("developer.") ||
-      host.includes("devdocs.")
-    )
+    if (host === "github.com" || host.endsWith(".github.com")) return "github";
+    if (host.startsWith("docs.") || parsed.pathname.includes("/docs/"))
       return "docs";
     return "web";
   } catch {
@@ -44,11 +97,97 @@ function inferSource(url: string): string {
   }
 }
 
-async function fetchUrlContent(
-  url: string,
-): Promise<{ content: string; title?: string }> {
-  const BROWSER_UA =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+function isLikelyTextContentType(contentType: string): boolean {
+  const ct = contentType.toLowerCase();
+  return (
+    ct.startsWith("text/") ||
+    ct.includes("json") ||
+    ct.includes("xml") ||
+    ct.includes("javascript") ||
+    ct.includes("typescript") ||
+    ct.includes("yaml") ||
+    ct.includes("graphql")
+  );
+}
+
+// ── SSRF Protection ──────────────────────────────────────────────────────────
+
+async function isPrivateUrl(url: string): Promise<boolean> {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return true;
+  }
+
+  const bare =
+    hostname.startsWith("[") && hostname.endsWith("]")
+      ? hostname.slice(1, -1)
+      : hostname;
+
+  if (
+    bare === "localhost" ||
+    bare === "0.0.0.0" ||
+    bare === "::1" ||
+    bare.endsWith(".local") ||
+    bare.endsWith(".internal")
+  ) {
+    return true;
+  }
+
+  let address: string;
+  let family: number;
+  try {
+    ({ address, family } = await lookup(bare));
+  } catch {
+    return true;
+  }
+
+  if (family === 6) {
+    const v4Mapped = address.match(
+      /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i,
+    );
+    if (v4Mapped) {
+      address = v4Mapped[1];
+    } else {
+      if (address === "::1") return true;
+      const firstWord = parseInt(address.split(":")[0], 16);
+      if (firstWord >= 0xfe80 && firstWord <= 0xfebf) return true;
+      if (
+        address.toLowerCase().startsWith("fc") ||
+        address.toLowerCase().startsWith("fd")
+      ) {
+        return true;
+      }
+      return false;
+    }
+  }
+
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return true;
+  const [a, b] = parts;
+  if (a === 127) return true;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 0) return true;
+  return false;
+}
+
+// ── URL Fetching ─────────────────────────────────────────────────────────────
+
+async function fetchUrlAsMarkdown(url: string): Promise<{
+  markdown: string;
+  title: string | null;
+  resolvedUrl: string;
+  contentType: string;
+}> {
+  if (await isPrivateUrl(url)) {
+    throw new Error(
+      "Blocked: URL resolves to a private/internal network address",
+    );
+  }
 
   const tavilyKey = process.env.TAVILY_API_KEY;
   if (tavilyKey) {
@@ -58,7 +197,12 @@ async function fetchUrlContent(
       const response = await tvly.extract([url]);
       const result = response.results?.[0];
       if (result?.rawContent) {
-        return { content: result.rawContent };
+        return {
+          markdown: normalizeMarkdown(result.rawContent),
+          title: null,
+          resolvedUrl: url,
+          contentType: "text/html",
+        };
       }
     } catch {
       // fall through to fetch
@@ -72,16 +216,23 @@ async function fetchUrlContent(
       headers: {
         "User-Agent": BROWSER_UA,
         Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,text/plain,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
       },
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(15_000),
       redirect: "manual",
     });
+
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) break;
       currentUrl = new URL(location, currentUrl).toString();
+      if (await isPrivateUrl(currentUrl)) {
+        throw new Error(
+          "Blocked: redirect resolves to a private/internal network address",
+        );
+      }
       continue;
     }
     break;
@@ -91,46 +242,101 @@ async function fetchUrlContent(
     throw new Error(`HTTP ${response.status} ${response.statusText}`);
   }
 
+  const contentType = (
+    response.headers.get("content-type") || ""
+  ).toLowerCase();
   const rawBody = await response.text();
-  const contentType = response.headers.get("content-type") || "";
 
-  let content: string;
-  if (contentType.includes("text/html")) {
-    content = rawBody
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/\s+/g, " ")
-      .trim();
-  } else {
-    content = rawBody;
+  if (!rawBody.trim()) {
+    throw new Error("Fetched content is empty");
   }
 
-  const titleMatch = rawBody.match(/<title[^>]*>(.*?)<\/title>/i);
-  return { content, title: titleMatch?.[1]?.trim() };
+  if (
+    contentType.includes("text/html") ||
+    contentType.includes("application/xhtml+xml")
+  ) {
+    const html = rawBody
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+    const markdown = normalizeMarkdown(turndown.turndown(html));
+    return {
+      markdown,
+      title: extractHtmlTitle(rawBody),
+      resolvedUrl: currentUrl,
+      contentType,
+    };
+  }
+
+  if (!isLikelyTextContentType(contentType)) {
+    throw new Error(
+      `Unsupported content type "${contentType || "unknown"}". Provide content_markdown for binaries (e.g. PDFs) after external extraction.`,
+    );
+  }
+
+  const markdown =
+    contentType.includes("json") || contentType.includes("xml")
+      ? `\`\`\`\n${rawBody.trim()}\n\`\`\``
+      : normalizeMarkdown(rawBody);
+
+  return {
+    markdown,
+    title: null,
+    resolvedUrl: currentUrl,
+    contentType,
+  };
 }
 
-async function generateSummary(
-  content: string,
-  title?: string,
-  url?: string,
-): Promise<string> {
+// ── Summary Generation ───────────────────────────────────────────────────────
+
+async function summarizeResource(input: {
+  url: string;
+  title: string | null;
+  source: string;
+  content: string;
+}): Promise<string> {
   const model = await getFastModel();
-  const preview = truncate(content, 12000);
-  const result = await generateText({
+  const maxChars = 24_000;
+  const boundedContent =
+    input.content.length > maxChars
+      ? `${input.content.slice(0, maxChars)}\n\n[content truncated for summarization]`
+      : input.content;
+
+  const { text } = await generateText({
     model,
-    system:
-      "You are a concise summarizer. Generate a ~200 word summary of the provided content. Focus on the key topics, findings, and takeaways. Write in third person. Do not use phrases like 'this document' or 'the article'. Just state the content directly.",
-    prompt: `${title ? `Title: ${title}\n` : ""}${url ? `URL: ${url}\n` : ""}\n---\n\n${preview}`,
-    maxOutputTokens: 400,
+    maxOutputTokens: 320,
+    prompt: `Summarize this resource in ~200 words for fast retrieval.
+
+Focus on:
+- what this resource is
+- key entities, concepts, and decisions
+- actionable takeaways
+- notable constraints, dates, or identifiers
+
+Source: ${input.source}
+URL: ${input.url}
+Title: ${input.title ?? "(unknown)"}
+
+Resource content:
+${boundedContent}`,
   });
-  return result.text.trim();
+
+  const summary = text.trim();
+  if (!summary) {
+    throw new Error("Summary generation returned empty output");
+  }
+  return summary;
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface ResourceSearchRow {
+  url: string;
+  title: string | null;
+  source: string;
+  summary: string | null;
+  crawled_at: Date | null;
+  similarity?: number;
+  rank?: number;
 }
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
@@ -139,226 +345,265 @@ export function createResourceTools(context?: ScheduleContext) {
   return {
     ingest_resource: defineTool({
       description:
-        "Ingest a URL into the resources knowledge base. Fetches content, converts to markdown, generates a summary + embedding. Idempotent: re-ingesting the same URL skips processing if content hasn't changed (based on SHA-256 hash). Use for YouTube videos, Notion pages, docs, GitHub files, blog posts, or any web content you want to store for later retrieval. Pass `content` directly if you already have the text (e.g. from a transcript or API response) — skips the fetch step.",
+        "Register or refresh a raw source document by URL. Use this for large external material (YouTube transcripts, Notion pages, GitHub files, docs pages, competitor pages) that should live as first-class resources, not notes. The tool stores markdown content, generates a summary, computes a summary embedding, and marks the resource as ready. Idempotent by URL + content hash. For binaries/non-HTTP sources, provide content_markdown directly.",
       inputSchema: z.object({
-        url: z.string().describe("The URL that uniquely identifies this resource"),
-        source: z
+        url: z
           .string()
+          .min(1)
+          .describe(
+            "Canonical identifier for the resource. Usually an https URL; non-HTTP identifiers like notion://page-id or gs://... are allowed if content_markdown is provided.",
+          ),
+        source: z
+          .enum(RESOURCE_SOURCES)
           .optional()
           .describe(
-            "Source type: 'youtube', 'notion', 'github', 'web', 'docs'. Auto-detected from URL if omitted.",
+            "Source type. Optional; inferred from URL when omitted. One of: youtube, notion, github, web, docs.",
           ),
-        title: z.string().optional().describe("Title of the resource"),
         parent_url: z
           .string()
           .optional()
           .describe(
-            "Parent resource URL for hierarchy (e.g. repo URL for a file, parent page for a Notion child)",
+            "Optional parent resource URL for hierarchy (e.g., file -> repo, notion child -> parent).",
           ),
-        content: z
+        title: z
+          .string()
+          .optional()
+          .describe("Optional title override."),
+        metadata: z
+          .record(z.unknown())
+          .optional()
+          .describe(
+            "Flexible source-specific metadata to store on the resource.",
+          ),
+        content_markdown: z
           .string()
           .optional()
           .describe(
-            "Pre-fetched content in markdown. If provided, skips URL fetching. Use when you already have the text (transcripts, API responses, etc.)",
-          ),
-        metadata: z
-          .record(z.any())
-          .optional()
-          .describe(
-            "Flexible metadata object (e.g. { channel: 'YouTube', duration: '45:00', author: 'Boris Cherny' })",
+            "Optional pre-extracted markdown content. Provide this for binaries or non-HTTP URLs; if omitted, Aura fetches the URL and converts it to markdown.",
           ),
       }),
-      execute: async ({ url, source, title, parent_url, content, metadata }) => {
+      execute: async ({
+        url,
+        source,
+        parent_url,
+        title,
+        metadata,
+        content_markdown,
+      }) => {
+        const normalizedUrl = url.trim();
+        if (!normalizedUrl) {
+          return { ok: false, error: "URL cannot be empty." };
+        }
+
+        const now = new Date();
+        const currentRows = await db
+          .select({
+            id: resources.id,
+            url: resources.url,
+            title: resources.title,
+            source: resources.source,
+            status: resources.status,
+            parentUrl: resources.parentUrl,
+            metadata: resources.metadata,
+            contentHash: resources.contentHash,
+          })
+          .from(resources)
+          .where(eq(resources.url, normalizedUrl))
+          .limit(1);
+        const current = currentRows[0];
+
+        const resolvedSource =
+          source ??
+          (current?.source as ResourceSource | undefined) ??
+          inferSourceFromUrl(normalizedUrl);
+        const mergedMetadata = mergeMetadata(current?.metadata, metadata);
+
+        const nextParentUrl = parent_url ?? current?.parentUrl ?? null;
+        let nextTitle = title?.trim() || current?.title || null;
+
         try {
-          const effectiveSource = source || inferSource(url);
-
-          const existing = await db
-            .select({
-              id: resources.id,
-              contentHash: resources.contentHash,
-              status: resources.status,
+          await db
+            .insert(resources)
+            .values({
+              url: normalizedUrl,
+              parentUrl: nextParentUrl,
+              title: nextTitle,
+              source: resolvedSource,
+              status: "pending",
+              metadata: mergedMetadata,
+              errorMessage: null,
+              updatedAt: now,
             })
-            .from(resources)
-            .where(eq(resources.url, url))
-            .limit(1);
+            .onConflictDoUpdate({
+              target: resources.url,
+              set: {
+                parentUrl: nextParentUrl,
+                title: nextTitle,
+                source: resolvedSource,
+                status: "pending",
+                metadata: mergedMetadata,
+                errorMessage: null,
+                updatedAt: now,
+              },
+            });
 
-          let fetchedContent: string;
-          let fetchedTitle = title;
+          let content = normalizeMarkdown(content_markdown ?? "");
+          const ingestMetadata = {
+            ...mergedMetadata,
+          } as Record<string, unknown>;
 
-          if (content) {
-            fetchedContent = content;
-          } else {
-            const fetched = await fetchUrlContent(url);
-            fetchedContent = fetched.content;
-            if (!fetchedTitle && fetched.title) {
-              fetchedTitle = fetched.title;
+          if (!content) {
+            if (!/^https?:\/\//i.test(normalizedUrl)) {
+              throw new Error(
+                "content_markdown is required for non-HTTP URLs.",
+              );
             }
+
+            const fetched = await fetchUrlAsMarkdown(normalizedUrl);
+            content = fetched.markdown;
+            if (!nextTitle && fetched.title) nextTitle = fetched.title;
+            ingestMetadata.resolved_url = fetched.resolvedUrl;
+            ingestMetadata.content_type = fetched.contentType;
           }
 
-          if (!fetchedContent || fetchedContent.trim().length === 0) {
-            if (existing[0]) {
-              await db
-                .update(resources)
-                .set({
-                  status: "error",
-                  errorMessage: "Fetched content was empty",
-                  updatedAt: new Date(),
-                })
-                .where(eq(resources.url, url));
-            } else {
-              await db.insert(resources).values({
-                url,
-                source: effectiveSource,
-                parentUrl: parent_url,
-                title: fetchedTitle,
-                status: "error",
-                errorMessage: "Fetched content was empty",
-                metadata: metadata || {},
-              });
-            }
-            return { ok: false, error: "Fetched content was empty" };
+          if (!content) {
+            throw new Error("Resource content is empty after normalization.");
           }
 
-          const hash = sha256(fetchedContent);
+          const contentHash = sha256(content);
+          const unchanged =
+            current?.status === "ready" &&
+            current.contentHash === contentHash;
 
-          if (
-            existing[0] &&
-            existing[0].contentHash === hash &&
-            existing[0].status === "ready"
-          ) {
-            return {
-              ok: true,
-              message: `Resource already up-to-date (hash match)`,
-              url,
-              skipped: true,
-            };
-          }
-
-          const summary = await generateSummary(
-            fetchedContent,
-            fetchedTitle,
-            url,
-          );
-          const embedding = await embedText(summary);
-          const now = new Date();
-
-          if (existing[0]) {
+          if (unchanged) {
             await db
               .update(resources)
               .set({
-                title: fetchedTitle || undefined,
-                source: effectiveSource,
-                parentUrl: parent_url ?? undefined,
+                parentUrl: nextParentUrl,
+                title: nextTitle ?? deriveTitleFromUrl(normalizedUrl),
+                source: resolvedSource,
                 status: "ready",
-                content: fetchedContent,
-                summary,
-                metadata: metadata || {},
-                embedding,
-                contentHash: hash,
+                metadata: ingestMetadata,
                 errorMessage: null,
                 crawledAt: now,
                 updatedAt: now,
               })
-              .where(eq(resources.url, url));
-          } else {
-            await db.insert(resources).values({
-              url,
-              parentUrl: parent_url,
-              title: fetchedTitle,
-              source: effectiveSource,
-              status: "ready",
-              content: fetchedContent,
-              summary,
-              metadata: metadata || {},
-              embedding,
-              contentHash: hash,
-              crawledAt: now,
+              .where(eq(resources.url, normalizedUrl));
+
+            logger.info("ingest_resource unchanged", {
+              url: normalizedUrl,
+              source: resolvedSource,
             });
+
+            return {
+              ok: true,
+              url: normalizedUrl,
+              source: resolvedSource,
+              status: "ready",
+              unchanged: true,
+              crawled_at: now.toISOString(),
+            };
           }
 
-          logger.info("ingest_resource completed", {
-            url,
-            source: effectiveSource,
-            contentLength: fetchedContent.length,
-            isUpdate: !!existing[0],
+          const finalTitle =
+            nextTitle ?? deriveTitleFromUrl(normalizedUrl);
+          const summary = await summarizeResource({
+            url: normalizedUrl,
+            title: finalTitle,
+            source: resolvedSource,
+            content,
+          });
+          const embedding = await embedText(summary);
+
+          await db
+            .update(resources)
+            .set({
+              parentUrl: nextParentUrl,
+              title: finalTitle,
+              source: resolvedSource,
+              status: "ready",
+              content,
+              summary,
+              metadata: ingestMetadata,
+              embedding,
+              contentHash,
+              errorMessage: null,
+              crawledAt: now,
+              updatedAt: now,
+            })
+            .where(eq(resources.url, normalizedUrl));
+
+          logger.info("ingest_resource tool called", {
+            url: normalizedUrl,
+            source: resolvedSource,
+            contentLength: content.length,
+            summaryLength: summary.length,
           });
 
           return {
             ok: true,
-            message: `Resource ingested (${effectiveSource}, ${fetchedContent.length} chars, summary ${summary.length} chars)`,
-            url,
-            title: fetchedTitle || null,
-            source: effectiveSource,
-            skipped: false,
+            url: normalizedUrl,
+            title: finalTitle,
+            source: resolvedSource,
+            status: "ready",
+            unchanged: false,
+            content_length: content.length,
+            summary_length: summary.length,
+            crawled_at: now.toISOString(),
           };
         } catch (error: any) {
-          logger.error("ingest_resource failed", {
-            url,
-            error: error.message,
-          });
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          await db
+            .update(resources)
+            .set({
+              source: resolvedSource,
+              status: "error",
+              errorMessage,
+              crawledAt: now,
+              updatedAt: now,
+            })
+            .where(eq(resources.url, normalizedUrl));
 
-          try {
-            await db
-              .insert(resources)
-              .values({
-                url,
-                source: source || inferSource(url),
-                parentUrl: parent_url,
-                title,
-                status: "error",
-                errorMessage: error.message,
-                metadata: metadata || {},
-              })
-              .onConflictDoUpdate({
-                target: resources.url,
-                set: {
-                  status: "error",
-                  errorMessage: error.message,
-                  updatedAt: new Date(),
-                },
-              });
-          } catch {
-            // best effort
-          }
+          logger.error("ingest_resource tool failed", {
+            url: normalizedUrl,
+            source: resolvedSource,
+            error: errorMessage,
+          });
 
           return {
             ok: false,
-            error: `Ingestion failed: ${error.message}`,
+            error: `Failed to ingest resource: ${errorMessage}`,
+            url: normalizedUrl,
           };
         }
       },
-      slack: {
-        status: "Ingesting resource...",
-        detail: (i) => i.url,
-        output: (r) => ("ok" in r && r.ok ? r.message : undefined),
-      },
+      slack: { status: "Ingesting resource...", detail: (i) => i.url },
     }),
 
     search_resources: defineTool({
       description:
-        "Search the resources knowledge base. Supports two modes: 'semantic' (default) uses vector similarity on resource summaries for conceptual search; 'text' uses Postgres full-text search on the full content for exact keyword matches. Filter by source type (youtube, notion, github, web, docs). Only returns resources with status 'ready'. Use this to find ingested content — YouTube videos, docs, Notion pages, web articles, etc.",
+        "Search ingested resources (status=ready). Use mode='semantic' for conceptual discovery across resource summaries, and mode='text' for exact keyword/full-text search within full markdown content. Optionally filter by source. Returns resource-level matches with URL, title, source, summary, crawl time, and score.",
       inputSchema: z.object({
         query: z
           .string()
-          .describe("Search query — a question, topic, or keywords"),
+          .describe("Query text used for semantic or text search."),
         mode: z
-          .enum(["semantic", "text"])
+          .enum(["text", "semantic"])
           .default("semantic")
           .describe(
-            "Search mode: 'semantic' (vector similarity on summaries) or 'text' (full-text on content)",
+            "Search mode: semantic (vector on summary embedding) or text (Postgres full-text on content). Default semantic.",
           ),
         source: z
-          .string()
+          .enum(RESOURCE_SOURCES)
           .optional()
-          .describe(
-            "Filter by source type: 'youtube', 'notion', 'github', 'web', 'docs'",
-          ),
+          .describe("Optional source filter."),
         limit: z
           .number()
           .min(1)
-          .max(25)
+          .max(50)
           .default(10)
-          .describe("Max results (default 10)"),
+          .describe("Max results to return (default 10, max 50)."),
       }),
       execute: async ({ query, mode, source, limit }) => {
         try {
@@ -372,180 +617,192 @@ export function createResourceTools(context?: ScheduleContext) {
             const embeddingLiteral = JSON.stringify(queryEmbedding);
 
             const conditions = [
-              sql`${resources.embedding} IS NOT NULL`,
               eq(resources.status, "ready"),
+              sql`${resources.embedding} IS NOT NULL`,
             ];
-            if (source) {
-              conditions.push(eq(resources.source, source));
-            }
+            if (source) conditions.push(eq(resources.source, source));
 
-            const results = await db
-              .select({
-                url: resources.url,
-                title: resources.title,
-                source: resources.source,
-                summary: resources.summary,
-                crawledAt: resources.crawledAt,
-                similarity:
-                  sql<number>`1 - (${resources.embedding} <=> ${embeddingLiteral}::vector)`.as(
-                    "similarity",
-                  ),
-              })
-              .from(resources)
-              .where(and(...conditions))
-              .orderBy(
-                sql`${resources.embedding} <=> ${embeddingLiteral}::vector`,
-              )
-              .limit(limit);
+            const where = and(...conditions);
+            const results = await db.execute(sql`
+              SELECT url, title, source, summary, crawled_at,
+                     1 - (embedding <=> ${embeddingLiteral}::vector) as similarity
+              FROM resources
+              WHERE ${where}
+              ORDER BY embedding <=> ${embeddingLiteral}::vector
+              LIMIT ${limit}
+            `);
+            const rows = ((results as any).rows ??
+              results) as ResourceSearchRow[];
 
-            logger.info("search_resources (semantic)", {
+            logger.info("search_resources tool called (semantic)", {
               query: trimmed,
               source,
-              count: results.length,
+              resultCount: rows.length,
             });
 
             return {
               ok: true,
               mode: "semantic",
-              results: results.map((r) => ({
+              count: rows.length,
+              results: rows.map((r) => ({
                 url: r.url,
                 title: r.title,
                 source: r.source,
-                summary: truncate(r.summary || "", 300),
-                crawled_at: r.crawledAt?.toISOString() || null,
-                similarity: Math.round(r.similarity * 1000) / 1000,
+                summary: r.summary,
+                crawled_at: r.crawled_at
+                  ? formatTimestamp(r.crawled_at, context?.timezone)
+                  : null,
+                similarity:
+                  r.similarity != null
+                    ? Math.round(Number(r.similarity) * 1000) / 1000
+                    : null,
               })),
-              count: results.length,
             };
           }
 
           // mode === "text"
-          const sourceFilter = source
-            ? sql`AND source = ${source}`
-            : sql``;
+          const conditions = [eq(resources.status, "ready")];
+          if (source) conditions.push(eq(resources.source, source));
+          const where = and(...conditions);
 
-          const rows: any[] = await db
-            .execute(
-              sql`
+          let rows: ResourceSearchRow[] = [];
+          try {
+            const results = await db.execute(sql`
               SELECT url, title, source, summary, crawled_at,
-                ts_headline('english', coalesce(content, ''),
-                  websearch_to_tsquery('english', ${trimmed}),
-                  'StartSel=>>>, StopSel=<<<, MaxWords=35, MinWords=15'
-                ) as snippet,
-                ts_rank(
-                  to_tsvector('english', coalesce(content, '')),
-                  websearch_to_tsquery('english', ${trimmed})
-                ) as rank
+                     ts_rank(
+                       to_tsvector('english', coalesce(content, '')),
+                       websearch_to_tsquery('english', ${trimmed})
+                     ) as rank
               FROM resources
-              WHERE to_tsvector('english', coalesce(content, ''))
-                @@ websearch_to_tsquery('english', ${trimmed})
-                AND status = 'ready'
-                ${sourceFilter}
-              ORDER BY rank DESC
+              WHERE ${where}
+                AND to_tsvector('english', coalesce(content, ''))
+                    @@ websearch_to_tsquery('english', ${trimmed})
+              ORDER BY rank DESC, crawled_at DESC
               LIMIT ${limit}
-            `,
-            )
-            .then((r: any) => r.rows ?? r);
+            `);
+            rows = ((results as any).rows ??
+              results) as ResourceSearchRow[];
+          } catch {
+            const escaped = trimmed.replace(/[\\%_]/g, "\\$&");
+            const pattern = `%${escaped.toLowerCase()}%`;
+            const results = await db.execute(sql`
+              SELECT url, title, source, summary, crawled_at
+              FROM resources
+              WHERE ${where}
+                AND lower(coalesce(content, '')) LIKE ${pattern} ESCAPE '\\'
+              ORDER BY crawled_at DESC
+              LIMIT ${limit}
+            `);
+            rows = ((results as any).rows ??
+              results) as ResourceSearchRow[];
+          }
 
-          logger.info("search_resources (text)", {
+          logger.info("search_resources tool called (text)", {
             query: trimmed,
             source,
-            count: rows.length,
+            resultCount: rows.length,
           });
 
           return {
             ok: true,
             mode: "text",
-            results: rows.map((r: any) => ({
+            count: rows.length,
+            results: rows.map((r) => ({
               url: r.url,
               title: r.title,
               source: r.source,
-              summary: r.summary
-                ? truncate(r.summary, 200)
-                : undefined,
-              snippet: r.snippet,
-              crawled_at: r.crawled_at || null,
+              summary: r.summary,
+              crawled_at: r.crawled_at
+                ? formatTimestamp(r.crawled_at, context?.timezone)
+                : null,
+              score:
+                r.rank != null
+                  ? Math.round(Number(r.rank) * 1000) / 1000
+                  : null,
             })),
-            count: rows.length,
           };
         } catch (error: any) {
-          logger.error("search_resources failed", {
+          logger.error("search_resources tool failed", {
+            query,
+            mode,
+            source,
             error: error.message,
           });
           return {
             ok: false,
-            error: `Search failed: ${error.message}`,
+            error: `Failed to search resources: ${error.message}`,
           };
         }
       },
-      slack: {
-        status: "Searching resources...",
-        detail: (i) => i.query,
-        output: (r) =>
-          "ok" in r && r.ok ? `${r.count} results` : undefined,
-      },
+      slack: { status: "Searching resources...", detail: (i) => i.query },
     }),
 
     get_resource: defineTool({
       description:
-        "Retrieve the full content of a resource by URL. Returns everything: content, summary, metadata, crawl info. Use after search_resources to load the full text of a specific resource.",
+        "Retrieve a single resource by URL, including full markdown content, summary, metadata, status, and crawl/error fields. Use this when you need the complete source material after search_resources identifies a match.",
       inputSchema: z.object({
-        url: z.string().describe("The URL of the resource to retrieve"),
+        url: z
+          .string()
+          .min(1)
+          .describe(
+            "Exact resource URL (the canonical ID used at ingest time).",
+          ),
       }),
       execute: async ({ url }) => {
         try {
-          const rows = await db
-            .select({
-              url: resources.url,
-              parentUrl: resources.parentUrl,
-              title: resources.title,
-              source: resources.source,
-              status: resources.status,
-              content: resources.content,
-              summary: resources.summary,
-              metadata: resources.metadata,
-              contentHash: resources.contentHash,
-              errorMessage: resources.errorMessage,
-              crawledAt: resources.crawledAt,
-              createdAt: resources.createdAt,
-              updatedAt: resources.updatedAt,
-            })
-            .from(resources)
-            .where(eq(resources.url, url))
-            .limit(1);
+          const normalizedUrl = url.trim();
+          if (!normalizedUrl) {
+            return { ok: false, error: "URL cannot be empty." };
+          }
 
-          if (!rows[0]) {
+          const rows = await db
+            .select()
+            .from(resources)
+            .where(eq(resources.url, normalizedUrl))
+            .limit(1);
+          const resource = rows[0];
+
+          if (!resource) {
             return {
               ok: false,
-              error: `No resource found with URL "${url}". Use search_resources to find it first.`,
+              error: `No resource found for URL "${normalizedUrl}".`,
             };
           }
 
-          const r = rows[0];
-
-          logger.info("get_resource", {
-            url,
-            contentLength: r.content?.length ?? 0,
+          logger.info("get_resource tool called", {
+            url: normalizedUrl,
+            status: resource.status,
           });
 
           return {
             ok: true,
-            url: r.url,
-            parent_url: r.parentUrl,
-            title: r.title,
-            source: r.source,
-            status: r.status,
-            content: r.content,
-            summary: r.summary,
-            metadata: r.metadata,
-            content_hash: r.contentHash,
-            error_message: r.errorMessage,
-            crawled_at: r.crawledAt?.toISOString() || null,
-            created_at: r.createdAt.toISOString(),
-            updated_at: r.updatedAt.toISOString(),
+            resource: {
+              id: resource.id,
+              url: resource.url,
+              parent_url: resource.parentUrl,
+              title: resource.title,
+              source: resource.source,
+              status: resource.status,
+              content: resource.content,
+              summary: resource.summary,
+              metadata: resource.metadata ?? {},
+              content_hash: resource.contentHash,
+              error_message: resource.errorMessage,
+              crawled_at: resource.crawledAt
+                ? formatTimestamp(resource.crawledAt, context?.timezone)
+                : null,
+              created_at: formatTimestamp(
+                resource.createdAt,
+                context?.timezone,
+              ),
+              updated_at: formatTimestamp(
+                resource.updatedAt,
+                context?.timezone,
+              ),
+            },
           };
         } catch (error: any) {
-          logger.error("get_resource failed", {
+          logger.error("get_resource tool failed", {
             url,
             error: error.message,
           });
@@ -555,35 +812,28 @@ export function createResourceTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: {
-        status: "Loading resource...",
-        detail: (i) => i.url,
-      },
+      slack: { status: "Loading resource...", detail: (i) => i.url },
     }),
 
     list_resources: defineTool({
       description:
-        "List resources in the knowledge base. Optionally filter by source type. Returns URL, title, source, summary preview, and crawl date. Useful for browsing what's been ingested.",
+        "List resources in the knowledge base. Optionally filter by source type. Returns URL, title, source, summary, and crawl date. Useful for browsing what's been ingested.",
       inputSchema: z.object({
         source: z
-          .string()
+          .enum(RESOURCE_SOURCES)
           .optional()
-          .describe(
-            "Filter by source type: 'youtube', 'notion', 'github', 'web', 'docs'",
-          ),
+          .describe("Optional source filter."),
         limit: z
           .number()
           .min(1)
           .max(50)
           .default(20)
-          .describe("Max results (default 20)"),
+          .describe("Max results (default 20, max 50)."),
       }),
       execute: async ({ source, limit }) => {
         try {
           const conditions = [eq(resources.status, "ready")];
-          if (source) {
-            conditions.push(eq(resources.source, source));
-          }
+          if (source) conditions.push(eq(resources.source, source));
 
           const rows = await db
             .select({
@@ -599,27 +849,27 @@ export function createResourceTools(context?: ScheduleContext) {
             .orderBy(desc(resources.crawledAt))
             .limit(limit);
 
-          logger.info("list_resources", {
+          logger.info("list_resources tool called", {
             source,
             count: rows.length,
           });
 
           return {
             ok: true,
+            count: rows.length,
             resources: rows.map((r) => ({
               url: r.url,
               title: r.title,
               source: r.source,
-              summary: r.summary
-                ? truncate(r.summary, 150)
-                : null,
+              summary: r.summary,
               parent_url: r.parentUrl,
-              crawled_at: r.crawledAt?.toISOString() || null,
+              crawled_at: r.crawledAt
+                ? formatTimestamp(r.crawledAt, context?.timezone)
+                : null,
             })),
-            count: rows.length,
           };
         } catch (error: any) {
-          logger.error("list_resources failed", {
+          logger.error("list_resources tool failed", {
             error: error.message,
           });
           return {
@@ -628,11 +878,7 @@ export function createResourceTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: {
-        status: "Listing resources...",
-        output: (r) =>
-          "ok" in r && r.ok ? `${r.count} resources` : undefined,
-      },
+      slack: { status: "Listing resources..." },
     }),
   };
 }
