@@ -1,4 +1,4 @@
-CREATE TABLE "credentials" (
+CREATE TABLE IF NOT EXISTS "credentials" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"owner_id" text NOT NULL,
 	"name" text NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE "credentials" (
 	CONSTRAINT "credentials_name_check" CHECK (name ~ '^[a-z][a-z0-9_]{1,62}$')
 );
 --> statement-breakpoint
-CREATE TABLE "credential_grants" (
+CREATE TABLE IF NOT EXISTS "credential_grants" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"credential_id" uuid NOT NULL,
 	"grantee_id" text NOT NULL,
@@ -23,9 +23,9 @@ CREATE TABLE "credential_grants" (
 	CONSTRAINT "credential_grants_permission_check" CHECK (permission IN ('read', 'write', 'admin'))
 );
 --> statement-breakpoint
-CREATE INDEX "idx_grants_grantee" ON "credential_grants" USING btree ("grantee_id");
+CREATE INDEX IF NOT EXISTS "idx_grants_grantee" ON "credential_grants" USING btree ("grantee_id");
 --> statement-breakpoint
-CREATE TABLE "credential_audit_log" (
+CREATE TABLE IF NOT EXISTS "credential_audit_log" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"credential_id" uuid,
 	"credential_name" text NOT NULL,
@@ -36,9 +36,9 @@ CREATE TABLE "credential_audit_log" (
 	CONSTRAINT "credential_audit_log_action_check" CHECK (action IN ('read','create','update','delete','grant','revoke','use'))
 );
 --> statement-breakpoint
-CREATE INDEX "idx_audit_credential" ON "credential_audit_log" USING btree ("credential_id","timestamp");
+CREATE INDEX IF NOT EXISTS "idx_audit_credential" ON "credential_audit_log" USING btree ("credential_id","timestamp");
 --> statement-breakpoint
-CREATE INDEX "idx_audit_accessed_by" ON "credential_audit_log" USING btree ("accessed_by","timestamp");
+CREATE INDEX IF NOT EXISTS "idx_audit_accessed_by" ON "credential_audit_log" USING btree ("accessed_by","timestamp");
 --> statement-breakpoint
 ALTER TABLE "credential_grants" ADD CONSTRAINT "credential_grants_credential_id_credentials_id_fk" FOREIGN KEY ("credential_id") REFERENCES "public"."credentials"("id") ON DELETE cascade ON UPDATE no action;
 --> statement-breakpoint
