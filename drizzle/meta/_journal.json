@@ -194,8 +194,15 @@
     {
       "idx": 27,
       "version": "7",
+      "when": 1772880000000,
+      "tag": "0027_api_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
       "when": 1772966400000,
-      "tag": "0027_job_credential_ids",
+      "tag": "0028_job_credential_ids",
       "breakpoints": true
     }
   ]
