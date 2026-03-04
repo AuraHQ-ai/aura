@@ -5,7 +5,7 @@ import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { runPipeline } from "./pipeline/index.js";
-import { publishHomeTab, ACTION_TO_SETTING, CREDENTIAL_ACTIONS, isAdmin, openCredentialModal } from "./slack/home.js";
+import { publishHomeTab, ACTION_TO_SETTING, CREDENTIAL_ACTIONS, isAdmin, openAddCredentialModal, openEditCredentialModal } from "./slack/home.js";
 import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
@@ -354,19 +354,53 @@ app.post("/api/slack/interactions", async (c) => {
         waitUntil(savePromise);
       }
 
-      const credentialKey = CREDENTIAL_ACTIONS[action.action_id];
-      if (credentialKey && payload.trigger_id) {
-        const modalPromise = openCredentialModal(
+      // Generic "Add Credential" button
+      if (action.action_id === "credential_add" && payload.trigger_id) {
+        const addPromise = openAddCredentialModal(
           slackClient,
           payload.trigger_id,
-          credentialKey,
         ).catch((err) => {
-          recordError("interactions.credential_modal", err, {
-            userId,
-            credentialKey,
-          });
+          recordError("interactions.credential_modal", err, { userId });
         });
-        waitUntil(modalPromise);
+        waitUntil(addPromise);
+      }
+
+      // Overflow menu on existing credentials (edit / delete)
+      if (
+        action.action_id?.startsWith("credential_overflow_") &&
+        action.selected_option?.value
+      ) {
+        const [op, ...keyParts] = action.selected_option.value.split(":");
+        const credKey = keyParts.join(":");
+        if (op === "edit" && payload.trigger_id) {
+          const editPromise = openEditCredentialModal(
+            slackClient,
+            payload.trigger_id,
+            credKey,
+          ).catch((err) => {
+            recordError("interactions.credential_modal", err, {
+              userId,
+              credentialKey: credKey,
+            });
+          });
+          waitUntil(editPromise);
+        } else if (op === "delete") {
+          const delPromise = (async () => {
+            try {
+              const { deleteCredential } = await import(
+                "./lib/credentials.js"
+              );
+              await deleteCredential(credKey);
+              await publishHomeTab(slackClient, userId);
+            } catch (err) {
+              recordError("interactions.credential_delete", err, {
+                userId,
+                credentialKey: credKey,
+              });
+            }
+          })();
+          waitUntil(delPromise);
+        }
       }
     }
   }
@@ -375,6 +409,37 @@ app.post("/api/slack/interactions", async (c) => {
     const callbackId = payload.view?.callback_id;
     const userId = payload.user?.id;
 
+    // New credential (name + value from add modal)
+    if (callbackId === "credential_add_submit" && userId && isAdmin(userId)) {
+      const credName =
+        payload.view?.state?.values?.credential_name_block?.credential_name
+          ?.value;
+      const credValue =
+        payload.view?.state?.values?.credential_value_block?.credential_value
+          ?.value;
+
+      if (credName && credValue) {
+        const normalizedKey = credName
+          .toLowerCase()
+          .replace(/[\s-]+/g, "_")
+          .replace(/[^a-z0-9_]/g, "");
+        const addPromise = (async () => {
+          try {
+            const { setCredential } = await import("./lib/credentials.js");
+            await setCredential(normalizedKey, credValue, userId);
+            await publishHomeTab(slackClient, userId);
+          } catch (err) {
+            recordError("interactions.credential_save", err, {
+              userId,
+              credentialKey: normalizedKey,
+            });
+          }
+        })();
+        waitUntil(addPromise);
+      }
+    }
+
+    // Update existing credential
     if (callbackId === "credential_submit" && userId && isAdmin(userId)) {
       const credentialKey = payload.view?.private_metadata;
       const newValue =

@@ -2,7 +2,6 @@ import type { WebClient } from "@slack/web-api";
 import { getAllSettings } from "../lib/settings.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
-import { getCredential, maskCredential } from "../lib/credentials.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
 
@@ -52,26 +51,13 @@ const DEFAULTS: Record<string, string> = {
   model_embedding: process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small",
 };
 
-// ── Credential Definitions ───────────────────────────────────────────────────
+// ── Credentials (generic, dynamic) ──────────────────────────────────────────
 
-interface CredentialDef {
-  key: string;
-  label: string;
-  description: string;
-}
+// No hardcoded credential list. All credentials are discovered from the DB.
+// Admins can add any credential via App Home -- it gets AES-256-GCM encrypted.
 
-const CREDENTIALS: CredentialDef[] = [
-  {
-    key: "github_token",
-    label: "GitHub Token",
-    description: "For issues, PRs, and code access",
-  },
-];
-
-/** Map credential button action IDs to credential keys */
-export const CREDENTIAL_ACTIONS: Record<string, string> = {
-  credential_edit_github_token: "github_token",
-};
+/** Legacy export -- no longer statically populated, kept for app.ts compat */
+export const CREDENTIAL_ACTIONS: Record<string, string> = {};
 
 // ── Block Kit Helpers ────────────────────────────────────────────────────────
 
@@ -109,6 +95,9 @@ function buildDropdown(
 }
 
 async function buildCredentialBlocks(): Promise<any[]> {
+  const { listCredentials } = await import("../lib/credentials.js");
+  const credentials = await listCredentials();
+
   const blocks: any[] = [
     { type: "divider" },
     {
@@ -120,64 +109,104 @@ async function buildCredentialBlocks(): Promise<any[]> {
       elements: [
         {
           type: "mrkdwn",
-          text: "Encrypted and stored in the database. Values are never logged or displayed in full.",
+          text: "Encrypted at rest with AES-256-GCM. Values are never logged or displayed in full.",
         },
       ],
     },
   ];
 
-  for (const cred of CREDENTIALS) {
-    const value = await getCredential(cred.key);
-    const status = value ? `\`${maskCredential(value)}\`` : "_not set_";
-
+  for (const cred of credentials) {
     blocks.push({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*${cred.label}*  —  ${cred.description}\nCurrent: ${status}`,
+        text: `*${cred.key}*\nCurrent: \`${cred.maskedValue}\``,
       },
       accessory: {
-        type: "button",
-        text: { type: "plain_text", text: value ? "Update" : "Set" },
-        action_id: `credential_edit_${cred.key}`,
+        type: "overflow",
+        action_id: `credential_overflow_${cred.key}`,
+        options: [
+          {
+            text: { type: "plain_text", text: "Update" },
+            value: `edit:${cred.key}`,
+          },
+          {
+            text: { type: "plain_text", text: "Delete" },
+            value: `delete:${cred.key}`,
+          },
+        ],
       },
     });
   }
+
+  if (credentials.length === 0) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "_No credentials stored yet._",
+      },
+    });
+  }
+
+  blocks.push({
+    type: "actions",
+    elements: [
+      {
+        type: "button",
+        text: { type: "plain_text", text: "Add Credential" },
+        action_id: "credential_add",
+        style: "primary",
+      },
+    ],
+  });
 
   return blocks;
 }
 
 /**
- * Open a modal for editing a credential value.
+ * Open a modal for adding a new credential (name + value).
  */
-export async function openCredentialModal(
+export async function openAddCredentialModal(
   client: WebClient,
   triggerId: string,
-  credentialKey: string,
 ): Promise<void> {
-  const cred = CREDENTIALS.find((c) => c.key === credentialKey);
-  if (!cred) return;
-
   await client.views.open({
     trigger_id: triggerId,
     view: {
       type: "modal",
-      callback_id: "credential_submit",
-      private_metadata: credentialKey,
-      title: { type: "plain_text", text: `Update ${cred.label}` },
+      callback_id: "credential_add_submit",
+      title: { type: "plain_text", text: "Add Credential" },
       submit: { type: "plain_text", text: "Save" },
       close: { type: "plain_text", text: "Cancel" },
       blocks: [
         {
           type: "input",
-          block_id: "credential_input_block",
-          label: { type: "plain_text", text: cred.label },
+          block_id: "credential_name_block",
+          label: { type: "plain_text", text: "Credential Name" },
+          element: {
+            type: "plain_text_input",
+            action_id: "credential_name",
+            placeholder: {
+              type: "plain_text",
+              text: "e.g. airbyte_api_token, close_ch_key, meta_ads",
+            },
+          },
+          hint: {
+            type: "plain_text",
+            text: "Lowercase with underscores. This is the key used to retrieve the credential.",
+          },
+        },
+        {
+          type: "input",
+          block_id: "credential_value_block",
+          label: { type: "plain_text", text: "Value" },
           element: {
             type: "plain_text_input",
             action_id: "credential_value",
             placeholder: {
               type: "plain_text",
-              text: "Paste the new token here",
+              text: "Paste the token or secret here",
             },
           },
         },
@@ -186,7 +215,52 @@ export async function openCredentialModal(
           elements: [
             {
               type: "mrkdwn",
-              text: `This will replace the current ${cred.label}. The value is encrypted at rest with AES-256-GCM.`,
+              text: "Encrypted with AES-256-GCM before storage. Never displayed in full.",
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
+/**
+ * Open a modal for updating an existing credential (value only).
+ */
+export async function openEditCredentialModal(
+  client: WebClient,
+  triggerId: string,
+  credentialKey: string,
+): Promise<void> {
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      callback_id: "credential_submit",
+      private_metadata: credentialKey,
+      title: { type: "plain_text", text: `Update: ${credentialKey}` },
+      submit: { type: "plain_text", text: "Save" },
+      close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        {
+          type: "input",
+          block_id: "credential_input_block",
+          label: { type: "plain_text", text: credentialKey },
+          element: {
+            type: "plain_text_input",
+            action_id: "credential_value",
+            placeholder: {
+              type: "plain_text",
+              text: "Paste the new value here",
+            },
+          },
+        },
+        {
+          type: "context",
+          elements: [
+            {
+              type: "mrkdwn",
+              text: `Replaces the current value for *${credentialKey}*. Encrypted at rest.`,
             },
           ],
         },
