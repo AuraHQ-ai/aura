@@ -1,56 +1,10 @@
 import { sql, or, inArray } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
 import { rerank } from "ai";
 import { db } from "../db/client.js";
 import { memories, messages, type Memory, type Message } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
 import { getRerankingModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
-
-const MAX_LEXEMES = 8;
-const PER_TERM_LIMIT = 25;
-
-/**
- * Extract positionally-ordered, stemmed lexemes from a query using Postgres
- * `to_tsvector`. Returns at most MAX_LEXEMES lexemes in the order they appear
- * in the original text (not alphabetical — see the design doc for why this matters).
- */
-async function extractLexemes(query: string): Promise<string[]> {
-  const result = await db.execute(sql`
-    SELECT word FROM unnest(to_tsvector('english', ${query}))
-    ORDER BY positions[1]
-    LIMIT ${MAX_LEXEMES}
-  `);
-  const rows = ((result as any).rows ?? result) as Array<Record<string, any>>;
-  const SAFE_LEXEME = /^[a-z0-9]+$/;
-  return rows
-    .map((r) => String(r.word))
-    .filter((w) => SAFE_LEXEME.test(w));
-}
-
-/**
- * Build a per-lexeme fulltext CTE. Each lexeme gets its own search lane so that
- * rare proper nouns aren't drowned by common terms (Postgres ts_rank has no IDF).
- */
-function buildPerTermCte(
-  index: number,
-  lexeme: string,
-  baseFilter: SQL,
-  privacyFilter: SQL,
-): SQL {
-  return sql.raw(`ft_${index} AS (
-    SELECT id, ROW_NUMBER() OVER (
-      ORDER BY ts_rank_cd(search_vector, to_tsquery('english', '${lexeme}'), 4) DESC
-    ) AS rank
-    FROM memories
-    WHERE search_vector @@ to_tsquery('english', '${lexeme}')
-  `)
-    .append(sql` AND ${baseFilter} AND ${privacyFilter}`)
-    .append(sql.raw(`
-    ORDER BY ts_rank_cd(search_vector, to_tsquery('english', '${lexeme}'), 4) DESC
-    LIMIT ${PER_TERM_LIMIT}
-  )`));
-}
 
 interface RetrievalOptions {
   /** The user's current message text */
@@ -65,18 +19,54 @@ interface RetrievalOptions {
   minRelevanceScore?: number;
 }
 
+const MAX_FULLTEXT_LEXEMES = 8;
+
 /**
- * Retrieve relevant memories using hybrid search (vector + per-term full-text)
- * with RRF fusion.
+ * Extract positionally-ordered, stemmed lexemes from a query using Postgres
+ * `to_tsvector`. Returns at most MAX_FULLTEXT_LEXEMES lexemes in the order they
+ * appear in the original text (not alphabetical — positional order preserves the
+ * user's emphasis, e.g. "Tali" first in "what does Tali do at RealAdvisor").
+ *
+ * Falls back to empty array (vector-only search) on any error.
+ */
+async function extractLexemes(
+  query: string,
+  maxLexemes = MAX_FULLTEXT_LEXEMES,
+): Promise<string[]> {
+  if (!query.trim()) return [];
+
+  try {
+    const result = await db.execute(sql`
+      SELECT lexeme AS term
+      FROM unnest(to_tsvector('english', ${query})) AS token(lexeme, positions, weights)
+      ORDER BY positions[1] ASC NULLS LAST, lexeme ASC
+      LIMIT ${maxLexemes}
+    `);
+
+    const rows = ((result as any).rows ?? result) as Array<{ term?: string | null }>;
+    return rows
+      .map((row) => row.term?.trim() ?? "")
+      .filter((term): term is string => term.length > 0);
+  } catch (error) {
+    logger.warn("Failed to extract positional lexemes; falling back to vector-only ranking", {
+      error: String(error),
+      query: query.substring(0, 100),
+    });
+    return [];
+  }
+}
+
+/**
+ * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
  *
  * Flow:
  * 1. Embed the user's message + extract stemmed lexemes (in parallel)
- * 2. Vector CTE: pgvector cosine similarity
- * 3. Per-term fulltext CTEs: one per lexeme, each with its own ranked pool
- * 4. ft_dedup: UNION ALL per-term results → GROUP BY id → MIN(rank) (best rank wins)
- * 5. RRF fusion: FULL OUTER JOIN vector + ft_dedup → reciprocal rank fusion
- * 6. Rerank top candidates with Cohere (or fall back to legacy scoring)
- * 7. Return top-K memories
+ * 2. Run hybrid SQL: pgvector cosine similarity + per-term full-text lanes merged
+ *    by best rank (each lexeme gets its own search lane so rare proper nouns aren't
+ *    drowned by common terms — Postgres ts_rank has no IDF)
+ * 3. Fuse results via Reciprocal Rank Fusion (RRF) with FULL OUTER JOIN
+ * 4. Rerank top candidates with Cohere (or fall back to legacy scoring)
+ * 5. Return top-K memories
  */
 export async function retrieveMemories(
   options: RetrievalOptions,
@@ -105,68 +95,59 @@ export async function retrieveMemories(
       query: query.substring(0, 100),
     });
 
-    let hybridQuery: SQL;
-
-    if (lexemes.length === 0) {
-      hybridQuery = sql`
-        WITH vector_search AS (
-          SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${embeddingLiteral}::vector) AS rank
-          FROM memories
-          WHERE ${baseFilter} AND ${privacyFilter}
-          ORDER BY embedding <=> ${embeddingLiteral}::vector
-          LIMIT ${CANDIDATE_POOL_SIZE}
+    const fulltextSearchCte = lexemes.length === 0
+      ? sql`
+        fulltext_search AS (
+          SELECT NULL::uuid AS id, NULL::bigint AS rank
+          WHERE FALSE
         )
-        SELECT
-          m.*,
-          rrf_score(v.rank) AS rrf_score,
-          (1 - (m.embedding <=> ${embeddingLiteral}::vector)) AS similarity
-        FROM vector_search v
-        JOIN memories m ON m.id = v.id
-        ORDER BY rrf_score DESC
+      `
+      : sql`
+        fulltext_search AS (
+          SELECT id, MIN(rank) AS rank
+          FROM (
+            ${sql.join(
+              lexemes.map((lexeme) => sql`
+                SELECT id, ROW_NUMBER() OVER (
+                  ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+                ) AS rank
+                FROM memories
+                WHERE search_vector @@ to_tsquery('english', ${lexeme})
+                  AND ${baseFilter}
+                  AND ${privacyFilter}
+                ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+                LIMIT ${CANDIDATE_POOL_SIZE}
+              `),
+              sql` UNION ALL `,
+            )}
+          ) per_term
+          GROUP BY id
+        )
       `;
-    } else {
-      const perTermCtes = lexemes.map((lex, i) =>
-        buildPerTermCte(i, lex, baseFilter, privacyFilter),
-      );
 
-      const unionParts = lexemes.map((_, i) =>
-        `SELECT * FROM ft_${i}`,
-      ).join(" UNION ALL ");
-
-      let fulltextBlock: SQL = perTermCtes[0];
-      for (let i = 1; i < perTermCtes.length; i++) {
-        fulltextBlock = fulltextBlock.append(sql`, `).append(perTermCtes[i]);
-      }
-      fulltextBlock = fulltextBlock.append(sql.raw(`,
-      ft_dedup AS (
-        SELECT id, MIN(rank) AS rank
-        FROM (${unionParts}) all_terms
-        GROUP BY id
-      )`));
-
-      hybridQuery = sql`
-        WITH vector_search AS (
-          SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${embeddingLiteral}::vector) AS rank
-          FROM memories
-          WHERE ${baseFilter} AND ${privacyFilter}
-          ORDER BY embedding <=> ${embeddingLiteral}::vector
-          LIMIT ${CANDIDATE_POOL_SIZE}
-        ), `.append(fulltextBlock).append(sql`
-        SELECT
-          m.*,
-          COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
-          (1 - (m.embedding <=> ${embeddingLiteral}::vector)) AS similarity
-        FROM (
-          SELECT COALESCE(v.id, f.id) AS id
-          FROM vector_search v
-          FULL OUTER JOIN ft_dedup f ON v.id = f.id
-        ) fused
-        JOIN memories m ON m.id = fused.id
-        LEFT JOIN vector_search v ON v.id = fused.id
-        LEFT JOIN ft_dedup f ON f.id = fused.id
-        ORDER BY rrf_score DESC
-      `);
-    }
+    const hybridQuery = sql`
+      WITH vector_search AS (
+        SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${embeddingLiteral}::vector) AS rank
+        FROM memories
+        WHERE ${baseFilter} AND ${privacyFilter}
+        ORDER BY embedding <=> ${embeddingLiteral}::vector
+        LIMIT ${CANDIDATE_POOL_SIZE}
+      ),
+      ${fulltextSearchCte}
+      SELECT
+        m.*,
+        COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
+        (1 - (m.embedding <=> ${embeddingLiteral}::vector)) AS similarity
+      FROM (
+        SELECT COALESCE(v.id, f.id) AS id, v.rank AS vector_rank, f.rank AS fulltext_rank
+        FROM vector_search v
+        FULL OUTER JOIN fulltext_search f ON v.id = f.id
+      ) fused
+      JOIN memories m ON m.id = fused.id
+      LEFT JOIN vector_search v ON v.id = fused.id
+      LEFT JOIN fulltext_search f ON f.id = fused.id
+      ORDER BY rrf_score DESC
+    `;
 
     const executeResult = await db.execute(hybridQuery);
     const rawResults = ((executeResult as any).rows ?? executeResult) as Array<Record<string, any>>;
@@ -229,6 +210,7 @@ export async function retrieveMemories(
         {
           query: query.substring(0, 100),
           totalCandidates: results.length,
+          lexemeCount: lexemes.length,
           method: "hybrid-rrf+cohere-rerank",
         },
       );
@@ -259,6 +241,7 @@ export async function retrieveMemories(
         {
           query: query.substring(0, 100),
           totalCandidates: results.length,
+          lexemeCount: lexemes.length,
           method: "hybrid-rrf+legacy",
         },
       );
