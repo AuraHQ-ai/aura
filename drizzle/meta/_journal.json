@@ -218,6 +218,13 @@
       "when": 1773139200000,
       "tag": "0030_add_credential_token_url",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1772880000000,
+      "tag": "0031_hybrid_memory_search",
+      "breakpoints": true
     }
   ]
 }
