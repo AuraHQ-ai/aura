@@ -2950,6 +2950,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // ── Note / Scratchpad Tools (with context for checkpoint_plan routing) ─
     ...createNoteTools(context),
 
+    // ── Resource Tools (raw external source material) ──────────────────────
+    ...createResourceTools(context),
+
     // ── Job Tools (unified: one-shots, recurring, continuations) ─────────
     ...createJobTools(client, context),
 
@@ -2995,9 +2998,6 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── People Data Tools (structured person records) ────────────────
     ...createPeopleTools(context),
-
-    // ── Resource Knowledge Base Tools (URL-based content storage) ───
-    ...createResourceTools(context),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
@@ -3040,7 +3040,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     // People
     "get_person", "update_person",
     // Resources
-    "ingest_resource", "get_resource", "list_resources",
+    "ingest_resource", "search_resources", "get_resource", "list_resources",
   ]);
 
   const deferOpts = { anthropic: { deferLoading: true } };
