@@ -5,7 +5,7 @@
  * ownership, grant-based sharing, and full audit logging.
  */
 import crypto from "node:crypto";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   credentials,
@@ -75,7 +75,7 @@ function validateName(name: string): void {
 
 async function audit(
   credentialId: string | null,
-  credentialName: string | null,
+  credentialName: string,
   accessedBy: string,
   action: string,
   context?: string,
@@ -144,29 +144,7 @@ export async function storeApiCredential(
   validateName(name);
   const encryptedValue = encrypt(value);
 
-  // Check if exists
-  const existing = await db
-    .select({ id: credentials.id })
-    .from(credentials)
-    .where(and(eq(credentials.ownerId, ownerId), eq(credentials.name, name)))
-    .limit(1);
-
-  if (existing.length) {
-    // Update
-    await db
-      .update(credentials)
-      .set({
-        value: encryptedValue,
-        expiresAt: opts?.expiresAt ?? null,
-        updatedAt: new Date(),
-      })
-      .where(eq(credentials.id, existing[0].id));
-
-    await audit(existing[0].id, name, ownerId, "update");
-    return { id: existing[0].id, created: false };
-  }
-
-  // Create
+  // UPSERT — avoids race condition between concurrent insert attempts
   const [row] = await db
     .insert(credentials)
     .values({
@@ -175,10 +153,26 @@ export async function storeApiCredential(
       value: encryptedValue,
       expiresAt: opts?.expiresAt ?? null,
     })
+    .onConflictDoUpdate({
+      target: [credentials.ownerId, credentials.name],
+      set: {
+        value: encryptedValue,
+        expiresAt: opts?.expiresAt ?? null,
+        updatedAt: new Date(),
+      },
+    })
     .returning({ id: credentials.id });
 
-  await audit(row.id, name, ownerId, "create");
-  return { id: row.id, created: true };
+  // Determine if this was a create or update by checking updated_at vs created_at
+  const [check] = await db
+    .select({ createdAt: credentials.createdAt, updatedAt: credentials.updatedAt })
+    .from(credentials)
+    .where(eq(credentials.id, row.id))
+    .limit(1);
+
+  const created = check.createdAt.getTime() === check.updatedAt.getTime();
+  await audit(row.id, name, ownerId, created ? "create" : "update");
+  return { id: row.id, created };
 }
 
 /**
@@ -203,9 +197,25 @@ export async function getApiCredential(
 
   const cred = rows[0];
 
-  // Check expiry
+  // Check expiry — null the value, audit, and notify owner
   if (cred.expiresAt && cred.expiresAt < new Date()) {
     await audit(cred.id, name, requestingUserId, "read", "expired");
+
+    // Best-effort DM to credential owner about expiry
+    try {
+      const { WebClient } = await import("@slack/web-api");
+      const botToken = process.env.SLACK_BOT_TOKEN;
+      if (botToken && cred.ownerId !== "system") {
+        const client = new WebClient(botToken);
+        await client.chat.postMessage({
+          channel: cred.ownerId,
+          text: `⚠️ Your credential *${name}* has expired (was set to expire ${cred.expiresAt.toISOString().split("T")[0]}). Please rotate it in your App Home settings.`,
+        });
+      }
+    } catch {
+      // Non-critical — don't fail the read operation
+    }
+
     return null;
   }
 
@@ -471,3 +481,34 @@ export function maskApiCredential(value: string): string {
   if (value.length <= 12) return "••••••••";
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
+
+/**
+ * ── Key Rotation Procedure ─────────────────────────────────────────────────
+ *
+ * To rotate the CREDENTIALS_KEY (master encryption key):
+ *
+ * 1. Generate a new 32-byte key:
+ *    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+ *
+ * 2. Set the new key in environment as CREDENTIALS_KEY_NEW alongside the old
+ *    CREDENTIALS_KEY.
+ *
+ * 3. Run the re-encryption migration:
+ *    - Read each credential row
+ *    - Decrypt with old key (CREDENTIALS_KEY)
+ *    - Re-encrypt with new key (CREDENTIALS_KEY_NEW)
+ *    - Update the row with new ciphertext and increment key_version
+ *
+ * 4. Once all rows are re-encrypted, swap CREDENTIALS_KEY_NEW → CREDENTIALS_KEY
+ *    and remove the old key.
+ *
+ * 5. Verify by reading a credential and confirming decryption succeeds.
+ *
+ * To rotate individual API credentials:
+ *
+ * 1. User generates a new API key from the provider.
+ * 2. User updates the credential via App Home → overflow menu → Update.
+ * 3. The old value is overwritten (UPSERT) and an audit entry is logged.
+ * 4. Optionally set a new expiration date.
+ * 5. All grants remain valid — grantees automatically get the new value.
+ */

@@ -5,7 +5,23 @@ import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { runPipeline } from "./pipeline/index.js";
-import { publishHomeTab, ACTION_TO_SETTING, CREDENTIAL_ACTIONS, isAdmin, openCredentialModal } from "./slack/home.js";
+import {
+  publishHomeTab,
+  ACTION_TO_SETTING,
+  CREDENTIAL_ACTIONS,
+  isAdmin,
+  openCredentialModal,
+  openAddCredentialModal,
+  openUpdateCredentialModal,
+  openShareCredentialModal,
+  buildUserCredentialBlocks,
+} from "./slack/home.js";
+import {
+  storeApiCredential,
+  deleteApiCredential,
+  grantApiCredentialAccess,
+} from "./lib/api-credentials.js";
+import { resolveConfirmation } from "./lib/confirmation.js";
 import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
@@ -354,7 +370,75 @@ app.post("/api/slack/interactions", async (c) => {
         waitUntil(savePromise);
       }
 
-      const credentialKey = CREDENTIAL_ACTIONS[action.action_id];
+      // ── Per-user credential actions ────────────────────────────────
+      if (action.action_id === "api_credential_add" && payload.trigger_id) {
+        const modalPromise = openAddCredentialModal(
+          slackClient,
+          payload.trigger_id,
+        ).catch((err: unknown) => {
+          recordError("interactions.api_credential_add", err, { userId });
+        });
+        waitUntil(modalPromise);
+      }
+
+      // Overflow menu actions for user credentials
+      if (action.action_id?.startsWith("api_credential_overflow_") && action.selected_option?.value) {
+        const optionValue = action.selected_option.value as string;
+
+        if (optionValue.startsWith("update_") && payload.trigger_id) {
+          const parts = optionValue.split("_");
+          const credId = parts[1];
+          const credName = parts.slice(2).join("_");
+          const modalPromise = openUpdateCredentialModal(
+            slackClient,
+            payload.trigger_id,
+            credId,
+            credName,
+          ).catch((err: unknown) => {
+            recordError("interactions.api_credential_update_modal", err, { userId, credId });
+          });
+          waitUntil(modalPromise);
+        }
+
+        if (optionValue.startsWith("share_") && payload.trigger_id) {
+          const credId = optionValue.replace("share_", "");
+          const modalPromise = openShareCredentialModal(
+            slackClient,
+            payload.trigger_id,
+            credId,
+          ).catch((err: unknown) => {
+            recordError("interactions.api_credential_share_modal", err, { userId, credId });
+          });
+          waitUntil(modalPromise);
+        }
+
+        if (optionValue.startsWith("delete_")) {
+          const parts = optionValue.split("_");
+          const credId = parts[1];
+          const credName = parts.slice(2).join("_");
+          const deletePromise = (async () => {
+            try {
+              await deleteApiCredential(credName, userId, userId);
+              await publishHomeTab(slackClient, userId);
+            } catch (err) {
+              recordError("interactions.api_credential_delete", err, { userId, credId });
+            }
+          })();
+          waitUntil(deletePromise);
+        }
+      }
+
+      // Confirmation flow (Phase 4)
+      if (action.action_id?.startsWith("confirm_approve_")) {
+        const token = action.action_id.replace("confirm_approve_", "");
+        resolveConfirmation(token, true, userId);
+      }
+      if (action.action_id?.startsWith("confirm_deny_")) {
+        const token = action.action_id.replace("confirm_deny_", "");
+        resolveConfirmation(token, false, userId);
+      }
+
+            const credentialKey = CREDENTIAL_ACTIONS[action.action_id];
       if (credentialKey && payload.trigger_id) {
         const modalPromise = openCredentialModal(
           slackClient,
@@ -371,7 +455,7 @@ app.post("/api/slack/interactions", async (c) => {
     }
   }
 
-  if (payload.type === "view_submission") {
+    if (payload.type === "view_submission") {
     const callbackId = payload.view?.callback_id;
     const userId = payload.user?.id;
 
@@ -395,6 +479,108 @@ app.post("/api/slack/interactions", async (c) => {
           }
         })();
         waitUntil(savePromise);
+      }
+    }
+
+    // ── Per-user credential modal submissions ─────────────────────
+    if (callbackId === "api_credential_add_submit" && userId) {
+      const credName =
+        payload.view?.state?.values?.cred_name_block?.cred_name?.value;
+      const credValue =
+        payload.view?.state?.values?.cred_value_block?.cred_value?.value;
+      const expiryDate =
+        payload.view?.state?.values?.cred_expiry_block?.cred_expiry?.selected_date;
+
+      if (credName && credValue) {
+        const savePromise = (async () => {
+          try {
+            await storeApiCredential(credName, credValue, userId, {
+              expiresAt: expiryDate ? new Date(expiryDate) : undefined,
+            });
+            await publishHomeTab(slackClient, userId);
+          } catch (err) {
+            recordError("interactions.api_credential_add_save", err, {
+              userId,
+              credName,
+            });
+          }
+        })();
+        waitUntil(savePromise);
+      }
+    }
+
+    if (callbackId === "api_credential_update_submit" && userId) {
+      const credentialId = payload.view?.private_metadata;
+      const credValue =
+        payload.view?.state?.values?.cred_value_block?.cred_value?.value;
+
+      if (credentialId && credValue) {
+        const savePromise = (async () => {
+          try {
+            // Look up the credential to get its name + verify ownership
+            const { eq: eqOp } = await import("drizzle-orm");
+            const { credentials: credTable } = await import("./db/schema.js");
+            const { db: dbClient } = await import("./db/client.js");
+            const [cred] = await dbClient
+              .select({ name: credTable.name, ownerId: credTable.ownerId })
+              .from(credTable)
+              .where(eqOp(credTable.id, credentialId))
+              .limit(1);
+
+            if (cred && cred.ownerId === userId) {
+              await storeApiCredential(cred.name, credValue, userId);
+              await publishHomeTab(slackClient, userId);
+            }
+          } catch (err) {
+            recordError("interactions.api_credential_update_save", err, {
+              userId,
+              credentialId,
+            });
+          }
+        })();
+        waitUntil(savePromise);
+      }
+    }
+
+    if (callbackId === "api_credential_share_submit" && userId) {
+      const credentialId = payload.view?.private_metadata;
+      const granteeId =
+        payload.view?.state?.values?.share_user_block?.share_user?.selected_user;
+      const permission =
+        payload.view?.state?.values?.share_permission_block?.share_permission
+          ?.selected_option?.value;
+
+      if (credentialId && granteeId && permission) {
+        const sharePromise = (async () => {
+          try {
+            // Look up credential to get name + ownerId
+            const { eq: eqOp } = await import("drizzle-orm");
+            const { credentials: credTable } = await import("./db/schema.js");
+            const { db: dbClient } = await import("./db/client.js");
+            const [cred] = await dbClient
+              .select({ name: credTable.name, ownerId: credTable.ownerId })
+              .from(credTable)
+              .where(eqOp(credTable.id, credentialId))
+              .limit(1);
+
+            if (cred) {
+              await grantApiCredentialAccess(
+                cred.name,
+                cred.ownerId,
+                granteeId,
+                permission as "read" | "write" | "admin",
+                userId,
+              );
+              await publishHomeTab(slackClient, userId);
+            }
+          } catch (err) {
+            recordError("interactions.api_credential_share_save", err, {
+              userId,
+              credentialId,
+            });
+          }
+        })();
+        waitUntil(sharePromise);
       }
     }
 
