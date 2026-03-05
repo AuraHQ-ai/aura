@@ -53,7 +53,7 @@ export default async function BlogPostPage({ params }: Props) {
 
   const [content, related] = await Promise.all([
     renderMdx(post.content),
-    getRelatedPosts(post.slug),
+    getRelatedPosts(post.slug, post.tags),
   ]);
 
   return (
