@@ -311,6 +311,43 @@ export const resources = pgTable(
   ],
 );
 
+// ── Content Index (blog/docs/landing metadata) ───────────────────────────────
+
+export const content = pgTable(
+  "content",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    slug: text("slug").notNull(),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    excerpt: text("excerpt"),
+    author: text("author"),
+    tags: text("tags")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    publishedAt: timestamptz("published_at"),
+    readingMinutes: integer("reading_minutes"),
+    ogImage: text("og_image"),
+    embedding: vector("embedding", { dimensions: 1536 }),
+    rawPath: text("raw_path").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("content_slug_idx").on(table.slug),
+    index("content_type_idx").on(table.type),
+    index("content_published_at_idx").on(table.publishedAt),
+    index("content_tags_idx").using("gin", table.tags),
+    index("content_embedding_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+  ],
+);
+
 // ── Jobs (unified: one-shot tasks, recurring work, continuations) ───────────
 
 export interface FrequencyConfig {
@@ -545,6 +582,8 @@ export type NewJob = typeof jobs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
 export type Resource = typeof resources.$inferSelect;
 export type NewResource = typeof resources.$inferInsert;
+export type Content = typeof content.$inferSelect;
+export type NewContent = typeof content.$inferInsert;
 export type EventLock = typeof eventLocks.$inferSelect;
 export type NewEventLock = typeof eventLocks.$inferInsert;
 export type ErrorEvent = typeof errorEvents.$inferSelect;

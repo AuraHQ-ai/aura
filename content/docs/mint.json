@@ -1,0 +1,40 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Aura",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "theme": "mint",
+  "colors": {
+    "primary": "#8b5cf6",
+    "light": "#a78bfa",
+    "dark": "#6d28d9"
+  },
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": ["getting-started", "one-click-deploy"]
+    },
+    {
+      "group": "Core Concepts",
+      "pages": ["architecture", "self-improvement", "memory-system"]
+    },
+    {
+      "group": "Tools",
+      "pages": ["tools/slack", "tools/email", "tools/bigquery"]
+    },
+    {
+      "group": "Deployment",
+      "pages": [
+        "deployment/vercel",
+        "deployment/environment-variables",
+        "deployment/one-click-deploy"
+      ]
+    },
+    {
+      "group": "API",
+      "pages": ["api-reference"]
+    }
+  ]
+}

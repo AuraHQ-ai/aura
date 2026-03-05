@@ -1,0 +1,29 @@
+---
+title: "Getting Started"
+description: "Deploy Aura, connect Slack, and run the first interaction."
+---
+
+# Getting Started
+
+Aura is an autonomous AI teammate that lives in Slack.
+
+## Prerequisites
+
+- A Vercel account
+- A Slack workspace where you can install apps
+- A Postgres database (Neon works well)
+
+## Quick setup
+
+1. Deploy the API project.
+2. Configure required environment variables.
+3. Install/reinstall the Slack app with the right scopes.
+4. Verify `/api/health` returns `{ ok: true }`.
+
+## First interaction
+
+Mention Aura in a Slack channel and ask:
+
+> "Summarize what happened in this channel today."
+
+If everything is wired correctly, Aura will respond and store memory for future retrieval.

@@ -1,0 +1,22 @@
+---
+title: "Memory System"
+description: "Extraction, storage, retrieval, and consolidation of long-term memory."
+---
+
+# Memory System
+
+Aura memory is stored in Postgres with vector embeddings.
+
+## Lifecycle
+
+1. **Extract** candidate memories from conversations.
+2. **Store** memory with type, metadata, and embedding.
+3. **Retrieve** relevant memory during future prompts.
+4. **Consolidate** to merge duplicates and reduce noise.
+
+## Retrieval strategy
+
+Use hybrid retrieval when possible:
+
+- semantic similarity for conceptual matches
+- lexical matching for names, IDs, and exact phrases

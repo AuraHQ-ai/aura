@@ -1,0 +1,103 @@
+openapi: 3.1.0
+info:
+  title: Aura API
+  version: 0.1.0
+  description: |
+    Public-facing endpoints for Aura webhooks and cron handlers.
+servers:
+  - url: https://api.aurahq.ai
+    description: Production
+  - url: https://aura-alpha-five.vercel.app
+    description: Legacy production hostname
+paths:
+  /api/health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  timestamp:
+                    type: string
+                    format: date-time
+  /api/slack/events:
+    post:
+      summary: Slack events webhook
+      operationId: handleSlackEvents
+      description: |
+        Receives Slack Events API payloads. Requests must include valid Slack
+        signature headers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Event accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "401":
+          description: Invalid Slack signature
+  /api/slack/interactions:
+    post:
+      summary: Slack interactions webhook
+      operationId: handleSlackInteractions
+      description: |
+        Receives interactive payloads from Slack (block actions and modal submissions).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                payload:
+                  type: string
+                  description: JSON-encoded Slack interaction payload.
+      responses:
+        "200":
+          description: Interaction acknowledged
+  /api/cron/heartbeat:
+    get:
+      summary: Run heartbeat sweep
+      operationId: runHeartbeat
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Heartbeat completed
+        "401":
+          description: Unauthorized
+  /api/cron/consolidate:
+    get:
+      summary: Run memory consolidation
+      operationId: runConsolidation
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Consolidation completed
+        "401":
+          description: Unauthorized
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Cron endpoints require `Authorization: Bearer <CRON_SECRET>`.
