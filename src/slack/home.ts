@@ -244,17 +244,10 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
     }
 
     const grants = grantsByCredId.get(cred.id) ?? [];
-    const actionCount = overflowOptions.length;
-    const maxAccessEntries = 5 - actionCount;
-
-    for (const grant of grants.slice(0, maxAccessEntries)) {
-      const label = grant.displayName ?? grant.granteeId;
+    if (grants.length > 0) {
       overflowOptions.push({
-        text: {
-          type: "plain_text",
-          text: `👤 ${label} (${grant.permission})`,
-        },
-        value: `api_credential_access_${cred.id}_${grant.granteeId}`,
+        text: { type: "plain_text", text: "View users" },
+        value: `api_credential_access_${cred.id}`,
       });
     }
 
