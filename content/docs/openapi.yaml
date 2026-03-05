@@ -1,0 +1,211 @@
+openapi: 3.1.0
+info:
+  title: Aura API
+  description: |
+    HTTP endpoints for Aura, an autonomous AI agent that lives in Slack.
+    These endpoints handle Slack event subscriptions, health monitoring,
+    and scheduled job execution.
+  version: 0.1.0
+  contact:
+    name: Aura
+    url: https://aurahq.ai
+    email: hello@aurahq.ai
+
+servers:
+  - url: https://api.aurahq.ai
+    description: Production
+  - url: http://localhost:3000
+    description: Local development
+
+paths:
+  /api/slack/events:
+    post:
+      operationId: slackEvents
+      summary: Slack Events Webhook
+      description: |
+        Receives event payloads from Slack's Events API. Handles:
+        - URL verification challenges
+        - Message events (new messages, edits, deletions)
+        - Reaction events
+        - App mention events
+
+        All requests are verified using the Slack signing secret.
+      tags:
+        - Slack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/SlackChallenge"
+                - $ref: "#/components/schemas/SlackEventCallback"
+      responses:
+        "200":
+          description: Event acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge:
+                    type: string
+                    description: Returned only for URL verification requests
+        "401":
+          description: Invalid signing secret
+        "429":
+          description: Rate limited
+
+  /api/health:
+    get:
+      operationId: healthCheck
+      summary: Health Check
+      description: Returns the current health status of the Aura service.
+      tags:
+        - System
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/cron/heartbeat:
+    get:
+      operationId: cronHeartbeat
+      summary: Heartbeat Cron
+      description: |
+        Triggered every 30 minutes by Vercel Cron. Checks for due jobs
+        (scheduled and recurring) and executes them with full tool access.
+
+        Protected by the `CRON_SECRET` header.
+      tags:
+        - Cron
+      security:
+        - cronSecret: []
+      responses:
+        "200":
+          description: Heartbeat completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  jobsExecuted:
+                    type: integer
+                    description: Number of jobs executed in this heartbeat
+                  duration:
+                    type: number
+                    description: Execution time in milliseconds
+
+  /api/cron/consolidate:
+    get:
+      operationId: cronConsolidate
+      summary: Memory Consolidation Cron
+      description: |
+        Runs nightly to consolidate memories: decay old entries, merge
+        duplicates, strengthen frequently-accessed memories, and resolve
+        open threads.
+
+        Protected by the `CRON_SECRET` header.
+      tags:
+        - Cron
+      security:
+        - cronSecret: []
+      responses:
+        "200":
+          description: Consolidation completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  memoriesProcessed:
+                    type: integer
+                  memoriesMerged:
+                    type: integer
+                  memoriesDecayed:
+                    type: integer
+
+components:
+  securitySchemes:
+    cronSecret:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Bearer token matching the CRON_SECRET environment variable
+
+  schemas:
+    SlackChallenge:
+      type: object
+      required:
+        - type
+        - challenge
+      properties:
+        type:
+          type: string
+          enum: [url_verification]
+        challenge:
+          type: string
+        token:
+          type: string
+
+    SlackEventCallback:
+      type: object
+      required:
+        - type
+        - event
+      properties:
+        type:
+          type: string
+          enum: [event_callback]
+        event:
+          type: object
+          properties:
+            type:
+              type: string
+              description: Event type (message, reaction_added, app_mention, etc.)
+            channel:
+              type: string
+            user:
+              type: string
+            text:
+              type: string
+            ts:
+              type: string
+            thread_ts:
+              type: string
+        team_id:
+          type: string
+        event_id:
+          type: string
+        event_time:
+          type: integer
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+        version:
+          type: string
+        uptime:
+          type: number
+          description: Uptime in seconds (per-invocation, resets each cold start)
+        database:
+          type: string
+          enum: [connected, disconnected]
+
+tags:
+  - name: Slack
+    description: Slack integration endpoints
+  - name: System
+    description: Operational endpoints
+  - name: Cron
+    description: Scheduled job endpoints

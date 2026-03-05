@@ -1,0 +1,81 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Aura Documentation",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#FFFFFF",
+    "light": "#F5F5F5",
+    "dark": "#000000",
+    "background": {
+      "dark": "#0A0A0A"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "Blog",
+      "url": "https://aurahq.ai/blog"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Access",
+    "url": "https://aurahq.ai#waitlist"
+  },
+  "tabs": [
+    {
+      "name": "API Reference",
+      "url": "api-reference"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/realadvisor/aura"
+    },
+    {
+      "name": "Blog",
+      "icon": "newspaper",
+      "url": "https://aurahq.ai/blog"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": ["getting-started", "architecture"]
+    },
+    {
+      "group": "Core Systems",
+      "pages": ["memory-system", "self-improvement"]
+    },
+    {
+      "group": "Tools",
+      "pages": [
+        "tools/slack",
+        "tools/email",
+        "tools/bigquery",
+        "tools/sandbox"
+      ]
+    },
+    {
+      "group": "Deployment",
+      "pages": [
+        "deployment/vercel",
+        "deployment/environment-variables",
+        "deployment/one-click-deploy"
+      ]
+    },
+    {
+      "group": "API Reference",
+      "pages": ["api-reference/overview"]
+    }
+  ],
+  "footerSocials": {
+    "x": "https://x.com/aurahq_ai",
+    "github": "https://github.com/realadvisor/aura"
+  },
+  "openapi": ["/openapi.yaml"]
+}

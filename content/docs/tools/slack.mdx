@@ -1,0 +1,59 @@
+---
+title: "Slack Tools"
+description: "How Aura interacts with Slack — messaging, search, channels, and streaming."
+---
+
+# Slack Tools
+
+Aura's primary interface is Slack. She uses the `@slack/web-api` SDK with both bot and user tokens.
+
+## Available Tools
+
+### send_message
+Send a message to any channel or thread Aura has access to. Uses Slack's mrkdwn formatting.
+
+### search_messages
+Search across the workspace's message history. Uses the user token (`xoxp-`) since bot tokens can't search.
+
+### list_channels
+List all channels in the workspace with metadata (topic, member count, type).
+
+### get_channel_history
+Retrieve recent messages from a specific channel. Useful for catching up on context.
+
+## Bot Scopes Required
+
+```
+channels:history
+channels:read
+chat:write
+groups:history
+groups:read
+im:history
+im:read
+im:write
+mpim:history
+reactions:read
+users:read
+```
+
+## User Scopes Required
+
+```
+search:read
+```
+
+## Streaming Responses
+
+Aura uses `chatStream` from the Slack Web API to stream responses in real-time. This provides a better user experience than posting a complete message after the LLM finishes generating.
+
+```typescript
+const stream = await client.chatStream({
+  channel: channelId,
+  thread_ts: threadTs,
+});
+```
+
+## Rate Limiting
+
+The Slack SDK handles rate-limit retries internally. Aura does not implement a custom rate limiter — the SDK's built-in backoff is sufficient for normal operation.
