@@ -8,9 +8,11 @@ openapi: ../openapi.yaml
 
 Aura's HTTP surface is intentionally small and operationally focused:
 
-- Slack events + interactions webhooks
-- health check
-- cron endpoints for heartbeat and consolidation
+- `POST /api/slack/events`
+- `POST /api/slack/interactions`
+- `GET /api/health`
+- `GET /api/cron/heartbeat`
+- `GET /api/cron/consolidate`
 
 ## Base URLs
 

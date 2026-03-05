@@ -49,21 +49,23 @@ npx --yes vercel@50.13.2 --prod --scope realadvisor
 
 Set Slack app request URLs to your deployment:
 
-- Events: `https://<your-domain>/api/slack/events`
-- Interactions: `https://<your-domain>/api/slack/interactions`
+- Events: `https://api.aurahq.ai/api/slack/events`
+- Interactions: `https://api.aurahq.ai/api/slack/interactions`
+
+If you are using a different domain, replace `api.aurahq.ai` accordingly.
 
 After changing scopes, reinstall the app to the workspace.
 
 ### 5. Verify health
 
 ```bash
-curl -s https://<your-domain>/api/health
+curl -s https://api.aurahq.ai/api/health
 ```
 
 Expected shape:
 
 ```json
-{"ok":true,"timestamp":"2026-03-05T00:00:00.000Z"}
+{"ok":true,"timestamp":"<current-iso-time>"}
 ```
 
 ## First interaction test
