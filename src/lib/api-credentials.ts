@@ -330,6 +330,21 @@ export async function getJobApiCredential(
   return decryptCredential(cred.value);
 }
 
+export async function getCredentialById(
+  credentialId: string,
+): Promise<{ id: string; name: string; ownerId: string } | null> {
+  const rows = await db
+    .select({
+      id: credentials.id,
+      name: credentials.name,
+      ownerId: credentials.ownerId,
+    })
+    .from(credentials)
+    .where(eq(credentials.id, credentialId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function listApiCredentials(
   userId: string,
 ): Promise<

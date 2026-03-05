@@ -15,6 +15,7 @@ import {
   buildAddCredentialBlocks,
   openUpdateCredentialModal,
   openShareCredentialModal,
+  openCredentialAccessModal,
 } from "./slack/home.js";
 import {
   storeApiCredential,
@@ -471,6 +472,18 @@ app.post("/api/slack/interactions", async (c) => {
             }
           })();
           waitUntil(deletePromise);
+        } else if (selectedValue.startsWith("api_credential_access_") && payload.trigger_id) {
+          const rest = selectedValue.slice("api_credential_access_".length);
+          const lastUnderscore = rest.lastIndexOf("_");
+          const credId = lastUnderscore > 0 ? rest.substring(0, lastUnderscore) : rest;
+          const accessPromise = openCredentialAccessModal(
+            slackClient,
+            payload.trigger_id,
+            credId,
+          ).catch((err) => {
+            recordError("interactions.api_credential_access_modal", err, { userId, credId });
+          });
+          waitUntil(accessPromise);
         }
       }
 

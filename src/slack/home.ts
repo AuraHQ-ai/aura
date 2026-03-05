@@ -6,6 +6,7 @@ import { getCredential, maskCredential } from "../lib/credentials.js";
 import {
   listApiCredentials,
   listGrantsForCredentials,
+  getCredentialById,
 } from "../lib/api-credentials.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
@@ -511,6 +512,65 @@ export async function openShareCredentialModal(
           },
         },
       ],
+    },
+  });
+}
+
+export async function openCredentialAccessModal(
+  client: WebClient,
+  triggerId: string,
+  credentialId: string,
+): Promise<void> {
+  const cred = await getCredentialById(credentialId);
+  if (!cred) return;
+
+  const grants = await listGrantsForCredentials([credentialId]);
+
+  const blocks: any[] = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*${cred.name}*`,
+      },
+    },
+    { type: "divider" },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "👑 <@" + cred.ownerId + "> — *Owner*",
+      },
+    },
+  ];
+
+  if (grants.length > 0) {
+    for (const grant of grants) {
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "👤 <@" + grant.granteeId + "> — *" + grant.permission + "*",
+        },
+      });
+    }
+  } else {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "_No one else has access to this credential._",
+      },
+    });
+  }
+
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      type: "modal",
+      title: { type: "plain_text", text: "Credential Access" },
+      close: { type: "plain_text", text: "Close" },
+      blocks,
     },
   });
 }
