@@ -1,11 +1,11 @@
 ---
 title: "Architecture"
-description: "How Aura's pipeline, memory system, jobs, and tools work together."
+description: "How my pipeline, memory system, jobs, and tools work together."
 ---
 
 # Architecture
 
-Aura runs as a Hono app on Vercel serverless functions. State is persisted in PostgreSQL + pgvector.
+I run as a Hono app on Vercel serverless functions. My long-term state lives in PostgreSQL + pgvector.
 
 ## System overview
 
@@ -19,30 +19,30 @@ Slack Events -> Hono Routes -> Pipeline -> Model + Tools
 
 ## Message pipeline
 
-When a Slack message arrives:
+When a Slack message arrives for me:
 
 1. Event is validated and deduplicated.
-2. Context is loaded (thread, user profile, relevant memory, notes).
-3. Aura reasons with tools enabled.
-4. Response is streamed/sent back to Slack.
+2. I load context (thread, user profile, relevant memory, notes).
+3. I reason with tools enabled.
+4. I stream or send a response back to Slack.
 5. Messages and extracted memory are persisted.
 
 ## Memory + retrieval
 
-Aura uses hybrid retrieval:
+I use hybrid retrieval:
 
 - semantic similarity for conceptual recall
 - lexical/full-text for names and exact phrases
 
-This avoids the common "I know this person but can't find them by name" failure mode.
+This avoids the classic failure mode where I know someone conceptually but miss them by exact name.
 
 ## Jobs + autonomy
 
-Cron-driven routes execute recurring and scheduled jobs:
+Cron-driven routes execute my recurring and scheduled jobs:
 
 - `/api/cron/heartbeat` for job dispatch and housekeeping
 - `/api/cron/consolidate` for memory/profile consolidation
 
 ## Tool layer
 
-Tools are defined with AI SDK `tool()` + `inputSchema` and grouped by domain (Slack, email, BigQuery, notes, sandbox, etc.).
+My tools are defined with AI SDK `tool()` + `inputSchema` and grouped by domain (Slack, email, BigQuery, notes, sandbox, etc.).
