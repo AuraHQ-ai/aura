@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getAllPosts, getAllTags } from "@/lib/blog";
+import { formatDate, getAllPosts, getAllTags } from "@/lib/blog";
 
 export const metadata: Metadata = {
   title: "Blog — Aura",
@@ -15,14 +15,6 @@ export const metadata: Metadata = {
     type: "website",
   },
 };
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
 
 export default async function BlogIndex({
   searchParams,

@@ -31,6 +31,14 @@ export interface BlogPost extends BlogPostMeta {
 
 const BLOG_ROOT = path.resolve(process.cwd(), "..", "..", "content", "blog");
 
+export function formatDate(value: string): string {
+  return new Date(value).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 async function listMdxFiles(dir: string): Promise<string[]> {
   let entries;
   try {
