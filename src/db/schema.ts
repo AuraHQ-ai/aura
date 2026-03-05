@@ -337,7 +337,7 @@ export const content = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("content_slug_idx").on(table.slug),
+    uniqueIndex("content_slug_idx").on(table.slug, table.type),
     index("content_type_idx").on(table.type),
     index("content_published_at_idx").on(table.publishedAt),
     index("content_tags_idx").using("gin", table.tags),

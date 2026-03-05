@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS "content" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "content_slug_idx" ON "content" USING btree ("slug");
+CREATE UNIQUE INDEX IF NOT EXISTS "content_slug_idx" ON "content" USING btree ("slug","type");
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "content_type_idx" ON "content" USING btree ("type");
 --> statement-breakpoint

@@ -18,8 +18,8 @@ export async function GET() {
       (post) => `
     <item>
       <title>${escapeXml(post.title)}</title>
-      <link>${siteUrl}/blog/${post.slug}</link>
-      <guid>${siteUrl}/blog/${post.slug}</guid>
+      <link>${siteUrl}/blog/${escapeXml(post.slug)}</link>
+      <guid>${siteUrl}/blog/${escapeXml(post.slug)}</guid>
       <pubDate>${new Date(post.date).toUTCString()}</pubDate>
       <description>${escapeXml(post.excerpt)}</description>
       <author>${escapeXml(post.author)}</author>
