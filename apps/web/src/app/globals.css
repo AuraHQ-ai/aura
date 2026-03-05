@@ -16,3 +16,13 @@
 [data-rehype-pretty-code-figure] code {
   counter-reset: line;
 }
+
+.reveal {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.revealed {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}

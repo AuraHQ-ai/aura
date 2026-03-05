@@ -1,35 +1,7 @@
-"use client";
-
-import { useEffect, useRef } from "react";
-
-function useScrollReveal() {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const items = el.querySelectorAll(".reveal");
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("revealed");
-            observer.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.15 }
-    );
-    items.forEach((item) => observer.observe(item));
-    return () => observer.disconnect();
-  }, []);
-  return ref;
-}
+import { ScrollReveal } from "@/components/scroll-reveal";
+import { WaitlistForm } from "@/components/waitlist-form";
 
 export default function Home() {
-  const timelineRef = useScrollReveal();
-  const statsRef = useScrollReveal();
-  const featuresRef = useScrollReveal();
-
   return (
     <main className="min-h-screen">
       {/* Hero */}
@@ -77,42 +49,44 @@ export default function Home() {
       </section>
 
       {/* What Makes Aura Different */}
-      <section className="mx-auto max-w-4xl px-6 py-24" ref={featuresRef}>
-        <h2 className="text-3xl font-bold sm:text-4xl">
-          She remembers. She acts. She improves.
-        </h2>
-        <div className="mt-12 grid gap-12 sm:grid-cols-2">
-          {[
-            {
-              title: "Memory that compounds",
-              desc: "Every conversation, every decision, every preference -- stored, embedded, retrieved when it matters. She quoted six of her founder's ideas from different conversations across a week. Without a single search.",
-            },
-            {
-              title: "Autonomous work",
-              desc: "She doesn't wait to be asked. Morning bug sweeps across four countries. Email triage before you open your inbox. Follow-ups on conversations that went quiet. She runs 30+ scheduled jobs without being told.",
-            },
-            {
-              title: "Self-improvement",
-              desc: "She files issues against her own codebase, dispatches agents to write patches, and opens pull requests for review. 88 PRs merged in her first 5 days. Each capability she gains unlocks the next one faster.",
-            },
-            {
-              title: "Synapses, not just storage",
-              desc: "Her knowledge isn't a flat database. It's a cross-referenced graph -- every note connected to related context. The denser the connections, the faster she thinks. She builds her own brain.",
-            },
-          ].map((item, i) => (
-            <div
-              key={item.title}
-              className="reveal opacity-0 translate-y-4 transition-all duration-700 ease-out"
-              style={{ transitionDelay: `${i * 120}ms` }}
-            >
-              <h3 className="text-xl font-semibold">{item.title}</h3>
-              <p className="mt-3 text-neutral-400 leading-relaxed">
-                {item.desc}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
+      <ScrollReveal>
+        <section className="mx-auto max-w-4xl px-6 py-24">
+          <h2 className="text-3xl font-bold sm:text-4xl">
+            She remembers. She acts. She improves.
+          </h2>
+          <div className="mt-12 grid gap-12 sm:grid-cols-2">
+            {[
+              {
+                title: "Memory that compounds",
+                desc: "Every conversation, every decision, every preference -- stored, embedded, retrieved when it matters. She quoted six of her founder's ideas from different conversations across a week. Without a single search.",
+              },
+              {
+                title: "Autonomous work",
+                desc: "She doesn't wait to be asked. Morning bug sweeps across four countries. Email triage before you open your inbox. Follow-ups on conversations that went quiet. She runs 30+ scheduled jobs without being told.",
+              },
+              {
+                title: "Self-improvement",
+                desc: "She files issues against her own codebase, dispatches agents to write patches, and opens pull requests for review. 88 PRs merged in her first 5 days. Each capability she gains unlocks the next one faster.",
+              },
+              {
+                title: "Synapses, not just storage",
+                desc: "Her knowledge isn't a flat database. It's a cross-referenced graph -- every note connected to related context. The denser the connections, the faster she thinks. She builds her own brain.",
+              },
+            ].map((item, i) => (
+              <div
+                key={item.title}
+                className="reveal opacity-0 translate-y-4 transition-all duration-700 ease-out"
+                style={{ transitionDelay: `${i * 120}ms` }}
+              >
+                <h3 className="text-xl font-semibold">{item.title}</h3>
+                <p className="mt-3 text-neutral-400 leading-relaxed">
+                  {item.desc}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </ScrollReveal>
 
       {/* Social proof quote */}
       <section className="border-t border-b border-neutral-800 px-6 py-16">
@@ -129,64 +103,66 @@ export default function Home() {
       </section>
 
       {/* Timeline */}
-      <section className="mx-auto max-w-3xl px-6 py-24" ref={timelineRef}>
-        <h2 className="text-3xl font-bold sm:text-4xl">
-          This isn&apos;t a demo. This is a Tuesday.
-        </h2>
-        <div className="mt-12 space-y-0">
-          {[
-            {
-              time: "4:00 AM",
-              text: "Consolidates memories. Decays old ones. Merges duplicates. No one asked her to.",
-            },
-            {
-              time: "8:30 AM",
-              text: "Sweeps bug channels in four languages. Triages 12 reports. Flags 2 as critical.",
-            },
-            {
-              time: "9:00 AM",
-              text: "Email digest lands in your DM. 3 urgent, 2 need replies, rest is noise. Junk already filtered.",
-            },
-            {
-              time: "10:15 AM",
-              text: "Someone asks about last quarter's churn. She queries the warehouse, builds a table, spots a pattern nobody mentioned.",
-            },
-            {
-              time: "2:00 PM",
-              text: "Finds a bug in her own code. Files an issue. Dispatches an agent to fix it. Opens a PR.",
-            },
-            {
-              time: "5:30 PM",
-              text: "Follows up with a team lead who went quiet on a request from 3 days ago.",
-            },
-            {
-              time: "11:00 PM",
-              text: "You're asleep. She's processing the day's conversations, extracting facts, wiring new synapses.",
-            },
-          ].map((item, i) => (
-            <div
-              key={item.time}
-              className="reveal flex gap-6 py-4 opacity-0 translate-y-4 transition-all duration-700 ease-out"
-              style={{ transitionDelay: `${i * 100}ms` }}
-            >
-              <div className="flex flex-col items-center">
-                <span className="h-2.5 w-2.5 rounded-full bg-neutral-600 mt-1.5 shrink-0"></span>
-                {i < 6 && (
-                  <span className="w-px flex-1 bg-neutral-800 mt-1"></span>
-                )}
+      <ScrollReveal>
+        <section className="mx-auto max-w-3xl px-6 py-24">
+          <h2 className="text-3xl font-bold sm:text-4xl">
+            This isn&apos;t a demo. This is a Tuesday.
+          </h2>
+          <div className="mt-12 space-y-0">
+            {[
+              {
+                time: "4:00 AM",
+                text: "Consolidates memories. Decays old ones. Merges duplicates. No one asked her to.",
+              },
+              {
+                time: "8:30 AM",
+                text: "Sweeps bug channels in four languages. Triages 12 reports. Flags 2 as critical.",
+              },
+              {
+                time: "9:00 AM",
+                text: "Email digest lands in your DM. 3 urgent, 2 need replies, rest is noise. Junk already filtered.",
+              },
+              {
+                time: "10:15 AM",
+                text: "Someone asks about last quarter's churn. She queries the warehouse, builds a table, spots a pattern nobody mentioned.",
+              },
+              {
+                time: "2:00 PM",
+                text: "Finds a bug in her own code. Files an issue. Dispatches an agent to fix it. Opens a PR.",
+              },
+              {
+                time: "5:30 PM",
+                text: "Follows up with a team lead who went quiet on a request from 3 days ago.",
+              },
+              {
+                time: "11:00 PM",
+                text: "You're asleep. She's processing the day's conversations, extracting facts, wiring new synapses.",
+              },
+            ].map((item, i) => (
+              <div
+                key={item.time}
+                className="reveal flex gap-6 py-4 opacity-0 translate-y-4 transition-all duration-700 ease-out"
+                style={{ transitionDelay: `${i * 100}ms` }}
+              >
+                <div className="flex flex-col items-center">
+                  <span className="h-2.5 w-2.5 rounded-full bg-neutral-600 mt-1.5 shrink-0"></span>
+                  {i < 6 && (
+                    <span className="w-px flex-1 bg-neutral-800 mt-1"></span>
+                  )}
+                </div>
+                <div className="pb-6">
+                  <p className="font-mono text-sm text-neutral-500">
+                    {item.time}
+                  </p>
+                  <p className="mt-1 text-neutral-300">{item.text}</p>
+                </div>
               </div>
-              <div className="pb-6">
-                <p className="font-mono text-sm text-neutral-500">
-                  {item.time}
-                </p>
-                <p className="mt-1 text-neutral-300">{item.text}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      </ScrollReveal>
 
-      {/* Under the hood -- trimmed */}
+      {/* Under the hood */}
       <section className="border-t border-neutral-800 px-6 py-24">
         <div className="mx-auto max-w-3xl">
           <h2 className="text-3xl font-bold sm:text-4xl">Under the hood</h2>
@@ -202,54 +178,56 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Real Numbers -- with context */}
-      <section className="border-t border-neutral-800 px-6 py-24" ref={statsRef}>
-        <div className="mx-auto max-w-4xl text-center">
-          <h2 className="text-3xl font-bold sm:text-4xl">Real numbers</h2>
-          <p className="mt-3 text-neutral-500">
-            From her first 15 days inside a live company. Not a benchmark. Not a
-            demo.
-          </p>
-          <div className="mt-12 grid grid-cols-2 gap-8 sm:grid-cols-4">
-            {[
-              {
-                stat: "88",
-                label: "PRs merged in 5 days",
-                context:
-                  "More code shipped in a week than most teams ship in a month.",
-              },
-              {
-                stat: "2,300+",
-                label: "conversations held",
-                context:
-                  "Across 20+ team members, 4 languages, every department.",
-              },
-              {
-                stat: "100+",
-                label: "knowledge notes",
-                context:
-                  "Cross-referenced into a self-built knowledge graph.",
-              },
-              {
-                stat: "30+",
-                label: "autonomous jobs",
-                context:
-                  "Running on schedule, without being asked. Bug sweeps, digests, follow-ups.",
-              },
-            ].map((item, i) => (
-              <div
-                key={item.label}
-                className="reveal opacity-0 translate-y-4 transition-all duration-700 ease-out"
-                style={{ transitionDelay: `${i * 100}ms` }}
-              >
-                <p className="text-4xl font-bold">{item.stat}</p>
-                <p className="mt-2 text-sm text-neutral-400">{item.label}</p>
-                <p className="mt-1 text-xs text-neutral-600">{item.context}</p>
-              </div>
-            ))}
+      {/* Real Numbers */}
+      <ScrollReveal>
+        <section className="border-t border-neutral-800 px-6 py-24">
+          <div className="mx-auto max-w-4xl text-center">
+            <h2 className="text-3xl font-bold sm:text-4xl">Real numbers</h2>
+            <p className="mt-3 text-neutral-500">
+              From her first 15 days inside a live company. Not a benchmark. Not a
+              demo.
+            </p>
+            <div className="mt-12 grid grid-cols-2 gap-8 sm:grid-cols-4">
+              {[
+                {
+                  stat: "88",
+                  label: "PRs merged in 5 days",
+                  context:
+                    "More code shipped in a week than most teams ship in a month.",
+                },
+                {
+                  stat: "2,300+",
+                  label: "conversations held",
+                  context:
+                    "Across 20+ team members, 4 languages, every department.",
+                },
+                {
+                  stat: "100+",
+                  label: "knowledge notes",
+                  context:
+                    "Cross-referenced into a self-built knowledge graph.",
+                },
+                {
+                  stat: "30+",
+                  label: "autonomous jobs",
+                  context:
+                    "Running on schedule, without being asked. Bug sweeps, digests, follow-ups.",
+                },
+              ].map((item, i) => (
+                <div
+                  key={item.label}
+                  className="reveal opacity-0 translate-y-4 transition-all duration-700 ease-out"
+                  style={{ transitionDelay: `${i * 100}ms` }}
+                >
+                  <p className="text-4xl font-bold">{item.stat}</p>
+                  <p className="mt-2 text-sm text-neutral-400">{item.label}</p>
+                  <p className="mt-1 text-xs text-neutral-600">{item.context}</p>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      </ScrollReveal>
 
       {/* CTA */}
       <section
@@ -266,32 +244,9 @@ export default function Home() {
           Free during beta. We&apos;ll set up a 15-minute demo to show you what
           she can do with your stack.
         </p>
-        <form className="mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
-          <input
-            type="email"
-            placeholder="you@company.com"
-            className="w-full rounded-full border border-neutral-700 bg-transparent px-6 py-3 text-white placeholder-neutral-600 focus:border-white focus:outline-none sm:w-80"
-          />
-          <button
-            type="submit"
-            className="rounded-full bg-white px-8 py-3 text-sm font-semibold text-black transition hover:bg-neutral-200"
-          >
-            Get early access
-          </button>
-        </form>
+        <WaitlistForm />
       </section>
 
-      {/* Scroll reveal CSS */}
-      <style jsx global>{`
-        .reveal {
-          opacity: 0;
-          transform: translateY(16px);
-        }
-        .revealed {
-          opacity: 1 !important;
-          transform: translateY(0) !important;
-        }
-      `}</style>
     </main>
   );
 }
