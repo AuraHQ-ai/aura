@@ -1,0 +1,38 @@
+---
+title: "API Reference"
+description: "Aura's HTTP endpoints for Slack events, health checks, and cron jobs."
+---
+
+# API Reference
+
+Aura exposes a small set of HTTP endpoints, primarily for Slack integration and operational health.
+
+## Base URL
+
+```
+https://api.aurahq.ai
+```
+
+Or your custom deployment URL.
+
+## Authentication
+
+- **Slack events** are verified using the Slack signing secret
+- **Cron endpoints** are protected by Vercel's `CRON_SECRET` header
+- **Health check** is unauthenticated
+
+## Endpoints
+
+See the [OpenAPI specification](/openapi.yaml) for full request/response schemas.
+
+<Card title="Slack Events" icon="slack" href="/api-reference/slack-events">
+  Webhook endpoint for Slack event subscriptions.
+</Card>
+
+<Card title="Health Check" icon="heart-pulse" href="/api-reference/health">
+  Simple health check returning system status.
+</Card>
+
+<Card title="Cron: Heartbeat" icon="clock" href="/api-reference/cron-heartbeat">
+  Periodic job execution trigger (runs every 30 minutes).
+</Card>

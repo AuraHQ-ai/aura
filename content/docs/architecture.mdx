@@ -1,0 +1,78 @@
+---
+title: "Architecture"
+description: "How Aura's message pipeline, memory system, tools, and self-improvement loop work together."
+---
+
+# Architecture
+
+Aura is a Hono-based application deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses Claude models for reasoning.
+
+## System Overview
+
+```
+Slack Events → Vercel Function → Hono Router → Message Pipeline → Claude (AI SDK)
+                                                      ↕
+                                              PostgreSQL + pgvector
+                                              (memories, messages, notes, jobs)
+                                                      ↕
+                                              Tools (Slack, BigQuery, GitHub, Gmail, ...)
+```
+
+## Message Pipeline
+
+When a Slack message arrives:
+
+1. **Event deduplication** — Slack sometimes sends duplicate events. The `event_locks` table prevents double-processing.
+2. **Context loading** — Recent conversation history, relevant memories, user profile, and channel context are loaded in parallel.
+3. **Memory retrieval** — Hybrid search (vector + full-text) finds relevant memories from past conversations.
+4. **LLM reasoning** — Claude processes the message with full context and available tools.
+5. **Response streaming** — The response streams back to Slack in real-time using `chatStream`.
+6. **Memory extraction** — Facts, decisions, and sentiments are extracted from the conversation and stored as new memories.
+
+## Memory System
+
+Aura's memory is a PostgreSQL database with pgvector embeddings. See [Memory System](/memory-system) for the deep dive.
+
+Key tables:
+- `memories` — Extracted facts, decisions, personal details, relationships
+- `messages` — Raw conversation history with embeddings
+- `notes` — Agent-authored knowledge articles (the "scratchpad")
+- `user_profiles` — Per-user communication preferences and known facts
+
+## Tool System
+
+Tools are defined using the AI SDK `tool()` function with Zod schemas. Each tool has:
+- An `inputSchema` describing its parameters
+- A `description` that guides the LLM on when and how to use it
+- An `execute` function that performs the action
+
+Tool categories:
+- **Slack** — Send messages, search conversations, manage channels
+- **Email** — Read, search, compose via Gmail
+- **Data** — BigQuery queries, Google Sheets, Drive
+- **Calendar** — View and create events
+- **Sandbox** — Run arbitrary code in an isolated Linux VM (via E2B)
+- **Notes** — Read and write to the knowledge graph
+- **Jobs** — Schedule and manage autonomous tasks
+- **Self-improvement** — Read own source code, file GitHub issues, dispatch agents
+
+## Heartbeat & Cron
+
+A heartbeat runs every 30 minutes via Vercel Cron. It:
+1. Checks for due jobs (both scheduled and recurring)
+2. Executes each job with full tool access
+3. Logs execution traces for debugging
+
+Jobs include bug sweeps, email digests, memory consolidation, and follow-ups.
+
+## Self-Improvement
+
+Aura can modify her own codebase through a controlled loop:
+1. Identify a gap (failed retrieval, tool error, user feedback)
+2. Read relevant source code via the GitHub API
+3. File an issue describing the problem
+4. Dispatch a Cursor agent to write the fix
+5. Open a PR for human review
+6. The PR is reviewed and merged (or not) by a human
+
+The safety constraint: Aura cannot push to `main`. All changes go through PRs with human approval.

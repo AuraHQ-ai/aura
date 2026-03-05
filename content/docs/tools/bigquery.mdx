@@ -1,0 +1,40 @@
+---
+title: "BigQuery Tools"
+description: "How Aura queries your data warehouse and turns results into insights."
+---
+
+# BigQuery Tools
+
+Aura connects to Google BigQuery to run analytical queries against your data warehouse. She can answer data questions, build tables, and identify patterns.
+
+## Available Tools
+
+### run_query
+Execute a BigQuery SQL query and return results. Supports parameterized queries and result formatting.
+
+### list_datasets
+Browse available datasets and tables in the connected BigQuery project.
+
+### describe_table
+Get schema information for a specific table — column names, types, descriptions.
+
+## Authentication
+
+BigQuery access uses a service account configured via `GOOGLE_APPLICATION_CREDENTIALS` or the equivalent JSON key environment variable.
+
+## How Aura Uses BigQuery
+
+When a user asks a data question ("What was our churn rate last quarter?"), Aura:
+
+1. Identifies relevant datasets and tables using cached schema metadata
+2. Writes a SQL query based on the question and table schema
+3. Executes the query via the BigQuery API
+4. Formats results as a Slack-friendly table
+5. Adds interpretation — trends, anomalies, comparisons
+
+## Safety
+
+- Aura uses read-only BigQuery access by default
+- Query results are truncated to prevent Slack's 40K character message limit
+- Long-running queries have a timeout to avoid blocking
+- Query cost is logged for monitoring
