@@ -5,7 +5,7 @@ description: "Gmail sync, triage, and follow-up automation."
 
 # Email Tools
 
-Aura can sync Gmail content and classify messages for action.
+Aura can sync Gmail content, classify messages, and trigger follow-up workflows.
 
 ## Typical flow
 
@@ -13,3 +13,13 @@ Aura can sync Gmail content and classify messages for action.
 2. message ingestion into staging tables
 3. triage and thread-state classification
 4. digest and follow-up actions in Slack
+
+## Security model
+
+OAuth tokens are stored per-user and scoped by provider.
+
+Recommended scopes:
+
+- `gmail.readonly`
+- `gmail.compose`
+- `gmail.send`

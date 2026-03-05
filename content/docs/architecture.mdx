@@ -1,23 +1,48 @@
 ---
 title: "Architecture"
-description: "How Aura processes messages, retrieves memory, and executes work."
+description: "How Aura's pipeline, memory system, jobs, and tools work together."
 ---
 
 # Architecture
 
-Aura runs as a stateless serverless API with persistent memory in Postgres.
+Aura runs as a Hono app on Vercel serverless functions. State is persisted in PostgreSQL + pgvector.
 
-## High-level flow
+## System overview
 
-1. Slack event arrives at `/api/slack/events`.
-2. Pipeline resolves context (channel, user, thread, memory).
-3. LLM generates a response and optional tool calls.
-4. Tool results are posted back to Slack.
-5. Message + extracted memories are persisted.
+```text
+Slack Events -> Hono Routes -> Pipeline -> Model + Tools
+                                   |
+                                   v
+                           Postgres + pgvector
+                      (messages, memories, notes, jobs)
+```
 
-## Key subsystems
+## Message pipeline
 
-- **Pipeline:** orchestration and tool execution
-- **Memory:** embedding, retrieval, consolidation
-- **Jobs:** recurring and one-shot autonomous tasks
-- **Integrations:** Slack, Gmail, BigQuery, GitHub, and sandboxed execution
+When a Slack message arrives:
+
+1. Event is validated and deduplicated.
+2. Context is loaded (thread, user profile, relevant memory, notes).
+3. Aura reasons with tools enabled.
+4. Response is streamed/sent back to Slack.
+5. Messages and extracted memory are persisted.
+
+## Memory + retrieval
+
+Aura uses hybrid retrieval:
+
+- semantic similarity for conceptual recall
+- lexical/full-text for names and exact phrases
+
+This avoids the common "I know this person but can't find them by name" failure mode.
+
+## Jobs + autonomy
+
+Cron-driven routes execute recurring and scheduled jobs:
+
+- `/api/cron/heartbeat` for job dispatch and housekeeping
+- `/api/cron/consolidate` for memory/profile consolidation
+
+## Tool layer
+
+Tools are defined with AI SDK `tool()` + `inputSchema` and grouped by domain (Slack, email, BigQuery, notes, sandbox, etc.).

@@ -5,7 +5,7 @@ description: "Extraction, storage, retrieval, and consolidation of long-term mem
 
 # Memory System
 
-Aura memory is stored in Postgres with vector embeddings.
+Aura memory is stored in Postgres with vector embeddings and retrieval indexes.
 
 ## Lifecycle
 
@@ -14,9 +14,28 @@ Aura memory is stored in Postgres with vector embeddings.
 3. **Retrieve** relevant memory during future prompts.
 4. **Consolidate** to merge duplicates and reduce noise.
 
+## Memory types
+
+Common memory categories:
+
+- `fact`
+- `decision`
+- `personal`
+- `relationship`
+- `sentiment`
+- `open_thread`
+
 ## Retrieval strategy
 
-Use hybrid retrieval when possible:
+Aura uses hybrid retrieval:
 
-- semantic similarity for conceptual matches
-- lexical matching for names, IDs, and exact phrases
+- semantic vector similarity
+- lexical/full-text matching
+
+This is especially important for proper nouns, IDs, and short queries.
+
+## Privacy and scope
+
+- DM memories are treated as non-shareable context.
+- Channel-derived memories are scoped using source metadata.
+- Retrieval filters honor conversation boundaries.

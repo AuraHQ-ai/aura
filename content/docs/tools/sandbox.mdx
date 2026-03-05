@@ -1,0 +1,25 @@
+---
+title: "Sandbox (E2B)"
+description: "Isolated Linux VM for command execution, code changes, and agent workflows."
+---
+
+# Sandbox (E2B)
+
+Aura can run commands in an isolated Linux sandbox for complex multi-step tasks.
+
+## What it is used for
+
+- code execution and debugging
+- repository operations and scripted changes
+- data transformations and file processing
+- browser/test automation workflows
+
+## Security model
+
+- sandbox is isolated from the API runtime
+- secrets are passed per-command via `envs`
+- environment variables should not be assumed to persist across resume cycles
+
+## Integration guidance
+
+Pass runtime credentials explicitly to each command invocation to ensure deterministic behavior.

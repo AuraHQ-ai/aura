@@ -1,15 +1,26 @@
 ---
 title: "API Reference"
-description: "Webhook and cron endpoints exposed by Aura."
+description: "HTTP endpoints for Slack webhooks, health checks, and cron execution."
 openapi: ../openapi.yaml
 ---
 
 # API Reference
 
-Aura's HTTP surface is intentionally small:
+Aura's HTTP surface is intentionally small and operationally focused:
 
 - Slack events + interactions webhooks
 - health check
 - cron endpoints for heartbeat and consolidation
 
-The OpenAPI spec is versioned in-repo at `content/openapi.yaml`.
+## Base URLs
+
+- `https://api.aurahq.ai` (target production API domain)
+- `https://aura-alpha-five.vercel.app` (current deployed backend URL)
+
+## Authentication model
+
+- Slack routes validate request signatures
+- Cron routes require `Authorization: Bearer <CRON_SECRET>`
+- Health check is unauthenticated
+
+The OpenAPI spec is versioned in-repo at `content/openapi.yaml` and rendered by Mintlify.

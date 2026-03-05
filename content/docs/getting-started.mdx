@@ -1,29 +1,75 @@
 ---
 title: "Getting Started"
-description: "Deploy Aura, connect Slack, and run the first interaction."
+description: "Deploy Aura into Slack, configure core integrations, and verify first response."
 ---
 
 # Getting Started
 
-Aura is an autonomous AI teammate that lives in Slack.
+Aura is an autonomous AI teammate that lives inside your Slack workspace.
 
 ## Prerequisites
 
-- A Vercel account
 - A Slack workspace where you can install apps
-- A Postgres database (Neon works well)
+- A Vercel account
+- A PostgreSQL database with `pgvector` (Neon works well)
+- AI provider credentials (for example `ANTHROPIC_API_KEY`)
 
-## Quick setup
+## Quick start
 
-1. Deploy the API project.
-2. Configure required environment variables.
-3. Install/reinstall the Slack app with the right scopes.
-4. Verify `/api/health` returns `{ ok: true }`.
+### 1. Clone and install
 
-## First interaction
+```bash
+git clone https://github.com/realadvisor/aura.git
+cd aura
+npm install
+```
+
+### 2. Configure environment variables
+
+At minimum, set:
+
+- `DATABASE_URL`
+- `SLACK_BOT_TOKEN`
+- `SLACK_SIGNING_SECRET`
+- `AURA_BOT_USER_ID`
+- `AURA_ADMIN_USER_IDS`
+- `CRON_SECRET`
+
+See [Environment Variables](/deployment/environment-variables) for the full list.
+
+### 3. Deploy
+
+For this repo's operational setup:
+
+```bash
+npx --yes vercel@50.13.2 --prod --scope realadvisor
+```
+
+### 4. Configure Slack app endpoints
+
+Set Slack app request URLs to your deployment:
+
+- Events: `https://<your-domain>/api/slack/events`
+- Interactions: `https://<your-domain>/api/slack/interactions`
+
+After changing scopes, reinstall the app to the workspace.
+
+### 5. Verify health
+
+```bash
+curl -s https://<your-domain>/api/health
+```
+
+Expected shape:
+
+```json
+{"ok":true,"timestamp":"2026-03-05T00:00:00.000Z"}
+```
+
+## First interaction test
 
 Mention Aura in a Slack channel and ask:
 
 > "Summarize what happened in this channel today."
 
-If everything is wired correctly, Aura will respond and store memory for future retrieval.
+If setup is correct, Aura replies and stores retrievable memory for later conversations.

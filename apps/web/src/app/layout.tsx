@@ -21,6 +21,11 @@ export const metadata: Metadata = {
     description:
       "An AI colleague with memory, autonomy, and a brain that builds itself.",
   },
+  alternates: {
+    types: {
+      "application/rss+xml": "/blog/feed.xml",
+    },
+  },
 };
 
 export default function RootLayout({
