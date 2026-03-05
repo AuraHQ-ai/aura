@@ -1,9 +1,10 @@
-import { eq, and, or, isNull, sql } from "drizzle-orm";
+import { eq, and, or, isNull, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   credentials,
   credentialGrants,
   credentialAuditLog,
+  userProfiles,
   type Credential,
 } from "../db/schema.js";
 import { encryptCredential, decryptCredential } from "./credentials.js";
@@ -374,6 +375,40 @@ export async function listApiCredentials(
     ...owned.map((r) => ({ ...r, permission: "owner" as const })),
     ...granted.map((r) => ({ ...r, permission: r.permission as "read" | "write" | "admin" })),
   ];
+}
+
+export async function listGrantsForCredentials(
+  credentialIds: string[],
+): Promise<
+  Array<{
+    credentialId: string;
+    granteeId: string;
+    permission: string;
+    displayName: string | null;
+  }>
+> {
+  if (credentialIds.length === 0) return [];
+
+  const grants = await db
+    .select({
+      credentialId: credentialGrants.credentialId,
+      granteeId: credentialGrants.granteeId,
+      permission: credentialGrants.permission,
+      displayName: userProfiles.displayName,
+    })
+    .from(credentialGrants)
+    .leftJoin(
+      userProfiles,
+      eq(credentialGrants.granteeId, userProfiles.slackUserId),
+    )
+    .where(
+      and(
+        inArray(credentialGrants.credentialId, credentialIds),
+        isNull(credentialGrants.revokedAt),
+      ),
+    );
+
+  return grants;
 }
 
 export async function deleteApiCredential(
