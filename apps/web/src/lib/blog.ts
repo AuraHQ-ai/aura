@@ -1,21 +1,18 @@
-import fs from "fs";
-import path from "path";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
 import matter from "gray-matter";
 import readingTime from "reading-time";
 
-const CONTENT_DIR = path.join(process.cwd(), "..", "..", "content", "blog");
-
-export interface BlogPost {
-  slug: string;
-  title: string;
-  date: string;
-  author: string;
-  tags: string[];
-  excerpt: string;
-  ogImage?: string;
-  readingTime: string;
-  content: string;
-}
+type Frontmatter = {
+  title?: string;
+  slug?: string;
+  date?: string | Date;
+  author?: string;
+  tags?: string[];
+  excerpt?: string;
+  og_image?: string;
+  draft?: boolean;
+};
 
 export interface BlogPostMeta {
   slug: string;
@@ -25,107 +22,122 @@ export interface BlogPostMeta {
   tags: string[];
   excerpt: string;
   ogImage?: string;
-  readingTime: string;
+  readingMinutes: number;
 }
 
-function parseMdxFile(filePath: string): BlogPost | null {
-  const raw = fs.readFileSync(filePath, "utf-8");
+export interface BlogPost extends BlogPostMeta {
+  content: string;
+}
+
+const BLOG_ROOT = path.resolve(process.cwd(), "..", "..", "content", "blog");
+
+async function listMdxFiles(dir: string): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) return listMdxFiles(fullPath);
+      return fullPath.endsWith(".mdx") || fullPath.endsWith(".md")
+        ? [fullPath]
+        : [];
+    }),
+  );
+  return files.flat();
+}
+
+function normalizeDate(value: string | Date | undefined): string {
+  if (!value) return new Date(0).toISOString();
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date(0).toISOString() : parsed.toISOString();
+}
+
+function parsePost(filePath: string, raw: string): BlogPost | null {
   const { data, content } = matter(raw);
+  const fm = data as Frontmatter;
 
-  if (data.draft) return null;
+  if (fm.draft) return null;
 
-  const slug =
-    data.slug || path.basename(filePath, path.extname(filePath));
+  const slug = fm.slug ?? path.basename(filePath, path.extname(filePath));
   const stats = readingTime(content);
 
   return {
     slug,
-    title: data.title ?? "Untitled",
-    date: data.date ? new Date(data.date).toISOString() : new Date().toISOString(),
-    author: data.author ?? "aura",
-    tags: data.tags ?? [],
-    excerpt: data.excerpt ?? "",
-    ogImage: data.og_image,
-    readingTime: stats.text,
+    title: fm.title ?? slug,
+    date: normalizeDate(fm.date),
+    author: fm.author ?? "aura",
+    tags: Array.isArray(fm.tags) ? fm.tags : [],
+    excerpt: fm.excerpt ?? "",
+    ogImage: fm.og_image,
+    readingMinutes: Math.max(1, Math.ceil(stats.minutes)),
     content,
   };
 }
 
-export function getAllPosts(): BlogPostMeta[] {
-  if (!fs.existsSync(CONTENT_DIR)) return [];
-
-  const files = fs.readdirSync(CONTENT_DIR).filter((f) => f.endsWith(".mdx"));
+export async function getAllPosts(): Promise<BlogPostMeta[]> {
+  const files = await listMdxFiles(BLOG_ROOT);
   const posts: BlogPostMeta[] = [];
 
-  for (const file of files) {
-    const post = parseMdxFile(path.join(CONTENT_DIR, file));
+  for (const filePath of files) {
+    const raw = await readFile(filePath, "utf-8");
+    const post = parsePost(filePath, raw);
     if (!post) continue;
     const { content: _, ...meta } = post;
     posts.push(meta);
   }
 
   return posts.sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
   );
 }
 
-export function getPostBySlug(slug: string): BlogPost | null {
-  if (!fs.existsSync(CONTENT_DIR)) return null;
+export async function getPostBySlug(slug: string): Promise<BlogPost | null> {
+  const files = await listMdxFiles(BLOG_ROOT);
 
-  const files = fs.readdirSync(CONTENT_DIR).filter((f) => f.endsWith(".mdx"));
-
-  for (const file of files) {
-    const post = parseMdxFile(path.join(CONTENT_DIR, file));
+  for (const filePath of files) {
+    const raw = await readFile(filePath, "utf-8");
+    const post = parsePost(filePath, raw);
     if (post && post.slug === slug) return post;
   }
 
   return null;
 }
 
-export function getAllSlugs(): string[] {
-  if (!fs.existsSync(CONTENT_DIR)) return [];
-
-  const files = fs.readdirSync(CONTENT_DIR).filter((f) => f.endsWith(".mdx"));
-  const slugs: string[] = [];
-
-  for (const file of files) {
-    const raw = fs.readFileSync(path.join(CONTENT_DIR, file), "utf-8");
-    const { data } = matter(raw);
-    if (data.draft) continue;
-    slugs.push(data.slug || path.basename(file, ".mdx"));
-  }
-
-  return slugs;
+export async function getAllSlugs(): Promise<string[]> {
+  const posts = await getAllPosts();
+  return posts.map((p) => p.slug);
 }
 
-export function getPostsByTag(tag: string): BlogPostMeta[] {
-  return getAllPosts().filter((p) => p.tags.includes(tag));
+export async function getAllTags(): Promise<string[]> {
+  const posts = await getAllPosts();
+  return Array.from(new Set(posts.flatMap((p) => p.tags))).sort();
 }
 
-export function getAllTags(): string[] {
-  const tags = new Set<string>();
-  for (const post of getAllPosts()) {
-    for (const tag of post.tags) tags.add(tag);
-  }
-  return Array.from(tags).sort();
-}
-
-export function getRelatedPosts(
+export async function getRelatedPosts(
   slug: string,
-  limit = 3
-): BlogPostMeta[] {
-  const current = getAllPosts().find((p) => p.slug === slug);
+  limit = 3,
+): Promise<BlogPostMeta[]> {
+  const posts = await getAllPosts();
+  const current = posts.find((p) => p.slug === slug);
   if (!current) return [];
 
-  const others = getAllPosts().filter((p) => p.slug !== slug);
-  const scored = others.map((post) => {
-    const overlap = post.tags.filter((t) => current.tags.includes(t)).length;
-    return { post, score: overlap };
-  });
-
-  return scored
-    .sort((a, b) => b.score - a.score)
+  return posts
+    .filter((p) => p.slug !== slug)
+    .map((post) => ({
+      post,
+      overlap: post.tags.filter((t) => current.tags.includes(t)).length,
+    }))
+    .filter(({ overlap }) => overlap > 0)
+    .sort(
+      (a, b) =>
+        b.overlap - a.overlap ||
+        new Date(b.post.date).getTime() - new Date(a.post.date).getTime(),
+    )
     .slice(0, limit)
-    .filter((s) => s.score > 0)
-    .map((s) => s.post);
+    .map(({ post }) => post);
 }
