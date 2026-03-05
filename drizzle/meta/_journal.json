@@ -225,6 +225,13 @@
       "when": 1772880000000,
       "tag": "0031_hybrid_memory_search",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1773225600000,
+      "tag": "0032_content_index_table",
+      "breakpoints": true
     }
   ]
 }

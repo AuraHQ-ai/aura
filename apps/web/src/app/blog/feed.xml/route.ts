@@ -4,7 +4,7 @@ import { getAllPosts } from "@/lib/blog";
 const SITE_URL = "https://aurahq.ai";
 
 export async function GET() {
-  const posts = getAllPosts();
+  const posts = await getAllPosts();
 
   const feed = new Feed({
     title: "Aura Blog",
@@ -35,8 +35,8 @@ export async function GET() {
 
   return new Response(feed.rss2(), {
     headers: {
-      "Content-Type": "application/xml; charset=utf-8",
-      "Cache-Control": "s-maxage=3600, stale-while-revalidate",
+      "Content-Type": "application/rss+xml; charset=utf-8",
+      "Cache-Control": "s-maxage=1800, stale-while-revalidate=3600",
     },
   });
 }

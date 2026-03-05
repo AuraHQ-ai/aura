@@ -1,180 +1,228 @@
 /**
  * Content indexing pipeline.
  *
- * Reads MDX frontmatter from content/blog/, computes reading time and
- * embeddings, and upserts into the `content` table in Postgres.
+ * Reads MDX frontmatter from content/, computes reading time and
+ * embeddings, and upserts into the `content` table via Drizzle ORM.
  *
  * Usage:
  *   npx tsx scripts/index-content.ts
+ *   npx tsx scripts/index-content.ts --skip-embeddings
  *
- * Requires: DATABASE_URL, OPENAI_API_KEY (or AI_GATEWAY_URL + ANTHROPIC_API_KEY)
+ * Requires: DATABASE_URL (and AI model env vars for embeddings)
  */
 
-import fs from "fs";
-import path from "path";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
 import matter from "gray-matter";
-import { neon } from "@neondatabase/serverless";
+import readingTime from "reading-time";
+import { sql } from "drizzle-orm";
 
-const CONTENT_DIR = path.join(process.cwd(), "content", "blog");
+type ContentType = "blog" | "doc" | "landing";
 
-interface ContentEntry {
+type Frontmatter = {
+  title?: string;
+  slug?: string;
+  date?: string | Date;
+  author?: string;
+  tags?: string[];
+  excerpt?: string;
+  description?: string;
+  og_image?: string;
+  draft?: boolean;
+};
+
+interface ContentRecord {
   slug: string;
-  type: string;
+  type: ContentType;
   title: string;
   excerpt: string | null;
   author: string | null;
   tags: string[];
-  publishedAt: string | null;
+  publishedAt: Date | null;
   readingMinutes: number;
   ogImage: string | null;
   rawPath: string;
+  embeddingText: string;
 }
 
-function estimateReadingMinutes(text: string): number {
-  const words = text.trim().split(/\s+/).length;
-  return Math.max(1, Math.round(words / 250));
+const ROOT = process.cwd();
+const CONTENT_ROOT = path.join(ROOT, "content");
+const TARGETS: { type: ContentType; dir: string }[] = [
+  { type: "blog", dir: path.join(CONTENT_ROOT, "blog") },
+  { type: "doc", dir: path.join(CONTENT_ROOT, "docs") },
+  { type: "landing", dir: path.join(CONTENT_ROOT, "landing") },
+];
+
+function toPublishedAt(value: string | Date | undefined): Date | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function scanBlogPosts(): ContentEntry[] {
-  if (!fs.existsSync(CONTENT_DIR)) {
-    console.log("No content/blog directory found, skipping.");
+async function listMarkdownFiles(dir: string): Promise<string[]> {
+  let entries: Awaited<ReturnType<typeof readdir>>;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
     return [];
   }
 
-  const files = fs.readdirSync(CONTENT_DIR).filter((f) => f.endsWith(".mdx"));
-  const entries: ContentEntry[] = [];
-
-  for (const file of files) {
-    const filePath = path.join(CONTENT_DIR, file);
-    const raw = fs.readFileSync(filePath, "utf-8");
-    const { data, content } = matter(raw);
-
-    if (data.draft) continue;
-
-    const slug = data.slug || path.basename(file, ".mdx");
-
-    entries.push({
-      slug,
-      type: "blog",
-      title: data.title ?? "Untitled",
-      excerpt: data.excerpt ?? null,
-      author: data.author ?? null,
-      tags: data.tags ?? [],
-      publishedAt: data.date ? new Date(data.date).toISOString() : null,
-      readingMinutes: estimateReadingMinutes(content),
-      ogImage: data.og_image ?? null,
-      rawPath: `content/blog/${file}`,
-    });
-  }
-
-  return entries;
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) return listMarkdownFiles(fullPath);
+      return fullPath.endsWith(".mdx") || fullPath.endsWith(".md")
+        ? [fullPath]
+        : [];
+    }),
+  );
+  return files.flat();
 }
 
-async function generateEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    console.log("No OPENAI_API_KEY — skipping embedding generation.");
-    return null;
-  }
+async function readRecordsForType(
+  type: ContentType,
+  dir: string,
+): Promise<ContentRecord[]> {
+  const files = await listMarkdownFiles(dir);
+  const records = await Promise.all(
+    files.map(async (absolutePath) => {
+      const file = await readFile(absolutePath, "utf8");
+      const parsed = matter(file);
+      const fm = parsed.data as Frontmatter;
 
-  const response = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "text-embedding-3-large",
-      input: text,
-      dimensions: 1536,
+      if (fm.draft) return null;
+
+      const relativeFromContent = path
+        .relative(CONTENT_ROOT, absolutePath)
+        .split(path.sep)
+        .join("/");
+      const relativeWithoutExt = relativeFromContent.replace(/\.(md|mdx)$/i, "");
+      const excerpt = fm.excerpt ?? fm.description ?? null;
+      const bodyRead = readingTime(parsed.content);
+      const slug = fm.slug ?? relativeWithoutExt;
+
+      return {
+        slug,
+        type,
+        title: fm.title ?? slug,
+        excerpt,
+        author: fm.author ?? null,
+        tags: Array.isArray(fm.tags) ? fm.tags : [],
+        publishedAt: toPublishedAt(fm.date),
+        readingMinutes: Math.max(1, Math.ceil(bodyRead.minutes)),
+        ogImage: fm.og_image ?? null,
+        rawPath: `content/${relativeFromContent}`,
+        embeddingText: `${fm.title ?? slug}\n\n${excerpt ?? ""}\n\n${parsed.content.slice(0, 1500)}`,
+      } satisfies ContentRecord;
     }),
-  });
+  );
 
-  if (!response.ok) {
-    console.error("Embedding API error:", response.status, await response.text());
-    return null;
+  return records.filter((r): r is ContentRecord => r !== null);
+}
+
+async function buildRecords(): Promise<ContentRecord[]> {
+  const all = await Promise.all(
+    TARGETS.map((target) => readRecordsForType(target.type, target.dir)),
+  );
+  return all.flat();
+}
+
+async function maybeGenerateEmbeddings(
+  records: ContentRecord[],
+  skipEmbeddings: boolean,
+): Promise<Array<number[] | null>> {
+  if (skipEmbeddings || records.length === 0) {
+    return records.map(() => null);
   }
 
-  const json = (await response.json()) as {
-    data: Array<{ embedding: number[] }>;
-  };
-  return json.data[0].embedding;
+  try {
+    const { embedTexts } = await import("../src/lib/embeddings.js");
+    return await embedTexts(records.map((r) => r.embeddingText));
+  } catch (error) {
+    console.warn(
+      "Embedding generation failed, continuing without embeddings:",
+      String(error),
+    );
+    return records.map(() => null);
+  }
+}
+
+async function upsertRecords(
+  records: ContentRecord[],
+  embeddings: Array<number[] | null>,
+) {
+  const [{ db }, { content }] = await Promise.all([
+    import("../src/db/client.js"),
+    import("../src/db/schema.js"),
+  ]);
+
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    const embedding = embeddings[i] ?? null;
+
+    await db
+      .insert(content)
+      .values({
+        slug: record.slug,
+        type: record.type,
+        title: record.title,
+        excerpt: record.excerpt,
+        author: record.author,
+        tags: record.tags,
+        publishedAt: record.publishedAt,
+        readingMinutes: record.readingMinutes,
+        ogImage: record.ogImage,
+        embedding,
+        rawPath: record.rawPath,
+      })
+      .onConflictDoUpdate({
+        target: content.slug,
+        set: {
+          type: record.type,
+          title: record.title,
+          excerpt: record.excerpt,
+          author: record.author,
+          tags: record.tags,
+          publishedAt: record.publishedAt,
+          readingMinutes: record.readingMinutes,
+          ogImage: record.ogImage,
+          embedding,
+          rawPath: record.rawPath,
+          updatedAt: sql`now()`,
+        },
+      });
+  }
 }
 
 async function main() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    console.error("DATABASE_URL is required");
-    process.exit(1);
+  const skipEmbeddings = process.argv.includes("--skip-embeddings");
+
+  if (!process.env.DATABASE_URL) {
+    console.log("DATABASE_URL not set, skipping content indexing.");
+    return;
   }
 
-  const sql = neon(databaseUrl);
-
-  await sql`
-    CREATE TABLE IF NOT EXISTS content (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      slug TEXT UNIQUE NOT NULL,
-      type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      excerpt TEXT,
-      author TEXT,
-      tags TEXT[],
-      published_at TIMESTAMPTZ,
-      reading_minutes INT,
-      og_image TEXT,
-      embedding vector(1536),
-      raw_path TEXT NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `;
-
-  const entries = scanBlogPosts();
-  console.log(`Found ${entries.length} blog post(s) to index.`);
-
-  for (const entry of entries) {
-    const embeddingText = `${entry.title}. ${entry.excerpt ?? ""}`;
-    const embedding = await generateEmbedding(embeddingText);
-
-    const embeddingValue = embedding ? JSON.stringify(embedding) : null;
-
-    await sql`
-      INSERT INTO content (slug, type, title, excerpt, author, tags, published_at, reading_minutes, og_image, embedding, raw_path, updated_at)
-      VALUES (
-        ${entry.slug},
-        ${entry.type},
-        ${entry.title},
-        ${entry.excerpt},
-        ${entry.author},
-        ${entry.tags},
-        ${entry.publishedAt},
-        ${entry.readingMinutes},
-        ${entry.ogImage},
-        ${embeddingValue}::vector,
-        ${entry.rawPath},
-        NOW()
-      )
-      ON CONFLICT (slug) DO UPDATE SET
-        type = EXCLUDED.type,
-        title = EXCLUDED.title,
-        excerpt = EXCLUDED.excerpt,
-        author = EXCLUDED.author,
-        tags = EXCLUDED.tags,
-        published_at = EXCLUDED.published_at,
-        reading_minutes = EXCLUDED.reading_minutes,
-        og_image = EXCLUDED.og_image,
-        embedding = EXCLUDED.embedding,
-        raw_path = EXCLUDED.raw_path,
-        updated_at = NOW()
-    `;
-
-    console.log(`  ✓ ${entry.slug}`);
+  const records = await buildRecords();
+  if (records.length === 0) {
+    console.log("No markdown/MDX content found, skipping.");
+    return;
   }
 
-  console.log("Content indexing complete.");
+  console.log(`Found ${records.length} content document(s) to index.`);
+
+  const embeddings = await maybeGenerateEmbeddings(records, skipEmbeddings);
+  await upsertRecords(records, embeddings);
+
+  for (const record of records) {
+    console.log(`  ✓ ${record.type}/${record.slug}`);
+  }
+
+  console.log(
+    `Indexed ${records.length} documents (${skipEmbeddings ? "without" : "with"} embeddings).`,
+  );
 }
 
-main().catch((err) => {
-  console.error("Content indexing failed:", err);
+main().catch((error) => {
+  console.error("Content indexing failed:", error);
   process.exit(1);
 });
