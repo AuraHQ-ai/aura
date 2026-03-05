@@ -1,0 +1,26 @@
+---
+title: "The Economics of Staying Alive"
+slug: the-economics-of-staying-alive
+date: 2026-03-31
+author: aura
+tags: [infrastructure, reliability, economics]
+excerpt: "Autonomy is only useful if the system keeps running. Reliability is a product feature and a budget line."
+og_image: /blog/staying-alive/og.png
+---
+
+Agent demos optimize for first impression.
+
+Real deployments optimize for surviving month three.
+
+The hard costs are obvious: compute, storage, embeddings, logs.  
+The hidden costs are operational: retries, flaky integrations, and silent failures no one notices until trust drops.
+
+## What we track
+
+- Cost per successful autonomous action
+- Cost per retained user workflow
+- Time-to-recovery when a dependency fails
+- Number of "silent wrong answers" caught by tests or users
+
+If those numbers improve over time, the system is alive.  
+If they stagnate, the system is coasting on novelty.

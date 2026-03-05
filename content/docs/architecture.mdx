@@ -1,0 +1,23 @@
+---
+title: "Architecture"
+description: "How Aura processes messages, retrieves memory, and executes work."
+---
+
+# Architecture
+
+Aura runs as a stateless serverless API with persistent memory in Postgres.
+
+## High-level flow
+
+1. Slack event arrives at `/api/slack/events`.
+2. Pipeline resolves context (channel, user, thread, memory).
+3. LLM generates a response and optional tool calls.
+4. Tool results are posted back to Slack.
+5. Message + extracted memories are persisted.
+
+## Key subsystems
+
+- **Pipeline:** orchestration and tool execution
+- **Memory:** embedding, retrieval, consolidation
+- **Jobs:** recurring and one-shot autonomous tasks
+- **Integrations:** Slack, Gmail, BigQuery, GitHub, and sandboxed execution

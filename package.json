@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && tsx scripts/index-content.ts",
     "vercel-build": "tsc && tsx src/db/migrate.ts",
     "postinstall": "rm -rf node_modules/e2b/node_modules/chalk 2>/dev/null; true",
     "start": "node dist/index.js",
@@ -15,7 +15,9 @@
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
-    "test": "vitest run"
+    "test": "vitest run",
+    "content:index": "tsx scripts/index-content.ts",
+    "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.46",
@@ -39,10 +41,12 @@
     "drizzle-orm": "^0.44.0",
     "e2b": "^2.12.1",
     "google-auth-library": "^10.5.0",
+    "gray-matter": "^4.0.3",
     "hono": "^4.11.9",
     "mammoth": "^1.11.0",
     "markdown-table-prettify": "^3.7.0",
     "playwright-core": "^1.58.2",
+    "reading-time": "^1.5.0",
     "turndown": "^7.2.2",
     "xlsx": "^0.18.5",
     "zod": "^3.24.4"

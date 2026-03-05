@@ -1,0 +1,14 @@
+---
+title: "Deploying on Vercel"
+description: "Production deployment model for Aura API and web properties."
+---
+
+# Deploying on Vercel
+
+Recommended project split:
+
+- `api.aurahq.ai` -> existing Aura backend project
+- `aurahq.ai` -> Next.js web project (`apps/web`)
+- `docs.aurahq.ai` -> Mintlify project (GitHub-synced docs)
+
+This keeps API risk isolated from marketing/blog deployments.
