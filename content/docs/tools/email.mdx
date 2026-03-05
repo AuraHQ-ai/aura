@@ -1,0 +1,42 @@
+---
+title: "Email Tools"
+description: "Gmail integration for reading, searching, and composing email."
+---
+
+# Email Tools
+
+Aura integrates with Gmail via the Google Workspace APIs. She can read, search, and compose emails on behalf of users who have granted OAuth access.
+
+## Available Tools
+
+### read_email
+Fetch and display a specific email by ID, including full body content and metadata.
+
+### search_email
+Search a user's inbox using Gmail's search syntax (from:, subject:, after:, has:attachment, etc.).
+
+### compose_email
+Draft and send emails. Aura composes in the user's voice based on their communication style profile.
+
+### email_triage
+Automated email classification: urgent, needs-reply, informational, or junk. Runs as a morning job.
+
+## Authentication
+
+Email access uses per-user OAuth tokens stored in the `oauth_tokens` table. Users authenticate via a Google OAuth flow, and the refresh token is stored securely.
+
+```
+Required Google Workspace scopes:
+- gmail.readonly
+- gmail.send
+- gmail.compose
+```
+
+## Email Pipeline
+
+Incoming emails are staged in the `emails_raw` table for triage:
+
+1. Gmail API fetches new messages since last sync
+2. Each email is parsed, stored, and classified
+3. Morning digest job summarizes the inbox and posts to the user's DM
+4. Users can ask Aura to reply, forward, or archive from within Slack

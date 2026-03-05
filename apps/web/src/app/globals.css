@@ -1,1 +1,18 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+[data-rehype-pretty-code-figure] {
+  margin: 1.25rem 0;
+}
+
+[data-rehype-pretty-code-figure] pre {
+  overflow-x: auto;
+  border: 1px solid #262626;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  background: #0a0a0a;
+}
+
+[data-rehype-pretty-code-figure] code {
+  counter-reset: line;
+}

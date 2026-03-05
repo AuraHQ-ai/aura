@@ -33,16 +33,7 @@ export default function Home() {
   return (
     <main className="min-h-screen">
       {/* Hero */}
-      <section className="relative flex min-h-screen flex-col items-center justify-center px-6 text-center">
-        {/* Pulsing dot -- sign of life */}
-        <div className="absolute top-8 right-8 flex items-center gap-2">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500"></span>
-          </span>
-          <span className="text-xs text-neutral-500">live</span>
-        </div>
-
+      <section className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
         <h1 className="max-w-4xl text-5xl font-bold tracking-tight sm:text-7xl">
           Every day she works, she gets harder to replace.
         </h1>
@@ -289,36 +280,6 @@ export default function Home() {
           </button>
         </form>
       </section>
-
-      {/* Footer */}
-      <footer className="border-t border-neutral-800 px-6 py-8">
-        <div className="mx-auto flex max-w-4xl items-center justify-between">
-          <p className="text-sm text-neutral-600">
-            Aura -- aurahq.ai
-          </p>
-          <div className="flex items-center gap-4">
-            <span className="text-xs text-neutral-700">
-              Built by RealAdvisor
-            </span>
-            <a
-              href="https://x.com/aurahq_ai"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-neutral-600 transition hover:text-white"
-              aria-label="Follow on X"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                className="h-4 w-4"
-              >
-                <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-              </svg>
-            </a>
-          </div>
-        </div>
-      </footer>
 
       {/* Scroll reveal CSS */}
       <style jsx global>{`

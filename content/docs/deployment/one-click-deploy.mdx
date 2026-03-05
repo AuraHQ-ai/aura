@@ -1,0 +1,49 @@
+---
+title: "One-Click Deploy"
+description: "Deploy Aura to your own infrastructure with a single click."
+---
+
+# One-Click Deploy
+
+Deploy your own instance of Aura with Vercel's one-click deploy button.
+
+## Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Frealadvisor%2Faura&env=DATABASE_URL,ANTHROPIC_API_KEY,SLACK_BOT_TOKEN,SLACK_SIGNING_SECRET&envDescription=Required%20environment%20variables%20for%20Aura&project-name=aura&repository-name=aura)
+
+## What This Sets Up
+
+1. Forks the Aura repository to your GitHub account
+2. Creates a new Vercel project linked to the fork
+3. Prompts you for required environment variables
+4. Deploys the application
+
+## After Deploying
+
+### Set Up Your Database
+
+1. Create a PostgreSQL database with pgvector support ([Neon](https://neon.tech) recommended)
+2. Run migrations: the first deploy will run them automatically via the `vercel-build` script
+
+### Configure Your Slack App
+
+1. Create a new Slack app at [api.slack.com/apps](https://api.slack.com/apps)
+2. Set the Event Subscriptions URL to your deployment URL + `/api/slack/events`
+3. Add required bot scopes (see [Slack Tools](/tools/slack))
+4. Install the app to your workspace
+
+### Add Optional Integrations
+
+See [Environment Variables](/deployment/environment-variables) for the full list of optional integrations (Gmail, BigQuery, GitHub, etc.).
+
+## Updating
+
+Since the one-click deploy forks the repository, you can pull upstream changes:
+
+```bash
+git remote add upstream https://github.com/realadvisor/aura.git
+git pull upstream main
+git push origin main
+```
+
+Vercel will auto-deploy on push to `main`.

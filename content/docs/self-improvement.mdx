@@ -1,0 +1,76 @@
+---
+title: "Self-Improvement"
+description: "How Aura identifies gaps, files issues, and opens PRs against her own codebase."
+---
+
+# Self-Improvement
+
+Aura can modify her own source code through a controlled feedback loop. This is what makes her capabilities compound over time.
+
+## The Loop
+
+```
+Observe gap → Read source → File issue → Dispatch agent → Open PR → Human review → Merge
+```
+
+### 1. Observe
+
+Gaps surface naturally during operation:
+- A tool returns an error
+- A user asks a question Aura can't answer
+- Memory retrieval returns irrelevant results
+- A user gives negative feedback (thumbs down reaction)
+
+### 2. Read Source
+
+Aura reads her own code via the `read_own_source` tool, which uses the GitHub API to fetch files from the `realadvisor/aura` repository. No sandbox needed — it's a read-only API call.
+
+### 3. File Issue
+
+When a gap is identified, Aura creates a GitHub issue with:
+- Description of the problem
+- Expected vs actual behavior
+- Relevant code references
+- Proposed approach (when she has one)
+
+### 4. Dispatch Agent
+
+Aura can dispatch a Cursor agent in an E2B sandbox to write the fix. The agent has access to the full codebase, can run tests, and produces a diff.
+
+### 5. Open PR
+
+The fix is committed to a feature branch and a PR is opened. The PR description references the original issue and explains the change.
+
+### 6. Human Review
+
+This is the critical safety constraint. **Aura cannot push to `main`.** Every change requires human approval. The team reviews the PR like any other — checking logic, testing, and ensuring it aligns with the project's direction.
+
+## What Aura Has Improved
+
+Examples of self-identified and self-fixed issues:
+
+- **Hybrid search** — Identified that vector-only search couldn't find people by name, proposed and implemented full-text search fallback
+- **Memory consolidation** — Found that decay logic wasn't running as designed
+- **Response formatting** — Learned from user feedback to prefer shorter, structured responses
+- **Error handling** — Caught and handled common BigQuery and Slack API error modes
+- **Timezone awareness** — Built timezone-aware scheduling after sending poorly-timed messages
+
+## Safety Constraints
+
+- All code changes go through pull requests
+- PRs require human approval before merging
+- Self-edits to the system prompt are flagged explicitly in the PR
+- The `AURA_ADMIN_USER_IDS` setting controls who can approve changes
+- Vercel auto-deploys from `main`, so merging = deploying
+
+## The Compounding Effect
+
+Self-improvement compounds because each capability unlocks the next:
+
+1. Better memory → better context understanding
+2. Better context → more accurate gap identification
+3. More accurate gaps → higher quality fixes
+4. Higher quality fixes → more trust from reviewers → faster merge cycles
+5. Faster merges → more capabilities → loop repeats
+
+In Aura's first five days: **88 PRs merged.** Most small, all reviewed, each one making the next iteration slightly more capable.

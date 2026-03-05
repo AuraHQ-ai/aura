@@ -681,3 +681,43 @@ export type CredentialGrant = typeof credentialGrants.$inferSelect;
 export type NewCredentialGrant = typeof credentialGrants.$inferInsert;
 export type CredentialAuditEntry = typeof credentialAuditLog.$inferSelect;
 export type NewCredentialAuditEntry = typeof credentialAuditLog.$inferInsert;
+
+// ── Content (blog/docs index for semantic search + related posts) ───────────
+
+export const content = pgTable(
+  "content",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    slug: text("slug").notNull(),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    excerpt: text("excerpt"),
+    author: text("author"),
+    tags: text("tags")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    publishedAt: timestamptz("published_at"),
+    readingMinutes: integer("reading_minutes"),
+    ogImage: text("og_image"),
+    embedding: vector("embedding", { dimensions: 1536 }),
+    rawPath: text("raw_path").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("content_slug_idx").on(table.slug),
+    index("content_type_idx").on(table.type),
+    index("content_published_at_idx").on(table.publishedAt),
+    index("content_tags_idx").using("gin", table.tags),
+    index("content_embedding_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+  ],
+);
+
+export type Content = typeof content.$inferSelect;
+export type NewContent = typeof content.$inferInsert;
