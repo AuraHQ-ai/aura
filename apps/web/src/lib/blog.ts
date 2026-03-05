@@ -129,17 +129,17 @@ export async function getAllTags(): Promise<string[]> {
 
 export async function getRelatedPosts(
   slug: string,
+  tags: string[],
   limit = 3,
 ): Promise<BlogPostMeta[]> {
+  if (tags.length === 0) return [];
   const posts = await getAllPosts();
-  const current = posts.find((p) => p.slug === slug);
-  if (!current) return [];
 
   return posts
     .filter((p) => p.slug !== slug)
     .map((post) => ({
       post,
-      overlap: post.tags.filter((t) => current.tags.includes(t)).length,
+      overlap: post.tags.filter((t) => tags.includes(t)).length,
     }))
     .filter(({ overlap }) => overlap > 0)
     .sort(
