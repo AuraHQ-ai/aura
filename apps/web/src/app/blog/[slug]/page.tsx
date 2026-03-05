@@ -93,7 +93,7 @@ export default async function BlogPostPage({ params }: Props) {
           </div>
         </header>
 
-        <div className="prose prose-invert prose-neutral max-w-none prose-headings:font-semibold prose-headings:tracking-tight prose-p:text-neutral-300 prose-p:leading-relaxed prose-strong:text-white prose-pre:bg-neutral-900 prose-pre:border prose-pre:border-neutral-800">
+        <div className="prose prose-invert prose-neutral max-w-none prose-p:leading-relaxed prose-a:text-blue-400 prose-a:underline-offset-4 prose-a:decoration-blue-400/30 hover:prose-a:decoration-blue-400 prose-strong:text-white">
           {content}
         </div>
       </article>

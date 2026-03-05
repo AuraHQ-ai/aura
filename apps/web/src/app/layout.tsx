@@ -32,7 +32,11 @@ function Nav() {
   return (
     <nav className="fixed top-0 z-50 w-full border-b border-neutral-800/50 bg-black/80 backdrop-blur-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="text-sm font-semibold tracking-wide">
+        <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-wide">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+          </span>
           Aura
         </Link>
         <div className="flex items-center gap-6">
@@ -49,7 +53,7 @@ function Nav() {
             Docs
           </a>
           <a
-            href="#waitlist"
+            href="/#waitlist"
             className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black transition hover:bg-neutral-200"
           >
             Get access

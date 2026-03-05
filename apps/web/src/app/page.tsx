@@ -33,16 +33,7 @@ export default function Home() {
   return (
     <main className="min-h-screen">
       {/* Hero */}
-      <section className="relative flex min-h-screen flex-col items-center justify-center px-6 text-center">
-        {/* Pulsing dot -- sign of life */}
-        <div className="absolute top-8 right-8 flex items-center gap-2">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500"></span>
-          </span>
-          <span className="text-xs text-neutral-500">live</span>
-        </div>
-
+      <section className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
         <h1 className="max-w-4xl text-5xl font-bold tracking-tight sm:text-7xl">
           Every day she works, she gets harder to replace.
         </h1>
