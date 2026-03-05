@@ -84,12 +84,12 @@ function Footer() {
           >
             Docs
           </a>
-          <Link
+          <a
             href="/blog/feed.xml"
             className="text-sm text-neutral-500 transition hover:text-white"
           >
             RSS
-          </Link>
+          </a>
         </div>
         <div className="flex items-center gap-4">
           <span className="text-xs text-neutral-700">

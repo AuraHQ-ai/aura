@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { formatDate, getAllPosts } from "@/lib/blog";
+import { formatDate, getAllPosts, getAllTags } from "@/lib/blog";
 
 export const metadata: Metadata = {
   title: "Blog — Aura",
@@ -25,7 +25,7 @@ export default async function BlogIndex({
   const activeTag = typeof params.tag === "string" ? params.tag : "";
 
   const allPosts = await getAllPosts();
-  const allTags = Array.from(new Set(allPosts.flatMap((p) => p.tags))).sort();
+  const allTags = await getAllTags();
 
   const posts = activeTag
     ? allPosts.filter((p) => p.tags.includes(activeTag))
