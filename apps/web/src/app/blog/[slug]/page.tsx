@@ -1,20 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getAllSlugs, getPostBySlug, getRelatedPosts } from "@/lib/blog";
+import {
+  formatDate,
+  getAllSlugs,
+  getPostBySlug,
+  getRelatedPosts,
+} from "@/lib/blog";
 import { renderMdx } from "@/lib/mdx";
 
 type Props = {
   params: Promise<{ slug: string }>;
 };
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
 
 export async function generateStaticParams() {
   const slugs = await getAllSlugs();
