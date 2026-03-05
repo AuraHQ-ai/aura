@@ -5,6 +5,7 @@ import { logger } from "../lib/logger.js";
 import { getCredential, maskCredential } from "../lib/credentials.js";
 import {
   listApiCredentials,
+  listGrantsForCredentials,
 } from "../lib/api-credentials.js";
 
 // ── Model Catalog ────────────────────────────────────────────────────────────
@@ -175,7 +176,7 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
       elements: [
         {
           type: "button",
-          text: { type: "plain_text", text: "➕ Add Credential" },
+          text: { type: "plain_text", text: "+ Add Credential", emoji: true },
           action_id: "api_credential_add",
           style: "primary",
         },
@@ -194,11 +195,24 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
     return blocks;
   }
 
+  const ownedCredIds = creds
+    .filter((c) => c.owner_id === userId)
+    .map((c) => c.id);
+  const allGrants = await listGrantsForCredentials(ownedCredIds);
+  const grantsByCredId = new Map<
+    string,
+    Array<{ granteeId: string; permission: string; displayName: string | null }>
+  >();
+  for (const g of allGrants) {
+    const list = grantsByCredId.get(g.credentialId) ?? [];
+    list.push(g);
+    grantsByCredId.set(g.credentialId, list);
+  }
+
   for (const cred of creds) {
     const isOwner = cred.owner_id === userId;
     const source = isOwner ? "yours" : `shared by <@${cred.owner_id}>`;
     const permLabel = isOwner ? "owner" : cred.permission;
-    const typeBadge = cred.type !== "token" ? ` (${cred.type})` : "";
 
     let expiryText = "";
     if (cred.expires_at) {
@@ -228,11 +242,26 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
       );
     }
 
+    const grants = grantsByCredId.get(cred.id) ?? [];
+    const actionCount = overflowOptions.length;
+    const maxAccessEntries = 5 - actionCount;
+
+    for (const grant of grants.slice(0, maxAccessEntries)) {
+      const label = grant.displayName ?? grant.granteeId;
+      overflowOptions.push({
+        text: {
+          type: "plain_text",
+          text: `👤 ${label} (${grant.permission})`,
+        },
+        value: `api_credential_access_${cred.id}_${grant.granteeId}`,
+      });
+    }
+
     blocks.push({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*${cred.name}*${typeBadge}  ·  _${source}_ (${permLabel})${expiryText}`,
+        text: `*${cred.name}*  ·  _${source}_ (${permLabel})${expiryText}`,
       },
       accessory: {
         type: "overflow",
