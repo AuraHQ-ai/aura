@@ -20,6 +20,8 @@ description: "Required variables for runtime, Slack integration, and cron."
 - `ANTHROPIC_API_KEY` (direct fallback path)
 - `TAVILY_API_KEY` (web search)
 - `E2B_API_KEY` (sandbox execution)
+- `CURSOR_API_KEY` (cursor-agent automation)
+- `CURSOR_WEBHOOK_SECRET` (validates cursor-agent webhook)
 
 ## Model settings
 
@@ -30,6 +32,19 @@ description: "Required variables for runtime, Slack integration, and cron."
 
 Runtime model settings can also be overridden from DB settings.
 
+## Optional integrations
+
+- `GOOGLE_EMAIL_CLIENT_ID`
+- `GOOGLE_EMAIL_CLIENT_SECRET`
+- `GOOGLE_BQ_CREDENTIALS`
+- `ELEVENLABS_API_KEY`
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_PHONE_NUMBER`
+- `COHERE_API_KEY`
+- `BROWSERBASE_API_KEY`
+- `BROWSERBASE_PROJECT_ID`
+
 ## Add variables with CLI
 
 ```bash
@@ -37,3 +52,5 @@ printf '%s' 'value' | npx --yes vercel@50.13.2 env add VAR_NAME production --sco
 ```
 
 Always use `printf '%s'` to avoid trailing newline issues.
+
+After adding or changing variables, redeploy so runtime sees the updated environment.

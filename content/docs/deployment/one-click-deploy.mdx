@@ -12,9 +12,19 @@ Use the hosted deployment button from the repository README, then:
 3. reinstall the Slack app,
 4. verify `/api/health` and cron auth.
 
+## Deploy button
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Frealadvisor%2Faura)
+
 ## After deploy checklist
 
 - Validate Slack event signatures are accepted
 - Confirm heartbeat cron can run with `CRON_SECRET`
 - Send one DM and one channel mention test
 - Verify memory persistence in Postgres
+
+## Recommended production split
+
+- Keep Aura backend as its own Vercel project (`api.aurahq.ai`)
+- Deploy `apps/web` as a separate project (`aurahq.ai`)
+- Host docs on Mintlify (`docs.aurahq.ai`)
