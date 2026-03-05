@@ -5,7 +5,7 @@ description: "Required variables for runtime, Slack integration, and cron."
 
 # Environment Variables
 
-Core runtime variables:
+## Required
 
 - `DATABASE_URL`
 - `SLACK_BOT_TOKEN`
@@ -14,8 +14,26 @@ Core runtime variables:
 - `AURA_ADMIN_USER_IDS`
 - `CRON_SECRET`
 
-Optional but useful:
+## Recommended
 
-- `SLACK_USER_TOKEN`
-- `TAVILY_API_KEY`
-- `ANTHROPIC_API_KEY`
+- `SLACK_USER_TOKEN` (workspace search)
+- `ANTHROPIC_API_KEY` (direct fallback path)
+- `TAVILY_API_KEY` (web search)
+- `E2B_API_KEY` (sandbox execution)
+
+## Model settings
+
+- `MODEL_MAIN`
+- `MODEL_FAST`
+- `MODEL_EMBEDDING`
+- `MODEL_ESCALATION`
+
+Runtime model settings can also be overridden from DB settings.
+
+## Add variables with CLI
+
+```bash
+printf '%s' 'value' | npx --yes vercel@50.13.2 env add VAR_NAME production --scope realadvisor
+```
+
+Always use `printf '%s'` to avoid trailing newline issues.

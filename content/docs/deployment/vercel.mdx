@@ -12,3 +12,30 @@ Recommended project split:
 - `docs.aurahq.ai` -> Mintlify project (GitHub-synced docs)
 
 This keeps API risk isolated from marketing/blog deployments.
+
+## Build behavior
+
+Backend deploys run:
+
+1. TypeScript compile
+2. Drizzle migrations (`tsx src/db/migrate.ts`)
+
+Migrations are idempotent and safe to run on each deploy.
+
+## CLI conventions
+
+Use:
+
+```bash
+npx --yes vercel@50.13.2 --scope realadvisor
+```
+
+For production deploy:
+
+```bash
+npx --yes vercel@50.13.2 --prod --scope realadvisor
+```
+
+## Operational rule
+
+Do not push directly to `main` in normal workflow. Use feature branches + PR review.

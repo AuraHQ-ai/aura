@@ -3,30 +3,17 @@ info:
   title: Aura API
   version: 0.1.0
   description: |
-    Public-facing endpoints for Aura webhooks and cron handlers.
+    HTTP endpoints for Aura, an autonomous AI agent that operates in Slack.
+    Current surface: Slack webhooks, health checks, and cron execution.
+  contact:
+    name: Aura
+    url: https://aurahq.ai
 servers:
   - url: https://api.aurahq.ai
     description: Production
   - url: https://aura-alpha-five.vercel.app
-    description: Legacy production hostname
+    description: Current backend deployment hostname
 paths:
-  /api/health:
-    get:
-      summary: Health check
-      operationId: getHealth
-      responses:
-        "200":
-          description: Service is healthy
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok:
-                    type: boolean
-                  timestamp:
-                    type: string
-                    format: date-time
   /api/slack/events:
     post:
       summary: Slack events webhook
@@ -39,8 +26,9 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              oneOf:
+                - $ref: "#/components/schemas/SlackChallenge"
+                - $ref: "#/components/schemas/SlackEventCallback"
       responses:
         "200":
           description: Event accepted
@@ -53,6 +41,8 @@ paths:
                     type: boolean
         "401":
           description: Invalid Slack signature
+      tags:
+        - Slack
   /api/slack/interactions:
     post:
       summary: Slack interactions webhook
@@ -72,6 +62,21 @@ paths:
       responses:
         "200":
           description: Interaction acknowledged
+      tags:
+        - Slack
+  /api/health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+      tags:
+        - System
   /api/cron/heartbeat:
     get:
       summary: Run heartbeat sweep
@@ -81,8 +86,29 @@ paths:
       responses:
         "200":
           description: Heartbeat completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  executed:
+                    type: integer
+                  failed:
+                    type: integer
+                  plansExpired:
+                    type: integer
+                  plansAbandoned:
+                    type: integer
+                  staleRunningRecovered:
+                    type: integer
+                  duration:
+                    type: integer
         "401":
           description: Unauthorized
+      tags:
+        - Cron
   /api/cron/consolidate:
     get:
       summary: Run memory consolidation
@@ -92,8 +118,20 @@ paths:
       responses:
         "200":
           description: Consolidation completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  duration:
+                    type: integer
+                additionalProperties: true
         "401":
           description: Unauthorized
+      tags:
+        - Cron
 components:
   securitySchemes:
     bearerAuth:
@@ -101,3 +139,42 @@ components:
       scheme: bearer
       description: |
         Cron endpoints require `Authorization: Bearer <CRON_SECRET>`.
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        timestamp:
+          type: string
+          format: date-time
+    SlackChallenge:
+      type: object
+      required:
+        - type
+        - challenge
+      properties:
+        type:
+          type: string
+          enum: [url_verification]
+        challenge:
+          type: string
+    SlackEventCallback:
+      type: object
+      required:
+        - type
+        - event
+      properties:
+        type:
+          type: string
+          enum: [event_callback]
+        event:
+          type: object
+          additionalProperties: true
+tags:
+  - name: Slack
+    description: Slack integration endpoints
+  - name: System
+    description: Operational health endpoints
+  - name: Cron
+    description: Scheduled background execution endpoints

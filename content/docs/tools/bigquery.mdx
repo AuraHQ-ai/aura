@@ -5,10 +5,16 @@ description: "Run analytical SQL and summarize insights in Slack."
 
 # BigQuery Tools
 
-Aura can execute SQL against BigQuery and report findings in plain language.
+Aura can execute SQL against BigQuery, summarize results, and provide decision-ready insights in Slack.
 
 ## Recommended pattern
 
 - start with scoped, safe queries
 - return small, interpretable tables
 - include assumptions and caveats in summaries
+
+## Operational guidance
+
+- default to read-only warehouse access
+- add execution timeouts for long-running queries
+- truncate oversized results before posting to Slack

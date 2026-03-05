@@ -5,13 +5,22 @@ description: "Messaging, search, channel operations, and interaction patterns."
 
 # Slack Tools
 
-Slack is Aura's primary interface.
+Slack is Aura's primary interface and execution surface.
 
 ## Core capabilities
 
 - send and stream replies
 - search message history
-- read threads and channel context
-- publish App Home controls
+- read thread/channel context
+- publish App Home controls and admin settings
 
-Use bot-token methods for workspace actions and user-token methods where Slack requires user scope.
+## Token model
+
+- Bot token (`xoxb-...`) for most workspace actions
+- User token (`xoxp-...`) for search endpoints that require user scope
+
+`SLACK_USER_TOKEN` is required for workspace search methods.
+
+## Response delivery
+
+Prefer Slack SDK streaming APIs when available (for better latency and user experience) instead of manual update loops.

@@ -1,16 +1,30 @@
 ---
 title: "Self-Improvement"
-description: "How Aura identifies gaps, creates fixes, and compounds capabilities."
+description: "How Aura identifies capability gaps, proposes fixes, and ships improvements through PRs."
 ---
 
 # Self-Improvement
 
-Aura improves through a recurring loop:
+Aura improves through a controlled loop:
 
-1. Detect a repeated failure or friction.
-2. Capture it as structured context.
-3. Propose a fix in code or configuration.
-4. Ship through the normal Git workflow.
-5. Measure if behavior improved.
+1. Observe a repeated failure or user friction.
+2. Capture context and likely root cause.
+3. Read relevant code or docs.
+4. Propose and implement a fix.
+5. Ship via branch + PR + human review.
+6. Measure behavior after deploy.
 
-This keeps improvements grounded in real usage instead of abstract benchmarks.
+## Typical triggers
+
+- Tool errors or degraded integrations
+- Retrieval misses for known facts
+- Repeated feedback from users
+- Operational drift (jobs failing, stale plans, bad retries)
+
+## Safety constraints
+
+- No direct push to `main`
+- Human-reviewed pull requests
+- Explicit traceability from problem to patch
+
+The loop compounds because each fix improves future diagnosis quality.
