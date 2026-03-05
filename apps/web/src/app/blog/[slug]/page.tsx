@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   getAllBlogPosts,
+  formatDate,
   getBlogPostBySlug,
   getRelatedPosts,
 } from "@/lib/blog";
@@ -11,14 +12,6 @@ import { renderMdx } from "@/lib/mdx";
 type BlogPostPageProps = {
   params: Promise<{ slug: string }>;
 };
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
 
 export async function generateStaticParams() {
   const posts = await getAllBlogPosts();

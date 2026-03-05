@@ -1,17 +1,9 @@
 import Link from "next/link";
-import { getAllBlogPosts, getAllBlogTags } from "@/lib/blog";
+import { formatDate, getAllBlogPosts, getAllBlogTags } from "@/lib/blog";
 
 type BlogPageProps = {
   searchParams?: Promise<{ tag?: string }>;
 };
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 export default async function BlogPage({ searchParams }: BlogPageProps) {
   const params = searchParams ? await searchParams : {};
@@ -78,7 +70,7 @@ export default async function BlogPage({ searchParams }: BlogPageProps) {
             </Link>
             <p className="mt-3 text-neutral-300">{post.excerpt}</p>
             <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-neutral-500">
-              <span>{formatDate(post.date)}</span>
+              <span>{formatDate(post.date, "short")}</span>
               <span>{post.readingMinutes} min read</span>
               <span>by {post.author}</span>
             </div>

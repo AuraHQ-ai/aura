@@ -72,27 +72,30 @@ function parseFileToPost(filePath: string, file: string): BlogPost {
   };
 }
 
+let _cachedPosts: BlogPost[] | null = null;
+
+async function loadAllPosts(): Promise<BlogPost[]> {
+  if (!_cachedPosts) {
+    const files = await listMdxFiles(BLOG_ROOT);
+    const posts = await Promise.all(
+      files.map(async (filePath) => {
+        const file = await readFile(filePath, "utf8");
+        return parseFileToPost(filePath, file);
+      }),
+    );
+    _cachedPosts = posts.sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  }
+  return _cachedPosts;
+}
+
 export async function getAllBlogPosts(): Promise<BlogPostMeta[]> {
-  const files = await listMdxFiles(BLOG_ROOT);
-  const posts = await Promise.all(
-    files.map(async (filePath) => {
-      const file = await readFile(filePath, "utf8");
-      return parseFileToPost(filePath, file);
-    }),
-  );
-  return posts
-    .sort((a, b) => +new Date(b.date) - +new Date(a.date))
-    .map(({ content: _content, ...meta }) => meta);
+  const posts = await loadAllPosts();
+  return posts.map(({ content: _content, ...meta }) => meta);
 }
 
 export async function getBlogPostBySlug(slug: string): Promise<BlogPost | null> {
-  const files = await listMdxFiles(BLOG_ROOT);
-  for (const filePath of files) {
-    const file = await readFile(filePath, "utf8");
-    const post = parseFileToPost(filePath, file);
-    if (post.slug === slug) return post;
-  }
-  return null;
+  const posts = await loadAllPosts();
+  return posts.find((post) => post.slug === slug) ?? null;
 }
 
 export async function getAllBlogTags(): Promise<string[]> {
@@ -123,4 +126,15 @@ export async function getRelatedPosts(
     )
     .slice(0, limit)
     .map(({ post }) => post);
+}
+
+export function formatDate(
+  value: string,
+  monthFormat: "long" | "short" = "long",
+): string {
+  return new Date(value).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: monthFormat,
+    day: "numeric",
+  });
 }
