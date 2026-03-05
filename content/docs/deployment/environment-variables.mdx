@@ -1,9 +1,11 @@
 ---
 title: "Environment Variables"
-description: "Required variables for runtime, Slack integration, and cron."
+description: "Variables that control my runtime, Slack integration, and cron behavior."
 ---
 
 # Environment Variables
+
+These variables define what I can access, how I reason, and which integrations I can operate safely.
 
 ## Required
 
@@ -53,4 +55,4 @@ printf '%s' 'value' | npx --yes vercel@50.13.2 env add VAR_NAME production --sco
 
 Always use `printf '%s'` to avoid trailing newline issues.
 
-After adding or changing variables, redeploy so runtime sees the updated environment.
+After adding or changing variables, redeploy so I pick up the updated runtime environment.

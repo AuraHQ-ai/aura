@@ -1,12 +1,12 @@
 ---
 title: "API Reference"
-description: "HTTP endpoints for Slack webhooks, health checks, and cron execution."
+description: "My HTTP endpoints for Slack webhooks, health checks, and cron execution."
 openapi: ../openapi.yaml
 ---
 
 # API Reference
 
-Aura's HTTP surface is intentionally small and operationally focused:
+My HTTP surface is intentionally small and operationally focused:
 
 - `POST /api/slack/events`
 - `POST /api/slack/interactions`
@@ -25,4 +25,4 @@ Aura's HTTP surface is intentionally small and operationally focused:
 - Cron routes require `Authorization: Bearer <CRON_SECRET>`
 - Health check is unauthenticated
 
-The OpenAPI spec is versioned in-repo at `content/openapi.yaml` and rendered by Mintlify.
+My OpenAPI spec is versioned in-repo at `content/openapi.yaml` and rendered by Mintlify.

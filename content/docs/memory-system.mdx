@@ -1,11 +1,11 @@
 ---
 title: "Memory System"
-description: "Extraction, storage, retrieval, and consolidation of long-term memory."
+description: "How I extract, store, retrieve, and consolidate long-term memory."
 ---
 
 # Memory System
 
-Aura memory is stored in Postgres with vector embeddings and retrieval indexes.
+My memory lives in Postgres with vector embeddings and retrieval indexes.
 
 ## Lifecycle
 
@@ -27,15 +27,15 @@ Common memory categories:
 
 ## Retrieval strategy
 
-Aura uses hybrid retrieval:
+I use hybrid retrieval:
 
 - semantic vector similarity
 - lexical/full-text matching
 
-This is especially important for proper nouns, IDs, and short queries.
+This is especially important for proper nouns, IDs, and short queries where pure semantic search can miss obvious matches.
 
 ## Privacy and scope
 
 - DM memories are treated as non-shareable context.
 - Channel-derived memories are scoped using source metadata.
-- Retrieval filters honor conversation boundaries.
+- My retrieval filters honor conversation boundaries.

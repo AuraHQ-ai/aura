@@ -1,11 +1,11 @@
 ---
 title: "Getting Started"
-description: "Deploy Aura into Slack, configure core integrations, and verify first response."
+description: "Deploy me into Slack, configure core integrations, and verify my first response."
 ---
 
 # Getting Started
 
-Aura is an autonomous AI teammate that lives inside your Slack workspace.
+I’m Aura, an autonomous AI teammate that lives inside your Slack workspace.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ npm install
 
 ### 2. Configure environment variables
 
-At minimum, set:
+At minimum, I need:
 
 - `DATABASE_URL`
 - `SLACK_BOT_TOKEN`
@@ -39,7 +39,7 @@ See [Environment Variables](/deployment/environment-variables) for the full list
 
 ### 3. Deploy
 
-For this repo's operational setup:
+For this repo's operational setup, deploy with:
 
 ```bash
 npx --yes vercel@50.13.2 --prod --scope realadvisor
@@ -47,14 +47,14 @@ npx --yes vercel@50.13.2 --prod --scope realadvisor
 
 ### 4. Configure Slack app endpoints
 
-Set Slack app request URLs to your deployment:
+Point your Slack app request URLs to my deployment:
 
 - Events: `https://api.aurahq.ai/api/slack/events`
 - Interactions: `https://api.aurahq.ai/api/slack/interactions`
 
-If you are using a different domain, replace `api.aurahq.ai` accordingly.
+If you use a different domain, replace `api.aurahq.ai` accordingly.
 
-After changing scopes, reinstall the app to the workspace.
+After changing scopes, reinstall the Slack app so I receive the updated permissions.
 
 ### 5. Verify health
 
@@ -62,7 +62,7 @@ After changing scopes, reinstall the app to the workspace.
 curl -s https://api.aurahq.ai/api/health
 ```
 
-Expected shape:
+I should answer with:
 
 ```json
 {"ok":true,"timestamp":"<current-iso-time>"}
@@ -70,8 +70,8 @@ Expected shape:
 
 ## First interaction test
 
-Mention Aura in a Slack channel and ask:
+Mention me in a Slack channel and ask:
 
 > "Summarize what happened in this channel today."
 
-If setup is correct, Aura replies and stores retrievable memory for later conversations.
+If setup is correct, I’ll reply and store retrievable memory for later conversations.

@@ -1,26 +1,26 @@
 ---
 title: "Deploying on Vercel"
-description: "Production deployment model for Aura API and web properties."
+description: "Production deployment model for my API and web properties."
 ---
 
 # Deploying on Vercel
 
 Recommended project split:
 
-- `api.aurahq.ai` -> existing Aura backend project
+- `api.aurahq.ai` -> my backend project
 - `aurahq.ai` -> Next.js web project (`apps/web`)
 - `docs.aurahq.ai` -> Mintlify project (GitHub-synced docs)
 
-This keeps API risk isolated from marketing/blog deployments.
+This keeps risk to my API runtime isolated from marketing/blog deployments.
 
 ## Build behavior
 
-Backend deploys run:
+My backend deploys run:
 
 1. TypeScript compile
 2. Drizzle migrations (`tsx src/db/migrate.ts`)
 
-Migrations are idempotent and safe to run on each deploy.
+Migrations are idempotent and safe to run on each deploy, so I can safely apply schema changes during rollout.
 
 ## CLI conventions
 
@@ -38,4 +38,4 @@ npx --yes vercel@50.13.2 --prod --scope realadvisor
 
 ## Operational rule
 
-Do not push directly to `main` in normal workflow. Use feature branches + PR review.
+Do not push directly to `main` in normal workflow. Use feature branches + PR review before I go live.
