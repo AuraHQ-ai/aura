@@ -15,7 +15,9 @@
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
-    "test": "vitest run"
+    "test": "vitest run",
+    "content:index": "tsx scripts/index-content.ts",
+    "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.46",
