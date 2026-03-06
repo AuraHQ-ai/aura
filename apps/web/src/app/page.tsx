@@ -7,11 +7,11 @@ export default function Home() {
       <section
         style={{
           padding: "96px 0 80px",
-          borderBottom: "1px solid #e5e5e5",
+          borderBottom: "1px solid var(--col-border)",
         }}
       >
         <div style={{ maxWidth: "640px" }}>
-          <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "#999", textTransform: "uppercase", marginBottom: "24px" }}>
+          <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "24px" }}>
             AI Colleague
           </p>
           <h1
@@ -20,21 +20,21 @@ export default function Home() {
               fontWeight: 700,
               letterSpacing: "-0.03em",
               lineHeight: 1.1,
-              color: "#111",
+              color: "var(--text-primary)",
               marginBottom: "24px",
             }}
           >
             Every day she works, she gets harder to replace.
           </h1>
-          <p style={{ fontSize: "1.125rem", color: "#555", lineHeight: 1.7, marginBottom: "40px", maxWidth: "520px" }}>
+          <p style={{ fontSize: "1.125rem", color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: "40px", maxWidth: "520px" }}>
             Aura is an AI agent that joins your team, learns your business, and compounds over time. Not a chatbot. Not a wrapper. A colleague with memory.
           </p>
           <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
             <a
               href="mailto:hello@aurahq.ai"
               style={{
-                background: "#111",
-                color: "#fff",
+                background: "var(--btn-bg)",
+                color: "var(--btn-color)",
                 padding: "12px 24px",
                 borderRadius: "8px",
                 fontSize: "14px",
@@ -48,9 +48,9 @@ export default function Home() {
             <a
               href="/blog"
               style={{
-                background: "#fff",
-                color: "#111",
-                border: "1px solid #e5e5e5",
+                background: "var(--btn-secondary-bg)",
+                color: "var(--btn-secondary-color)",
+                border: "1px solid var(--col-border)",
                 padding: "12px 24px",
                 borderRadius: "8px",
                 fontSize: "14px",
@@ -69,7 +69,7 @@ export default function Home() {
       <section
         style={{
           padding: "40px 0",
-          borderBottom: "1px solid #e5e5e5",
+          borderBottom: "1px solid var(--col-border)",
         }}
       >
         <p
@@ -77,7 +77,7 @@ export default function Home() {
             fontSize: "11px",
             fontWeight: 600,
             letterSpacing: "0.1em",
-            color: "#bbb",
+            color: "var(--text-muted)",
             textTransform: "uppercase",
             marginBottom: "28px",
           }}
@@ -106,8 +106,8 @@ export default function Home() {
       </section>
 
       {/* Features */}
-      <section style={{ padding: "80px 0", borderBottom: "1px solid #e5e5e5" }}>
-        <p style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", color: "#bbb", textTransform: "uppercase", marginBottom: "48px" }}>
+      <section style={{ padding: "80px 0", borderBottom: "1px solid var(--col-border)" }}>
+        <p style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "48px" }}>
           What she does
         </p>
         <div
@@ -115,8 +115,8 @@ export default function Home() {
             display: "grid",
             gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
             gap: "1px",
-            background: "#e5e5e5",
-            border: "1px solid #e5e5e5",
+            background: "var(--col-border)",
+            border: "1px solid var(--col-border)",
           }}
         >
           {[
@@ -130,23 +130,23 @@ export default function Home() {
             <div
               key={i}
               style={{
-                background: "#fff",
+                background: "var(--feature-card-bg)",
                 padding: "32px",
               }}
             >
-              <p style={{ fontSize: "0.9375rem", fontWeight: 600, color: "#111", marginBottom: "8px", letterSpacing: "-0.01em" }}>{f.title}</p>
-              <p style={{ fontSize: "0.875rem", color: "#777", lineHeight: 1.65, margin: 0 }}>{f.desc}</p>
+              <p style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "8px", letterSpacing: "-0.01em" }}>{f.title}</p>
+              <p style={{ fontSize: "0.875rem", color: "var(--text-secondary)", lineHeight: 1.65, margin: 0 }}>{f.desc}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* Day in the life */}
-      <section style={{ padding: "80px 0", borderBottom: "1px solid #e5e5e5" }}>
-        <p style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", color: "#bbb", textTransform: "uppercase", marginBottom: "8px" }}>
+      <section style={{ padding: "80px 0", borderBottom: "1px solid var(--col-border)" }}>
+        <p style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "8px" }}>
           This isn&apos;t a demo. This is a Tuesday.
         </p>
-        <p style={{ fontSize: "0.875rem", color: "#999", marginBottom: "48px" }}>
+        <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "48px" }}>
           A real day. Real tasks. Zero prompts from anyone.
         </p>
         <div style={{ maxWidth: "640px" }}>
@@ -163,12 +163,12 @@ export default function Home() {
                 gridTemplateColumns: "80px 1fr",
                 gap: "24px",
                 padding: "20px 0",
-                borderTop: i === 0 ? "1px solid #e5e5e5" : "none",
-                borderBottom: "1px solid #e5e5e5",
+                borderTop: i === 0 ? "1px solid var(--col-border)" : "none",
+                borderBottom: "1px solid var(--col-border)",
               }}
             >
-              <span style={{ fontSize: "12px", color: "#bbb", fontVariantNumeric: "tabular-nums", paddingTop: "2px" }}>{item.t}</span>
-              <p style={{ fontSize: "0.9375rem", color: "#444", lineHeight: 1.6, margin: 0 }}>{item.text}</p>
+              <span style={{ fontSize: "12px", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums", paddingTop: "2px" }}>{item.t}</span>
+              <p style={{ fontSize: "0.9375rem", color: "var(--text-secondary)", lineHeight: 1.6, margin: 0 }}>{item.text}</p>
             </div>
           ))}
         </div>
@@ -177,18 +177,18 @@ export default function Home() {
       {/* CTA */}
       <section style={{ padding: "96px 0" }}>
         <div style={{ maxWidth: "480px" }}>
-          <h2 style={{ fontSize: "clamp(1.5rem, 3vw, 2.25rem)", fontWeight: 700, letterSpacing: "-0.03em", color: "#111", marginBottom: "16px" }}>
+          <h2 style={{ fontSize: "clamp(1.5rem, 3vw, 2.25rem)", fontWeight: 700, letterSpacing: "-0.03em", color: "var(--text-primary)", marginBottom: "16px" }}>
             Ready to hire her?
           </h2>
-          <p style={{ fontSize: "1rem", color: "#666", lineHeight: 1.7, marginBottom: "32px" }}>
+          <p style={{ fontSize: "1rem", color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: "32px" }}>
             Aura runs in Slack. She joins your channels, learns your team, and starts working on day one. No setup wizard. No onboarding call.
           </p>
           <a
             href="mailto:hello@aurahq.ai"
             style={{
               display: "inline-block",
-              background: "#111",
-              color: "#fff",
+              background: "var(--btn-bg)",
+              color: "var(--btn-color)",
               padding: "13px 28px",
               borderRadius: "8px",
               fontSize: "14px",
