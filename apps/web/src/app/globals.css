@@ -63,19 +63,21 @@ a {
 code {
   font-family: "SF Mono", "Fira Code", "Fira Mono", monospace;
   font-size: 0.875em;
-  background: #f3f3f3;
+  background: #1e1e1e;
+  color: #e8e8e8;
   padding: 2px 6px;
   border-radius: 4px;
-  border: 1px solid #e5e5e5;
+  border: 1px solid #333;
 }
 
 pre {
-  background: #f8f8f8;
-  border: 1px solid #e5e5e5;
+  background: #1e1e1e;
+  border: 1px solid #333;
   border-radius: 8px;
   padding: 20px 24px;
   overflow-x: auto;
   line-height: 1.6;
+  color: #e8e8e8;
 }
 
 pre code {
