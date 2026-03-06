@@ -93,22 +93,13 @@ export default function Home() {
           }}
         >
           {stackLogos.map((logo) => (
-            <div
+            <img
               key={logo.name}
+              src={`/logos/${logo.file}.svg`}
+              alt={logo.name}
               title={logo.name}
-              style={{
-                height: "20px",
-                opacity: 0.35,
-                color: "#111",
-                display: "flex",
-                alignItems: "center",
-              }}
-              dangerouslySetInnerHTML={{
-                __html: logo.svg.replace(
-                  "<svg",
-                  `<svg height="20" style="height:20px;width:auto;display:block"`
-                ),
-              }}
+              height={20}
+              style={{ height: "20px", width: "auto", display: "block", opacity: 0.35 }}
             />
           ))}
         </div>
