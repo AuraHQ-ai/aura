@@ -90,7 +90,7 @@ pre code {
 
 /* Prose for blog */
 .prose {
-  max-width: 680px;
+  max-width: 760px;
 }
 
 .prose p {
@@ -98,6 +98,8 @@ pre code {
   line-height: 1.75;
   margin-bottom: 1.5rem;
   font-size: 1.0625rem;
+  text-align: justify;
+  hyphens: auto;
 }
 
 .prose h2 {
