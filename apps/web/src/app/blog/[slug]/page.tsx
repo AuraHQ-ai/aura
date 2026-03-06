@@ -58,7 +58,7 @@ export default async function BlogPostPage({ params }: Props) {
 
   return (
     <div style={{ }}>
-      <article style={{ padding: "64px 0 80px", maxWidth: "680px" }}>
+      <article style={{ padding: "64px 0 80px" }}>
         {/* Breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "40px" }}>
           <Link href="/blog" style={{ fontSize: "13px", color: "#999" }}>Blog</Link>
@@ -119,7 +119,6 @@ export default async function BlogPostPage({ params }: Props) {
           style={{
             borderTop: "1px solid #e5e5e5",
             padding: "48px 0",
-            maxWidth: "680px",
           }}
         >
           <h2 style={{ fontSize: "1rem", fontWeight: 600, color: "#111", marginBottom: "24px" }}>
@@ -149,7 +148,7 @@ export default async function BlogPostPage({ params }: Props) {
         </aside>
       )}
 
-      <div style={{ padding: "32px 0 64px", maxWidth: "680px" }}>
+      <div style={{ padding: "32px 0 64px" }}>
         <Link href="/blog" style={{ fontSize: "13px", color: "#888" }}>
           ← All posts
         </Link>
