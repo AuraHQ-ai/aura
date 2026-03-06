@@ -2,7 +2,7 @@ import { stackLogos } from "@/components/stack-logos";
 
 export default function Home() {
   return (
-    <div style={{ padding: "0 48px" }}>
+    <div style={{ }}>
       {/* Hero */}
       <section
         style={{
