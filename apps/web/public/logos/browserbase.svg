@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 24" fill="currentColor">
+  <rect x="0.5" y="0.5" width="23" height="23" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <path d="M7 18V6h4.5c2 0 3.5 1.5 3.5 3.5v.5a3.4 3.4 0 0 1-.9 2.3c.8.6 1.4 1.6 1.4 2.7v.5c0 2-1.5 3.5-3.5 3.5H7zm2-7.5h2.5c.8 0 1.5-.7 1.5-1.5V8c0-.8-.7-1.5-1.5-1.5H9v4zm0 5.5h2.8c.8 0 1.7-.7 1.7-1.5v-.5c0-.8-.7-1.5-1.5-1.5H9V16z"/>
+  <text x="31" y="17.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13" font-weight="600" letter-spacing="-0.02em">Browserbase</text>
+</svg>
