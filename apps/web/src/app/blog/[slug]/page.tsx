@@ -57,7 +57,7 @@ export default async function BlogPostPage({ params }: Props) {
   ]);
 
   return (
-    <div style={{ padding: "0 48px" }}>
+    <div style={{ }}>
       <article style={{ padding: "64px 0 80px", maxWidth: "680px" }}>
         {/* Breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "40px" }}>
