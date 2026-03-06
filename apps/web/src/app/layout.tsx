@@ -142,6 +142,7 @@ function Footer() {
           <Link href="/blog" style={{ fontSize: "13px", color: "#999" }}>Blog</Link>
           <a href="https://docs.aurahq.ai" style={{ fontSize: "13px", color: "#999" }}>Docs</a>
           <a href="/blog/feed.xml" style={{ fontSize: "13px", color: "#999" }}>RSS</a>
+          <a href="/llms.txt" style={{ fontSize: "13px", color: "#999" }}>llms.txt</a>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
           <span style={{ fontSize: "12px", color: "#bbb" }}>Built by RealAdvisor</span>
