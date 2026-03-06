@@ -1,7 +1,7 @@
 import { getAllPosts } from "@/lib/blog";
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-static";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const posts = (await getAllPosts()).filter((p) => !p.draft);
