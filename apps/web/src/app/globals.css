@@ -207,3 +207,42 @@ pre code {
     padding: 0;
   }
 }
+
+/* ── Layout primitives ──────────────────────────────────────────── */
+.layout-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  border-left: 1px solid #e5e5e5;
+  border-right: 1px solid #e5e5e5;
+  padding: 0 48px;
+}
+
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 32px;
+  padding-bottom: 32px;
+}
+
+.site-main {
+  padding: 0 48px;
+}
+
+@media (max-width: 768px) {
+  .layout-inner {
+    padding: 0 20px;
+  }
+  .site-main {
+    padding: 0 20px;
+  }
+}

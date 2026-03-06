@@ -41,19 +41,7 @@ function Nav() {
         WebkitBackdropFilter: "blur(8px)",
       }}
     >
-      <div
-        style={{
-          maxWidth: "1100px",
-          margin: "0 auto",
-          borderLeft: "1px solid #e5e5e5",
-          borderRight: "1px solid #e5e5e5",
-          padding: "0 48px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          height: "56px",
-        }}
-      >
+      <div className="layout-inner nav-inner">
         <Link
           href="/"
           style={{
@@ -124,18 +112,7 @@ function Footer() {
   return (
     <footer style={{ borderTop: "1px solid #e5e5e5" }}>
       <div
-        style={{
-          maxWidth: "1100px",
-          margin: "0 auto",
-          borderLeft: "1px solid #e5e5e5",
-          borderRight: "1px solid #e5e5e5",
-          padding: "32px 48px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: "16px",
-        }}
+        className="layout-inner footer-inner"
       >
         <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
           <Link href="/" style={{ fontSize: "13px", fontWeight: 600, color: "#111" }}>Aura</Link>
@@ -169,6 +146,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body style={{ background: "#fff", color: "#111", margin: 0 }}>
         <Nav />
         <main
+          className="site-main"
           style={{
             maxWidth: "1100px",
             margin: "0 auto",
