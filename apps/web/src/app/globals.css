@@ -180,3 +180,33 @@ pre code {
   padding: 2px 10px;
 }
 
+
+/* ── rehype-pretty-code (Shiki) overrides ────────────────────────────────── */
+/* Shiki injects inline style="background-color:..." — !important to win */
+[data-rehype-pretty-code-figure] {
+  margin: 1.25rem 0;
+}
+
+[data-rehype-pretty-code-figure] pre {
+  overflow-x: auto;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  background-color: #f6f8fa !important;
+  color: #24292e !important;
+}
+
+[data-rehype-pretty-code-figure] pre code {
+  background: none !important;
+  border: none !important;
+  color: inherit !important;
+  font-size: 0.875em;
+  line-height: 1.6;
+}
+
+/* Mobile padding fix */
+@media (max-width: 768px) {
+  .prose {
+    padding: 0;
+  }
+}
