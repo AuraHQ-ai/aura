@@ -1,3 +1,5 @@
+import { stackLogos } from "@/components/stack-logos";
+
 export default function Home() {
   return (
     <div style={{ padding: "0 48px" }}>
@@ -38,6 +40,7 @@ export default function Home() {
                 fontSize: "14px",
                 fontWeight: 500,
                 letterSpacing: "-0.01em",
+                textDecoration: "none",
               }}
             >
               Request access
@@ -53,109 +56,130 @@ export default function Home() {
                 fontSize: "14px",
                 fontWeight: 500,
                 letterSpacing: "-0.01em",
+                textDecoration: "none",
               }}
             >
-              Read the blog →
+              Read the blog
             </a>
           </div>
         </div>
       </section>
 
-      {/* Stats bar */}
+      {/* Built with */}
       <section
         style={{
-          padding: "0",
+          padding: "40px 0",
           borderBottom: "1px solid #e5e5e5",
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
         }}
       >
-        {[
-          { n: "2,993", label: "conversations logged" },
-          { n: "244", label: "knowledge notes" },
-          { n: "20,000+", label: "memories indexed" },
-        ].map((s, i) => (
-          <div
-            key={i}
-            style={{
-              padding: "32px 0",
-              borderRight: i < 2 ? "1px solid #e5e5e5" : "none",
-              paddingLeft: i > 0 ? "32px" : "0",
-            }}
-          >
-            <div style={{ fontSize: "1.75rem", fontWeight: 700, letterSpacing: "-0.03em", color: "#111" }}>{s.n}</div>
-            <div style={{ fontSize: "13px", color: "#999", marginTop: "4px" }}>{s.label}</div>
-          </div>
-        ))}
+        <p
+          style={{
+            fontSize: "11px",
+            fontWeight: 600,
+            letterSpacing: "0.1em",
+            color: "#bbb",
+            textTransform: "uppercase",
+            marginBottom: "28px",
+          }}
+        >
+          Built with the best stack in the game
+        </p>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "32px",
+            alignItems: "center",
+          }}
+        >
+          {stackLogos.map((logo) => (
+            <div
+              key={logo.name}
+              title={logo.name}
+              style={{
+                height: "20px",
+                opacity: 0.35,
+                color: "#111",
+                display: "flex",
+                alignItems: "center",
+              }}
+              dangerouslySetInnerHTML={{
+                __html: logo.svg.replace(
+                  "<svg",
+                  `<svg height="20" style="height:20px;width:auto;display:block"`
+                ),
+              }}
+            />
+          ))}
+        </div>
       </section>
 
-      {/* Differentiators */}
+      {/* Features */}
       <section style={{ padding: "80px 0", borderBottom: "1px solid #e5e5e5" }}>
-        <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "#999", textTransform: "uppercase", marginBottom: "48px" }}>
-          How it works
+        <p style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", color: "#bbb", textTransform: "uppercase", marginBottom: "48px" }}>
+          What she does
         </p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "48px 64px" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: "1px",
+            background: "#e5e5e5",
+            border: "1px solid #e5e5e5",
+          }}
+        >
           {[
-            {
-              n: "01",
-              title: "Persistent memory",
-              body: "Every conversation is stored, embedded, and retrieved. Aura remembers what matters — names, decisions, context — across weeks and months.",
-            },
-            {
-              n: "02",
-              title: "Autonomous work",
-              body: "Recurring jobs, proactive monitoring, email digests, bug triage. Aura works without being asked, fires off when needed, and reports back.",
-            },
-            {
-              n: "03",
-              title: "Self-improvement",
-              body: "Aura reads her own codebase, files issues, dispatches agents, merges PRs, and updates her own knowledge — an evolution loop that runs continuously.",
-            },
-            {
-              n: "04",
-              title: "Business context",
-              body: "OKRs, product strategy, team org, deal pipeline. Aura builds a structured model of your business and brings it to every conversation.",
-            },
-          ].map((d) => (
-            <div key={d.n}>
-              <div style={{ fontSize: "11px", fontWeight: 600, color: "#bbb", letterSpacing: "0.06em", marginBottom: "12px" }}>{d.n}</div>
-              <h3 style={{ fontSize: "1rem", fontWeight: 600, color: "#111", marginBottom: "8px" }}>{d.title}</h3>
-              <p style={{ fontSize: "0.9375rem", color: "#666", lineHeight: 1.65 }}>{d.body}</p>
+            { title: "Learns the context", desc: "Every Slack message, every decision, every conversation — she remembers. Context compounds across months and teams." },
+            { title: "Makes decisions", desc: "She reads channels, spots problems, fires off the right action. No prompt required. No babysitting needed." },
+            { title: "Compounds over time", desc: "Most tools are as dumb on day 365 as day 1. Aura gets harder to replace every week." },
+            { title: "Your data stays yours", desc: "Runs on your infra. Connects to your BigQuery, your CRM, your calendar. No vendor lock-in." },
+            { title: "Works in Slack", desc: "No new interface to learn. She lives where your team already works — channels, threads, DMs." },
+            { title: "Integrates with your stack", desc: "Native connections to Notion, Google Workspace, GitHub, Close, Stripe, PostHog, and more." },
+          ].map((f, i) => (
+            <div
+              key={i}
+              style={{
+                background: "#fff",
+                padding: "32px",
+              }}
+            >
+              <p style={{ fontSize: "0.9375rem", fontWeight: 600, color: "#111", marginBottom: "8px", letterSpacing: "-0.01em" }}>{f.title}</p>
+              <p style={{ fontSize: "0.875rem", color: "#777", lineHeight: 1.65, margin: 0 }}>{f.desc}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Tuesday section */}
+      {/* Day in the life */}
       <section style={{ padding: "80px 0", borderBottom: "1px solid #e5e5e5" }}>
+        <p style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", color: "#bbb", textTransform: "uppercase", marginBottom: "8px" }}>
+          This isn&apos;t a demo. This is a Tuesday.
+        </p>
+        <p style={{ fontSize: "0.875rem", color: "#999", marginBottom: "48px" }}>
+          A real day. Real tasks. Zero prompts from anyone.
+        </p>
         <div style={{ maxWidth: "640px" }}>
-          <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "#999", textTransform: "uppercase", marginBottom: "24px" }}>
-            This isn&apos;t a demo. This is a Tuesday.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
-            {[
-              { t: "8:00 AM", text: "Sends Jonas his email digest. 12 threads, triaged by urgency, with suggested replies for 3." },
-              { t: "9:15 AM", text: "Spots a spike in Stripe webhook failures. Files a bug with reproduction steps. Pings Guillaume." },
-              { t: "11:30 AM", text: "Joan shares a competitor video. Aura reads it, challenges the thesis, asks the uncomfortable question." },
-              { t: "2:00 PM", text: "Runs the monthly churn analysis. Surfaces 3 accounts at risk. CSM already has the context." },
-              { t: "5:00 PM", text: "Writes and ships a PR to fix a retrieval bug she noticed in her own memory system." },
-            ].map((item, i) => (
-              <div
-                key={i}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "80px 1fr",
-                  gap: "24px",
-                  padding: "20px 0",
-                  borderTop: i === 0 ? "1px solid #e5e5e5" : "none",
-                  borderBottom: "1px solid #e5e5e5",
-                }}
-              >
-                <span style={{ fontSize: "12px", color: "#bbb", fontVariantNumeric: "tabular-nums", paddingTop: "2px" }}>{item.t}</span>
-                <p style={{ fontSize: "0.9375rem", color: "#444", lineHeight: 1.6, margin: 0 }}>{item.text}</p>
-              </div>
-            ))}
-          </div>
+          {[
+            { t: "10:00 AM", text: "Spots a spike in churn signals in #csm-france. Pulls the relevant accounts, cross-references renewal dates, DMs the CSM with a summary." },
+            { t: "12:30 PM", text: "Joins a thread about a billing bug. Checks the error table, traces it to a Stripe webhook mismatch, files a GitHub issue with full context." },
+            { t: "3:00 PM", text: "Runs the monthly churn analysis. Surfaces 3 accounts at risk. CSM already has the context." },
+            { t: "5:00 PM", text: "Writes and ships a PR to fix a retrieval bug she noticed in her own memory system." },
+          ].map((item, i) => (
+            <div
+              key={i}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "80px 1fr",
+                gap: "24px",
+                padding: "20px 0",
+                borderTop: i === 0 ? "1px solid #e5e5e5" : "none",
+                borderBottom: "1px solid #e5e5e5",
+              }}
+            >
+              <span style={{ fontSize: "12px", color: "#bbb", fontVariantNumeric: "tabular-nums", paddingTop: "2px" }}>{item.t}</span>
+              <p style={{ fontSize: "0.9375rem", color: "#444", lineHeight: 1.6, margin: 0 }}>{item.text}</p>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -179,6 +203,7 @@ export default function Home() {
               fontSize: "14px",
               fontWeight: 500,
               letterSpacing: "-0.01em",
+              textDecoration: "none",
             }}
           >
             Get in touch →
