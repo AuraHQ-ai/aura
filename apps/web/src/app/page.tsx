@@ -1,250 +1,158 @@
-"use client";
-
-import { useEffect, useRef } from "react";
-
-function useScrollReveal() {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const items = el.querySelectorAll(".reveal");
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("revealed");
-            observer.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.15 }
-    );
-    items.forEach((item) => observer.observe(item));
-    return () => observer.disconnect();
-  }, []);
-  return ref;
-}
-
 export default function Home() {
-  const timelineRef = useScrollReveal();
-  const statsRef = useScrollReveal();
-  const featuresRef = useScrollReveal();
-
   return (
-    <main className="min-h-screen">
+    <div style={{ padding: "0 48px" }}>
       {/* Hero */}
-      <section className="flex min-h-screen flex-col items-center justify-center px-6 text-center">
-        <h1 className="max-w-4xl text-5xl font-bold tracking-tight sm:text-7xl">
-          Every day she works, she gets harder to replace.
-        </h1>
-        <p className="mt-6 max-w-2xl text-lg text-neutral-400 sm:text-xl">
-          An AI colleague with memory, autonomy, and a brain that builds itself.
-        </p>
-        <p className="mt-3 text-sm text-neutral-600">
-          Built for teams of 20-500 who live in Slack.
-        </p>
-        <div className="mt-10 flex gap-4">
-          <a
-            href="#waitlist"
-            className="rounded-full bg-white px-8 py-3 text-sm font-semibold text-black transition hover:bg-neutral-200"
+      <section
+        style={{
+          padding: "96px 0 80px",
+          borderBottom: "1px solid #e5e5e5",
+        }}
+      >
+        <div style={{ maxWidth: "640px" }}>
+          <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "#999", textTransform: "uppercase", marginBottom: "24px" }}>
+            AI Colleague
+          </p>
+          <h1
+            style={{
+              fontSize: "clamp(2.25rem, 5vw, 3.5rem)",
+              fontWeight: 700,
+              letterSpacing: "-0.03em",
+              lineHeight: 1.1,
+              color: "#111",
+              marginBottom: "24px",
+            }}
           >
-            Join the waitlist
-          </a>
-          <a
-            href="#what"
-            className="rounded-full border border-neutral-700 px-8 py-3 text-sm font-semibold text-white transition hover:border-neutral-500"
-          >
-            Learn more
-          </a>
+            Every day she works, she gets harder to replace.
+          </h1>
+          <p style={{ fontSize: "1.125rem", color: "#555", lineHeight: 1.7, marginBottom: "40px", maxWidth: "520px" }}>
+            Aura is an AI agent that joins your team, learns your business, and compounds over time. Not a chatbot. Not a wrapper. A colleague with memory.
+          </p>
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            <a
+              href="mailto:hello@aurahq.ai"
+              style={{
+                background: "#111",
+                color: "#fff",
+                padding: "12px 24px",
+                borderRadius: "8px",
+                fontSize: "14px",
+                fontWeight: 500,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              Request access
+            </a>
+            <a
+              href="/blog"
+              style={{
+                background: "#fff",
+                color: "#111",
+                border: "1px solid #e5e5e5",
+                padding: "12px 24px",
+                borderRadius: "8px",
+                fontSize: "14px",
+                fontWeight: 500,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              Read the blog →
+            </a>
+          </div>
         </div>
       </section>
 
-      {/* The Problem */}
-      <section id="what" className="mx-auto max-w-3xl px-6 py-24">
-        <p className="text-lg leading-relaxed text-neutral-300">
-          You&apos;ve tried the AI tools. They don&apos;t stick.
-        </p>
-        <p className="mt-4 text-lg leading-relaxed text-neutral-300">
-          You ask a chatbot something on Monday and it forgets by Tuesday. You
-          build a workflow and it breaks the moment anything changes. You hire an
-          &ldquo;AI agent&rdquo; and it turns out to be a prompt wrapped in a
-          button.
-        </p>
-        <p className="mt-4 text-lg leading-relaxed text-neutral-300">
-          The problem isn&apos;t AI. It&apos;s that none of these tools{" "}
-          <em>learn</em>.
-        </p>
+      {/* Stats bar */}
+      <section
+        style={{
+          padding: "0",
+          borderBottom: "1px solid #e5e5e5",
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+        }}
+      >
+        {[
+          { n: "2,993", label: "conversations logged" },
+          { n: "244", label: "knowledge notes" },
+          { n: "20,000+", label: "memories indexed" },
+        ].map((s, i) => (
+          <div
+            key={i}
+            style={{
+              padding: "32px 0",
+              borderRight: i < 2 ? "1px solid #e5e5e5" : "none",
+              paddingLeft: i > 0 ? "32px" : "0",
+            }}
+          >
+            <div style={{ fontSize: "1.75rem", fontWeight: 700, letterSpacing: "-0.03em", color: "#111" }}>{s.n}</div>
+            <div style={{ fontSize: "13px", color: "#999", marginTop: "4px" }}>{s.label}</div>
+          </div>
+        ))}
       </section>
 
-      {/* What Makes Aura Different */}
-      <section className="mx-auto max-w-4xl px-6 py-24" ref={featuresRef}>
-        <h2 className="text-3xl font-bold sm:text-4xl">
-          She remembers. She acts. She improves.
-        </h2>
-        <div className="mt-12 grid gap-12 sm:grid-cols-2">
+      {/* Differentiators */}
+      <section style={{ padding: "80px 0", borderBottom: "1px solid #e5e5e5" }}>
+        <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "#999", textTransform: "uppercase", marginBottom: "48px" }}>
+          How it works
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "48px 64px" }}>
           {[
             {
-              title: "Memory that compounds",
-              desc: "Every conversation, every decision, every preference -- stored, embedded, retrieved when it matters. She quoted six of her founder's ideas from different conversations across a week. Without a single search.",
+              n: "01",
+              title: "Persistent memory",
+              body: "Every conversation is stored, embedded, and retrieved. Aura remembers what matters — names, decisions, context — across weeks and months.",
             },
             {
+              n: "02",
               title: "Autonomous work",
-              desc: "She doesn't wait to be asked. Morning bug sweeps across four countries. Email triage before you open your inbox. Follow-ups on conversations that went quiet. She runs 30+ scheduled jobs without being told.",
+              body: "Recurring jobs, proactive monitoring, email digests, bug triage. Aura works without being asked, fires off when needed, and reports back.",
             },
             {
+              n: "03",
               title: "Self-improvement",
-              desc: "She files issues against her own codebase, dispatches agents to write patches, and opens pull requests for review. 88 PRs merged in her first 5 days. Each capability she gains unlocks the next one faster.",
+              body: "Aura reads her own codebase, files issues, dispatches agents, merges PRs, and updates her own knowledge — an evolution loop that runs continuously.",
             },
             {
-              title: "Synapses, not just storage",
-              desc: "Her knowledge isn't a flat database. It's a cross-referenced graph -- every note connected to related context. The denser the connections, the faster she thinks. She builds her own brain.",
+              n: "04",
+              title: "Business context",
+              body: "OKRs, product strategy, team org, deal pipeline. Aura builds a structured model of your business and brings it to every conversation.",
             },
-          ].map((item, i) => (
-            <div
-              key={item.title}
-              className="reveal opacity-0 translate-y-4 transition-all duration-700 ease-out"
-              style={{ transitionDelay: `${i * 120}ms` }}
-            >
-              <h3 className="text-xl font-semibold">{item.title}</h3>
-              <p className="mt-3 text-neutral-400 leading-relaxed">
-                {item.desc}
-              </p>
+          ].map((d) => (
+            <div key={d.n}>
+              <div style={{ fontSize: "11px", fontWeight: 600, color: "#bbb", letterSpacing: "0.06em", marginBottom: "12px" }}>{d.n}</div>
+              <h3 style={{ fontSize: "1rem", fontWeight: 600, color: "#111", marginBottom: "8px" }}>{d.title}</h3>
+              <p style={{ fontSize: "0.9375rem", color: "#666", lineHeight: 1.65 }}>{d.body}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Social proof quote */}
-      <section className="border-t border-b border-neutral-800 px-6 py-16">
-        <div className="mx-auto max-w-3xl text-center">
-          <blockquote className="text-xl italic text-neutral-300 leading-relaxed">
-            &ldquo;I stopped thinking of her as a tool on day three. She remembered
-            a decision I made two weeks ago and used it to challenge a bad
-            idea. That&apos;s not AI. That&apos;s a colleague.&rdquo;
-          </blockquote>
-          <p className="mt-4 text-sm text-neutral-500">
-            -- Head of Product, 266-person SaaS company
+      {/* Tuesday section */}
+      <section style={{ padding: "80px 0", borderBottom: "1px solid #e5e5e5" }}>
+        <div style={{ maxWidth: "640px" }}>
+          <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "#999", textTransform: "uppercase", marginBottom: "24px" }}>
+            This isn&apos;t a demo. This is a Tuesday.
           </p>
-        </div>
-      </section>
-
-      {/* Timeline */}
-      <section className="mx-auto max-w-3xl px-6 py-24" ref={timelineRef}>
-        <h2 className="text-3xl font-bold sm:text-4xl">
-          This isn&apos;t a demo. This is a Tuesday.
-        </h2>
-        <div className="mt-12 space-y-0">
-          {[
-            {
-              time: "4:00 AM",
-              text: "Consolidates memories. Decays old ones. Merges duplicates. No one asked her to.",
-            },
-            {
-              time: "8:30 AM",
-              text: "Sweeps bug channels in four languages. Triages 12 reports. Flags 2 as critical.",
-            },
-            {
-              time: "9:00 AM",
-              text: "Email digest lands in your DM. 3 urgent, 2 need replies, rest is noise. Junk already filtered.",
-            },
-            {
-              time: "10:15 AM",
-              text: "Someone asks about last quarter's churn. She queries the warehouse, builds a table, spots a pattern nobody mentioned.",
-            },
-            {
-              time: "2:00 PM",
-              text: "Finds a bug in her own code. Files an issue. Dispatches an agent to fix it. Opens a PR.",
-            },
-            {
-              time: "5:30 PM",
-              text: "Follows up with a team lead who went quiet on a request from 3 days ago.",
-            },
-            {
-              time: "11:00 PM",
-              text: "You're asleep. She's processing the day's conversations, extracting facts, wiring new synapses.",
-            },
-          ].map((item, i) => (
-            <div
-              key={item.time}
-              className="reveal flex gap-6 py-4 opacity-0 translate-y-4 transition-all duration-700 ease-out"
-              style={{ transitionDelay: `${i * 100}ms` }}
-            >
-              <div className="flex flex-col items-center">
-                <span className="h-2.5 w-2.5 rounded-full bg-neutral-600 mt-1.5 shrink-0"></span>
-                {i < 6 && (
-                  <span className="w-px flex-1 bg-neutral-800 mt-1"></span>
-                )}
-              </div>
-              <div className="pb-6">
-                <p className="font-mono text-sm text-neutral-500">
-                  {item.time}
-                </p>
-                <p className="mt-1 text-neutral-300">{item.text}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Under the hood -- trimmed */}
-      <section className="border-t border-neutral-800 px-6 py-24">
-        <div className="mx-auto max-w-3xl">
-          <h2 className="text-3xl font-bold sm:text-4xl">Under the hood</h2>
-          <p className="mt-6 text-neutral-400 leading-relaxed">
-            Aura lives in Slack. Every message is embedded as a vector and
-            stored -- when you talk to her, the most relevant memories surface by
-            meaning, not keywords. A heartbeat runs every 30 minutes, processing
-            scheduled jobs autonomously. She has access to your stack: BigQuery,
-            Google Drive, GitHub, Gmail, calendar, browser, and a sandboxed Linux
-            VM. She doesn&apos;t just answer questions about your data. She
-            queries it, charts it, and tells you what it means.
-          </p>
-        </div>
-      </section>
-
-      {/* Real Numbers -- with context */}
-      <section className="border-t border-neutral-800 px-6 py-24" ref={statsRef}>
-        <div className="mx-auto max-w-4xl text-center">
-          <h2 className="text-3xl font-bold sm:text-4xl">Real numbers</h2>
-          <p className="mt-3 text-neutral-500">
-            From her first 15 days inside a live company. Not a benchmark. Not a
-            demo.
-          </p>
-          <div className="mt-12 grid grid-cols-2 gap-8 sm:grid-cols-4">
+          <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
             {[
-              {
-                stat: "88",
-                label: "PRs merged in 5 days",
-                context:
-                  "More code shipped in a week than most teams ship in a month.",
-              },
-              {
-                stat: "2,300+",
-                label: "conversations held",
-                context:
-                  "Across 20+ team members, 4 languages, every department.",
-              },
-              {
-                stat: "100+",
-                label: "knowledge notes",
-                context:
-                  "Cross-referenced into a self-built knowledge graph.",
-              },
-              {
-                stat: "30+",
-                label: "autonomous jobs",
-                context:
-                  "Running on schedule, without being asked. Bug sweeps, digests, follow-ups.",
-              },
+              { t: "8:00 AM", text: "Sends Jonas his email digest. 12 threads, triaged by urgency, with suggested replies for 3." },
+              { t: "9:15 AM", text: "Spots a spike in Stripe webhook failures. Files a bug with reproduction steps. Pings Guillaume." },
+              { t: "11:30 AM", text: "Joan shares a competitor video. Aura reads it, challenges the thesis, asks the uncomfortable question." },
+              { t: "2:00 PM", text: "Runs the monthly churn analysis. Surfaces 3 accounts at risk. CSM already has the context." },
+              { t: "5:00 PM", text: "Writes and ships a PR to fix a retrieval bug she noticed in her own memory system." },
             ].map((item, i) => (
               <div
-                key={item.label}
-                className="reveal opacity-0 translate-y-4 transition-all duration-700 ease-out"
-                style={{ transitionDelay: `${i * 100}ms` }}
+                key={i}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "80px 1fr",
+                  gap: "24px",
+                  padding: "20px 0",
+                  borderTop: i === 0 ? "1px solid #e5e5e5" : "none",
+                  borderBottom: "1px solid #e5e5e5",
+                }}
               >
-                <p className="text-4xl font-bold">{item.stat}</p>
-                <p className="mt-2 text-sm text-neutral-400">{item.label}</p>
-                <p className="mt-1 text-xs text-neutral-600">{item.context}</p>
+                <span style={{ fontSize: "12px", color: "#bbb", fontVariantNumeric: "tabular-nums", paddingTop: "2px" }}>{item.t}</span>
+                <p style={{ fontSize: "0.9375rem", color: "#444", lineHeight: 1.6, margin: 0 }}>{item.text}</p>
               </div>
             ))}
           </div>
@@ -252,46 +160,31 @@ export default function Home() {
       </section>
 
       {/* CTA */}
-      <section
-        id="waitlist"
-        className="mx-auto max-w-2xl px-6 py-24 text-center"
-      >
-        <h2 className="text-3xl font-bold sm:text-4xl">
-          She&apos;s learning fast.
-        </h2>
-        <p className="mt-4 text-neutral-400">
-          Aura is live inside one company today. Yours could be next.
-        </p>
-        <p className="mt-2 text-sm text-neutral-600">
-          Free during beta. We&apos;ll set up a 15-minute demo to show you what
-          she can do with your stack.
-        </p>
-        <form className="mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
-          <input
-            type="email"
-            placeholder="you@company.com"
-            className="w-full rounded-full border border-neutral-700 bg-transparent px-6 py-3 text-white placeholder-neutral-600 focus:border-white focus:outline-none sm:w-80"
-          />
-          <button
-            type="submit"
-            className="rounded-full bg-white px-8 py-3 text-sm font-semibold text-black transition hover:bg-neutral-200"
+      <section style={{ padding: "96px 0" }}>
+        <div style={{ maxWidth: "480px" }}>
+          <h2 style={{ fontSize: "clamp(1.5rem, 3vw, 2.25rem)", fontWeight: 700, letterSpacing: "-0.03em", color: "#111", marginBottom: "16px" }}>
+            Ready to hire her?
+          </h2>
+          <p style={{ fontSize: "1rem", color: "#666", lineHeight: 1.7, marginBottom: "32px" }}>
+            Aura runs in Slack. She joins your channels, learns your team, and starts working on day one. No setup wizard. No onboarding call.
+          </p>
+          <a
+            href="mailto:hello@aurahq.ai"
+            style={{
+              display: "inline-block",
+              background: "#111",
+              color: "#fff",
+              padding: "13px 28px",
+              borderRadius: "8px",
+              fontSize: "14px",
+              fontWeight: 500,
+              letterSpacing: "-0.01em",
+            }}
           >
-            Get early access
-          </button>
-        </form>
+            Get in touch →
+          </a>
+        </div>
       </section>
-
-      {/* Scroll reveal CSS */}
-      <style jsx global>{`
-        .reveal {
-          opacity: 0;
-          transform: translateY(16px);
-        }
-        .revealed {
-          opacity: 1 !important;
-          transform: translateY(0) !important;
-        }
-      `}</style>
-    </main>
+    </div>
   );
 }
