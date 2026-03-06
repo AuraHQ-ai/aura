@@ -49,7 +49,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function BlogPostPage({ params }: Props) {
   const { slug } = await params;
   const post = await getPostBySlug(slug);
-  if (!post) notFound();
+  if (!post) return notFound();
 
   const [content, related] = await Promise.all([
     renderMdx(post.content),
