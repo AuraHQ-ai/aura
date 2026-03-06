@@ -23,6 +23,7 @@ export interface BlogPostMeta {
   excerpt: string;
   ogImage?: string;
   readingMinutes: number;
+  draft?: boolean;
 }
 
 export interface BlogPost extends BlogPostMeta {
