@@ -30,84 +30,129 @@ export const metadata: Metadata = {
 
 function Nav() {
   return (
-    <nav className="fixed top-0 z-50 w-full border-b border-neutral-800/50 bg-black/80 backdrop-blur-md">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-wide">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+    <nav
+      style={{
+        borderBottom: "1px solid #e5e5e5",
+        position: "sticky",
+        top: 0,
+        zIndex: 50,
+        background: "rgba(255,255,255,0.92)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "1100px",
+          margin: "0 auto",
+          borderLeft: "1px solid #e5e5e5",
+          borderRight: "1px solid #e5e5e5",
+          padding: "0 48px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          height: "56px",
+        }}
+      >
+        <Link
+          href="/"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontWeight: 600,
+            fontSize: "14px",
+            letterSpacing: "-0.01em",
+            color: "#111",
+          }}
+        >
+          <span style={{ position: "relative", display: "flex", width: "8px", height: "8px" }}>
+            <span
+              style={{
+                position: "absolute",
+                display: "inline-flex",
+                width: "100%",
+                height: "100%",
+                borderRadius: "50%",
+                background: "#22c55e",
+                opacity: 0.6,
+                animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite",
+              }}
+            />
+            <span
+              style={{
+                position: "relative",
+                display: "inline-flex",
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: "#22c55e",
+              }}
+            />
           </span>
           Aura
         </Link>
-        <div className="flex items-center gap-6">
-          <Link
-            href="/blog"
-            className="text-sm text-neutral-400 transition hover:text-white"
-          >
-            Blog
-          </Link>
+        <div style={{ display: "flex", alignItems: "center", gap: "28px" }}>
+          <Link href="/blog" style={{ fontSize: "14px", color: "#555" }}>Blog</Link>
+          <a href="https://docs.aurahq.ai" style={{ fontSize: "14px", color: "#555" }}>Docs</a>
           <a
-            href="https://docs.aurahq.ai"
-            className="text-sm text-neutral-400 transition hover:text-white"
-          >
-            Docs
-          </a>
-          <a
-            href="/#waitlist"
-            className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black transition hover:bg-neutral-200"
+            href="mailto:hello@aurahq.ai"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              background: "#111",
+              color: "#fff",
+              padding: "6px 16px",
+              borderRadius: "6px",
+              letterSpacing: "-0.01em",
+            }}
           >
             Get access
           </a>
         </div>
       </div>
+      <style>{`
+        @keyframes ping {
+          75%, 100% { transform: scale(2); opacity: 0; }
+        }
+      `}</style>
     </nav>
   );
 }
 
 function Footer() {
   return (
-    <footer className="border-t border-neutral-800 px-6 py-12">
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 sm:flex-row">
-        <div className="flex items-center gap-6">
-          <Link href="/" className="text-sm font-semibold">
-            Aura
-          </Link>
-          <Link
-            href="/blog"
-            className="text-sm text-neutral-500 transition hover:text-white"
-          >
-            Blog
-          </Link>
-          <a
-            href="https://docs.aurahq.ai"
-            className="text-sm text-neutral-500 transition hover:text-white"
-          >
-            Docs
-          </a>
-          <a
-            href="/blog/feed.xml"
-            className="text-sm text-neutral-500 transition hover:text-white"
-          >
-            RSS
-          </a>
+    <footer style={{ borderTop: "1px solid #e5e5e5" }}>
+      <div
+        style={{
+          maxWidth: "1100px",
+          margin: "0 auto",
+          borderLeft: "1px solid #e5e5e5",
+          borderRight: "1px solid #e5e5e5",
+          padding: "32px 48px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "16px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+          <Link href="/" style={{ fontSize: "13px", fontWeight: 600, color: "#111" }}>Aura</Link>
+          <Link href="/blog" style={{ fontSize: "13px", color: "#999" }}>Blog</Link>
+          <a href="https://docs.aurahq.ai" style={{ fontSize: "13px", color: "#999" }}>Docs</a>
+          <a href="/blog/feed.xml" style={{ fontSize: "13px", color: "#999" }}>RSS</a>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-xs text-neutral-700">
-            Built by RealAdvisor
-          </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <span style={{ fontSize: "12px", color: "#bbb" }}>Built by RealAdvisor</span>
           <a
             href="https://x.com/aurahq_ai"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-neutral-600 transition hover:text-white"
+            style={{ color: "#bbb" }}
             aria-label="Follow on X"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="h-4 w-4"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style={{ width: "15px", height: "15px" }}>
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
             </svg>
           </a>
@@ -117,16 +162,22 @@ function Footer() {
   );
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-black text-white antialiased">
+      <body style={{ background: "#fff", color: "#111", margin: 0 }}>
         <Nav />
-        <div className="pt-16">{children}</div>
+        <main
+          style={{
+            maxWidth: "1100px",
+            margin: "0 auto",
+            borderLeft: "1px solid #e5e5e5",
+            borderRight: "1px solid #e5e5e5",
+            minHeight: "calc(100vh - 56px)",
+          }}
+        >
+          {children}
+        </main>
         <Footer />
       </body>
     </html>
