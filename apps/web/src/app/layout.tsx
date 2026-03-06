@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -31,14 +32,12 @@ export const metadata: Metadata = {
 function Nav() {
   return (
     <nav
+      className="nav-bg"
       style={{
-        borderBottom: "1px solid #e5e5e5",
+        borderBottom: "1px solid var(--col-border)",
         position: "sticky",
         top: 0,
         zIndex: 50,
-        background: "rgba(255,255,255,0.92)",
-        backdropFilter: "blur(8px)",
-        WebkitBackdropFilter: "blur(8px)",
       }}
     >
       <div className="layout-inner nav-inner">
@@ -51,7 +50,7 @@ function Nav() {
             fontWeight: 600,
             fontSize: "14px",
             letterSpacing: "-0.01em",
-            color: "#111",
+            color: "var(--text-primary)",
           }}
         >
           <span style={{ position: "relative", display: "flex", width: "8px", height: "8px" }}>
@@ -81,15 +80,15 @@ function Nav() {
           Aura
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: "28px" }}>
-          <Link href="/blog" style={{ fontSize: "14px", color: "#555" }}>Blog</Link>
-          <a href="https://docs.aurahq.ai" style={{ fontSize: "14px", color: "#555" }}>Docs</a>
+          <Link href="/blog" style={{ fontSize: "14px", color: "var(--text-secondary)" }}>Blog</Link>
+          <a href="https://docs.aurahq.ai" style={{ fontSize: "14px", color: "var(--text-secondary)" }}>Docs</a>
           <a
             href="mailto:hello@aurahq.ai"
             style={{
               fontSize: "13px",
               fontWeight: 500,
-              background: "#111",
-              color: "#fff",
+              background: "var(--btn-bg)",
+              color: "var(--btn-color)",
               padding: "6px 16px",
               borderRadius: "6px",
               letterSpacing: "-0.01em",
@@ -110,24 +109,24 @@ function Nav() {
 
 function Footer() {
   return (
-    <footer style={{ borderTop: "1px solid #e5e5e5" }}>
+    <footer style={{ borderTop: "1px solid var(--col-border)" }}>
       <div
         className="layout-inner footer-inner"
       >
         <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
-          <Link href="/" style={{ fontSize: "13px", fontWeight: 600, color: "#111" }}>Aura</Link>
-          <Link href="/blog" style={{ fontSize: "13px", color: "#999" }}>Blog</Link>
-          <a href="https://docs.aurahq.ai" style={{ fontSize: "13px", color: "#999" }}>Docs</a>
-          <a href="/blog/feed.xml" style={{ fontSize: "13px", color: "#999" }}>RSS</a>
-          <a href="/llms.txt" style={{ fontSize: "13px", color: "#999" }}>llms.txt</a>
+          <Link href="/" style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>Aura</Link>
+          <Link href="/blog" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Blog</Link>
+          <a href="https://docs.aurahq.ai" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Docs</a>
+          <a href="/blog/feed.xml" style={{ fontSize: "13px", color: "var(--text-muted)" }}>RSS</a>
+          <a href="/llms.txt" style={{ fontSize: "13px", color: "var(--text-muted)" }}>llms.txt</a>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <span style={{ fontSize: "12px", color: "#bbb" }}>Built by RealAdvisor</span>
+          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Built by RealAdvisor</span>
           <a
             href="https://x.com/aurahq_ai"
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: "#bbb" }}
+            style={{ color: "var(--text-muted)" }}
             aria-label="Follow on X"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style={{ width: "15px", height: "15px" }}>
@@ -142,13 +141,15 @@ function Footer() {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body style={{ background: "#fff", color: "#111", margin: 0 }}>
-        <Nav />
-        <main className="site-main">
-          {children}
-        </main>
-        <Footer />
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <Nav />
+          <main className="site-main">
+            {children}
+          </main>
+          <Footer />
+        </ThemeProvider>
       </body>
     </html>
   );

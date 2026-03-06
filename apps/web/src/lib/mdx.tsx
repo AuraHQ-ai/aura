@@ -18,7 +18,10 @@ export async function renderMdx(source: string) {
           [
             rehypePrettyCode,
             {
-              theme: "one-light",
+              themes: {
+                light: "github-light",
+                dark: "github-dark",
+              },
               keepBackground: false,
             },
           ],

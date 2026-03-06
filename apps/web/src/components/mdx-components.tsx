@@ -8,7 +8,14 @@ function CodeBlock({
   if (!className) {
     return (
       <code
-        className="rounded bg-neutral-800 px-1.5 py-0.5 text-sm text-neutral-200"
+        style={{
+          background: "var(--code-bg)",
+          color: "var(--code-color)",
+          border: "1px solid var(--code-border)",
+          borderRadius: "4px",
+          padding: "2px 6px",
+          fontSize: "0.875em",
+        }}
         {...props}
       >
         {children}
@@ -40,9 +47,9 @@ function Callout({
   return (
     <div className={`my-6 rounded-xl border-l-4 px-6 py-4 ${styles[type]}`}>
       {title && (
-        <p className="mb-2 text-sm font-semibold text-white">{title}</p>
+        <p className="mb-2 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{title}</p>
       )}
-      <div className="text-sm text-neutral-200">{children}</div>
+      <div className="text-sm" style={{ color: "var(--text-secondary)" }}>{children}</div>
     </div>
   );
 }
