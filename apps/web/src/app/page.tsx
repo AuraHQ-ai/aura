@@ -2,7 +2,7 @@ import { stackLogos } from "@/components/stack-logos";
 
 export default function Home() {
   return (
-    <div style={{ }}>
+    <div className="site-inner">
       {/* Hero */}
       <section
         style={{

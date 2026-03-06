@@ -145,16 +145,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body style={{ background: "#fff", color: "#111", margin: 0 }}>
         <Nav />
-        <main
-          className="site-main"
-          style={{
-            maxWidth: "1100px",
-            margin: "0 auto",
-            borderLeft: "1px solid #e5e5e5",
-            borderRight: "1px solid #e5e5e5",
-            minHeight: "calc(100vh - 56px)",
-          }}
-        >
+        <main className="site-main">
           {children}
         </main>
         <Footer />

@@ -189,7 +189,8 @@ pre code {
 
 [data-rehype-pretty-code-figure] pre {
   overflow-x: auto;
-  border: 1px solid #d0d7de;
+  background: #f6f8fa !important;
+  border: 1px solid #d0d7de !important;
   border-radius: 6px;
   padding: 1rem 1.25rem;
 }
@@ -199,6 +200,7 @@ pre code {
   border: none !important;
   font-size: 0.875em;
   line-height: 1.6;
+  color: #1f2328 !important;
 }
 
 /* Mobile padding fix */
@@ -234,15 +236,18 @@ pre code {
   padding-bottom: 32px;
 }
 
+/* site-main: the full-width content wrapper. No horizontal padding here —
+   each page is responsible for its own inner padding via .site-inner or prose */
 .site-main {
-  padding: 0 48px;
+  max-width: 1100px;
+  margin: 0 auto;
+  border-left: 1px solid #e5e5e5;
+  border-right: 1px solid #e5e5e5;
+  min-height: calc(100vh - 56px);
 }
 
 @media (max-width: 768px) {
   .layout-inner {
-    padding: 0 20px;
-  }
-  .site-main {
     padding: 0 20px;
   }
 }

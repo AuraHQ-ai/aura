@@ -10,7 +10,7 @@ export default async function BlogPage() {
   const posts = await getAllPosts();
 
   return (
-    <div style={{ }}>
+    <div className="site-inner">
       {/* Header */}
       <div style={{ padding: "64px 0 48px", borderBottom: "1px solid #e5e5e5" }}>
         <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "#999", textTransform: "uppercase", marginBottom: "12px" }}>
