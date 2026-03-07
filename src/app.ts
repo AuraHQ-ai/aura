@@ -185,6 +185,7 @@ app.post("/api/slack/events", async (c) => {
                   actionLogId,
                   reaction: event.reaction,
                   reactorUserId: event.user,
+                  slackClient,
                 });
                 return;
               }

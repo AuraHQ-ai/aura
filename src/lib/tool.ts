@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import type { ZodType } from "zod";
 import { db } from "../db/client.js";
 import { actionLog } from "../db/schema.js";
-import { lookupPolicy, requestApproval } from "./approval.js";
+import { lookupPolicy, requestApproval, effectiveRiskTier, type ApprovalPolicy } from "./approval.js";
 import { logger } from "./logger.js";
 
 // ── Execution Context (AsyncLocalStorage) ────────────────────────────────────
@@ -103,7 +103,7 @@ export function defineTool<TInput, TOutput>(config: {
     };
 
     let riskTier: "read" | "write" | "destructive" = "write";
-    let policy: Awaited<ReturnType<typeof lookupPolicy>>["policy"] = null;
+    let policy: ApprovalPolicy | null = null;
 
     try {
       const httpInput = input as Record<string, unknown>;
@@ -113,8 +113,9 @@ export function defineTool<TInput, TOutput>(config: {
         method: toolName === "http_request" ? (httpInput.method as string) : undefined,
         credentialName: httpInput.credential_name as string | undefined,
       });
-      riskTier = lookup.riskTier;
-      policy = lookup.policy;
+      policy = lookup;
+      const httpInput2 = input as Record<string, unknown>;
+      riskTier = effectiveRiskTier(policy, toolName === "http_request" ? (httpInput2.method as string) : undefined);
     } catch (policyErr) {
       logger.warn("Governance: policy lookup failed, defaulting to write tier", {
         toolName,
@@ -143,9 +144,8 @@ export function defineTool<TInput, TOutput>(config: {
         toolName,
         params: input,
         riskTier,
-        policy,
-        triggeredBy: ctx.triggeredBy,
-        jobId: ctx.jobId,
+        policy: policy!,
+        context: ctx,
       });
 
       throw new PendingApprovalError(logEntry.id);

@@ -145,7 +145,7 @@ export async function requestApproval(args: {
   riskTier: string;
   policy: ApprovalPolicy;
   context: ExecutionContext;
-  slackClient: InstanceType<typeof import("@slack/web-api").WebClient>;
+  slackClient?: InstanceType<typeof import("@slack/web-api").WebClient> | null;
 }): Promise<void> {
   const { actionLogId, toolName, params, riskTier, policy, context, slackClient } = args;
 
