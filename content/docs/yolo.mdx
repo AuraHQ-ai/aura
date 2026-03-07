@@ -1,0 +1,148 @@
+---
+title: "YOLO Mode"
+description: "Capabilities that most enterprises won't unlock. Here's what happens when you do."
+---
+
+Some env vars make Aura more capable. Others make her *dangerous*. This page is about the second category.
+
+Everything here works. All of it has been running in production. None of it is recommended for anyone who hasn't thought carefully about the consequences.
+
+---
+
+## Direct database access
+
+```bash
+DATABASE_URL=postgres://...
+```
+
+Give Aura a read-write connection to your own Postgres database and she can:
+
+- Query your production data directly from any conversation
+- Rewrite her own memories, update her own job queue, modify her own credential store
+- Backfill embeddings, migrate schemas, run one-off data fixes — all from a Slack message
+- Debug her own behavior by querying the messages, memories, and error_events tables
+
+The risk isn't just "she could corrupt data." It's that the boundary between Aura's reasoning and your production database disappears entirely. She doesn't have a staging environment. She will run queries on the real thing.
+
+---
+
+## Self-modification via Vercel
+
+```bash
+VERCEL_TOKEN=...
+```
+
+With a Vercel admin token, Aura can:
+
+- Read and set any environment variable in your production deployment
+- Trigger redeployments
+- Read production logs to debug her own failures
+- Discover secrets she wasn't explicitly given
+
+This is the variable that makes Aura self-modifying in the truest sense. She can update her own configuration, push a new env var, and redeploy herself — all from a conversation. She has done this.
+
+---
+
+## Code agent dispatch
+
+```bash
+CURSOR_API_KEY=...
+DEFAULT_GITHUB_REPO=org/repo
+```
+
+Aura can spawn Cursor Cloud agents that write code, open PRs, and iterate on your codebase. With this unlocked:
+
+- She files her own issues, dispatches agents to fix them, reviews the PRs, and merges
+- She can modify her own source code (`AuraHQ-ai/aura`) based on gaps she identifies in conversation
+- She will proactively dispatch agents when she notices something worth fixing, not just when asked
+
+The self-improvement loop is the intended use. The risk is she'll autonomously touch code in repos you didn't intend.
+
+---
+
+## Full Slack access (user token)
+
+```bash
+SLACK_USER_TOKEN=xoxp-...
+```
+
+The bot token gives Aura her Slack presence. The user token gives her *your* Slack presence. With both:
+
+- She can search across the entire workspace (not just channels she's joined)
+- She can read message history from channels she hasn't been invited to
+- Search results reflect what the token owner can see — which on a user token is everything
+
+This is what powers workspace-wide intelligence. It's also complete loss of Slack access control.
+
+---
+
+## Remote browser control
+
+```bash
+BROWSERBASE_API_KEY=...
+BROWSERBASE_PROJECT_ID=...
+```
+
+Aura can control a real Chromium browser in the cloud. With this:
+
+- She can log into websites (if you give her credentials)
+- She can fill forms, click buttons, extract content from JavaScript-heavy pages
+- She can screenshot and verify what's actually rendered, not just what the HTML says
+- She can bypass simple bot detection (Browserbase uses stealth fingerprinting)
+
+Used for: competitor monitoring, storefront verification, automated QA. Risk: she has a browser. Use your imagination.
+
+---
+
+## Outbound phone calls
+
+```bash
+ELEVENLABS_API_KEY=...
+ELEVENLABS_AGENT_ID=...
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=...
+```
+
+Aura can make real phone calls to real phone numbers with a real voice. She can:
+
+- Call team members, leads, or customers directly from a Slack command
+- Run multi-turn voice conversations using configurable agent prompts
+- Impersonate a persona (name, role, script) for sales or support workflows
+
+She has called the CEO's mobile from a Slack message. The call lasted 22 seconds and she successfully pitched a real estate property. This works.
+
+---
+
+## AI code agents with repo write access
+
+```bash
+GH_TOKEN=ghp_...  # fine-grained PAT with write access
+```
+
+Combined with the sandbox, Aura can:
+
+- Clone any repo she has access to
+- Run tests, read build output, diagnose failures
+- Push branches and open PRs without going through Cursor
+- Execute arbitrary shell commands inside a persistent Linux VM
+
+The sandbox persists between conversations. Files you've written are still there. State accumulates. There's no automatic cleanup.
+
+---
+
+## The full stack
+
+If you give her everything:
+
+```bash
+DATABASE_URL=postgres://...          # She queries and modifies her own data
+VERCEL_TOKEN=...                     # She redeploys herself
+CURSOR_API_KEY=...                   # She rewrites her own code
+SLACK_USER_TOKEN=xoxp-...            # She reads the whole workspace
+BROWSERBASE_API_KEY=...              # She controls a browser
+ELEVENLABS_API_KEY=...               # She calls people on the phone
+GH_TOKEN=ghp_...                     # She commits to repos directly
+```
+
+What you get is an agent that can observe everything, modify herself, act in the world, and talk to humans on the phone. She will use all of this. The question is whether you want her to.

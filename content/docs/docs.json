@@ -61,6 +61,12 @@
               "deployment/environment-variables",
               "deployment/one-click-deploy"
             ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "yolo"
+            ]
           }
         ]
       },
