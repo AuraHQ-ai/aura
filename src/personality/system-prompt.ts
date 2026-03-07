@@ -261,8 +261,8 @@ function formatUserProfile(profile: UserProfile, interlocutor?: MentionedPerson)
 
   // Enrich with people DB fields (gender, pronouns, language, role, notes)
   if (interlocutor) {
-    const PRONOUN_MAP: Record<string, string> = { male: 'he/him', female: 'she/her', 'non-binary': 'they/them' };
-    if (interlocutor.gender) parts.push(`Gender: ${interlocutor.gender} (${PRONOUN_MAP[interlocutor.gender.toLowerCase()] ?? 'they/them'})`);
+    const PRONOUN_MAP: Record<string, string> = { male: 'he/him', female: 'she/her' };
+    if (interlocutor.gender && PRONOUN_MAP[interlocutor.gender]) parts.push(`Communication style: ${PRONOUN_MAP[interlocutor.gender]} pronouns`);
     if (interlocutor.preferredLanguage) parts.push(`Preferred language: ${interlocutor.preferredLanguage}`);
     if (interlocutor.jobTitle) parts.push(`Role: ${interlocutor.jobTitle}`);
     if (interlocutor.managerName) parts.push(`Manager: ${interlocutor.managerName}`);
