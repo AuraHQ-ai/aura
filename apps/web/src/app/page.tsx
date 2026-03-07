@@ -1,6 +1,6 @@
 import { stackLogos } from "@/components/stack-logos";
 
-const SLACK_CLIENT_ID = process.env.NEXT_PUBLIC_SLACK_CLIENT_ID ?? "YOUR_CLIENT_ID";
+const SLACK_CLIENT_ID = process.env.NEXT_PUBLIC_SLACK_CLIENT_ID;
 const SLACK_SCOPES = [
   "app_mentions:read",
   "channels:history",
@@ -21,7 +21,9 @@ const SLACK_SCOPES = [
   "users:read",
   "users:read.email",
 ].join(",");
-const SLACK_OAUTH_URL = `https://slack.com/oauth/v2/authorize?client_id=${SLACK_CLIENT_ID}&scope=${SLACK_SCOPES}`;
+const SLACK_OAUTH_URL = SLACK_CLIENT_ID
+  ? `https://slack.com/oauth/v2/authorize?client_id=${SLACK_CLIENT_ID}&scope=${SLACK_SCOPES}`
+  : null;
 
 export default function Home() {
   return (
@@ -53,21 +55,23 @@ export default function Home() {
             Aura is an AI assistant that lives in your Slack workspace — triaging bugs, analyzing data, coordinating your team, and building memory that compounds over time. Not a chatbot. A colleague.
           </p>
           <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
-            <a
-              href={SLACK_OAUTH_URL}
-              style={{ display: "inline-block" }}
-              aria-label="Add Aura to Slack"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                alt="Add to Slack"
-                height="40"
-                width="139"
-                src="https://platform.slack-edge.com/img/add_to_slack.png"
-                srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
-                style={{ height: "40px", width: "auto" }}
-              />
-            </a>
+            {SLACK_OAUTH_URL && (
+              <a
+                href={SLACK_OAUTH_URL}
+                style={{ display: "inline-block" }}
+                aria-label="Add Aura to Slack"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt="Add to Slack"
+                  height="40"
+                  width="139"
+                  src="https://platform.slack-edge.com/img/add_to_slack.png"
+                  srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
+                  style={{ height: "40px", width: "auto" }}
+                />
+              </a>
+            )}
             <a
               href="/blog"
               style={{
@@ -251,21 +255,23 @@ export default function Home() {
             Aura runs in Slack. She joins your channels, learns your team, and starts working on day one. No setup wizard. No onboarding call.
           </p>
           <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
-            <a
-              href={SLACK_OAUTH_URL}
-              style={{ display: "inline-block" }}
-              aria-label="Add Aura to Slack"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                alt="Add to Slack"
-                height="40"
-                width="139"
-                src="https://platform.slack-edge.com/img/add_to_slack.png"
-                srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
-                style={{ height: "40px", width: "auto" }}
-              />
-            </a>
+            {SLACK_OAUTH_URL && (
+              <a
+                href={SLACK_OAUTH_URL}
+                style={{ display: "inline-block" }}
+                aria-label="Add Aura to Slack"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt="Add to Slack"
+                  height="40"
+                  width="139"
+                  src="https://platform.slack-edge.com/img/add_to_slack.png"
+                  srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
+                  style={{ height: "40px", width: "auto" }}
+                />
+              </a>
+            )}
             <a
               href="mailto:hello@aurahq.ai"
               style={{
