@@ -327,11 +327,10 @@ function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
               )}
             </span>
 
-            {/* Tool name in monospace */}
+            {/* Tool name: plain English, bold */}
             <span
               style={{
                 fontSize: "13px",
-                fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
                 fontWeight: 700,
                 color: dark ? "#d1d2d3" : "#1d1c1d",
                 flex: 1,
