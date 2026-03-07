@@ -32,21 +32,24 @@ import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { notes, feedback } from "./db/schema.js";
+import { notes, feedback, workspaces } from "./db/schema.js";
+import { getBotToken, getBotUserId } from "./lib/workspace-token.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
 const signingSecret = process.env.SLACK_SIGNING_SECRET || "";
-const botToken = process.env.SLACK_BOT_TOKEN || "";
-const botUserId = process.env.AURA_BOT_USER_ID || "";
+const fallbackBotToken = process.env.SLACK_BOT_TOKEN || "";
+const fallbackBotUserId = process.env.AURA_BOT_USER_ID || "";
 
-if (!signingSecret || !botToken) {
+if (!signingSecret) {
   logger.warn(
-    "SLACK_SIGNING_SECRET or SLACK_BOT_TOKEN not set — Slack handlers will not work",
+    "SLACK_SIGNING_SECRET not set — Slack handlers will not work",
   );
 }
 
-const slackClient = new WebClient(botToken);
+// Fallback client for backward compatibility (single-tenant legacy mode).
+// Per-team clients are created via getBotToken() in event handlers.
+const fallbackSlackClient = new WebClient(fallbackBotToken);
 
 // ── Hono App ────────────────────────────────────────────────────────────────
 
@@ -158,6 +161,14 @@ app.post("/api/slack/events", async (c) => {
   // Process the event
   if (body.event) {
     const event = body.event;
+    const teamId: string | undefined = body.team_id;
+
+    // Resolve per-team Slack client (DB workspace → env var fallback)
+    const resolvedToken = await getBotToken(teamId);
+    const slackClient = resolvedToken
+      ? new WebClient(resolvedToken)
+      : fallbackSlackClient;
+    const botUserId = await getBotUserId(teamId);
 
     // Handle reaction events -- store as memory for awareness
     if (event.type === "reaction_added" && event.user && event.item) {
@@ -249,7 +260,7 @@ app.post("/api/slack/events", async (c) => {
       event,
       client: slackClient,
       botUserId,
-      teamId: body.team_id,
+      teamId,
     }).catch((err) => {
       recordError("pipeline", err, {
         eventType: event.type,
@@ -293,6 +304,13 @@ app.post("/api/slack/interactions", async (c) => {
   } catch {
     return c.json({ error: "Invalid payload JSON" }, 400);
   }
+
+  // Resolve per-team Slack client from interaction payload
+  const interactionTeamId: string | undefined = payload.team?.id;
+  const interactionToken = await getBotToken(interactionTeamId);
+  const slackClient = interactionToken
+    ? new WebClient(interactionToken)
+    : fallbackSlackClient;
 
   // Handle block_actions
   if (payload.type === "block_actions" && payload.actions) {
@@ -658,6 +676,150 @@ app.post("/api/slack/interactions", async (c) => {
   return c.json({ ok: true });
 });
 
+// ── Slack OAuth Install Flow (multi-workspace) ─────────────────────────────
+
+const SLACK_CLIENT_ID = process.env.SLACK_CLIENT_ID || "";
+const SLACK_CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET || "";
+
+const SLACK_BOT_SCOPES = [
+  "app_mentions:read",
+  "assistant:write",
+  "channels:history",
+  "channels:read",
+  "chat:write",
+  "commands",
+  "files:read",
+  "groups:history",
+  "groups:read",
+  "im:history",
+  "im:read",
+  "im:write",
+  "mpim:history",
+  "mpim:read",
+  "reactions:read",
+  "users:read",
+  "users:read.email",
+].join(",");
+
+app.get("/api/slack/install", (c) => {
+  if (!SLACK_CLIENT_ID) {
+    return c.json({ error: "SLACK_CLIENT_ID is not configured" }, 500);
+  }
+
+  const baseUrl = new URL(c.req.url);
+  const redirectUri = `${baseUrl.protocol}//${baseUrl.host}/api/slack/oauth-callback`;
+
+  const oauthUrl = new URL("https://slack.com/oauth/v2/authorize");
+  oauthUrl.searchParams.set("client_id", SLACK_CLIENT_ID);
+  oauthUrl.searchParams.set("scope", SLACK_BOT_SCOPES);
+  oauthUrl.searchParams.set("redirect_uri", redirectUri);
+
+  const format = c.req.query("format");
+  if (format === "json") {
+    return c.json({ url: oauthUrl.toString() });
+  }
+
+  return c.redirect(oauthUrl.toString());
+});
+
+app.get("/api/slack/oauth-callback", async (c) => {
+  const code = c.req.query("code");
+  const error = c.req.query("error");
+
+  if (error) {
+    logger.warn("Slack OAuth denied by user", { error });
+    return c.json({ ok: false, error: `OAuth denied: ${error}` }, 400);
+  }
+
+  if (!code) {
+    return c.json({ ok: false, error: "Missing authorization code" }, 400);
+  }
+
+  if (!SLACK_CLIENT_ID || !SLACK_CLIENT_SECRET) {
+    return c.json(
+      { ok: false, error: "Slack OAuth credentials not configured" },
+      500,
+    );
+  }
+
+  const baseUrl = new URL(c.req.url);
+  const redirectUri = `${baseUrl.protocol}//${baseUrl.host}/api/slack/oauth-callback`;
+
+  try {
+    const tokenResponse = await fetch("https://slack.com/api/oauth.v2.access", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: SLACK_CLIENT_ID,
+        client_secret: SLACK_CLIENT_SECRET,
+        code,
+        redirect_uri: redirectUri,
+      }),
+    });
+
+    const data = (await tokenResponse.json()) as any;
+
+    if (!data.ok) {
+      logger.error("Slack OAuth token exchange failed", { error: data.error });
+      return c.json(
+        { ok: false, error: `Slack API error: ${data.error}` },
+        400,
+      );
+    }
+
+    const teamId = data.team?.id;
+    const teamName = data.team?.name || "Unknown";
+    const botToken = data.access_token;
+    const botUserId = data.bot_user_id;
+
+    if (!teamId || !botToken || !botUserId) {
+      logger.error("Slack OAuth response missing required fields", {
+        hasTeamId: !!teamId,
+        hasBotToken: !!botToken,
+        hasBotUserId: !!botUserId,
+      });
+      return c.json(
+        { ok: false, error: "Incomplete OAuth response from Slack" },
+        500,
+      );
+    }
+
+    await db
+      .insert(workspaces)
+      .values({ teamId, teamName, botToken, botUserId })
+      .onConflictDoUpdate({
+        target: workspaces.teamId,
+        set: {
+          teamName,
+          botToken,
+          botUserId,
+          isActive: true,
+          installedAt: sql`now()`,
+        },
+      });
+
+    logger.info("Slack workspace installed via OAuth", { teamId, teamName });
+
+    return c.html(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Aura Installed</title></head>
+        <body style="font-family: system-ui, sans-serif; max-width: 480px; margin: 80px auto; text-align: center;">
+          <h1>Aura has been added to ${teamName}!</h1>
+          <p>You can now use Aura in your Slack workspace.</p>
+          <p>Close this window and head back to Slack.</p>
+        </body>
+      </html>
+    `);
+  } catch (err: any) {
+    logger.error("Slack OAuth callback error", { error: err.message });
+    return c.json(
+      { ok: false, error: `OAuth callback failed: ${err.message}` },
+      500,
+    );
+  }
+});
+
 // ── Google OAuth Routes (Gmail) ─────────────────────────────────────────────
 
 app.get("/api/oauth/google/auth-url", async (c) => {
@@ -903,7 +1065,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         }
       }
 
-      const dmResult = await slackClient.conversations.open({
+      const dmResult = await fallbackSlackClient.conversations.open({
         users: dmTarget,
       });
       const dmChannelId = dmResult.channel?.id;
@@ -911,7 +1073,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       if (dmChannelId) {
         const useThreadTs =
           channelId === dmChannelId && threadTs ? threadTs : undefined;
-        await safePostMessage(slackClient, {
+        await safePostMessage(fallbackSlackClient, {
           channel: dmChannelId,
           thread_ts: useThreadTs,
           text: message,
@@ -928,7 +1090,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         channelId !== "unknown" &&
         channelId !== dmChannelId
       ) {
-        await safePostMessage(slackClient, {
+        await safePostMessage(fallbackSlackClient, {
           channel: channelId,
           thread_ts: threadTs || undefined,
           text: message,
