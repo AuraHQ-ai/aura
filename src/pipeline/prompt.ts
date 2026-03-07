@@ -40,6 +40,7 @@ export async function assemblePrompt(
   context: MessageContext,
   conversation: ConversationContext,
   client?: WebClient,
+  workspaceId?: string,
 ): Promise<AssembledPrompt> {
   const start = Date.now();
 
@@ -77,6 +78,7 @@ export async function assemblePrompt(
           query: queryText,
           queryEmbedding,
           currentUserId: context.userId,
+          workspaceId,
           limit: 15,
         })
       : Promise.resolve([] as Memory[]),
@@ -84,13 +86,14 @@ export async function assemblePrompt(
       ? retrieveConversations({
           query: queryText,
           queryEmbedding,
+          workspaceId,
           threadLimit: 3,
           matchLimit: 15,
           minSimilarity: 0.35,
           excludeThreadTs: context.threadTs,
         })
       : Promise.resolve([] as ConversationThread[]),
-    getProfile(context.userId),
+    getProfile(context.userId, workspaceId),
     lookupMentionedPeople(mentionedUserIds),
     lookupPerson(context.userId),
   ]);
@@ -137,6 +140,7 @@ export async function assemblePrompt(
     isChannelHistory,
     mentionedPeople,
     interlocutor: interlocutor ?? undefined,
+    workspaceId,
   });
 
   // Dynamic per-call context — separated so the stable prompt stays cache-friendly

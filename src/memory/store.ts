@@ -1,6 +1,6 @@
 import { eq, sql, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { messages, memories, notes, eventLocks, type NewMessage, type NewMemory } from "../db/schema.js";
+import { messages, memories, notes, eventLocks, DEFAULT_WORKSPACE_ID, type NewMessage, type NewMemory } from "../db/schema.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
@@ -18,10 +18,10 @@ export function toDbChannelType(ct: ChannelType): DbChannelType {
  * Returns true if this caller claimed the event, false if it was already claimed.
  * Safe against race conditions — uses INSERT ... ON CONFLICT DO NOTHING RETURNING id.
  */
-export async function claimEvent(eventTs: string, channelId: string): Promise<boolean> {
+export async function claimEvent(eventTs: string, channelId: string, workspaceId?: string): Promise<boolean> {
   const result = await db
     .insert(eventLocks)
-    .values({ eventTs, channelId })
+    .values({ eventTs, channelId, workspaceId: workspaceId ?? DEFAULT_WORKSPACE_ID })
     .onConflictDoNothing()
     .returning({ id: eventLocks.id });
   return result.length > 0;
@@ -267,6 +267,7 @@ interface ToolCallStorageContext {
   channelId: string;
   channelType: ChannelType;
   userId: string;
+  workspaceId?: string;
 }
 
 /**
@@ -285,6 +286,7 @@ export async function storeToolCallMessages(
     channelId: ctx.channelId,
     channelType: toDbChannelType(ctx.channelType),
     userId: ctx.userId,
+    workspaceId: ctx.workspaceId ?? DEFAULT_WORKSPACE_ID,
     role: "tool" as const,
     content: summarizeToolCall(tc),
     metadata: {
@@ -350,6 +352,7 @@ export async function storeChannelReadMessage(
     channelId: ctx.channelId,
     channelType: toDbChannelType(ctx.channelType),
     userId: ctx.userId,
+    workspaceId: ctx.workspaceId ?? DEFAULT_WORKSPACE_ID,
     role: "tool" as const,
     content,
     metadata: {

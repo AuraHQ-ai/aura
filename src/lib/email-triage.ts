@@ -2,7 +2,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { emailsRaw } from "../db/schema.js";
+import { emailsRaw, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import { getFastModel } from "./ai.js";
 import { logger } from "./logger.js";
 
@@ -100,6 +100,7 @@ ${threadText}`;
  */
 export async function computeThreadStates(
   userId: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<ThreadStateSummary> {
   const summary: ThreadStateSummary = {
     processed: 0,
@@ -119,7 +120,12 @@ export async function computeThreadStates(
       threadStateUpdatedAt: emailsRaw.threadStateUpdatedAt,
     })
     .from(emailsRaw)
-    .where(eq(emailsRaw.userId, userId));
+    .where(
+      and(
+        eq(emailsRaw.workspaceId, workspaceId),
+        eq(emailsRaw.userId, userId),
+      ),
+    );
 
   if (metaRows.length === 0) {
     logger.info("No emails found for user", { userId });
@@ -169,6 +175,7 @@ export async function computeThreadStates(
     .from(emailsRaw)
     .where(
       and(
+        eq(emailsRaw.workspaceId, workspaceId),
         eq(emailsRaw.userId, userId),
         inArray(emailsRaw.gmailThreadId, threadIdsBatch),
       ),
@@ -224,7 +231,8 @@ export async function computeThreadStates(
           updated_at = now()
         FROM (VALUES ${valuesList})
           AS v(thread_id, state, reason)
-        WHERE e.user_id = ${userId}
+        WHERE e.workspace_id = ${workspaceId}
+          AND e.user_id = ${userId}
           AND e.gmail_thread_id = v.thread_id
       `);
     } catch (err) {

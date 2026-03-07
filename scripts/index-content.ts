@@ -176,7 +176,7 @@ async function upsertRecords(
         rawPath: record.rawPath,
       })
       .onConflictDoUpdate({
-        target: content.slug,
+        target: [content.workspaceId, content.slug],
         set: {
           type: record.type,
           title: record.title,

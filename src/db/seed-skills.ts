@@ -9,7 +9,7 @@
 
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
-import { notes } from "./schema.js";
+import { notes, DEFAULT_WORKSPACE_ID } from "./schema.js";
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -80,12 +80,13 @@ try {
     await db
       .insert(notes)
       .values({
+        workspaceId: DEFAULT_WORKSPACE_ID,
         topic: skill.topic,
         content: skill.content,
         category: skill.category,
         updatedAt: new Date(),
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing({ target: [notes.workspaceId, notes.topic] });
 
     console.log(`  - ${skill.topic}: seeded (or already exists)`);
   }

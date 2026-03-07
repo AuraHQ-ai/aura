@@ -30,9 +30,9 @@ import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
 import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { notes, feedback } from "./db/schema.js";
+import { notes, feedback, DEFAULT_WORKSPACE_ID } from "./db/schema.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -312,15 +312,17 @@ app.post("/api/slack/interactions", async (c) => {
         });
 
         if (messageTs && channelId && userId) {
+          const workspaceId = payload.team?.id ?? DEFAULT_WORKSPACE_ID;
           const feedbackPromise = (async () => {
             try {
               await db.insert(feedback).values({
+                workspaceId,
                 messageTs,
                 channelId,
                 userId,
                 value: action.value,
               }).onConflictDoUpdate({
-                target: [feedback.messageTs, feedback.channelId, feedback.userId],
+                target: [feedback.workspaceId, feedback.messageTs, feedback.channelId, feedback.userId],
                 set: { value: sql`excluded.value` },
               });
 
@@ -796,7 +798,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         const trackingRows = await db
           .select({ content: notes.content })
           .from(notes)
-          .where(eq(notes.topic, `cursor-agent:${agentId}`))
+          .where(and(eq(notes.workspaceId, DEFAULT_WORKSPACE_ID), eq(notes.topic, `cursor-agent:${agentId}`)))
           .limit(1);
 
         if (trackingRows[0]?.content) {

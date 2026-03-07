@@ -1,7 +1,7 @@
 import TurndownService from "turndown";
 import { and, eq, isNull, sql, inArray, asc } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { emailsRaw, type NewEmailRaw } from "../db/schema.js";
+import { emailsRaw, DEFAULT_WORKSPACE_ID, type NewEmailRaw } from "../db/schema.js";
 import {
   getGmailClientForUser,
   getHeader,
@@ -191,6 +191,7 @@ async function batchGetMessages(
 function messageToRow(
   msg: any,
   userId: string,
+  workspaceId: string,
   userEmail: string | null,
 ): NewEmailRaw | null {
   if (!msg?.id || !msg?.threadId) return null;
@@ -229,6 +230,7 @@ function messageToRow(
   }
 
   return {
+    workspaceId,
     userId,
     gmailMessageId: msg.id,
     gmailThreadId: msg.threadId,
@@ -256,6 +258,7 @@ function messageToRow(
  */
 export async function syncEmails(
   userId: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
   options: SyncOptions = {},
 ): Promise<SyncResult> {
   const result: SyncResult = { synced: 0, skipped: 0, errors: 0, errorDetails: [] };
@@ -322,7 +325,7 @@ export async function syncEmails(
         continue;
       }
       try {
-        const row = messageToRow(msg, userId, userEmail);
+        const row = messageToRow(msg, userId, workspaceId, userEmail);
         if (row) {
           rows.push(row);
           if (!uniqueSenders.has(row.fromEmail)) {
@@ -365,7 +368,7 @@ export async function syncEmails(
           .insert(emailsRaw)
           .values(rows)
           .onConflictDoNothing({
-            target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+            target: [emailsRaw.workspaceId, emailsRaw.userId, emailsRaw.gmailMessageId],
           });
         result.synced += insertResult.rowCount ?? 0;
         result.skipped += rows.length - (insertResult.rowCount ?? 0);
@@ -411,7 +414,7 @@ export async function syncEmails(
       const msg = retryMap.get(e.gmailMessageId);
       if (!msg) continue;
       try {
-        const row = messageToRow(msg, userId, userEmail);
+        const row = messageToRow(msg, userId, workspaceId, userEmail);
         if (row) {
           retryRows.push(row);
           recoveredIds.add(e.gmailMessageId);
@@ -425,7 +428,7 @@ export async function syncEmails(
           .insert(emailsRaw)
           .values(retryRows)
           .onConflictDoNothing({
-            target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+            target: [emailsRaw.workspaceId, emailsRaw.userId, emailsRaw.gmailMessageId],
           });
         result.synced += insertResult.rowCount ?? 0;
         result.skipped += retryRows.length - (insertResult.rowCount ?? 0);
@@ -470,6 +473,7 @@ export async function syncEmails(
             .from(emailsRaw)
             .where(
               and(
+                eq(emailsRaw.workspaceId, workspaceId),
                 eq(emailsRaw.userId, userId),
                 isNull(emailsRaw.embedding),
               ),
@@ -479,7 +483,7 @@ export async function syncEmails(
     )];
 
     if (threadIds.length > 0) {
-      const embedded = await embedEmailThreads(userId, threadIds);
+      const embedded = await embedEmailThreads(userId, workspaceId, threadIds);
       logger.info("Email sync: embedded threads", {
         userId,
         threadsEmbedded: embedded,
@@ -524,6 +528,7 @@ function buildThreadText(
 
 async function embedEmailThreads(
   userId: string,
+  workspaceId: string,
   threadIds: string[],
 ): Promise<number> {
   const BATCH_SIZE = 50;
@@ -543,6 +548,7 @@ async function embedEmailThreads(
       .from(emailsRaw)
       .where(
         and(
+          eq(emailsRaw.workspaceId, workspaceId),
           eq(emailsRaw.userId, userId),
           inArray(emailsRaw.gmailThreadId, batchThreadIds),
         ),
@@ -580,6 +586,7 @@ async function embedEmailThreads(
           })
           .where(
             and(
+              eq(emailsRaw.workspaceId, workspaceId),
               eq(emailsRaw.userId, userId),
               eq(emailsRaw.gmailThreadId, orderedThreadIds[j]),
             ),
@@ -606,6 +613,7 @@ async function embedEmailThreads(
  */
 export async function backfillEmailEmbeddings(
   userId: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<{ embedded: number; errors: number }> {
   const result = { embedded: 0, errors: 0 };
 
@@ -614,6 +622,7 @@ export async function backfillEmailEmbeddings(
     .from(emailsRaw)
     .where(
       and(
+        eq(emailsRaw.workspaceId, workspaceId),
         eq(emailsRaw.userId, userId),
         isNull(emailsRaw.embedding),
       ),
@@ -629,7 +638,7 @@ export async function backfillEmailEmbeddings(
   logger.info("Backfill: starting", { userId, threads: threadIds.length });
 
   try {
-    result.embedded = await embedEmailThreads(userId, threadIds);
+    result.embedded = await embedEmailThreads(userId, workspaceId, threadIds);
   } catch (err) {
     logger.error("Backfill: failed", { userId, error: String(err) });
   }

@@ -112,9 +112,9 @@ async function createBaseOAuth2Client() {
  * Get an authenticated OAuth2Client for a given user.
  * No args = Aura's own token (U0AFEC1C69F). Pass a userId for per-user tokens.
  */
-export async function getOAuth2Client(userId?: string) {
+export async function getOAuth2Client(userId?: string, workspaceId?: string) {
   const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
-  const tokenRow = await getUserRefreshToken(resolvedUserId);
+  const tokenRow = await getUserRefreshToken(resolvedUserId, workspaceId);
   if (!tokenRow) return null;
 
   const oauth2Client = await createBaseOAuth2Client();
@@ -127,8 +127,8 @@ export async function getOAuth2Client(userId?: string) {
 /**
  * Returns an authenticated Gmail client for Aura, or null if credentials are missing.
  */
-export async function getGmailClient() {
-  const auth = await getOAuth2Client();
+export async function getGmailClient(workspaceId?: string) {
+  const auth = await getOAuth2Client(undefined, workspaceId);
   if (!auth) {
     logger.warn("Gmail: No OAuth2 client available (checked oauth_tokens and env)");
     return null;
@@ -716,12 +716,16 @@ export interface DraftSummary {
  */
 export async function getUserRefreshToken(
   userId: string,
+  workspaceId?: string,
 ): Promise<{ refreshToken: string; email: string | null } | null> {
   try {
     const { eq, and } = await import("drizzle-orm");
     const { db } = await import("../db/client.js");
-    const { oauthTokens } = await import("../db/schema.js");
+    const { oauthTokens, DEFAULT_WORKSPACE_ID } = await import(
+      "../db/schema.js"
+    );
 
+    const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
     const rows = await db
       .select({
         refreshToken: oauthTokens.refreshToken,
@@ -730,6 +734,7 @@ export async function getUserRefreshToken(
       .from(oauthTokens)
       .where(
         and(
+          eq(oauthTokens.workspaceId, wsId),
           eq(oauthTokens.userId, userId),
           eq(oauthTokens.provider, "google"),
         ),
@@ -754,13 +759,18 @@ export async function saveUserRefreshToken(
   userId: string,
   refreshToken: string,
   email?: string,
+  workspaceId?: string,
 ): Promise<void> {
   const { db } = await import("../db/client.js");
-  const { oauthTokens } = await import("../db/schema.js");
+  const { oauthTokens, DEFAULT_WORKSPACE_ID } = await import(
+    "../db/schema.js"
+  );
 
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
   await db
     .insert(oauthTokens)
     .values({
+      workspaceId: wsId,
       userId,
       provider: "google",
       refreshToken,
@@ -769,7 +779,7 @@ export async function saveUserRefreshToken(
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [oauthTokens.userId, oauthTokens.provider],
+      target: [oauthTokens.workspaceId, oauthTokens.userId, oauthTokens.provider],
       set: {
         refreshToken,
         email: email || undefined,
@@ -785,8 +795,11 @@ export async function saveUserRefreshToken(
  * Get an authenticated Gmail client for a specific Slack user.
  * Returns null if the user has not authorized or credentials are missing.
  */
-export async function getGmailClientForUser(userId: string) {
-  const userToken = await getUserRefreshToken(userId);
+export async function getGmailClientForUser(
+  userId: string,
+  workspaceId?: string,
+) {
+  const userToken = await getUserRefreshToken(userId, workspaceId);
   if (!userToken) {
     logger.warn("Gmail: No OAuth token for user", { userId });
     return null;

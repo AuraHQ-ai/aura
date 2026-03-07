@@ -6,7 +6,7 @@ import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { isAdmin } from "../lib/permissions.js";
 import { db } from "../db/client.js";
-import { emailsRaw } from "../db/schema.js";
+import { emailsRaw, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { resolveUserByName } from "./slack.js";
 import { threadStateValues } from "../lib/email-triage.js";
@@ -18,6 +18,8 @@ export function createEmailSyncTools(
   client: WebClient,
   context?: ScheduleContext,
 ) {
+  const wsId = context?.workspaceId ?? DEFAULT_WORKSPACE_ID;
+
   return {
     sync_emails: defineTool({
       description:
@@ -103,7 +105,7 @@ export function createEmailSyncTools(
             }
           }
 
-          const syncResult = await syncEmails(user.id, {
+          const syncResult = await syncEmails(user.id, wsId, {
             query: gmailQuery,
             maxMessages: max_messages || 500,
           });
@@ -117,7 +119,7 @@ export function createEmailSyncTools(
             const { computeThreadStates } = await import(
               "../lib/email-triage.js"
             );
-            threadStates = await computeThreadStates(user.id);
+            threadStates = await computeThreadStates(user.id, wsId);
           }
 
           const syncSummary = `Synced ${syncResult.synced} emails (${syncResult.skipped} already existed, ${syncResult.errors} errors)`;
@@ -213,6 +215,7 @@ export function createEmailSyncTools(
             .from(emailsRaw)
             .where(
               and(
+                eq(emailsRaw.workspaceId, wsId),
                 eq(emailsRaw.userId, userId),
                 stateFilter,
               ),
@@ -259,6 +262,7 @@ export function createEmailSyncTools(
             .from(emailsRaw)
             .where(
               and(
+                eq(emailsRaw.workspaceId, wsId),
                 eq(emailsRaw.userId, userId),
                 inArray(emailsRaw.gmailThreadId, threadIds)
               )
@@ -369,9 +373,11 @@ export function createEmailSyncTools(
 
           const userId = user.id;
 
-          const conditions = [eq(emailsRaw.userId, userId)];
-
-          conditions.push(eq(emailsRaw.gmailThreadId, gmail_thread_id));
+          const conditions = [
+            eq(emailsRaw.workspaceId, wsId),
+            eq(emailsRaw.userId, userId),
+            eq(emailsRaw.gmailThreadId, gmail_thread_id),
+          ];
 
           // Find distinct threads that match
           const matchingThreads = await db
@@ -400,6 +406,7 @@ export function createEmailSyncTools(
             })
             .where(
               and(
+                eq(emailsRaw.workspaceId, wsId),
                 eq(emailsRaw.userId, userId),
                 inArray(emailsRaw.gmailThreadId, threadIds),
               ),
@@ -503,6 +510,7 @@ export function createEmailSyncTools(
                 })
                 .where(
                   and(
+                    eq(emailsRaw.workspaceId, wsId),
                     eq(emailsRaw.userId, userId),
                     eq(emailsRaw.gmailThreadId, update.gmail_thread_id),
                   ),
@@ -616,7 +624,10 @@ export function createEmailSyncTools(
           }
 
           const userId = user.id;
-          const conditions = [eq(emailsRaw.userId, userId)];
+          const conditions = [
+            eq(emailsRaw.workspaceId, wsId),
+            eq(emailsRaw.userId, userId),
+          ];
 
           if (thread_state) {
             conditions.push(eq(emailsRaw.threadState, thread_state));

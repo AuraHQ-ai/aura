@@ -2,14 +2,14 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import crypto from "node:crypto";
-import { sql } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { formatForSlack } from "../lib/format.js";
 import { embedText } from "../lib/embeddings.js";
 import { db } from "../db/client.js";
-import { voiceCalls, notes } from "../db/schema.js";
+import { voiceCalls, notes, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import { getUserList, resolveUserByName } from "../tools/slack.js";
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 
@@ -57,7 +57,7 @@ async function handleLookupContext(
       const results = await db
         .select({ topic: notes.topic, content: notes.content })
         .from(notes)
-        .where(sql`embedding IS NOT NULL`)
+        .where(and(eq(notes.workspaceId, DEFAULT_WORKSPACE_ID), sql`embedding IS NOT NULL`))
         .orderBy(sql`embedding <=> ${JSON.stringify(vector)}::vector`)
         .limit(5);
 
@@ -95,7 +95,7 @@ async function handleLookupContext(
         const relatedNotes = await db
           .select({ topic: notes.topic, content: notes.content })
           .from(notes)
-          .where(ilike(notes.topic, `%${escapedName}%`))
+          .where(and(eq(notes.workspaceId, DEFAULT_WORKSPACE_ID), ilike(notes.topic, `%${escapedName}%`)))
           .limit(3);
 
         if (relatedNotes.length > 0) {
@@ -285,6 +285,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       await db
         .insert(voiceCalls)
         .values({
+          workspaceId: DEFAULT_WORKSPACE_ID,
           conversationId,
           agentId: agentId ?? null,
           direction,
@@ -299,7 +300,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           metadata: strippedMetadata,
         })
         .onConflictDoUpdate({
-          target: voiceCalls.conversationId,
+          target: [voiceCalls.workspaceId, voiceCalls.conversationId],
           set: {
             status: callStatus,
             durationSeconds: duration ?? null,

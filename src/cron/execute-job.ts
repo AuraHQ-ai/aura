@@ -1,7 +1,7 @@
 import { WebClient } from "@slack/web-api";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { jobs, notes, jobExecutions } from "../db/schema.js";
+import { jobs, notes, jobExecutions, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
@@ -49,11 +49,11 @@ function parseContinuationTag(description: string): string | null {
   return match ? match[1] : null;
 }
 
-async function loadPlanNote(topic: string): Promise<string | null> {
+async function loadPlanNote(topic: string, workspaceId: string = DEFAULT_WORKSPACE_ID): Promise<string | null> {
   const rows = await db
     .select({ content: notes.content })
     .from(notes)
-    .where(eq(notes.topic, topic))
+    .where(and(eq(notes.workspaceId, workspaceId), eq(notes.topic, topic)))
     .limit(1);
   return rows[0]?.content ?? null;
 }
@@ -81,10 +81,12 @@ export async function executeJob(
   }
 
   // Insert execution trace row
+  const jobWorkspaceId = job.workspaceId ?? DEFAULT_WORKSPACE_ID;
   const [execution] = await db
     .insert(jobExecutions)
     .values({
       jobId,
+      workspaceId: jobWorkspaceId,
       status: "running",
       trigger,
       callbackChannel: job.channelId || null,
@@ -117,7 +119,7 @@ export async function executeJob(
         : "";
 
     if (isContinuation) {
-      const planContent = await loadPlanNote(planTopic);
+      const planContent = await loadPlanNote(planTopic, jobWorkspaceId);
       const nextSteps = job.description.replace(CONTINUE_TAG_RE, "");
 
       prompt = planContent
@@ -165,6 +167,7 @@ export async function executeJob(
     const { agent } = await createHeadlessAgent({
       slackClient,
       context: {
+        workspaceId: jobWorkspaceId,
         userId: job.requestedBy,
         channelId: job.channelId || undefined,
         threadTs: job.threadTs || undefined,

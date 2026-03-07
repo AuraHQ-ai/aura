@@ -10,19 +10,22 @@
  * - Level 3 (lazy): referenced resources executed when needed
  */
 
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { notes } from "../db/schema.js";
+import { notes, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 
 /**
  * Build a compact skill index for injection into system prompts.
  * Returns empty string if no skill notes exist.
  */
-export async function buildSkillIndex(): Promise<string> {
+export async function buildSkillIndex(
+  workspaceId?: string,
+): Promise<string> {
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
   const skills = await db
     .select({ topic: notes.topic, content: notes.content })
     .from(notes)
-    .where(eq(notes.category, "skill"));
+    .where(and(eq(notes.workspaceId, wsId), eq(notes.category, "skill")));
 
   if (skills.length === 0) return "";
 

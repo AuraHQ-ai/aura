@@ -4,7 +4,7 @@ import { generateText } from "ai";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { resources } from "../db/schema.js";
+import { resources, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { getFastModel } from "../lib/ai.js";
 import { embedText } from "../lib/embeddings.js";
@@ -252,6 +252,7 @@ interface ResourceListRow {
 }
 
 export function createResourceTools(context?: ScheduleContext) {
+  const wsId = context?.workspaceId ?? DEFAULT_WORKSPACE_ID;
   return {
     ingest_resource: defineTool({
       description:
@@ -327,7 +328,7 @@ export function createResourceTools(context?: ScheduleContext) {
               contentHash: resources.contentHash,
             })
             .from(resources)
-            .where(eq(resources.url, normalizedUrl))
+            .where(and(eq(resources.workspaceId, wsId), eq(resources.url, normalizedUrl)))
             .limit(1);
           const current = currentRows[0];
 
@@ -345,6 +346,7 @@ export function createResourceTools(context?: ScheduleContext) {
           await db
             .insert(resources)
             .values({
+              workspaceId: wsId,
               url: normalizedUrl,
               parentUrl: nextParentUrl,
               title: nextTitle,
@@ -355,7 +357,7 @@ export function createResourceTools(context?: ScheduleContext) {
               updatedAt: now,
             })
             .onConflictDoUpdate({
-              target: resources.url,
+              target: [resources.workspaceId, resources.url],
               set: {
                 parentUrl: nextParentUrl,
                 title: nextTitle,
@@ -428,7 +430,7 @@ export function createResourceTools(context?: ScheduleContext) {
                 crawledAt: now,
                 updatedAt: now,
               })
-              .where(eq(resources.url, normalizedUrl));
+              .where(and(eq(resources.workspaceId, wsId), eq(resources.url, normalizedUrl)));
 
             logger.info("ingest_resource unchanged", {
               url: normalizedUrl,
@@ -470,7 +472,7 @@ export function createResourceTools(context?: ScheduleContext) {
               crawledAt: now,
               updatedAt: now,
             })
-            .where(eq(resources.url, normalizedUrl));
+            .where(and(eq(resources.workspaceId, wsId), eq(resources.url, normalizedUrl)));
 
           logger.info("ingest_resource tool called", {
             url: normalizedUrl,
@@ -502,7 +504,7 @@ export function createResourceTools(context?: ScheduleContext) {
               crawledAt: now,
               updatedAt: now,
             })
-            .where(eq(resources.url, normalizedUrl));
+            .where(and(eq(resources.workspaceId, wsId), eq(resources.url, normalizedUrl)));
 
           logger.error("ingest_resource tool failed", {
             url: normalizedUrl,
@@ -556,6 +558,7 @@ export function createResourceTools(context?: ScheduleContext) {
             const embeddingLiteral = JSON.stringify(queryEmbedding);
 
             const conditions = [
+              eq(resources.workspaceId, wsId),
               eq(resources.status, "ready"),
               sql`${resources.embedding} IS NOT NULL`,
             ];
@@ -597,7 +600,7 @@ export function createResourceTools(context?: ScheduleContext) {
             };
           }
 
-          const conditions = [eq(resources.status, "ready")];
+          const conditions = [eq(resources.workspaceId, wsId), eq(resources.status, "ready")];
           if (source) conditions.push(eq(resources.source, source));
           const where = and(...conditions);
 
@@ -706,7 +709,7 @@ export function createResourceTools(context?: ScheduleContext) {
           const rows = await db
             .select()
             .from(resources)
-            .where(eq(resources.url, normalizedUrl))
+            .where(and(eq(resources.workspaceId, wsId), eq(resources.url, normalizedUrl)))
             .limit(1);
           const resource = rows[0];
 
@@ -779,7 +782,7 @@ export function createResourceTools(context?: ScheduleContext) {
       }),
       execute: async ({ source, status, limit }) => {
         try {
-          const conditions = [eq(resources.status, status)];
+          const conditions = [eq(resources.workspaceId, wsId), eq(resources.status, status)];
           if (source) conditions.push(eq(resources.source, source));
 
           const rows = await db

@@ -1,6 +1,6 @@
-import { eq, sql, and, like, or, arrayContains } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { memories, userProfiles, type Memory } from "../db/schema.js";
+import { memories, userProfiles, DEFAULT_WORKSPACE_ID, type Memory } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
 
@@ -18,6 +18,7 @@ import { embedText } from "../lib/embeddings.js";
  */
 export async function getKnowledgeAboutUser(
   slackUserId: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<{
   profile: {
     displayName: string;
@@ -33,7 +34,7 @@ export async function getKnowledgeAboutUser(
   const [profile] = await db
     .select()
     .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .where(and(eq(userProfiles.workspaceId, workspaceId), eq(userProfiles.slackUserId, slackUserId)))
     .limit(1);
 
   // Get all memories related to this user
@@ -46,7 +47,10 @@ export async function getKnowledgeAboutUser(
     })
     .from(memories)
     .where(
-      sql`${slackUserId} = ANY(${memories.relatedUserIds})`,
+      and(
+        eq(memories.workspaceId, workspaceId),
+        sql`${slackUserId} = ANY(${memories.relatedUserIds})`,
+      ),
     )
     .orderBy(sql`${memories.relevanceScore} DESC`)
     .limit(50);
@@ -155,6 +159,7 @@ export function formatKnowledgeSummary(
 export async function forgetMemories(
   slackUserId: string,
   whatToForget: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<{
   forgottenCount: number;
   examples: string[];
@@ -176,6 +181,7 @@ export async function forgetMemories(
       .from(memories)
       .where(
         and(
+          eq(memories.workspaceId, workspaceId),
           sql`${slackUserId} = ANY(${memories.relatedUserIds})`,
           sql`${memories.embedding} IS NOT NULL`,
         ),

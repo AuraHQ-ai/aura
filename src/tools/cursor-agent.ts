@@ -1,8 +1,8 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { notes } from "../db/schema.js";
+import { notes, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -14,6 +14,7 @@ const DEFAULT_REPO = process.env.DEFAULT_GITHUB_REPO ?? "AuraHQ-ai/aura";
  * Provides async dispatch of Cursor agents for complex multi-file code tasks.
  */
 export function createCursorAgentTools(context?: ScheduleContext) {
+  const wsId = context?.workspaceId ?? DEFAULT_WORKSPACE_ID;
   return {
     dispatch_cursor_agent: defineTool({
       description:
@@ -144,6 +145,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           await db
             .insert(notes)
             .values({
+              workspaceId: wsId,
               topic: `cursor-agent:${result.id}`,
               content: trackingContent,
               category: "plan",
@@ -151,7 +153,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
               updatedAt: new Date(),
             })
             .onConflictDoUpdate({
-              target: notes.topic,
+              target: [notes.workspaceId, notes.topic],
               set: {
                 content: trackingContent,
                 category: "plan",
@@ -297,7 +299,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           const trackingRows = await db
             .select({ content: notes.content })
             .from(notes)
-            .where(eq(notes.topic, `cursor-agent:${agent_id}`))
+            .where(and(eq(notes.workspaceId, wsId), eq(notes.topic, `cursor-agent:${agent_id}`)))
             .limit(1);
 
           if (trackingRows[0]?.content) {
@@ -307,6 +309,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             await db
               .insert(notes)
               .values({
+                workspaceId: wsId,
                 topic: `cursor-agent:${agent_id}`,
                 content: trackingRows[0].content + followupNote,
                 category: "plan",
@@ -314,7 +317,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
                 updatedAt: new Date(),
               })
               .onConflictDoUpdate({
-                target: notes.topic,
+                target: [notes.workspaceId, notes.topic],
                 set: {
                   content: trackingRows[0].content + followupNote,
                   expiresAt: sevenDays,
