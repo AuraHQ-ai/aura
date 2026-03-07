@@ -10,10 +10,7 @@
   "colors": {
     "primary": "#FFFFFF",
     "light": "#F5F5F5",
-    "dark": "#000000",
-    "background": {
-      "dark": "#0A0A0A"
-    }
+    "dark": "#000000"
   },
   "topbar": {
     "links": [
@@ -34,11 +31,17 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["getting-started", "architecture"]
+            "pages": [
+              "getting-started",
+              "architecture"
+            ]
           },
           {
             "group": "Core Systems",
-            "pages": ["memory-system", "self-improvement"]
+            "pages": [
+              "memory-system",
+              "self-improvement"
+            ]
           },
           {
             "group": "Tools",
@@ -64,7 +67,9 @@
         "groups": [
           {
             "group": "API Reference",
-            "pages": ["api-reference/overview"]
+            "pages": [
+              "api-reference/overview"
+            ]
           }
         ]
       }
