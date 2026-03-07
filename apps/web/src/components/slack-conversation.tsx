@@ -318,50 +318,29 @@ function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
               color: textMuted,
             }}
           >
-            {/* Status icon or chevron */}
-            <span style={{ display: "flex", alignItems: "center", width: "14px", height: "14px" }}>
-              {!open ? (
-                // collapsed: show > arrow
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <path d="M3 2l4 3-4 3" stroke={textMuted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+            {/* Status icon: checkmark/X always on LEFT */}
+            <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+              {node.status === "error" ? (
+                <X size={14} color={statusErrColor} />
               ) : (
-                // expanded: show checkmark or X depending on status
-                node.status === "error" ? (
-                  <X size={12} color={statusErrColor} />
-                ) : (
-                  <Check size={12} color={checkColor} />
-                )
+                <Check size={14} color={checkColor} />
               )}
             </span>
 
-            {/* Tool name */}
-            <code
+            {/* Tool name in monospace */}
+            <span
               style={{
                 fontSize: "13px",
                 fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
-                color: dark ? "#c9cdd3" : "#333",
-                fontWeight: 500,
+                fontWeight: 700,
+                color: dark ? "#d1d2d3" : "#1d1c1d",
+                flex: 1,
               }}
             >
-              [{node.name}]
-            </code>
+              {node.name}
+            </span>
 
-            {/* Status badge */}
-            {node.status && (
-              <span
-                style={{
-                  fontSize: "12px",
-                  color: node.status === "error" ? statusErrColor : statusOkColor,
-                  fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
-                }}
-              >
-                ({node.status.toUpperCase()})
-              </span>
-            )}
-
-            {/* Spacer + expand chevron on right when collapsed */}
-            <span style={{ flex: 1 }} />
+            {/* Caret on RIGHT, always present if expandable */}
             {node.detail && (
               <svg
                 width="16"
