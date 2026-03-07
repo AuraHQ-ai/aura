@@ -1,5 +1,30 @@
 import { stackLogos } from "@/components/stack-logos";
 
+const SLACK_CLIENT_ID = process.env.NEXT_PUBLIC_SLACK_CLIENT_ID;
+const SLACK_SCOPES = [
+  "app_mentions:read",
+  "channels:history",
+  "channels:join",
+  "channels:manage",
+  "channels:read",
+  "chat:write",
+  "files:read",
+  "files:write",
+  "groups:history",
+  "groups:read",
+  "im:history",
+  "im:read",
+  "mpim:history",
+  "mpim:read",
+  "reactions:read",
+  "reactions:write",
+  "users:read",
+  "users:read.email",
+].join(",");
+const SLACK_OAUTH_URL = SLACK_CLIENT_ID
+  ? `https://slack.com/oauth/v2/authorize?client_id=${SLACK_CLIENT_ID}&scope=${SLACK_SCOPES}`
+  : null;
+
 export default function Home() {
   return (
     <div className="site-inner">
@@ -12,7 +37,7 @@ export default function Home() {
       >
         <div style={{ maxWidth: "640px" }}>
           <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "24px" }}>
-            AI Colleague
+            AI Assistant for Slack
           </p>
           <h1
             style={{
@@ -27,31 +52,49 @@ export default function Home() {
             Every day she works, she gets harder to replace.
           </h1>
           <p style={{ fontSize: "1.125rem", color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: "40px", maxWidth: "520px" }}>
-            Aura is an AI agent that joins your team, learns your business, and compounds over time. Not a chatbot. Not a wrapper. A colleague with memory.
+            Aura is an AI assistant that lives in your Slack workspace — triaging bugs, analyzing data, coordinating your team, and building memory that compounds over time. Not a chatbot. A colleague.
           </p>
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-            <a
-              href="mailto:hello@aurahq.ai"
-              style={{
-                background: "var(--btn-bg)",
-                color: "var(--btn-color)",
-                padding: "12px 24px",
-                borderRadius: "8px",
-                fontSize: "14px",
-                fontWeight: 500,
-                letterSpacing: "-0.01em",
-                textDecoration: "none",
-              }}
-            >
-              Request access
-            </a>
+          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
+            {SLACK_OAUTH_URL ? (
+              <a
+                href={SLACK_OAUTH_URL}
+                style={{ display: "inline-block" }}
+                aria-label="Add Aura to Slack"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt="Add to Slack"
+                  height="40"
+                  width="139"
+                  src="https://platform.slack-edge.com/img/add_to_slack.png"
+                  srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
+                  style={{ height: "40px", width: "auto" }}
+                />
+              </a>
+            ) : (
+              <a
+                href="mailto:hello@aurahq.ai"
+                style={{
+                  background: "var(--btn-bg)",
+                  color: "var(--btn-color)",
+                  padding: "12px 24px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: 500,
+                  letterSpacing: "-0.01em",
+                  textDecoration: "none",
+                }}
+              >
+                Request access
+              </a>
+            )}
             <a
               href="/blog"
               style={{
                 background: "var(--btn-secondary-bg)",
                 color: "var(--btn-secondary-color)",
                 border: "1px solid var(--col-border)",
-                padding: "12px 24px",
+                padding: "8px 24px",
                 borderRadius: "8px",
                 fontSize: "14px",
                 fontWeight: 500,
@@ -120,12 +163,12 @@ export default function Home() {
           }}
         >
           {[
-            { title: "Learns the context", desc: "Every Slack message, every decision, every conversation — she remembers. Context compounds across months and teams." },
-            { title: "Makes decisions", desc: "She reads channels, spots problems, fires off the right action. No prompt required. No babysitting needed." },
-            { title: "Compounds over time", desc: "Most tools are as dumb on day 365 as day 1. Aura gets harder to replace every week." },
-            { title: "Your data stays yours", desc: "Runs on your infra. Connects to your BigQuery, your CRM, your calendar. No vendor lock-in." },
-            { title: "Works in Slack", desc: "No new interface to learn. She lives where your team already works — channels, threads, DMs." },
-            { title: "Integrates with your stack", desc: "Native connections to Notion, Google Workspace, GitHub, Close, Stripe, PostHog, and more." },
+            { title: "Lives in Slack", desc: "No new interface to learn. Aura joins your channels, responds in threads, and works alongside your team where they already collaborate." },
+            { title: "Remembers everything", desc: "Conversations, decisions, context — Aura builds persistent memory that compounds across months and teams. She gets smarter every day." },
+            { title: "Autonomous actions", desc: "She reads channels, spots problems, and fires off the right action. Bug triage, data pulls, team coordination — no prompt required." },
+            { title: "Data analysis", desc: "Connects to BigQuery, your CRM, and your metrics stack. Ask questions in plain English and get answers with full context." },
+            { title: "Secure by design", desc: "Your data stays yours. Aura stores conversation summaries, not raw transcripts. No data is used for model training." },
+            { title: "Integrates with your stack", desc: "Native connections to GitHub, Google Workspace, BigQuery, Close, Stripe, PostHog, Notion, and more." },
           ].map((f, i) => (
             <div
               key={i}
@@ -174,31 +217,106 @@ export default function Home() {
         </div>
       </section>
 
+      {/* AI & Data Transparency */}
+      <section style={{ padding: "80px 0", borderBottom: "1px solid var(--col-border)" }}>
+        <p style={{ fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "16px" }}>
+          AI &amp; Data Transparency
+        </p>
+        <div style={{ maxWidth: "640px" }}>
+          <p style={{ fontSize: "1rem", color: "var(--text-secondary)", lineHeight: 1.75, marginBottom: "24px" }}>
+            Aura uses large language models (Anthropic Claude) to understand messages, generate responses, and take actions in your workspace. Here&apos;s how we handle your data:
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginBottom: "24px" }}>
+            {[
+              { label: "Summaries, not transcripts", text: "Aura stores conversation summaries and structured notes — not raw message transcripts. Your full chat history stays in Slack." },
+              { label: "No model training", text: "Your workspace data is never used to train or fine-tune AI models. Conversations are processed in real-time and not retained by the model provider." },
+              { label: "LLM-powered responses", text: "All of Aura's responses are generated by Anthropic Claude. Aura clearly identifies itself as an AI assistant in every interaction." },
+              { label: "You control access", text: "Aura only accesses channels it's invited to. You can remove Aura from any channel at any time, and uninstall from your workspace instantly." },
+            ].map((item, i) => (
+              <div
+                key={i}
+                style={{
+                  padding: "20px 24px",
+                  background: "var(--feature-card-bg)",
+                  border: "1px solid var(--col-border)",
+                  borderRadius: "8px",
+                }}
+              >
+                <p style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "4px" }}>{item.label}</p>
+                <p style={{ fontSize: "0.875rem", color: "var(--text-secondary)", lineHeight: 1.65, margin: 0 }}>{item.text}</p>
+              </div>
+            ))}
+          </div>
+          <a
+            href="/legal/data-handling"
+            style={{
+              fontSize: "0.875rem",
+              color: "var(--text-primary)",
+              textDecoration: "underline",
+              textUnderlineOffset: "3px",
+            }}
+          >
+            Read our full data handling policy →
+          </a>
+        </div>
+      </section>
+
       {/* CTA */}
       <section style={{ padding: "96px 0" }}>
         <div style={{ maxWidth: "480px" }}>
           <h2 style={{ fontSize: "clamp(1.5rem, 3vw, 2.25rem)", fontWeight: 700, letterSpacing: "-0.03em", color: "var(--text-primary)", marginBottom: "16px" }}>
-            Ready to hire her?
+            Ready to add Aura to your workspace?
           </h2>
           <p style={{ fontSize: "1rem", color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: "32px" }}>
             Aura runs in Slack. She joins your channels, learns your team, and starts working on day one. No setup wizard. No onboarding call.
           </p>
-          <a
-            href="mailto:hello@aurahq.ai"
-            style={{
-              display: "inline-block",
-              background: "var(--btn-bg)",
-              color: "var(--btn-color)",
-              padding: "13px 28px",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: 500,
-              letterSpacing: "-0.01em",
-              textDecoration: "none",
-            }}
-          >
-            Get in touch →
-          </a>
+          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
+            {SLACK_OAUTH_URL ? (
+              <a
+                href={SLACK_OAUTH_URL}
+                style={{ display: "inline-block" }}
+                aria-label="Add Aura to Slack"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt="Add to Slack"
+                  height="40"
+                  width="139"
+                  src="https://platform.slack-edge.com/img/add_to_slack.png"
+                  srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
+                  style={{ height: "40px", width: "auto" }}
+                />
+              </a>
+            ) : (
+              <a
+                href="mailto:hello@aurahq.ai"
+                style={{
+                  display: "inline-block",
+                  background: "var(--btn-bg)",
+                  color: "var(--btn-color)",
+                  padding: "13px 28px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: 500,
+                  letterSpacing: "-0.01em",
+                  textDecoration: "none",
+                }}
+              >
+                Get in touch →
+              </a>
+            )}
+            <a
+              href="mailto:hello@aurahq.ai"
+              style={{
+                fontSize: "14px",
+                color: "var(--text-secondary)",
+                textDecoration: "underline",
+                textUnderlineOffset: "3px",
+              }}
+            >
+              hello@aurahq.ai
+            </a>
+          </div>
         </div>
       </section>
     </div>
