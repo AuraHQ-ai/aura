@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import * as Collapsible from "@radix-ui/react-collapsible";
-import { ChevronRight } from "lucide-react";
+import { Check, X } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,10 +15,12 @@ export type ToolCallNode = {
   type: "tool_call";
   /** Tool name, e.g. "read_channel_history" */
   name: string;
-  /** Optional label to show in collapsed state, e.g. "(OK)" or "(ERROR)" */
+  /** Status badge */
   status?: "ok" | "error";
-  /** Expanded content — input args, output, etc. */
+  /** Expanded content */
   detail?: string;
+  /** Whether the accordion is open by default */
+  open?: boolean;
 };
 
 export type ContentNode = TextNode | ToolCallNode;
@@ -31,97 +33,124 @@ export type SlackMessage = {
   timestamp: string;
   /** Shows the "APP" badge next to the author name */
   isApp?: boolean;
+  /** Whether avatar is rounded (human) or square (bot/app). Default: rounded for humans, squircle for apps */
+  avatarShape?: "round" | "square";
   /** Interleaved text + tool call nodes */
   content: ContentNode[];
 };
 
 export type SlackConversationProps = {
   messages: SlackMessage[];
-  /** Optional max-width override, e.g. "680px". Defaults to 680px */
+  /** Optional max-width override. Defaults to 680px */
   maxWidth?: string;
+  /** Dark or light theme override. Defaults to CSS var cascade (system). */
+  theme?: "dark" | "light";
 };
 
 // ── Slack mrkdwn parser ──────────────────────────────────────────────────────
-// Converts Slack mrkdwn to React nodes. Order matters: pre-block first,
-// then inline patterns.
 
-function parseMrkdwn(text: string): React.ReactNode[] {
+function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   let key = 0;
+  const textColor = dark ? "#d1d2d3" : "#1d1c1d";
+  const channelColor = dark ? "#4bc0ff" : "#1264a3";
+  const mentionBg = dark ? "rgba(75,192,255,0.15)" : "rgba(18,100,163,0.1)";
+  const codeBg = dark ? "#1a1d21" : "#f8f8f8";
+  const codeBorder = dark ? "#36393f" : "#e0e0e0";
+  const codeColor = dark ? "#e8912d" : "#c0143c";
+  const preBg = dark ? "#1a1d21" : "#f4f5f6";
+  const preBorder = dark ? "#36393f" : "#e0e0e0";
 
   // Split by ```pre``` blocks first
   const parts = text.split(/(```[\s\S]*?```)/g);
 
   for (const part of parts) {
     if (part.startsWith("```") && part.endsWith("```")) {
-      const code = part.slice(3, -3);
+      const code = part.slice(3, -3).replace(/^\n/, "");
       nodes.push(
         <pre
           key={key++}
           style={{
-            background: "var(--code-bg, #f0f0f0)",
-            border: "1px solid var(--code-border, #e0e0e0)",
+            background: preBg,
+            border: `1px solid ${preBorder}`,
             borderRadius: "4px",
             padding: "8px 12px",
             fontSize: "12px",
+            fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
             lineHeight: "1.5",
             overflowX: "auto",
             margin: "4px 0",
+            color: textColor,
             whiteSpace: "pre-wrap",
-            wordBreak: "break-all",
           }}
         >
-          <code style={{ color: "var(--pre-color, inherit)", background: "none" }}>
-            {code}
-          </code>
+          {code}
         </pre>
       );
       continue;
     }
 
-    // Process inline mrkdwn — split into lines to handle > blockquotes
+    // Process line by line to handle numbered lists, bullets, blockquotes
     const lines = part.split("\n");
     const lineNodes: React.ReactNode[] = [];
 
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li];
 
-      if (li > 0) lineNodes.push(<br key={`br-${key++}`} />);
-
-      // > blockquote
-      if (line.startsWith(">")) {
+      // Blockquote: lines starting with >
+      if (line.startsWith("> ") || line === ">") {
         lineNodes.push(
-          <span
-            key={key++}
+          <div
+            key={`${key++}-q`}
             style={{
-              display: "block",
-              borderLeft: "4px solid var(--col-border, #ccc)",
-              paddingLeft: "8px",
-              color: "var(--text-secondary, #666)",
+              borderLeft: `3px solid ${dark ? "#444" : "#ccc"}`,
+              paddingLeft: "12px",
+              color: dark ? "#999" : "#777",
               margin: "2px 0",
             }}
           >
-            {parseInline(line.slice(1).trimStart(), key)}
-          </span>
+            {parseInline(line.slice(2), key++, dark)}
+          </div>
         );
-        key += 100;
         continue;
       }
 
-      // Bullet lists (* or - at start of line)
-      if (/^[*\-] /.test(line)) {
+      // Numbered list: "1. text"
+      const numMatch = line.match(/^(\d+)\.\s+(.*)$/);
+      if (numMatch) {
         lineNodes.push(
-          <span key={key++} style={{ display: "block", paddingLeft: "16px" }}>
-            <span style={{ marginLeft: "-12px", marginRight: "4px" }}>•</span>
-            {parseInline(line.slice(2), key)}
-          </span>
+          <div key={`${key++}-n`} style={{ display: "flex", gap: "6px", margin: "1px 0" }}>
+            <span style={{ color: channelColor, fontWeight: 700, minWidth: "16px" }}>{numMatch[1]}.</span>
+            <span>{parseInline(numMatch[2], key++, dark)}</span>
+          </div>
         );
-        key += 100;
         continue;
       }
 
-      lineNodes.push(...parseInline(line, key));
-      key += 100;
+      // Bullet: "* text" or "• text"
+      const bulletMatch = line.match(/^[*•]\s+(.*)$/);
+      if (bulletMatch) {
+        lineNodes.push(
+          <div key={`${key++}-b`} style={{ display: "flex", gap: "8px", margin: "1px 0" }}>
+            <span style={{ color: dark ? "#999" : "#777" }}>•</span>
+            <span>{parseInline(bulletMatch[1], key++, dark)}</span>
+          </div>
+        );
+        continue;
+      }
+
+      // Empty line = paragraph break
+      if (line === "") {
+        lineNodes.push(<div key={`${key++}-br`} style={{ height: "8px" }} />);
+        continue;
+      }
+
+      // Normal line
+      lineNodes.push(
+        <div key={`${key++}-l`}>
+          {parseInline(line, key++, dark)}
+        </div>
+      );
     }
 
     nodes.push(...lineNodes);
@@ -130,323 +159,362 @@ function parseMrkdwn(text: string): React.ReactNode[] {
   return nodes;
 }
 
-function parseInline(text: string, baseKey: number): React.ReactNode[] {
-  // Pattern order matters: bold > italic > strike > code > mention > channel > link
-  const PATTERNS: [RegExp, (m: RegExpMatchArray, k: number) => React.ReactNode][] = [
-    // Bold: *text*
-    [
-      /\*([^*\n]+)\*/g,
-      (m, k) => <strong key={k} style={{ fontWeight: 700 }}>{m[1]}</strong>,
-    ],
-    // Italic: _text_
-    [
-      /\_([^_\n]+)\_/g,
-      (m, k) => <em key={k}>{m[1]}</em>,
-    ],
-    // Strikethrough: ~text~
-    [
-      /~([^~\n]+)~/g,
-      (m, k) => <s key={k}>{m[1]}</s>,
-    ],
-    // Inline code: `text`
-    [
-      /`([^`\n]+)`/g,
-      (m, k) => (
-        <code
-          key={k}
-          style={{
-            background: "var(--code-bg, #f0f0f0)",
-            color: "var(--code-color, #c0143c)",
-            border: "1px solid var(--code-border, #e0e0e0)",
-            borderRadius: "3px",
-            padding: "1px 5px",
-            fontSize: "0.85em",
-            fontFamily: "ui-monospace, monospace",
-          }}
-        >
-          {m[1]}
-        </code>
-      ),
-    ],
-    // Slack link: <url|label> or <url>
-    [
-      /<(https?:\/\/[^|>]+)(?:\|([^>]+))?>/g,
-      (m, k) => (
-        <a
-          key={k}
-          href={m[1]}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "#1264a3", textDecoration: "none" }}
-        >
-          {m[2] || m[1]}
-        </a>
-      ),
-    ],
-    // @mention
-    [
-      /@([\w.]+)/g,
-      (m, k) => (
-        <span
-          key={k}
-          style={{
-            background: "rgba(18,100,163,0.1)",
-            color: "#1264a3",
-            borderRadius: "3px",
-            padding: "0 3px",
-          }}
-        >
-          @{m[1]}
-        </span>
-      ),
-    ],
-    // #channel
-    [
-      /#([\w-]+)/g,
-      (m, k) => (
-        <span
-          key={k}
-          style={{
-            background: "rgba(18,100,163,0.1)",
-            color: "#1264a3",
-            borderRadius: "3px",
-            padding: "0 3px",
-          }}
-        >
-          #{m[1]}
-        </span>
-      ),
-    ],
-  ];
+function parseInline(text: string, baseKey: number, dark: boolean): React.ReactNode {
+  const channelColor = dark ? "#4bc0ff" : "#1264a3";
+  const mentionBg = dark ? "rgba(75,192,255,0.15)" : "rgba(18,100,163,0.1)";
+  const codeBg = dark ? "#222529" : "#f8f8f8";
+  const codeBorder = dark ? "#36393f" : "#e0e0e0";
+  const codeColor = dark ? "#e8912d" : "#c0143c";
+  const textColor = dark ? "#d1d2d3" : "#1d1c1d";
 
-  // We need to process patterns sequentially, splitting text around matches
-  // Use a segment-based approach to avoid nested parsing issues
-  interface Segment {
-    type: "text" | "node";
-    value?: string;
-    node?: React.ReactNode;
-  }
+  // Tokenize: bold, italic, strike, code, @mention, #channel, url, emoji
+  const pattern = /(\*[^*]+\*|_[^_]+_|~[^~]+~|`[^`]+`|<[^>]+>|:[a-z_]+:)/g;
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  let key = baseKey * 100;
+  let match: RegExpExecArray | null;
 
-  let segments: Segment[] = [{ type: "text", value: text }];
-
-  for (const [pattern, renderer] of PATTERNS) {
-    const newSegments: Segment[] = [];
-    for (const seg of segments) {
-      if (seg.type !== "text" || !seg.value) {
-        newSegments.push(seg);
-        continue;
-      }
-
-      const str = seg.value;
-      let lastIndex = 0;
-      let match: RegExpExecArray | null;
-      pattern.lastIndex = 0;
-
-      while ((match = pattern.exec(str)) !== null) {
-        if (match.index > lastIndex) {
-          newSegments.push({ type: "text", value: str.slice(lastIndex, match.index) });
-        }
-        newSegments.push({ type: "node", node: renderer(match, baseKey++) });
-        lastIndex = match.index + match[0].length;
-      }
-
-      if (lastIndex < str.length) {
-        newSegments.push({ type: "text", value: str.slice(lastIndex) });
-      }
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > last) {
+      parts.push(<React.Fragment key={key++}>{text.slice(last, match.index)}</React.Fragment>);
     }
-    segments = newSegments;
+    const token = match[0];
+
+    if (token.startsWith("*") && token.endsWith("*") && token.length > 2) {
+      parts.push(<strong key={key++} style={{ fontWeight: 700 }}>{token.slice(1, -1)}</strong>);
+    } else if (token.startsWith("_") && token.endsWith("_") && token.length > 2) {
+      parts.push(<em key={key++}>{token.slice(1, -1)}</em>);
+    } else if (token.startsWith("~") && token.endsWith("~") && token.length > 2) {
+      parts.push(<del key={key++}>{token.slice(1, -1)}</del>);
+    } else if (token.startsWith("`") && token.endsWith("`") && token.length > 2) {
+      parts.push(
+        <code
+          key={key++}
+          style={{
+            background: codeBg,
+            border: `1px solid ${codeBorder}`,
+            borderRadius: "3px",
+            padding: "0 4px",
+            fontSize: "0.85em",
+            fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
+            color: codeColor,
+          }}
+        >
+          {token.slice(1, -1)}
+        </code>
+      );
+    } else if (token.startsWith("<") && token.endsWith(">")) {
+      // Slack link format: <url|label> or <url> or <@mention> or <#channel>
+      const inner = token.slice(1, -1);
+      if (inner.startsWith("@")) {
+        const name = inner.slice(1);
+        parts.push(
+          <span
+            key={key++}
+            style={{
+              color: channelColor,
+              background: mentionBg,
+              borderRadius: "3px",
+              padding: "0 2px",
+            }}
+          >
+            @{name}
+          </span>
+        );
+      } else if (inner.startsWith("#")) {
+        const name = inner.slice(1);
+        parts.push(
+          <span key={key++} style={{ color: channelColor, cursor: "pointer" }}>
+            #{name}
+          </span>
+        );
+      } else {
+        const [url, label] = inner.split("|");
+        parts.push(
+          <a key={key++} href={url} style={{ color: channelColor, textDecoration: "none" }} target="_blank" rel="noreferrer">
+            {label || url}
+          </a>
+        );
+      }
+    } else if (token.startsWith("#") && token.length > 1) {
+      // bare #channel
+      parts.push(
+        <span key={key++} style={{ color: channelColor, cursor: "pointer" }}>
+          {token}
+        </span>
+      );
+    } else if (token.startsWith(":") && token.endsWith(":")) {
+      // emoji -- keep as-is, maybe map common ones later
+      const name = token.slice(1, -1);
+      const emojiMap: Record<string, string> = {
+        white_check_mark: "✅", check: "✓", x: "❌", eyes: "👀",
+        thumbsup: "👍", thumbsdown: "👎", fire: "🔥", rocket: "🚀",
+        warning: "⚠️", tada: "🎉", chart_with_upwards_trend: "📈",
+        chart_with_downwards_trend: "📉", memo: "📝", bug: "🐛",
+        wrench: "🔧", bulb: "💡", star: "⭐", heart: "❤️",
+        zap: "⚡", lock: "🔒", key: "🔑", mag: "🔍",
+        mailbox_with_mail: "📬", alarm_clock: "⏰", red_circle: "🔴",
+        money_with_wings: "💸", globe_with_meridians: "🌐",
+        closed_lock_with_key: "🔐", clipboard: "📋", new: "🆕",
+        receipt: "🧾", page_facing_up: "📄", robot_face: "🤖",
+        moneybag: "💰",
+      };
+      parts.push(<span key={key++}>{emojiMap[name] || token}</span>);
+    } else {
+      parts.push(<React.Fragment key={key++}>{token}</React.Fragment>);
+    }
+
+    last = match.index + token.length;
   }
 
-  return segments.map((seg, i) =>
-    seg.type === "text" ? (
-      <React.Fragment key={`t-${baseKey}-${i}`}>{seg.value}</React.Fragment>
-    ) : (
-      (seg.node as React.ReactNode)
-    )
-  );
+  if (last < text.length) {
+    parts.push(<React.Fragment key={key++}>{text.slice(last)}</React.Fragment>);
+  }
+
+  // Also handle bare #channel not caught by pattern (before the <> form)
+  return <>{parts}</>;
 }
 
-// ── ToolCallBlock ────────────────────────────────────────────────────────────
+// ── ToolCallBlock ─────────────────────────────────────────────────────────────
 
-function ToolCallBlock({ node }: { node: ToolCallNode }) {
-  const [open, setOpen] = React.useState(false);
+function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
+  const [open, setOpen] = React.useState(node.open ?? false);
 
-  const statusColor =
-    node.status === "error"
-      ? "#e01e5a"
-      : "var(--text-muted, #999)";
+  const borderColor = dark ? "#36393f" : "#d9d9d9";
+  const bgColor = dark ? "#1a1d21" : "#f8f8f8";
+  const bgHover = dark ? "#222529" : "#f0f0f0";
+  const textMuted = dark ? "#8a8b8c" : "#888";
+  const statusOkColor = dark ? "#8a8b8c" : "#888";
+  const statusErrColor = "#e01e5a";
+  const checkColor = dark ? "#6ac47b" : "#2ecc71";
 
   return (
     <Collapsible.Root open={open} onOpenChange={setOpen}>
-      <Collapsible.Trigger asChild>
-        <button
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-            background: "var(--bg-subtle, #f7f7f7)",
-            border: "1px solid var(--col-border, #e5e5e5)",
-            borderRadius: "6px",
-            padding: "3px 8px",
-            fontSize: "12px",
-            cursor: "pointer",
-            color: "var(--text-secondary, #555)",
-            margin: "3px 0",
-            transition: "background 0.1s",
-            fontFamily: "ui-monospace, monospace",
-          }}
-        >
-          <ChevronRight
-            size={12}
+      <div
+        style={{
+          margin: "3px 0",
+          border: `1px solid ${borderColor}`,
+          borderRadius: "8px",
+          overflow: "hidden",
+          background: bgColor,
+          display: "inline-flex",
+          flexDirection: "column",
+          maxWidth: "440px",
+          width: "100%",
+        }}
+      >
+        <Collapsible.Trigger asChild>
+          <button
             style={{
-              transition: "transform 0.15s",
-              transform: open ? "rotate(90deg)" : "rotate(0deg)",
-              flexShrink: 0,
-            }}
-          />
-          <span style={{ fontWeight: 500 }}>[{node.name}]</span>
-          {node.status && (
-            <span style={{ color: statusColor, marginLeft: "2px" }}>
-              ({node.status.toUpperCase()})
-            </span>
-          )}
-        </button>
-      </Collapsible.Trigger>
-      {node.detail && (
-        <Collapsible.Content
-          style={{
-            overflow: "hidden",
-          }}
-        >
-          <pre
-            style={{
-              background: "var(--bg-subtle, #f7f7f7)",
-              border: "1px solid var(--col-border, #e5e5e5)",
-              borderRadius: "6px",
-              borderTopLeftRadius: "0",
-              borderTopRightRadius: "0",
-              padding: "8px 12px",
-              fontSize: "11px",
-              lineHeight: "1.5",
-              overflowX: "auto",
-              maxHeight: "200px",
-              overflowY: "auto",
-              margin: 0,
-              marginTop: "-1px",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-              color: "var(--text-secondary, #555)",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              padding: "7px 12px",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              textAlign: "left",
+              width: "100%",
+              color: textMuted,
             }}
           >
-            {node.detail}
-          </pre>
-        </Collapsible.Content>
-      )}
+            {/* Status icon or chevron */}
+            <span style={{ display: "flex", alignItems: "center", width: "14px", height: "14px" }}>
+              {!open ? (
+                // collapsed: show > arrow
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <path d="M3 2l4 3-4 3" stroke={textMuted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              ) : (
+                // expanded: show checkmark or X depending on status
+                node.status === "error" ? (
+                  <X size={12} color={statusErrColor} />
+                ) : (
+                  <Check size={12} color={checkColor} />
+                )
+              )}
+            </span>
+
+            {/* Tool name */}
+            <code
+              style={{
+                fontSize: "13px",
+                fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
+                color: dark ? "#c9cdd3" : "#333",
+                fontWeight: 500,
+              }}
+            >
+              [{node.name}]
+            </code>
+
+            {/* Status badge */}
+            {node.status && (
+              <span
+                style={{
+                  fontSize: "12px",
+                  color: node.status === "error" ? statusErrColor : statusOkColor,
+                  fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
+                }}
+              >
+                ({node.status.toUpperCase()})
+              </span>
+            )}
+
+            {/* Spacer + expand chevron on right when collapsed */}
+            <span style={{ flex: 1 }} />
+            {node.detail && (
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                style={{
+                  transform: open ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 0.15s ease",
+                  flexShrink: 0,
+                }}
+              >
+                <path d="M4 6l4 4 4-4" stroke={textMuted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </button>
+        </Collapsible.Trigger>
+
+        {node.detail && (
+          <Collapsible.Content>
+            <div
+              style={{
+                padding: "8px 12px 10px",
+                borderTop: `1px solid ${borderColor}`,
+                fontSize: "12px",
+                fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
+                color: dark ? "#8a8b8c" : "#666",
+                whiteSpace: "pre-wrap",
+                lineHeight: "1.5",
+              }}
+            >
+              {node.detail}
+            </div>
+          </Collapsible.Content>
+        )}
+      </div>
     </Collapsible.Root>
   );
 }
 
-// ── SlackMessage ─────────────────────────────────────────────────────────────
+// ── SlackMessageRow ───────────────────────────────────────────────────────────
 
-function SlackMessageRow({ message }: { message: SlackMessage }) {
+function SlackMessageRow({
+  message,
+  prevMessage,
+  dark,
+}: {
+  message: SlackMessage;
+  prevMessage?: SlackMessage;
+  dark: boolean;
+}) {
+  // Group consecutive messages from same author (same author = no avatar repeat)
+  const sameAuthor = prevMessage && prevMessage.author === message.author;
+  const textColor = dark ? "#d1d2d3" : "#1d1c1d";
+  const nameColor = dark ? "#d1d2d3" : "#1d1c1d";
+  const tsColor = dark ? "#757677" : "#999";
+  const appBgColor = dark ? "#2a2d31" : "#e8e8e8";
+  const appTextColor = dark ? "#9a9b9c" : "#666";
+  const hoverBg = dark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)";
+
+  const avatarShape = message.avatarShape ?? (message.isApp ? "square" : "round");
+  const avatarBorderRadius = avatarShape === "round" ? "50%" : "12px";
+
   return (
     <div
       style={{
         display: "flex",
-        gap: "12px",
-        padding: "6px 16px",
-        transition: "background 0.1s",
+        gap: "0",
+        padding: sameAuthor ? "1px 20px 1px 20px" : "6px 20px 2px 20px",
+        position: "relative",
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLDivElement).style.background =
-          "var(--bg-subtle, #f7f7f7)";
+        (e.currentTarget as HTMLDivElement).style.background = hoverBg;
       }}
       onMouseLeave={(e) => {
         (e.currentTarget as HTMLDivElement).style.background = "transparent";
       }}
     >
-      {/* Avatar */}
-      <div style={{ flexShrink: 0, paddingTop: "2px" }}>
-        <img
-          src={message.avatar}
-          alt={message.author}
-          width={36}
-          height={36}
-          style={{
-            borderRadius: "6px",
-            objectFit: "cover",
-            display: "block",
-          }}
-        />
+      {/* Avatar column -- 36px wide */}
+      <div style={{ width: "36px", marginRight: "8px", flexShrink: 0, paddingTop: sameAuthor ? "0" : "2px" }}>
+        {!sameAuthor && (
+          <img
+            src={message.avatar}
+            alt={message.author}
+            width={36}
+            height={36}
+            style={{
+              borderRadius: avatarBorderRadius,
+              display: "block",
+              objectFit: "cover",
+            }}
+          />
+        )}
       </div>
 
-      {/* Body */}
+      {/* Content column */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Header row */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: "6px",
-            marginBottom: "2px",
-          }}
-        >
-          <span
-            style={{
-              fontWeight: 700,
-              fontSize: "15px",
-              color: "var(--text-primary, #111)",
-            }}
-          >
-            {message.author}
-          </span>
-          {message.isApp && (
+        {/* Header: name + APP badge + timestamp */}
+        {!sameAuthor && (
+          <div style={{ display: "flex", alignItems: "baseline", gap: "6px", marginBottom: "2px" }}>
             <span
               style={{
-                fontSize: "10px",
                 fontWeight: 700,
-                background: "var(--tag-bg, #e8e8e8)",
-                color: "var(--tag-color, #555)",
-                border: "1px solid var(--tag-border, #d0d0d0)",
-                borderRadius: "3px",
-                padding: "0 4px",
-                lineHeight: "16px",
-                letterSpacing: "0.02em",
+                fontSize: "15px",
+                color: nameColor,
+                lineHeight: "1.2",
               }}
             >
-              APP
+              {message.author}
             </span>
-          )}
-          <span
-            style={{
-              fontSize: "12px",
-              color: "var(--text-muted, #999)",
-            }}
-          >
-            {message.timestamp}
-          </span>
-        </div>
+            {message.isApp && (
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  background: appBgColor,
+                  color: appTextColor,
+                  borderRadius: "3px",
+                  padding: "1px 4px",
+                  letterSpacing: "0.04em",
+                  lineHeight: "1.4",
+                  alignSelf: "center",
+                }}
+              >
+                APP
+              </span>
+            )}
+            <span style={{ fontSize: "11px", color: tsColor }}>
+              {message.timestamp}
+            </span>
+          </div>
+        )}
 
-        {/* Content nodes */}
+        {/* Message content -- interleaved text + tool calls */}
         <div
           style={{
             fontSize: "15px",
             lineHeight: "1.46668",
-            color: "var(--text-primary, #111)",
+            color: textColor,
           }}
         >
           {message.content.map((node, i) => {
             if (node.type === "text") {
               return (
-                <span key={i}>
-                  {parseMrkdwn(node.text)}
-                </span>
+                <div key={i} style={{ display: "block" }}>
+                  {parseMrkdwn(node.text, dark)}
+                </div>
               );
             }
             if (node.type === "tool_call") {
               return (
-                <div key={i} style={{ display: "block" }}>
-                  <ToolCallBlock node={node} />
+                <div key={i} style={{ display: "block", margin: "3px 0" }}>
+                  <ToolCallBlock node={node} dark={dark} />
                 </div>
               );
             }
@@ -458,24 +526,58 @@ function SlackMessageRow({ message }: { message: SlackMessage }) {
   );
 }
 
-// ── SlackConversation ────────────────────────────────────────────────────────
+// ── SlackConversation ─────────────────────────────────────────────────────────
 
-export function SlackConversation({ messages, maxWidth = "680px" }: SlackConversationProps) {
+export function SlackConversation({
+  messages,
+  maxWidth = "680px",
+  theme,
+}: SlackConversationProps) {
+  // Detect dark from CSS class or explicit prop
+  const [sysDark, setSysDark] = React.useState(false);
+  React.useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    setSysDark(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setSysDark(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  // Also check for the .dark class on <html> (next-themes)
+  const [classDark, setClassDark] = React.useState(false);
+  React.useEffect(() => {
+    const update = () => setClassDark(document.documentElement.classList.contains("dark"));
+    update();
+    const obs = new MutationObserver(update);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+
+  const dark = theme === "dark" ? true : theme === "light" ? false : (classDark || sysDark);
+
+  const bgColor = dark ? "#1a1d21" : "#ffffff";
+  const borderColor = dark ? "#36393f" : "#e5e5e5";
+
   return (
     <div
       style={{
         maxWidth,
         fontFamily:
-          '"Lato", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
-        background: "var(--bg, #fff)",
-        border: "1px solid var(--col-border, #e5e5e5)",
+          'Slack-Lato,"Lato",ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif',
+        background: bgColor,
+        border: `1px solid ${borderColor}`,
         borderRadius: "12px",
         overflow: "hidden",
         padding: "8px 0",
       }}
     >
       {messages.map((msg, i) => (
-        <SlackMessageRow key={i} message={msg} />
+        <SlackMessageRow
+          key={i}
+          message={msg}
+          prevMessage={i > 0 ? messages[i - 1] : undefined}
+          dark={dark}
+        />
       ))}
     </div>
   );
