@@ -43,6 +43,11 @@ async function loadE2B() {
  * passed at creation time, and persistence across pause/resume is
  * unreliable (see e2b-dev/E2B#884). Per-command `envs` is the only
  * mechanism that works consistently.
+ *
+ * GOVERNANCE: Only compute-infrastructure keys belong here. External
+ * service API keys (Close, Stripe, PostHog, Claap, etc.) must be
+ * accessed via the credentials table through the governed http_request
+ * tool. This prevents run_command from bypassing the governance layer.
  */
 export async function getSandboxEnvs(): Promise<Record<string, string>> {
   const envs: Record<string, string> = {};
@@ -63,12 +68,8 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
   if (process.env.OPENAI_API_KEY) {
     envs.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   }
-  if (process.env.POSTHOG_API_KEY) {
-    envs.POSTHOG_API_KEY = process.env.POSTHOG_API_KEY;
-  }
-  if (process.env.CLAAP_API_KEY) {
-    envs.CLAAP_API_KEY = process.env.CLAAP_API_KEY;
-  }
+  // POSTHOG_API_KEY and CLAAP_API_KEY removed — external service
+  // credentials should flow through the governed http_request tool.
   const saKeyB64 =
     process.env.GOOGLE_SA_KEY_B64 ||
     (process.env.GOOGLE_SERVICE_ACCOUNT_KEY

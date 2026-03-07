@@ -25,6 +25,8 @@ import {
   hasPermission,
 } from "./lib/api-credentials.js";
 import { resolveConfirmation } from "./lib/confirmation.js";
+import { handleApprovalReaction } from "./lib/approval.js";
+import { executionContext } from "./lib/tool.js";
 import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
@@ -159,11 +161,39 @@ app.post("/api/slack/events", async (c) => {
   if (body.event) {
     const event = body.event;
 
-    // Handle reaction events -- store as memory for awareness
+    // Handle reaction events -- store as memory + governance approval
     if (event.type === "reaction_added" && event.user && event.item) {
       const reactionPromise = (async () => {
         try {
-          // Resolve user name for the memory
+          // ── Governance: check if this is an approval/rejection reaction ──
+          if (
+            event.item?.type === "message" &&
+            ["white_check_mark", "x"].includes(event.reaction)
+          ) {
+            try {
+              const msgResult = await slackClient.conversations.history({
+                channel: event.item.channel,
+                latest: event.item.ts,
+                limit: 1,
+                inclusive: true,
+              });
+              const msg = msgResult.messages?.[0];
+              const actionLogId = (msg?.metadata as any)?.event_payload?.action_log_id;
+
+              if (actionLogId) {
+                await handleApprovalReaction({
+                  actionLogId,
+                  reaction: event.reaction,
+                  reactorUserId: event.user,
+                });
+                return;
+              }
+            } catch (approvalErr) {
+              logger.warn("Failed to process approval reaction", { error: approvalErr });
+            }
+          }
+
+          // ── Store as a lightweight memory via the store module ──
           let userName = event.user;
           try {
             const userResult = await slackClient.users.info({ user: event.user });
@@ -174,7 +204,6 @@ app.post("/api/slack/events", async (c) => {
               event.user;
           } catch {}
 
-          // Store as a lightweight memory via the store module
           const { storeMessage } = await import("./memory/store.js");
           await storeMessage({
             slackTs: `reaction-${event.event_ts}`,
@@ -242,15 +271,20 @@ app.post("/api/slack/events", async (c) => {
       channel: event.channel,
     });
 
-    // Run pipeline asynchronously.
+    // Run pipeline asynchronously inside governance execution context.
     // On Vercel, we must acknowledge within 3 seconds, so we process
     // in the background using waitUntil where available.
-    const pipelinePromise = runPipeline({
-      event,
-      client: slackClient,
-      botUserId,
-      teamId: body.team_id,
-    }).catch((err) => {
+    const userId = event.user || "unknown";
+    const pipelinePromise = executionContext.run(
+      { triggeredBy: userId, triggerType: "user_message" },
+      () =>
+        runPipeline({
+          event,
+          client: slackClient,
+          botUserId,
+          teamId: body.team_id,
+        }),
+    ).catch((err) => {
       recordError("pipeline", err, {
         eventType: event.type,
         channel: event.channel,

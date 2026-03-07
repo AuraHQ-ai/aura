@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { defineTool, binaryToModelOutput } from "../lib/tool.js";
+import { defineTool, binaryToModelOutput, registerToolNames } from "../lib/tool.js";
 import { isAdmin } from "../lib/permissions.js";
 import { createNoteTools } from "./notes.js";
 import { createJobTools } from "./jobs.js";
@@ -3054,5 +3054,5 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     }
   }
 
-  return tools;
+  return registerToolNames(tools);
 }
