@@ -8,7 +8,7 @@ import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
 
-export interface MentionedPerson {
+export interface PersonProfile {
   slackUserId: string;
   displayName: string | null;
   gender: string | null;
@@ -34,9 +34,9 @@ interface SystemPromptContext {
   /** Whether threadContext contains channel history (true) vs. actual thread messages (false) */
   isChannelHistory?: boolean;
   /** People @mentioned in the current message, looked up from the people DB */
-  mentionedPeople?: MentionedPerson[];
+  mentionedPeople?: PersonProfile[];
   /** The person sending the message, looked up from the people DB */
-  interlocutor?: MentionedPerson;
+  interlocutor?: PersonProfile;
 }
 
 /**
@@ -251,7 +251,7 @@ function formatMemories(memories: Memory[]): string {
 /**
  * Format user profile for tone adaptation hints.
  */
-function formatUserProfile(profile: UserProfile, interlocutor?: MentionedPerson): string {
+function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): string {
   const style = profile.communicationStyle;
   const facts = profile.knownFacts;
   const parts: string[] = [];
@@ -311,7 +311,7 @@ function formatUserProfile(profile: UserProfile, interlocutor?: MentionedPerson)
 /**
  * Format @mentioned people for compact injection into the conversation layer.
  */
-function formatMentionedPeople(people: MentionedPerson[]): string {
+function formatMentionedPeople(people: PersonProfile[]): string {
   if (!people.length) return '';
   const lines = people.map(p => {
     const parts = [`<@${p.slackUserId}>`];

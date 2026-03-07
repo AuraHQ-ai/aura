@@ -1,5 +1,5 @@
 import type { WebClient } from "@slack/web-api";
-import { buildSystemPrompt, buildDynamicContext, type MentionedPerson } from "../personality/system-prompt.js";
+import { buildSystemPrompt, buildDynamicContext, type PersonProfile } from "../personality/system-prompt.js";
 import { retrieveMemories, retrieveConversations, type ConversationThread } from "../memory/retrieve.js";
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
@@ -178,7 +178,7 @@ If the thread content is sparse, try list_slack_list_items to find the item by m
  * Look up a single Slack user in the people DB.
  * Returns null if not found or on error.
  */
-async function lookupPerson(slackUserId: string): Promise<MentionedPerson | null> {
+async function lookupPerson(slackUserId: string): Promise<PersonProfile | null> {
   try {
     const manager = alias(people, 'manager');
     const rows = await db
@@ -217,7 +217,7 @@ async function lookupPerson(slackUserId: string): Promise<MentionedPerson | null
  * Look up @mentioned Slack users in the people DB.
  * Uses a single query with a left-join to resolve manager names.
  */
-async function lookupMentionedPeople(slackUserIds: string[]): Promise<MentionedPerson[]> {
+async function lookupMentionedPeople(slackUserIds: string[]): Promise<PersonProfile[]> {
   if (slackUserIds.length === 0) return [];
 
   try {
