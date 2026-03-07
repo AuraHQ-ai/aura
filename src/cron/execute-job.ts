@@ -5,9 +5,10 @@ import { jobs, notes, jobExecutions } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
+import { getBotToken } from "../lib/workspace-token.js";
 
-const botToken = process.env.SLACK_BOT_TOKEN || "";
-const slackClient = new WebClient(botToken);
+const fallbackBotToken = process.env.SLACK_BOT_TOKEN || "";
+const fallbackSlackClient = new WebClient(fallbackBotToken);
 
 /** Max retries before marking as failed */
 export const MAX_RETRIES = 3;
@@ -93,6 +94,12 @@ export async function executeJob(
     .returning({ id: jobExecutions.id });
 
   const executionId = execution.id;
+
+  // Resolve per-team token (jobs don't store team_id yet — falls back to env)
+  const resolvedToken = await getBotToken();
+  const slackClient = resolvedToken
+    ? new WebClient(resolvedToken)
+    : fallbackSlackClient;
 
   try {
     const planTopic = parseContinuationTag(job.description);

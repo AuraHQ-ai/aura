@@ -85,10 +85,8 @@ let cachedErrorsChannelId: string | null = null;
 async function getSlackClient(): Promise<
   InstanceType<typeof import("@slack/web-api").WebClient> | null
 > {
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) return null;
-  const { WebClient } = await import("@slack/web-api");
-  return new WebClient(token);
+  const { getSlackClientForTeam } = await import("./workspace-token.js");
+  return getSlackClientForTeam();
 }
 
 async function getErrorsChannelId(

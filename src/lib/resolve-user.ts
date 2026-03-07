@@ -11,7 +11,9 @@ export async function resolveSlackUserId(
   try {
     const { WebClient } = await import("@slack/web-api");
     const { getUserList } = await import("../tools/slack.js");
-    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
+    const { getBotToken } = await import("./workspace-token.js");
+    const token = (await getBotToken()) || "";
+    const client = new WebClient(token);
     const users = await getUserList(client);
 
     const normalizedInput = userName

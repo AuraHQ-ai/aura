@@ -70,10 +70,9 @@ async function notifyOwnerExpired(
   ownerId: string,
   credentialName: string,
 ): Promise<void> {
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) return;
-  const { WebClient } = await import("@slack/web-api");
-  const client = new WebClient(token);
+  const { getSlackClientForTeam } = await import("./workspace-token.js");
+  const client = await getSlackClientForTeam();
+  if (!client) return;
   const dm = await client.conversations.open({ users: ownerId });
   if (dm.channel?.id) {
     await client.chat.postMessage({
