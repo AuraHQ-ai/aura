@@ -55,7 +55,7 @@ export default function Home() {
             Aura is an AI assistant that lives in your Slack workspace — triaging bugs, analyzing data, coordinating your team, and building memory that compounds over time. Not a chatbot. A colleague.
           </p>
           <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
-            {SLACK_OAUTH_URL && (
+            {SLACK_OAUTH_URL ? (
               <a
                 href={SLACK_OAUTH_URL}
                 style={{ display: "inline-block" }}
@@ -70,6 +70,22 @@ export default function Home() {
                   srcSet="https://platform.slack-edge.com/img/add_to_slack.png 1x, https://platform.slack-edge.com/img/add_to_slack@2x.png 2x"
                   style={{ height: "40px", width: "auto" }}
                 />
+              </a>
+            ) : (
+              <a
+                href="mailto:hello@aurahq.ai"
+                style={{
+                  background: "var(--btn-bg)",
+                  color: "var(--btn-color)",
+                  padding: "12px 24px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: 500,
+                  letterSpacing: "-0.01em",
+                  textDecoration: "none",
+                }}
+              >
+                Request access
               </a>
             )}
             <a
@@ -255,7 +271,7 @@ export default function Home() {
             Aura runs in Slack. She joins your channels, learns your team, and starts working on day one. No setup wizard. No onboarding call.
           </p>
           <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
-            {SLACK_OAUTH_URL && (
+            {SLACK_OAUTH_URL ? (
               <a
                 href={SLACK_OAUTH_URL}
                 style={{ display: "inline-block" }}
@@ -271,6 +287,23 @@ export default function Home() {
                   style={{ height: "40px", width: "auto" }}
                 />
               </a>
+            ) : (
+              <a
+                href="mailto:hello@aurahq.ai"
+                style={{
+                  display: "inline-block",
+                  background: "var(--btn-bg)",
+                  color: "var(--btn-color)",
+                  padding: "13px 28px",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontWeight: 500,
+                  letterSpacing: "-0.01em",
+                  textDecoration: "none",
+                }}
+              >
+                Get in touch →
+              </a>
             )}
             <a
               href="mailto:hello@aurahq.ai"
@@ -281,7 +314,7 @@ export default function Home() {
                 textUnderlineOffset: "3px",
               }}
             >
-              Or contact us at hello@aurahq.ai
+              hello@aurahq.ai
             </a>
           </div>
         </div>
