@@ -1,8 +1,8 @@
 # Aura
 
-Aura is an AI team member that lives in Slack. Not a bot you query — a colleague you work with.
+Aura is an AI team member that lives in Slack -- a persistent, autonomous colleague with memory, judgment, and the ability to act.
 
-She reads context, remembers conversations, initiates work without being asked, and gets smarter over time. The difference from a chatbot is that she has persistent memory, a self-improvement loop, and the ability to act autonomously: file issues, make phone calls, send emails, query data warehouses, run code, dispatch coding agents, and more — all without leaving your workspace.
+She reads context, remembers every conversation, initiates work without being asked, and gets smarter over time. She has persistent memory, a self-improvement loop, and the ability to act autonomously: file issues, make phone calls, send emails, query data warehouses, run code, dispatch coding agents, and more -- all without leaving your workspace.
 
 She also maintains her own knowledge base, writes and executes playbooks, and updates her own system prompt when she learns something important.
 
