@@ -4,6 +4,7 @@ import { getCredential } from "./credentials.js";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
+const SANDBOX_TEMPLATE_KEY = "e2b_sandbox_template_id";
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Per-invocation cache -- reuse the same sandbox within a single request */
@@ -179,8 +180,27 @@ export async function getOrCreateSandbox(): Promise<any> {
         throw new Error("Health check failed after resume");
       }
 
-      cachedSandbox = sandbox;
-      logger.info("E2B sandbox resumed", { sandboxId: savedId });
+      // Check if this sandbox was created with the current template
+      const currentTemplateId = process.env.E2B_TEMPLATE_ID || null;
+      const savedTemplateId = await getSetting(SANDBOX_TEMPLATE_KEY);
+      if (currentTemplateId && savedTemplateId && currentTemplateId !== savedTemplateId) {
+        logger.info("Template mismatch — killing old sandbox to force fresh create", {
+          savedTemplateId,
+          currentTemplateId,
+        });
+        try {
+          await sandbox.kill();
+        } catch {
+          // best effort
+        }
+        await setSetting(SANDBOX_NOTE_KEY, "", "aura");
+        await setSetting(SANDBOX_TEMPLATE_KEY, "", "aura");
+        cachedSandbox = null;
+        // Fall through to create a new sandbox below
+      } else {
+        cachedSandbox = sandbox;
+        logger.info("E2B sandbox resumed", { sandboxId: savedId });
+      }
     } catch (error: any) {
       logger.warn("Failed to resume sandbox, creating new one", {
         savedId,
@@ -205,6 +225,10 @@ export async function getOrCreateSandbox(): Promise<any> {
 
   // Save the sandbox ID for future resumption
   await setSetting(SANDBOX_NOTE_KEY, sandbox.sandboxId, "aura");
+  const newTemplateId = process.env.E2B_TEMPLATE_ID || null;
+  if (newTemplateId) {
+    await setSetting(SANDBOX_TEMPLATE_KEY, newTemplateId, "aura");
+  }
 
   cachedSandbox = sandbox;
   logger.info("E2B sandbox created", { sandboxId: sandbox.sandboxId });
