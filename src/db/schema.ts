@@ -682,6 +682,29 @@ export type NewCredentialGrant = typeof credentialGrants.$inferInsert;
 export type CredentialAuditEntry = typeof credentialAuditLog.$inferSelect;
 export type NewCredentialAuditEntry = typeof credentialAuditLog.$inferInsert;
 
+// ── Workspaces (multi-tenant Slack OAuth installs) ──────────────────────────
+
+export const workspaces = pgTable(
+  "workspaces",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    teamId: text("team_id").notNull().unique(),
+    teamName: text("team_name").notNull(),
+    botToken: text("bot_token").notNull(),
+    botUserId: text("bot_user_id").notNull(),
+    installedAt: timestamptz("installed_at").defaultNow(),
+    isActive: boolean("is_active").default(true),
+  },
+  (table) => [
+    uniqueIndex("workspaces_team_id_idx").on(table.teamId),
+  ],
+);
+
+export type Workspace = typeof workspaces.$inferSelect;
+export type NewWorkspace = typeof workspaces.$inferInsert;
+
 // ── Content (blog/docs index for semantic search + related posts) ───────────
 
 export const content = pgTable(
