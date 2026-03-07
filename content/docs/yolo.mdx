@@ -1,0 +1,209 @@
+---
+title: "YOLO Mode"
+description: "Give Aura the keys. She'll use them."
+---
+
+# Make Aura Really Powerful (At Your Own Risk)
+
+Out of the box, Aura can chat. With a few extra environment variables, she can read your database, push to Vercel, make phone calls, browse the web, and run code in a sandboxed VM. Each credential you add unlocks a new capability tier.
+
+This page lists everything, what it unlocks, and what you're signing up for when you add it.
+
+---
+
+## Tier 1: Core (Required)
+
+These are the minimum required variables. Without them, Aura won't start.
+
+| Variable | What it is | Where to get it |
+|---|---|---|
+| `SLACK_BOT_TOKEN` | Bot OAuth token | Slack app → OAuth & Permissions |
+| `SLACK_SIGNING_SECRET` | Request verification | Slack app → Basic Information |
+| `SLACK_USER_TOKEN` | User-level token (for search, DMs) | Slack app → OAuth & Permissions → User Token |
+| `ANTHROPIC_API_KEY` | Powers the LLM | [console.anthropic.com](https://console.anthropic.com) |
+| `DATABASE_URL` | PostgreSQL connection string | Your Neon / Supabase / Postgres instance |
+
+**What `DATABASE_URL` unlocks:** This is the big one. Aura stores all her memory, notes, jobs, and conversation history here. Without it, she has no persistence -- she forgets everything between messages. With it, she remembers your team, your decisions, your history. This is the variable that makes Aura a _colleague_ instead of a chatbot.
+
+---
+
+## Tier 2: Autonomous Operations
+
+### Vercel Token
+```
+VERCEL_TOKEN=your_token
+```
+**Unlocks:** Aura can read and set environment variables, check deployment logs, trigger redeploys, and inspect your Vercel projects -- all from her sandbox.
+
+**Risk:** She can modify env vars on your production deployments. She won't do it unless you ask, but she _can_.
+
+**Get it:** [vercel.com/account/tokens](https://vercel.com/account/tokens)
+
+---
+
+### Sandbox (e2b)
+```
+E2B_API_KEY=your_key
+E2B_TEMPLATE_ID=your_template_id  # optional: custom pre-baked image
+```
+**Unlocks:** Aura gets a persistent Linux VM. She can write and run code, install packages, run shell commands, clone repos, query databases, process files -- anything you can do in a terminal. The sandbox persists between messages in the same conversation.
+
+**Risk:** She's running real code. She won't do anything destructive without asking, but this is full code execution. Treat it like giving a contractor SSH access to a dev machine.
+
+**Get it:** [e2b.dev](https://e2b.dev)
+
+---
+
+### GitHub
+```
+GH_TOKEN=your_fine_grained_pat
+DEFAULT_GITHUB_REPO=org/repo
+```
+**Unlocks:** Aura can read issues and PRs, create branches, commit code, open PRs, and comment on issues. She uses this to fix her own bugs, ship features, and investigate production issues by reading the codebase.
+
+**Risk:** She can push code and open PRs. Set up branch protection so she can't merge to main without a human review.
+
+**Get it:** GitHub → Settings → Developer settings → Fine-grained personal access tokens
+
+---
+
+## Tier 3: Google Workspace
+
+### BigQuery (Service Account)
+```
+GOOGLE_BQ_CREDENTIALS={"type":"service_account","project_id":...}
+GCP_PROJECT_ID=your-gcp-project
+```
+**Unlocks:** `list_datasets`, `list_tables`, `inspect_table`, `execute_query`. Aura can query your data warehouse directly. Ask "what's our MRR in France this month?" and she'll write and run the SQL.
+
+**Risk:** Read-only by design. The service account only sees what you grant it in IAM. Grant BigQuery Data Viewer + Job User -- nothing more.
+
+**Get it:** GCP Console → IAM → Service Accounts → Create → grant BigQuery Data Viewer + BigQuery Job User
+
+---
+
+### Gmail, Drive, Calendar (Per-User OAuth)
+```
+GOOGLE_EMAIL_CLIENT_ID=your_client_id
+GOOGLE_EMAIL_CLIENT_SECRET=your_client_secret
+```
+**Unlocks:** Each user connects their own Google account via the App Home. Once connected, Aura can read their inbox, draft emails, check their calendar, find files in Drive, and read Google Sheets -- with their own permissions, not yours.
+
+**Risk:** Aura sees exactly what the connected user sees in Google. Tokens are stored encrypted in your database. DM-sourced content stays private.
+
+**Get it:** GCP Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web application)
+
+---
+
+## Tier 4: Voice & Communication
+
+### ElevenLabs + Twilio (Voice Calls)
+```
+ELEVENLABS_API_KEY=your_key
+ELEVENLABS_AGENT_ID=your_agent_id
+ELEVENLABS_VOICE_ID=your_voice_id
+ELEVENLABS_PHONE_NUMBER_ID=your_phone_number_id
+TWILIO_ACCOUNT_SID=your_sid
+TWILIO_AUTH_TOKEN=your_token
+TWILIO_PHONE_NUMBER=+1234567890
+```
+**Unlocks:** `place_call`, `send_voice_note`, `send_sms`, `list_voice_agents`. Aura can make outbound phone calls, send voice messages in Slack, and send SMS. Useful for SDR outreach, automated check-ins, or reaching people who aren't responding to Slack.
+
+**Get it:** [elevenlabs.io](https://elevenlabs.io) for voice + [twilio.com](https://twilio.com/console) for the phone number
+
+---
+
+## Tier 5: Intelligence Augmentation
+
+### Web Search (Tavily)
+```
+TAVILY_API_KEY=your_key
+```
+**Unlocks:** `web_search`, `read_url`, `ingest_resource`. Aura can search the web and read URLs -- check competitor pricing, read docs, research candidates, verify facts.
+
+**Get it:** [tavily.com](https://tavily.com)
+
+---
+
+### Cohere (Reranking)
+```
+COHERE_API_KEY=your_key
+```
+**Unlocks:** Significantly better memory retrieval. Aura uses Cohere's reranker as a second pass over her vector search results, improving which past conversations and notes surface as relevant context. Not required, but noticeably improves recall quality.
+
+**Get it:** [dashboard.cohere.com](https://dashboard.cohere.com)
+
+---
+
+### Browserbase (Browser Automation)
+```
+BROWSERBASE_API_KEY=your_key
+BROWSERBASE_PROJECT_ID=your_project_id
+```
+**Unlocks:** `browse`. Aura controls a remote Chromium browser -- navigate pages, take screenshots, fill forms, extract content from JavaScript-heavy sites, bypass basic bot detection.
+
+**Get it:** [browserbase.com](https://browserbase.com)
+
+---
+
+## Tier 6: AI Code Agents (Cursor)
+```
+CURSOR_API_KEY=your_key
+CURSOR_WEBHOOK_SECRET=your_secret
+CURSOR_WEBHOOK_URL=https://your-aura.vercel.app/webhook/cursor
+```
+**Unlocks:** `dispatch_cursor_agent`. Aura can dispatch AI coding agents to work on your repo in the background -- they create branches, make changes, and open PRs while Aura does other things. She uses this to fix her own bugs and ship features.
+
+**Get it:** [cursor.com](https://cursor.com) → Settings → API
+
+---
+
+## The Full Stack
+
+Copy-paste if you want everything:
+
+```bash
+# Core (required)
+SLACK_BOT_TOKEN=
+SLACK_SIGNING_SECRET=
+SLACK_USER_TOKEN=
+ANTHROPIC_API_KEY=
+DATABASE_URL=
+
+# Autonomous ops
+VERCEL_TOKEN=
+E2B_API_KEY=
+GH_TOKEN=
+DEFAULT_GITHUB_REPO=org/repo
+
+# Data
+GOOGLE_BQ_CREDENTIALS=
+GCP_PROJECT_ID=
+
+# Google workspace (per-user OAuth)
+GOOGLE_EMAIL_CLIENT_ID=
+GOOGLE_EMAIL_CLIENT_SECRET=
+
+# Intelligence
+TAVILY_API_KEY=
+COHERE_API_KEY=
+BROWSERBASE_API_KEY=
+BROWSERBASE_PROJECT_ID=
+
+# Voice
+ELEVENLABS_API_KEY=
+ELEVENLABS_AGENT_ID=
+ELEVENLABS_VOICE_ID=
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=
+
+# AI code agents
+CURSOR_API_KEY=
+CURSOR_WEBHOOK_SECRET=
+CURSOR_WEBHOOK_URL=
+```
+
+With all of these set, Aura has persistent memory, can query your data warehouse, read email, browse the web, run arbitrary code, push to GitHub, make phone calls, and deploy to Vercel. She's not answering questions -- she's doing work.
+
+That's the YOLO stack. You've been warned.

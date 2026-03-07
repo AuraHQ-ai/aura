@@ -42,6 +42,12 @@
             ]
           },
           {
+            "group": "Advanced",
+            "pages": [
+              "yolo"
+            ]
+          },
+          {
             "group": "Tools",
             "pages": [
               "tools/slack",
