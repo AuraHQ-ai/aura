@@ -1,81 +1,103 @@
 import { SlackConversation } from "@/components/slack-conversation";
 import type { SlackMessage } from "@/components/slack-conversation";
 
-const DEMO_MESSAGES: SlackMessage[] = [
+// ── Conversation 1: Sales leaderboard ────────────────────────────────────────
+
+const SALES_LEADERBOARD: SlackMessage[] = [
   {
     author: "Joan Rodriguez",
     avatar: "https://unavatar.io/github/wieseljonas",
-    timestamp: "11:22 PM",
+    timestamp: "9:14 AM",
     content: [
-      {
-        type: "text",
-        text: "can you pull the *top 5 channels* by message volume this week and post a summary in <#general>?",
-      },
+      { type: "text", text: "show the sales leaderboard this week" },
     ],
   },
   {
     author: "Aura",
     avatar: "https://aurahq.ai/icon.svg",
-    timestamp: "11:22 PM",
+    timestamp: "9:14 AM",
     isApp: true,
     avatarShape: "square",
     content: [
-      { type: "text", text: "On it." },
       {
         type: "tool_call",
-        name: "Listing channels...",
+        name: "Querying BigQuery — deals closed this week...",
         status: "ok",
-        detail: "Input: { \"limit\": 200 }\nOutput: 42 channels returned",
-      },
-      {
-        type: "tool_call",
-        name: "Reading channel history...",
-        status: "ok",
-        detail: "Input: { \"channel\": \"general\", \"limit\": 50 }\nOutput: 50 messages fetched",
+        detail: "SELECT closer_name, COUNT(*) as deals, SUM(mrr) as mrr FROM deals WHERE closed_at >= CURRENT_DATE - 7 AND stage = 'won' GROUP BY 1 ORDER BY 3 DESC LIMIT 10",
       },
       {
         type: "text",
-        text: "Here's the breakdown for the past 7 days:\n\n1. <#general> — 312 messages\n2. <#engineering> — 287 messages\n3. <#spain> — 201 messages\n4. <#random> — 178 messages\n5. <#product> — 143 messages\n\nPosting the summary now.",
+        text: "| # | Rep | Deals | MRR |\n|---|-----|-------|-----|\n| 🥇 | Jenibel Ruiz | 9 | €4,320 |\n| 🥈 | Sergio Mora | 7 | €3,150 |\n| 🥉 | Manuel Osuna | 6 | €2,880 |\n| 4 | Cristina Moro | 5 | €2,100 |\n| 5 | Ilia Molina | 4 | €1,740 |\n\nJenibel is on a *3-week win streak* — her close rate is 68% vs the team average of 51%. Worth a shoutout in <#spain>.",
       },
-      {
-        type: "tool_call",
-        name: "Sending message...",
-        status: "ok",
-        detail: "Input: { \"channel\": \"general\", \"message\": \"Weekly top 5...\" }\nOutput: Message sent (ts: 1741384920.123)",
-      },
-      { type: "text", text: "Done. :white_check_mark:" },
     ],
   },
+];
+
+// ── Conversation 2: Ad spend by platform ─────────────────────────────────────
+
+const AD_SPEND: SlackMessage[] = [
   {
     author: "Joan Rodriguez",
     avatar: "https://unavatar.io/github/wieseljonas",
-    timestamp: "11:23 PM",
+    timestamp: "2:31 PM",
     content: [
-      { type: "text", text: "nice, now do the same for _last month_ and put it in a `canvas`" },
+      { type: "text", text: "what's our spend, CTR, CPC and CPA by platform for the sign up conversion event in the last 12 months?" },
     ],
   },
   {
     author: "Aura",
     avatar: "https://aurahq.ai/icon.svg",
-    timestamp: "11:23 PM",
+    timestamp: "2:31 PM",
     isApp: true,
     avatarShape: "square",
     content: [
       {
         type: "tool_call",
-        name: "Reading channel history...",
+        name: "Querying BigQuery — ad performance last 12 months...",
         status: "ok",
-        detail: "Fetching 30-day history across top channels...",
-      },
-      {
-        type: "tool_call",
-        name: "Creating canvas...",
-        status: "ok",
-        detail: "Input: { \"title\": \"Monthly Channel Volume Report\" }\nOutput: Canvas F0A1B2C3D created",
+        detail: "SELECT platform, SUM(spend) as spend, SUM(clicks)/SUM(impressions) as ctr, SUM(spend)/SUM(clicks) as cpc, SUM(spend)/SUM(conversions) as cpa FROM ad_performance WHERE event = 'sign_up' AND date >= DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH) GROUP BY 1 ORDER BY 1",
       },
       {
         type: "text",
-        text: "Done — *Monthly Channel Volume Report* canvas is live. ~30 days of data, 5 channels ranked by total message count. Same pattern as the weekly view.",
+        text: "| Platform | Spend | CTR | CPC | CPA |\n|----------|-------|-----|-----|-----|\n| Google | €184,200 | 4.2% | €1.84 | €38 |\n| Meta | €97,400 | 1.8% | €3.21 | €52 |\n| LinkedIn | €43,600 | 0.6% | €8.90 | €141 |\n| Bing | €9,100 | 3.1% | €2.10 | €44 |\n\nGoogle is carrying this — best CTR, lowest CPA by a wide margin. LinkedIn's CPA is *3.7× worse* than Google for the same sign-up event. Would be worth reviewing if that budget is justified by deal quality downstream.",
+      },
+    ],
+  },
+];
+
+// ── Conversation 3: Build failing on GitHub Actions ───────────────────────────
+
+const BUILD_FAILING: SlackMessage[] = [
+  {
+    author: "Joan Rodriguez",
+    avatar: "https://unavatar.io/github/wieseljonas",
+    timestamp: "6:48 PM",
+    content: [
+      { type: "text", text: "the build is failing on github actions, investigate and suggest a fix" },
+    ],
+  },
+  {
+    author: "Aura",
+    avatar: "https://aurahq.ai/icon.svg",
+    timestamp: "6:48 PM",
+    isApp: true,
+    avatarShape: "square",
+    content: [
+      {
+        type: "tool_call",
+        name: "Fetching latest workflow runs...",
+        status: "ok",
+        detail: "gh run list --limit 5 --json name,status,conclusion,headBranch,createdAt",
+      },
+      {
+        type: "tool_call",
+        name: "Reading build logs...",
+        status: "ok",
+        detail: "gh run view 8471920344 --log-failed",
+      },
+      {
+        type: "text",
+        text: "Found it. The `ci.yml` lint step is failing on `main` since *6:31 PM* — 3 consecutive runs.\n\nError:\n```\nTypeError: Cannot read properties of undefined (reading 'map')\n  at generateLeadScore (src/scoring/leads.ts:84)\n```\n\nRoot cause: PR #1847 (merged 42 min ago) changed `lead.attributes` from an array to an object, but `generateLeadScore` still calls `.map()` on it.\n\n*Fix:*\n```ts\n// Before\nconst scores = lead.attributes.map(attr => weights[attr]);\n\n// After\nconst scores = Object.keys(lead.attributes).map(attr => weights[attr]);\n```\n\nThis is in `src/scoring/leads.ts:84`. Want me to open a PR?",
       },
     ],
   },
@@ -88,9 +110,17 @@ export default function DemoPage() {
         SlackConversation component demo
       </h1>
       <p style={{ marginBottom: "32px", color: "#888", fontSize: "14px" }}>
-        Theme-aware · mrkdwn · tool call accordions · message grouping
+        Three real scenarios — data, ads, engineering
       </p>
-      <SlackConversation messages={DEMO_MESSAGES} />
+
+      <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "16px" }}>Sales leaderboard</h2>
+      <SlackConversation messages={SALES_LEADERBOARD} />
+
+      <h2 style={{ fontSize: "16px", fontWeight: 600, margin: "48px 0 16px" }}>Ad spend by platform</h2>
+      <SlackConversation messages={AD_SPEND} />
+
+      <h2 style={{ fontSize: "16px", fontWeight: 600, margin: "48px 0 16px" }}>Build failing — investigate and fix</h2>
+      <SlackConversation messages={BUILD_FAILING} />
     </div>
   );
 }
