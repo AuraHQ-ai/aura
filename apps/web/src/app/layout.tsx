@@ -54,6 +54,20 @@ function Nav() {
             color: "var(--text-primary)",
           }}
         >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="16"
+            viewBox="0 0 102 90"
+            fill="none"
+            className="text-black dark:text-white"
+            style={{ flexShrink: 0 }}
+          >
+            <path
+              fill="currentColor"
+              d="m58 0 44 77-8 13H7L0 77 43 0h15ZM6 77l3 5 36-64 9 16 17 30h6L45 8 6 77Zm79-8H34l-3 5h64L55 5h-6l36 64Zm-48-5h28L51 39 37 64Z"
+            />
+          </svg>
           <span style={{ position: "relative", display: "flex", width: "8px", height: "8px" }}>
             <span
               style={{
