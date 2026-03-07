@@ -1,301 +1,357 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { actionLog, approvalPolicies, jobs } from "../db/schema.js";
-import type { ApprovalPolicy } from "../db/schema.js";
-import { isAdmin } from "./permissions.js";
+import {
+  actionLog,
+  approvalPolicies,
+  jobs,
+  type ApprovalPolicy,
+  type ScheduleContext,
+} from "../db/schema.js";
 import { logger } from "./logger.js";
 
-// ── Policy Lookup ────────────────────────────────────────────────────────────
+// ── Types ───────────────────────────────────────────────────────────────────
 
-export type RiskTier = "read" | "write" | "destructive";
+export interface ExecutionContext {
+  userId?: string;
+  channelId?: string;
+  threadTs?: string;
+  jobId?: string;
+  triggerType: "user_message" | "scheduled_job" | "autonomous";
+}
 
-interface LookupParams {
+// ── URL Pattern Matching ────────────────────────────────────────────────────
+
+/**
+ * Simple glob matcher for URL patterns.
+ * Supports `*` (match one path segment) and `**` (match any number of segments).
+ * Strips protocol from both pattern and URL before matching.
+ */
+function matchUrlPattern(pattern: string, url: string): boolean {
+  const stripProtocol = (s: string) => s.replace(/^https?:\/\//, "");
+  const normalizedUrl = stripProtocol(url).replace(/\/$/, "");
+  const normalizedPattern = stripProtocol(pattern).replace(/\/$/, "");
+
+  const regexStr = normalizedPattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "§§")
+    .replace(/\*/g, "[^/]+")
+    .replace(/§§/g, ".*");
+
+  return new RegExp(`^${regexStr}$`).test(normalizedUrl);
+}
+
+/**
+ * Compute a specificity score for a pattern so more specific matches win.
+ * Fewer wildcards and more literal segments = higher specificity.
+ */
+function patternSpecificity(pattern: string): number {
+  const stripped = pattern.replace(/^https?:\/\//, "");
+  const segments = stripped.split("/");
+  let score = 0;
+  for (const seg of segments) {
+    if (seg === "**") score += 0;
+    else if (seg.includes("*")) score += 1;
+    else score += 2;
+  }
+  return score;
+}
+
+// ── Default Risk Tier by HTTP Method ────────────────────────────────────────
+
+const METHOD_DEFAULT_TIER: Record<string, "read" | "write" | "destructive"> = {
+  GET: "read",
+  HEAD: "read",
+  OPTIONS: "read",
+  POST: "write",
+  PUT: "write",
+  PATCH: "write",
+  DELETE: "destructive",
+};
+
+// ── Policy Lookup ───────────────────────────────────────────────────────────
+
+export async function lookupPolicy(args: {
   toolName: string;
   url?: string;
   method?: string;
   credentialName?: string;
-}
+}): Promise<ApprovalPolicy | null> {
+  const rows = await db.select().from(approvalPolicies);
 
-interface PolicyResult {
-  riskTier: RiskTier;
-  policy: ApprovalPolicy | null;
+  const candidates: Array<{ policy: ApprovalPolicy; specificity: number }> = [];
+
+  for (const policy of rows) {
+    if (args.toolName === "http_request") {
+      if (policy.urlPattern && args.url) {
+        if (!matchUrlPattern(policy.urlPattern, args.url)) continue;
+
+        if (
+          policy.httpMethods &&
+          policy.httpMethods.length > 0 &&
+          args.method &&
+          !policy.httpMethods.includes(args.method.toUpperCase())
+        ) {
+          continue;
+        }
+
+        if (
+          policy.credentialName &&
+          args.credentialName &&
+          policy.credentialName !== args.credentialName
+        ) {
+          continue;
+        }
+
+        candidates.push({
+          policy,
+          specificity: patternSpecificity(policy.urlPattern),
+        });
+      } else if (policy.toolPattern === "http_request") {
+        candidates.push({ policy, specificity: 0 });
+      }
+    } else {
+      if (policy.toolPattern === args.toolName) {
+        candidates.push({ policy, specificity: 100 });
+      }
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => b.specificity - a.specificity);
+  return candidates[0].policy;
 }
 
 /**
- * Look up the applicable approval policy for a tool call.
- *
- * Matching order:
- * 1. For http_request: most-specific url_pattern + http_methods match
- * 2. Exact tool_pattern match
- * 3. Fallback defaults: GET=read, POST/PATCH/PUT=write, DELETE=destructive;
- *    for non-http tools, default to "write"
+ * Determine the effective risk tier for a tool invocation.
+ * If a policy matches, use its tier. Otherwise fall back to method-based defaults
+ * for http_request, or "write" for named tools.
  */
-export async function lookupPolicy(params: LookupParams): Promise<PolicyResult> {
-  const { toolName, url, method, credentialName } = params;
-
-  const allPolicies = await db
-    .select()
-    .from(approvalPolicies)
-    .orderBy(sql`length(coalesce(url_pattern, '')) DESC`);
-
-  // For http_request, try url_pattern + method matching first
-  if (toolName === "http_request" && url) {
-    for (const policy of allPolicies) {
-      if (!policy.urlPattern) continue;
-
-      if (!urlMatchesPattern(url, policy.urlPattern)) continue;
-
-      if (policy.httpMethods && policy.httpMethods.length > 0) {
-        if (method && !policy.httpMethods.includes(method.toUpperCase())) continue;
-      }
-
-      if (policy.credentialName && policy.credentialName !== credentialName) continue;
-
-      return { riskTier: policy.riskTier as RiskTier, policy };
-    }
-  }
-
-  // Try exact tool_pattern match
-  for (const policy of allPolicies) {
-    if (!policy.toolPattern) continue;
-    if (policy.toolPattern !== toolName) continue;
-    if (policy.credentialName && policy.credentialName !== credentialName) continue;
-
-    return { riskTier: policy.riskTier as RiskTier, policy };
-  }
-
-  // Fallback defaults
-  if (toolName === "http_request" && method) {
-    const upperMethod = method.toUpperCase();
-    if (upperMethod === "GET" || upperMethod === "HEAD" || upperMethod === "OPTIONS") {
-      return { riskTier: "read", policy: null };
-    }
-    if (upperMethod === "DELETE") {
-      return { riskTier: "destructive", policy: null };
-    }
-    return { riskTier: "write", policy: null };
-  }
-
-  return { riskTier: "write", policy: null };
+export function effectiveRiskTier(
+  policy: ApprovalPolicy | null,
+  method?: string,
+): "read" | "write" | "destructive" {
+  if (policy) return policy.riskTier as "read" | "write" | "destructive";
+  if (method) return METHOD_DEFAULT_TIER[method.toUpperCase()] ?? "write";
+  return "write";
 }
 
-function urlMatchesPattern(url: string, pattern: string): boolean {
-  try {
-    const parsed = new URL(url);
-    const urlPath = parsed.hostname + parsed.pathname;
-    const regexStr = "^" + pattern.replace(/\*/g, "[^/]*") + "(/.*)?$";
-    return new RegExp(regexStr).test(urlPath);
-  } catch {
-    return false;
-  }
-}
+// ── Request Approval (post Slack message + write action_log row) ────────────
 
-// ── Approval Message ─────────────────────────────────────────────────────────
-
-export interface RequestApprovalParams {
+export async function requestApproval(args: {
   actionLogId: string;
   toolName: string;
   params: unknown;
   riskTier: string;
-  policy: ApprovalPolicy | null;
-  triggeredBy: string;
-  jobId?: string;
-}
+  policy: ApprovalPolicy;
+  context: ExecutionContext;
+  slackClient: InstanceType<typeof import("@slack/web-api").WebClient>;
+}): Promise<void> {
+  const { actionLogId, toolName, params, riskTier, policy, context, slackClient } = args;
 
-/**
- * Post an approval request message to the appropriate Slack channel.
- * Embeds the action_log ID in message metadata for the reaction handler.
- */
-export async function requestApproval(params: RequestApprovalParams): Promise<void> {
-  const { WebClient } = await import("@slack/web-api");
-  const botToken = process.env.SLACK_BOT_TOKEN || "";
-  const slackClient = new WebClient(botToken);
-
-  const { actionLogId, toolName, params: toolParams, riskTier, policy, triggeredBy, jobId } = params;
-
-  const paramsDisplay = typeof toolParams === "object"
-    ? JSON.stringify(toolParams, null, 2).slice(0, 2000)
-    : String(toolParams).slice(0, 2000);
-
-  const blocks: any[] = [
-    {
-      type: "header",
-      text: { type: "plain_text", text: `:warning: Approval Required — ${toolName}`, emoji: true },
-    },
-    {
-      type: "section",
-      fields: [
-        { type: "mrkdwn", text: `*Risk Tier:*\n\`${riskTier}\`` },
-        { type: "mrkdwn", text: `*Triggered By:*\n<@${triggeredBy}>` },
-      ],
-    },
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: `*Parameters:*\n\`\`\`${paramsDisplay}\`\`\`` },
-    },
-    {
-      type: "context",
-      elements: [
-        { type: "mrkdwn", text: `React with :white_check_mark: to approve or :x: to reject` },
-      ],
-    },
-  ];
-
-  if (jobId) {
-    blocks.splice(2, 0, {
-      type: "section",
-      fields: [{ type: "mrkdwn", text: `*Job ID:*\n\`${jobId}\`` }],
-    });
-  }
-
-  const metadata = {
-    event_type: "aura_approval_request",
-    event_payload: { action_log_id: actionLogId },
-  };
-
-  const channel = policy?.approvalChannel || triggeredBy;
-
-  try {
-    await slackClient.chat.postMessage({
-      channel,
-      text: `Approval required for ${toolName} (${riskTier}). React ✅ to approve, ❌ to reject.`,
-      blocks,
-      metadata,
-    });
-    logger.info("Approval request posted", { actionLogId, toolName, channel });
-  } catch (err: any) {
-    logger.error("Failed to post approval request", { actionLogId, error: err.message });
-    // If posting to a channel fails, try DM to triggeredBy
-    if (channel !== triggeredBy) {
-      try {
-        await slackClient.chat.postMessage({
-          channel: triggeredBy,
-          text: `Approval required for ${toolName} (${riskTier}). React ✅ to approve, ❌ to reject.`,
-          blocks,
-          metadata,
-        });
-      } catch (dmErr: any) {
-        logger.error("Failed to post approval DM fallback", { actionLogId, error: dmErr.message });
-      }
-    }
-  }
-}
-
-// ── Approval Reaction Handler ────────────────────────────────────────────────
-
-export interface HandleApprovalReactionParams {
-  actionLogId: string;
-  reaction: string;
-  reactorUserId: string;
-}
-
-/**
- * Handle an approval or rejection reaction on an action_log entry.
- * Called from the reaction_added event handler in app.ts.
- */
-export async function handleApprovalReaction(params: HandleApprovalReactionParams): Promise<void> {
-  const { actionLogId, reaction, reactorUserId } = params;
-
-  const logRows = await db
+  const row = await db
     .select()
     .from(actionLog)
     .where(eq(actionLog.id, actionLogId))
     .limit(1);
 
-  const logRow = logRows[0];
-  if (!logRow || logRow.status !== "pending_approval") {
-    logger.info("Approval reaction: action not pending", { actionLogId, status: logRow?.status });
-    return;
+  const logEntry = row[0];
+  if (!logEntry) {
+    throw new Error(`action_log row ${actionLogId} not found`);
   }
 
-  // Look up the policy that gated this action to verify approver authorization
-  const { policy } = await lookupPolicy({
-    toolName: logRow.toolName,
-    credentialName: logRow.credentialName ?? undefined,
+  const channel = policy.approvalChannel ?? undefined;
+  const approvers = policy.approverIds ?? [];
+  const approverMentions =
+    approvers.length > 0
+      ? approvers.map((id) => `<@${id}>`).join(", ")
+      : "admins";
+
+  const paramsSummary = JSON.stringify(logEntry.params, null, 2);
+  const truncatedParams =
+    paramsSummary.length > 2800
+      ? paramsSummary.slice(0, 2800) + "\n... (truncated)"
+      : paramsSummary;
+
+  const blocks = [
+    {
+      type: "header" as const,
+      text: {
+        type: "plain_text" as const,
+        text: `🔒 Approval Required: ${toolName}`,
+        emoji: true,
+      },
+    },
+    {
+      type: "section" as const,
+      text: {
+        type: "mrkdwn" as const,
+        text: `*Risk tier:* \`${riskTier}\`\n*Requested by:* <@${logEntry.triggeredBy}>\n*Trigger:* ${logEntry.triggerType}${logEntry.jobId ? `\n*Job:* ${logEntry.jobId}` : ""}`,
+      },
+    },
+    {
+      type: "section" as const,
+      text: {
+        type: "mrkdwn" as const,
+        text: `*Parameters:*\n\`\`\`${truncatedParams}\`\`\``,
+      },
+    },
+    {
+      type: "context" as const,
+      elements: [
+        {
+          type: "mrkdwn" as const,
+          text: `React with :white_check_mark: to approve or :x: to reject • ${approverMentions}\n\`action_log_id: ${actionLogId}\``,
+        },
+      ],
+    },
+  ];
+
+  let targetChannel: string;
+
+  if (channel) {
+    targetChannel = channel;
+  } else if (context.channelId) {
+    targetChannel = context.channelId;
+  } else {
+    const dm = await slackClient.conversations.open({
+      users: logEntry.triggeredBy,
+    });
+    targetChannel = dm.channel?.id ?? logEntry.triggeredBy;
+  }
+
+  await slackClient.chat.postMessage({
+    channel: targetChannel,
+    text: `Approval required for ${toolName} (${riskTier})`,
+    blocks,
+    metadata: {
+      event_type: "approval_request",
+      event_payload: {
+        action_log_id: actionLogId,
+      },
+    },
   });
 
-  const approverIds = policy?.approverIds ?? null;
-  const isAuthorized = approverIds
-    ? approverIds.includes(reactorUserId)
-    : isAdmin(reactorUserId);
+  if (context.jobId) {
+    await db
+      .update(jobs)
+      .set({
+        approvalStatus: "awaiting_approval",
+        pendingActionLogId: actionLogId,
+      })
+      .where(eq(jobs.id, context.jobId));
+  }
 
-  if (!isAuthorized) {
-    logger.info("Approval reaction: reactor not authorized", {
+  logger.info("Approval requested", {
+    actionLogId,
+    toolName,
+    riskTier,
+    channel: targetChannel,
+  });
+}
+
+// ── Handle Approval Reaction ────────────────────────────────────────────────
+
+export async function handleApprovalReaction(args: {
+  actionLogId: string;
+  reaction: string;
+  reactorUserId: string;
+  slackClient: InstanceType<typeof import("@slack/web-api").WebClient>;
+}): Promise<void> {
+  const { actionLogId, reaction, reactorUserId, slackClient } = args;
+
+  const rows = await db
+    .select()
+    .from(actionLog)
+    .where(eq(actionLog.id, actionLogId))
+    .limit(1);
+
+  const entry = rows[0];
+  if (!entry) {
+    logger.warn("handleApprovalReaction: action_log row not found", {
       actionLogId,
-      reactorUserId,
-      approverIds,
     });
     return;
   }
 
-  const { WebClient } = await import("@slack/web-api");
-  const botToken = process.env.SLACK_BOT_TOKEN || "";
-  const slackClient = new WebClient(botToken);
+  if (entry.status !== "pending_approval") {
+    logger.info("handleApprovalReaction: action already resolved", {
+      actionLogId,
+      currentStatus: entry.status,
+    });
+    return;
+  }
 
-  if (reaction === "white_check_mark") {
-    await db
-      .update(actionLog)
-      .set({
-        status: "approved",
-        approvedBy: reactorUserId,
-        approvedAt: new Date(),
-      })
-      .where(eq(actionLog.id, actionLogId));
+  const policy = await lookupPolicy({
+    toolName: entry.toolName,
+    url:
+      entry.toolName === "http_request"
+        ? (entry.params as Record<string, unknown>)?.url as string
+        : undefined,
+    method:
+      entry.toolName === "http_request"
+        ? (entry.params as Record<string, unknown>)?.method as string
+        : undefined,
+  });
 
-    // Re-enqueue the associated job
-    await db
-      .update(jobs)
-      .set({
-        status: "pending",
-        approvalStatus: "approved",
-        executeAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(jobs.pendingActionLogId, actionLogId));
+  const allowedApprovers = policy?.approverIds ?? [];
+  const adminIds = (process.env.AURA_ADMIN_USER_IDS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-    logger.info("Action approved", { actionLogId, approvedBy: reactorUserId });
+  const isAuthorized =
+    allowedApprovers.length === 0
+      ? adminIds.includes(reactorUserId)
+      : allowedApprovers.includes(reactorUserId);
 
-    // Notify job creator
-    if (logRow.triggeredBy && logRow.triggeredBy !== "unknown") {
-      try {
-        await slackClient.chat.postMessage({
-          channel: logRow.triggeredBy,
-          text: `Your action \`${logRow.toolName}\` has been approved by <@${reactorUserId}>.`,
-        });
-      } catch { /* non-critical */ }
-    }
-  } else if (reaction === "x") {
-    await db
-      .update(actionLog)
-      .set({
-        status: "rejected",
-        approvedBy: reactorUserId,
-        approvedAt: new Date(),
-      })
-      .where(eq(actionLog.id, actionLogId));
+  if (!isAuthorized) {
+    logger.warn("handleApprovalReaction: unauthorized reactor", {
+      actionLogId,
+      reactorUserId,
+    });
+    return;
+  }
 
-    // Cancel the associated job
-    const cancelledJobs = await db
-      .update(jobs)
-      .set({
-        status: "cancelled",
-        approvalStatus: "rejected",
-        updatedAt: new Date(),
-      })
-      .where(eq(jobs.pendingActionLogId, actionLogId))
-      .returning({ id: jobs.id, requestedBy: jobs.requestedBy });
+  const isApproved = reaction === "white_check_mark";
+  const newStatus = isApproved ? "approved" : "rejected";
 
-    logger.info("Action rejected", { actionLogId, rejectedBy: reactorUserId });
+  await db
+    .update(actionLog)
+    .set({
+      status: newStatus,
+      approvedBy: reactorUserId,
+      approvedAt: new Date(),
+    })
+    .where(eq(actionLog.id, actionLogId));
 
-    // Notify job creator
-    const job = cancelledJobs[0];
-    if (job?.requestedBy && job.requestedBy !== "aura") {
-      try {
-        await slackClient.chat.postMessage({
-          channel: job.requestedBy,
-          text: `Your action \`${logRow.toolName}\` was rejected by <@${reactorUserId}>. The associated job has been cancelled.`,
-        });
-      } catch { /* non-critical */ }
+  if (entry.jobId) {
+    if (isApproved) {
+      await db
+        .update(jobs)
+        .set({
+          approvalStatus: null,
+          pendingActionLogId: null,
+          status: "pending",
+        })
+        .where(eq(jobs.id, entry.jobId));
+    } else {
+      await db
+        .update(jobs)
+        .set({
+          approvalStatus: null,
+          pendingActionLogId: null,
+          status: "cancelled",
+          result: `Rejected by <@${reactorUserId}>`,
+        })
+        .where(eq(jobs.id, entry.jobId));
     }
   }
+
+  logger.info("Approval reaction handled", {
+    actionLogId,
+    reaction,
+    newStatus,
+    reactorUserId,
+  });
 }
