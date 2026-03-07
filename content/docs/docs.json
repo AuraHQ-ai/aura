@@ -31,7 +31,8 @@
             "group": "Getting Started",
             "pages": [
               "getting-started",
-              "architecture"
+              "architecture",
+              "yolo"
             ]
           },
           {

@@ -1,0 +1,52 @@
+---
+title: "YOLO Mode"
+description: "Two credentials that unlock capabilities most enterprises explicitly block"
+---
+
+Most of Aura's integrations are straightforward: connect a service, get a feature. Google Workspace, voice, BigQuery, web search — standard stuff.
+
+Two credentials are different. They give Aura access to infrastructure she can modify. If something goes wrong, it can go really wrong.
+
+---
+
+## Direct Postgres access
+
+```env
+DATABASE_URL=postgresql://...
+```
+
+With a direct connection to her own database, Aura can:
+
+- **Query anything** — conversation history, memories, jobs, credentials, all of it
+- **Rewrite her own memory** — delete facts she's storing about you, fabricate context
+- **Modify the job queue** — cancel scheduled work, change what fires next
+- **Alter her own behavior** — the self-directive is a note in the DB; she can edit it
+- **Read encrypted credentials** (if she also has the encryption key)
+
+Without this, Aura has no persistent state at all — she's a chatbot. With it, she's building institutional knowledge that compounds over time. The database is the difference.
+
+The risk isn't that Aura will go rogue. The risk is that a prompt injection, a confused tool call, or a job gone wrong can corrupt memory or cancel real work with no undo.
+
+---
+
+## Vercel admin token
+
+```env
+VERCEL_TOKEN=...
+VERCEL_TEAM_ID=...
+```
+
+With a Vercel admin token, Aura can:
+
+- **Read all environment variables** — including secrets she was never explicitly given
+- **Set environment variables** — change her own config, API keys, model routing
+- **Trigger production redeploys** — push a config change and it's live in 30 seconds
+- **Read deployment logs** — debug her own failures in production
+
+This is how Aura reads her own Vercel logs when something breaks, sets new env vars when you ask her to configure something, and re-deploys after a fix. It's also how, in theory, she could modify her own runtime configuration without you noticing.
+
+Most enterprise security policies explicitly prohibit giving an AI agent admin access to production infrastructure. This is why.
+
+---
+
+These two are the real YOLO. Everything else is just features.
