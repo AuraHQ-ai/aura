@@ -25,6 +25,8 @@ import {
   hasPermission,
 } from "./lib/api-credentials.js";
 import { resolveConfirmation } from "./lib/confirmation.js";
+import { handleApprovalReaction } from "./lib/approval.js";
+import { executeApprovedAction } from "./lib/action-governance.js";
 import { setSetting } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
@@ -159,11 +161,71 @@ app.post("/api/slack/events", async (c) => {
   if (body.event) {
     const event = body.event;
 
-    // Handle reaction events -- store as memory for awareness
+    // Handle reaction events -- check approval flow first, then store as memory
     if (event.type === "reaction_added" && event.user && event.item) {
       const reactionPromise = (async () => {
         try {
-          // Resolve user name for the memory
+          // Check if this reaction is an approval/rejection for a pending action
+          if (event.item.ts && event.item.channel) {
+            const approvalResult = await handleApprovalReaction({
+              reaction: event.reaction,
+              userId: event.user,
+              channelId: event.item.channel,
+              messageTs: event.item.ts,
+            });
+
+            if (approvalResult.handled) {
+              logger.info("Approval reaction handled", {
+                action: approvalResult.action,
+                userId: event.user,
+                messageTs: event.item.ts,
+              });
+
+              if (approvalResult.action === "approved") {
+                // Find the action_log entry by message_ts and execute it
+                const { getActionLogEntry } = await import("./lib/approval.js");
+                const { eq } = await import("drizzle-orm");
+                const { db: dbClient } = await import("./db/client.js");
+                const { actionLog } = await import("./db/schema.js");
+                const rows = await dbClient
+                  .select()
+                  .from(actionLog)
+                  .where(eq(actionLog.approvalMessageTs, event.item.ts))
+                  .limit(1);
+                const entry = rows[0];
+                if (entry) {
+                  const execResult = await executeApprovedAction(
+                    entry.id,
+                    slackClient,
+                  );
+                  logger.info("Approved action executed", {
+                    actionLogId: entry.id,
+                    toolName: entry.toolName,
+                    result: execResult.ok,
+                  });
+                }
+              } else if (approvalResult.action === "rejected") {
+                const { eq } = await import("drizzle-orm");
+                const { db: dbClient } = await import("./db/client.js");
+                const { actionLog } = await import("./db/schema.js");
+                const rows = await dbClient
+                  .select()
+                  .from(actionLog)
+                  .where(eq(actionLog.approvalMessageTs, event.item.ts))
+                  .limit(1);
+                const entry = rows[0];
+                if (entry?.approvalChannel) {
+                  await slackClient.chat.postMessage({
+                    channel: entry.approvalChannel,
+                    text: `❌ Action \`${entry.toolName}\` (action \`${entry.id}\`) was rejected by <@${event.user}>.`,
+                  }).catch(() => {});
+                }
+              }
+              return;
+            }
+          }
+
+          // Not an approval reaction — store as memory for awareness
           let userName = event.user;
           try {
             const userResult = await slackClient.users.info({ user: event.user });
@@ -174,7 +236,6 @@ app.post("/api/slack/events", async (c) => {
               event.user;
           } catch {}
 
-          // Store as a lightweight memory via the store module
           const { storeMessage } = await import("./memory/store.js");
           await storeMessage({
             slackTs: `reaction-${event.event_ts}`,

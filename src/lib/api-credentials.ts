@@ -4,6 +4,7 @@ import {
   credentials,
   credentialGrants,
   credentialAuditLog,
+  actionLog,
   userProfiles,
   type Credential,
 } from "../db/schema.js";
@@ -58,6 +59,27 @@ async function audit(
     });
   } catch (error) {
     logger.error("Failed to write credential audit log", {
+      credentialName,
+      accessedBy,
+      action,
+      error,
+    });
+  }
+
+  // Mirror to action_log for unified governance audit trail
+  try {
+    await db.insert(actionLog).values({
+      toolName: `credential:${action}`,
+      params: { credential_name: credentialName, context: context ?? null },
+      result: null,
+      status: "executed",
+      riskTier: action === "delete" ? "destructive" : "write",
+      triggerType: "interactive",
+      triggeredBy: accessedBy,
+      credentialId,
+    });
+  } catch (error) {
+    logger.error("Failed to mirror credential audit to action_log", {
       credentialName,
       accessedBy,
       action,
