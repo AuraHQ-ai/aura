@@ -1,0 +1,104 @@
+# Data Handling
+
+**Last updated: March 7, 2026**
+
+This document describes how Aura stores, secures, and isolates your workspace data. It is intended for Slack workspace administrators and security reviewers.
+
+---
+
+## Architecture Overview
+
+Aura runs on **Vercel** (serverless, Node.js) and stores all persistent data in a **Neon** PostgreSQL database. Your Slack workspace data never touches other infrastructure.
+
+```
+Slack → Vercel Functions → Neon PostgreSQL
+                        → Anthropic API (inference only, not stored)
+                        → OpenAI API (embedding only, not stored)
+```
+
+---
+
+## Data Storage
+
+| Data Type | Storage | Retention | Encrypted at Rest |
+|-----------|---------|-----------|-------------------|
+| Slack messages | Neon PostgreSQL | Indefinite (configurable) | Yes (AES-256) |
+| Memories / extracted facts | Neon PostgreSQL + pgvector | 90-day decay, deletable | Yes |
+| OAuth tokens (Slack, Google) | Neon PostgreSQL | Until uninstall + 30d | Yes |
+| Job logs / execution traces | Neon PostgreSQL | 90 days | Yes |
+| API credentials (user-added) | Neon PostgreSQL | Until deleted | Yes (application-level encryption) |
+
+---
+
+## Workspace Isolation
+
+Every record in our database is tagged with a `workspace_id` corresponding to your Slack workspace (e.g., `T066UV1H6`). All queries are scoped to this ID. There is no mechanism for cross-workspace data access.
+
+For high-volume workspaces, we use PostgreSQL table partitioning by `workspace_id` to maintain query performance.
+
+---
+
+## Encryption
+
+- **In transit**: TLS 1.2+ for all connections (Slack API, Vercel, Neon, Anthropic, OpenAI)
+- **At rest**: Neon uses AES-256 disk encryption. OAuth tokens and API credentials are additionally encrypted at the application layer before storage.
+
+---
+
+## LLM Data Processing
+
+When Aura generates a response, message content is sent to **Anthropic Claude** for inference. This data:
+
+- Is processed in-memory by Anthropic and not stored for training
+- Is governed by [Anthropic's usage policy](https://www.anthropic.com/legal/usage-policy)
+- Is never shared with other Anthropic customers
+
+Message content is sent to **OpenAI's embedding model** to generate vector representations for semantic search. This data is processed in-memory and not stored by OpenAI.
+
+**We do not train any AI models on your Slack data.**
+
+---
+
+## Access Controls
+
+- Production database access requires service account credentials stored in Vercel environment variables
+- No direct database access is granted to end users
+- Aura maintainers access production only for incident response
+- All production access is logged
+
+---
+
+## Data Deletion
+
+**Workspace deletion**: request via privacy@aurahq.ai or by uninstalling Aura. We delete all workspace data within 30 days, including messages, memories, OAuth tokens, jobs, and user profiles.
+
+**Individual records**: workspace admins can request deletion of specific data (e.g., a user's memories). Contact privacy@aurahq.ai.
+
+**Automated decay**: memory records automatically lose relevance weight over time (~50% in 138 days) and are pruned when they drop below threshold.
+
+---
+
+## Incident Response
+
+In the event of a security incident affecting your workspace data:
+
+1. We will notify affected workspace admins via Slack message within **72 hours** of discovery
+2. We will provide a written incident report within **7 days**
+3. We will remediate the vulnerability and document preventive measures
+
+To report a security vulnerability: security@aurahq.ai
+
+---
+
+## Certifications & Compliance
+
+- GDPR-aligned data handling (EU users)
+- CCPA-compliant (California users)
+- No HIPAA certification -- not suitable for PHI
+- SOC 2 audit: planned for 2026
+
+---
+
+## Questions
+
+security@aurahq.ai | privacy@aurahq.ai
