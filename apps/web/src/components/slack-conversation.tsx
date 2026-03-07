@@ -387,7 +387,6 @@ function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
                 padding: "8px 12px 10px",
                 borderTop: `1px solid ${borderColor}`,
                 fontSize: "12px",
-                fontFamily: '"Slack-Mono","Monaco","Menlo","Courier New",monospace',
                 color: dark ? "#8a8b8c" : "#666",
                 whiteSpace: "pre-wrap",
                 lineHeight: "1.5",
