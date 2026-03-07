@@ -212,6 +212,8 @@ export function createJobTools(
           if (recurring !== undefined) updateSet.cronSchedule = recurring || null;
           updateSet.frequencyConfig = frequencyConfig;
           if (channel_name !== undefined) updateSet.channelId = channelId;
+          // Always capture threadTs from context (DM thread routing)
+          updateSet.threadTs = context?.threadTs || null;
           if (executeAt) updateSet.executeAt = executeAt;
           updateSet.timezone = timezone;
           updateSet.priority = priority;
@@ -224,7 +226,8 @@ export function createJobTools(
               playbook: playbook || null,
               cronSchedule: recurring || null,
               frequencyConfig,
-              channelId: channelId || "",
+              channelId: channelId || context?.channelId || "",
+              threadTs: context?.threadTs || null,
               executeAt,
               requestedBy,
               timezone,

@@ -157,7 +157,7 @@ export async function executeJob(
 
     // Inject reply-routing so the agent posts results back to the originating thread/channel
     if (job.channelId && job.threadTs) {
-      prompt += `\n\nIMPORTANT: Post your results using send_thread_reply(channel="${job.channelId}", thread_ts="${job.threadTs}"). Do NOT use send_direct_message -- reply in the existing thread where this job was dispatched.`;
+      prompt += `\n\nIMPORTANT: Post your results using send_thread_reply(channel="${job.channelId}", thread_ts="${job.threadTs}"). If your response is too long for one message, post the first part with send_thread_reply, then post each continuation ALSO with send_thread_reply(channel="${job.channelId}", thread_ts="${job.threadTs}") — all parts in the same thread. Do NOT call send_direct_message.`;
     } else if (job.channelId) {
       prompt += `\n\nIMPORTANT: Post your results to channel "${job.channelId}" using send_channel_message. Do NOT use send_direct_message.`;
     }
