@@ -1,59 +1,435 @@
 ---
 title: "Slack Tools"
-description: "How Aura interacts with Slack — messaging, search, channels, and streaming."
+description: "Full reference for all 34 Slack tools — channels, DMs, messages, canvases, lists, files, and workspace management."
 ---
 
 # Slack Tools
 
-Aura's primary interface is Slack. She uses the `@slack/web-api` SDK with both bot and user tokens.
+Aura's primary interface is Slack. She uses the `@slack/web-api` SDK with both a bot token (`SLACK_BOT_TOKEN`) and a user token (`SLACK_USER_TOKEN`). Most tools use the bot token; search and DM listing require the user token.
 
-## Available Tools
+Aura must **join a channel** before she can read or post. `list_channels` only shows channels she has already joined — use `search_channels` or `join_channel` to find and enter others.
 
-### send_message
-Send a message to any channel or thread Aura has access to. Uses Slack's mrkdwn formatting.
+---
 
-### search_messages
-Search across the workspace's message history. Uses the user token (`xoxp-`) since bot tokens can't search.
+## Channels
 
-### list_channels
-List all channels in the workspace with metadata (topic, member count, type).
+### `list_channels`
+List Slack channels Aura is currently a member of.
 
-### get_channel_history
-Retrieve recent messages from a specific channel. Useful for catching up on context.
+**Returns:** name, ID, topic, member count for each joined channel.  
+**Note:** Does NOT show all workspace channels — only joined ones.
 
-## Bot Scopes Required
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `limit` | number | no | Max channels to return (default 100, max 200) |
 
+---
+
+### `get_channel_info`
+Get detailed info about any channel by name or ID. Works even for channels Aura hasn't joined. Use to resolve a raw channel ID (e.g. `C0BNVKS77`) to a human-readable name.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name (e.g. `general`, `#general`) or ID (e.g. `C0BNVKS77`) |
+
+---
+
+### `search_channels`
+Fuzzy-search for channels by partial name. Searches both joined and public channels.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Partial name, e.g. `road` or `dev` |
+| `limit` | number | no | Max results (default 20, max 100) |
+
+---
+
+### `join_channel`
+Join a public channel. Required before reading history or posting. Can find channels not listed by `list_channels`.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+
+---
+
+### `set_channel_topic`
+Set or update a channel's topic. Aura must be a member.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+| `topic` | string | **yes** | New topic text |
+
+---
+
+### `create_channel`
+Create a new public or private Slack channel.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel_name` | string | **yes** | Lowercase, hyphens/underscores only |
+| `is_private` | boolean | no | Create as private (default false) |
+
+---
+
+### `invite_to_channel`
+Invite a user to a channel. Aura must be a member.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+| `user_name` | string | **yes** | Display name, username, or user ID |
+
+---
+
+### `leave_channel`
+Leave a channel Aura is currently a member of.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+
+---
+
+## Reading Messages
+
+### `read_channel_history`
+Read recent messages from a channel. Includes reactions. Aura must be a member.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+| `limit` | number | no | Messages to fetch (default 20, max 50) |
+
+---
+
+### `read_thread_replies`
+Read replies in a specific thread. Works for regular threads and Slack List item threads.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+| `thread_ts` | string | **yes** | Timestamp of the parent message |
+| `limit` | number | no | Max replies (default 50, max 200) |
+
+---
+
+### `read_dm_history`
+Read messages from a DM conversation with a specific user. Supports time-window filtering.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | **yes** | Display name, username, or user ID |
+| `limit` | number | no | Max messages (default 20, max 200) |
+| `oldest_ts` | string | no | Only messages after this Unix timestamp |
+| `latest_ts` | string | no | Only messages before this Unix timestamp |
+| `cursor` | string | no | Pagination cursor from previous response |
+
+---
+
+### `list_dm_conversations`
+List all users Aura has open DM channels with. Admin-only. Supports cursor pagination.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `limit` | number | no | Max DMs per page (default 20, max 200) |
+| `cursor` | string | no | Pagination cursor |
+
+---
+
+### `search_messages`
+Search workspace messages using Slack's search index. Supports `in:#channel` and `from:@user` syntax. For Aura's own DM threads, prefer `search_my_conversations` — it has better coverage.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Search query, e.g. `budget in:#finance from:@joan` |
+| `count` | number | no | Results to return (default 10, max 20) |
+
+---
+
+## Sending Messages
+
+### `send_channel_message`
+Send a message to a channel. Aura must be a member. Supports Slack mrkdwn.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+| `message` | string | **yes** | Message text (mrkdwn supported) |
+
+---
+
+### `send_direct_message`
+Send a DM to one user (1:1) or multiple users (group DM). Always opens a new conversation — to reply in an existing thread, use `send_thread_reply` instead.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string or array | **yes** | Single name for 1:1, array for group DM |
+| `message` | string | **yes** | Message text |
+
+---
+
+### `send_thread_reply`
+Reply in a specific thread instead of the main channel. Also used to comment on Slack List items.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+| `thread_ts` | string | **yes** | Timestamp of the parent message |
+| `message` | string | **yes** | Reply text |
+
+---
+
+### `edit_message`
+Edit one of Aura's own messages. Cannot edit other people's messages.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name, ID, or DM channel ID |
+| `message_ts` | string | **yes** | Timestamp of the message to edit |
+| `new_text` | string | **yes** | Replacement text |
+
+---
+
+### `delete_message`
+Delete one of Aura's own messages.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name, ID, or DM channel ID |
+| `message_ts` | string | **yes** | Timestamp of the message to delete |
+
+---
+
+## Reactions
+
+### `add_reaction`
+Add an emoji reaction to a message.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+| `message_ts` | string | **yes** | Timestamp of the message |
+| `emoji` | string | **yes** | Emoji name without colons, e.g. `eyes` |
+
+---
+
+### `remove_reaction`
+Remove an emoji reaction Aura previously added.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | **yes** | Channel name or ID |
+| `message_ts` | string | **yes** | Timestamp of the message |
+| `emoji` | string | **yes** | Emoji name without colons |
+
+---
+
+## Users
+
+### `list_users`
+List workspace members. Returns display names, real names, usernames, roles. Excludes deleted users and bots.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `limit` | number | no | Max users (default 100, max 200) |
+
+---
+
+### `get_user_info`
+Get detailed profile for a specific user — timezone, status, title, phone, email.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | **yes** | Display name, real name, or username |
+
+---
+
+### `search_users`
+Fuzzy-search workspace members by partial name. Searches display names, real names, and usernames.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Partial name, e.g. `joan` |
+| `limit` | number | no | Max results (default 20, max 50) |
+
+---
+
+### `set_my_status`
+Set Aura's own Slack status with optional auto-expiry.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `status_text` | string | **yes** | Status text, e.g. `Running morning digest` |
+| `status_emoji` | string | **yes** | Emoji, e.g. `:mag:` |
+| `expiration_minutes` | number | no | Auto-clear after this many minutes |
+
+---
+
+## Files
+
+### `upload_file`
+Upload a file to Slack. Two modes: pass `content` for text files (CSV, JSON, code), or `file_path` for binary files (images, PDFs). Exactly one must be provided.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `filename` | string | **yes** | Filename with extension, e.g. `report.csv` |
+| `content` | string | no* | File content as text. For text files only. |
+| `file_path` | string | no* | Absolute path to binary file in sandbox |
+| `channel` | string | no | Channel, DM, or username to share to |
+| `title` | string | no | Display title in Slack |
+| `thread_ts` | string | no | Thread to attach the file to |
+
+*Exactly one of `content` or `file_path` must be provided.
+
+---
+
+### `download_slack_file`
+Download a Slack file by its file ID. Returns base64-encoded content by default. Set `save_to_disk` to write to `/home/user/downloads/` for processing with shell tools.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file_id` | string | **yes** | Slack file ID (e.g. `F0ABC123DEF`) |
+| `save_to_disk` | boolean | no | Write to sandbox filesystem (default false) |
+
+---
+
+## Canvases
+
+### `read_canvas`
+Read a Slack Canvas by its ID. Returns title, markdown content, and section IDs for editing.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `canvas_id` | string | **yes** | Canvas/file ID |
+
+---
+
+### `create_canvas`
+Create a new Slack Canvas with markdown content.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `title` | string | **yes** | Canvas title |
+| `content` | string | **yes** | Markdown content |
+| `channel_name` | string | no | Add as a tab to this channel |
+
+---
+
+### `edit_canvas`
+Edit an existing canvas. Operations: `insert_at_end`, `insert_at_start`, `insert_before`, `insert_after`, `replace`, `delete`, `rename`. Use `read_canvas` first to get section IDs.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `canvas_id` | string | **yes** | Canvas ID |
+| `operation` | string | **yes** | One of the edit operations listed above |
+| `content` | string | no | New content (not needed for `delete`) |
+| `section_id` | string | no | Required for section-targeted operations |
+
+---
+
+### `delete_canvas`
+Permanently delete a canvas.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `canvas_id` | string | **yes** | Canvas ID |
+
+---
+
+### `share_canvas`
+Share a canvas with users or channels.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `canvas_id` | string | **yes** | Canvas ID |
+| `access_level` | string | no | `read`, `write`, or `owner` (default `write`) |
+| `user_ids` | string[] | no | User IDs to share with |
+| `channel_ids` | string[] | no | Channel IDs to share with |
+
+---
+
+### `list_canvases`
+List canvases in the workspace.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel` | string | no | Filter by channel ID |
+| `count` | number | no | Max results (default 20) |
+
+---
+
+## Lists
+
+Slack Lists are structured databases (think Notion tables). Each item has a thread for comments.
+
+### `list_slack_list_items`
+Retrieve items from a Slack List.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `list_id` | string | **yes** | Slack List ID |
+| `limit` | number | no | Max items (default 50, max 100) |
+| `cursor` | string | no | Pagination cursor |
+
+---
+
+### `get_slack_list_item`
+Get details for a single List item including all field values and thread info. **Always call this before `update_slack_list_item`** to see exact column IDs and value formats.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `list_id` | string | **yes** | Slack List ID |
+| `item_id` | string | **yes** | Item/record ID |
+
+---
+
+### `create_slack_list_item`
+Create a new item in a Slack List.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `list_id` | string | **yes** | Slack List ID |
+| `fields` | object | no | Column values as `{ column_id: value }` |
+
+---
+
+### `update_slack_list_item`
+Update fields on an existing List item. Call `get_slack_list_item` first to discover column IDs and formats.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `list_id` | string | **yes** | Slack List ID |
+| `item_id` | string | **yes** | Item ID |
+| `fields` | object | **yes** | Fields to update: `{ column_id: value }` |
+
+---
+
+### `delete_slack_list_item`
+Delete an item from a Slack List.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `list_id` | string | **yes** | Slack List ID |
+| `item_id` | string | **yes** | Item ID |
+
+---
+
+## Required OAuth Scopes
+
+**Bot token (`SLACK_BOT_TOKEN`):**
 ```
-channels:history
-channels:read
-chat:write
-groups:history
-groups:read
-im:history
-im:read
-im:write
-mpim:history
-reactions:read
-users:read
+channels:history  channels:join   channels:manage  channels:read
+chat:write        files:read      files:write      groups:history
+groups:read       groups:write    im:history       im:read
+im:write          mpim:history    mpim:read        mpim:write
+reactions:read    reactions:write users:read       users:read.email
+canvases:read     canvases:write
 ```
 
-## User Scopes Required
-
+**User token (`SLACK_USER_TOKEN`):**
 ```
-search:read
+channels:history  groups:history  im:history  mpim:history
+search:read       users:read
 ```
-
-## Streaming Responses
-
-Aura uses `chatStream` from the Slack Web API to stream responses in real-time. This provides a better user experience than posting a complete message after the LLM finishes generating.
-
-```typescript
-const stream = await client.chatStream({
-  channel: channelId,
-  thread_ts: threadTs,
-});
-```
-
-## Rate Limiting
-
-The Slack SDK handles rate-limit retries internally. Aura does not implement a custom rate limiter — the SDK's built-in backoff is sufficient for normal operation.

@@ -1,51 +1,80 @@
 ---
-title: "Sandbox (E2B)"
-description: "Isolated Linux VM for running arbitrary code, scripts, and development tools."
+title: "Sandbox & Code Execution"
+description: "Run arbitrary shell commands in an isolated Linux VM — 1 tool."
 ---
 
-# Sandbox (E2B)
+# Sandbox & Code Execution
 
-Aura has access to a sandboxed Linux VM via [E2B](https://e2b.dev). This allows her to run arbitrary code, install packages, and execute complex multi-step operations safely.
+Aura has access to a sandboxed Linux VM powered by [E2B](https://e2b.dev). This allows her to run shell commands, execute code, process files, and interact with the filesystem safely — without risking the production environment.
 
-## Available Tools
+**Required env var:** `E2B_API_KEY` (and optionally `E2B_TEMPLATE_ID` for a custom template)
 
-### run_command
-Execute a shell command in the sandbox. Supports environment variables, working directories, and timeouts.
+---
 
-## How It Works
+## `run_command`
 
-Each sandbox session provides:
-- A full Linux environment (Ubuntu-based)
-- Pre-installed: Node.js, Python, git, GitHub CLI
-- Network access for installing packages and cloning repos
-- File system persistence within a session
-- Automatic cleanup after timeout
+Execute a shell command in the sandboxed Linux VM.
 
-## Environment Variables
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | **yes** | Shell command to run, e.g. `git clone https://github.com/org/repo.git` |
+| `timeout_seconds` | number | no | Timeout in seconds (default 120, max 750). Use higher values for long-running agent commands. |
+| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to `/home/user`. |
 
-Environment variables are passed per-command, not persisted in the sandbox:
+**Returns:** exit code, stdout, stderr.
 
-```typescript
-await sandbox.commands.run("echo $API_KEY", {
-  envs: { API_KEY: process.env.API_KEY },
-});
-```
+---
 
-This is deliberate — E2B sandboxes can be paused and resumed, and environment variables don't persist across pause/resume cycles.
+## What's pre-installed
 
-## Use Cases
+The sandbox template includes:
 
-- **Code execution** — Run user-provided scripts, test code snippets
-- **Data processing** — Transform files, parse documents, generate reports
-- **Self-improvement** — Clone the repo, make changes, create branches, open PRs
-- **Browser automation** — Run Playwright for web scraping and testing
-- **Document conversion** — Parse PDFs, spreadsheets, and other file formats
+| Tool | Purpose |
+|------|---------|
+| `node`, `npm` | JavaScript/TypeScript execution |
+| `python3`, `pip` | Python scripting |
+| `git` | Version control |
+| `gh` | GitHub CLI (authenticated via `GH_TOKEN`) |
+| `gcloud` | Google Cloud SDK |
+| `vercel` | Vercel CLI (install first: `sudo npm install -g vercel`) |
+| `rg` (ripgrep) | Fast code search |
+| `curl`, `jq` | HTTP requests and JSON processing |
+| `claude` | Claude Code for agentic code tasks |
+| `pdftotext` | PDF text extraction |
 
-## Safety
+Install additional packages with `apt-get install` or `pip install`.
 
-The sandbox is completely isolated from the Vercel runtime. It cannot access:
-- The production database
-- Slack tokens (unless explicitly passed via `envs`)
-- Other environment variables (unless explicitly passed)
+---
 
-This isolation is the safety boundary — Aura can run untrusted code without risk to the production system.
+## File system
+
+The sandbox persists between messages **within a session** — files and state are preserved across tool calls in the same conversation. The sandbox may auto-pause between sessions; check `/home/user/` to verify state is intact before assuming files exist.
+
+Common paths:
+- `/home/user/` — working directory
+- `/home/user/aura/` — Aura's own codebase (cloned at startup)
+- `/home/user/downloads/` — files saved to disk via `download_slack_file` or `download_email_attachment`
+
+---
+
+## Isolation model
+
+The sandbox is isolated from the Vercel runtime. It **cannot** access:
+- The production PostgreSQL database (use `psql "$DATABASE_URL"` after extracting the URL via `skill-vercel-env-extraction`)
+- Slack tokens (unless extracted and passed explicitly)
+- Other production env vars (must be fetched from Vercel API using the `skill-vercel-env-extraction` playbook)
+
+This isolation is intentional — Aura can run untrusted code without risk to the production system.
+
+---
+
+## Timeout guidance
+
+| Task | Recommended timeout |
+|------|-------------------|
+| Quick commands (`ls`, `grep`, `git log`) | 10–30s |
+| Code execution, file processing | 60–120s |
+| `claude` agent tasks (multi-file changes) | 400–750s |
+| Long web crawls or batch processing | 300–600s |
+
+The Vercel function timeout is 800s. Leave a 50s buffer for overhead — use 750s maximum.

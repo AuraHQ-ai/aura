@@ -1,40 +1,120 @@
 ---
-title: "BigQuery Tools"
-description: "How Aura queries your data warehouse and turns results into insights."
+title: "BigQuery & Data Tools"
+description: "Query your data warehouse, inspect schemas, browse sheets, and search Drive — 9 tools."
 ---
 
-# BigQuery Tools
+# BigQuery & Data Tools
 
-Aura connects to Google BigQuery to run analytical queries against your data warehouse. She can answer data questions, build tables, and identify patterns.
+Aura connects to Google BigQuery using a service account (`BQ_SA_KEY_JSON`). Access is **read-only by default** — no DML or DDL is allowed. Before querying unfamiliar tables, always call `inspect_table` to see actual data formats and sparsity.
 
-## Available Tools
+---
 
-### run_query
-Execute a BigQuery SQL query and return results. Supports parameterized queries and result formatting.
+## BigQuery
 
-### list_datasets
-Browse available datasets and tables in the connected BigQuery project.
+### `list_datasets`
+List all datasets in the BigQuery warehouse. Use to discover what data is available.
 
-### describe_table
-Get schema information for a specific table — column names, types, descriptions.
+No parameters required.
+
+**Tip:** After exploring, save findings to the `data-warehouse-map` knowledge note.
+
+---
+
+### `list_tables`
+List all tables in a dataset, including type, row count, and description.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dataset` | string | **yes** | Dataset ID to list tables from |
+
+---
+
+### `inspect_table`
+Get a table's full schema, metadata, and sample rows. **Always use before querying an unfamiliar table** — sample rows reveal actual data formats, value ranges, and sparsity.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dataset` | string | **yes** | Dataset ID |
+| `table` | string | **yes** | Table ID |
+| `sample_rows` | number | no | Sample rows to fetch (default 5, max 20) |
+
+---
+
+### `execute_query`
+Run a read-only SQL query against BigQuery. `SELECT`/`WITH` only — DML/DDL is blocked. 1 GB scan limit. Use `LIMIT` on large tables.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sql` | string | **yes** | Standard SQL query (SELECT/WITH only) |
+| `max_rows` | number | no | Max rows to return (default 100, max 1000) |
+
+**Important guardrails:**
+- Monetary values are often stored in **cents** — divide by 100 for euros/CHF
+- Always check the `data-warehouse-map` note before re-exploring from scratch
+- Timestamps may be Unix epoch — use `TIMESTAMP_SECONDS()` to convert
+
+---
+
+## Google Sheets
+
+### `read_google_sheet`
+Read data from a Google Sheets spreadsheet. Accepts a spreadsheet ID or full URL.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `spreadsheet_id` | string | **yes** | Spreadsheet ID or full Google Sheets URL |
+| `range` | string | no | A1 notation range, e.g. `Sheet1!A1:D10`. Defaults to all data. |
+| `max_rows` | number | no | Max data rows (default 100, max 1000) |
+| `user_name` | string | no | Access via this user's OAuth token |
+
+---
+
+## Google Drive
+
+### `search_drive`
+Search Google Drive for files using Drive query syntax.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Drive search query, e.g. `name contains 'budget'` or `fullText contains 'Q4'` |
+| `limit` | number | no | Max results (default 10, max 50) |
+| `user_name` | string | no | Search in this user's Drive |
+
+---
+
+### `read_drive_file`
+Read the content of a file from Google Drive by file ID. Google Docs/Slides export as plain text. For Sheets, use `read_google_sheet` instead.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file_id` | string | **yes** | Google Drive file ID |
+| `user_name` | string | no | Access via this user's Drive |
+
+---
+
+### `list_drive_folder`
+List files in a Google Drive folder. Defaults to root of My Drive.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `folder_id` | string | no | Folder ID (default `root`) |
+| `drive_id` | string | no | Shared drive ID (from `list_shared_drives`) |
+| `limit` | number | no | Max files (default 20, max 100) |
+| `user_name` | string | no | Access via this user's Drive |
+
+---
+
+### `list_shared_drives`
+List all shared drives in the Google Workspace organization.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | no | Access via this user's token |
+
+---
 
 ## Authentication
 
-BigQuery access uses a service account configured via `GOOGLE_APPLICATION_CREDENTIALS` or the equivalent JSON key environment variable.
+BigQuery uses a service account key (`BQ_SA_KEY_JSON` env var — base64-encoded JSON key).
 
-## How Aura Uses BigQuery
-
-When a user asks a data question ("What was our churn rate last quarter?"), Aura:
-
-1. Identifies relevant datasets and tables using cached schema metadata
-2. Writes a SQL query based on the question and table schema
-3. Executes the query via the BigQuery API
-4. Formats results as a Slack-friendly table
-5. Adds interpretation — trends, anomalies, comparisons
-
-## Safety
-
-- Aura uses read-only BigQuery access by default
-- Query results are truncated to prevent Slack's 40K character message limit
-- Long-running queries have a timeout to avoid blocking
-- Query cost is logged for monitoring
+Google Drive/Sheets/Calendar use **per-user OAuth tokens** stored in the `oauth_tokens` table. Users must connect their Google account first. Aura's own token is only for Aura's own internal work, never for accessing another user's data.

@@ -1,42 +1,300 @@
 ---
-title: "Email Tools"
-description: "Gmail integration for reading, searching, and composing email."
+title: "Email & Calendar Tools"
+description: "Gmail reading, drafting, sending, triage, calendar management, and workspace directory — 22 tools."
 ---
 
-# Email Tools
+# Email & Calendar Tools
 
-Aura integrates with Gmail via the Google Workspace APIs. She can read, search, and compose emails on behalf of users who have granted OAuth access.
+Aura integrates with Gmail and Google Calendar via the Google Workspace APIs. All email and calendar tools respect a hard security boundary: **they always use the requesting user's OAuth token, never Aura's own**. Users must connect their Google account before these tools work.
 
-## Available Tools
+---
 
-### read_email
-Fetch and display a specific email by ID, including full body content and metadata.
+## Gmail — Sending
 
-### search_email
-Search a user's inbox using Gmail's search syntax (from:, subject:, after:, has:attachment, etc.).
+### `send_email`
+Send an email from `aura@realadvisor.com` (default) or from a specific user's account.
 
-### compose_email
-Draft and send emails. Aura composes in the user's voice based on their communication style profile.
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `to` | string | **yes** | Recipient email address |
+| `subject` | string | **yes** | Email subject |
+| `body` | string | **yes** | Email body (plain text) |
+| `cc` | string | no | CC email address |
+| `bcc` | string | no | BCC email address |
+| `user_name` | string | no | Send from this user's account (requires their OAuth) |
+| `reply_to_message_id` | string | no | Message ID to reply to |
+| `thread_id` | string | no | Thread ID for reply threading |
+| `attachments` | array | no | Base64-encoded file attachments |
 
-### email_triage
-Automated email classification: urgent, needs-reply, informational, or junk. Runs as a morning job.
+---
 
-## Authentication
+### `reply_to_email`
+Reply to an existing email thread. Requires `message_id` and `thread_id` from `read_user_emails`.
 
-Email access uses per-user OAuth tokens stored in the `oauth_tokens` table. Users authenticate via a Google OAuth flow, and the refresh token is stored securely.
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message_id` | string | **yes** | Gmail message ID to reply to |
+| `thread_id` | string | **yes** | Gmail thread ID |
+| `body` | string | **yes** | Reply body text |
+| `user_name` | string | no | Reply from this user's account |
+
+---
+
+## Gmail — Reading
+
+### `read_user_emails`
+Read recent emails from a Gmail inbox. Supports Gmail search query syntax.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | no | Whose inbox to read (defaults to caller) |
+| `max_results` | number | no | Max emails (default 10, max 20) |
+| `query` | string | no | Gmail search query, e.g. `from:someone@example.com` |
+| `unread_only` | boolean | no | Only show unread emails |
+| `page_token` | string | no | Pagination token from previous response |
+
+---
+
+### `read_user_email`
+Read the full content of a specific email by its message ID.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message_id` | string | **yes** | Gmail message ID |
+| `user_name` | string | no | Account owner (defaults to caller) |
+
+---
+
+### `download_email_attachment`
+Download an attachment from a Gmail message. Returns base64 content by default, or saves to disk.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message_id` | string | **yes** | Gmail message ID |
+| `attachment_id` | string | **yes** | Attachment ID from `read_user_email` |
+| `filename` | string | no | Original filename (for display) |
+| `mime_type` | string | no | MIME type (for display) |
+| `save_to_disk` | boolean | no | Write to `/home/user/downloads/` (default false) |
+| `user_name` | string | no | Account owner (defaults to caller) |
+
+---
+
+## Gmail — Drafts
+
+### `create_gmail_draft`
+Create a draft email in a user's Gmail account.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `to` | string | **yes** | Recipient email |
+| `subject` | string | **yes** | Email subject |
+| `body` | string | **yes** | Email body |
+| `user_name` | string | no | Account owner (defaults to caller) |
+| `cc` | string | no | CC address |
+| `bcc` | string | no | BCC address |
+| `thread_id` | string | no | Gmail thread ID to add the draft to |
+| `attachments` | array | no | Base64-encoded attachments |
+
+---
+
+### `list_gmail_drafts`
+List draft emails in a Gmail account.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | no | Account owner (defaults to caller) |
+| `max_results` | number | no | Max drafts (default 10, max 20) |
+
+---
+
+### `delete_gmail_draft`
+Delete a draft from a Gmail account.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `draft_id` | string | **yes** | Gmail draft ID |
+| `user_name` | string | no | Account owner (defaults to caller) |
+
+---
+
+### `generate_gmail_auth_url`
+Generate a Google OAuth consent URL so a user can connect their Gmail account. DM the URL to the user — they click it and authorize.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | no | Whose account to connect (defaults to caller) |
+
+---
+
+## Email Triage (Admin-only)
+
+### `sync_emails`
+Sync emails from a user's Gmail into Aura's staging pipeline. Supports date windows and Gmail query syntax. Resumable — re-running skips already-synced emails.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | **yes** | Account owner |
+| `after` | string | no | Date filter, e.g. `2025/01/01` |
+| `before` | string | no | Date filter, e.g. `2025/06/01` |
+| `newer_than` | string | no | Relative filter, e.g. `7d`, `30d` |
+| `query` | string | no | Raw Gmail search query (overrides date params) |
+| `max_messages` | number | no | Max messages per sync call (default 500) |
+| `classify` | boolean | no | Compute thread states after sync (default true) |
+
+---
+
+### `email_digest`
+Get a structured email digest for a user: counts, thread objects with `gmail_thread_id`. Use thread IDs for follow-up actions.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | **yes** | Account owner |
+| `include_fyi` | boolean | no | Include FYI-level threads (default false) |
+
+---
+
+### `update_email_thread`
+Update the triage state of a single email thread.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | **yes** | Account owner |
+| `gmail_thread_id` | string | **yes** | Gmail thread ID |
+| `thread_state` | string | **yes** | `junk`, `resolved`, `awaiting_your_reply`, `awaiting_their_reply`, `fyi` |
+| `reason` | string | no | Why the state was changed |
+
+---
+
+### `update_email_threads`
+Batch-update triage states for multiple threads at once. Use after `email_digest`.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | **yes** | Account owner |
+| `updates` | array | **yes** | Array of `{ gmail_thread_id, thread_state, reason? }` |
+
+---
+
+### `search_emails`
+Search synced emails by keyword (text) or meaning (semantic). Returns one result per thread.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | **yes** | Account owner |
+| `query` | string | **yes** | Search query |
+| `mode` | string | no | `text` (default) or `semantic` |
+| `thread_state` | string | no | Filter by triage state |
+| `limit` | number | no | Max results (default 10, max 20) |
+
+---
+
+## Google Workspace Directory
+
+### `lookup_workspace_user`
+Look up a person in the Google Workspace directory by name or email. Returns email, title, department.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Name or email to search for |
+
+---
+
+### `list_workspace_users`
+List all users in the Google Workspace directory with emails, names, titles, departments.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `max_results` | number | no | Max users (default 100) |
+
+---
+
+### `lookup_contact`
+Search for external contacts (agents, clients, partners) by name or email. Searches RealAdvisor platform and Close CRM.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Name or email, e.g. `Rahel Thoma` |
+
+---
+
+## Calendar
+
+### `check_calendar`
+List upcoming calendar events. Defaults to caller's account.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | no | Whose calendar (defaults to caller) |
+| `calendar_id` | string | no | Specific calendar ID (e.g. `joan@example.com`) |
+| `time_min` | string | no | Start of range (ISO 8601) |
+| `time_max` | string | no | End of range (ISO 8601) |
+| `query` | string | no | Free-text search to filter events |
+| `max_results` | number | no | Max events (default 20) |
+
+---
+
+### `create_event`
+Create a calendar event with optional attendees. Sends email invitations.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `summary` | string | **yes** | Event title |
+| `start` | string | **yes** | Start time (ISO 8601) |
+| `end` | string | **yes** | End time (ISO 8601) |
+| `attendees` | string[] | no | Attendee email addresses |
+| `description` | string | no | Event description |
+| `location` | string | no | Location or meeting link |
+| `user_name` | string | no | Create on this user's calendar |
+
+---
+
+### `update_event`
+Update an existing calendar event. Only provided fields are changed.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `event_id` | string | **yes** | Calendar event ID |
+| `summary` | string | no | New title |
+| `start` | string | no | New start time (ISO 8601) |
+| `end` | string | no | New end time (ISO 8601) |
+| `attendees` | string[] | no | New attendee list (replaces existing) |
+| `description` | string | no | New description |
+| `location` | string | no | New location |
+| `user_name` | string | no | Whose calendar to update |
+
+---
+
+### `delete_event`
+Delete a calendar event.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `event_id` | string | **yes** | Calendar event ID |
+| `user_name` | string | no | Whose calendar (defaults to caller) |
+
+---
+
+### `find_available_slot`
+Find available meeting slots across multiple people's calendars.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `emails` | string[] | **yes** | Email addresses of people to check |
+| `time_min` | string | **yes** | Start of search range (ISO 8601) |
+| `time_max` | string | **yes** | End of search range (ISO 8601) |
+| `duration_minutes` | number | **yes** | Required meeting duration |
+| `user_name` | string | no | Query via this user's OAuth token |
+
+---
+
+## Required Google OAuth Scopes
 
 ```
-Required Google Workspace scopes:
-- gmail.readonly
-- gmail.send
-- gmail.compose
+gmail.readonly
+gmail.send
+gmail.compose
+gmail.modify
+calendar.readonly
+calendar.events
+admin.directory.user.readonly
 ```
-
-## Email Pipeline
-
-Incoming emails are staged in the `emails_raw` table for triage:
-
-1. Gmail API fetches new messages since last sync
-2. Each email is parsed, stored, and classified
-3. Morning digest job summarizes the inbox and posts to the user's DM
-4. Users can ask Aura to reply, forward, or archive from within Slack

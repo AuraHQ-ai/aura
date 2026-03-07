@@ -1,0 +1,82 @@
+---
+title: "Jobs & Scheduling Tools"
+description: "One-shot reminders, recurring cron jobs, headless execution, and background tasks — 5 tools."
+---
+
+# Jobs & Scheduling Tools
+
+Aura can schedule work to run in the background. Jobs come in two types:
+
+- **One-shot** — fires once at a scheduled time. Great for reminders and follow-ups.
+- **Recurring** — runs on a cron schedule (e.g. every weekday at 9 AM). Great for digests, monitoring, and periodic reports.
+
+The **heartbeat** runs every 30 minutes and evaluates all pending jobs. Scheduling granularity is approximately 30 minutes. Failed jobs retry 3x with 30-minute backoff, then escalate via DM.
+
+---
+
+## `create_job`
+
+Create a one-shot task, recurring job, or follow-up.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `description` | string | **yes** | What to do when the job fires. Be specific — this becomes the execution prompt. |
+| `execute_in` | string | conditional | When to first execute (for one-shots). E.g. `30 minutes`, `2 hours`, `tomorrow` |
+| `recurring` | string | conditional | Cron expression for recurring jobs, e.g. `0 9 * * 1-5` (weekdays 9 AM) |
+| `name` | string | no | Unique job name for tracking (auto-generated if omitted) |
+| `playbook` | string | no | Step-by-step execution guide for complex recurring jobs |
+| `timezone` | string | no | IANA timezone for cron schedule, e.g. `Europe/Zurich` (default UTC) |
+| `channel_name` | string | no | Channel to post results in |
+| `priority` | enum | no | `high`, `normal` (default), or `low` |
+| `max_per_day` | number | no | Max executions per day (recurring jobs) |
+| `min_interval_hours` | number | no | Minimum hours between executions |
+
+---
+
+## `list_jobs`
+
+List jobs by status.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `status` | enum | no | `pending` (default), `running`, `completed`, `failed`, or `cancelled` |
+| `limit` | number | no | Max jobs to return (default 20, max 50) |
+| `recurring_only` | boolean | no | Show only recurring jobs (default false) |
+
+---
+
+## `cancel_job`
+
+Cancel a pending one-shot job, or disable a recurring job (preserves its definition).
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `job_id` | string | conditional | UUID of the job to cancel |
+| `name` | string | conditional | Name of the job to cancel (alternative to `job_id`) |
+
+---
+
+## `dispatch_headless`
+
+Dispatch a task for immediate headless execution. Creates a job and triggers it NOW — no waiting for the heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. Results are posted to the callback channel/thread when done.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `task` | string | **yes** | What to do. Be specific — this is the full execution prompt. |
+| `name` | string | no | Job name for tracking |
+| `playbook` | string | no | Detailed execution guide |
+| `callback_channel` | string | no | Channel to post results in (defaults to current channel) |
+| `callback_thread_ts` | string | no | Thread to post results in |
+
+---
+
+## `read_job_trace`
+
+Read execution traces of jobs — reasoning steps, tool calls, results, token usage. Use to debug failed jobs or review past autonomous work.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `job_id` | string | conditional | Specific job ID |
+| `job_name` | string | conditional | Job name to find latest execution(s) |
+| `limit` | number | no | Number of recent executions to return (default 1) |
+| `include_steps` | boolean | no | Include full step details (can be large, default false) |

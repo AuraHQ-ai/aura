@@ -1,0 +1,63 @@
+---
+title: "Voice & Calling Tools"
+description: "Outbound phone calls, SMS, and voice notes via ElevenLabs and Twilio — 4 tools."
+---
+
+# Voice & Calling Tools
+
+Aura can make outbound phone calls using [ElevenLabs](https://elevenlabs.io) voice agents and [Twilio](https://twilio.com) for PSTN routing. She can also send SMS messages and generate voice notes (text-to-speech audio) in Slack.
+
+**Required env vars:** `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `ELEVENLABS_VOICE_ID`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
+
+---
+
+## `list_voice_agents`
+
+List all available ElevenLabs voice agents, phone numbers, and voices. Call this **before** `place_call` to resolve names to IDs.
+
+No parameters required. Results are cached for 10 minutes.
+
+---
+
+## `place_call`
+
+Initiate an outbound phone call via ElevenLabs + Twilio.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `to_number` | string | **yes** | Recipient phone in E.164 format (e.g. `+34612345678`) |
+| `agent_id` | string | no | ElevenLabs agent ID (defaults to `ELEVENLABS_AGENT_ID`) |
+| `from_number` | string | no | Caller phone number (defaults to `ELEVENLABS_FROM_NUMBER`) |
+| `agent_phone_number_id` | string | no | ElevenLabs phone_number_id directly |
+| `person_name` | string | no | Name of the person being called (injected as dynamic variable) |
+| `prompt` | string | no | Full agent prompt with name baked in (overrides agent default for this call) |
+| `language` | string | no | Language code: `es`, `fr`, `it`, `en`, `de` |
+| `context` | string | no | Why the call is being made (logged for tracking) |
+| `voice_id` | string | no | ElevenLabs voice ID override |
+
+**Note:** Bake the person's name directly into `prompt` — do not use `{{person_name}}` placeholders in the prompt body. Only `first_message` supports dynamic variable interpolation.
+
+---
+
+## `send_sms`
+
+Send an SMS text message via Twilio.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `phone_number` | string | **yes** | Recipient phone in E.164 format |
+| `message` | string | **yes** | SMS message body |
+
+---
+
+## `send_voice_note`
+
+Generate a voice note from text using ElevenLabs TTS and upload it to Slack as an MP3.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `text` | string | **yes** | Text to convert to speech |
+| `channel` | string | no | Channel name, ID, or username (defaults to current conversation) |
+| `thread_ts` | string | no | Thread timestamp to post in a specific thread |
+| `language` | string | no | Language hint for the TTS model |
+| `voice_id` | string | no | ElevenLabs voice ID override |

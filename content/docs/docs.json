@@ -47,7 +47,11 @@
               "tools/slack",
               "tools/email",
               "tools/bigquery",
-              "tools/sandbox"
+              "tools/sandbox",
+              "tools/voice",
+              "tools/notes",
+              "tools/jobs",
+              "tools/web"
             ]
           },
           {

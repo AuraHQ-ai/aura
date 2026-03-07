@@ -1,0 +1,100 @@
+---
+title: "Notes & Memory Tools"
+description: "Persistent knowledge base — save, read, edit, search, and checkpoint plans — 7 tools."
+---
+
+# Notes & Memory Tools
+
+Aura's notes system is a persistent knowledge base stored in PostgreSQL. Notes are organized into three categories:
+
+| Category | Purpose | Lifetime |
+|----------|---------|----------|
+| `skill` | Durable playbooks and protocols | Permanent |
+| `plan` | Ephemeral work-in-progress | Expires (set via `expires_in`) |
+| `knowledge` | General reference, business context | Permanent |
+
+Two special notes are auto-loaded into every conversation: **`self-directive`** (Aura's hard rules and institutional memory) and **`notes-index`** (table of contents for all notes).
+
+---
+
+## `save_note`
+
+Create a new note or fully overwrite an existing one.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `topic` | string | **yes** | Short descriptive key, e.g. `bugs-weekly` or `project-alpha-todos` |
+| `content` | string | **yes** | Full note content (markdown supported) |
+| `category` | enum | no | `skill`, `plan`, or `knowledge` (default `knowledge`) |
+| `expires_in` | string | no | When to expire, e.g. `2 hours`, `3 days` (mainly for plan notes) |
+
+---
+
+## `read_note`
+
+Read a note by topic. Returns content with line numbers for use with `edit_note`.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `topic` | string | **yes** | Topic key of the note to read |
+
+---
+
+## `list_notes`
+
+List all saved notes with topics, category, preview, and last-updated time.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `category` | enum | no | Filter by `skill`, `plan`, or `knowledge` |
+
+---
+
+## `edit_note`
+
+Surgically edit an existing note without rewriting the whole thing. Prefer this over `save_note` for partial updates.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `topic` | string | **yes** | Topic key of the note to edit |
+| `operation` | enum | **yes** | `append`, `prepend`, `replace_lines`, or `insert_after_line` |
+| `content` | string | **yes** | Content to insert or replace |
+| `start_line` | number | conditional | First line to replace (required for `replace_lines`) |
+| `end_line` | number | conditional | Last line to replace (required for `replace_lines`) |
+| `line` | number | conditional | Line to insert after (required for `insert_after_line`) |
+
+---
+
+## `delete_note`
+
+Delete a note entirely by topic.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `topic` | string | **yes** | Topic key of the note to delete |
+
+---
+
+## `search_notes`
+
+Full-text search across all notes content.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Search term or phrase |
+| `mode` | enum | no | `text` (keyword, default) or `semantic` (vector similarity) |
+| `limit` | number | no | Max results (default 10) |
+
+---
+
+## `checkpoint_plan`
+
+Save progress on a multi-step task and schedule a continuation. Use when approaching the step limit and you won't finish in time. Atomically saves a plan note AND schedules a follow-up job.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `topic` | string | **yes** | Plan note topic (will create or update) |
+| `progress` | string | **yes** | What has been accomplished so far |
+| `next_steps` | string | **yes** | Specific instructions for the next continuation |
+| `context` | string | **yes** | Accumulated findings and intermediate results |
+| `continue_in_minutes` | number | no | Minutes until continuation fires (default 5) |

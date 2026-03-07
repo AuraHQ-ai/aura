@@ -1,0 +1,60 @@
+---
+title: "Web & Search Tools"
+description: "Search the web, read URLs, and browse pages with a full headless browser — 3 tools."
+---
+
+# Web & Search Tools
+
+Aura can search the web, read URLs as clean text, and automate browser interactions using a remote Chromium instance.
+
+**When to use web tools vs Slack tools:**
+- Use `web_search` / `read_url` for external information, documentation, news.
+- Use `search_messages` or `read_channel_history` for information _inside_ the Slack workspace.
+
+---
+
+## `web_search`
+
+Search the web for current information. Powered by [Tavily](https://tavily.com).
+
+**Required env var:** `TAVILY_API_KEY`
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Search query, e.g. `latest Next.js release notes` |
+| `max_results` | number | no | Results to return (default 5, max 10) |
+
+---
+
+## `read_url`
+
+Fetch a URL and extract its readable text content. Use when someone pastes a link and asks "what does this say?". Faster than `browse` for simple text extraction.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | **yes** | The URL to fetch and read |
+
+---
+
+## `browse`
+
+Browse a webpage or automate browser interactions using [Browserbase](https://browserbase.com) (remote Chromium). Two modes:
+
+- **Simple mode** — provide a URL to navigate, screenshot, and extract content.
+- **Code mode** — provide Playwright JS code for multi-step automation. Variables `page`, `context`, `browser` are available.
+
+Returns a screenshot (base64), extracted text/HTML/accessibility tree, and console errors.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | conditional | URL to navigate to (simple mode, mutually exclusive with `code`) |
+| `code` | string | conditional | Playwright JS code to execute (code mode, mutually exclusive with `url`) |
+| `extract` | enum | no | `text`, `accessibility`, or `html` |
+| `screenshot` | boolean | no | Take a screenshot after navigation (default true) |
+| `session_id` | string | no | Reuse an existing Browserbase session for multi-turn chains |
+| `release_session` | boolean | no | Close the session after this action (default false, use on final call) |
+| `headers` | object | no | Custom HTTP headers to set before navigation |
+| `stealth` | boolean | no | Use stealth fingerprinting to bypass bot detection (default true) |
+| `timeout_seconds` | number | no | Timeout in seconds (default 30, max 120) |
+
+**Tip:** For multi-step flows, create a session with one call (get `session_id` back), reuse it across calls, then set `release_session: true` on the final call.
