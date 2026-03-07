@@ -21,7 +21,7 @@ export async function lookupContact(query: string): Promise<Contact[]> {
   const { BigQuery } = await import("@google-cloud/bigquery");
 
   const bq = new BigQuery({
-    projectId: process.env.GCP_PROJECT_ID || "realadvisor-184710",
+    projectId: process.env.GCP_PROJECT_ID || "",
   });
 
   const searchTerm = query.trim().toLowerCase();

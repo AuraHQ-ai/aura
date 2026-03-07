@@ -50,7 +50,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "GitHub repository in owner/repo format, e.g. 'realadvisor/realadvisor'. Defaults to 'AuraHQ-ai/aura'",
+            "GitHub repository in owner/repo format, e.g. 'org/repo'. Defaults to 'AuraHQ-ai/aura'",
           ),
       }),
       execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {

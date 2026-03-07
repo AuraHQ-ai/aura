@@ -680,7 +680,7 @@ app.get("/api/oauth/google/auth-url", async (c) => {
     url,
     instructions: userId
       ? `Open this URL in a browser logged in as the Gmail account for Slack user ${userId}`
-      : "Open this URL in a browser logged in as aura@realadvisor.com",
+      : "Open this URL in a browser logged in as your Aura email account",
   });
 });
 

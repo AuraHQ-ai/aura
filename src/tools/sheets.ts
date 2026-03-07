@@ -66,7 +66,7 @@ async function fetchJson<T>(url: string, token: string): Promise<T> {
     }
     if (status === 403) {
       throw new Error(
-        "No access to this spreadsheet. Make sure it's shared with Aura's Google account (aura@realadvisor.com).",
+        "No access to this spreadsheet. Make sure it's shared with Aura's Google account.",
       );
     }
     throw new Error(`Google Sheets API error ${status}: ${body.slice(0, 300)}`);

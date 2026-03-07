@@ -17,7 +17,7 @@ export function createEmailTools(context?: ScheduleContext) {
   return {
     send_email: defineTool({
       description:
-        "Send an email. Defaults to sending from aura@realadvisor.com. Set user_name to send from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Use for external communication, follow-ups, outreach, and reports. Never send emails without being asked or having a clear reason (job, follow-up, etc.). Body is sent as plain text — keep it professional but conversational, same tone as Slack. DM privacy applies: don't email someone's private Slack DM content to others. Supports optional file attachments (base64-encoded).",
+        "Send an email. Defaults to sending from Aura's configured email address. Set user_name to send from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Use for external communication, follow-ups, outreach, and reports. Never send emails without being asked or having a clear reason (job, follow-up, etc.). Body is sent as plain text — keep it professional but conversational, same tone as Slack. DM privacy applies: don't email someone's private Slack DM content to others. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
         to: z.string().describe("Recipient email address"),
         subject: z.string().describe("Email subject line"),
@@ -36,7 +36,7 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Send from this user's account instead of Aura. The display name, real name, or username, e.g. 'Joan' or '@joan'. Omit to send from aura@realadvisor.com.",
+            "Send from this user's account instead of Aura. The display name, real name, or username, e.g. 'Joan' or '@joan'. Omit to send from Aura's configured email address.",
           ),
         attachments: z
           .array(
@@ -123,7 +123,7 @@ export function createEmailTools(context?: ScheduleContext) {
     }),
 
     reply_to_email: defineTool({
-      description: "Reply to an existing email thread. Defaults to replying from aura@realadvisor.com. Set user_name to reply from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Requires message_id and thread_id from read_user_emails or read_user_email.",
+      description: "Reply to an existing email thread. Defaults to replying from Aura's configured email address. Set user_name to reply from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Requires message_id and thread_id from read_user_emails or read_user_email.",
       inputSchema: z.object({
         message_id: z
           .string()
@@ -136,7 +136,7 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Reply from this user's account instead of Aura. The display name, real name, or username, e.g. 'Joan' or '@joan'. Omit to reply from aura@realadvisor.com.",
+            "Reply from this user's account instead of Aura. The display name, real name, or username, e.g. 'Joan' or '@joan'. Omit to reply from Aura's configured email address.",
           ),
       }),
       execute: async ({ message_id, thread_id, body, user_name }) => {
@@ -203,7 +203,7 @@ export function createEmailTools(context?: ScheduleContext) {
         query: z
           .string()
           .describe(
-            "Name or email to search for, e.g. 'Joan Rodriguez' or 'joan@realadvisor.com'"
+            "Name or email to search for, e.g. 'Joan Rodriguez' or 'joan@company.com'"
           ),
       }),
       execute: async ({ query }) => {
@@ -311,7 +311,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
     lookup_contact: defineTool({
       description:
-        "Search for external contacts (agents, clients, partners) by name or email. Searches the RealAdvisor platform (3M+ users) and Close CRM (216K sales contacts across CH, ES, FR, IT). Returns name, email, phone, company, and source.",
+        "Search for external contacts (agents, clients, partners) by name or email. Searches the platform and CRM for external contacts. Returns name, email, phone, company, and source.",
       inputSchema: z.object({
         query: z
           .string()
@@ -381,7 +381,7 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Specific calendar ID to query, e.g. 'joan@realadvisor.com'. Lets you check another person's calendar using your own OAuth token. Defaults to 'primary'.",
+            "Specific calendar ID to query, e.g. 'joan@company.com'. Lets you check another person's calendar using your own OAuth token. Defaults to 'primary'.",
           ),
       }),
       execute: async ({ time_min, time_max, max_results, query, user_name, calendar_id }) => {

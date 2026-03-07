@@ -74,10 +74,10 @@ const SCOPES = [
 const EMAIL_SIGNATURE_HTML = `
 <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e0e0e0; font-family: Arial, sans-serif; font-size: 13px; color: #666;">
   <strong style="color: #333;">Aura</strong> &middot; AI Team Member<br/>
-  <a href="https://www.realadvisor.com" style="color: #0066cc; text-decoration: none;">RealAdvisor</a>
+  <a href="${process.env.AURA_WEBSITE_URL || ''}" style="color: #0066cc; text-decoration: none;">${process.env.COMPANY_NAME || 'Aura'}</a>
 </div>`.trim();
 
-const EMAIL_SIGNATURE_TEXT = `\n--\nAura · AI Team Member\nRealAdvisor · https://www.realadvisor.com`;
+const EMAIL_SIGNATURE_TEXT = `\n--\nAura · AI Team Member\n${process.env.COMPANY_NAME || ''} · ${process.env.AURA_WEBSITE_URL || ''}`.trimEnd() + \`\`;
 
 function textToHtml(text: string): string {
   return text
@@ -198,7 +198,7 @@ function buildMimeMessage(
   attachments?: Attachment[],
 ): string {
   const auraEmail =
-    process.env.AURA_EMAIL_ADDRESS || "aura@realadvisor.com";
+    process.env.AURA_EMAIL_ADDRESS || "";
   const fromHeader = overrides?.from || `Aura <${auraEmail}>`;
   const includeSignature = overrides?.includeSignature !== false;
   const altBoundary = `boundary_alt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
