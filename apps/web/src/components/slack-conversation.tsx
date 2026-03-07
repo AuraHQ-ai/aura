@@ -94,8 +94,91 @@ function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
     const lines = part.split("\n");
     const lineNodes: React.ReactNode[] = [];
 
+    // Pre-pass: collect table line groups
+    const tableRanges: { start: number; end: number }[] = [];
+    {
+      let ti = 0;
+      while (ti < lines.length) {
+        if (lines[ti].trim().startsWith("|")) {
+          const start = ti;
+          while (ti < lines.length && lines[ti].trim().startsWith("|")) ti++;
+          tableRanges.push({ start, end: ti - 1 });
+        } else {
+          ti++;
+        }
+      }
+    }
+    const tableLineSet = new Set<number>();
+    tableRanges.forEach(({ start, end }) => {
+      for (let i = start; i <= end; i++) tableLineSet.add(i);
+    });
+
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li];
+
+      // Markdown table: consecutive lines starting with |
+      if (tableLineSet.has(li)) {
+        // Find the full range for this table
+        const range = tableRanges.find(r => r.start === li);
+        if (range) {
+          const tableLines = lines.slice(range.start, range.end + 1)
+            .filter(l => !l.trim().match(/^\|[-\s|:]+\|$/)); // drop separator row
+          const headerLine = tableLines[0];
+          const dataLines = tableLines.slice(1);
+          const parseRow = (row: string) =>
+            row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+          const headers = parseRow(headerLine);
+          const rows = dataLines.map(parseRow);
+          const borderCol = dark ? "#36393f" : "#e5e5e5";
+          const headerBg = dark ? "#222529" : "#f8f8f8";
+          lineNodes.push(
+            <div key={`${key++}-tbl`} style={{ overflowX: "auto", margin: "6px 0" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "14px" }}>
+                <thead>
+                  <tr>
+                    {headers.map((h, hi) => (
+                      <th
+                        key={hi}
+                        style={{
+                          border: `1px solid ${borderCol}`,
+                          padding: "4px 10px",
+                          background: headerBg,
+                          fontWeight: 600,
+                          textAlign: "left",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {parseInline(h, key++, dark)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, ri) => (
+                    <tr key={ri}>
+                      {row.map((cell, ci) => (
+                        <td
+                          key={ci}
+                          style={{
+                            border: `1px solid ${borderCol}`,
+                            padding: "4px 10px",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {parseInline(cell, key++, dark)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+          li = range.end; // skip to end of table
+          continue;
+        }
+        continue; // skip individual table lines already consumed
+      }
 
       // Blockquote: lines starting with >
       if (line.startsWith("> ") || line === ">") {

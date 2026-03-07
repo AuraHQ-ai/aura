@@ -5,11 +5,11 @@ import type { SlackMessage } from "@/components/slack-conversation";
 
 const SALES_LEADERBOARD: SlackMessage[] = [
   {
-    author: "Joan Rodriguez",
+    author: "Jonas Wiesel",
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "9:14 AM",
     content: [
-      { type: "text", text: "show the sales leaderboard this week" },
+      { type: "text", text: "<@U0AFEC1C69F> show the sales leaderboard this week" },
     ],
   },
   {
@@ -37,11 +37,11 @@ const SALES_LEADERBOARD: SlackMessage[] = [
 
 const AD_SPEND: SlackMessage[] = [
   {
-    author: "Joan Rodriguez",
+    author: "Jonas Wiesel",
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "2:31 PM",
     content: [
-      { type: "text", text: "what's our spend, CTR, CPC and CPA by platform for the sign up conversion event in the last 12 months?" },
+      { type: "text", text: "<@U0AFEC1C69F> what's our spend, CTR, CPC and CPA by platform for the sign up conversion event in the last 12 months?" },
     ],
   },
   {
@@ -69,11 +69,11 @@ const AD_SPEND: SlackMessage[] = [
 
 const BUILD_FAILING: SlackMessage[] = [
   {
-    author: "Joan Rodriguez",
+    author: "Jonas Wiesel",
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "6:48 PM",
     content: [
-      { type: "text", text: "the build is failing on github actions, investigate and suggest a fix" },
+      { type: "text", text: "<@U0AFEC1C69F> the build is failing on github actions, investigate and suggest a fix" },
     ],
   },
   {
