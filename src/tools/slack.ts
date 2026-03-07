@@ -22,7 +22,9 @@ import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createResourceTools } from "./resources.js";
 import { createCredentialTools } from "./credentials.js";
+import { createHttpRequestTools } from "./http-request.js";
 import type { ScheduleContext } from "../db/schema.js";
+import { wrapToolsWithGovernance } from "../lib/action-governance.js";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { formatTimestamp } from "../lib/temporal.js";
@@ -3002,7 +3004,13 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Credential Tools (secure credential retrieval) ──────────────
     ...createCredentialTools(context),
+
+    // ── HTTP Request Tools (credentialed API calls) ─────────────────
+    ...createHttpRequestTools(context),
   };
+
+  // ── Action Governance ────────────────────────────────────────────
+  wrapToolsWithGovernance(tools, client, context);
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
   // Mark infrequently-used tools as deferred so their schemas aren't
@@ -3045,6 +3053,8 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     "run_subagent",
     // People
     "get_person", "update_person",
+    // HTTP Request
+    "http_request",
   ]);
 
   const deferOpts = { anthropic: { deferLoading: true } };

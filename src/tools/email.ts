@@ -119,6 +119,7 @@ export function createEmailTools(context?: ScheduleContext) {
           };
         }
       },
+      risk: "destructive",
       slack: { status: "Sending email...", detail: (i) => i.to },
     }),
 
@@ -191,6 +192,7 @@ export function createEmailTools(context?: ScheduleContext) {
           };
         }
       },
+      risk: "destructive",
       slack: { status: "Replying to email..." },
     }),
 
@@ -591,6 +593,7 @@ export function createEmailTools(context?: ScheduleContext) {
           };
         }
       },
+      risk: "destructive",
       slack: { status: "Deleting event..." },
     }),
 

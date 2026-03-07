@@ -503,6 +503,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           };
         }
       },
+      risk: "destructive",
       slack: { status: "Placing call...", detail: (i) => i.to_number },
     });
   }
@@ -638,6 +639,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         };
       }
     },
+    risk: "destructive",
     slack: { status: "Sending SMS...", detail: (i) => i.phone_number },
   });
 
