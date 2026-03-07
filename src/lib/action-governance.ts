@@ -210,7 +210,7 @@ async function runExecutor(
     _governanceBypass = false;
 
     await updateActionLog(actionLogId, {
-      status: "executed" as any,
+      status: "executed",
       result: typeof result === "object" ? result : { value: result },
     });
 
@@ -235,7 +235,7 @@ async function runExecutor(
     _governanceBypass = false;
 
     await updateActionLog(actionLogId, {
-      status: "failed" as any,
+      status: "failed",
       result: { error: err.message },
     });
 
