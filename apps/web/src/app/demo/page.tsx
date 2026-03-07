@@ -4,7 +4,7 @@ import type { SlackMessage } from "@/components/slack-conversation";
 const DEMO_MESSAGES: SlackMessage[] = [
   {
     author: "Joan Rodriguez",
-    avatar: "https://unavatar.io/github/joanrod",
+    avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "11:22 PM",
     content: [
       {
@@ -48,7 +48,7 @@ const DEMO_MESSAGES: SlackMessage[] = [
   },
   {
     author: "Joan Rodriguez",
-    avatar: "https://unavatar.io/github/joanrod",
+    avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "11:23 PM",
     content: [
       { type: "text", text: "nice, now do the same for _last month_ and put it in a `canvas`" },
