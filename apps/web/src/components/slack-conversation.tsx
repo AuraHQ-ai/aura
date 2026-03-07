@@ -386,13 +386,19 @@ function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
               style={{
                 padding: "8px 12px 10px",
                 borderTop: `1px solid ${borderColor}`,
-                fontSize: "12px",
-                color: dark ? "#8a8b8c" : "#666",
-                whiteSpace: "pre-wrap",
-                lineHeight: "1.5",
               }}
             >
-              {node.detail}
+              <div
+                style={{
+                  borderLeft: `3px solid ${dark ? "#555" : "#ccc"}`,
+                  paddingLeft: "10px",
+                  fontSize: "13px",
+                  color: dark ? "#aaa" : "#555",
+                  lineHeight: "1.5",
+                }}
+              >
+                {node.detail}
+              </div>
             </div>
           </Collapsible.Content>
         )}
