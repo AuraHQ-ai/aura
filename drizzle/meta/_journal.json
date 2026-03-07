@@ -232,6 +232,13 @@
       "when": 1773225600000,
       "tag": "0032_content_index_table",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1773312000000,
+      "tag": "0033_action_governance",
+      "breakpoints": true
     }
   ]
 }

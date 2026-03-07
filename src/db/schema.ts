@@ -721,3 +721,80 @@ export const content = pgTable(
 
 export type Content = typeof content.$inferSelect;
 export type NewContent = typeof content.$inferInsert;
+
+// ── Action Log (governance audit trail for tool executions) ─────────────────
+
+export const actionStatusEnum = pgEnum("action_status", [
+  "executed",
+  "pending_approval",
+  "approved",
+  "rejected",
+  "failed",
+]);
+
+export const riskTierEnum = pgEnum("risk_tier", [
+  "read",
+  "write",
+  "destructive",
+]);
+
+export const actionLog = pgTable(
+  "action_log",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    toolName: text("tool_name").notNull(),
+    params: jsonb("params").$type<Record<string, unknown>>(),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    status: actionStatusEnum("status").notNull(),
+    riskTier: riskTierEnum("risk_tier").notNull(),
+    triggerType: text("trigger_type").notNull().default("interactive"),
+    triggeredBy: text("triggered_by").notNull(),
+    credentialId: uuid("credential_id").references(() => credentials.id, {
+      onDelete: "set null",
+    }),
+    approvalMessageTs: text("approval_message_ts"),
+    approvalChannel: text("approval_channel"),
+    approvedBy: text("approved_by"),
+    approvedAt: timestamptz("approved_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("action_log_tool_name_idx").on(table.toolName),
+    index("action_log_status_idx").on(table.status),
+    index("action_log_triggered_by_idx").on(table.triggeredBy),
+    index("action_log_created_at_idx").on(table.createdAt),
+    index("action_log_credential_id_idx").on(table.credentialId),
+  ],
+);
+
+export type ActionLogEntry = typeof actionLog.$inferSelect;
+export type NewActionLogEntry = typeof actionLog.$inferInsert;
+
+// ── Approval Policies (admin-managed governance rules) ──────────────────────
+
+export const approvalPolicies = pgTable(
+  "approval_policies",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    toolPattern: text("tool_pattern").notNull(),
+    riskTierOverride: riskTierEnum("risk_tier_override"),
+    approverIds: text("approver_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    approvalChannel: text("approval_channel"),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("approval_policies_tool_pattern_idx").on(table.toolPattern),
+  ],
+);
+
+export type ApprovalPolicy = typeof approvalPolicies.$inferSelect;
+export type NewApprovalPolicy = typeof approvalPolicies.$inferInsert;
