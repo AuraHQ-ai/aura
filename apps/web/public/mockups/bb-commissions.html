@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BB Commissions — Mockup v3</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        primary: 'oklch(0.55 0.2 260)',
+        border: 'oklch(0.92 0.005 260)',
+        muted: 'oklch(0.96 0.01 260)',
+        'muted-foreground': 'oklch(0.55 0.02 260)',
+        sidebar: 'oklch(0.98 0.005 260)',
+        'sidebar-accent': 'oklch(0.94 0.03 260)',
+        'sidebar-border': 'oklch(0.92 0.005 260)',
+      }
+    }
+  }
+}
+</script>
+<style>
+  :root {
+    --primary: oklch(0.55 0.2 260);
+    --primary-hover: oklch(0.48 0.2 260);
+    --primary-light: oklch(0.94 0.04 260);
+    --primary-text: oklch(1 0 0);
+    --border: oklch(0.92 0.005 260);
+    --muted: oklch(0.96 0.01 260);
+    --muted-fg: oklch(0.55 0.02 260);
+    --sidebar: oklch(0.985 0.005 260);
+    --sidebar-accent: oklch(0.94 0.03 260);
+    --sidebar-accent-fg: oklch(0.35 0.15 260);
+    --sidebar-border: oklch(0.92 0.005 260);
+    --card: oklch(1 0 0);
+    --radius: 0.625rem;
+    --fg: oklch(0.2 0.02 260);
+    --fg-muted: oklch(0.55 0.02 260);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; color: var(--fg); background: white; }
+
+  /* Nav tabs at top */
+  .nav-tabs { background: #1e293b; padding: 10px 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .nav-tab { padding: 6px 14px; border-radius: 6px; color: #94a3b8; cursor: pointer; font-size: 12px; font-weight: 500; border: none; background: transparent; }
+  .nav-tab:hover { background: #334155; color: #e2e8f0; }
+  .nav-tab.active { background: #3b82f6; color: white; }
+
+  .screen { display: none; }
+  .screen.active { display: flex; }
+
+  /* Workspace header */
+  .ws-header {
+    position: sticky; top: 0; z-index: 50;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: blur(8px);
+    padding: 10px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .ws-logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--fg); }
+  .ws-logo-icon { width: 28px; height: 28px; background: var(--primary); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-size: 13px; font-weight: 800; }
+  .ws-header-right { display: flex; align-items: center; gap: 8px; }
+
+  /* Shadcn Button */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: var(--radius); font-size: 13px; font-weight: 500; border: none; cursor: default; white-space: nowrap; }
+  .btn-primary { background: var(--primary); color: var(--primary-text); }
+  .btn-outline { background: white; color: var(--fg); border: 1px solid var(--border); }
+  .btn-ghost { background: transparent; color: var(--fg-muted); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-destructive { background: oklch(0.577 0.245 27.325); color: white; }
+
+  /* Shadcn Badge */
+  .badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 9999px; padding: 2px 8px; font-size: 11px; font-weight: 500; white-space: nowrap; border: 1px solid transparent; }
+  .badge-default { background: var(--primary); color: white; border-color: transparent; }
+  .badge-secondary { background: var(--muted); color: var(--fg-muted); }
+  .badge-outline { background: transparent; color: var(--fg); border-color: var(--border); }
+  .badge-success { background: oklch(0.92 0.06 145); color: oklch(0.35 0.1 145); }
+  .badge-warning { background: oklch(0.95 0.08 75); color: oklch(0.45 0.12 75); }
+  .badge-destructive { background: oklch(0.95 0.05 27); color: oklch(0.45 0.15 27); }
+  .badge-blue { background: oklch(0.93 0.05 255); color: oklch(0.4 0.15 255); }
+
+  /* Shadcn Card */
+  .card { background: var(--card); border-radius: calc(var(--radius) + 2px); border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .card-header { padding: 20px 24px 12px; }
+  .card-title { font-size: 15px; font-weight: 600; color: var(--fg); }
+  .card-description { font-size: 13px; color: var(--fg-muted); margin-top: 2px; }
+  .card-content { padding: 0 24px 20px; }
+
+  /* Shadcn Table */
+  .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tbl th { padding: 10px 12px; text-align: left; font-weight: 500; color: var(--fg-muted); border-bottom: 1px solid var(--border); font-size: 12px; }
+  .tbl td { padding: 11px 12px; border-bottom: 1px solid oklch(0.96 0.005 260); color: var(--fg); vertical-align: middle; }
+  .tbl tr:last-child td { border-bottom: none; }
+  .tbl tr:hover td { background: oklch(0.985 0.005 260); }
+
+  /* Shadcn Input */
+  .input { height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; color: var(--fg); background: white; outline: none; width: 100%; }
+  .input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px oklch(0.55 0.2 260 / 0.12); }
+
+  /* Shadcn Select */
+  .select { height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; background: white; color: var(--fg); appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+
+  /* Admin sidebar */
+  .admin-layout { display: flex; min-height: calc(100vh - 98px); }
+  .admin-sidebar { width: 220px; flex-shrink: 0; background: var(--sidebar); border-right: 1px solid var(--sidebar-border); padding: 12px 0; }
+  .admin-sidebar-content { flex: 1; padding: 0; }
+  .nav-section-label { padding: 6px 16px 4px; font-size: 10px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 7px 14px; margin: 1px 6px; border-radius: 7px; color: var(--fg-muted); font-size: 13px; cursor: default; }
+  .nav-item:hover { background: var(--sidebar-accent); color: var(--fg); }
+  .nav-item.active { background: var(--sidebar-accent); color: oklch(0.35 0.15 260); font-weight: 500; }
+  .nav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.7; }
+  .nav-item.active svg { opacity: 1; }
+
+  /* Workspace shell */
+  .ws-layout { min-height: 100vh; background: linear-gradient(135deg, #f8fafc 0%, rgba(219,234,254,0.3) 50%, #f1f5f9 100%); }
+
+  /* Tabs (shadcn) */
+  .tabs-list { display: inline-flex; background: var(--muted); border-radius: var(--radius); padding: 3px; gap: 2px; }
+  .tab-trigger { padding: 5px 14px; border-radius: calc(var(--radius) - 2px); font-size: 13px; font-weight: 500; color: var(--fg-muted); cursor: default; }
+  .tab-trigger.active { background: white; color: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+
+  /* KPI card */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .kpi-card { background: white; border: 1px solid var(--border); border-radius: calc(var(--radius) + 2px); padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .kpi-label { font-size: 12px; color: var(--fg-muted); font-weight: 500; margin-bottom: 4px; }
+  .kpi-value { font-size: 22px; font-weight: 700; color: var(--fg); }
+  .kpi-sub { font-size: 11px; color: var(--fg-muted); margin-top: 2px; }
+  .kpi-delta-up { color: oklch(0.45 0.12 145); font-size: 11px; }
+  .kpi-delta-down { color: oklch(0.5 0.15 27); font-size: 11px; }
+
+  /* Page header */
+  .page-header { margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }
+  .page-header-left { display: flex; align-items: flex-start; gap: 12px; }
+  .page-header-icon { width: 40px; height: 40px; background: oklch(0.93 0.04 260); border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .page-header-icon svg { width: 20px; height: 20px; color: var(--primary); }
+  .page-header-icon svg { stroke: oklch(0.55 0.2 260); }
+  .page-header-title { font-size: 22px; font-weight: 700; color: #0f172a; }
+  .page-header-desc { font-size: 13px; color: var(--fg-muted); margin-top: 2px; }
+
+  /* Sheet/Drawer */
+  .drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 40; display: none; }
+  .drawer { position: fixed; right: 0; top: 0; height: 100%; width: 480px; background: white; z-index: 50; box-shadow: -4px 0 24px rgba(0,0,0,0.12); display: none; flex-direction: column; border-left: 1px solid var(--border); }
+  .drawer.open, .drawer-overlay.open { display: flex; }
+  .drawer-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; }
+  .drawer-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+  .drawer-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+
+  /* Form */
+  .form-label { font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 5px; display: block; }
+  .form-row { margin-bottom: 14px; }
+
+  /* Line items table in form */
+  .li-table { width: 100%; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .li-table th { background: var(--muted); padding: 8px 10px; font-size: 11px; font-weight: 600; color: var(--fg-muted); text-align: left; border-bottom: 1px solid var(--border); }
+  .li-table td { padding: 8px 10px; border-bottom: 1px solid oklch(0.96 0.005 260); font-size: 12px; }
+  .li-table tr:last-child td { border-bottom: none; }
+
+  /* Formula editor */
+  .formula-box { background: #0f172a; border-radius: var(--radius); padding: 14px 16px; font-family: 'Courier New', monospace; font-size: 12px; color: #e2e8f0; line-height: 1.7; }
+  .formula-kw { color: #7dd3fc; }
+  .formula-fn { color: #a78bfa; }
+  .formula-str { color: #86efac; }
+  .formula-num { color: #fdba74; }
+  .formula-comment { color: #64748b; }
+
+  /* Separator */
+  .sep { height: 1px; background: var(--border); margin: 16px 0; }
+
+  /* Avatar */
+  .avatar { width: 28px; height: 28px; border-radius: 9999px; background: oklch(0.88 0.06 255); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: oklch(0.4 0.15 255); flex-shrink: 0; }
+
+  /* Admin top bar */
+  .admin-topbar { border-bottom: 1px solid var(--border); background: white; padding: 10px 24px; display: flex; align-items: center; justify-content: space-between; }
+  .admin-topbar-left { display: flex; align-items: center; gap: 10px; }
+  .admin-topbar-workspace { font-size: 12px; color: var(--fg-muted); }
+  .admin-topbar-workspace span { font-weight: 500; color: var(--fg); }
+
+  /* Progress bar */
+  .progress-bar { height: 6px; background: var(--muted); border-radius: 9999px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 9999px; background: var(--primary); }
+</style>
+</head>
+<body>
+
+<!-- Screen switcher -->
+<div class="nav-tabs">
+  <span style="color:#64748b;font-size:12px;padding:6px 8px;font-weight:600;">BB COMMISSIONS</span>
+  <button class="nav-tab active" onclick="show('admin-sales')">① Admin — Sales</button>
+  <button class="nav-tab" onclick="show('admin-plans')">② Admin — Plans</button>
+  <button class="nav-tab" onclick="show('admin-payouts')">③ Admin — Payouts</button>
+  <button class="nav-tab" onclick="show('rep-commissions')">④ Rep — My Commissions</button>
+  <button class="nav-tab" onclick="show('sale-form')">⑤ New Sale Form</button>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SCREEN 1: ADMIN — SALES                        -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="admin-sales" class="screen active" style="flex-direction:column;">
+  <!-- Admin top bar -->
+  <div class="admin-topbar">
+    <div class="admin-topbar-left">
+      <div class="ws-logo-icon" style="width:24px;height:24px;font-size:11px;">B</div>
+      <div class="admin-topbar-workspace">Managing: <span>RealAdvisor CH</span></div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-outline btn-sm">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        Quote Generator
+      </button>
+    </div>
+  </div>
+
+  <div class="admin-layout">
+    <!-- Sidebar -->
+    <aside class="admin-sidebar">
+      <div class="nav-section-label">Main</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Dashboard
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Quotes
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+        Subscriptions
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3"/><rect x="9" y="3" width="6" height="8" rx="1"/></svg>
+        Invoices
+      </div>
+      <div style="height:1px;background:var(--sidebar-border);margin:8px 12px;"></div>
+      <div class="nav-section-label">Commissions</div>
+      <div class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        Sales
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        Commission Plans
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Payouts
+      </div>
+      <div style="height:1px;background:var(--sidebar-border);margin:8px 12px;"></div>
+      <div class="nav-section-label">Settings</div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Users
+      </div>
+      <div class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 0-14.14 0M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        Settings
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="admin-sidebar-content" style="padding:24px;overflow-y:auto;">
+      <!-- Page header -->
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+          <div>
+            <h1 class="page-header-title">Sales</h1>
+            <p class="page-header-desc">All recorded sales — source of truth for commission calculations</p>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-outline btn-sm">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Import CSV
+          </button>
+          <button class="btn btn-primary btn-sm" onclick="show('sale-form')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Sale
+          </button>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Sales (Mar)</div>
+          <div class="kpi-value">CHF 48,200</div>
+          <div class="kpi-sub kpi-delta-up">↑ 12% vs Feb</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">MRR Added</div>
+          <div class="kpi-value">CHF 3,840</div>
+          <div class="kpi-sub kpi-delta-up">↑ 8% vs Feb</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Commissions Due</div>
+          <div class="kpi-value">CHF 6,120</div>
+          <div class="kpi-sub" style="color:var(--fg-muted);">14 reps, unlocked</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Sales This Month</div>
+          <div class="kpi-value">24</div>
+          <div class="kpi-sub" style="color:var(--fg-muted);">18 new · 6 renewal</div>
+        </div>
+      </div>
+
+      <!-- Filters row -->
+      <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;">
+        <input class="input" placeholder="Search client name, rep..." style="max-width:220px;" readonly/>
+        <select class="select" style="width:130px;">
+          <option>All deal types</option>
+          <option>New</option>
+          <option>Renewal</option>
+        </select>
+        <select class="select" style="width:120px;">
+          <option>All reps</option>
+          <option>Marc Dubois</option>
+          <option>Anna Keller</option>
+        </select>
+        <select class="select" style="width:130px;">
+          <option>March 2026</option>
+          <option>February 2026</option>
+        </select>
+      </div>
+
+      <!-- Table card -->
+      <div class="card">
+        <div style="overflow-x:auto;">
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Rep</th>
+                <th>Deal type</th>
+                <th>MRR</th>
+                <th>Sale date</th>
+                <th>Commission</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr onclick="openDrawer()" style="cursor:default;">
+                <td><div style="font-weight:500;">Immo Zürich AG</div><div style="font-size:11px;color:var(--fg-muted);">From quote #Q-2026-0341</div></td>
+                <td><div style="display:flex;align-items:center;gap:6px;"><div class="avatar">MD</div>Marc D.</div></td>
+                <td><span class="badge badge-blue">New</span></td>
+                <td style="font-weight:500;">CHF 490/mo</td>
+                <td style="color:var(--fg-muted);">Mar 6</td>
+                <td style="font-weight:500;color:oklch(0.45 0.12 145);">CHF 940</td>
+                <td><span class="badge badge-warning">Pending</span></td>
+                <td><button class="btn btn-ghost btn-sm">···</button></td>
+              </tr>
+              <tr>
+                <td><div style="font-weight:500;">Keller Immobilien</div><div style="font-size:11px;color:var(--fg-muted);">Manual entry</div></td>
+                <td><div style="display:flex;align-items:center;gap:6px;"><div class="avatar" style="background:oklch(0.88 0.06 165);color:oklch(0.35 0.1 165);">AK</div>Anna K.</div></td>
+                <td><span class="badge badge-secondary">Renewal</span></td>
+                <td style="font-weight:500;">CHF 290/mo</td>
+                <td style="color:var(--fg-muted);">Mar 5</td>
+                <td style="font-weight:500;color:oklch(0.45 0.12 145);">CHF 420</td>
+                <td><span class="badge badge-success">Approved</span></td>
+                <td><button class="btn btn-ghost btn-sm">···</button></td>
+              </tr>
+              <tr>
+                <td><div style="font-weight:500;">Wohnraum Basel GmbH</div><div style="font-size:11px;color:var(--fg-muted);">From quote #Q-2026-0338</div></td>
+                <td><div style="display:flex;align-items:center;gap:6px;"><div class="avatar" style="background:oklch(0.88 0.06 295);color:oklch(0.35 0.1 295);">TW</div>Tom W.</div></td>
+                <td><span class="badge badge-blue">New</span></td>
+                <td style="font-weight:500;">CHF 690/mo</td>
+                <td style="color:var(--fg-muted);">Mar 4</td>
+                <td style="font-weight:500;color:oklch(0.45 0.12 145);">CHF 1,320</td>
+                <td><span class="badge badge-warning">Pending</span></td>
+                <td><button class="btn btn-ghost btn-sm">···</button></td>
+              </tr>
+              <tr>
+                <td><div style="font-weight:500;">Müller & Partner AG</div><div style="font-size:11px;color:var(--fg-muted);">CSV import</div></td>
+                <td><div style="display:flex;align-items:center;gap:6px;"><div class="avatar">MD</div>Marc D.</div></td>
+                <td><span class="badge badge-secondary">Renewal</span></td>
+                <td style="font-weight:500;">CHF 190/mo</td>
+                <td style="color:var(--fg-muted);">Mar 3</td>
+                <td style="font-weight:500;color:oklch(0.45 0.12 145);">CHF 275</td>
+                <td><span class="badge badge-success">Approved</span></td>
+                <td><button class="btn btn-ghost btn-sm">···</button></td>
+              </tr>
+              <tr>
+                <td><div style="font-weight:500;">Helvetia Realty</div><div style="font-size:11px;color:var(--fg-muted);">Manual entry</div></td>
+                <td><div style="display:flex;align-items:center;gap:6px;"><div class="avatar" style="background:oklch(0.88 0.06 165);color:oklch(0.35 0.1 165);">AK</div>Anna K.</div></td>
+                <td><span class="badge badge-blue">New</span></td>
+                <td style="font-weight:500;">CHF 890/mo</td>
+                <td style="color:var(--fg-muted);">Mar 2</td>
+                <td style="font-weight:500;color:oklch(0.45 0.12 145);">CHF 1,705</td>
+                <td><span class="badge badge-destructive">Disputed</span></td>
+                <td><button class="btn btn-ghost btn-sm">···</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;font-size:12px;color:var(--fg-muted);text-align:right;">Showing 5 of 24 sales · Mar 2026</div>
+    </main>
+  </div>
+
+  <!-- Drawer overlay -->
+  <div class="drawer-overlay" id="overlay" onclick="closeDrawer()"></div>
+  <!-- Sale detail drawer -->
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div>
+        <div style="font-size:16px;font-weight:600;">Immo Zürich AG</div>
+        <div style="font-size:12px;color:var(--fg-muted);margin-top:2px;">Sale · Mar 6, 2026 · From quote #Q-2026-0341</div>
+      </div>
+      <button onclick="closeDrawer()" class="btn btn-ghost btn-sm">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+        <div class="card" style="padding:14px 16px;">
+          <div class="kpi-label">MRR</div>
+          <div style="font-size:18px;font-weight:700;">CHF 490/mo</div>
+        </div>
+        <div class="card" style="padding:14px 16px;">
+          <div class="kpi-label">Commission</div>
+          <div style="font-size:18px;font-weight:700;color:oklch(0.45 0.12 145);">CHF 940</div>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px;">Line Items</div>
+      <table class="li-table" style="margin-bottom:16px;">
+        <thead><tr><th>Product</th><th>Type</th><th>Interval</th><th>Amount</th></tr></thead>
+        <tbody>
+          <tr><td>Visibility Pro</td><td><span class="badge badge-blue" style="font-size:10px;">Recurring</span></td><td style="color:var(--fg-muted);">Monthly</td><td style="font-weight:500;">CHF 390</td></tr>
+          <tr><td>Add-on Leads</td><td><span class="badge badge-secondary" style="font-size:10px;">Add-on</span></td><td style="color:var(--fg-muted);">Monthly</td><td style="font-weight:500;">CHF 100</td></tr>
+          <tr><td>Onboarding</td><td><span class="badge badge-outline" style="font-size:10px;">Setup fee</span></td><td style="color:var(--fg-muted);">One-time</td><td style="font-weight:500;">CHF 500</td></tr>
+        </tbody>
+      </table>
+
+      <div class="sep"></div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px;">Commission Calculation</div>
+      <div class="formula-box" style="margin-bottom:14px;">
+        <span class="formula-comment">// Plan: CH Standard (new deals)</span><br>
+        <span class="formula-kw">const</span> mrr = <span class="formula-num">490</span>; <span class="formula-comment">// CHF/mo</span><br>
+        <span class="formula-kw">const</span> rate = deal_type === <span class="formula-str">'new'</span> ? <span class="formula-num">0.16</span> : <span class="formula-num">0.08</span>;<br>
+        <span class="formula-kw">return</span> mrr * <span class="formula-num">12</span> * rate; <span class="formula-comment">// = 940 CHF</span>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-top:1px solid var(--border);">
+        <span style="color:var(--fg-muted);">Rep</span>
+        <span style="font-weight:500;">Marc Dubois</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-top:1px solid var(--border);">
+        <span style="color:var(--fg-muted);">Plan</span>
+        <span style="font-weight:500;">CH Standard</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-top:1px solid var(--border);">
+        <span style="color:var(--fg-muted);">Status</span>
+        <span class="badge badge-warning">Pending approval</span>
+      </div>
+    </div>
+    <div class="drawer-footer">
+      <button class="btn btn-outline btn-sm">Edit sale</button>
+      <button class="btn btn-primary btn-sm">Approve commission</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SCREEN 2: ADMIN — COMMISSION PLANS             -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="admin-plans" class="screen" style="flex-direction:column;">
+  <div class="admin-topbar">
+    <div class="admin-topbar-left">
+      <div class="ws-logo-icon" style="width:24px;height:24px;font-size:11px;">B</div>
+      <div class="admin-topbar-workspace">Managing: <span>RealAdvisor CH</span></div>
+    </div>
+    <div style="display:flex;gap:8px;"><button class="btn btn-outline btn-sm">Quote Generator</button></div>
+  </div>
+  <div class="admin-layout">
+    <aside class="admin-sidebar">
+      <div class="nav-section-label">Main</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Dashboard</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Quotes</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>Subscriptions</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3"/><rect x="9" y="3" width="6" height="8" rx="1"/></svg>Invoices</div>
+      <div style="height:1px;background:var(--sidebar-border);margin:8px 12px;"></div>
+      <div class="nav-section-label">Commissions</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Sales</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Commission Plans</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Payouts</div>
+      <div style="height:1px;background:var(--sidebar-border);margin:8px 12px;"></div>
+      <div class="nav-section-label">Settings</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Users</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 0-14.14 0"/></svg>Settings</div>
+    </aside>
+
+    <main class="admin-sidebar-content" style="padding:24px;">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
+          <div>
+            <h1 class="page-header-title">Commission Plans</h1>
+            <p class="page-header-desc">Define rules and JS formulas for each market and deal type</p>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Plan</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:280px 1fr;gap:16px;">
+        <!-- Plans list -->
+        <div>
+          <div class="card" style="overflow:hidden;">
+            <div style="padding:12px 14px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--fg-muted);text-transform:uppercase;letter-spacing:0.05em;">2 plans</div>
+            <div style="padding:10px 8px;background:var(--primary-light);border-bottom:1px solid var(--border);">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:6px;background:white;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+                <div>
+                  <div style="font-weight:600;font-size:13px;">CH Standard</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">3 rules · Active</div>
+                </div>
+                <span class="badge badge-success">Active</span>
+              </div>
+            </div>
+            <div style="padding:10px 8px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:6px;">
+                <div>
+                  <div style="font-weight:500;font-size:13px;">CH Defended ARR</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">2 rules · Draft</div>
+                </div>
+                <span class="badge badge-secondary">Draft</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Plan editor -->
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                  <div class="card-title">CH Standard</div>
+                  <div class="card-description">Applied to: all reps · all markets CH · Active</div>
+                </div>
+                <div style="display:flex;gap:8px;">
+                  <button class="btn btn-outline btn-sm">Duplicate</button>
+                  <button class="btn btn-primary btn-sm">Save changes</button>
+                </div>
+              </div>
+            </div>
+            <div class="card-content">
+              <!-- Rule 1 -->
+              <div style="border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                  <div style="font-size:13px;font-weight:600;">Rule 1 — New deals (ARR %)</div>
+                  <span class="badge badge-success">Active</span>
+                </div>
+                <div style="font-size:12px;color:var(--fg-muted);margin-bottom:8px;">Condition: <code style="background:var(--muted);padding:1px 5px;border-radius:3px;">deal_type === 'new'</code></div>
+                <div class="formula-box">
+<span class="formula-comment">// 16% of ARR on new deals, recursive MRR × 12</span><br>
+<span class="formula-kw">const</span> arr = <span class="formula-fn">mrr_cents</span> / <span class="formula-num">100</span> * <span class="formula-num">12</span>;<br>
+<span class="formula-kw">return</span> Math.<span class="formula-fn">round</span>(arr * <span class="formula-num">0.16</span>);
+                </div>
+                <div style="margin-top:10px;display:flex;gap:6px;align-items:center;">
+                  <span style="font-size:11px;color:var(--fg-muted);">AI assist:</span>
+                  <input class="input" placeholder="Describe the rule in plain English..." style="font-size:12px;height:30px;" readonly/>
+                  <button class="btn btn-outline btn-sm" style="white-space:nowrap;">Generate</button>
+                </div>
+              </div>
+
+              <!-- Rule 2 -->
+              <div style="border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:10px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                  <div style="font-size:13px;font-weight:600;">Rule 2 — Renewals (flat %)</div>
+                  <span class="badge badge-success">Active</span>
+                </div>
+                <div style="font-size:12px;color:var(--fg-muted);margin-bottom:8px;">Condition: <code style="background:var(--muted);padding:1px 5px;border-radius:3px;">deal_type === 'renewal'</code></div>
+                <div class="formula-box">
+<span class="formula-comment">// 8% of ARR on renewals</span><br>
+<span class="formula-kw">const</span> arr = <span class="formula-fn">mrr_cents</span> / <span class="formula-num">100</span> * <span class="formula-num">12</span>;<br>
+<span class="formula-kw">return</span> Math.<span class="formula-fn">round</span>(arr * <span class="formula-num">0.08</span>);
+                </div>
+              </div>
+
+              <!-- Rule 3 -->
+              <div style="border:1px solid var(--border);border-radius:var(--radius);padding:14px;background:var(--muted);opacity:0.7;">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                  <div style="font-size:13px;font-weight:600;">Rule 3 — Setup fee exclusion</div>
+                  <span class="badge badge-secondary">Note only</span>
+                </div>
+                <div style="font-size:12px;color:var(--fg-muted);margin-top:6px;">Setup fees excluded from MRR calc — handled automatically via <code style="background:var(--muted);padding:1px 4px;border-radius:3px;">mrr_cents</code> helper (only sums recurring line items).</div>
+              </div>
+
+              <button class="btn btn-outline btn-sm" style="margin-top:12px;width:100%;justify-content:center;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add rule
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SCREEN 3: ADMIN — PAYOUTS                      -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="admin-payouts" class="screen" style="flex-direction:column;">
+  <div class="admin-topbar">
+    <div class="admin-topbar-left">
+      <div class="ws-logo-icon" style="width:24px;height:24px;font-size:11px;">B</div>
+      <div class="admin-topbar-workspace">Managing: <span>RealAdvisor CH</span></div>
+    </div>
+    <div style="display:flex;gap:8px;"><button class="btn btn-outline btn-sm">Quote Generator</button></div>
+  </div>
+  <div class="admin-layout">
+    <aside class="admin-sidebar">
+      <div class="nav-section-label">Main</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Dashboard</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Quotes</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>Subscriptions</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 7H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3"/><rect x="9" y="3" width="6" height="8" rx="1"/></svg>Invoices</div>
+      <div style="height:1px;background:var(--sidebar-border);margin:8px 12px;"></div>
+      <div class="nav-section-label">Commissions</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Sales</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Commission Plans</div>
+      <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Payouts</div>
+      <div style="height:1px;background:var(--sidebar-border);margin:8px 12px;"></div>
+      <div class="nav-section-label">Settings</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Users</div>
+      <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>Settings</div>
+    </aside>
+
+    <main class="admin-sidebar-content" style="padding:24px;">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+          <div>
+            <h1 class="page-header-title">Payouts</h1>
+            <p class="page-header-desc">Lock monthly periods and export payroll CSV</p>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm">Create period</button>
+      </div>
+
+      <!-- Current period card -->
+      <div class="card" style="margin-bottom:16px;border-color:oklch(0.82 0.07 260);">
+        <div class="card-header" style="background:oklch(0.97 0.02 260);border-radius:calc(var(--radius)+2px) calc(var(--radius)+2px) 0 0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div class="card-title">March 2026 <span class="badge badge-warning" style="margin-left:8px;vertical-align:middle;">Open</span></div>
+              <div class="card-description">24 sales · 14 reps · closes Mar 31</div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-outline btn-sm">Review all</button>
+              <button class="btn btn-primary btn-sm">Lock & export CSV</button>
+            </div>
+          </div>
+        </div>
+        <div class="card-content">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px;">
+            <div><div class="kpi-label">Total commissions</div><div style="font-size:18px;font-weight:700;">CHF 6,120</div></div>
+            <div><div class="kpi-label">Approved</div><div style="font-size:18px;font-weight:700;color:oklch(0.45 0.12 145);">CHF 3,870 <span style="font-size:12px;font-weight:400;">(8 reps)</span></div></div>
+            <div><div class="kpi-label">Pending</div><div style="font-size:18px;font-weight:700;color:oklch(0.5 0.12 75);">CHF 2,250 <span style="font-size:12px;font-weight:400;">(6 reps)</span></div></div>
+          </div>
+          <!-- Approval progress -->
+          <div style="font-size:12px;color:var(--fg-muted);margin-bottom:6px;">Approval progress — 8 of 14 reps approved</div>
+          <div class="progress-bar"><div class="progress-fill" style="width:57%;"></div></div>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div class="card">
+        <div class="card-header"><div class="card-title">Past periods</div></div>
+        <div class="card-content" style="padding-top:0;">
+          <table class="tbl">
+            <thead><tr><th>Period</th><th>Sales</th><th>Reps</th><th>Total paid</th><th>Locked</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td style="font-weight:500;">February 2026</td>
+                <td>19</td>
+                <td>12</td>
+                <td style="font-weight:500;">CHF 4,840</td>
+                <td style="color:var(--fg-muted);">Mar 2</td>
+                <td><span class="badge badge-success">Locked</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:500;">January 2026</td>
+                <td>21</td>
+                <td>13</td>
+                <td style="font-weight:500;">CHF 5,280</td>
+                <td style="color:var(--fg-muted);">Feb 1</td>
+                <td><span class="badge badge-success">Locked</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SCREEN 4: REP — MY COMMISSIONS                 -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="rep-commissions" class="screen" style="flex-direction:column;">
+  <div class="ws-layout">
+    <!-- Workspace header -->
+    <header style="position:sticky;top:0;z-index:50;border-bottom:1px solid var(--border);background:rgba(255,255,255,0.85);backdrop-filter:blur(8px);">
+      <div style="max-width:900px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="ws-logo-icon">B</div>
+          <span style="font-weight:700;font-size:15px;">Billing Badger</span>
+          <div style="padding:3px 10px;border-radius:6px;background:var(--muted);font-size:12px;color:var(--fg-muted);font-weight:500;">RealAdvisor CH</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn btn-outline btn-sm" style="font-size:12px;">EN</button>
+          <div class="avatar" style="width:32px;height:32px;font-size:12px;">MD</div>
+        </div>
+      </div>
+    </header>
+
+    <main style="max-width:900px;margin:0 auto;padding:32px 16px;">
+      <!-- Tabs -->
+      <div style="margin-bottom:24px;">
+        <div class="tabs-list">
+          <div class="tab-trigger">My Quotes</div>
+          <div class="tab-trigger active">My Commissions</div>
+        </div>
+      </div>
+
+      <!-- KPI summary cards -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px;">
+        <div class="kpi-card">
+          <div class="kpi-label">YTD Earned</div>
+          <div class="kpi-value">CHF 18,640</div>
+          <div class="kpi-sub kpi-delta-up">↑ 22% vs last year</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">This month (Mar)</div>
+          <div class="kpi-value">CHF 2,260</div>
+          <div class="kpi-sub" style="color:var(--fg-muted);">2 pending approval</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Next payout</div>
+          <div class="kpi-value">Apr 1</div>
+          <div class="kpi-sub" style="color:var(--fg-muted);">Est. CHF 3,100</div>
+        </div>
+      </div>
+
+      <!-- March 2026 -->
+      <div class="card" style="margin-bottom:14px;">
+        <div class="card-header" style="padding-bottom:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div class="card-title">March 2026</div>
+              <div class="card-description">3 sales · CHF 2,260 total · period open</div>
+            </div>
+            <span class="badge badge-warning">Open</span>
+          </div>
+        </div>
+        <div class="card-content" style="padding-top:0;">
+          <table class="tbl">
+            <thead><tr><th>Client</th><th>Deal type</th><th>MRR</th><th>Commission</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr>
+                <td style="font-weight:500;">Immo Zürich AG</td>
+                <td><span class="badge badge-blue">New</span></td>
+                <td>CHF 490/mo</td>
+                <td style="font-weight:600;color:oklch(0.45 0.12 145);">CHF 940</td>
+                <td><span class="badge badge-warning">Pending</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:500;">Helvetia Realty</td>
+                <td><span class="badge badge-blue">New</span></td>
+                <td>CHF 890/mo</td>
+                <td style="font-weight:600;color:oklch(0.45 0.12 145);">CHF 1,705</td>
+                <td><span class="badge badge-warning">Pending</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:500;">Müller & Partner AG</td>
+                <td><span class="badge badge-secondary">Renewal</span></td>
+                <td>CHF 190/mo</td>
+                <td style="font-weight:600;color:oklch(0.45 0.12 145);">CHF 365</td>
+                <td><span class="badge badge-success">Approved</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- February 2026 (locked) -->
+      <div class="card">
+        <div class="card-header" style="padding-bottom:8px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div class="card-title">February 2026</div>
+              <div class="card-description">4 sales · CHF 4,120 total · paid Mar 2</div>
+            </div>
+            <span class="badge badge-success">Paid</span>
+          </div>
+        </div>
+        <div class="card-content" style="padding-top:0;">
+          <table class="tbl">
+            <thead><tr><th>Client</th><th>Deal type</th><th>MRR</th><th>Commission</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr>
+                <td style="font-weight:500;">Zug Immobilien AG</td>
+                <td><span class="badge badge-blue">New</span></td>
+                <td>CHF 590/mo</td>
+                <td style="font-weight:600;">CHF 1,130</td>
+                <td><span class="badge badge-success">Paid</span></td>
+              </tr>
+              <tr>
+                <td style="font-weight:500;">Luzern Wohnen GmbH</td>
+                <td><span class="badge badge-secondary">Renewal</span></td>
+                <td>CHF 290/mo</td>
+                <td style="font-weight:600;">CHF 558</td>
+                <td><span class="badge badge-success">Paid</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- SCREEN 5: NEW SALE FORM                        -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="sale-form" class="screen" style="flex-direction:column;">
+  <div class="admin-topbar">
+    <div class="admin-topbar-left">
+      <div class="ws-logo-icon" style="width:24px;height:24px;font-size:11px;">B</div>
+      <div class="admin-topbar-workspace">Managing: <span>RealAdvisor CH</span></div>
+    </div>
+    <button class="btn btn-outline btn-sm" onclick="show('admin-sales')">← Back to Sales</button>
+  </div>
+
+  <div style="max-width:720px;margin:0 auto;padding:28px 16px;width:100%;">
+    <div class="page-header">
+      <div class="page-header-left">
+        <div class="page-header-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+        <div><h1 class="page-header-title">New Sale</h1><p class="page-header-desc">Record a new sale for commission calculation</p></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title">Sale details</div></div>
+      <div class="card-content">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="form-row" style="margin-bottom:0;">
+            <label class="form-label">Client name *</label>
+            <input class="input" value="Immo Beispiel AG" readonly/>
+          </div>
+          <div class="form-row" style="margin-bottom:0;">
+            <label class="form-label">Sales rep *</label>
+            <select class="select" style="height:36px;width:100%;">
+              <option>Marc Dubois</option>
+              <option>Anna Keller</option>
+            </select>
+          </div>
+          <div class="form-row" style="margin-bottom:0;">
+            <label class="form-label">Deal type *</label>
+            <select class="select" style="height:36px;width:100%;">
+              <option>New</option>
+              <option>Renewal</option>
+            </select>
+          </div>
+          <div class="form-row" style="margin-bottom:0;">
+            <label class="form-label">Sale date *</label>
+            <input class="input" value="2026-03-07" readonly/>
+          </div>
+          <div class="form-row" style="margin-bottom:0;grid-column:1/-1;">
+            <label class="form-label">Linked quote <span style="color:var(--fg-muted);font-weight:400;">(optional)</span></label>
+            <input class="input" value="Q-2026-0341 — Immo Beispiel AG" readonly/>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <div class="card-header">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div class="card-title">Line items</div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-outline btn-sm">Apply sale discount</button>
+            <button class="btn btn-outline btn-sm"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add line item</button>
+          </div>
+        </div>
+      </div>
+      <div class="card-content" style="padding-top:0;">
+        <table class="li-table">
+          <thead>
+            <tr>
+              <th style="width:30%;">Product</th>
+              <th>Type</th>
+              <th>Interval</th>
+              <th>Unit price</th>
+              <th>Qty</th>
+              <th>Discount</th>
+              <th>Net</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><input class="input" value="Visibility Pro" readonly style="font-size:12px;height:30px;"/></td>
+              <td>
+                <select class="select" style="height:30px;font-size:12px;width:100px;">
+                  <option>Recurring</option>
+                  <option>Setup fee</option>
+                  <option>One-time</option>
+                  <option>Add-on</option>
+                </select>
+              </td>
+              <td>
+                <select class="select" style="height:30px;font-size:12px;width:80px;">
+                  <option>Monthly</option>
+                  <option>Annual</option>
+                </select>
+              </td>
+              <td><input class="input" value="CHF 390" readonly style="font-size:12px;height:30px;width:80px;"/></td>
+              <td><input class="input" value="1" readonly style="font-size:12px;height:30px;width:46px;"/></td>
+              <td><input class="input" placeholder="0%" style="font-size:12px;height:30px;width:60px;" readonly/></td>
+              <td style="font-weight:600;font-size:12px;">CHF 390</td>
+              <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px;color:oklch(0.5 0.15 27);">✕</button></td>
+            </tr>
+            <tr>
+              <td><input class="input" value="Onboarding" readonly style="font-size:12px;height:30px;"/></td>
+              <td>
+                <select class="select" style="height:30px;font-size:12px;width:100px;">
+                  <option>Recurring</option>
+                  <option selected>Setup fee</option>
+                  <option>One-time</option>
+                  <option>Add-on</option>
+                </select>
+              </td>
+              <td>
+                <select class="select" style="height:30px;font-size:12px;width:80px;">
+                  <option selected>One-time</option>
+                </select>
+              </td>
+              <td><input class="input" value="CHF 500" readonly style="font-size:12px;height:30px;width:80px;"/></td>
+              <td><input class="input" value="1" readonly style="font-size:12px;height:30px;width:46px;"/></td>
+              <td><input class="input" value="10%" style="font-size:12px;height:30px;width:60px;" readonly/></td>
+              <td style="font-weight:600;font-size:12px;">CHF 450</td>
+              <td><button class="btn btn-ghost btn-sm" style="padding:2px 6px;color:oklch(0.5 0.15 27);">✕</button></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Commission preview -->
+        <div style="margin-top:14px;padding:12px 14px;background:oklch(0.97 0.02 260);border-radius:var(--radius);border:1px solid oklch(0.88 0.05 260);">
+          <div style="font-size:12px;font-weight:600;color:oklch(0.4 0.15 260);margin-bottom:6px;">Commission preview — CH Standard plan</div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <div style="font-size:12px;color:var(--fg-muted);">MRR: <strong>CHF 390/mo</strong></div>
+            <div style="font-size:12px;color:var(--fg-muted);">ARR: <strong>CHF 4,680</strong></div>
+            <div style="font-size:12px;color:var(--fg-muted);">Rate: <strong>16% (new deal)</strong></div>
+            <div style="font-size:14px;font-weight:700;color:oklch(0.45 0.12 145);margin-left:auto;">= CHF 749</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+      <button class="btn btn-outline" onclick="show('admin-sales')">Cancel</button>
+      <button class="btn btn-primary">Save sale</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  const labels = { 'admin-sales': '①', 'admin-plans': '②', 'admin-payouts': '③', 'rep-commissions': '④', 'sale-form': '⑤' };
+  document.querySelectorAll('.nav-tab').forEach(t => {
+    if (t.textContent.startsWith(labels[id])) t.classList.add('active');
+  });
+}
+function openDrawer() {
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('overlay').classList.add('open');
+}
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');
+}
+</script>
+</body>
+</html>
