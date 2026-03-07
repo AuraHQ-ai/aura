@@ -290,7 +290,14 @@ function parseInline(text: string, baseKey: number, dark: boolean): React.ReactN
       // Slack link format: <url|label> or <url> or <@mention> or <#channel>
       const inner = token.slice(1, -1);
       if (inner.startsWith("@")) {
-        const name = inner.slice(1);
+        const rawId = inner.slice(1);
+        // Resolve known Slack user IDs to display names for HTML rendering
+        const USER_NAMES: Record<string, string> = {
+          U0AFEC1C69F: "Aura",
+          U0678NQJ2: "Joan",
+          U066V1AN6: "Jonas",
+        };
+        const name = USER_NAMES[rawId] ?? rawId;
         parts.push(
           <span
             key={key++}
