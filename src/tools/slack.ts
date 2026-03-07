@@ -2278,7 +2278,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     upload_file: defineTool({
       description:
-        "Upload a file to Slack, optionally sharing to a channel or thread. Two modes: (1) Pass `content` for text files (CSV, JSON, code) — inline string. (2) Pass `file_path` for binary files (images, audio, PDFs) — reads the file from the sandbox filesystem. Exactly one of `content` or `file_path` must be provided. The channel parameter accepts any Slack destination: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID ('D0AF1K2EBH8'), group DM ID ('G01234'), or a username/display name ('Joan') to open a DM. Use thread_ts to post into a specific thread (including Slack List item comment threads).",
+        "Upload a file to Slack, optionally sharing to a channel or thread. Two modes: (1) Pass `content` for text files (CSV, JSON, code) — inline string. (2) Pass `file_path` for binary files (images, audio, PDFs) — reads the file from the sandbox filesystem. Exactly one of `content` or `file_path` must be provided. The channel parameter accepts any Slack destination: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID ('D0AF1K2EBH8'), group DM ID ('G01234'), or a username/display name ('Joan') to open a DM. Use thread_ts to post into a specific thread (including Slack List item comment threads). IMPORTANT: If you are currently in a thread and want to share a file there, pass the channel ID (not a username) plus thread_ts. Passing a username always opens a new DM conversation, even if you're already in a DM thread with that person.",
       inputSchema: z.object({
         content: z
           .string()
