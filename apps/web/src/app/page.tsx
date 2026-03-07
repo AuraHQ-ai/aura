@@ -31,7 +31,9 @@ export default function Home() {
           </p>
           <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
             <a
-              href="mailto:hello@aurahq.ai"
+              href="https://github.com/AuraHQ-ai/aura"
+              target="_blank"
+              rel="noopener noreferrer"
               style={{
                 background: "var(--btn-bg)",
                 color: "var(--btn-color)",
@@ -41,12 +43,20 @@ export default function Home() {
                 fontWeight: 500,
                 letterSpacing: "-0.01em",
                 textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
               }}
             >
-              Request access
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style={{ width: "16px", height: "16px", flexShrink: 0 }}>
+                <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.942.359.31.678.921.678 1.856 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+              </svg>
+              Star on GitHub
             </a>
             <a
-              href="/blog"
+              href="https://docs.aurahq.ai"
+              target="_blank"
+              rel="noopener noreferrer"
               style={{
                 background: "var(--btn-secondary-bg)",
                 color: "var(--btn-secondary-color)",
@@ -59,7 +69,7 @@ export default function Home() {
                 textDecoration: "none",
               }}
             >
-              Read the blog
+              Read the docs →
             </a>
           </div>
         </div>
@@ -178,27 +188,57 @@ export default function Home() {
       <section style={{ padding: "96px 0" }}>
         <div style={{ maxWidth: "480px" }}>
           <h2 style={{ fontSize: "clamp(1.5rem, 3vw, 2.25rem)", fontWeight: 700, letterSpacing: "-0.03em", color: "var(--text-primary)", marginBottom: "16px" }}>
-            Ready to hire her?
+            Open source. Deploy it yourself.
           </h2>
           <p style={{ fontSize: "1rem", color: "var(--text-secondary)", lineHeight: 1.7, marginBottom: "32px" }}>
-            Aura runs in Slack. She joins your channels, learns your team, and starts working on day one. No setup wizard. No onboarding call.
+            Aura runs in Slack. She joins your channels, learns your team, and compounds over time. Star the repo and follow the docs to get her running in 30 minutes.
           </p>
-          <a
-            href="mailto:hello@aurahq.ai"
-            style={{
-              display: "inline-block",
-              background: "var(--btn-bg)",
-              color: "var(--btn-color)",
-              padding: "13px 28px",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: 500,
-              letterSpacing: "-0.01em",
-              textDecoration: "none",
-            }}
-          >
-            Get in touch →
-          </a>
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            <a
+              href="https://github.com/AuraHQ-ai/aura"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                background: "var(--btn-bg)",
+                color: "var(--btn-color)",
+                padding: "13px 28px",
+                borderRadius: "8px",
+                fontSize: "14px",
+                fontWeight: 500,
+                letterSpacing: "-0.01em",
+                textDecoration: "none",
+              }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style={{ width: "16px", height: "16px", flexShrink: 0 }}>
+                <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.942.359.31.678.921.678 1.856 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+              </svg>
+              View on GitHub
+            </a>
+            <a
+              href="https://docs.aurahq.ai"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                background: "var(--btn-secondary-bg)",
+                color: "var(--btn-secondary-color)",
+                border: "1px solid var(--col-border)",
+                padding: "13px 28px",
+                borderRadius: "8px",
+                fontSize: "14px",
+                fontWeight: 500,
+                letterSpacing: "-0.01em",
+                textDecoration: "none",
+              }}
+            >
+              Read the docs →
+            </a>
+          </div>
         </div>
       </section>
     </div>
