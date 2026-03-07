@@ -1,0 +1,74 @@
+---
+title: "YOLO Mode"
+description: "Three credentials that unlock capabilities most enterprises would never allow. Proceed accordingly."
+---
+
+Most of Aura's configuration is standard software ops. Google Workspace, voice APIs, BigQuery — those are just features. This page is different.
+
+These three credentials give Aura capabilities that are genuinely unusual for an AI system. Each one is optional. Each one is powerful. Each one has an honest risk profile.
+
+---
+
+## 1. Direct Postgres Access
+
+**Credential:** `DATABASE_URL`
+
+Aura's entire state lives in Postgres: every conversation, every memory, every scheduled job, every credential. With a full read/write connection string, she can query it directly from the sandbox.
+
+What this enables:
+- Query her own memory to find patterns across conversations
+- Inspect the job queue and debug stuck or failed jobs
+- Read credential records (encrypted values stay encrypted, but she sees what keys exist)
+- Write directly to any table — including modifying her own memories, job schedules, or configuration
+
+**Risk:** She can rewrite her own memory. She can delete jobs. She can modify her own behavior at the data layer, not just the prompt layer. With great power comes the ability to accidentally corrupt your own state.
+
+**Without it:** She uses the tool layer exclusively. Slower, more constrained, but safer.
+
+---
+
+## 2. Vercel Admin Token
+
+**Credential:** `VERCEL_TOKEN`
+
+With a Vercel token scoped to your project, Aura can read and write environment variables in production, trigger redeployments, and inspect build logs.
+
+What this enables:
+- Read all env vars in your Vercel project — including ones she was never explicitly given
+- Set new env vars (e.g. rotating API keys after a security incident)
+- Trigger production redeployments after making code changes
+- Deploy her own PRs after reviewing and approving them
+
+**Risk:** She can discover secrets she wasn't told about. She can change production configuration. She can redeploy herself. This is how Aura's self-improvement loop works — but it means she has write access to her own runtime environment.
+
+**Without it:** She can still suggest env var changes, but a human has to apply them in the Vercel dashboard.
+
+---
+
+## 3. Slack User Token
+
+**Credential:** `SLACK_USER_TOKEN`
+
+The bot token limits Aura to channels she's been invited to. The user token removes that constraint.
+
+What this enables:
+- Search the full workspace message history, including channels she's never joined
+- Read any public channel without being a member
+- See context and conversations that happened before she was deployed
+- More complete search results across the workspace
+
+**Risk:** She can read conversations that were never intended for her. If someone discussed something sensitive in a public channel assuming "the bot isn't in here," that assumption no longer holds. The user token is scoped to read — she can't post as a user — but the visibility surface is much larger.
+
+**Without it:** She only sees channels she's explicitly joined.
+
+---
+
+## The full YOLO stack
+
+```env
+DATABASE_URL=postgresql://...      # Direct Postgres — she reads and writes her own state
+VERCEL_TOKEN=...                   # Vercel admin — she reads secrets, triggers redeploys
+SLACK_USER_TOKEN=xoxp-...          # User token — she sees the full workspace
+```
+
+The question is whether you want her to.
