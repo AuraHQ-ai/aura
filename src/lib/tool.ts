@@ -1,5 +1,6 @@
 import { tool, type Tool } from "ai";
 import type { ZodType } from "zod";
+import type { RiskTier } from "./approval.js";
 
 // ── Slack Card Metadata ──────────────────────────────────────────────────────
 // Co-located with tool definitions via defineTool() so that Slack card behavior
@@ -31,11 +32,24 @@ export function getSlackMeta(t: unknown): SlackToolMetadata | undefined {
   return undefined;
 }
 
+/** Retrieve the risk tier from a tool created with defineTool(). */
+export function getToolRisk(t: unknown): RiskTier | undefined {
+  if (t && typeof t === "object" && "risk" in t) {
+    return (t as { risk: RiskTier }).risk;
+  }
+  return undefined;
+}
+
 /**
- * Wrapper around AI SDK's tool() that co-locates Slack card metadata with the
- * tool definition. The optional `slack` field is attached directly to the
- * returned tool object so respond.ts can read it at runtime without maintaining
- * separate switch blocks.
+ * Wrapper around AI SDK's tool() that co-locates Slack card metadata and
+ * governance risk tier with the tool definition.
+ *
+ * The optional `risk` field declares the tool's risk tier for action governance:
+ * - `"read"`: executed, optionally logged
+ * - `"write"`: executed + logged to action_log
+ * - `"destructive"`: requires human approval before execution
+ *
+ * Tools without `risk` behave exactly as before (no governance overhead).
  *
  * Usage:
  * ```ts
@@ -43,6 +57,7 @@ export function getSlackMeta(t: unknown): SlackToolMetadata | undefined {
  *   description: "...",
  *   inputSchema: z.object({ query: z.string() }),
  *   execute: async ({ query }) => ({ ok: true, results: [] }),
+ *   risk: "write",
  *   slack: {
  *     status: "Searching...",
  *     detail: (input) => input.query,
@@ -55,10 +70,11 @@ export function defineTool<TInput, TOutput>(config: {
   description: string;
   inputSchema: ZodType<TInput, any, any>;
   execute: (input: TInput) => PromiseLike<TOutput>;
+  risk?: RiskTier;
   slack?: SlackToolMetadata<TInput, TOutput>;
   toModelOutput?: Tool<TInput, TOutput>["toModelOutput"];
 }) {
-  const { slack, ...toolConfig } = config;
+  const { slack, risk, ...toolConfig } = config;
   // The spread loses the generic relationship between TInput/TOutput and the
   // Tool intersection type, so we go through `unknown` to satisfy the compiler.
   const t = tool<TInput, TOutput>(
@@ -67,8 +83,12 @@ export function defineTool<TInput, TOutput>(config: {
   if (slack) {
     (t as any).slack = slack;
   }
+  if (risk) {
+    (t as any).risk = risk;
+  }
   return t as Tool<TInput, TOutput> & {
     slack?: SlackToolMetadata<TInput, TOutput>;
+    risk?: RiskTier;
   };
 }
 
