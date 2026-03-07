@@ -251,13 +251,23 @@ function formatMemories(memories: Memory[]): string {
 /**
  * Format user profile for tone adaptation hints.
  */
-function formatUserProfile(profile: UserProfile): string {
+function formatUserProfile(profile: UserProfile, interlocutor?: MentionedPerson): string {
   const style = profile.communicationStyle;
   const facts = profile.knownFacts;
   const parts: string[] = [];
 
   parts.push(`\n## About the person you're talking to`);
   parts.push(`Display name: ${profile.displayName}`);
+
+  // Enrich with people DB fields (gender, pronouns, language, role, notes)
+  if (interlocutor) {
+    const PRONOUN_MAP: Record<string, string> = { male: 'he/him', female: 'she/her', 'non-binary': 'they/them' };
+    if (interlocutor.gender) parts.push(`Gender: ${interlocutor.gender} (${PRONOUN_MAP[interlocutor.gender.toLowerCase()] ?? 'they/them'})`);
+    if (interlocutor.preferredLanguage) parts.push(`Preferred language: ${interlocutor.preferredLanguage}`);
+    if (interlocutor.jobTitle) parts.push(`Role: ${interlocutor.jobTitle}`);
+    if (interlocutor.managerName) parts.push(`Manager: ${interlocutor.managerName}`);
+    if (interlocutor.notes) parts.push(`Notes: ${interlocutor.notes}`);
+  }
 
   if (style) {
     const styleParts: string[] = [];
@@ -316,30 +326,6 @@ function formatMentionedPeople(people: MentionedPerson[]): string {
   return `\n## Mentioned people\n${lines.join('\n')}`;
 }
 
-/**
- * Format interlocutor profile from the people DB for the conversation layer.
- * Provides gender/pronouns, preferred language, and org context so Aura
- * addresses the person correctly from the very first token.
- */
-function formatInterlocutor(person: MentionedPerson): string {
-  const PRONOUN_MAP: Record<string, string> = {
-    male: "he/him",
-    female: "she/her",
-    "non-binary": "they/them",
-  };
-
-  const parts: string[] = [`\n## About the person you're talking to (people DB)`];
-  if (person.displayName) parts.push(`Name: ${person.displayName}`);
-  if (person.gender) {
-    const pronouns = PRONOUN_MAP[person.gender.toLowerCase()] ?? "they/them";
-    parts.push(`Gender: ${person.gender} (${pronouns})`);
-  }
-  if (person.preferredLanguage) parts.push(`Preferred language: ${person.preferredLanguage}`);
-  if (person.jobTitle) parts.push(`Job title: ${person.jobTitle}`);
-  if (person.managerName) parts.push(`Manager: ${person.managerName}`);
-  if (person.notes) parts.push(`Notes: ${person.notes}`);
-  return parts.join("\n");
-}
 
 /**
  * Format retrieved conversation threads for injection into the prompt.
@@ -474,13 +460,9 @@ export async function buildSystemPrompt(
 
   // User profile (if available)
   if (context.userProfile) {
-    conversationParts.push(formatUserProfile(context.userProfile));
+    conversationParts.push(formatUserProfile(context.userProfile, context.interlocutor));
   }
 
-  // Interlocutor profile from people DB (gender, pronouns, language, org context)
-  if (context.interlocutor) {
-    conversationParts.push(formatInterlocutor(context.interlocutor));
-  }
 
   // Mentioned people context (from people DB)
   if (context.mentionedPeople?.length) {
