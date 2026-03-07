@@ -281,8 +281,8 @@ function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
   const [open, setOpen] = React.useState(node.open ?? false);
 
   const borderColor = dark ? "#36393f" : "#d9d9d9";
-  const bgColor = dark ? "#1a1d21" : "#f8f8f8";
-  const bgHover = dark ? "#222529" : "#f0f0f0";
+  const bgColor = dark ? "#222529" : "#f7f7f7";
+  const bgHover = dark ? "#2a2e34" : "#f0f0f0";
   const textMuted = dark ? "#8a8b8c" : "#888";
   const statusOkColor = dark ? "#8a8b8c" : "#888";
   const statusErrColor = "#e01e5a";
@@ -533,27 +533,23 @@ export function SlackConversation({
   maxWidth = "680px",
   theme,
 }: SlackConversationProps) {
-  // Detect dark from CSS class or explicit prop
-  const [sysDark, setSysDark] = React.useState(false);
+  // Detect dark from next-themes: checks class="dark" and data-theme="dark" on <html>
+  const [themeDark, setThemeDark] = React.useState(false);
   React.useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    setSysDark(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setSysDark(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-
-  // Also check for the .dark class on <html> (next-themes)
-  const [classDark, setClassDark] = React.useState(false);
-  React.useEffect(() => {
-    const update = () => setClassDark(document.documentElement.classList.contains("dark"));
+    const update = () => {
+      const html = document.documentElement;
+      const isDark =
+        html.classList.contains("dark") ||
+        html.getAttribute("data-theme") === "dark";
+      setThemeDark(isDark);
+    };
     update();
     const obs = new MutationObserver(update);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
     return () => obs.disconnect();
   }, []);
 
-  const dark = theme === "dark" ? true : theme === "light" ? false : (classDark || sysDark);
+  const dark = theme === "dark" ? true : theme === "light" ? false : themeDark;
 
   const bgColor = dark ? "#1a1d21" : "#ffffff";
   const borderColor = dark ? "#36393f" : "#e5e5e5";
