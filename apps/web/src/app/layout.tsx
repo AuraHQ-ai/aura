@@ -128,12 +128,15 @@ function Footer() {
       <div
         className="layout-inner footer-inner"
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "24px", flexWrap: "wrap" }}>
           <Link href="/" style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>Aura</Link>
           <Link href="/blog" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Blog</Link>
           <a href="https://docs.aurahq.ai" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Docs</a>
           <a href="/blog/feed.xml" style={{ fontSize: "13px", color: "var(--text-muted)" }}>RSS</a>
           <a href="/llms.txt" style={{ fontSize: "13px", color: "var(--text-muted)" }}>llms.txt</a>
+          <Link href="/legal/privacy" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Privacy</Link>
+          <Link href="/legal/terms" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Terms</Link>
+          <Link href="/legal/data-handling" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Data Handling</Link>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <ThemeToggle />
