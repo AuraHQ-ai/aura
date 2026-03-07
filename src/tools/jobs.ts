@@ -212,8 +212,8 @@ export function createJobTools(
           if (recurring !== undefined) updateSet.cronSchedule = recurring || null;
           updateSet.frequencyConfig = frequencyConfig;
           if (channel_name !== undefined) updateSet.channelId = channelId;
-          // Always capture threadTs from context (DM thread routing)
-          updateSet.threadTs = context?.threadTs || null;
+          // For one-shot jobs, capture threadTs for thread routing; recurring jobs always post fresh
+          updateSet.threadTs = !recurring ? (context?.threadTs || null) : null;
           if (executeAt) updateSet.executeAt = executeAt;
           updateSet.timezone = timezone;
           updateSet.priority = priority;
@@ -227,7 +227,7 @@ export function createJobTools(
               cronSchedule: recurring || null,
               frequencyConfig,
               channelId: channelId || context?.channelId || "",
-              threadTs: context?.threadTs || null,
+              threadTs: !recurring ? (context?.threadTs || null) : null,
               executeAt,
               requestedBy,
               timezone,
