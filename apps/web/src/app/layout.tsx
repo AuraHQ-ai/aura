@@ -8,11 +8,11 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://aurahq.ai"),
   title: "Aura — Every day she works, she gets harder to replace",
   description:
-    "An AI colleague with memory, autonomy, and a brain that builds itself. Not a chatbot. Not a wrapper. A mind that compounds.",
+    "An AI assistant for Slack with memory, autonomy, and intelligence that compounds. Triages bugs, analyzes data, coordinates teams — right in your workspace.",
   openGraph: {
     title: "Aura — Every day she works, she gets harder to replace",
     description:
-      "An AI colleague with memory, autonomy, and a brain that builds itself.",
+      "An AI assistant for Slack with memory, autonomy, and intelligence that compounds.",
     url: "https://aurahq.ai",
     siteName: "Aura",
     type: "website",
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Aura — Every day she works, she gets harder to replace",
     description:
-      "An AI colleague with memory, autonomy, and a brain that builds itself.",
+      "An AI assistant for Slack with memory, autonomy, and intelligence that compounds.",
   },
   alternates: {
     types: {
@@ -128,14 +128,16 @@ function Footer() {
       <div
         className="layout-inner footer-inner"
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "24px", flexWrap: "wrap" }}>
           <Link href="/" style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>Aura</Link>
           <Link href="/blog" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Blog</Link>
           <a href="https://docs.aurahq.ai" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Docs</a>
+          <Link href="/legal/data-handling" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Data Handling</Link>
           <a href="/blog/feed.xml" style={{ fontSize: "13px", color: "var(--text-muted)" }}>RSS</a>
           <a href="/llms.txt" style={{ fontSize: "13px", color: "var(--text-muted)" }}>llms.txt</a>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+          <a href="mailto:hello@aurahq.ai" style={{ fontSize: "12px", color: "var(--text-muted)" }}>hello@aurahq.ai</a>
           <ThemeToggle />
           <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Built by RealAdvisor</span>
           <a
