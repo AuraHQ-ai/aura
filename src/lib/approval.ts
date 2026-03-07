@@ -1,3 +1,4 @@
+import { WebClient } from "@slack/web-api";
 import { eq, and, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
@@ -8,6 +9,8 @@ import {
   type ScheduleContext,
 } from "../db/schema.js";
 import { logger } from "./logger.js";
+
+export type { ApprovalPolicy };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -147,7 +150,8 @@ export async function requestApproval(args: {
   context: ExecutionContext;
   slackClient?: InstanceType<typeof import("@slack/web-api").WebClient> | null;
 }): Promise<void> {
-  const { actionLogId, toolName, params, riskTier, policy, context, slackClient } = args;
+  const { actionLogId, toolName, params, riskTier, policy, context, slackClient: injectedSlackClient } = args;
+  const slackClient = injectedSlackClient ?? new WebClient(process.env.SLACK_BOT_TOKEN);
 
   const row = await db
     .select()
