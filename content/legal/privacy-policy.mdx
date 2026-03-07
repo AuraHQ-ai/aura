@@ -1,0 +1,107 @@
+# Privacy Policy
+
+**Last updated: March 7, 2026**
+
+Aura is an AI team member that lives in Slack. This Privacy Policy explains what data we collect, how we use it, and your rights as a workspace administrator or user.
+
+---
+
+## 1. What We Collect
+
+When you install Aura in your Slack workspace, we collect and store:
+
+- **Slack messages and threads** where Aura is mentioned or participates -- used to generate responses and extract memories
+- **User identifiers** (Slack user IDs, display names) -- used to personalize responses and maintain conversation context
+- **Workspace metadata** (workspace ID, workspace name, channel IDs) -- used to isolate your data from other workspaces
+- **OAuth tokens** -- your Slack bot token, stored encrypted, used to send and receive messages
+- **Optional integrations**: if you connect Gmail, Google Calendar, or Google Drive, we store OAuth refresh tokens for those services, scoped to the individual user who authorized them
+
+We do **not** collect payment card data, health information, government IDs, or any data outside your connected Slack workspace and authorized integrations.
+
+---
+
+## 2. How We Use Your Data
+
+Your data is used exclusively to operate Aura:
+
+- **LLM inference**: message content is sent to Anthropic (Claude) to generate responses. Anthropic processes this data under their [usage policies](https://www.anthropic.com/legal/usage-policy).
+- **Memory extraction**: after each conversation, a fast model extracts structured facts (preferences, decisions, context) and stores them as vector embeddings in your workspace database.
+- **Semantic search**: message content is embedded using OpenAI's embedding model (`text-embedding-3-large`) to enable similarity search over your conversation history.
+- **Scheduled jobs**: your workspace's operational data may be used by scheduled Aura jobs (digests, monitoring, reminders) that you configure.
+
+We do **not**:
+- Train AI models on your Slack data
+- Sell your data to third parties
+- Share your data across workspaces
+- Use your data for advertising
+
+---
+
+## 3. Third-Party Services
+
+Aura relies on the following infrastructure providers. Your data may transit through or be stored by:
+
+| Service | Purpose | Privacy Policy |
+|---------|---------|---------------|
+| Anthropic | LLM inference (Claude) | [anthropic.com/legal/privacy](https://www.anthropic.com/legal/privacy) |
+| OpenAI | Text embeddings | [openai.com/privacy](https://openai.com/privacy) |
+| Neon | PostgreSQL database (EU-based) | [neon.tech/privacy](https://neon.tech/privacy) |
+| Vercel | Serverless hosting | [vercel.com/legal/privacy-policy](https://vercel.com/legal/privacy-policy) |
+
+All data is encrypted in transit (TLS 1.2+) and at rest (AES-256).
+
+---
+
+## 4. Data Retention
+
+- **Messages**: stored indefinitely by default. Workspace administrators can request deletion.
+- **Memories**: automatically decay in relevance over time (~138 days to 50% weight). Can be deleted on request.
+- **OAuth tokens**: deleted immediately when you uninstall Aura from your workspace.
+- **Job logs**: retained for 90 days, then purged.
+
+---
+
+## 5. Data Isolation
+
+Each Slack workspace has a unique `workspace_id` that scopes all data. Your messages, memories, notes, and user profiles are never accessible to other workspaces. We enforce this at the database query level.
+
+---
+
+## 6. Your Rights
+
+As a workspace administrator, you can:
+
+- **Request a data export**: email privacy@aurahq.ai with your workspace ID
+- **Request data deletion**: we will delete all workspace data within 30 days of a verified request
+- **Uninstall at any time**: uninstalling Aura from Slack immediately revokes our bot token. Your data remains in our database for 30 days (to support reinstallation), then is permanently deleted unless you request earlier deletion.
+
+Individual users (EU residents) may have additional rights under GDPR including access, rectification, erasure, and portability. Contact privacy@aurahq.ai.
+
+---
+
+## 7. GDPR & CCPA
+
+We operate under EU data protection law. For GDPR purposes:
+- **Data Controller**: AuraHQ (aurahq.ai)
+- **Data Processor**: Anthropic, OpenAI, Neon, Vercel (see Section 3)
+- **Legal basis for processing**: legitimate interest (operating the service you installed) and contract performance
+
+California residents: we do not sell personal information. You have the right to know, delete, and opt-out under CCPA. Contact privacy@aurahq.ai.
+
+---
+
+## 8. Security
+
+- All data encrypted in transit (TLS 1.2+) and at rest (AES-256)
+- OAuth tokens stored encrypted in our database
+- Access to production systems restricted to Aura maintainers
+- Security incidents disclosed to affected workspace admins within 72 hours
+
+---
+
+## 9. Contact
+
+For privacy questions, data requests, or security concerns:
+
+**Email**: privacy@aurahq.ai  
+**Response time**: within 5 business days
