@@ -428,7 +428,7 @@ function SlackMessageRow({
   const hoverBg = dark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)";
 
   const avatarShape = message.avatarShape ?? (message.isApp ? "square" : "round");
-  const avatarBorderRadius = avatarShape === "round" ? "50%" : "12px";
+  const avatarBorderRadius = avatarShape === "round" ? "12px" : "6px";
 
   return (
     <div
