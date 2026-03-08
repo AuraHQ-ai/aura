@@ -2,7 +2,7 @@ import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq, and, gt, or, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { notes, jobs } from "../db/schema.js";
+import { notes, jobs, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -23,6 +23,7 @@ function withLineNumbers(content: string): string {
 /** Fetch a note by topic. */
 async function getNoteByTopic(
   topic: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<{
   id: string;
   topic: string;
@@ -34,7 +35,7 @@ async function getNoteByTopic(
   const rows = await db
     .select()
     .from(notes)
-    .where(eq(notes.topic, topic))
+    .where(and(eq(notes.workspaceId, workspaceId), eq(notes.topic, topic)))
     .limit(1);
   return rows[0] ?? null;
 }
@@ -46,9 +47,9 @@ function parseContinuationDepth(content: string): number {
 }
 
 /** Fire-and-forget: embed note content and update the embedding column. Uses updatedAt guard to avoid stale writes. */
-function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
+function updateNoteEmbedding(text: string, topic: string, savedAt: Date, workspaceId: string = DEFAULT_WORKSPACE_ID): void {
   embedText(text).then(embedding => {
-    db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
+    db.update(notes).set({ embedding }).where(and(eq(notes.workspaceId, workspaceId), eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
   }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 }
 
@@ -61,6 +62,8 @@ function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
  * @param context Optional schedule context for checkpoint_plan routing (channelId, threadTs, userId)
  */
 export function createNoteTools(context?: ScheduleContext) {
+  const wsId = context?.workspaceId ?? DEFAULT_WORKSPACE_ID;
+
   return {
     save_note: defineTool({
       description:
@@ -127,6 +130,7 @@ export function createNoteTools(context?: ScheduleContext) {
           await db
             .insert(notes)
             .values({
+              workspaceId: wsId,
               topic,
               content,
               category: effectiveCategory,
@@ -134,11 +138,11 @@ export function createNoteTools(context?: ScheduleContext) {
               updatedAt: savedAt,
             })
             .onConflictDoUpdate({
-              target: notes.topic,
+              target: [notes.workspaceId, notes.topic],
               set: updateSet,
             });
 
-          updateNoteEmbedding(content, topic, savedAt);
+          updateNoteEmbedding(content, topic, savedAt, wsId);
 
           logger.info("save_note tool called", {
             topic,
@@ -169,7 +173,7 @@ export function createNoteTools(context?: ScheduleContext) {
       }),
       execute: async ({ topic }) => {
         try {
-          const note = await getNoteByTopic(topic);
+          const note = await getNoteByTopic(topic, wsId);
           if (!note) {
             return {
               ok: false,
@@ -214,7 +218,7 @@ export function createNoteTools(context?: ScheduleContext) {
       execute: async ({ category }) => {
         try {
           const now = new Date();
-          const conditions = [];
+          const conditions = [eq(notes.workspaceId, wsId)];
 
           if (category) {
             conditions.push(eq(notes.category, category));
@@ -313,7 +317,7 @@ export function createNoteTools(context?: ScheduleContext) {
             return { ok: false, error: "Only admins can edit the self-directive." };
           }
 
-          const note = await getNoteByTopic(topic);
+          const note = await getNoteByTopic(topic, wsId);
           if (!note) {
             return {
               ok: false,
@@ -389,9 +393,9 @@ export function createNoteTools(context?: ScheduleContext) {
           await db
             .update(notes)
             .set({ content: newContent, embedding: null, updatedAt: savedAt })
-            .where(eq(notes.topic, topic));
+            .where(and(eq(notes.workspaceId, wsId), eq(notes.topic, topic)));
 
-          updateNoteEmbedding(newContent, topic, savedAt);
+          updateNoteEmbedding(newContent, topic, savedAt, wsId);
 
           const finalLineCount = newContent.split("\n").length;
 
@@ -432,7 +436,7 @@ export function createNoteTools(context?: ScheduleContext) {
             return { ok: false, error: "Only admins can delete the self-directive." };
           }
 
-          const note = await getNoteByTopic(topic);
+          const note = await getNoteByTopic(topic, wsId);
           if (!note) {
             return {
               ok: false,
@@ -440,7 +444,7 @@ export function createNoteTools(context?: ScheduleContext) {
             };
           }
 
-          await db.delete(notes).where(eq(notes.topic, topic));
+          await db.delete(notes).where(and(eq(notes.workspaceId, wsId), eq(notes.topic, topic)));
 
           logger.info("delete_note tool called", { topic });
 
@@ -503,6 +507,7 @@ export function createNoteTools(context?: ScheduleContext) {
               .from(notes)
               .where(
                 and(
+                  eq(notes.workspaceId, wsId),
                   sql`${notes.embedding} IS NOT NULL`,
                   or(isNull(notes.expiresAt), gt(notes.expiresAt, new Date()))!,
                 ),
@@ -543,7 +548,8 @@ export function createNoteTools(context?: ScheduleContext) {
                   websearch_to_tsquery('english', unaccent(${trimmed}))
                 ) as rank
               FROM notes
-              WHERE to_tsvector('english', unaccent(content))
+              WHERE workspace_id = ${wsId}
+                AND to_tsvector('english', unaccent(content))
                 @@ websearch_to_tsquery('english', unaccent(${trimmed}))
                 AND (expires_at IS NULL OR expires_at > now())
               ORDER BY rank DESC
@@ -561,7 +567,8 @@ export function createNoteTools(context?: ScheduleContext) {
                 substring(content from greatest(1, position(lower(${trimmed}) in lower(content)) - 100)
                   for 200) as snippet
               FROM notes
-              WHERE lower(content) LIKE ${pattern} ESCAPE '\\'
+              WHERE workspace_id = ${wsId}
+                AND lower(content) LIKE ${pattern} ESCAPE '\\'
                 AND (expires_at IS NULL OR expires_at > now())
               ORDER BY updated_at DESC
               LIMIT ${limit}
@@ -648,7 +655,7 @@ export function createNoteTools(context?: ScheduleContext) {
           }
 
           // Read existing plan note to check continuation depth
-          const existing = await getNoteByTopic(topic);
+          const existing = await getNoteByTopic(topic, wsId);
           let depth = 0;
           if (existing) {
             depth = parseContinuationDepth(existing.content);
@@ -667,6 +674,7 @@ export function createNoteTools(context?: ScheduleContext) {
             await db
               .insert(notes)
               .values({
+                workspaceId: wsId,
                 topic,
                 content: noteContent,
                 category: "plan",
@@ -674,7 +682,7 @@ export function createNoteTools(context?: ScheduleContext) {
                 updatedAt: savedAt,
               })
               .onConflictDoUpdate({
-                target: notes.topic,
+                target: [notes.workspaceId, notes.topic],
                 set: {
                   content: noteContent,
                   category: "plan",
@@ -684,7 +692,7 @@ export function createNoteTools(context?: ScheduleContext) {
                 },
               });
 
-            updateNoteEmbedding(noteContent, topic, savedAt);
+            updateNoteEmbedding(noteContent, topic, savedAt, wsId);
 
             logger.info("checkpoint_plan: depth limit reached", {
               topic,
@@ -715,6 +723,7 @@ export function createNoteTools(context?: ScheduleContext) {
           await db
             .insert(notes)
             .values({
+              workspaceId: wsId,
               topic,
               content: noteContent,
               category: "plan",
@@ -722,7 +731,7 @@ export function createNoteTools(context?: ScheduleContext) {
               updatedAt: savedAt,
             })
             .onConflictDoUpdate({
-              target: notes.topic,
+              target: [notes.workspaceId, notes.topic],
               set: {
                 content: noteContent,
                 category: "plan",
@@ -732,10 +741,11 @@ export function createNoteTools(context?: ScheduleContext) {
               },
             });
 
-          updateNoteEmbedding(noteContent, topic, savedAt);
+          updateNoteEmbedding(noteContent, topic, savedAt, wsId);
 
           // 2. Insert a continuation job with channelId + threadTs for routing
           await db.insert(jobs).values({
+            workspaceId: wsId,
             name: `continue-${topic}-${Date.now().toString(36)}`,
             description,
             executeAt,

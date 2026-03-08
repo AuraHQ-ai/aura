@@ -1,9 +1,10 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import { generateObject, generateText, Output } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
   userProfiles,
+  DEFAULT_WORKSPACE_ID,
   type UserProfile,
   type CommunicationStyle,
   type KnownFacts,
@@ -19,12 +20,13 @@ export async function getOrCreateProfile(
   slackUserId: string,
   displayName: string,
   timezone?: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<UserProfile> {
   // Try to find existing
   const existing = await db
     .select()
     .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .where(and(eq(userProfiles.workspaceId, workspaceId), eq(userProfiles.slackUserId, slackUserId)))
     .limit(1);
 
   if (existing.length > 0) {
@@ -33,7 +35,7 @@ export async function getOrCreateProfile(
       await db
         .update(userProfiles)
         .set({ timezone, updatedAt: new Date() })
-        .where(eq(userProfiles.slackUserId, slackUserId));
+        .where(and(eq(userProfiles.workspaceId, workspaceId), eq(userProfiles.slackUserId, slackUserId)));
       Object.assign(profile, { timezone });
     }
     if (!profile.personId) {
@@ -54,11 +56,12 @@ export async function getOrCreateProfile(
   const result = await db
     .insert(userProfiles)
     .values({
+      workspaceId,
       slackUserId,
       displayName,
       timezone,
     })
-    .onConflictDoNothing({ target: userProfiles.slackUserId })
+    .onConflictDoNothing({ target: [userProfiles.workspaceId, userProfiles.slackUserId] })
     .returning();
 
   if (result.length > 0) {
@@ -80,7 +83,7 @@ export async function getOrCreateProfile(
   const [concurrentlyCreated] = await db
     .select()
     .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .where(and(eq(userProfiles.workspaceId, workspaceId), eq(userProfiles.slackUserId, slackUserId)))
     .limit(1);
 
   return concurrentlyCreated;
@@ -90,7 +93,7 @@ export async function getOrCreateProfile(
  * Increment interaction count and update last interaction time.
  * Called after every exchange.
  */
-export async function recordInteraction(slackUserId: string): Promise<void> {
+export async function recordInteraction(slackUserId: string, workspaceId: string = DEFAULT_WORKSPACE_ID): Promise<void> {
   await db
     .update(userProfiles)
     .set({
@@ -98,7 +101,7 @@ export async function recordInteraction(slackUserId: string): Promise<void> {
       lastInteractionAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(userProfiles.slackUserId, slackUserId));
+    .where(and(eq(userProfiles.workspaceId, workspaceId), eq(userProfiles.slackUserId, slackUserId)));
 }
 
 /**
@@ -130,13 +133,14 @@ export async function updateProfileFromConversation(
   slackUserId: string,
   userMessage: string,
   assistantResponse: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<void> {
   try {
     // Get current profile
     const [profile] = await db
       .select()
       .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, slackUserId))
+      .where(and(eq(userProfiles.workspaceId, workspaceId), eq(userProfiles.slackUserId, slackUserId)))
       .limit(1);
 
     if (!profile) return;
@@ -205,7 +209,7 @@ Only include new facts that are clearly stated or strongly implied. Don't specul
         knownFacts: mergedFacts,
         updatedAt: new Date(),
       })
-      .where(eq(userProfiles.slackUserId, slackUserId));
+      .where(and(eq(userProfiles.workspaceId, workspaceId), eq(userProfiles.slackUserId, slackUserId)));
 
     logger.info("Updated user profile", {
       slackUserId,
@@ -225,11 +229,12 @@ Only include new facts that are clearly stated or strongly implied. Don't specul
  */
 export async function getProfile(
   slackUserId: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<UserProfile | null> {
   const results = await db
     .select()
     .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .where(and(eq(userProfiles.workspaceId, workspaceId), eq(userProfiles.slackUserId, slackUserId)))
     .limit(1);
 
   return results[0] || null;

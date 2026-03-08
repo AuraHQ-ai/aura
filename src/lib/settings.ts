@@ -1,17 +1,17 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { settings } from "../db/schema.js";
+import { settings, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import { logger } from "./logger.js";
 
 /**
  * Read a single setting by key. Returns null if not set.
  */
-export async function getSetting(key: string): Promise<string | null> {
+export async function getSetting(key: string, workspaceId: string = DEFAULT_WORKSPACE_ID): Promise<string | null> {
   try {
     const rows = await db
       .select({ value: settings.value })
       .from(settings)
-      .where(eq(settings.key, key))
+      .where(and(eq(settings.workspaceId, workspaceId), eq(settings.key, key)))
       .limit(1);
 
     return rows[0]?.value ?? null;
@@ -28,13 +28,14 @@ export async function setSetting(
   key: string,
   value: string,
   updatedBy?: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<void> {
   try {
     await db
       .insert(settings)
-      .values({ key, value, updatedBy, updatedAt: new Date() })
+      .values({ workspaceId, key, value, updatedBy, updatedAt: new Date() })
       .onConflictDoUpdate({
-        target: settings.key,
+        target: [settings.workspaceId, settings.key],
         set: { value, updatedBy, updatedAt: new Date() },
       });
 
@@ -48,9 +49,9 @@ export async function setSetting(
 /**
  * Read all settings as a key-value record.
  */
-export async function getAllSettings(): Promise<Record<string, string>> {
+export async function getAllSettings(workspaceId: string = DEFAULT_WORKSPACE_ID): Promise<Record<string, string>> {
   try {
-    const rows = await db.select().from(settings);
+    const rows = await db.select().from(settings).where(eq(settings.workspaceId, workspaceId));
     const result: Record<string, string> = {};
     for (const row of rows) {
       result[row.key] = row.value;
@@ -74,24 +75,26 @@ const JSON_CACHE_TTL_MS = 60_000; // 1 minute
 export async function getSettingJSON<T = unknown>(
   key: string,
   fallback: T | null = null,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<T | null> {
+  const cacheKey = `${workspaceId}:${key}`;
   const now = Date.now();
-  const cached = jsonSettingsCache.get(key);
+  const cached = jsonSettingsCache.get(cacheKey);
   if (cached && cached.expiresAt > now) return cached.value as T;
 
-  const raw = await getSetting(key);
+  const raw = await getSetting(key, workspaceId);
   if (raw === null) {
-    jsonSettingsCache.set(key, { value: fallback, expiresAt: now + JSON_CACHE_TTL_MS });
+    jsonSettingsCache.set(cacheKey, { value: fallback, expiresAt: now + JSON_CACHE_TTL_MS });
     return fallback;
   }
 
   try {
     const parsed = JSON.parse(raw) as T;
-    jsonSettingsCache.set(key, { value: parsed, expiresAt: now + JSON_CACHE_TTL_MS });
+    jsonSettingsCache.set(cacheKey, { value: parsed, expiresAt: now + JSON_CACHE_TTL_MS });
     return parsed;
   } catch {
     logger.warn("Failed to parse JSON setting", { key, raw });
-    jsonSettingsCache.set(key, { value: fallback, expiresAt: now + JSON_CACHE_TTL_MS });
+    jsonSettingsCache.set(cacheKey, { value: fallback, expiresAt: now + JSON_CACHE_TTL_MS });
     return fallback;
   }
 }

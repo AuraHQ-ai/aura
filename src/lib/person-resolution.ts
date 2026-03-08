@@ -4,6 +4,7 @@ import {
   people,
   addresses,
   userProfiles,
+  DEFAULT_WORKSPACE_ID,
   type Person,
 } from "../db/schema.js";
 import { logger } from "./logger.js";
@@ -14,13 +15,21 @@ import { logger } from "./logger.js";
 export async function resolvePersonByAddress(
   channel: string,
   value: string,
+  workspaceId?: string,
 ): Promise<Person | null> {
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
   const normalised = normaliseValue(channel, value);
   const rows = await db
     .select({ person: people })
     .from(addresses)
     .innerJoin(people, eq(addresses.personId, people.id))
-    .where(and(eq(addresses.channel, channel), eq(addresses.value, normalised)))
+    .where(
+      and(
+        eq(addresses.workspaceId, wsId),
+        eq(addresses.channel, channel),
+        eq(addresses.value, normalised),
+      ),
+    )
     .limit(1);
 
   return rows.length > 0 ? rows[0].person : null;
@@ -34,10 +43,12 @@ export async function createPersonWithAddress(
   displayName: string | null,
   channel: string,
   value: string,
+  workspaceId?: string,
 ): Promise<Person> {
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
   const normalised = normaliseValue(channel, value);
 
-  const personValues: Record<string, unknown> = { displayName };
+  const personValues: Record<string, unknown> = { displayName, workspaceId: wsId };
   if (channel === "slack") {
     personValues.slackUserId = normalised;
   }
@@ -52,6 +63,7 @@ export async function createPersonWithAddress(
       .insert(addresses)
       .values({
         personId: person.id,
+        workspaceId: wsId,
         channel,
         value: normalised,
         isPrimary: true,
@@ -61,7 +73,7 @@ export async function createPersonWithAddress(
 
     if (insertedAddress.length === 0) {
       await db.delete(people).where(eq(people.id, person.id));
-      const existing = await resolvePersonByAddress(channel, value);
+      const existing = await resolvePersonByAddress(channel, value, wsId);
       if (!existing) {
         throw new Error(
           `Address conflict but could not resolve person for ${channel}:${value}`,
@@ -94,15 +106,23 @@ export async function linkProfileToPerson(
  * Ensure a profile is linked to a person (called from getOrCreateProfile).
  * Creates a person + slack address if one doesn't exist yet.
  */
-export async function ensurePersonLinked(profile: {
-  id: string;
-  slackUserId: string;
-  displayName: string | null;
-  personId?: string | null;
-}): Promise<string> {
+export async function ensurePersonLinked(
+  profile: {
+    id: string;
+    slackUserId: string;
+    displayName: string | null;
+    personId?: string | null;
+  },
+  workspaceId?: string,
+): Promise<string> {
   if (profile.personId) return profile.personId;
 
-  const existing = await resolvePersonByAddress("slack", profile.slackUserId);
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
+  const existing = await resolvePersonByAddress(
+    "slack",
+    profile.slackUserId,
+    wsId,
+  );
   if (existing) {
     await linkProfileToPerson(profile.id, existing.id);
     return existing.id;
@@ -112,6 +132,7 @@ export async function ensurePersonLinked(profile: {
     profile.displayName,
     "slack",
     profile.slackUserId,
+    wsId,
   );
   await linkProfileToPerson(profile.id, person.id);
   return person.id;
@@ -124,21 +145,23 @@ export async function ensurePersonLinked(profile: {
  *   2. Create an address row (channel='slack', value=slack_user_id, is_primary=true)
  *   3. Set user_profiles.person_id = new person.id
  */
-export async function backfillPeopleFromProfiles(): Promise<{
-  created: number;
-  skipped: number;
-}> {
+export async function backfillPeopleFromProfiles(
+  workspaceId?: string,
+): Promise<{ created: number; skipped: number }> {
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
   const unlinked = await db
     .select()
     .from(userProfiles)
-    .where(isNull(userProfiles.personId));
+    .where(
+      and(eq(userProfiles.workspaceId, wsId), isNull(userProfiles.personId)),
+    );
 
   let created = 0;
   let skipped = 0;
 
   for (const profile of unlinked) {
     try {
-      await ensurePersonLinked(profile);
+      await ensurePersonLinked(profile, wsId);
       created++;
     } catch (error) {
       logger.error("Failed to backfill profile", {
@@ -166,13 +189,20 @@ export async function backfillPeopleFromProfiles(): Promise<{
 export async function resolveOrCreateFromEmail(
   email: string,
   displayName: string | null,
+  workspaceId?: string,
 ): Promise<string> {
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
   const normEmail = email.toLowerCase();
 
-  const existing = await resolvePersonByAddress("email", normEmail);
+  const existing = await resolvePersonByAddress("email", normEmail, wsId);
   if (existing) return existing.id;
 
-  const person = await createPersonWithAddress(displayName, "email", normEmail);
+  const person = await createPersonWithAddress(
+    displayName,
+    "email",
+    normEmail,
+    wsId,
+  );
   return person.id;
 }
 

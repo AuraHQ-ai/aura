@@ -1,7 +1,7 @@
-import { sql, or, inArray } from "drizzle-orm";
+import { sql, or, inArray, and, eq } from "drizzle-orm";
 import { rerank } from "ai";
 import { db } from "../db/client.js";
-import { memories, messages, type Memory, type Message } from "../db/schema.js";
+import { memories, messages, type Memory, type Message, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
 import { getRerankingModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
@@ -13,6 +13,8 @@ interface RetrievalOptions {
   queryEmbedding?: number[];
   /** The Slack user ID of the person asking */
   currentUserId: string;
+  /** Workspace ID for multi-tenancy (defaults to "default") */
+  workspaceId?: string;
   /** Maximum number of memories to return */
   limit?: number;
   /** Minimum relevance score threshold */
@@ -64,7 +66,8 @@ async function extractLexemes(
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1 } = options;
+  const { query, queryEmbedding: precomputed, currentUserId, workspaceId: wsIdOpt, limit = 20, minRelevanceScore = 0.1 } = options;
+  const wsId = wsIdOpt ?? DEFAULT_WORKSPACE_ID;
   const start = Date.now();
 
   try {
@@ -82,7 +85,7 @@ export async function retrieveMemories(
       OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
     )`;
 
-    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore}`;
+    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${memories.workspaceId} = ${wsId}`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
@@ -179,6 +182,7 @@ export async function retrieveMemories(
         relevanceScore: row.relevance_score ?? 1,
         shareable: row.shareable ?? 0,
         searchVector: row.search_vector ?? null,
+        workspaceId: row.workspace_id ?? DEFAULT_WORKSPACE_ID,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       } as Memory,
@@ -283,6 +287,8 @@ interface ConversationRetrievalOptions {
   query: string;
   /** Pre-computed query embedding (avoids double-embedding when called alongside retrieveMemories) */
   queryEmbedding?: number[];
+  /** Workspace ID for multi-tenancy (defaults to "default") */
+  workspaceId?: string;
   /** Maximum number of individual message matches to search */
   matchLimit?: number;
   /** Maximum number of conversation threads to return */
@@ -309,11 +315,13 @@ export async function retrieveConversations(
   const {
     query,
     queryEmbedding: precomputed,
+    workspaceId: wsIdOpt,
     matchLimit = 20,
     threadLimit = 5,
     minSimilarity = 0.3,
     excludeThreadTs,
   } = options;
+  const wsId = wsIdOpt ?? DEFAULT_WORKSPACE_ID;
   const start = Date.now();
 
   try {
@@ -327,7 +335,7 @@ export async function retrieveConversations(
         similarity: sql<number>`1 - (${messages.embedding} <=> ${embeddingLiteral}::vector)`.as("similarity"),
       })
       .from(messages)
-      .where(sql`${messages.embedding} IS NOT NULL`)
+      .where(and(sql`${messages.embedding} IS NOT NULL`, eq(messages.workspaceId, wsId)))
       .orderBy(sql`${messages.embedding} <=> ${embeddingLiteral}::vector`)
       .limit(matchLimit);
 
@@ -388,10 +396,13 @@ export async function retrieveConversations(
       .select()
       .from(messages)
       .where(
-        or(
-          inArray(messages.slackThreadTs, threadKeys),
-          inArray(messages.slackTs, threadKeys),
-        )!,
+        and(
+          eq(messages.workspaceId, wsId),
+          or(
+            inArray(messages.slackThreadTs, threadKeys),
+            inArray(messages.slackTs, threadKeys),
+          )!,
+        ),
       )
       .orderBy(messages.createdAt);
 

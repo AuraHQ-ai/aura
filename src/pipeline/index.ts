@@ -29,6 +29,7 @@ import {
 import { downloadEventFiles } from "../lib/files.js";
 import { pauseSandbox } from "../lib/sandbox.js";
 import { getSettingJSON } from "../lib/settings.js";
+import { DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
@@ -134,7 +135,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   }
 
   // 1a. Dedup: atomically claim this event; skip if another handler got there first
-  const claimed = await claimEvent(context.messageTs, context.channelId);
+  const claimed = await claimEvent(context.messageTs, context.channelId, teamId);
   if (!claimed) {
     logger.debug("Skipping duplicate event", {
       ts: context.messageTs,
@@ -180,7 +181,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       channelId: context.channelId,
     });
     // Still store the message for long-term memory, but don't respond
-    const storePromise = storeUserMessage(context, event);
+    const storePromise = storeUserMessage(context, event, teamId);
     if (waitUntil) {
       waitUntil(storePromise);
     } else {
@@ -273,7 +274,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
 
     // Ensure user has a profile and resolve their timezone
     const { name: displayName, timezone: slackTimezone } = await resolveDisplayName(client, context.userId);
-    const userProfile = await getOrCreateProfile(context.userId, displayName, slackTimezone);
+    const userProfile = await getOrCreateProfile(context.userId, displayName, slackTimezone, teamId);
     const userTimezone = userProfile.timezone || "UTC";
 
     // 3. Check for transparency commands first
@@ -281,6 +282,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       { ...context, text: messageText },
       client,
       replyThreadTs,
+      teamId,
     );
     if (transparencyResult) {
       recordPipelineMetrics({
@@ -308,6 +310,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       { ...context, text: messageText },
       conversation,
       client,
+      teamId,
     );
     const retrievalMs = Date.now() - retrievalStart;
 
@@ -329,7 +332,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       dynamicContext,
       userMessage: messageText,
       slackClient: client,
-      context: { userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs, timezone: userTimezone },
+      context: { workspaceId: teamId, userId: context.userId, channelId: context.channelId, threadTs: replyThreadTs, timezone: userTimezone },
       files: fileParts,
       channelId: context.channelId,
       threadTs: replyThreadTs,
@@ -392,6 +395,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       displayName,
       client,
       threadMessageCount: conversation.thread?.length ?? 0,
+      workspaceId: teamId,
       ...(() => {
         const all = (conversation.thread ?? conversation.recentMessages)
           .map(m => ({ displayName: m.displayName, text: m.text }));
@@ -462,8 +466,10 @@ async function handleTransparencyCommands(
   context: MessageContext,
   client: WebClient,
   replyThreadTs?: string,
+  workspaceId?: string,
 ): Promise<boolean> {
   const text = context.text.toLowerCase().trim();
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
 
   // "What do you know about me?" command
   if (
@@ -471,7 +477,7 @@ async function handleTransparencyCommands(
     text.includes("what do you remember about me")
   ) {
     try {
-      const knowledge = await getKnowledgeAboutUser(context.userId);
+      const knowledge = await getKnowledgeAboutUser(context.userId, wsId);
       const summary = formatKnowledgeSummary(knowledge);
       await safePostMessage(client, {
         channel: context.channelId,
@@ -507,9 +513,10 @@ async function handleTransparencyCommands(
 /**
  * Store the user's message in the background.
  */
-async function storeUserMessage(context: MessageContext, event: SlackEvent): Promise<void> {
+async function storeUserMessage(context: MessageContext, event: SlackEvent, workspaceId?: string): Promise<void> {
   try {
     await storeMessage({
+      workspaceId: workspaceId ?? DEFAULT_WORKSPACE_ID,
       slackTs: context.messageTs,
       slackThreadTs: context.threadTs,
       channelId: context.channelId,
@@ -546,12 +553,15 @@ async function runBackgroundTasks(params: {
   threadMessageCount: number;
   recentThreadMessages: Array<{ displayName: string; text: string }>;
   threadMessagesElided: boolean;
+  workspaceId?: string;
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided } = params;
+  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, workspaceId } = params;
+  const wsId = workspaceId ?? DEFAULT_WORKSPACE_ID;
 
   try {
     // Store the user's message
     const userMessageId = await storeMessage({
+      workspaceId: wsId,
       slackTs: context.messageTs,
       slackThreadTs: context.threadTs,
       channelId: context.channelId,
@@ -565,6 +575,7 @@ async function runBackgroundTasks(params: {
     // Store Aura's response with a pseudo-timestamp
     const assistantTs = `${context.messageTs}-aura`;
     await storeMessage({
+      workspaceId: wsId,
       slackTs: assistantTs,
       slackThreadTs: context.threadTs || context.messageTs,
       channelId: context.channelId,
@@ -582,6 +593,7 @@ async function runBackgroundTasks(params: {
         channelId: context.channelId,
         channelType: context.channelType,
         userId: context.userId,
+        workspaceId: wsId,
       };
 
       await storeToolCallMessages(toolCalls, storageCtx);
@@ -617,11 +629,12 @@ async function runBackgroundTasks(params: {
     });
 
     // Record interaction and potentially update profile
-    await recordInteraction(context.userId);
+    await recordInteraction(context.userId, wsId);
     await updateProfileFromConversation(
       context.userId,
       context.text,
       response,
+      wsId,
     );
 
     // Set or update DM thread title for the Assistant History tab.

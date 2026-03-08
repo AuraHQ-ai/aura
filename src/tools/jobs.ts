@@ -4,7 +4,7 @@ import { eq, and, or, desc, isNotNull, ne, sql } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
-import { jobs, jobExecutions } from "../db/schema.js";
+import { jobs, jobExecutions, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import type { FrequencyConfig, ScheduleContext } from "../db/schema.js";
 import { waitUntil } from "@vercel/functions";
 import { isAdmin } from "../lib/permissions.js";
@@ -25,6 +25,7 @@ export function createJobTools(
   client: WebClient,
   context?: ScheduleContext,
 ) {
+  const wsId = context?.workspaceId ?? DEFAULT_WORKSPACE_ID;
   return {
     create_job: defineTool({
       description:
@@ -144,7 +145,7 @@ export function createJobTools(
             const existing = await db
               .select({ cronSchedule: jobs.cronSchedule, timezone: jobs.timezone })
               .from(jobs)
-              .where(eq(jobs.name, name))
+              .where(and(eq(jobs.workspaceId, wsId), eq(jobs.name, name)))
               .limit(1);
 
             if (existing.length > 0 && existing[0].cronSchedule) {
@@ -186,6 +187,7 @@ export function createJobTools(
               .from(jobs)
               .where(
                 and(
+                  eq(jobs.workspaceId, wsId),
                   eq(jobs.requestedBy, requestedBy),
                   eq(jobs.status, "pending"),
                   eq(jobs.enabled, 1),
@@ -221,6 +223,7 @@ export function createJobTools(
           await db
             .insert(jobs)
             .values({
+              workspaceId: wsId,
               name: jobName,
               description,
               playbook: playbook || null,
@@ -235,7 +238,7 @@ export function createJobTools(
               updatedAt: new Date(),
             })
             .onConflictDoUpdate({
-              target: jobs.name,
+              target: [jobs.workspaceId, jobs.name],
               set: updateSet,
             });
 
@@ -287,7 +290,7 @@ export function createJobTools(
       }),
       execute: async ({ status, recurring_only, limit }) => {
         try {
-          const conditions = [eq(jobs.status, status)];
+          const conditions = [eq(jobs.workspaceId, wsId), eq(jobs.status, status)];
           if (recurring_only) {
             conditions.push(
               and(isNotNull(jobs.cronSchedule), ne(jobs.cronSchedule, ""))!,
@@ -355,8 +358,8 @@ export function createJobTools(
           }
 
           const condition = job_id
-            ? eq(jobs.id, job_id)
-            : eq(jobs.name, name!);
+            ? and(eq(jobs.workspaceId, wsId), eq(jobs.id, job_id))!
+            : and(eq(jobs.workspaceId, wsId), eq(jobs.name, name!))!;
 
           const rows = await db
             .select()
@@ -462,6 +465,7 @@ export function createJobTools(
           const [job] = await db
             .insert(jobs)
             .values({
+              workspaceId: wsId,
               name: jobName,
               description: task,
               playbook: playbook || null,
@@ -553,7 +557,7 @@ export function createJobTools(
             const [job] = await db
               .select({ id: jobs.id })
               .from(jobs)
-              .where(eq(jobs.name, job_name))
+              .where(and(eq(jobs.workspaceId, wsId), eq(jobs.name, job_name)))
               .limit(1);
             if (!job)
               return {
@@ -567,8 +571,8 @@ export function createJobTools(
 
           const query = db.select().from(jobExecutions);
           const executions = await (condition
-            ? query.where(condition)
-            : query
+            ? query.where(and(eq(jobExecutions.workspaceId, wsId), condition)!)
+            : query.where(eq(jobExecutions.workspaceId, wsId))
           )
             .orderBy(desc(jobExecutions.startedAt))
             .limit(limit);

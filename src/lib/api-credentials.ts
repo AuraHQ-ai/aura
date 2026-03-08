@@ -5,6 +5,7 @@ import {
   credentialGrants,
   credentialAuditLog,
   userProfiles,
+  DEFAULT_WORKSPACE_ID,
   type Credential,
 } from "../db/schema.js";
 import { encryptCredential, decryptCredential } from "./credentials.js";
@@ -47,6 +48,7 @@ async function audit(
   accessedBy: string,
   action: AuditAction,
   context?: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<void> {
   try {
     await db.insert(credentialAuditLog).values({
@@ -55,6 +57,7 @@ async function audit(
       accessedBy,
       action,
       context,
+      workspaceId,
     });
   } catch (error) {
     logger.error("Failed to write credential audit log", {
@@ -117,6 +120,7 @@ export async function storeApiCredential(
   expiresAt?: Date,
   type: "token" | "oauth_client" = "token",
   tokenUrl?: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<Credential> {
   validateKey();
   validateName(name);
@@ -144,9 +148,10 @@ export async function storeApiCredential(
       tokenUrl: type === "oauth_client" ? (tokenUrl ?? null) : null,
       value: encrypted,
       expiresAt: expiresAt ?? null,
+      workspaceId,
     })
     .onConflictDoUpdate({
-      target: [credentials.ownerId, credentials.name],
+      target: [credentials.workspaceId, credentials.ownerId, credentials.name],
       set: {
         value: encrypted,
         type,
@@ -158,7 +163,7 @@ export async function storeApiCredential(
     .returning();
 
   const isUpdate = row.createdAt.getTime() !== row.updatedAt.getTime();
-  await audit(row.id, name, ownerId, isUpdate ? "update" : "create");
+  await audit(row.id, name, ownerId, isUpdate ? "update" : "create", undefined, workspaceId);
 
   return row;
 }
@@ -169,6 +174,7 @@ async function fetchAndAuthorize(
   ownerId: string,
   requestingUserId: string,
   intent: "read" | "write",
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<typeof credentials.$inferSelect | null> {
   validateKey();
   validateName(name);
@@ -176,25 +182,31 @@ async function fetchAndAuthorize(
   const rows = await db
     .select()
     .from(credentials)
-    .where(and(eq(credentials.ownerId, ownerId), eq(credentials.name, name)))
+    .where(
+      and(
+        eq(credentials.workspaceId, workspaceId),
+        eq(credentials.ownerId, ownerId),
+        eq(credentials.name, name),
+      ),
+    )
     .limit(1);
 
   const cred = rows[0];
   if (!cred) return null;
 
   if (cred.expiresAt && cred.expiresAt < new Date()) {
-    await audit(cred.id, name, requestingUserId, "expired_access_attempt");
+    await audit(cred.id, name, requestingUserId, "expired_access_attempt", undefined, workspaceId);
     await notifyOwnerExpired(cred.ownerId, name).catch(() => {});
     return null;
   }
 
   const allowed = await hasPermission(ownerId, cred.id, requestingUserId, intent);
   if (!allowed) {
-    await audit(cred.id, name, requestingUserId, intent, "access_denied");
+    await audit(cred.id, name, requestingUserId, intent, "access_denied", workspaceId);
     throw new Error(`Access denied: ${requestingUserId} cannot ${intent} credential "${name}" owned by ${ownerId}`);
   }
 
-  await audit(cred.id, name, requestingUserId, "read");
+  await audit(cred.id, name, requestingUserId, "read", undefined, workspaceId);
   return cred;
 }
 
@@ -203,8 +215,9 @@ export async function getApiCredential(
   ownerId: string,
   requestingUserId: string,
   intent: "read" | "write",
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<string | null> {
-  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
+  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent, workspaceId);
   if (!cred) return null;
   return decryptCredential(cred.value);
 }
@@ -214,8 +227,9 @@ export async function getApiCredentialWithType(
   ownerId: string,
   requestingUserId: string,
   intent: "read" | "write",
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<{ value: string; type: string; access_token?: string; expires_in?: number } | null> {
-  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
+  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent, workspaceId);
   if (!cred) return null;
 
   const decrypted = decryptCredential(cred.value);
@@ -299,6 +313,7 @@ export async function getJobApiCredential(
   jobId: string,
   creatorId: string,
   declaredCredentialIds: string[],
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<string | null> {
   validateKey();
   validateName(name);
@@ -310,6 +325,7 @@ export async function getJobApiCredential(
     .from(credentials)
     .where(
       and(
+        eq(credentials.workspaceId, workspaceId),
         eq(credentials.name, name),
         eq(credentials.ownerId, creatorId),
         sql`${credentials.id} = ANY(${declaredCredentialIds})`,
@@ -321,12 +337,12 @@ export async function getJobApiCredential(
   if (!cred) return null;
 
   if (cred.expiresAt && cred.expiresAt < new Date()) {
-    await audit(cred.id, name, `job:${jobId}`, "expired_access_attempt");
+    await audit(cred.id, name, `job:${jobId}`, "expired_access_attempt", undefined, workspaceId);
     await notifyOwnerExpired(creatorId, name).catch(() => {});
     return null;
   }
 
-  await audit(cred.id, name, `job:${jobId}`, "use", `creator:${creatorId}`);
+  await audit(cred.id, name, `job:${jobId}`, "use", `creator:${creatorId}`, workspaceId);
   return decryptCredential(cred.value);
 }
 
@@ -347,6 +363,7 @@ export async function getCredentialById(
 
 export async function listApiCredentials(
   userId: string,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<
   Array<{
     id: string;
@@ -366,7 +383,7 @@ export async function listApiCredentials(
       expires_at: credentials.expiresAt,
     })
     .from(credentials)
-    .where(eq(credentials.ownerId, userId));
+    .where(and(eq(credentials.workspaceId, workspaceId), eq(credentials.ownerId, userId)));
 
   const granted = await db
     .select({
@@ -381,6 +398,7 @@ export async function listApiCredentials(
     .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
     .where(
       and(
+        eq(credentials.workspaceId, workspaceId),
         eq(credentialGrants.granteeId, userId),
         isNull(credentialGrants.revokedAt),
       ),
@@ -440,12 +458,12 @@ export async function deleteApiCredential(
   if (!cred) return false;
 
   if (cred.ownerId !== requestingUserId) {
-    await audit(cred.id, cred.name, requestingUserId, "delete", "access_denied");
+    await audit(cred.id, cred.name, requestingUserId, "delete", "access_denied", cred.workspaceId);
     return false;
   }
 
   await db.delete(credentials).where(eq(credentials.id, credentialId));
-  await audit(null, cred.name, requestingUserId, "delete");
+  await audit(null, cred.name, requestingUserId, "delete", undefined, cred.workspaceId);
   return true;
 }
 
@@ -487,7 +505,7 @@ export async function grantApiCredentialAccess(
       },
     });
 
-  await audit(credentialId, cred.name, granterId, "grant", `grantee:${granteeId} permission:${permission}`);
+  await audit(credentialId, cred.name, granterId, "grant", `grantee:${granteeId} permission:${permission}`, cred.workspaceId);
 }
 
 export async function revokeApiCredentialAccess(
@@ -520,7 +538,7 @@ export async function revokeApiCredentialAccess(
       ),
     );
 
-  await audit(credentialId, cred.name, revokerId, "revoke", `grantee:${granteeId}`);
+  await audit(credentialId, cred.name, revokerId, "revoke", `grantee:${granteeId}`, cred.workspaceId);
 }
 
 function scrubValue(error: unknown, plaintext: string): Error {
@@ -539,8 +557,9 @@ export async function withApiCredential<T>(
   requestingUserId: string,
   intent: "read" | "write",
   fn: (value: string) => Promise<T>,
+  workspaceId: string = DEFAULT_WORKSPACE_ID,
 ): Promise<T> {
-  const plaintext = await getApiCredential(name, ownerId, requestingUserId, intent);
+  const plaintext = await getApiCredential(name, ownerId, requestingUserId, intent, workspaceId);
   if (plaintext === null) {
     throw new Error(`Credential "${name}" not found`);
   }
@@ -549,14 +568,18 @@ export async function withApiCredential<T>(
     const result = await fn(plaintext);
 
     const rows = await db
-      .select({ id: credentials.id })
+      .select({ id: credentials.id, workspaceId: credentials.workspaceId })
       .from(credentials)
       .where(
-        and(eq(credentials.ownerId, ownerId), eq(credentials.name, name)),
+        and(
+          eq(credentials.workspaceId, workspaceId),
+          eq(credentials.ownerId, ownerId),
+          eq(credentials.name, name),
+        ),
       )
       .limit(1);
     if (rows[0]) {
-      await audit(rows[0].id, name, requestingUserId, "use");
+      await audit(rows[0].id, name, requestingUserId, "use", undefined, rows[0].workspaceId);
     }
 
     return result;

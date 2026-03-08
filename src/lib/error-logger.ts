@@ -1,5 +1,5 @@
 import { db } from "../db/client.js";
-import { errorEvents } from "../db/schema.js";
+import { errorEvents, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import { logger } from "./logger.js";
 import { safePostMessage } from "./slack-messaging.js";
 
@@ -14,6 +14,7 @@ export interface LogErrorParams {
   channelType?: string;
   context?: Record<string, unknown>;
   stackTrace?: string;
+  workspaceId?: string;
 }
 
 // ── Rate Limiting ────────────────────────────────────────────────────────────
@@ -181,6 +182,7 @@ export function logError(params: LogErrorParams): void {
         channelType: params.channelType,
         context: params.context,
         stackTrace: params.stackTrace,
+        workspaceId: params.workspaceId ?? DEFAULT_WORKSPACE_ID,
       })
       .catch(() => {});
   }

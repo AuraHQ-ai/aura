@@ -2,7 +2,7 @@ import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { sql, and, eq, gte, lte } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { messages } from "../db/schema.js";
+import { messages, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
@@ -47,6 +47,7 @@ export interface ThreadGroup {
 }
 
 export function createConversationSearchTools(context?: ScheduleContext) {
+  const wsId = context?.workspaceId ?? DEFAULT_WORKSPACE_ID;
   return {
     search_my_conversations: defineTool({
       description:
@@ -117,7 +118,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
             };
           }
 
-          const conditions: ReturnType<typeof eq>[] = [];
+          const conditions: ReturnType<typeof eq>[] = [eq(messages.workspaceId, wsId)];
 
           if (user_id) {
             conditions.push(eq(messages.userId, user_id));
@@ -285,6 +286,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
                   FROM messages
                   WHERE (slack_thread_ts = ${threadKey} OR slack_ts = ${threadKey})
                     AND channel_id = ${thread.channel_id}
+                    AND workspace_id = ${wsId}
                   ORDER BY created_at ASC
                   LIMIT 20
                 `);

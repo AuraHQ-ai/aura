@@ -2,7 +2,7 @@ import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { voiceCalls } from "../db/schema.js";
+import { voiceCalls, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { isAdmin } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -183,6 +183,7 @@ async function resolvePhoneNumberIdFromCache(
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
 export function createVoiceTools(client: WebClient, context?: ScheduleContext): Record<string, any> {
+  const wsId = context?.workspaceId ?? DEFAULT_WORKSPACE_ID;
   const tools: Record<string, any> = {};
 
   if (process.env.ELEVENLABS_API_KEY) {
@@ -352,6 +353,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           .from(voiceCalls)
           .where(
             and(
+              eq(voiceCalls.workspaceId, wsId),
               gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
               eq(voiceCalls.direction, "outbound"),
             ),
@@ -533,6 +535,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         .from(voiceCalls)
         .where(
           and(
+            eq(voiceCalls.workspaceId, wsId),
             gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
             eq(voiceCalls.direction, "sms_outbound"),
           ),
@@ -603,6 +606,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           await db
             .insert(voiceCalls)
             .values({
+              workspaceId: wsId,
               conversationId: data.sid as string,
               direction: "sms_outbound",
               phoneNumber: phone_number,
@@ -610,7 +614,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
               status: "completed",
               callContext: message,
             })
-            .onConflictDoNothing({ target: voiceCalls.conversationId });
+            .onConflictDoNothing({ target: [voiceCalls.workspaceId, voiceCalls.conversationId] });
         } catch (dbError: any) {
           logger.error("send_sms DB insert failed (SMS was sent)", {
             error: dbError.message,
@@ -681,6 +685,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           .from(voiceCalls)
           .where(
             and(
+              eq(voiceCalls.workspaceId, wsId),
               gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
               eq(voiceCalls.direction, "voice_note"),
             ),
@@ -798,13 +803,14 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
             await db
               .insert(voiceCalls)
               .values({
+                workspaceId: wsId,
                 conversationId: `voice_note_${fileId}`,
                 direction: "voice_note",
                 slackUserId: context?.userId ?? null,
                 status: "completed",
                 callContext: text.substring(0, 500),
               })
-              .onConflictDoNothing({ target: voiceCalls.conversationId });
+              .onConflictDoNothing({ target: [voiceCalls.workspaceId, voiceCalls.conversationId] });
           } catch (dbError: any) {
             logger.error("send_voice_note DB insert failed (voice note was sent)", {
               error: dbError.message,

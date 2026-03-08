@@ -1,7 +1,7 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "../db/schema.js";
-import { notes } from "../db/schema.js";
+import { notes, DEFAULT_WORKSPACE_ID } from "../db/schema.js";
 import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
 import { buildSkillIndex } from "../lib/skill-index.js";
 import { logger } from "../lib/logger.js";
@@ -37,6 +37,8 @@ interface SystemPromptContext {
   mentionedPeople?: PersonProfile[];
   /** The person sending the message, looked up from the people DB */
   interlocutor?: PersonProfile;
+  /** Workspace ID for notes filtering */
+  workspaceId?: string;
 }
 
 /**
@@ -389,11 +391,12 @@ export async function buildSystemPrompt(
   // Self-directive: agent's own persistent context, loaded every invocation
   // Hard cap at ~2000 tokens (~8000 chars) to prevent context-window overflow
   const SELF_DIRECTIVE_MAX_CHARS = 8000;
+  const wsId = context.workspaceId ?? DEFAULT_WORKSPACE_ID;
   try {
     const rows = await db
       .select({ content: notes.content })
       .from(notes)
-      .where(eq(notes.topic, "self-directive"))
+      .where(and(eq(notes.workspaceId, wsId), eq(notes.topic, "self-directive")))
       .limit(1);
     if (rows[0]?.content) {
       let content = rows[0].content;
@@ -420,7 +423,7 @@ export async function buildSystemPrompt(
     const indexRows = await db
       .select({ content: notes.content })
       .from(notes)
-      .where(eq(notes.topic, "notes-index"))
+      .where(and(eq(notes.workspaceId, wsId), eq(notes.topic, "notes-index")))
       .limit(1);
     if (indexRows[0]?.content) {
       let indexContent = indexRows[0].content;
@@ -442,7 +445,7 @@ export async function buildSystemPrompt(
   }
 
   // Skill index (progressive disclosure -- lightweight topic + first line)
-  const skillIndex = await buildSkillIndex();
+  const skillIndex = await buildSkillIndex(wsId);
   if (skillIndex) {
     stableParts.push(skillIndex);
   }

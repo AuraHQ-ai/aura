@@ -8,6 +8,7 @@ import {
   addresses,
   userProfiles,
   messages,
+  DEFAULT_WORKSPACE_ID,
   type ScheduleContext,
 } from "../db/schema.js";
 
@@ -19,6 +20,7 @@ const E164_RE = /^\+[1-9]\d{1,14}$/;
 
 interface RawPersonRow {
   id: string;
+  workspace_id: string;
   display_name: string | null;
   slack_user_id: string | null;
   job_title: string | null;
@@ -34,6 +36,7 @@ interface RawPersonRow {
 function mapRawPerson(row: RawPersonRow): typeof people.$inferSelect {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     displayName: row.display_name,
     slackUserId: row.slack_user_id,
     jobTitle: row.job_title,
@@ -68,7 +71,10 @@ interface PersonResult {
   };
 }
 
-async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonResult> {
+async function enrichPerson(
+  person: typeof people.$inferSelect,
+  wsId: string,
+): Promise<PersonResult> {
   const addrs = await db
     .select({
       id: addresses.id,
@@ -77,14 +83,14 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
       isPrimary: addresses.isPrimary,
     })
     .from(addresses)
-    .where(eq(addresses.personId, person.id));
+    .where(and(eq(addresses.personId, person.id), eq(addresses.workspaceId, wsId)));
 
   let managerName: string | null = null;
   if (person.managerId) {
     const [mgr] = await db
       .select({ displayName: people.displayName })
       .from(people)
-      .where(eq(people.id, person.managerId))
+      .where(and(eq(people.id, person.managerId), eq(people.workspaceId, wsId)))
       .limit(1);
     managerName = mgr?.displayName ?? null;
   }
@@ -102,7 +108,7 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
         slackUserId: userProfiles.slackUserId,
       })
       .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, person.slackUserId))
+      .where(and(eq(userProfiles.slackUserId, person.slackUserId), eq(userProfiles.workspaceId, wsId)))
       .limit(1);
 
     if (profile) {
@@ -116,7 +122,7 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
           lastAuraDm: sql<string>`max(${messages.createdAt}) filter (where ${messages.channelType} = 'dm')`,
         })
         .from(messages)
-        .where(eq(messages.userId, profile.slackUserId));
+        .where(and(eq(messages.userId, profile.slackUserId), eq(messages.workspaceId, wsId)));
 
       workspaceMessages = Number(msgStats?.workspaceMessages ?? 0);
       auraDmMessages = Number(msgStats?.auraDmMessages ?? 0);
@@ -152,12 +158,15 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
   };
 }
 
-async function findPeople(query: string): Promise<(typeof people.$inferSelect)[]> {
+async function findPeople(
+  query: string,
+  wsId: string,
+): Promise<(typeof people.$inferSelect)[]> {
   if (SLACK_ID_RE.test(query)) {
     return db
       .select()
       .from(people)
-      .where(eq(people.slackUserId, query))
+      .where(and(eq(people.slackUserId, query), eq(people.workspaceId, wsId)))
       .limit(1);
   }
 
@@ -166,7 +175,13 @@ async function findPeople(query: string): Promise<(typeof people.$inferSelect)[]
       .select({ person: people })
       .from(addresses)
       .innerJoin(people, eq(addresses.personId, people.id))
-      .where(and(eq(addresses.channel, "email"), eq(addresses.value, query.toLowerCase())))
+      .where(
+        and(
+          eq(addresses.channel, "email"),
+          eq(addresses.value, query.toLowerCase()),
+          eq(addresses.workspaceId, wsId),
+        ),
+      )
       .limit(1);
     return rows.map((r) => r.person);
   }
@@ -174,7 +189,8 @@ async function findPeople(query: string): Promise<(typeof people.$inferSelect)[]
   const rows = await db.execute(sql`
     SELECT p.*
     FROM people p
-    WHERE similarity(p.display_name, ${query}) > 0.3
+    WHERE p.workspace_id = ${wsId}
+      AND similarity(p.display_name, ${query}) > 0.3
     ORDER BY similarity(p.display_name, ${query}) DESC
     LIMIT 3
   `);
@@ -186,6 +202,8 @@ async function findPeople(query: string): Promise<(typeof people.$inferSelect)[]
 // ── Tool Definitions ────────────────────────────────────────────────────────
 
 export function createPeopleTools(context?: ScheduleContext) {
+  const wsId = context?.workspaceId ?? DEFAULT_WORKSPACE_ID;
+
   return {
     get_person: defineTool({
       description:
@@ -202,13 +220,13 @@ export function createPeopleTools(context?: ScheduleContext) {
       }),
       execute: async ({ query }) => {
         try {
-          const matched = await findPeople(query.trim());
+          const matched = await findPeople(query.trim(), wsId);
 
           if (matched.length === 0) {
             return { ok: false as const, error: `No person found matching '${query}'` };
           }
 
-          const results = await Promise.all(matched.map(enrichPerson));
+          const results = await Promise.all(matched.map((p) => enrichPerson(p, wsId)));
 
           logger.info("get_person tool called", {
             query,
@@ -308,14 +326,14 @@ export function createPeopleTools(context?: ScheduleContext) {
             const [exists] = await db
               .select({ id: people.id })
               .from(people)
-              .where(eq(people.id, person_id))
+              .where(and(eq(people.id, person_id), eq(people.workspaceId, wsId)))
               .limit(1);
             if (!exists) {
               return { ok: false as const, error: `Person ${person_id} not found` };
             }
             resolvedId = person_id;
           } else {
-            const matched = await findPeople(query!.trim());
+            const matched = await findPeople(query!.trim(), wsId);
             if (matched.length === 0) {
               return { ok: false as const, error: `No person found matching '${query}'` };
             }
@@ -342,7 +360,7 @@ export function createPeopleTools(context?: ScheduleContext) {
               if (UUID_RE.test(fields.manager_id)) {
                 updateSet.managerId = fields.manager_id;
               } else {
-                const mgrMatches = await findPeople(fields.manager_id);
+                const mgrMatches = await findPeople(fields.manager_id, wsId);
                 if (mgrMatches.length === 0) {
                   return { ok: false as const, error: `Could not resolve manager '${fields.manager_id}'` };
                 }
@@ -360,10 +378,10 @@ export function createPeopleTools(context?: ScheduleContext) {
             if (fields.notes !== undefined) updateSet.notes = fields.notes;
 
             if (fields.phone !== undefined) {
-              await upsertPrimaryAddress(resolvedId, "phone", fields.phone.toLowerCase());
+              await upsertPrimaryAddress(resolvedId, "phone", fields.phone.toLowerCase(), wsId);
             }
             if (fields.email !== undefined) {
-              await upsertPrimaryAddress(resolvedId, "email", fields.email.toLowerCase());
+              await upsertPrimaryAddress(resolvedId, "email", fields.email.toLowerCase(), wsId);
             }
           }
 
@@ -380,6 +398,7 @@ export function createPeopleTools(context?: ScheduleContext) {
                 and(
                   eq(addresses.channel, add_address.channel),
                   eq(addresses.value, normalizedValue),
+                  eq(addresses.workspaceId, wsId),
                 ),
               )
               .limit(1);
@@ -396,6 +415,7 @@ export function createPeopleTools(context?: ScheduleContext) {
                 channel: add_address.channel,
                 value: normalizedValue,
                 isPrimary: add_address.is_primary ?? false,
+                workspaceId: wsId,
               });
             } else if (add_address.is_primary && !existingAddr[0].isPrimary) {
               await db
@@ -418,6 +438,7 @@ export function createPeopleTools(context?: ScheduleContext) {
                   eq(addresses.personId, resolvedId),
                   eq(addresses.channel, remove_address.channel),
                   eq(addresses.value, normalizedRemoveValue),
+                  eq(addresses.workspaceId, wsId),
                 ),
               );
           }
@@ -425,19 +446,19 @@ export function createPeopleTools(context?: ScheduleContext) {
           await db
             .update(people)
             .set(updateSet)
-            .where(eq(people.id, resolvedId));
+            .where(and(eq(people.id, resolvedId), eq(people.workspaceId, wsId)));
 
           const [updated] = await db
             .select()
             .from(people)
-            .where(eq(people.id, resolvedId))
+            .where(and(eq(people.id, resolvedId), eq(people.workspaceId, wsId)))
             .limit(1);
 
           if (!updated) {
             return { ok: false as const, error: `Person ${resolvedId} not found after update` };
           }
 
-          const result = await enrichPerson(updated);
+          const result = await enrichPerson(updated, wsId);
 
           logger.info("update_person tool called", {
             personId: resolvedId,
@@ -472,6 +493,7 @@ async function upsertPrimaryAddress(
   personId: string,
   channel: string,
   value: string,
+  wsId: string,
 ): Promise<void> {
   const existing = await db
     .select()
@@ -481,6 +503,7 @@ async function upsertPrimaryAddress(
         eq(addresses.personId, personId),
         eq(addresses.channel, channel),
         eq(addresses.isPrimary, true),
+        eq(addresses.workspaceId, wsId),
       ),
     )
     .limit(1);
@@ -491,7 +514,13 @@ async function upsertPrimaryAddress(
     const conflict = await db
       .select()
       .from(addresses)
-      .where(and(eq(addresses.channel, channel), eq(addresses.value, value)))
+      .where(
+        and(
+          eq(addresses.channel, channel),
+          eq(addresses.value, value),
+          eq(addresses.workspaceId, wsId),
+        ),
+      )
       .limit(1);
 
     if (conflict.length > 0) {
@@ -513,7 +542,13 @@ async function upsertPrimaryAddress(
     const byChannelValue = await db
       .select()
       .from(addresses)
-      .where(and(eq(addresses.channel, channel), eq(addresses.value, value)))
+      .where(
+        and(
+          eq(addresses.channel, channel),
+          eq(addresses.value, value),
+          eq(addresses.workspaceId, wsId),
+        ),
+      )
       .limit(1);
 
     if (byChannelValue.length > 0) {
@@ -528,7 +563,7 @@ async function upsertPrimaryAddress(
     } else {
       await db
         .insert(addresses)
-        .values({ personId, channel, value, isPrimary: true });
+        .values({ personId, channel, value, isPrimary: true, workspaceId: wsId });
     }
   }
 }
