@@ -48,6 +48,9 @@ export function getSlackMeta(t: unknown): SlackToolMetadata | undefined {
  * Thin wrapper around AI SDK's tool() that co-locates Slack card metadata
  * with the tool definition. No governance or interception — just passes
  * through to the SDK and attaches the `slack` property for task cards.
+ *
+ * Supports `needsApproval` (boolean or async function) which gates execution
+ * behind a human-in-the-loop approval step via the SDK-native primitive.
  */
 export function defineTool<TInput, TOutput>(config: {
   description: string;
@@ -55,6 +58,7 @@ export function defineTool<TInput, TOutput>(config: {
   execute: (input: TInput) => PromiseLike<TOutput>;
   slack?: SlackToolMetadata<TInput, TOutput>;
   toModelOutput?: Tool<TInput, TOutput>["toModelOutput"];
+  needsApproval?: boolean | ((input: TInput) => boolean | Promise<boolean>);
 }) {
   const { slack, ...rest } = config;
   const t = tool<TInput, TOutput>(

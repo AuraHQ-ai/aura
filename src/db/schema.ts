@@ -530,8 +530,38 @@ export const voiceCalls = pgTable(
 );
 
 
+// ── Pending Approvals (HITL state for SDK-native needsApproval) ─────────────
+
+export const pendingApprovals = pgTable(
+  "pending_approvals",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    toolName: text("tool_name").notNull(),
+    toolCallId: text("tool_call_id").notNull(),
+    args: jsonb("args").notNull(),
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts"),
+    userId: text("user_id").notNull(),
+    status: text("status")
+      .$type<"pending" | "approved" | "rejected" | "expired">()
+      .notNull()
+      .default("pending"),
+    resolvedBy: text("resolved_by"),
+    resolvedAt: timestamptz("resolved_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("pending_approvals_status_idx").on(table.status),
+    index("pending_approvals_created_at_idx").on(table.createdAt),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
+export type PendingApproval = typeof pendingApprovals.$inferSelect;
+export type NewPendingApproval = typeof pendingApprovals.$inferInsert;
 export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Memory = typeof memories.$inferSelect;

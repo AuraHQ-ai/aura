@@ -555,27 +555,33 @@ app.post("/api/slack/interactions", async (c) => {
         const approvalId = action.action_id.replace("hitl_approve_", "");
         const approvePromise = (async () => {
           try {
-            const entry = resolveApproval(approvalId, true);
+            const entry = await resolveApproval(approvalId, true, userId);
             const chanId = payload.channel?.id;
             const msgTs = payload.message?.ts;
+            if (!entry) {
+              if (chanId && msgTs) {
+                await slackClient.chat.update({
+                  channel: chanId,
+                  ts: msgTs,
+                  text: "This approval has already been handled or expired.",
+                  blocks: [{ type: "section" as const, text: { type: "mrkdwn" as const, text: "_This approval has already been handled or expired._" } }],
+                });
+              }
+              return;
+            }
+
             if (chanId && msgTs) {
               await slackClient.chat.update({
                 channel: chanId,
                 ts: msgTs,
-                text: entry
-                  ? `Approved by <@${userId}>: ${entry.toolName}`
-                  : `Approved by <@${userId}>`,
-                blocks: [{
-                  type: "section" as const,
-                  text: {
-                    type: "mrkdwn" as const,
-                    text: entry
-                      ? `*Approved* by <@${userId}> — \`${entry.toolName}\``
-                      : `*Approved* by <@${userId}>`,
-                  },
-                }],
+                text: `Approved by <@${userId}>: ${entry.toolName}`,
+                blocks: [{ type: "section" as const, text: { type: "mrkdwn" as const, text: `*Approved* by <@${userId}> — \`${entry.toolName}\` — executing...` } }],
               });
             }
+
+            // Execute the approved tool and post result to the thread
+            const { executeApprovedTool } = await import("./lib/hitl-execute.js");
+            await executeApprovedTool(entry, slackClient);
           } catch (err) {
             recordError("interactions.hitl_approve", err, { userId, approvalId });
           }
@@ -587,7 +593,7 @@ app.post("/api/slack/interactions", async (c) => {
         const approvalId = action.action_id.replace("hitl_reject_", "");
         const rejectPromise = (async () => {
           try {
-            const entry = resolveApproval(approvalId, false);
+            const entry = await resolveApproval(approvalId, false, userId);
             const chanId = payload.channel?.id;
             const msgTs = payload.message?.ts;
             if (chanId && msgTs) {
@@ -596,14 +602,14 @@ app.post("/api/slack/interactions", async (c) => {
                 ts: msgTs,
                 text: entry
                   ? `Rejected by <@${userId}>: ${entry.toolName}`
-                  : `Rejected by <@${userId}>`,
+                  : "This approval has already been handled or expired.",
                 blocks: [{
                   type: "section" as const,
                   text: {
                     type: "mrkdwn" as const,
                     text: entry
                       ? `*Rejected* by <@${userId}> — \`${entry.toolName}\``
-                      : `*Rejected* by <@${userId}>`,
+                      : "_This approval has already been handled or expired._",
                   },
                 }],
               });

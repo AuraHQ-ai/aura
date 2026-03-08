@@ -1,100 +1,115 @@
-import crypto from "node:crypto";
 import type { WebClient } from "@slack/web-api";
+import { eq, and, lt } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { pendingApprovals } from "../db/schema.js";
 import { logger } from "./logger.js";
 
-// ── Types ───────────────────────────────────────────────────────────────────
-
-export interface PendingApproval {
-  id: string;
-  toolName: string;
-  toolCallId: string;
-  args: unknown;
-  channelId: string;
-  threadTs?: string;
-  userId: string;
-  createdAt: number;
-  resolve: (approved: boolean) => void;
-}
-
-// ── In-memory Store ─────────────────────────────────────────────────────────
-
-const pending = new Map<string, PendingApproval>();
+// ── Constants ───────────────────────────────────────────────────────────────
 
 const TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-const cleanupInterval = setInterval(() => {
-  const now = Date.now();
-  for (const [id, entry] of pending) {
-    if (entry.createdAt + TTL_MS < now) {
-      entry.resolve(false);
-      pending.delete(id);
-    }
-  }
-}, 60_000);
-cleanupInterval.unref();
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Register a pending approval and return a promise that resolves when the
- * human clicks Approve (true) or Reject (false). The promise also rejects
- * after TTL_MS via the cleanup interval.
+ * Persist a pending approval to the database and return its ID.
+ * The approval can be resolved later (possibly in a different Vercel isolate)
+ * via resolveApproval().
  */
-export function createPendingApproval(opts: {
+export async function createPendingApproval(opts: {
   toolName: string;
   toolCallId: string;
   args: unknown;
   channelId: string;
   threadTs?: string;
   userId: string;
-}): { id: string; promise: Promise<boolean> } {
-  const id = crypto.randomBytes(12).toString("hex");
+}): Promise<{ id: string }> {
+  const [row] = await db
+    .insert(pendingApprovals)
+    .values({
+      toolName: opts.toolName,
+      toolCallId: opts.toolCallId,
+      args: opts.args as any,
+      channelId: opts.channelId,
+      threadTs: opts.threadTs ?? null,
+      userId: opts.userId,
+      status: "pending",
+    })
+    .returning({ id: pendingApprovals.id });
 
-  let resolveRef!: (approved: boolean) => void;
-  const promise = new Promise<boolean>((resolve) => {
-    resolveRef = resolve;
-  });
-
-  pending.set(id, {
-    id,
-    toolName: opts.toolName,
-    toolCallId: opts.toolCallId,
-    args: opts.args,
-    channelId: opts.channelId,
-    threadTs: opts.threadTs,
-    userId: opts.userId,
-    createdAt: Date.now(),
-    resolve: resolveRef,
-  });
-
-  return { id, promise };
+  return { id: row.id };
 }
 
 /**
- * Resolve a pending approval. Returns the entry if found, null otherwise.
+ * Resolve a pending approval. Returns the row if found and still pending,
+ * null otherwise. Updates the row atomically so double-clicks are safe.
  */
-export function resolveApproval(
+export async function resolveApproval(
   approvalId: string,
   approved: boolean,
-): PendingApproval | null {
-  const entry = pending.get(approvalId);
-  if (!entry) return null;
-  pending.delete(approvalId);
-  if (entry.createdAt + TTL_MS < Date.now()) {
-    entry.resolve(false);
+  resolvedBy: string,
+): Promise<typeof pendingApprovals.$inferSelect | null> {
+  const newStatus = approved ? "approved" : "rejected";
+
+  const [updated] = await db
+    .update(pendingApprovals)
+    .set({
+      status: newStatus,
+      resolvedBy,
+      resolvedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(pendingApprovals.id, approvalId),
+        eq(pendingApprovals.status, "pending"),
+      ),
+    )
+    .returning();
+
+  if (!updated) {
+    logger.info("resolveApproval: not found or already resolved", { approvalId });
     return null;
   }
-  entry.resolve(approved);
-  return entry;
+
+  return updated;
 }
 
 /**
- * Look up a pending approval without resolving it.
+ * Look up a pending approval by ID without resolving it.
  */
-export function getPendingApproval(
+export async function getPendingApproval(
   approvalId: string,
-): PendingApproval | null {
-  return pending.get(approvalId) ?? null;
+): Promise<typeof pendingApprovals.$inferSelect | null> {
+  const rows = await db
+    .select()
+    .from(pendingApprovals)
+    .where(eq(pendingApprovals.id, approvalId))
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
+/**
+ * Expire stale approvals that have exceeded the TTL. Called from heartbeat
+ * or lazily. Not critical — buttons simply become no-ops once the row
+ * is resolved/expired.
+ */
+export async function expireStaleApprovals(): Promise<number> {
+  const cutoff = new Date(Date.now() - TTL_MS);
+  const expired = await db
+    .update(pendingApprovals)
+    .set({ status: "expired" })
+    .where(
+      and(
+        eq(pendingApprovals.status, "pending"),
+        lt(pendingApprovals.createdAt, cutoff),
+      ),
+    )
+    .returning({ id: pendingApprovals.id });
+
+  if (expired.length > 0) {
+    logger.info("Expired stale HITL approvals", { count: expired.length });
+  }
+  return expired.length;
 }
 
 // ── Slack UI ────────────────────────────────────────────────────────────────
@@ -104,7 +119,14 @@ export function getPendingApproval(
  */
 export async function postApprovalMessage(
   slackClient: WebClient,
-  approval: PendingApproval,
+  approval: {
+    id: string;
+    toolName: string;
+    args: unknown;
+    channelId: string;
+    threadTs?: string | null;
+    userId: string;
+  },
 ): Promise<void> {
   const paramsSummary = JSON.stringify(approval.args, null, 2);
   const truncatedParams =
@@ -165,10 +187,8 @@ export async function postApprovalMessage(
     },
   ];
 
-  const targetChannel = approval.channelId;
-
   await slackClient.chat.postMessage({
-    channel: targetChannel,
+    channel: approval.channelId,
     ...(approval.threadTs ? { thread_ts: approval.threadTs } : {}),
     text: `Approval required for ${approval.toolName}`,
     blocks,
@@ -177,6 +197,6 @@ export async function postApprovalMessage(
   logger.info("HITL approval message posted", {
     approvalId: approval.id,
     toolName: approval.toolName,
-    channel: targetChannel,
+    channel: approval.channelId,
   });
 }
