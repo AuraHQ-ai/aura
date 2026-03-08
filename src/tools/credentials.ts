@@ -12,7 +12,7 @@ export function createCredentialTools(context?: ScheduleContext) {
   return {
     get_credential: defineTool({
       description:
-        "Retrieve a stored API credential by name. Returns the decrypted value for 'token' type credentials. For 'oauth_client' type with a configured token_url, automatically exchanges client credentials for a fresh access token and returns it ready to use. If no token_url is set, returns parsed client_id + client_secret. Permission checks and audit logging are automatic. Use this when a job or workflow needs an API key, token, or OAuth client credentials that the user has stored via the App Home.",
+        "Retrieve a stored API credential by name. Returns the decrypted value based on auth_scheme (bearer, basic, header, query, oauth_client). For oauth_client, automatically exchanges client credentials for a fresh access token using token_url stored inside the credential value. Permission checks and audit logging are automatic. Use this when a job or workflow needs an API key, token, or OAuth client credentials that the user has stored via the App Home.",
       inputSchema: z.object({
         name: z
           .string()
@@ -49,34 +49,17 @@ export function createCredentialTools(context?: ScheduleContext) {
             };
           }
 
-          if (result.type === "oauth_client") {
-            if (result.access_token) {
-              return {
-                ok: true,
-                type: "oauth_client" as const,
-                value: result.access_token,
-                ...(result.expires_in != null && { expires_in: result.expires_in }),
-              };
-            }
-            try {
-              const parsed = JSON.parse(result.value);
-              return {
-                ok: true,
-                type: "oauth_client" as const,
-                client_id: parsed.client_id,
-                client_secret: parsed.client_secret,
-              };
-            } catch {
-              return {
-                ok: false,
-                error: `Credential "${name}" has type oauth_client but its value is not valid JSON.`,
-              };
-            }
+          if (result.authScheme === "oauth_client") {
+            return {
+              ok: true,
+              auth_scheme: "oauth_client" as const,
+              value: result.value,
+            };
           }
 
           return {
             ok: true,
-            type: "token" as const,
+            auth_scheme: result.authScheme,
             value: result.value,
           };
         } catch (error: any) {
