@@ -277,7 +277,12 @@ app.post("/api/slack/events", async (c) => {
     // in the background using waitUntil where available.
     const userId = event.user || "unknown";
     const pipelinePromise = executionContext.run(
-      { triggeredBy: userId, triggerType: "user_message" },
+      {
+        triggeredBy: userId,
+        triggerType: "user_message",
+        channelId: event.channel || undefined,
+        threadTs: event.thread_ts || event.ts || undefined,
+      },
       () =>
         runPipeline({
           event,
@@ -572,6 +577,63 @@ app.post("/api/slack/interactions", async (c) => {
           }
         })();
         waitUntil(denyPromise);
+      }
+
+      // ── Governance approval buttons ─────────────────────────────────
+      if (action.action_id?.startsWith("governance_approve_")) {
+        const actionLogId = action.action_id.replace("governance_approve_", "");
+        const approvePromise = (async () => {
+          try {
+            const { handleApprovalReaction } = await import("./lib/approval.js");
+            await handleApprovalReaction({
+              actionLogId,
+              reaction: "white_check_mark",
+              reactorUserId: userId,
+              slackClient,
+            });
+            const gaChanId = payload.channel?.id;
+            const gaTs = payload.message?.ts;
+            if (gaChanId && gaTs) {
+              await slackClient.chat.update({
+                channel: gaChanId,
+                ts: gaTs,
+                text: `✅ Approved by <@${userId}>`,
+                blocks: [{ type: "section" as const, text: { type: "mrkdwn" as const, text: `✅ *Approved* by <@${userId}>` } }],
+              });
+            }
+          } catch (err) {
+            recordError("interactions.governance_approve", err, { userId, actionLogId });
+          }
+        })();
+        waitUntil(approvePromise);
+      }
+
+      if (action.action_id?.startsWith("governance_reject_")) {
+        const actionLogId = action.action_id.replace("governance_reject_", "");
+        const rejectPromise = (async () => {
+          try {
+            const { handleApprovalReaction } = await import("./lib/approval.js");
+            await handleApprovalReaction({
+              actionLogId,
+              reaction: "x",
+              reactorUserId: userId,
+              slackClient,
+            });
+            const grChanId = payload.channel?.id;
+            const grTs = payload.message?.ts;
+            if (grChanId && grTs) {
+              await slackClient.chat.update({
+                channel: grChanId,
+                ts: grTs,
+                text: `❌ Rejected by <@${userId}>`,
+                blocks: [{ type: "section" as const, text: { type: "mrkdwn" as const, text: `❌ *Rejected* by <@${userId}>` } }],
+              });
+            }
+          } catch (err) {
+            recordError("interactions.governance_reject", err, { userId, actionLogId });
+          }
+        })();
+        waitUntil(rejectPromise);
       }
     }
   }

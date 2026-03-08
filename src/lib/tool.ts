@@ -13,6 +13,8 @@ export interface ExecutionContext {
   triggeredBy: string;
   triggerType: "user_message" | "scheduled_job" | "autonomous";
   jobId?: string;
+  channelId?: string;
+  threadTs?: string;
 }
 
 export const executionContext = new AsyncLocalStorage<ExecutionContext>();
@@ -144,7 +146,7 @@ export function defineTool<TInput, TOutput>(config: {
         toolName,
         params: input,
         riskTier,
-        policy: policy!,
+        policy: policy,
         context: ctx,
       });
 

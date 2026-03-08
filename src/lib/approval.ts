@@ -146,7 +146,7 @@ export async function requestApproval(args: {
   toolName: string;
   params: unknown;
   riskTier: string;
-  policy: ApprovalPolicy;
+  policy: ApprovalPolicy | null;
   context: ExecutionContext;
   slackClient?: InstanceType<typeof import("@slack/web-api").WebClient> | null;
 }): Promise<void> {
@@ -164,8 +164,8 @@ export async function requestApproval(args: {
     throw new Error(`action_log row ${actionLogId} not found`);
   }
 
-  const channel = policy.approvalChannel ?? undefined;
-  const approvers = policy.approverIds ?? [];
+  const channel = policy?.approvalChannel ?? undefined;
+  const approvers = policy?.approverIds ?? [];
   const approverMentions =
     approvers.length > 0
       ? approvers.map((id) => `<@${id}>`).join(", ")
@@ -201,11 +201,30 @@ export async function requestApproval(args: {
       },
     },
     {
+      type: "actions" as const,
+      elements: [
+        {
+          type: "button" as const,
+          text: { type: "plain_text" as const, text: "✅ Approve", emoji: true },
+          style: "primary" as const,
+          action_id: `governance_approve_${actionLogId}`,
+          value: actionLogId,
+        },
+        {
+          type: "button" as const,
+          text: { type: "plain_text" as const, text: "❌ Reject", emoji: true },
+          style: "danger" as const,
+          action_id: `governance_reject_${actionLogId}`,
+          value: actionLogId,
+        },
+      ],
+    },
+    {
       type: "context" as const,
       elements: [
         {
           type: "mrkdwn" as const,
-          text: `React with :white_check_mark: to approve or :x: to reject • ${approverMentions}\n\`action_log_id: ${actionLogId}\``,
+          text: `${approverMentions} • \`action_log_id: ${actionLogId}\``,
         },
       ],
     },
@@ -226,6 +245,7 @@ export async function requestApproval(args: {
 
   await slackClient.chat.postMessage({
     channel: targetChannel,
+    ...(context.threadTs ? { thread_ts: context.threadTs } : {}),
     text: `Approval required for ${toolName} (${riskTier})`,
     blocks,
     metadata: {
