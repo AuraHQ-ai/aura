@@ -98,7 +98,7 @@ const BUILD_FAILING: SlackMessage[] = [
       },
       {
         type: "text",
-        text: "Found it. The `ci.yml` lint step is failing on `main` since *6:31 PM* — 3 consecutive runs.\n\nError:\n```\nTypeError: Cannot read properties of undefined (reading 'map')\n  at generateLeadScore (src/scoring/leads.ts:84)\n```\n\nRoot cause: PR #1847 (merged 42 min ago) changed `lead.attributes` from an array to an object, but `generateLeadScore` still calls `.map()` on it.\n\n*Fix:*\n```ts\n// Before\nconst scores = lead.attributes.map(attr => weights[attr]);\n\n// After\nconst scores = Object.keys(lead.attributes).map(attr => weights[attr]);\n```\n\nThis is in `src/scoring/leads.ts:84`. Want me to open a PR?",
+        text: "Found it. The `ci.yml` lint step is failing on `main` since *6:31 PM* — 3 consecutive runs.\n\nError:\n```\nTypeError: Cannot read properties of undefined (reading 'map')\n  at generateLeadScore (src/scoring/leads.ts:84)\n```\n\nRoot cause: <https://github.com/org/repo/pull/1847|PR #1847> (merged 42 min ago) changed `lead.attributes` from an array to an object, but `generateLeadScore` still calls `.map()` on it.\n\n*Fix:*\n```ts\n// Before\nconst scores = lead.attributes.map(attr => weights[attr]);\n\n// After\nconst scores = Object.keys(lead.attributes).map(attr => weights[attr]);\n```\n\nThis is in `src/scoring/leads.ts:84`. Want me to open a PR?",
       },
     ],
   },
