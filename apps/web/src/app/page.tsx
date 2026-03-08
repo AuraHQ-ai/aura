@@ -10,7 +10,7 @@ const SALES_LEADERBOARD: SlackMessage[] = [
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "9:14 AM",
     content: [
-      { type: "text", text: "@Aura show the sales leaderboard this week" },
+      { type: "text", text: "<@Aura> show the sales leaderboard this week" },
     ],
   },
   {
@@ -42,7 +42,7 @@ const AD_SPEND: SlackMessage[] = [
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "2:31 PM",
     content: [
-      { type: "text", text: "@Aura what's our spend, CTR, CPC and CPA by platform for the sign up conversion event in the last 12 months?" },
+      { type: "text", text: "<@Aura> what's our spend, CTR, CPC and CPA by platform for the sign up conversion event in the last 12 months?" },
     ],
   },
   {
@@ -74,7 +74,7 @@ const BUILD_FAILING: SlackMessage[] = [
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "6:48 PM",
     content: [
-      { type: "text", text: "@Aura the build is failing on github actions, investigate and suggest a fix" },
+      { type: "text", text: "<@Aura> the build is failing on github actions, investigate and suggest a fix" },
     ],
   },
   {
