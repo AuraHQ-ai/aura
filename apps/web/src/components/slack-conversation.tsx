@@ -498,7 +498,7 @@ function SlackMessageRow({
       style={{
         display: "flex",
         gap: "0",
-        padding: sameAuthor ? "1px 20px 1px 20px" : "6px 20px 2px 20px",
+        padding: sameAuthor ? "1px 12px 1px 12px" : "6px 12px 2px 12px",
         position: "relative",
       }}
       onMouseEnter={(e) => {
