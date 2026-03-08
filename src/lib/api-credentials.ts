@@ -599,3 +599,79 @@ export function maskApiCredential(value: string): string {
   const last4 = value.slice(-4);
   return `${first4}***${last4}`;
 }
+
+/**
+ * One-time data migration: fold `token_url` from the old column into the encrypted
+ * value JSON blob for oauth_client credentials.
+ *
+ * Safe to call at startup — checks whether the legacy `type` column still exists
+ * before doing anything. After the SQL migration in 0034 drops that column, this
+ * is a no-op. Idempotent: re-running when already migrated does nothing.
+ */
+export async function runCredentialMigration(): Promise<void> {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) return;
+
+  // Check if the old `type` column still exists (pre-migration state)
+  const { neon } = await import("@neondatabase/serverless");
+  const rawSql = neon(connectionString);
+
+  const cols = await rawSql`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_name = 'credentials'
+      AND column_name = 'type'
+  `;
+
+  if (cols.length === 0) {
+    // Column already gone — migration already ran, nothing to do
+    return;
+  }
+
+  logger.info("runCredentialMigration: folding token_url into oauth_client value blobs");
+
+  // Fetch all oauth_client rows via raw SQL (Drizzle schema no longer has these columns)
+  const rows = await rawSql`
+    SELECT id, value, token_url
+    FROM credentials
+    WHERE type = 'oauth_client'
+  `;
+
+  for (const row of rows) {
+    try {
+      const decrypted = decryptCredential(row.value as string);
+      let parsed: Record<string, string> = {};
+      try {
+        parsed = JSON.parse(decrypted);
+      } catch {
+        // value wasn't JSON yet — treat as empty object
+      }
+
+      if (row.token_url && !parsed.token_url) {
+        parsed.token_url = row.token_url as string;
+        const { encryptCredential: enc } = await import("./credentials.js");
+        const reEncrypted = enc(JSON.stringify(parsed));
+
+        await rawSql`
+          UPDATE credentials
+          SET value = ${reEncrypted},
+              auth_scheme = 'oauth_client',
+              updated_at = NOW()
+          WHERE id = ${row.id}
+        `;
+      }
+    } catch (err) {
+      logger.error("runCredentialMigration: failed to migrate row", { id: row.id, err });
+    }
+  }
+
+  // Ensure all legacy token rows are marked as bearer
+  await rawSql`
+    UPDATE credentials
+    SET auth_scheme = 'bearer'
+    WHERE type = 'token'
+      AND auth_scheme != 'bearer'
+  `;
+
+  logger.info("runCredentialMigration: complete");
+}
