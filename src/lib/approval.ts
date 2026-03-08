@@ -164,8 +164,8 @@ export async function requestApproval(args: {
     throw new Error(`action_log row ${actionLogId} not found`);
   }
 
-  const channel = policy.approvalChannel ?? undefined;
-  const approvers = policy.approverIds ?? [];
+  const channel = policy?.approvalChannel ?? undefined;
+  const approvers = policy?.approverIds ?? [];
   const approverMentions =
     approvers.length > 0
       ? approvers.map((id) => `<@${id}>`).join(", ")

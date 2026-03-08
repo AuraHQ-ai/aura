@@ -144,7 +144,7 @@ export function defineTool<TInput, TOutput>(config: {
         toolName,
         params: input,
         riskTier,
-        policy: policy!,
+        policy: policy ?? null,
         context: ctx,
       });
 
