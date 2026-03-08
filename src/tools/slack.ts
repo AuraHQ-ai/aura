@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { defineTool, binaryToModelOutput } from "../lib/tool.js";
+import { defineTool, binaryToModelOutput, registerToolNames } from "../lib/tool.js";
 import { isAdmin } from "../lib/permissions.js";
 import { createNoteTools } from "./notes.js";
 import { createJobTools } from "./jobs.js";
@@ -22,6 +22,7 @@ import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createResourceTools } from "./resources.js";
 import { createCredentialTools } from "./credentials.js";
+import { createHttpRequestTool } from "./http-request.js";
 import type { ScheduleContext } from "../db/schema.js";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -3002,6 +3003,9 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
 
     // ── Credential Tools (secure credential retrieval) ──────────────
     ...createCredentialTools(context),
+
+    // ── HTTP Request Tool (governed external API calls) ─────────────
+    ...createHttpRequestTool(context),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
@@ -3054,5 +3058,5 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     }
   }
 
-  return tools;
+  return registerToolNames(tools);
 }
