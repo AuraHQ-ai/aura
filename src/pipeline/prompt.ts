@@ -65,9 +65,25 @@ export async function assemblePrompt(
   // Extract @mentioned user IDs from message text (excluding the sender).
   // By this point, resolveSlackEntities has converted <@U066V1AN6> to @name (U066V1AN6).
   const MENTION_RE = /\((U[A-Z0-9]+)\)/g;
-  const mentionedUserIds = [...new Set(
-    [...(context.text || '').matchAll(MENTION_RE)].map(m => m[1])
-  )].filter(id => id !== context.userId);
+
+  // Also collect all thread and channel context participants so their
+  // gender/pronouns/language are available even without explicit @-mentions.
+  const threadParticipantIds = (conversation.thread ?? [])
+    .map(m => m.user)
+    .filter((id): id is string => !!id);
+
+  const recentParticipantIds = (conversation.recentMessages ?? [])
+    .map(m => m.user)
+    .filter((id): id is string => !!id);
+
+  // Cap at 10 to avoid context bloat. @-mentions come first (most relevant).
+  const mentionedUserIds = [...new Set([
+    ...[...(context.text || '').matchAll(MENTION_RE)].map(m => m[1]),
+    ...threadParticipantIds,
+    ...recentParticipantIds,
+  ])]
+    .filter(id => id !== context.userId)
+    .slice(0, 10);
 
   // Run memory retrieval, conversation retrieval, profile fetch, mentioned-people lookup,
   // and interlocutor lookup in parallel
