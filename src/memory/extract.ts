@@ -27,15 +27,13 @@ async function buildUserLookup(): Promise<Map<string, string>> {
 }
 
 async function buildUserLookupInner(): Promise<Map<string, string>> {
-  const botToken = process.env.SLACK_BOT_TOKEN;
-  if (!botToken) {
-    logger.warn("SLACK_BOT_TOKEN not set — skipping user ID normalization");
-    return new Map();
-  }
-
   try {
-    const { WebClient } = await import("@slack/web-api");
-    const client = new WebClient(botToken);
+    const { getSlackClientForTeam } = await import("../lib/workspace-token.js");
+    const client = await getSlackClientForTeam();
+    if (!client) {
+      logger.warn("No bot token available — skipping user ID normalization");
+      return new Map();
+    }
 
     const users = await getUserList(client);
 
