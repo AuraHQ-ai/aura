@@ -277,7 +277,12 @@ app.post("/api/slack/events", async (c) => {
     // in the background using waitUntil where available.
     const userId = event.user || "unknown";
     const pipelinePromise = executionContext.run(
-      { triggeredBy: userId, triggerType: "user_message" },
+      {
+        triggeredBy: userId,
+        triggerType: "user_message",
+        channelId: event.channel ?? undefined,
+        threadTs: event.thread_ts ?? undefined,
+      },
       () =>
         runPipeline({
           event,
@@ -520,6 +525,71 @@ app.post("/api/slack/interactions", async (c) => {
           });
           waitUntil(accessPromise);
         }
+      }
+
+      // ── Governance approval buttons ─────────────────────────────────
+      if (action.action_id?.startsWith("governance_approve_")) {
+        const actionLogId = action.action_id.replace("governance_approve_", "");
+        const approvePromise = (async () => {
+          try {
+            await handleApprovalReaction({
+              actionLogId,
+              reaction: "white_check_mark",
+              reactorUserId: userId,
+              slackClient,
+            });
+            const channelId = payload.channel?.id;
+            const messageTs = payload.message?.ts;
+            if (channelId && messageTs) {
+              await slackClient.chat.update({
+                channel: channelId,
+                ts: messageTs,
+                text: `✅ Approved by <@${userId}>`,
+                blocks: [
+                  {
+                    type: "section",
+                    text: { type: "mrkdwn", text: `✅ *Approved* by <@${userId}>` },
+                  },
+                ],
+              });
+            }
+          } catch (err) {
+            recordError("interactions.governance_approve", err, { userId, actionLogId });
+          }
+        })();
+        waitUntil(approvePromise);
+      }
+
+      if (action.action_id?.startsWith("governance_reject_")) {
+        const actionLogId = action.action_id.replace("governance_reject_", "");
+        const rejectPromise = (async () => {
+          try {
+            await handleApprovalReaction({
+              actionLogId,
+              reaction: "x",
+              reactorUserId: userId,
+              slackClient,
+            });
+            const channelId = payload.channel?.id;
+            const messageTs = payload.message?.ts;
+            if (channelId && messageTs) {
+              await slackClient.chat.update({
+                channel: channelId,
+                ts: messageTs,
+                text: `❌ Rejected by <@${userId}>`,
+                blocks: [
+                  {
+                    type: "section",
+                    text: { type: "mrkdwn", text: `❌ *Rejected* by <@${userId}>` },
+                  },
+                ],
+              });
+            }
+          } catch (err) {
+            recordError("interactions.governance_reject", err, { userId, actionLogId });
+          }
+        })();
+        waitUntil(rejectPromise);
       }
 
       // ── Confirmation buttons (Phase 4) ──────────────────────────────

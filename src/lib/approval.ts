@@ -201,11 +201,30 @@ export async function requestApproval(args: {
       },
     },
     {
+      type: "actions" as const,
+      elements: [
+        {
+          type: "button" as const,
+          text: { type: "plain_text" as const, text: "Approve", emoji: true },
+          style: "primary" as const,
+          action_id: `governance_approve_${actionLogId}`,
+          value: actionLogId,
+        },
+        {
+          type: "button" as const,
+          text: { type: "plain_text" as const, text: "Reject", emoji: true },
+          style: "danger" as const,
+          action_id: `governance_reject_${actionLogId}`,
+          value: actionLogId,
+        },
+      ],
+    },
+    {
       type: "context" as const,
       elements: [
         {
           type: "mrkdwn" as const,
-          text: `React with :white_check_mark: to approve or :x: to reject • ${approverMentions}\n\`action_log_id: ${actionLogId}\``,
+          text: `Approvers: ${approverMentions} · \`${actionLogId}\``,
         },
       ],
     },
@@ -226,6 +245,7 @@ export async function requestApproval(args: {
 
   await slackClient.chat.postMessage({
     channel: targetChannel,
+    thread_ts: context.threadTs ?? undefined,
     text: `Approval required for ${toolName} (${riskTier})`,
     blocks,
     metadata: {
