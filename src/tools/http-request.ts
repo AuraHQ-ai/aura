@@ -76,6 +76,7 @@ export function createHttpRequestTool(context?: ScheduleContext) {
           }
 
           const headers: Record<string, string> = { ...input.headers };
+          let requestUrl = input.url;
 
           if (input.credential_name) {
             const owner = input.credential_owner ?? context?.userId;
@@ -102,7 +103,63 @@ export function createHttpRequestTool(context?: ScheduleContext) {
               };
             }
 
-            headers["Authorization"] = `Bearer ${credResult.value}`;
+            switch (credResult.authScheme) {
+              case "bearer":
+              case "oauth_client": {
+                headers["Authorization"] = `Bearer ${credResult.value}`;
+                break;
+              }
+              case "basic": {
+                const encoded = Buffer.from(credResult.value).toString("base64");
+                headers["Authorization"] = `Basic ${encoded}`;
+                break;
+              }
+              case "header": {
+                let parsed: { key: string; secret: string };
+                try {
+                  parsed = JSON.parse(credResult.value);
+                } catch {
+                  return {
+                    ok: false as const,
+                    error: `Credential "${input.credential_name}" has auth_scheme header but its value is not valid JSON`,
+                  };
+                }
+                if (!parsed.key || !parsed.secret) {
+                  return {
+                    ok: false as const,
+                    error: `Credential "${input.credential_name}" must include key and secret for header auth`,
+                  };
+                }
+                headers[parsed.key] = parsed.secret;
+                break;
+              }
+              case "query": {
+                let parsed: { key: string; secret: string };
+                try {
+                  parsed = JSON.parse(credResult.value);
+                } catch {
+                  return {
+                    ok: false as const,
+                    error: `Credential "${input.credential_name}" has auth_scheme query but its value is not valid JSON`,
+                  };
+                }
+                if (!parsed.key || !parsed.secret) {
+                  return {
+                    ok: false as const,
+                    error: `Credential "${input.credential_name}" must include key and secret for query auth`,
+                  };
+                }
+                const urlObj = new URL(requestUrl);
+                urlObj.searchParams.set(parsed.key, parsed.secret);
+                requestUrl = urlObj.toString();
+                break;
+              }
+              default:
+                return {
+                  ok: false as const,
+                  error: `Unsupported auth scheme for credential "${input.credential_name}"`,
+                };
+            }
           }
 
           if (
@@ -120,7 +177,7 @@ export function createHttpRequestTool(context?: ScheduleContext) {
             hasCredential: !!input.credential_name,
           });
 
-          const response = await fetch(input.url, {
+          const response = await fetch(requestUrl, {
             method: input.method,
             headers,
             body: input.body ? JSON.stringify(input.body) : undefined,
