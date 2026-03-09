@@ -94,6 +94,7 @@ export async function executeJob(
     .returning({ id: jobExecutions.id });
 
   const executionId = execution.id;
+  let progressTs: string | undefined;
 
   try {
     const planTopic = parseContinuationTag(job.description);
@@ -173,13 +174,66 @@ export async function executeJob(
       systemPrompt,
     });
 
+    // Post initial progress indicator (if we have a channel to post to)
+    const jobLabel = job.name || job.description.slice(0, 60);
+    if (job.channelId) {
+      try {
+        const result = await slackClient.chat.postMessage({
+          channel: job.channelId,
+          thread_ts: job.threadTs || undefined,
+          text: `⏳ Running: ${jobLabel}...`,
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `⏳ *Running:* ${jobLabel}...`,
+              },
+            },
+          ],
+        });
+        progressTs = result.ts;
+      } catch (e) {
+        logger.warn("executeJob: failed to post progress indicator", { jobId, error: e });
+      }
+    }
+
+    let stepCount = 0;
+    const onStepFinish = progressTs && job.channelId
+      ? async (stepResult: { toolCalls: Array<{ toolName: string }> }) => {
+          stepCount++;
+          const toolNames = stepResult.toolCalls.map((tc) => tc.toolName);
+          const toolSummary = toolNames.length > 0
+            ? toolNames.join(", ")
+            : "thinking";
+          try {
+            await slackClient.chat.update({
+              channel: job.channelId!,
+              ts: progressTs!,
+              text: `⏳ Running: ${jobLabel} (step ${stepCount}: ${toolSummary})`,
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: `⏳ *Running:* ${jobLabel}\n_Step ${stepCount}: ${toolSummary}_`,
+                  },
+                },
+              ],
+            });
+          } catch {
+            // Non-fatal — progress update failed, continue execution
+          }
+        }
+      : undefined;
+
     const generateResult = await executionContext.run(
       {
         triggeredBy: job.requestedBy,
         triggerType: "scheduled_job",
         jobId: job.id,
       },
-      () => agent.generate({ prompt }),
+      () => agent.generate({ prompt, onStepFinish }),
     );
 
     const { text, steps, totalUsage: usage } = generateResult;
@@ -202,6 +256,18 @@ export async function executeJob(
       output: usage.outputTokens,
       total: usage.totalTokens,
     };
+
+    // Delete the progress indicator now that the job completed
+    if (progressTs && job.channelId) {
+      try {
+        await slackClient.chat.delete({
+          channel: job.channelId,
+          ts: progressTs,
+        });
+      } catch (e) {
+        logger.warn("executeJob: failed to delete progress indicator", { jobId, error: e });
+      }
+    }
 
     // Update execution trace with results
     await db
@@ -308,6 +374,28 @@ export async function executeJob(
         executionId,
         error: traceErr.message,
       });
+    }
+
+    // Update progress indicator to show failure
+    if (progressTs && job.channelId) {
+      try {
+        await slackClient.chat.update({
+          channel: job.channelId,
+          ts: progressTs,
+          text: `❌ Job failed: ${job.name || job.description.slice(0, 60)}`,
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `❌ *Failed:* ${job.name || job.description.slice(0, 60)}\n_Check job trace for details._`,
+              },
+            },
+          ],
+        });
+      } catch (e) {
+        logger.warn("executeJob: failed to update progress indicator on failure", { jobId, error: e });
+      }
     }
 
     // Retry logic
