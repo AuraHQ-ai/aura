@@ -41,6 +41,8 @@ type AuditAction =
   | "use"
   | "expired_access_attempt";
 
+type AuthScheme = "bearer" | "basic" | "header" | "query" | "oauth_client";
+
 async function audit(
   credentialId: string | null,
   credentialName: string,
@@ -115,21 +117,50 @@ export async function storeApiCredential(
   name: string,
   plaintext: string,
   expiresAt?: Date,
-  type: "token" | "oauth_client" = "token",
-  tokenUrl?: string,
+  authScheme: AuthScheme = "bearer",
 ): Promise<Credential> {
   validateKey();
   validateName(name);
 
-  if (type === "oauth_client") {
+  if (authScheme === "oauth_client") {
     try {
       const parsed = JSON.parse(plaintext);
-      if (!parsed.client_id || !parsed.client_secret) {
-        throw new Error("oauth_client value must contain client_id and client_secret");
+      if (!parsed.client_id || !parsed.client_secret || !parsed.token_url) {
+        throw new Error(
+          "oauth_client value must contain client_id, client_secret, and token_url",
+        );
       }
     } catch (e: any) {
-      if (e.message.includes("client_id") || e.message.includes("client_secret")) throw e;
-      throw new Error("oauth_client value must be valid JSON with client_id and client_secret keys");
+      if (
+        e.message.includes("client_id") ||
+        e.message.includes("client_secret") ||
+        e.message.includes("token_url")
+      ) {
+        throw e;
+      }
+      throw new Error(
+        "oauth_client value must be valid JSON with client_id, client_secret, and token_url keys",
+      );
+    }
+  } else if (authScheme === "basic") {
+    try {
+      const parsed = JSON.parse(plaintext);
+      if (!parsed.username || !parsed.password) {
+        throw new Error("basic value must contain username and password");
+      }
+    } catch (e: any) {
+      if (e.message.includes("username") || e.message.includes("password")) throw e;
+      throw new Error("basic value must be valid JSON with username and password keys");
+    }
+  } else if (authScheme === "header" || authScheme === "query") {
+    try {
+      const parsed = JSON.parse(plaintext);
+      if (!parsed.key || !parsed.secret) {
+        throw new Error(`${authScheme} value must contain key and secret`);
+      }
+    } catch (e: any) {
+      if (e.message.includes("key") || e.message.includes("secret")) throw e;
+      throw new Error(`${authScheme} value must be valid JSON with key and secret keys`);
     }
   }
 
@@ -140,8 +171,7 @@ export async function storeApiCredential(
     .values({
       ownerId,
       name,
-      type,
-      tokenUrl: type === "oauth_client" ? (tokenUrl ?? null) : null,
+      authScheme,
       value: encrypted,
       expiresAt: expiresAt ?? null,
     })
@@ -149,8 +179,7 @@ export async function storeApiCredential(
       target: [credentials.ownerId, credentials.name],
       set: {
         value: encrypted,
-        type,
-        tokenUrl: type === "oauth_client" ? (tokenUrl ?? null) : null,
+        authScheme,
         expiresAt: expiresAt ?? null,
         updatedAt: new Date(),
       },
@@ -214,36 +243,36 @@ export async function getApiCredentialWithType(
   ownerId: string,
   requestingUserId: string,
   intent: "read" | "write",
-): Promise<{ value: string; type: string; access_token?: string; expires_in?: number } | null> {
+): Promise<{ value: string; authScheme: AuthScheme } | null> {
   const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
   if (!cred) return null;
 
   const decrypted = decryptCredential(cred.value);
 
-  if (cred.type === "oauth_client" && cred.tokenUrl) {
-    let parsed: { client_id: string; client_secret: string };
+  if (cred.authScheme === "oauth_client") {
+    let parsed: { client_id: string; client_secret: string; token_url: string };
     try {
       parsed = JSON.parse(decrypted);
     } catch {
       throw new Error(`oauth_client credential "${name}" has invalid JSON value`);
     }
-    if (!parsed.client_id || !parsed.client_secret) {
-      throw new Error(`oauth_client credential "${name}" missing client_id or client_secret`);
+    if (!parsed.client_id || !parsed.client_secret || !parsed.token_url) {
+      throw new Error(
+        `oauth_client credential "${name}" missing client_id, client_secret, or token_url`,
+      );
     }
     const tokenResponse = await exchangeOAuthToken(
-      cred.tokenUrl,
+      parsed.token_url,
       parsed.client_id,
       parsed.client_secret,
     );
     return {
       value: tokenResponse.access_token,
-      type: cred.type,
-      access_token: tokenResponse.access_token,
-      expires_in: tokenResponse.expires_in,
+      authScheme: cred.authScheme as AuthScheme,
     };
   }
 
-  return { value: decrypted, type: cred.type };
+  return { value: decrypted, authScheme: cred.authScheme as AuthScheme };
 }
 
 async function exchangeOAuthToken(
@@ -289,7 +318,7 @@ async function exchangeOAuthToken(
 }
 
 /**
- * Retrieve a credential for a scheduled job. Returns raw decrypted value.
+ * Retrieve a credential for a scheduled job. Returns raw decrypted value and auth scheme.
  * NOTE: Does not auto-exchange oauth_client tokens — jobs get raw client_id/client_secret JSON.
  * This is intentional: jobs may need different exchange flows or caching strategies.
  * Use getApiCredentialWithType for interactive tool calls that need auto-exchange.
@@ -299,7 +328,7 @@ export async function getJobApiCredential(
   jobId: string,
   creatorId: string,
   declaredCredentialIds: string[],
-): Promise<string | null> {
+): Promise<{ value: string; authScheme: AuthScheme } | null> {
   validateKey();
   validateName(name);
 
@@ -327,7 +356,7 @@ export async function getJobApiCredential(
   }
 
   await audit(cred.id, name, `job:${jobId}`, "use", `creator:${creatorId}`);
-  return decryptCredential(cred.value);
+  return { value: decryptCredential(cred.value), authScheme: cred.authScheme as AuthScheme };
 }
 
 export async function getCredentialById(
@@ -351,7 +380,7 @@ export async function listApiCredentials(
   Array<{
     id: string;
     name: string;
-    type: string;
+    authScheme: AuthScheme;
     owner_id: string;
     expires_at: Date | null;
     permission: "owner" | "read" | "write" | "admin";
@@ -361,7 +390,7 @@ export async function listApiCredentials(
     .select({
       id: credentials.id,
       name: credentials.name,
-      type: credentials.type,
+      authScheme: credentials.authScheme,
       owner_id: credentials.ownerId,
       expires_at: credentials.expiresAt,
     })
@@ -372,7 +401,7 @@ export async function listApiCredentials(
     .select({
       id: credentials.id,
       name: credentials.name,
-      type: credentials.type,
+      authScheme: credentials.authScheme,
       owner_id: credentials.ownerId,
       expires_at: credentials.expiresAt,
       permission: credentialGrants.permission,
@@ -387,8 +416,8 @@ export async function listApiCredentials(
     );
 
   return [
-    ...owned.map((r) => ({ ...r, permission: "owner" as const })),
-    ...granted.map((r) => ({ ...r, permission: r.permission as "read" | "write" | "admin" })),
+    ...owned.map((r) => ({ ...r, authScheme: r.authScheme as AuthScheme, permission: "owner" as const })),
+    ...granted.map((r) => ({ ...r, authScheme: r.authScheme as AuthScheme, permission: r.permission as "read" | "write" | "admin" })),
   ];
 }
 
@@ -579,4 +608,80 @@ export function maskApiCredential(value: string): string {
   const first4 = value.slice(0, 4);
   const last4 = value.slice(-4);
   return `${first4}***${last4}`;
+}
+
+/**
+ * One-time data migration: fold `token_url` from the old column into the encrypted
+ * value JSON blob for oauth_client credentials.
+ *
+ * Safe to call at startup — checks whether the legacy `type` column still exists
+ * before doing anything. After the SQL migration in 0034 drops that column, this
+ * is a no-op. Idempotent: re-running when already migrated does nothing.
+ */
+export async function runCredentialMigration(): Promise<void> {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) return;
+
+  // Check if the old `type` column still exists (pre-migration state)
+  const { neon } = await import("@neondatabase/serverless");
+  const rawSql = neon(connectionString);
+
+  const cols = await rawSql`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_name = 'credentials'
+      AND column_name = 'type'
+  `;
+
+  if (cols.length === 0) {
+    // Column already gone — migration already ran, nothing to do
+    return;
+  }
+
+  logger.info("runCredentialMigration: folding token_url into oauth_client value blobs");
+
+  // Fetch all oauth_client rows via raw SQL (Drizzle schema no longer has these columns)
+  const rows = await rawSql`
+    SELECT id, value, token_url
+    FROM credentials
+    WHERE type = 'oauth_client'
+  `;
+
+  for (const row of rows) {
+    try {
+      const decrypted = decryptCredential(row.value as string);
+      let parsed: Record<string, string> = {};
+      try {
+        parsed = JSON.parse(decrypted);
+      } catch {
+        // value wasn't JSON yet — treat as empty object
+      }
+
+      if (row.token_url && !parsed.token_url) {
+        parsed.token_url = row.token_url as string;
+        const { encryptCredential: enc } = await import("./credentials.js");
+        const reEncrypted = enc(JSON.stringify(parsed));
+
+        await rawSql`
+          UPDATE credentials
+          SET value = ${reEncrypted},
+              auth_scheme = 'oauth_client',
+              updated_at = NOW()
+          WHERE id = ${row.id}
+        `;
+      }
+    } catch (err) {
+      logger.error("runCredentialMigration: failed to migrate row", { id: row.id, err });
+    }
+  }
+
+  // Ensure all legacy token rows are marked as bearer
+  await rawSql`
+    UPDATE credentials
+    SET auth_scheme = 'bearer'
+    WHERE type = 'token'
+      AND auth_scheme != 'bearer'
+  `;
+
+  logger.info("runCredentialMigration: complete");
 }

@@ -13,6 +13,7 @@ import {
   openCredentialModal,
   openAddCredentialModal,
   buildAddCredentialBlocks,
+  buildUpdateCredentialBlocks,
   openUpdateCredentialModal,
   openShareCredentialModal,
   openCredentialAccessModal,
@@ -439,32 +440,59 @@ app.post("/api/slack/interactions", async (c) => {
         waitUntil(addPromise);
       }
 
-      // Dynamic modal: swap fields when credential type changes
-      if (action.action_id === "cred_type" && payload.view) {
-        const selectedType = (action.selected_option?.value || "token") as "token" | "oauth_client";
+      // Dynamic modal: swap fields when credential auth scheme changes
+      if (action.action_id === "cred_auth_scheme" && payload.view) {
+        const selectedScheme = (action.selected_option?.value || "bearer") as
+          | "bearer"
+          | "basic"
+          | "header"
+          | "query"
+          | "oauth_client";
         // Preserve the name field value if already filled
         const currentName = payload.view.state?.values?.cred_name_block?.cred_name?.value || "";
-        const blocks = buildAddCredentialBlocks(selectedType);
-        // Inject current name value into the block
-        if (currentName) {
-          const nameBlock = blocks.find((b: any) => b.block_id === "cred_name_block");
-          if (nameBlock) {
-            nameBlock.element.initial_value = currentName;
-          }
+        const isAdd = payload.view.callback_id === "api_credential_add_submit";
+        const blocks = isAdd
+          ? buildAddCredentialBlocks(selectedScheme)
+          : [
+              ...buildUpdateCredentialBlocks(selectedScheme),
+              {
+                type: "context",
+                elements: [
+                  {
+                    type: "mrkdwn",
+                    text: "This will replace the current credential value. Encrypted at rest with AES-256-GCM.",
+                  },
+                ],
+              },
+            ];
+
+        if (isAdd && currentName) {
+          const nameBlock = blocks.find(
+            (b: any) => b.block_id === "cred_name_block",
+          );
+          if (nameBlock) nameBlock.element.initial_value = currentName;
         }
+
+        const titleText =
+          payload.view.title?.text ||
+          (isAdd ? "Add API Credential" : "Update Credential");
         const updatePromise = slackClient.views.update({
           view_id: payload.view.id,
           hash: payload.view.hash,
           view: {
             type: "modal",
-            callback_id: "api_credential_add_submit",
-            title: { type: "plain_text", text: "Add API Credential" },
+            callback_id: payload.view.callback_id,
+            private_metadata: payload.view.private_metadata,
+            title: { type: "plain_text", text: titleText },
             submit: { type: "plain_text", text: "Save" },
             close: { type: "plain_text", text: "Cancel" },
             blocks,
           },
         }).catch((err: unknown) => {
-          recordError("interactions.cred_type_switch", err, { userId, selectedType });
+          recordError("interactions.cred_auth_scheme_switch", err, {
+            userId,
+            selectedScheme,
+          });
         });
         waitUntil(updatePromise);
       }
@@ -479,11 +507,14 @@ app.post("/api/slack/interactions", async (c) => {
             const creds = await listApiCredentials(userId);
             const cred = creds.find((c) => c.id === credId);
             const credName = cred?.name ?? "credential";
+            const credAuthScheme = (cred?.authScheme ??
+              "bearer") as "bearer" | "basic" | "header" | "query" | "oauth_client";
             const updatePromise = openUpdateCredentialModal(
               slackClient,
               payload.trigger_id,
               credId,
               credName,
+              credAuthScheme,
             ).catch((err) => {
               recordError("interactions.api_credential_update_modal", err, { userId, credId });
             });
@@ -668,16 +699,42 @@ app.post("/api/slack/interactions", async (c) => {
     if (callbackId === "api_credential_add_submit" && userId) {
       const name = payload.view?.state?.values?.cred_name_block?.cred_name?.value;
       const expiryStr = payload.view?.state?.values?.cred_expiry_block?.cred_expiry?.selected_date;
-      const credType = (payload.view?.state?.values?.cred_type_block?.cred_type?.selected_option?.value || "token") as "token" | "oauth_client";
+      const authScheme = (payload.view?.state?.values?.cred_auth_scheme_block?.cred_auth_scheme?.selected_option?.value || "bearer") as
+        | "bearer"
+        | "basic"
+        | "header"
+        | "query"
+        | "oauth_client";
 
       let value: string | undefined;
-      let tokenUrl: string | undefined;
-      if (credType === "oauth_client") {
-        const clientId = payload.view?.state?.values?.cred_client_id_block?.cred_client_id?.value;
-        const clientSecret = payload.view?.state?.values?.cred_client_secret_block?.cred_client_secret?.value;
-        tokenUrl = payload.view?.state?.values?.cred_token_url_block?.cred_token_url?.value || undefined;
-        if (clientId && clientSecret) {
-          value = JSON.stringify({ client_id: clientId, client_secret: clientSecret });
+      if (authScheme === "oauth_client") {
+        const clientId =
+          payload.view?.state?.values?.cred_client_id_block?.cred_client_id?.value;
+        const clientSecret =
+          payload.view?.state?.values?.cred_client_secret_block?.cred_client_secret?.value;
+        const tokenUrl =
+          payload.view?.state?.values?.cred_token_url_block?.cred_token_url?.value;
+        if (clientId && clientSecret && tokenUrl) {
+          value = JSON.stringify({
+            client_id: clientId,
+            client_secret: clientSecret,
+            token_url: tokenUrl,
+          });
+        }
+      } else if (authScheme === "basic") {
+        const username =
+          payload.view?.state?.values?.cred_username_block?.cred_username?.value;
+        const password =
+          payload.view?.state?.values?.cred_password_block?.cred_password?.value;
+        if (username && password) {
+          value = JSON.stringify({ username, password });
+        }
+      } else if (authScheme === "header" || authScheme === "query") {
+        const key = payload.view?.state?.values?.cred_key_block?.cred_key?.value;
+        const secret =
+          payload.view?.state?.values?.cred_secret_block?.cred_secret?.value;
+        if (key && secret) {
+          value = JSON.stringify({ key, secret });
         }
       } else {
         value = payload.view?.state?.values?.cred_value_block?.cred_value?.value;
@@ -688,7 +745,7 @@ app.post("/api/slack/interactions", async (c) => {
         const expiresAt = expiryStr ? new Date(expiryStr) : undefined;
         const addPromise = (async () => {
           try {
-            await storeApiCredential(userId, name, value, expiresAt, credType, tokenUrl);
+            await storeApiCredential(userId, name, value, expiresAt, authScheme);
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.api_credential_add", err, { userId, name });
@@ -700,7 +757,46 @@ app.post("/api/slack/interactions", async (c) => {
 
     if (callbackId === "api_credential_update_submit" && userId) {
       const credentialId = payload.view?.private_metadata;
-      const value = payload.view?.state?.values?.cred_value_block?.cred_value?.value;
+      const authScheme = (payload.view?.state?.values?.cred_auth_scheme_block?.cred_auth_scheme?.selected_option?.value || "bearer") as
+        | "bearer"
+        | "basic"
+        | "header"
+        | "query"
+        | "oauth_client";
+
+      let value: string | undefined;
+      if (authScheme === "oauth_client") {
+        const clientId =
+          payload.view?.state?.values?.cred_client_id_block?.cred_client_id?.value;
+        const clientSecret =
+          payload.view?.state?.values?.cred_client_secret_block?.cred_client_secret?.value;
+        const tokenUrl =
+          payload.view?.state?.values?.cred_token_url_block?.cred_token_url?.value;
+        if (clientId && clientSecret && tokenUrl) {
+          value = JSON.stringify({
+            client_id: clientId,
+            client_secret: clientSecret,
+            token_url: tokenUrl,
+          });
+        }
+      } else if (authScheme === "basic") {
+        const username =
+          payload.view?.state?.values?.cred_username_block?.cred_username?.value;
+        const password =
+          payload.view?.state?.values?.cred_password_block?.cred_password?.value;
+        if (username && password) {
+          value = JSON.stringify({ username, password });
+        }
+      } else if (authScheme === "header" || authScheme === "query") {
+        const key = payload.view?.state?.values?.cred_key_block?.cred_key?.value;
+        const secret =
+          payload.view?.state?.values?.cred_secret_block?.cred_secret?.value;
+        if (key && secret) {
+          value = JSON.stringify({ key, secret });
+        }
+      } else {
+        value = payload.view?.state?.values?.cred_value_block?.cred_value?.value;
+      }
 
       if (credentialId && value) {
         const updatePromise = (async () => {
@@ -719,7 +815,13 @@ app.post("/api/slack/interactions", async (c) => {
               return;
             }
 
-            await storeApiCredential(cred.owner_id, cred.name, value, cred.expires_at ?? undefined, (cred.type as "token" | "oauth_client") ?? "token");
+            await storeApiCredential(
+              cred.owner_id,
+              cred.name,
+              value,
+              cred.expires_at ?? undefined,
+              authScheme,
+            );
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.api_credential_update", err, { userId, credentialId });
