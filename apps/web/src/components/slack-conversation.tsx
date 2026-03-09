@@ -498,7 +498,7 @@ function SlackMessageRow({
       style={{
         display: "flex",
         gap: "0",
-        padding: sameAuthor ? "1px 20px 1px 20px" : "6px 20px 2px 20px",
+        padding: sameAuthor ? "1px 8px 1px 8px" : "6px 8px 2px 8px",
         position: "relative",
       }}
       onMouseEnter={(e) => {
@@ -630,7 +630,7 @@ export function SlackConversation({
           'Slack-Lato,"Lato",ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif',
         background: bgColor,
         border: `1px solid ${borderColor}`,
-        borderRadius: "12px",
+        borderRadius: "4px",
         overflow: "hidden",
         padding: "8px 0",
       }}
