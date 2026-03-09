@@ -1,16 +1,28 @@
 {
   "installCommand": "npm install",
+  "buildCommand": "tsc && tsx src/db/migrate.ts",
   "framework": null,
-  "regions": ["fra1"],
+  "regions": [
+    "fra1"
+  ],
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 800
     }
   },
   "rewrites": [
-    { "source": "/slack/events", "destination": "/api/slack/events" },
-    { "source": "/health", "destination": "/api/health" },
-    { "source": "/(.*)", "destination": "/api/index" }
+    {
+      "source": "/slack/events",
+      "destination": "/api/slack/events"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/health"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
   ],
   "crons": [
     {
