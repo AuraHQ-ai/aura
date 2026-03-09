@@ -27,6 +27,8 @@ const MAIN_MODELS: ModelOption[] = [
   { value: "openai/gpt-4o", label: "GPT-4o" },
   { value: "google/gemini-3-pro-preview", label: "Gemini 3 Pro" },
   { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  { value: "xai/grok-4", label: "Grok 4" },
+  { value: "xai/grok-4-fast-reasoning", label: "Grok 4 Fast" },
   { value: "xai/grok-4.1-fast-reasoning", label: "Grok 4.1 Fast" },
   { value: "deepseek/deepseek-v3.2-thinking", label: "DeepSeek V3.2 Thinking" },
 ];
@@ -38,6 +40,7 @@ const FAST_MODELS: ModelOption[] = [
   { value: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
   { value: "google/gemini-3-flash", label: "Gemini 3 Flash" },
   { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { value: "xai/grok-4-fast-non-reasoning", label: "Grok 4 Fast NR" },
   { value: "xai/grok-4.1-fast-non-reasoning", label: "Grok 4.1 Fast NR" },
   { value: "xai/grok-code-fast-1", label: "Grok Code Fast 1" },
   { value: "deepseek/deepseek-v3.2", label: "DeepSeek V3.2" },
@@ -270,80 +273,136 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
 
 // ── User Credential Modals ──────────────────────────────────────────────────
 
-export function buildAddCredentialBlocks(credType: "token" | "oauth_client" = "token"): any[] {
-  const typeBlock = {
+type AuthScheme = "bearer" | "basic" | "header" | "query" | "oauth_client";
+
+function buildAuthSchemeBlock(authScheme: AuthScheme) {
+  return {
     type: "input",
-    block_id: "cred_type_block",
+    block_id: "cred_auth_scheme_block",
     dispatch_action: true,
-    label: { type: "plain_text", text: "Type" },
+    label: { type: "plain_text", text: "Auth Scheme" },
     element: {
       type: "static_select",
-      action_id: "cred_type",
+      action_id: "cred_auth_scheme",
       options: [
-        { text: { type: "plain_text", text: "Token" }, value: "token" },
+        { text: { type: "plain_text", text: "Bearer" }, value: "bearer" },
+        { text: { type: "plain_text", text: "Basic" }, value: "basic" },
+        { text: { type: "plain_text", text: "Header" }, value: "header" },
+        { text: { type: "plain_text", text: "Query" }, value: "query" },
         { text: { type: "plain_text", text: "OAuth Client" }, value: "oauth_client" },
       ],
-      initial_option: credType === "oauth_client"
-        ? { text: { type: "plain_text", text: "OAuth Client" }, value: "oauth_client" }
-        : { text: { type: "plain_text", text: "Token" }, value: "token" },
+      initial_option: (() => {
+        const labels: Record<AuthScheme, string> = {
+          bearer: "Bearer",
+          basic: "Basic",
+          header: "Header",
+          query: "Query",
+          oauth_client: "OAuth Client",
+        };
+        return { text: { type: "plain_text", text: labels[authScheme] }, value: authScheme };
+      })(),
     },
   };
+}
 
-  const valueBlocks = credType === "oauth_client"
-    ? [
-        {
-          type: "input",
-          block_id: "cred_client_id_block",
-          label: { type: "plain_text", text: "Client ID" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_client_id",
-            placeholder: { type: "plain_text", text: "Paste client ID" },
+function buildCredentialValueBlocks(authScheme: AuthScheme): any[] {
+  if (authScheme === "oauth_client") {
+    return [
+      {
+        type: "input",
+        block_id: "cred_client_id_block",
+        label: { type: "plain_text", text: "Client ID" },
+        element: {
+          type: "plain_text_input",
+          action_id: "cred_client_id",
+          placeholder: { type: "plain_text", text: "Paste client ID" },
+        },
+      },
+      {
+        type: "input",
+        block_id: "cred_client_secret_block",
+        label: { type: "plain_text", text: "Client Secret" },
+        element: {
+          type: "plain_text_input",
+          action_id: "cred_client_secret",
+          placeholder: { type: "plain_text", text: "Paste client secret" },
+        },
+      },
+      {
+        type: "input",
+        block_id: "cred_token_url_block",
+        label: { type: "plain_text", text: "Token URL" },
+        element: {
+          type: "plain_text_input",
+          action_id: "cred_token_url",
+          placeholder: {
+            type: "plain_text",
+            text: "https://cloud.airbyte.com/api/v1/applications/token",
           },
         },
-        {
-          type: "input",
-          block_id: "cred_client_secret_block",
-          label: { type: "plain_text", text: "Client Secret" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_client_secret",
-            placeholder: { type: "plain_text", text: "Paste client secret" },
+      },
+      {
+        type: "context",
+        elements: [
+          {
+            type: "mrkdwn",
+            text: "Credentials will be automatically exchanged for an access token when retrieved.",
           },
+        ],
+      },
+    ];
+  }
+
+  if (authScheme === "header" || authScheme === "query") {
+    const keyLabel = authScheme === "header" ? "Header Name" : "Query Key";
+    const keyPlaceholder =
+      authScheme === "header" ? "e.g. x-api-key" : "e.g. api_key";
+    return [
+      {
+        type: "input",
+        block_id: "cred_key_block",
+        label: { type: "plain_text", text: keyLabel },
+        element: {
+          type: "plain_text_input",
+          action_id: "cred_key",
+          placeholder: { type: "plain_text", text: keyPlaceholder },
         },
-        {
-          type: "input",
-          block_id: "cred_token_url_block",
-          optional: true,
-          label: { type: "plain_text", text: "Token URL (optional)" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_token_url",
-            placeholder: { type: "plain_text", text: "https://cloud.airbyte.com/api/v1/applications/token" },
-          },
+      },
+      {
+        type: "input",
+        block_id: "cred_secret_block",
+        label: { type: "plain_text", text: "Secret" },
+        element: {
+          type: "plain_text_input",
+          action_id: "cred_secret",
+          placeholder: { type: "plain_text", text: "Paste secret value" },
         },
-        {
-          type: "context",
-          elements: [
-            {
-              type: "mrkdwn",
-              text: "If provided, credentials will be automatically exchanged for an access token when retrieved.",
-            },
-          ],
-        },
-      ]
-    : [
-        {
-          type: "input",
-          block_id: "cred_value_block",
-          label: { type: "plain_text", text: "Value" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_value",
-            placeholder: { type: "plain_text", text: "Paste your API token or key" },
-          },
-        },
-      ];
+      },
+    ];
+  }
+
+  const valuePlaceholder =
+    authScheme === "basic"
+      ? "Paste username:password"
+      : "Paste your API token or key";
+
+  return [
+    {
+      type: "input",
+      block_id: "cred_value_block",
+      label: { type: "plain_text", text: "Value" },
+      element: {
+        type: "plain_text_input",
+        action_id: "cred_value",
+        placeholder: { type: "plain_text", text: valuePlaceholder },
+      },
+    },
+  ];
+}
+
+export function buildAddCredentialBlocks(authScheme: AuthScheme = "bearer"): any[] {
+  const authSchemeBlock = buildAuthSchemeBlock(authScheme);
+  const valueBlocks = buildCredentialValueBlocks(authScheme);
 
   return [
     {
@@ -360,7 +419,7 @@ export function buildAddCredentialBlocks(credType: "token" | "oauth_client" = "t
         text: "Lowercase, a-z, 0-9, underscores. e.g. airbyte_api_token",
       },
     },
-    typeBlock,
+    authSchemeBlock,
     ...valueBlocks,
     {
       type: "input",
@@ -376,6 +435,13 @@ export function buildAddCredentialBlocks(credType: "token" | "oauth_client" = "t
   ];
 }
 
+export function buildUpdateCredentialBlocks(authScheme: AuthScheme = "bearer"): any[] {
+  const authSchemeBlock = buildAuthSchemeBlock(authScheme);
+  const valueBlocks = buildCredentialValueBlocks(authScheme);
+
+  return [authSchemeBlock, ...valueBlocks];
+}
+
 export async function openAddCredentialModal(
   client: WebClient,
   triggerId: string,
@@ -388,7 +454,7 @@ export async function openAddCredentialModal(
       title: { type: "plain_text", text: "Add API Credential" },
       submit: { type: "plain_text", text: "Save" },
       close: { type: "plain_text", text: "Cancel" },
-      blocks: buildAddCredentialBlocks("token"),
+      blocks: buildAddCredentialBlocks("bearer"),
     },
   });
 }
@@ -398,6 +464,7 @@ export async function openUpdateCredentialModal(
   triggerId: string,
   credentialId: string,
   credentialName: string,
+  authScheme: AuthScheme,
 ): Promise<void> {
   await client.views.open({
     trigger_id: triggerId,
@@ -409,19 +476,7 @@ export async function openUpdateCredentialModal(
       submit: { type: "plain_text", text: "Save" },
       close: { type: "plain_text", text: "Cancel" },
       blocks: [
-        {
-          type: "input",
-          block_id: "cred_value_block",
-          label: { type: "plain_text", text: "New Value" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_value",
-            placeholder: {
-              type: "plain_text",
-              text: "Paste the new token value",
-            },
-          },
-        },
+        ...buildUpdateCredentialBlocks(authScheme),
         {
           type: "context",
           elements: [
