@@ -45,6 +45,8 @@ export type SlackConversationProps = {
   maxWidth?: string;
   /** Dark or light theme override. Defaults to CSS var cascade (system). */
   theme?: "dark" | "light";
+  /** Extra CSS class(es) applied to the root div */
+  className?: string;
 };
 
 // ── Slack mrkdwn parser ──────────────────────────────────────────────────────
@@ -600,6 +602,7 @@ export function SlackConversation({
   messages,
   maxWidth = "680px",
   theme,
+  className,
 }: SlackConversationProps) {
   // Detect dark from next-themes: checks class="dark" and data-theme="dark" on <html>
   const [themeDark, setThemeDark] = React.useState(false);
@@ -624,6 +627,7 @@ export function SlackConversation({
 
   return (
     <div
+      className={className}
       style={{
         maxWidth,
         fontFamily:

@@ -264,18 +264,18 @@ export default function Home() {
         <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "48px" }}>
           Real questions. Real answers. No prompting required.
         </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "48px", maxWidth: "720px" }}>
+        <div className="demo-conversation-list" style={{ display: "flex", flexDirection: "column", gap: "48px", maxWidth: "720px" }}>
           <div>
             <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>Sales performance</p>
-            <SlackConversation messages={SALES_LEADERBOARD} />
+            <SlackConversation messages={SALES_LEADERBOARD} className="slack-conversation-flush" />
           </div>
           <div>
             <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>Marketing analytics</p>
-            <SlackConversation messages={AD_SPEND} />
+            <SlackConversation messages={AD_SPEND} className="slack-conversation-flush" />
           </div>
           <div>
             <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>Engineering — build failing</p>
-            <SlackConversation messages={BUILD_FAILING} />
+            <SlackConversation messages={BUILD_FAILING} className="slack-conversation-flush" />
           </div>
         </div>
       </section>
