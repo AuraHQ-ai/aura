@@ -1,6 +1,9 @@
 import * as nodePath from "node:path";
 import { getSetting, setSetting } from "./settings.js";
-import { getCredential } from "./credentials.js";
+import { getCredential, decryptCredential } from "./credentials.js";
+import { db } from "../db/client.js";
+import { credentials } from "../db/schema.js";
+import { isNotNull } from "drizzle-orm";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
@@ -78,6 +81,28 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
   if (saKeyB64) {
     envs.GOOGLE_SA_KEY_B64 = saKeyB64;
   }
+
+  try {
+    const rows = await db
+      .select({ sandboxEnvName: credentials.sandboxEnvName, value: credentials.value })
+      .from(credentials)
+      .where(isNotNull(credentials.sandboxEnvName));
+    for (const row of rows) {
+      if (row.sandboxEnvName) {
+        try {
+          envs[row.sandboxEnvName] = decryptCredential(row.value);
+        } catch (e: any) {
+          logger.warn("Failed to decrypt credential for sandbox injection", {
+            envName: row.sandboxEnvName,
+            error: e.message,
+          });
+        }
+      }
+    }
+  } catch (e: any) {
+    logger.warn("Failed to query credentials for sandbox injection", { error: e.message });
+  }
+
   return envs;
 }
 

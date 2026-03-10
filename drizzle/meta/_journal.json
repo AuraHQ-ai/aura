@@ -239,6 +239,20 @@
       "when": 1773312000000,
       "tag": "0033_action_log_approval_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1773398400000,
+      "tag": "0034_add_sandbox_env_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1773484800000,
+      "tag": "0035_add_message_token_usage",
+      "breakpoints": true
     }
   ]
 }
