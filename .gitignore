@@ -13,6 +13,11 @@ apps/web/node_modules/
 apps/web/.next/
 apps/web/next-env.d.ts
 
+# Dashboard
+apps/dashboard/node_modules/
+apps/dashboard/.next/
+apps/dashboard/next-env.d.ts
+
 # Additional env files (prevent accidental secret commits)
 .env.prod
 .env.staging

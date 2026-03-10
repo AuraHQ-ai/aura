@@ -1,0 +1,96 @@
+import { getResource } from "../actions";
+import { notFound } from "next/navigation";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ArrowLeft } from "lucide-react";
+import { formatDate } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
+
+export default async function ResourceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const resource = await getResource(id);
+  if (!resource) return notFound();
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-4">
+        <Link href="/resources">
+          <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
+        </Link>
+        <div>
+          <h1 className="text-xl font-semibold">{resource.title || "Untitled"}</h1>
+          <a href={resource.url} target="_blank" rel="noopener noreferrer" className="text-sm text-muted-foreground hover:underline">
+            {resource.url}
+          </a>
+        </div>
+        <div className="ml-auto">
+          <Badge variant={
+            resource.status === "ready" ? "success" :
+            resource.status === "error" ? "destructive" :
+            "warning"
+          }>
+            {resource.status}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Source</CardTitle></CardHeader>
+          <CardContent><Badge variant="outline">{resource.source}</Badge></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Crawled</CardTitle></CardHeader>
+          <CardContent><span className="text-sm">{formatDate(resource.crawledAt)}</span></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Updated</CardTitle></CardHeader>
+          <CardContent><span className="text-sm">{formatDate(resource.updatedAt)}</span></CardContent>
+        </Card>
+      </div>
+
+      {resource.summary && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Summary</CardTitle></CardHeader>
+          <CardContent><p className="text-sm">{resource.summary}</p></CardContent>
+        </Card>
+      )}
+
+      {resource.content && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Content</CardTitle></CardHeader>
+          <CardContent>
+            <pre className="whitespace-pre-wrap text-sm font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[500px]">
+              {resource.content}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
+      {resource.errorMessage && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Error</CardTitle></CardHeader>
+          <CardContent>
+            <pre className="whitespace-pre-wrap text-sm font-mono text-destructive bg-muted rounded-lg p-4">
+              {resource.errorMessage}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
+      {resource.metadata && Object.keys(resource.metadata).length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Metadata</CardTitle></CardHeader>
+          <CardContent>
+            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[300px]">
+              {JSON.stringify(resource.metadata, null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,130 @@
+"use client";
+
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { ArrowLeft } from "lucide-react";
+import { formatDate } from "@/lib/utils";
+import type { Job, JobExecution } from "@schema";
+
+interface JobData {
+  job: Job;
+  executions: JobExecution[];
+}
+
+export function JobDetail({ data }: { data: JobData }) {
+  const { job, executions } = data;
+
+  return (
+    <>
+      <div className="flex items-center gap-4">
+        <Link href="/jobs">
+          <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
+        </Link>
+        <div>
+          <h1 className="text-xl font-semibold">{job.name}</h1>
+          <p className="text-sm text-muted-foreground">{job.description}</p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <Badge variant={job.enabled ? "success" : "secondary"}>
+            {job.enabled ? "Enabled" : "Disabled"}
+          </Badge>
+          <Badge variant="outline">{job.status}</Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Schedule</CardTitle></CardHeader>
+          <CardContent>
+            <span className="font-mono text-sm">{job.cronSchedule || "One-shot"}</span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Executions</CardTitle></CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{job.executionCount}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Priority</CardTitle></CardHeader>
+          <CardContent>
+            <Badge variant="outline">{job.priority}</Badge>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Last Run</CardTitle></CardHeader>
+          <CardContent>
+            <span className="text-sm">{formatDate(job.lastExecutedAt)}</span>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Tabs defaultValue="executions">
+        <TabsList>
+          <TabsTrigger value="executions">Executions</TabsTrigger>
+          <TabsTrigger value="playbook">Playbook</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="executions">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Started</TableHead>
+                <TableHead>Finished</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Trigger</TableHead>
+                <TableHead>Error</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {executions.map((exec) => (
+                <TableRow key={exec.id}>
+                  <TableCell className="text-sm">{formatDate(exec.startedAt)}</TableCell>
+                  <TableCell className="text-sm">{formatDate(exec.finishedAt)}</TableCell>
+                  <TableCell>
+                    <Badge variant={
+                      exec.status === "completed" ? "success" :
+                      exec.status === "failed" ? "destructive" :
+                      "secondary"
+                    }>
+                      {exec.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-sm">{exec.trigger}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
+                    {exec.error || "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {executions.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                    No executions yet
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TabsContent>
+
+        <TabsContent value="playbook">
+          <Card>
+            <CardContent className="pt-6">
+              {job.playbook ? (
+                <pre className="whitespace-pre-wrap text-sm font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[500px]">
+                  {job.playbook}
+                </pre>
+              ) : (
+                <p className="text-sm text-muted-foreground">No playbook defined.</p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </>
+  );
+}

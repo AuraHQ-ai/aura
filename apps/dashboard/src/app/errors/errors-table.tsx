@@ -1,0 +1,111 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { formatDate, truncate } from "@/lib/utils";
+import { resolveErrors } from "./actions";
+import { Search, CheckCircle } from "lucide-react";
+import type { ErrorEvent } from "@schema";
+
+export function ErrorsTable({ errors }: { errors: ErrorEvent[] }) {
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const filtered = search
+    ? errors.filter(
+        (e) =>
+          e.errorName.toLowerCase().includes(search.toLowerCase()) ||
+          e.errorMessage.toLowerCase().includes(search.toLowerCase()),
+      )
+    : errors;
+
+  function toggleSelect(id: string) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+  }
+
+  async function handleBulkResolve() {
+    await resolveErrors(Array.from(selected));
+    setSelected(new Set());
+    router.refresh();
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search errors..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        {selected.size > 0 && (
+          <Button size="sm" onClick={handleBulkResolve}>
+            <CheckCircle className="h-4 w-4" /> Resolve ({selected.size})
+          </Button>
+        )}
+      </div>
+
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-10" />
+            <TableHead>Error</TableHead>
+            <TableHead>Code</TableHead>
+            <TableHead>Message</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Time</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filtered.map((err) => (
+            <TableRow key={err.id}>
+              <TableCell>
+                <input
+                  type="checkbox"
+                  checked={selected.has(err.id)}
+                  onChange={() => toggleSelect(err.id)}
+                />
+              </TableCell>
+              <TableCell>
+                <Link href={`/errors/${err.id}`} className="font-medium hover:underline">
+                  {err.errorName}
+                </Link>
+              </TableCell>
+              <TableCell>
+                {err.errorCode ? <Badge variant="outline">{err.errorCode}</Badge> : "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground max-w-md">
+                {truncate(err.errorMessage, 80)}
+              </TableCell>
+              <TableCell>
+                <Badge variant={err.resolved ? "success" : "destructive"}>
+                  {err.resolved ? "Resolved" : "Open"}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-muted-foreground text-sm">{formatDate(err.timestamp)}</TableCell>
+            </TableRow>
+          ))}
+          {filtered.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                No errors found
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </>
+  );
+}
