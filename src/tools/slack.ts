@@ -3017,7 +3017,18 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
   if (isAnthropic) {
     const { anthropic } = await import("@ai-sdk/anthropic");
-    tools.toolSearch = anthropic.tools.toolSearchBm25_20251119();
+    // TODO: toolSearchBm25_20251119() returns an Anthropic-native tool object that bypasses
+    // defineTool(), so it never gets the `slack` metadata we use for Slack action cards.
+    // Workaround: cast to any and attach the slack property manually so the pipeline
+    // renders a proper card (status + detail) instead of the fallback "Done" label.
+    // Long-term fix: Anthropic should expose a way to attach metadata to built-in tools,
+    // or we should wrap it in defineTool() once the SDK supports that pattern.
+    const _toolSearch = anthropic.tools.toolSearchBm25_20251119();
+    ((_toolSearch as unknown) as Record<string, unknown>).slack = {
+      status: "Searching tools...",
+      detail: (i: { query: string }) => i.query,
+    };
+    tools.toolSearch = _toolSearch;
 
     const DEFERRED_TOOLS = new Set([
       // BigQuery / Data
