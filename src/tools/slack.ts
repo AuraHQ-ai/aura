@@ -3041,16 +3041,16 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
       "check_calendar", "create_event", "update_event", "delete_event", "find_available_slot",
       // Canvas
       "read_canvas", "create_canvas", "edit_canvas", "delete_canvas", "share_canvas", "list_canvases",
-      // Slack Lists
-      "list_slack_list_items", "get_slack_list_item", "create_slack_list_item", "update_slack_list_item", "delete_slack_list_item",
+      // Slack Lists (list + get are eager -- used in every bug triage session)
+      "create_slack_list_item", "update_slack_list_item", "delete_slack_list_item",
       // Email
       "send_email", "reply_to_email",
       // Email triage (per-user Gmail)
       "sync_emails", "email_digest", "update_email_thread",
       "read_user_emails", "read_user_email",
       "generate_gmail_auth_url", "create_gmail_draft", "list_gmail_drafts", "delete_gmail_draft",
-      // Dev / Code
-      "run_command", "dispatch_headless", "read_job_trace",
+      // Dev / Code (run_command is eager -- used reflexively in most sessions)
+      "dispatch_headless", "read_job_trace",
       "dispatch_cursor_agent", "check_cursor_agent", "followup_cursor_agent",
       "stop_cursor_agent", "get_cursor_conversation", "list_cursor_agents",
       // Browser
