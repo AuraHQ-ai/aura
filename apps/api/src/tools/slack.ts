@@ -2377,7 +2377,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
           // 2. Upload the file content to the presigned URL
           const uploadResp = await fetch(uploadUrl, {
             method: "POST",
-            body: fileBuffer,
+            body: new Uint8Array(fileBuffer),
             headers: { "Content-Type": "application/octet-stream" },
           });
           if (!uploadResp.ok) {

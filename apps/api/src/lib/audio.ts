@@ -15,7 +15,8 @@ export async function transcribeAudio(
   }
 
   const formData = new FormData();
-  formData.append("file", new Blob([data], { type: mimeType }), filename);
+  // Re-wrap into a fresh Uint8Array backed by a plain ArrayBuffer for DOM Blob typings.
+  formData.append("file", new Blob([new Uint8Array(data)], { type: mimeType }), filename);
   formData.append("model", "whisper-1");
 
   const response = await fetch(
