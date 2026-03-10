@@ -62,16 +62,16 @@ export default async function DashboardPage() {
   const stats = await getStats();
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+    <div className="space-y-4">
+      <h1 className="text-lg font-semibold tracking-tight">Overview</h1>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Notes</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.notes}</div>
+            <div className="text-xl font-bold">{stats.notes}</div>
           </CardContent>
         </Card>
         <Card>
@@ -79,7 +79,7 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium">Memories</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.memories}</div>
+            <div className="text-xl font-bold">{stats.memories}</div>
           </CardContent>
         </Card>
         <Card>
@@ -87,7 +87,7 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium">Users</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.users}</div>
+            <div className="text-xl font-bold">{stats.users}</div>
           </CardContent>
         </Card>
         <Card>
@@ -95,7 +95,7 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium">Active Jobs</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.activeJobs}</div>
+            <div className="text-xl font-bold">{stats.activeJobs}</div>
           </CardContent>
         </Card>
         <Card>
@@ -103,12 +103,12 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium">Errors (24h)</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.recentErrorsCount}</div>
+            <div className="text-xl font-bold">{stats.recentErrorsCount}</div>
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Recent Errors</CardTitle>

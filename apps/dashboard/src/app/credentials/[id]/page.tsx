@@ -10,7 +10,7 @@ export default async function CredentialDetailPage({ params }: { params: Promise
   if (!data) return notFound();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <CredentialDetail data={data} />
     </div>
   );

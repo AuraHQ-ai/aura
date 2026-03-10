@@ -2,23 +2,33 @@
 
 import { db } from "@/lib/db";
 import { credentials, credentialGrants, credentialAuditLog, userProfiles } from "@schema";
-import { eq, desc, count } from "drizzle-orm";
+import { eq, desc, count, ilike, sql } from "drizzle-orm";
 import { encryptCredential, decryptCredential, maskCredential } from "@/lib/credentials";
 import { revalidatePath } from "next/cache";
 
-export async function getCredentials() {
+export async function getCredentials(search?: string, page = 1, limit = 100) {
+  const offset = (page - 1) * limit;
+  const where = search ? ilike(credentials.name, `%${search}%`) : undefined;
+
+  const [{ value: total }] = await db
+    .select({ value: sql<number>`count(*)::int` })
+    .from(credentials)
+    .where(where);
+
   const creds = await db
     .select({
       id: credentials.id,
       name: credentials.name,
       type: credentials.type,
       ownerId: credentials.ownerId,
-      sandboxEnvName: credentials.sandboxEnvName,
       expiresAt: credentials.expiresAt,
       createdAt: credentials.createdAt,
     })
     .from(credentials)
-    .orderBy(desc(credentials.createdAt));
+    .where(where)
+    .orderBy(desc(credentials.createdAt))
+    .limit(limit)
+    .offset(offset);
 
   const result = [];
   for (const cred of creds) {
@@ -39,7 +49,7 @@ export async function getCredentials() {
     });
   }
 
-  return result;
+  return { items: result, total };
 }
 
 export async function getCredential(id: string) {
@@ -94,7 +104,6 @@ export async function createCredential(data: {
   type: string;
   ownerId: string;
   value: string;
-  sandboxEnvName?: string;
   expiresAt?: string;
   tokenUrl?: string;
 }) {
@@ -106,22 +115,12 @@ export async function createCredential(data: {
       type: data.type,
       ownerId: data.ownerId,
       value: encrypted,
-      sandboxEnvName: data.sandboxEnvName || null,
       expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
       tokenUrl: data.tokenUrl || null,
     })
     .returning();
   revalidatePath("/credentials");
   return cred;
-}
-
-export async function updateSandboxEnvName(id: string, sandboxEnvName: string | null) {
-  await db
-    .update(credentials)
-    .set({ sandboxEnvName, updatedAt: new Date() })
-    .where(eq(credentials.id, id));
-  revalidatePath(`/credentials/${id}`);
-  revalidatePath("/credentials");
 }
 
 export async function updateCredentialValue(id: string, value: string) {

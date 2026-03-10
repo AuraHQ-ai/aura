@@ -2,23 +2,33 @@
 
 import { db } from "@/lib/db";
 import { errorEvents } from "@schema";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, ilike, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
-export async function getErrors(resolved?: string) {
-  let query = db
+export async function getErrors(resolved?: string, search?: string, page = 1, limit = 100) {
+  const offset = (page - 1) * limit;
+
+  const conditions = [];
+  if (resolved === "true") conditions.push(eq(errorEvents.resolved, true));
+  else if (resolved === "false") conditions.push(eq(errorEvents.resolved, false));
+  if (search) conditions.push(ilike(errorEvents.errorName, `%${search}%`));
+
+  const where = conditions.length ? sql`${sql.join(conditions, sql` AND `)}` : undefined;
+
+  const [{ value: total }] = await db
+    .select({ value: sql<number>`count(*)::int` })
+    .from(errorEvents)
+    .where(where);
+
+  const items = await db
     .select()
     .from(errorEvents)
+    .where(where)
     .orderBy(desc(errorEvents.timestamp))
-    .$dynamic();
+    .limit(limit)
+    .offset(offset);
 
-  if (resolved === "true") {
-    query = query.where(eq(errorEvents.resolved, true));
-  } else if (resolved === "false") {
-    query = query.where(eq(errorEvents.resolved, false));
-  }
-
-  return query.limit(200);
+  return { items, total };
 }
 
 export async function getError(id: string) {

@@ -2,42 +2,52 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Pagination } from "@/components/pagination";
 import { formatDate, truncate } from "@/lib/utils";
-import { searchMemoriesKeyword, deleteMemory } from "./actions";
+import { deleteMemory } from "./actions";
 import { Search, Trash2 } from "lucide-react";
 import { Dialog, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Memory } from "@schema";
 
+type MemoryRow = Omit<Memory, "searchVector">;
+
 const MEMORY_TYPES = ["fact", "decision", "personal", "relationship", "sentiment", "open_thread"] as const;
 
-export function MemoriesTable({ memories: initialMemories }: { memories: Memory[] }) {
+interface Props {
+  memories: MemoryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export function MemoriesTable({ memories, total, page, pageSize }: Props) {
   const router = useRouter();
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [memories, setMemories] = useState(initialMemories);
-  const [searchMode, setSearchMode] = useState<"filter" | "keyword">("filter");
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [searchValue, setSearchValue] = useState(searchParams.get("search") || "");
+  const typeFilter = searchParams.get("type") || "";
 
-  const filtered = typeFilter
-    ? memories.filter((m) => m.type === typeFilter)
-    : memories;
-
-  const display = search && searchMode === "filter"
-    ? filtered.filter((m) => m.content.toLowerCase().includes(search.toLowerCase()))
-    : filtered;
-
-  async function handleKeywordSearch() {
-    if (!search) {
-      setMemories(initialMemories);
-      return;
+  function updateParams(key: string, value: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) {
+      params.set(key, value);
+    } else {
+      params.delete(key);
     }
-    const results = await searchMemoriesKeyword(search);
-    setMemories(results);
+    params.delete("page");
+    const qs = params.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  }
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    updateParams("search", searchValue);
   }
 
   async function handleDelete() {
@@ -50,34 +60,19 @@ export function MemoriesTable({ memories: initialMemories }: { memories: Memory[
   return (
     <>
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 max-w-sm">
+        <form onSubmit={handleSearchSubmit} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder={searchMode === "keyword" ? "Full-text search..." : "Filter memories..."}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && searchMode === "keyword" && handleKeywordSearch()}
+            placeholder="Full-text search (press Enter)..."
+            value={searchValue}
+            onChange={(e) => setSearchValue(e.target.value)}
             className="pl-9"
           />
-        </div>
-        <div className="flex rounded-lg border p-0.5 text-sm">
-          <button
-            onClick={() => setSearchMode("filter")}
-            className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${searchMode === "filter" ? "bg-muted font-medium" : ""}`}
-          >
-            Filter
-          </button>
-          <button
-            onClick={() => setSearchMode("keyword")}
-            className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${searchMode === "keyword" ? "bg-muted font-medium" : ""}`}
-          >
-            Keyword
-          </button>
-        </div>
+        </form>
         <select
           value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+          onChange={(e) => updateParams("type", e.target.value)}
+          className="h-8 rounded-md border border-input bg-transparent px-2.5 text-[13px]"
         >
           <option value="">All types</option>
           {MEMORY_TYPES.map((t) => (
@@ -98,7 +93,7 @@ export function MemoriesTable({ memories: initialMemories }: { memories: Memory[
           </TableRow>
         </TableHeader>
         <TableBody>
-          {display.map((memory) => (
+          {memories.map((memory) => (
             <TableRow key={memory.id}>
               <TableCell>
                 <Link href={`/memories/${memory.id}`} className="hover:underline">
@@ -116,7 +111,7 @@ export function MemoriesTable({ memories: initialMemories }: { memories: Memory[
               </TableCell>
             </TableRow>
           ))}
-          {display.length === 0 && (
+          {memories.length === 0 && (
             <TableRow>
               <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                 No memories found
@@ -125,6 +120,8 @@ export function MemoriesTable({ memories: initialMemories }: { memories: Memory[
           )}
         </TableBody>
       </Table>
+
+      <Pagination total={total} pageSize={pageSize} page={page} />
 
       <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <DialogHeader>

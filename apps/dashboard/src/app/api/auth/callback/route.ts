@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
 
   cookieStore.set(getSessionCookieName(), jwt, {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV !== "development",
     sameSite: "lax",
     maxAge: 7 * 24 * 60 * 60,
     path: "/",

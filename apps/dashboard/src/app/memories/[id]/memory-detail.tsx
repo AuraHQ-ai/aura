@@ -11,7 +11,7 @@ import { ArrowLeft, Save } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { Memory } from "@schema";
 
-interface MemoryWithUsers extends Memory {
+interface MemoryWithUsers extends Omit<Memory, "searchVector"> {
   relatedUsers: { slackUserId: string; displayName: string }[];
 }
 
@@ -31,7 +31,7 @@ export function MemoryDetail({ memory }: { memory: MemoryWithUsers }) {
 
   return (
     <>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <Link href="/memories">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
@@ -55,7 +55,7 @@ export function MemoryDetail({ memory }: { memory: MemoryWithUsers }) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <Card>
           <CardHeader><CardTitle className="text-sm">Relevance Score</CardTitle></CardHeader>
           <CardContent>

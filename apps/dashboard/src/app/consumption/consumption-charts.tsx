@@ -79,7 +79,7 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">By User</CardTitle>

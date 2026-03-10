@@ -20,12 +20,12 @@ export function JobDetail({ data }: { data: JobData }) {
 
   return (
     <>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <Link href="/jobs">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
         <div>
-          <h1 className="text-xl font-semibold">{job.name}</h1>
+          <h1 className="text-base font-semibold">{job.name}</h1>
           <p className="text-sm text-muted-foreground">{job.description}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -36,17 +36,17 @@ export function JobDetail({ data }: { data: JobData }) {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-4">
         <Card>
-          <CardHeader><CardTitle className="text-sm">Schedule</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Schedule</CardTitle></CardHeader>
           <CardContent>
-            <span className="font-mono text-sm">{job.cronSchedule || "One-shot"}</span>
+            <span className="font-mono text-[13px]">{job.cronSchedule || "One-shot"}</span>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Executions</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Executions</CardTitle></CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{job.executionCount}</div>
+            <div className="text-xl font-bold">{job.executionCount}</div>
           </CardContent>
         </Card>
         <Card>
@@ -113,9 +113,9 @@ export function JobDetail({ data }: { data: JobData }) {
 
         <TabsContent value="playbook">
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="pt-4">
               {job.playbook ? (
-                <pre className="whitespace-pre-wrap text-sm font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[500px]">
+                <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[500px]">
                   {job.playbook}
                 </pre>
               ) : (

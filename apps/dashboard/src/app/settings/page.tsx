@@ -7,8 +7,8 @@ export default async function SettingsPage() {
   const allSettings = await getSettings();
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+    <div className="space-y-4">
+      <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
       <SettingsForm settings={allSettings} />
     </div>
   );

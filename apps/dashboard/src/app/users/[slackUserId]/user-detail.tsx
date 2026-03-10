@@ -16,7 +16,7 @@ import type { UserProfile, Person, Memory } from "@schema";
 interface UserData {
   profile: UserProfile;
   person: Person | null;
-  memories: Memory[];
+  memories: Omit<Memory, "searchVector">[];
 }
 
 export function UserDetail({ data }: { data: UserData }) {
@@ -40,21 +40,21 @@ export function UserDetail({ data }: { data: UserData }) {
 
   return (
     <>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <Link href="/users">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
         <div>
-          <h1 className="text-xl font-semibold">{profile.displayName}</h1>
+          <h1 className="text-base font-semibold">{profile.displayName}</h1>
           <p className="text-sm text-muted-foreground font-mono">{profile.slackUserId}</p>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <Card>
-          <CardHeader><CardTitle className="text-sm">Interactions</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Interactions</CardTitle></CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{profile.interactionCount}</div>
+            <div className="text-xl font-bold">{profile.interactionCount}</div>
             <p className="text-xs text-muted-foreground">Last: {formatDate(profile.lastInteractionAt)}</p>
           </CardContent>
         </Card>
@@ -88,8 +88,8 @@ export function UserDetail({ data }: { data: UserData }) {
         <TabsContent value="profile">
           {person ? (
             <Card>
-              <CardContent className="pt-6 space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
+              <CardContent className="pt-4 space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
                   <div>
                     <label className="text-sm font-medium">Job Title</label>
                     <Input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />

@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { Pagination } from "@/components/pagination";
 import { formatDate } from "@/lib/utils";
 import { Search } from "lucide-react";
 
@@ -18,12 +20,31 @@ interface UserRow {
   jobTitle: string | null;
 }
 
-export function UsersTable({ users }: { users: UserRow[] }) {
-  const [search, setSearch] = useState("");
+interface Props {
+  users: UserRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 
-  const filtered = search
-    ? users.filter((u) => u.displayName.toLowerCase().includes(search.toLowerCase()))
-    : users;
+export function UsersTable({ users, total, page, pageSize }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [searchValue, setSearchValue] = useState(searchParams.get("search") || "");
+
+  function handleSearch(value: string) {
+    setSearchValue(value);
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) {
+      params.set("search", value);
+    } else {
+      params.delete("search");
+    }
+    params.delete("page");
+    const qs = params.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  }
 
   return (
     <>
@@ -31,8 +52,8 @@ export function UsersTable({ users }: { users: UserRow[] }) {
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Search users..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchValue}
+          onChange={(e) => handleSearch(e.target.value)}
           className="pl-9"
         />
       </div>
@@ -49,7 +70,7 @@ export function UsersTable({ users }: { users: UserRow[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filtered.map((user) => (
+          {users.map((user) => (
             <TableRow key={user.id}>
               <TableCell>
                 <Link href={`/users/${user.slackUserId}`} className="font-medium hover:underline">
@@ -63,7 +84,7 @@ export function UsersTable({ users }: { users: UserRow[] }) {
               <TableCell className="text-muted-foreground text-sm">{formatDate(user.createdAt)}</TableCell>
             </TableRow>
           ))}
-          {filtered.length === 0 && (
+          {users.length === 0 && (
             <TableRow>
               <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                 No users found
@@ -72,6 +93,8 @@ export function UsersTable({ users }: { users: UserRow[] }) {
           )}
         </TableBody>
       </Table>
+
+      <Pagination total={total} pageSize={pageSize} page={page} />
     </>
   );
 }

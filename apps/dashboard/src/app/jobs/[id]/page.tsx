@@ -10,7 +10,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   if (!data) return notFound();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <JobDetail data={data} />
     </div>
   );

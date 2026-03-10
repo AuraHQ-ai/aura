@@ -2,22 +2,41 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Pagination } from "@/components/pagination";
 import { formatDate } from "@/lib/utils";
 import { toggleJobEnabled } from "./actions";
 import { Search } from "lucide-react";
 import type { Job } from "@schema";
 
-export function JobsTable({ jobs }: { jobs: Job[] }) {
-  const router = useRouter();
-  const [search, setSearch] = useState("");
+interface Props {
+  jobs: Job[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 
-  const filtered = search
-    ? jobs.filter((j) => j.name.toLowerCase().includes(search.toLowerCase()))
-    : jobs;
+export function JobsTable({ jobs, total, page, pageSize }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [searchValue, setSearchValue] = useState(searchParams.get("search") || "");
+
+  function handleSearch(value: string) {
+    setSearchValue(value);
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) {
+      params.set("search", value);
+    } else {
+      params.delete("search");
+    }
+    params.delete("page");
+    const qs = params.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  }
 
   async function handleToggle(id: string, currentEnabled: number) {
     await toggleJobEnabled(id, currentEnabled === 0);
@@ -30,8 +49,8 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Search jobs..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchValue}
+          onChange={(e) => handleSearch(e.target.value)}
           className="pl-9"
         />
       </div>
@@ -49,7 +68,7 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filtered.map((job) => (
+          {jobs.map((job) => (
             <TableRow key={job.id}>
               <TableCell>
                 <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
@@ -81,7 +100,7 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
               <TableCell><Badge variant="outline">{job.priority}</Badge></TableCell>
             </TableRow>
           ))}
-          {filtered.length === 0 && (
+          {jobs.length === 0 && (
             <TableRow>
               <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                 No jobs found
@@ -90,6 +109,8 @@ export function JobsTable({ jobs }: { jobs: Job[] }) {
           )}
         </TableBody>
       </Table>
+
+      <Pagination total={total} pageSize={pageSize} page={page} />
     </>
   );
 }

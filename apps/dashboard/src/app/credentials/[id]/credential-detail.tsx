@@ -11,13 +11,12 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Dialog, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  updateSandboxEnvName,
   updateCredentialValue,
   grantCredentialAccess,
   revokeCredentialAccess,
   deleteCredential,
 } from "../actions";
-import { ArrowLeft, Save, Trash2, UserPlus } from "lucide-react";
+import { ArrowLeft, Trash2, UserPlus } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { Credential, CredentialGrant, CredentialAuditEntry } from "@schema";
 
@@ -31,20 +30,11 @@ interface CredentialData extends Credential {
 
 export function CredentialDetail({ data }: { data: CredentialData }) {
   const router = useRouter();
-  const [sandboxEnv, setSandboxEnv] = useState(data.sandboxEnvName || "");
   const [showUpdateValue, setShowUpdateValue] = useState(false);
   const [newValue, setNewValue] = useState("");
   const [showGrant, setShowGrant] = useState(false);
   const [granteeId, setGranteeId] = useState("");
   const [permission, setPermission] = useState("read");
-  const [saving, setSaving] = useState(false);
-
-  async function handleSaveSandboxEnv() {
-    setSaving(true);
-    await updateSandboxEnvName(data.id, sandboxEnv || null);
-    setSaving(false);
-    router.refresh();
-  }
 
   async function handleUpdateValue() {
     if (!newValue) return;
@@ -75,12 +65,12 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
 
   return (
     <>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <Link href="/credentials">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
         <div>
-          <h1 className="text-xl font-semibold font-mono">{data.name}</h1>
+          <h1 className="text-base font-semibold font-mono">{data.name}</h1>
           <p className="text-sm text-muted-foreground">Owned by {data.ownerName}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -92,7 +82,7 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <Card>
           <CardHeader><CardTitle className="text-sm">Value</CardTitle></CardHeader>
           <CardContent>
@@ -108,24 +98,6 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
           <CardContent><span className="text-sm">{formatDate(data.expiresAt)}</span></CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader><CardTitle className="text-sm">Sandbox Injection</CardTitle></CardHeader>
-        <CardContent className="flex items-center gap-2">
-          <Input
-            placeholder="ENV_VAR_NAME (e.g. STRIPE_API_KEY)"
-            value={sandboxEnv}
-            onChange={(e) => setSandboxEnv(e.target.value)}
-            className="max-w-sm font-mono"
-          />
-          <Button onClick={handleSaveSandboxEnv} disabled={saving} size="sm">
-            <Save className="h-4 w-4" /> Save
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            {sandboxEnv ? `Injected as $${sandboxEnv} in E2B sandbox` : "Not injected into sandbox"}
-          </p>
-        </CardContent>
-      </Card>
 
       <Tabs defaultValue="grants">
         <TabsList>
@@ -231,7 +203,7 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
           <select
             value={permission}
             onChange={(e) => setPermission(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px]"
           >
             <option value="read">Read</option>
             <option value="write">Write</option>

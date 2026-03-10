@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Pagination } from "@/components/pagination";
 import { formatDate } from "@/lib/utils";
 import { createCredential } from "./actions";
 import { Plus, Search } from "lucide-react";
@@ -18,25 +19,41 @@ interface CredentialRow {
   type: string;
   ownerId: string;
   ownerName: string;
-  sandboxEnvName: string | null;
   expiresAt: Date | null;
   createdAt: Date;
   grantCount: number;
 }
 
-export function CredentialsTable({ credentials }: { credentials: CredentialRow[] }) {
+interface Props {
+  credentials: CredentialRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export function CredentialsTable({ credentials, total, page, pageSize }: Props) {
   const router = useRouter();
-  const [search, setSearch] = useState("");
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState("token");
   const [newValue, setNewValue] = useState("");
   const [newOwnerId, setNewOwnerId] = useState("");
-  const [newSandboxEnv, setNewSandboxEnv] = useState("");
+  const [searchValue, setSearchValue] = useState(searchParams.get("search") || "");
 
-  const filtered = search
-    ? credentials.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
-    : credentials;
+  function handleSearch(value: string) {
+    setSearchValue(value);
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) {
+      params.set("search", value);
+    } else {
+      params.delete("search");
+    }
+    params.delete("page");
+    const qs = params.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  }
 
   async function handleCreate() {
     if (!newName || !newValue || !newOwnerId) return;
@@ -45,14 +62,12 @@ export function CredentialsTable({ credentials }: { credentials: CredentialRow[]
       type: newType,
       value: newValue,
       ownerId: newOwnerId,
-      sandboxEnvName: newSandboxEnv || undefined,
     });
     setShowCreate(false);
     setNewName("");
     setNewType("token");
     setNewValue("");
     setNewOwnerId("");
-    setNewSandboxEnv("");
     router.refresh();
   }
 
@@ -63,8 +78,8 @@ export function CredentialsTable({ credentials }: { credentials: CredentialRow[]
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search credentials..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchValue}
+            onChange={(e) => handleSearch(e.target.value)}
             className="pl-9"
           />
         </div>
@@ -79,13 +94,12 @@ export function CredentialsTable({ credentials }: { credentials: CredentialRow[]
             <TableHead>Name</TableHead>
             <TableHead>Type</TableHead>
             <TableHead>Owner</TableHead>
-            <TableHead>Sandbox Env</TableHead>
             <TableHead>Grants</TableHead>
             <TableHead>Expires</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filtered.map((cred) => (
+          {credentials.map((cred) => (
             <TableRow key={cred.id}>
               <TableCell>
                 <Link href={`/credentials/${cred.id}`} className="font-medium hover:underline font-mono">
@@ -94,20 +108,21 @@ export function CredentialsTable({ credentials }: { credentials: CredentialRow[]
               </TableCell>
               <TableCell><Badge variant="secondary">{cred.type}</Badge></TableCell>
               <TableCell className="text-sm">{cred.ownerName}</TableCell>
-              <TableCell className="font-mono text-sm text-muted-foreground">{cred.sandboxEnvName || "—"}</TableCell>
               <TableCell>{cred.grantCount}</TableCell>
               <TableCell className="text-muted-foreground text-sm">{formatDate(cred.expiresAt)}</TableCell>
             </TableRow>
           ))}
-          {filtered.length === 0 && (
+          {credentials.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+              <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                 No credentials found
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
+
+      <Pagination total={total} pageSize={pageSize} page={page} />
 
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogHeader>
@@ -118,14 +133,13 @@ export function CredentialsTable({ credentials }: { credentials: CredentialRow[]
           <select
             value={newType}
             onChange={(e) => setNewType(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px]"
           >
             <option value="token">Token</option>
             <option value="oauth_client">OAuth Client</option>
           </select>
           <Input placeholder="Owner Slack User ID" value={newOwnerId} onChange={(e) => setNewOwnerId(e.target.value)} />
           <Input type="password" placeholder="Value / Secret" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
-          <Input placeholder="Sandbox env name (optional, e.g. STRIPE_API_KEY)" value={newSandboxEnv} onChange={(e) => setNewSandboxEnv(e.target.value)} />
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
             <Button onClick={handleCreate}>Create</Button>

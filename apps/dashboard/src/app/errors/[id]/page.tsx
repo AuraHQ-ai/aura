@@ -15,13 +15,13 @@ export default async function ErrorDetailPage({ params }: { params: Promise<{ id
   if (!error) return notFound();
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
         <Link href="/errors">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
         <div>
-          <h1 className="text-xl font-semibold">{error.errorName}</h1>
+          <h1 className="text-base font-semibold">{error.errorName}</h1>
           <p className="text-sm text-muted-foreground">{formatDate(error.timestamp)}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -43,7 +43,7 @@ export default async function ErrorDetailPage({ params }: { params: Promise<{ id
         <Card>
           <CardHeader><CardTitle className="text-sm">Stack Trace</CardTitle></CardHeader>
           <CardContent>
-            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[400px]">
+            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[400px]">
               {error.stackTrace}
             </pre>
           </CardContent>
@@ -54,14 +54,14 @@ export default async function ErrorDetailPage({ params }: { params: Promise<{ id
         <Card>
           <CardHeader><CardTitle className="text-sm">Context</CardTitle></CardHeader>
           <CardContent>
-            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[400px]">
+            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[400px]">
               {JSON.stringify(error.context, null, 2)}
             </pre>
           </CardContent>
         </Card>
       )}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         {error.userId && (
           <Card>
             <CardHeader><CardTitle className="text-sm">User</CardTitle></CardHeader>

@@ -5,21 +5,29 @@ import { notes } from "@schema";
 import { eq, desc, ilike, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
-export async function getNotes(search?: string, category?: string) {
-  let query = db
+export async function getNotes(search?: string, category?: string, page = 1, limit = 100) {
+  const offset = (page - 1) * limit;
+
+  const conditions = [];
+  if (search) conditions.push(ilike(notes.topic, `%${search}%`));
+  if (category) conditions.push(eq(notes.category, category));
+
+  const where = conditions.length ? sql`${sql.join(conditions, sql` AND `)}` : undefined;
+
+  const [{ value: total }] = await db
+    .select({ value: sql<number>`count(*)::int` })
+    .from(notes)
+    .where(where);
+
+  const items = await db
     .select()
     .from(notes)
+    .where(where)
     .orderBy(desc(notes.updatedAt))
-    .$dynamic();
+    .limit(limit)
+    .offset(offset);
 
-  if (search) {
-    query = query.where(ilike(notes.topic, `%${search}%`));
-  }
-  if (category) {
-    query = query.where(eq(notes.category, category));
-  }
-
-  return query.limit(200);
+  return { items, total };
 }
 
 export async function getNote(id: string) {

@@ -10,7 +10,7 @@ export default async function MemoryDetailPage({ params }: { params: Promise<{ i
   if (!memory) return notFound();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <MemoryDetail memory={memory} />
     </div>
   );

@@ -2,27 +2,44 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Pagination } from "@/components/pagination";
 import { formatDate, truncate } from "@/lib/utils";
 import { deleteResource } from "./actions";
 import { Search, Trash2 } from "lucide-react";
 import { Dialog, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Resource } from "@schema";
 
-export function ResourcesTable({ resources }: { resources: Resource[] }) {
-  const router = useRouter();
-  const [search, setSearch] = useState("");
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+interface Props {
+  resources: Resource[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 
-  const filtered = search
-    ? resources.filter((r) =>
-        (r.title || r.url).toLowerCase().includes(search.toLowerCase()),
-      )
-    : resources;
+export function ResourcesTable({ resources, total, page, pageSize }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [searchValue, setSearchValue] = useState(searchParams.get("search") || "");
+
+  function handleSearch(value: string) {
+    setSearchValue(value);
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) {
+      params.set("search", value);
+    } else {
+      params.delete("search");
+    }
+    params.delete("page");
+    const qs = params.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  }
 
   async function handleDelete() {
     if (!deleteId) return;
@@ -37,8 +54,8 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Search resources..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchValue}
+          onChange={(e) => handleSearch(e.target.value)}
           className="pl-9"
         />
       </div>
@@ -55,7 +72,7 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filtered.map((resource) => (
+          {resources.map((resource) => (
             <TableRow key={resource.id}>
               <TableCell>
                 <Link href={`/resources/${resource.id}`} className="font-medium hover:underline">
@@ -81,7 +98,7 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
               </TableCell>
             </TableRow>
           ))}
-          {filtered.length === 0 && (
+          {resources.length === 0 && (
             <TableRow>
               <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                 No resources found
@@ -90,6 +107,8 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
           )}
         </TableBody>
       </Table>
+
+      <Pagination total={total} pageSize={pageSize} page={page} />
 
       <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <DialogHeader>

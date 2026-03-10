@@ -2,15 +2,27 @@
 
 import { db } from "@/lib/db";
 import { jobs, jobExecutions } from "@schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, ilike, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
-export async function getJobs() {
-  return db
+export async function getJobs(search?: string, page = 1, limit = 100) {
+  const offset = (page - 1) * limit;
+  const where = search ? ilike(jobs.name, `%${search}%`) : undefined;
+
+  const [{ value: total }] = await db
+    .select({ value: sql<number>`count(*)::int` })
+    .from(jobs)
+    .where(where);
+
+  const items = await db
     .select()
     .from(jobs)
+    .where(where)
     .orderBy(desc(jobs.updatedAt))
-    .limit(200);
+    .limit(limit)
+    .offset(offset);
+
+  return { items, total };
 }
 
 export async function getJob(id: string) {

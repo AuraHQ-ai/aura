@@ -10,7 +10,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ sla
   if (!data) return notFound();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <UserDetail data={data} />
     </div>
   );

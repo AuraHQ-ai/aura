@@ -15,13 +15,13 @@ export default async function ResourceDetailPage({ params }: { params: Promise<{
   if (!resource) return notFound();
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
         <Link href="/resources">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
         <div>
-          <h1 className="text-xl font-semibold">{resource.title || "Untitled"}</h1>
+          <h1 className="text-base font-semibold">{resource.title || "Untitled"}</h1>
           <a href={resource.url} target="_blank" rel="noopener noreferrer" className="text-sm text-muted-foreground hover:underline">
             {resource.url}
           </a>
@@ -37,7 +37,7 @@ export default async function ResourceDetailPage({ params }: { params: Promise<{
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-3">
         <Card>
           <CardHeader><CardTitle className="text-sm">Source</CardTitle></CardHeader>
           <CardContent><Badge variant="outline">{resource.source}</Badge></CardContent>
@@ -63,7 +63,7 @@ export default async function ResourceDetailPage({ params }: { params: Promise<{
         <Card>
           <CardHeader><CardTitle className="text-sm">Content</CardTitle></CardHeader>
           <CardContent>
-            <pre className="whitespace-pre-wrap text-sm font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[500px]">
+            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[500px]">
               {resource.content}
             </pre>
           </CardContent>
@@ -74,7 +74,7 @@ export default async function ResourceDetailPage({ params }: { params: Promise<{
         <Card>
           <CardHeader><CardTitle className="text-sm">Error</CardTitle></CardHeader>
           <CardContent>
-            <pre className="whitespace-pre-wrap text-sm font-mono text-destructive bg-muted rounded-lg p-4">
+            <pre className="whitespace-pre-wrap text-xs font-mono text-destructive bg-muted rounded-md p-3">
               {resource.errorMessage}
             </pre>
           </CardContent>
@@ -85,7 +85,7 @@ export default async function ResourceDetailPage({ params }: { params: Promise<{
         <Card>
           <CardHeader><CardTitle className="text-sm">Metadata</CardTitle></CardHeader>
           <CardContent>
-            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-lg p-4 overflow-auto max-h-[300px]">
+            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[300px]">
               {JSON.stringify(resource.metadata, null, 2)}
             </pre>
           </CardContent>

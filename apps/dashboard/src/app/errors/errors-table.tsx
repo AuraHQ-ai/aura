@@ -2,28 +2,43 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Pagination } from "@/components/pagination";
 import { formatDate, truncate } from "@/lib/utils";
 import { resolveErrors } from "./actions";
 import { Search, CheckCircle } from "lucide-react";
 import type { ErrorEvent } from "@schema";
 
-export function ErrorsTable({ errors }: { errors: ErrorEvent[] }) {
-  const router = useRouter();
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+interface Props {
+  errors: ErrorEvent[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
 
-  const filtered = search
-    ? errors.filter(
-        (e) =>
-          e.errorName.toLowerCase().includes(search.toLowerCase()) ||
-          e.errorMessage.toLowerCase().includes(search.toLowerCase()),
-      )
-    : errors;
+export function ErrorsTable({ errors, total, page, pageSize }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [searchValue, setSearchValue] = useState(searchParams.get("search") || "");
+
+  function handleSearch(value: string) {
+    setSearchValue(value);
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) {
+      params.set("search", value);
+    } else {
+      params.delete("search");
+    }
+    params.delete("page");
+    const qs = params.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  }
 
   function toggleSelect(id: string) {
     const next = new Set(selected);
@@ -45,8 +60,8 @@ export function ErrorsTable({ errors }: { errors: ErrorEvent[] }) {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search errors..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchValue}
+            onChange={(e) => handleSearch(e.target.value)}
             className="pl-9"
           />
         </div>
@@ -69,7 +84,7 @@ export function ErrorsTable({ errors }: { errors: ErrorEvent[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filtered.map((err) => (
+          {errors.map((err) => (
             <TableRow key={err.id}>
               <TableCell>
                 <input
@@ -97,7 +112,7 @@ export function ErrorsTable({ errors }: { errors: ErrorEvent[] }) {
               <TableCell className="text-muted-foreground text-sm">{formatDate(err.timestamp)}</TableCell>
             </TableRow>
           ))}
-          {filtered.length === 0 && (
+          {errors.length === 0 && (
             <TableRow>
               <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                 No errors found
@@ -106,6 +121,8 @@ export function ErrorsTable({ errors }: { errors: ErrorEvent[] }) {
           )}
         </TableBody>
       </Table>
+
+      <Pagination total={total} pageSize={pageSize} page={page} />
     </>
   );
 }

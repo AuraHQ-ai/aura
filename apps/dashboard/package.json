@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --turbopack",
-    "prebuild": "node -e \"const fs=require('fs');const src='../../src/db/schema.ts';if(fs.existsSync(src)){fs.cpSync(src,'src/db/schema.ts')}\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
+    "@aura/db": "workspace:*",
     "@neondatabase/serverless": "^1.0.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

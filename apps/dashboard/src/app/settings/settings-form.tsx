@@ -83,8 +83,8 @@ export function SettingsForm({ settings }: { settings: Setting[] }) {
     <>
       <Card>
         <CardHeader><CardTitle className="text-base">Model Selection</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
+        <CardContent className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Main Model</label>
               <Select value={mainModel} onChange={(e) => setMainModel(e.target.value)}>
@@ -147,8 +147,8 @@ export function SettingsForm({ settings }: { settings: Setting[] }) {
 
       <Card>
         <CardHeader><CardTitle className="text-base">Edit Setting</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
+        <CardContent className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
             <Input placeholder="Key" value={editKey} onChange={(e) => setEditKey(e.target.value)} />
             <Input placeholder="Value" value={editValue} onChange={(e) => setEditValue(e.target.value)} />
           </div>

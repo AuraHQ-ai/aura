@@ -5,8 +5,16 @@ import { userProfiles, people, memories, messages } from "@schema";
 import { eq, desc, sql, ilike } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
-export async function getUsers(search?: string) {
-  let query = db
+export async function getUsers(search?: string, page = 1, limit = 100) {
+  const offset = (page - 1) * limit;
+  const where = search ? ilike(userProfiles.displayName, `%${search}%`) : undefined;
+
+  const [{ value: total }] = await db
+    .select({ value: sql<number>`count(*)::int` })
+    .from(userProfiles)
+    .where(where);
+
+  const items = await db
     .select({
       id: userProfiles.id,
       slackUserId: userProfiles.slackUserId,
@@ -19,14 +27,12 @@ export async function getUsers(search?: string) {
     })
     .from(userProfiles)
     .leftJoin(people, eq(userProfiles.personId, people.id))
+    .where(where)
     .orderBy(desc(userProfiles.lastInteractionAt))
-    .$dynamic();
+    .limit(limit)
+    .offset(offset);
 
-  if (search) {
-    query = query.where(ilike(userProfiles.displayName, `%${search}%`));
-  }
-
-  return query.limit(200);
+  return { items, total };
 }
 
 export async function getUser(slackUserId: string) {
@@ -43,7 +49,19 @@ export async function getUser(slackUserId: string) {
   }
 
   const userMemories = await db
-    .select()
+    .select({
+      id: memories.id,
+      content: memories.content,
+      type: memories.type,
+      sourceMessageId: memories.sourceMessageId,
+      sourceChannelType: memories.sourceChannelType,
+      relatedUserIds: memories.relatedUserIds,
+      embedding: memories.embedding,
+      relevanceScore: memories.relevanceScore,
+      shareable: memories.shareable,
+      createdAt: memories.createdAt,
+      updatedAt: memories.updatedAt,
+    })
     .from(memories)
     .where(sql`${memories.relatedUserIds} @> ARRAY[${slackUserId}]::text[]`)
     .orderBy(desc(memories.createdAt))

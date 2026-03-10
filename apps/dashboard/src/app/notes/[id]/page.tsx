@@ -10,7 +10,7 @@ export default async function NoteDetailPage({ params }: { params: Promise<{ id:
   if (!note) return notFound();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <NoteEditor note={note} />
     </div>
   );

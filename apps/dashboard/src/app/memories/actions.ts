@@ -5,41 +5,56 @@ import { memories, userProfiles } from "@schema";
 import { eq, desc, sql, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
-export async function getMemories(search?: string, type?: string) {
-  let query = db
-    .select()
+const memoryCols = {
+  id: memories.id,
+  content: memories.content,
+  type: memories.type,
+  sourceMessageId: memories.sourceMessageId,
+  sourceChannelType: memories.sourceChannelType,
+  relatedUserIds: memories.relatedUserIds,
+  embedding: memories.embedding,
+  relevanceScore: memories.relevanceScore,
+  shareable: memories.shareable,
+  createdAt: memories.createdAt,
+  updatedAt: memories.updatedAt,
+};
+
+export async function getMemories(search?: string, type?: string, page = 1, limit = 100) {
+  const offset = (page - 1) * limit;
+
+  const conditions = [];
+  if (type) conditions.push(eq(memories.type, type as any));
+  if (search) conditions.push(sql`to_tsvector('english', coalesce(${memories.content}, '')) @@ plainto_tsquery('english', ${search})`);
+
+  const where = conditions.length ? sql`${sql.join(conditions, sql` AND `)}` : undefined;
+
+  const [{ value: total }] = await db
+    .select({ value: sql<number>`count(*)::int` })
     .from(memories)
+    .where(where);
+
+  const items = await db
+    .select(memoryCols)
+    .from(memories)
+    .where(where)
     .orderBy(desc(memories.createdAt))
-    .$dynamic();
+    .limit(limit)
+    .offset(offset);
 
-  if (type) {
-    query = query.where(eq(memories.type, type as any));
-  }
-
-  const results = await query.limit(200);
-
-  if (search) {
-    const filtered = results.filter((m) =>
-      m.content.toLowerCase().includes(search.toLowerCase()),
-    );
-    return filtered;
-  }
-
-  return results;
+  return { items, total };
 }
 
 export async function searchMemoriesKeyword(query: string) {
-  const results = await db
-    .select()
+  return db
+    .select(memoryCols)
     .from(memories)
     .where(sql`to_tsvector('english', coalesce(${memories.content}, '')) @@ plainto_tsquery('english', ${query})`)
     .orderBy(desc(memories.relevanceScore))
     .limit(50);
-  return results;
 }
 
 export async function getMemory(id: string) {
-  const [memory] = await db.select().from(memories).where(eq(memories.id, id));
+  const [memory] = await db.select(memoryCols).from(memories).where(eq(memories.id, id));
   if (!memory) return null;
 
   let relatedUsers: { slackUserId: string; displayName: string }[] = [];
