@@ -15,6 +15,16 @@ import {
   HEADLESS_STEP_LIMIT,
 } from "../pipeline/prepare-step.js";
 
+
+/**
+ * Build a compact tool roster line for injection into the dynamic context.
+ * Sorted alphabetically so the list is stable and easy to scan.
+ */
+function buildToolRoster(tools: Record<string, unknown>): string {
+  const names = Object.keys(tools).sort().join(', ');
+  return `\n\n## Available tools\n\n${names}`;
+}
+
 // ── Interactive Agent ────────────────────────────────────────────────────────
 // Used by respond.ts for streaming Slack conversations.
 
@@ -37,10 +47,12 @@ export async function createInteractiveAgent(
 ): Promise<InteractiveAgentResult> {
   const { modelId, model } = await getMainModel();
   const tools = createSlackTools(options.slackClient, options.context);
+  const dynamicContextWithRoster =
+    (options.dynamicContext ?? '') + buildToolRoster(tools);
   const systemMessages = buildCachedSystemMessages(
     options.stablePrefix,
     options.conversationContext,
-    options.dynamicContext,
+    dynamicContextWithRoster,
   );
 
   const agent = new ToolLoopAgent({
@@ -51,7 +63,7 @@ export async function createInteractiveAgent(
     prepareStep: createInteractivePrepareStep({
       stablePrefix: options.stablePrefix,
       conversationContext: options.conversationContext,
-      dynamicContext: options.dynamicContext,
+      dynamicContext: dynamicContextWithRoster,
       modelId,
       defaultEffort: "medium",
       getEscalationModel,
@@ -73,14 +85,15 @@ export interface HeadlessAgentOptions {
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
   const { modelId, model } = await getMainModel();
   const tools = createSlackTools(options.slackClient, options.context);
+  const systemPromptWithRoster = options.systemPrompt + buildToolRoster(tools);
 
   const agent = new ToolLoopAgent({
     model,
     tools,
-    instructions: withCacheControl(options.systemPrompt),
+    instructions: withCacheControl(systemPromptWithRoster),
     stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
     prepareStep: createHeadlessPrepareStep({
-      stablePrefix: options.systemPrompt,
+      stablePrefix: systemPromptWithRoster,
       modelId,
       defaultEffort: "medium",
       getEscalationModel,
