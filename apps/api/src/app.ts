@@ -951,8 +951,8 @@ app.post("/api/webhook/cursor-agent", async (c) => {
                     },
                   },
                 );
-                if (ghRes.ok) {
-                  const prData = (await ghRes.json()) as any;
+                if ((ghRes as any).ok) {
+                  const prData = (await (ghRes as any).json()) as any;
                   prTitle = prData.title || "";
                 }
               }
