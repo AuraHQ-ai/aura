@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --turbopack",
+    "prebuild": "node -e \"const fs=require('fs');const src='../../src/db/schema.ts';if(fs.existsSync(src)){fs.cpSync(src,'src/db/schema.ts')}\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

@@ -4,3 +4,4 @@ next-env.d.ts
 .vercel/
 .env
 .env.local
+.vercel
