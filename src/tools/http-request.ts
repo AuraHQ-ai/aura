@@ -148,11 +148,11 @@ export function createHttpRequestTool(context?: ScheduleContext) {
                     error: `Invalid header name "${parsed.key}": must contain only alphanumeric characters, hyphens, and underscores`,
                   };
                 }
-                const blockedHeaders = ["authorization", "x-api-key", "x-auth-token"];
+                const blockedHeaders = ["authorization"];
                 if (blockedHeaders.includes(parsed.key.toLowerCase())) {
                   return {
                     ok: false as const,
-                    error: `Header name "${parsed.key}" is blocked -- use the appropriate auth_scheme instead of header`,
+                    error: `Header name "${parsed.key}" is blocked -- use bearer or basic auth_scheme for Authorization headers`,
                   };
                 }
                 headers[parsed.key] = parsed.secret;
