@@ -1,6 +1,4 @@
 {
-  "buildCommand": "tsc && pnpm --filter @aura/db db:migrate",
-  "framework": null,
   "regions": [
     "fra1"
   ],
