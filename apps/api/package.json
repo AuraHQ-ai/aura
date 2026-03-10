@@ -7,7 +7,6 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "vercel-build": "pnpm --filter @aura/db db:migrate",
-    "postinstall": "rm -rf node_modules/e2b/node_modules/chalk 2>/dev/null; true",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",

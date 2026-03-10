@@ -6,5 +6,10 @@
     "db:migrate": "pnpm --filter @aura/db db:migrate",
     "db:push": "pnpm --filter @aura/db db:push",
     "db:studio": "pnpm --filter @aura/db db:studio"
+  },
+  "pnpm": {
+    "overrides": {
+      "e2b>chalk": "4.1.2"
+    }
   }
 }
