@@ -346,8 +346,6 @@ export const jobs = pgTable(
     lastExecutionDate: text("last_execution_date"),
     enabled: integer("enabled").notNull().default(1),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
-    approvalStatus: text("approval_status"),
-    pendingActionLogId: uuid("pending_action_log_id"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -355,10 +353,6 @@ export const jobs = pgTable(
     uniqueIndex("jobs_name_idx").on(table.name),
     index("jobs_enabled_idx").on(table.enabled),
     index("jobs_status_execute_idx").on(table.status, table.executeAt),
-    check(
-      "jobs_approval_status_check",
-      sql`${table.approvalStatus} IS NULL OR ${table.approvalStatus} IN ('pending_approval','awaiting_approval','approved','rejected')`,
-    ),
   ],
 );
 
@@ -535,77 +529,39 @@ export const voiceCalls = pgTable(
   ],
 );
 
-// ── Action Log (governance audit trail) ──────────────────────────────────────
 
-export const actionLog = pgTable(
-  "action_log",
+// ── Pending Approvals (HITL state for SDK-native needsApproval) ─────────────
+
+export const pendingApprovals = pgTable(
+  "pending_approvals",
   {
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     toolName: text("tool_name").notNull(),
-    params: jsonb("params").notNull(),
-    triggerType: text("trigger_type").notNull(),
-    triggeredBy: text("triggered_by").notNull(),
-    jobId: uuid("job_id").references(() => jobs.id),
-    credentialName: text("credential_name"),
-    riskTier: text("risk_tier").notNull(),
-    status: text("status").notNull(),
-    result: jsonb("result"),
-    approvedBy: text("approved_by"),
-    approvedAt: timestamptz("approved_at"),
-    idempotencyKey: text("idempotency_key"),
+    toolCallId: text("tool_call_id").notNull(),
+    args: jsonb("args").notNull(),
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts"),
+    userId: text("user_id").notNull(),
+    status: text("status")
+      .$type<"pending" | "approved" | "rejected" | "expired">()
+      .notNull()
+      .default("pending"),
+    resolvedBy: text("resolved_by"),
+    resolvedAt: timestamptz("resolved_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    check(
-      "action_log_status_check",
-      sql`${table.status} IN ('executed','pending_approval','approved','rejected','failed')`,
-    ),
-    check(
-      "action_log_risk_tier_check",
-      sql`${table.riskTier} IN ('read','write','destructive')`,
-    ),
-    check(
-      "action_log_trigger_type_check",
-      sql`${table.triggerType} IN ('user_message','scheduled_job','autonomous')`,
-    ),
-    unique("action_log_idempotency_key_unique").on(table.idempotencyKey),
-    index("action_log_tool_name_idx").on(table.toolName),
-    index("action_log_triggered_by_idx").on(table.triggeredBy),
-    index("action_log_status_idx").on(table.status),
-    index("action_log_created_at_idx").on(table.createdAt),
-  ],
-);
-
-// ── Approval Policies (runtime governance config) ────────────────────────────
-
-export const approvalPolicies = pgTable(
-  "approval_policies",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    toolPattern: text("tool_pattern"),
-    urlPattern: text("url_pattern"),
-    httpMethods: text("http_methods").array(),
-    credentialName: text("credential_name"),
-    riskTier: text("risk_tier").notNull(),
-    approverIds: text("approver_ids").array(),
-    approvalChannel: text("approval_channel"),
-    createdBy: text("created_by").notNull(),
-    createdAt: timestamptz("created_at").notNull().defaultNow(),
-  },
-  (table) => [
-    check(
-      "approval_policies_risk_tier_check",
-      sql`${table.riskTier} IN ('read','write','destructive')`,
-    ),
+    index("pending_approvals_status_idx").on(table.status),
+    index("pending_approvals_created_at_idx").on(table.createdAt),
   ],
 );
 
 // ── Type exports ───────────────────────────────────────────────────────────
 
+export type PendingApproval = typeof pendingApprovals.$inferSelect;
+export type NewPendingApproval = typeof pendingApprovals.$inferInsert;
 export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Memory = typeof memories.$inferSelect;
@@ -636,11 +592,6 @@ export type Address = typeof addresses.$inferSelect;
 export type NewAddress = typeof addresses.$inferInsert;
 export type VoiceCall = typeof voiceCalls.$inferSelect;
 export type NewVoiceCall = typeof voiceCalls.$inferInsert;
-export type ActionLog = typeof actionLog.$inferSelect;
-export type NewActionLog = typeof actionLog.$inferInsert;
-export type ApprovalPolicy = typeof approvalPolicies.$inferSelect;
-export type NewApprovalPolicy = typeof approvalPolicies.$inferInsert;
-
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
   userId?: string;

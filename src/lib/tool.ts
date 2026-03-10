@@ -1,11 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { tool, type Tool } from "ai";
-import { eq } from "drizzle-orm";
 import type { ZodType } from "zod";
-import { db } from "../db/client.js";
-import { actionLog } from "../db/schema.js";
-import { lookupPolicy, requestApproval, effectiveRiskTier, type ApprovalPolicy } from "./approval.js";
-import { logger } from "./logger.js";
 
 // ── Execution Context (AsyncLocalStorage) ────────────────────────────────────
 
@@ -18,15 +13,6 @@ export interface ExecutionContext {
 }
 
 export const executionContext = new AsyncLocalStorage<ExecutionContext>();
-
-// ── PendingApprovalError ─────────────────────────────────────────────────────
-
-export class PendingApprovalError extends Error {
-  constructor(public readonly actionLogId: string) {
-    super(`Action pending approval: ${actionLogId}`);
-    this.name = "PendingApprovalError";
-  }
-}
 
 // ── Slack Card Metadata ──────────────────────────────────────────────────────
 // Co-located with tool definitions via defineTool() so that Slack card behavior
@@ -59,31 +45,12 @@ export function getSlackMeta(t: unknown): SlackToolMetadata | undefined {
 }
 
 /**
- * Mutable name ref stored in a closure so registerToolNames() can fill it
- * in after the tools map is built.
- */
-interface ToolNameRef {
-  name?: string;
-}
-
-/**
- * Wrapper around AI SDK's tool() that co-locates Slack card metadata with the
- * tool definition and adds a governance interceptor. Every tool call is logged
- * to action_log; destructive-tier calls are gated behind approval.
+ * Thin wrapper around AI SDK's tool() that co-locates Slack card metadata
+ * with the tool definition. No governance or interception — just passes
+ * through to the SDK and attaches the `slack` property for task cards.
  *
- * Usage:
- * ```ts
- * const myTool = defineTool({
- *   description: "...",
- *   inputSchema: z.object({ query: z.string() }),
- *   execute: async ({ query }) => ({ ok: true, results: [] }),
- *   slack: {
- *     status: "Searching...",
- *     detail: (input) => input.query,
- *     output: (result) => `${result.results.length} results`,
- *   },
- * });
- * ```
+ * Supports `needsApproval` (boolean or async function) which gates execution
+ * behind a human-in-the-loop approval step via the SDK-native primitive.
  */
 export function defineTool<TInput, TOutput>(config: {
   description: string;
@@ -91,156 +58,19 @@ export function defineTool<TInput, TOutput>(config: {
   execute: (input: TInput) => PromiseLike<TOutput>;
   slack?: SlackToolMetadata<TInput, TOutput>;
   toModelOutput?: Tool<TInput, TOutput>["toModelOutput"];
+  needsApproval?: boolean | ((input: TInput) => boolean | Promise<boolean>);
 }) {
   const { slack, ...rest } = config;
-  const originalExecute = rest.execute;
-
-  const toolRef: ToolNameRef = {};
-
-  const governedExecute = async (input: TInput): Promise<TOutput> => {
-    const toolName = toolRef.name || "unknown";
-    const ctx = executionContext.getStore() ?? {
-      triggeredBy: "unknown",
-      triggerType: "autonomous" as const,
-    };
-
-    let riskTier: "read" | "write" | "destructive" = "write";
-    let policy: ApprovalPolicy | null = null;
-
-    try {
-      const httpInput = input as Record<string, unknown>;
-      const lookup = await lookupPolicy({
-        toolName,
-        url: toolName === "http_request" ? (httpInput.url as string) : undefined,
-        method: toolName === "http_request" ? (httpInput.method as string) : undefined,
-        credentialName: httpInput.credential_name as string | undefined,
-      });
-      policy = lookup;
-      const httpInput2 = input as Record<string, unknown>;
-      riskTier = effectiveRiskTier(policy, toolName === "http_request" ? (httpInput2.method as string) : undefined);
-    } catch (policyErr) {
-      logger.warn("Governance: policy lookup failed, defaulting to write tier", {
-        toolName,
-        error: policyErr,
-      });
-    }
-
-    // Destructive: write pending log → post approval message → throw
-    if (riskTier === "destructive") {
-      const [logEntry] = await db
-        .insert(actionLog)
-        .values({
-          toolName,
-          params: input as any,
-          triggerType: ctx.triggerType,
-          triggeredBy: ctx.triggeredBy,
-          jobId: ctx.jobId ?? null,
-          credentialName: (input as any)?.credential_name ?? null,
-          riskTier,
-          status: "pending_approval",
-        })
-        .returning({ id: actionLog.id });
-
-      await requestApproval({
-        actionLogId: logEntry.id,
-        toolName,
-        params: input,
-        riskTier,
-        policy: policy,
-        context: ctx,
-      });
-
-      throw new PendingApprovalError(logEntry.id);
-    }
-
-    // Read / Write: execute, then log result
-    let logId: string | undefined;
-
-    try {
-      // Write the log entry before execution (captures params before credential injection)
-      try {
-        const [logEntry] = await db
-          .insert(actionLog)
-          .values({
-            toolName,
-            params: input as any,
-            triggerType: ctx.triggerType,
-            triggeredBy: ctx.triggeredBy,
-            jobId: ctx.jobId ?? null,
-            credentialName: (input as any)?.credential_name ?? null,
-            riskTier,
-            status: "executed",
-          })
-          .returning({ id: actionLog.id });
-        logId = logEntry.id;
-      } catch (logErr) {
-        logger.warn("Governance: failed to write action_log entry", {
-          toolName,
-          error: logErr,
-        });
-      }
-
-      const result = await originalExecute(input);
-
-      // Update log with result
-      if (logId) {
-        try {
-          await db
-            .update(actionLog)
-            .set({ result: result as any })
-            .where(eq(actionLog.id, logId));
-        } catch { /* non-critical */ }
-      }
-
-      return result;
-    } catch (error: any) {
-      // Update log with failure status
-      if (logId) {
-        try {
-          await db
-            .update(actionLog)
-            .set({
-              status: "failed",
-              result: { error: error.message } as any,
-            })
-            .where(eq(actionLog.id, logId));
-        } catch { /* non-critical */ }
-      }
-      throw error;
-    }
-  };
-
-  const toolConfig = { ...rest, execute: governedExecute };
   const t = tool<TInput, TOutput>(
-    toolConfig as unknown as Tool<TInput, TOutput>,
+    rest as unknown as Tool<TInput, TOutput>,
   );
   if (slack) {
     (t as any).slack = slack;
   }
-  (t as any).__toolRef = toolRef;
 
   return t as Tool<TInput, TOutput> & {
     slack?: SlackToolMetadata<TInput, TOutput>;
   };
-}
-
-/**
- * Stamp tool names from the map keys onto each tool's internal ref.
- * Call this on the tools record after building it so the governance
- * interceptor knows which tool is being invoked.
- *
- * Handles both defineTool()-created tools (have __toolRef) and
- * plain AI SDK tools (skipped silently).
- */
-export function registerToolNames<T extends Record<string, unknown>>(
-  tools: T,
-): T {
-  for (const [name, t] of Object.entries(tools)) {
-    if (t && typeof t === "object" && "__toolRef" in t) {
-      (t as any).__toolRef.name = name;
-    }
-  }
-  return tools;
 }
 
 /**

@@ -18,6 +18,7 @@ export function createEmailTools(context?: ScheduleContext) {
     send_email: defineTool({
       description:
         "Send an email. Defaults to sending from Aura's configured email address. Set user_name to send from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Use for external communication, follow-ups, outreach, and reports. Never send emails without being asked or having a clear reason (job, follow-up, etc.). Body is sent as plain text — keep it professional but conversational, same tone as Slack. DM privacy applies: don't email someone's private Slack DM content to others. Supports optional file attachments (base64-encoded).",
+      needsApproval: true,
       inputSchema: z.object({
         to: z.string().describe("Recipient email address"),
         subject: z.string().describe("Email subject line"),
@@ -553,6 +554,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
     delete_event: defineTool({
       description: "Delete a calendar event by its event ID. Defaults to the caller's account. Set user_name to delete from another user's calendar (requires their OAuth access).",
+      needsApproval: true,
       inputSchema: z.object({
         event_id: z.string().describe("The calendar event ID to delete"),
         user_name: z

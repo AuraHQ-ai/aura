@@ -28,6 +28,10 @@ export function createHttpRequestTool(context?: ScheduleContext) {
         "to inject auth. The server resolves the credential from the encrypted store and " +
         "sets the Authorization header. You CANNOT pass Authorization, x-api-key, or " +
         "x-auth-token headers directly -- use credential_name instead.",
+      needsApproval: (input) => {
+        const readOnly = ["GET", "HEAD", "OPTIONS"];
+        return !readOnly.includes(input.method);
+      },
       inputSchema: z.object({
         method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
         url: z.string().url(),

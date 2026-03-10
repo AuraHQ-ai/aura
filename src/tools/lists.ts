@@ -199,6 +199,7 @@ export function createListWriteTools(client: WebClient) {
 
     delete_slack_list_item: defineTool({
       description: "Delete an item (row) from a Slack List.",
+      needsApproval: true,
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         item_id: z.string().describe("The ID of the item/row to delete"),

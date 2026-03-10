@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { defineTool, binaryToModelOutput, registerToolNames } from "../lib/tool.js";
+import { defineTool, binaryToModelOutput } from "../lib/tool.js";
 import { isAdmin } from "../lib/permissions.js";
 import { createNoteTools } from "./notes.js";
 import { createJobTools } from "./jobs.js";
@@ -2104,6 +2104,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     delete_canvas: defineTool({
       description:
         "Delete a Slack Canvas permanently by its canvas/file ID.",
+      needsApproval: true,
       inputSchema: z.object({
         canvas_id: z
           .string()
@@ -2574,6 +2575,7 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     delete_message: defineTool({
       description:
         "Delete one of Aura's own messages. Can only delete messages Aura posted — not other people's. Use to clean up test posts or mistakes. Works in channels and DMs — pass a DM channel ID (D...) or group DM ID (G...) directly.",
+      needsApproval: true,
       inputSchema: z.object({
         channel: z
           .string()
@@ -3058,5 +3060,5 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
     }
   }
 
-  return registerToolNames(tools);
+  return tools;
 }

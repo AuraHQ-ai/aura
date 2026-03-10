@@ -9,6 +9,7 @@ import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLo
 import { getSlackMeta } from "../lib/tool.js";
 import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
+import { createPendingApproval, postApprovalMessage } from "../lib/hitl.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -780,6 +781,41 @@ export async function generateResponse(
       if (streamingFailed) {
         fallbackStartIdx = streamedRawIdx;
       }
+    }
+
+    // ── HITL: detect tool calls that were not executed (needsApproval) ──
+    if (pendingToolInputs.size > 0) {
+      if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+      if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+
+      const userId = options.context?.userId ?? "unknown";
+      for (const [toolCallId, info] of pendingToolInputs) {
+        const parsedArgs = (() => { try { return JSON.parse(info.input); } catch { return {}; } })();
+        const { id: approvalId } = await createPendingApproval({
+          toolName: info.name,
+          toolCallId,
+          args: parsedArgs,
+          channelId,
+          threadTs,
+          userId,
+        });
+        await postApprovalMessage(slackClient, {
+          id: approvalId,
+          toolName: info.name,
+          args: parsedArgs,
+          channelId,
+          threadTs,
+          userId,
+        });
+
+        toolCallRecords.push({
+          name: info.name,
+          input: info.input,
+          output: JSON.stringify({ pending_approval: approvalId }),
+          is_error: false,
+        });
+      }
+      pendingToolInputs.clear();
     }
 
     // ── Finalize ──────────────────────────────────────────────────────────
