@@ -149,7 +149,7 @@ export async function storeApiCredential(
         throw new Error("basic value must contain a username (password is optional)");
       }
     } catch (e: any) {
-      if (e.message.includes("password")) throw e;
+      if (e.message.includes("username")) throw e;
       throw new Error("basic value must be valid JSON with username and password keys");
     }
   } else if (authScheme === "header" || authScheme === "query") {
