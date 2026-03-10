@@ -498,7 +498,7 @@ export async function resolveChannelById(
  * Create Slack tools for the AI SDK.
  * Each tool receives the WebClient via closure.
  */
-export function createSlackTools(client: WebClient, context?: ScheduleContext) {
+export async function createSlackTools(client: WebClient, context?: ScheduleContext, modelId?: string) {
   // Resolve thread coordinates for Slack List items.
   // List channels use the list ID with a C prefix (F088... → C088...).
   // Each root message in the channel has a slack_list.list_record_id field
@@ -3009,52 +3009,60 @@ export function createSlackTools(client: WebClient, context?: ScheduleContext) {
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
-  // Mark infrequently-used tools as deferred so their schemas aren't
-  // sent upfront. Claude discovers them via toolSearch when needed.
-  // Non-Anthropic providers simply ignore providerOptions.anthropic.
-  const DEFERRED_TOOLS = new Set([
-    // BigQuery / Data
-    "list_datasets", "list_tables", "inspect_table", "execute_query",
-    // Google Sheets
-    "read_google_sheet",
-    // Google Drive
-    "search_drive", "read_drive_file", "list_drive_folder", "list_shared_drives",
-    // Calendar
-    "check_calendar", "create_event", "update_event", "delete_event", "find_available_slot",
-    // Canvas
-    "read_canvas", "create_canvas", "edit_canvas", "delete_canvas", "share_canvas", "list_canvases",
-    // Slack Lists
-    "list_slack_list_items", "get_slack_list_item", "create_slack_list_item", "update_slack_list_item", "delete_slack_list_item",
-    // Email
-    "send_email", "reply_to_email",
-    // Email triage (per-user Gmail)
-    "sync_emails", "email_digest", "update_email_thread",
-    "read_user_emails", "read_user_email",
-    "generate_gmail_auth_url", "create_gmail_draft", "list_gmail_drafts", "delete_gmail_draft",
-    // Dev / Code
-    "run_command", "dispatch_headless", "read_job_trace",
-    "dispatch_cursor_agent", "check_cursor_agent", "followup_cursor_agent",
-    "stop_cursor_agent", "get_cursor_conversation", "list_cursor_agents",
-    // Browser
-    "browse", "download_slack_file",
-    // Voice / Calls
-    "list_voice_agents", "place_call", "send_sms", "send_voice_note",
-    // Directory / Contacts
-    "lookup_workspace_user", "list_workspace_users", "lookup_contact",
-    // Checkpoint
-    "checkpoint_plan",
-    // Resources
-    "ingest_resource", "search_resources", "get_resource", "list_resources",
-    // Subagent
-    "run_subagent",
-    // People
-    "get_person", "update_person",
-  ]);
+  // When running on an Anthropic model, mark infrequently-used tools as
+  // deferred so their schemas aren't sent upfront, and register the
+  // tool search meta-tool so Claude can discover them on demand.
+  // Non-Anthropic providers don't support these features.
+  const isAnthropic = modelId?.startsWith("anthropic/") ?? false;
 
-  const deferOpts = { anthropic: { deferLoading: true } };
-  for (const name of DEFERRED_TOOLS) {
-    if (name in tools) {
-      tools[name] = { ...tools[name], providerOptions: deferOpts };
+  if (isAnthropic) {
+    const { anthropic } = await import("@ai-sdk/anthropic");
+    tools.toolSearch = anthropic.tools.toolSearchBm25_20251119();
+
+    const DEFERRED_TOOLS = new Set([
+      // BigQuery / Data
+      "list_datasets", "list_tables", "inspect_table", "execute_query",
+      // Google Sheets
+      "read_google_sheet",
+      // Google Drive
+      "search_drive", "read_drive_file", "list_drive_folder", "list_shared_drives",
+      // Calendar
+      "check_calendar", "create_event", "update_event", "delete_event", "find_available_slot",
+      // Canvas
+      "read_canvas", "create_canvas", "edit_canvas", "delete_canvas", "share_canvas", "list_canvases",
+      // Slack Lists
+      "list_slack_list_items", "get_slack_list_item", "create_slack_list_item", "update_slack_list_item", "delete_slack_list_item",
+      // Email
+      "send_email", "reply_to_email",
+      // Email triage (per-user Gmail)
+      "sync_emails", "email_digest", "update_email_thread",
+      "read_user_emails", "read_user_email",
+      "generate_gmail_auth_url", "create_gmail_draft", "list_gmail_drafts", "delete_gmail_draft",
+      // Dev / Code
+      "run_command", "dispatch_headless", "read_job_trace",
+      "dispatch_cursor_agent", "check_cursor_agent", "followup_cursor_agent",
+      "stop_cursor_agent", "get_cursor_conversation", "list_cursor_agents",
+      // Browser
+      "browse", "download_slack_file",
+      // Voice / Calls
+      "list_voice_agents", "place_call", "send_sms", "send_voice_note",
+      // Directory / Contacts
+      "lookup_workspace_user", "list_workspace_users", "lookup_contact",
+      // Checkpoint
+      "checkpoint_plan",
+      // Resources
+      "ingest_resource", "search_resources", "get_resource", "list_resources",
+      // Subagent
+      "run_subagent",
+      // People
+      "get_person", "update_person",
+    ]);
+
+    const deferOpts = { anthropic: { deferLoading: true } };
+    for (const name of DEFERRED_TOOLS) {
+      if (name in tools) {
+        tools[name] = { ...tools[name], providerOptions: deferOpts };
+      }
     }
   }
 

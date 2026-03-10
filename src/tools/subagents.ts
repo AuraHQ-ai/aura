@@ -25,6 +25,7 @@ async function buildToolScope(
   scope: string,
   client: WebClient,
   context?: ScheduleContext,
+  modelId?: string,
 ) {
   switch (scope) {
     case "email":
@@ -48,7 +49,7 @@ async function buildToolScope(
       };
     case "slack": {
       const { createSlackTools } = await import("./slack.js");
-      return { ...createSlackTools(client, context) };
+      return { ...(await createSlackTools(client, context, modelId)) };
     }
     case "notes":
       return {
@@ -59,7 +60,7 @@ async function buildToolScope(
     case "all":
     default: {
       const { createSlackTools } = await import("./slack.js");
-      return createSlackTools(client, context);
+      return await createSlackTools(client, context, modelId);
     }
   }
 }
@@ -114,13 +115,12 @@ export function createSubagentTools(
           return { ok: false as const, error: "Admin-only tool" };
         }
 
-        const resolvedModel =
+        const { modelId, model } =
           model_preference === "main"
             ? await getMainModel()
-            : { model: await getFastModel() };
-        const model = resolvedModel.model;
+            : { modelId: undefined, model: await getFastModel() };
 
-        const tools = await buildToolScope(scope, client, context);
+        const tools = await buildToolScope(scope, client, context, modelId);
 
         const safeTools = { ...tools };
         delete (safeTools as Record<string, unknown>).run_subagent;

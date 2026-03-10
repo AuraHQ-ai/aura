@@ -27,8 +27,8 @@ export interface InteractiveAgentOptions {
 }
 
 export interface InteractiveAgentResult {
-  agent: ToolLoopAgent<never, ReturnType<typeof createSlackTools>>;
-  tools: ReturnType<typeof createSlackTools>;
+  agent: ToolLoopAgent<never, Awaited<ReturnType<typeof createSlackTools>>>;
+  tools: Awaited<ReturnType<typeof createSlackTools>>;
   modelId: string;
 }
 
@@ -36,7 +36,7 @@ export async function createInteractiveAgent(
   options: InteractiveAgentOptions,
 ): Promise<InteractiveAgentResult> {
   const { modelId, model } = await getMainModel();
-  const tools = createSlackTools(options.slackClient, options.context);
+  const tools = await createSlackTools(options.slackClient, options.context, modelId);
   const systemMessages = buildCachedSystemMessages(
     options.stablePrefix,
     options.conversationContext,
@@ -72,7 +72,7 @@ export interface HeadlessAgentOptions {
 
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
   const { modelId, model } = await getMainModel();
-  const tools = createSlackTools(options.slackClient, options.context);
+  const tools = await createSlackTools(options.slackClient, options.context, modelId);
 
   const agent = new ToolLoopAgent({
     model,
