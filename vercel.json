@@ -1,6 +1,6 @@
 {
   "installCommand": "npm install",
-  "buildCommand": "tsc && tsx src/db/migrate.ts",
+  "buildCommand": "tsc & tsx src/db/migrate.ts & wait",
   "framework": null,
   "regions": [
     "fra1"
@@ -13,11 +13,11 @@
   "rewrites": [
     {
       "source": "/slack/events",
-      "destination": "/api/slack/events"
+      "destination": "/api/index"
     },
     {
       "source": "/health",
-      "destination": "/api/health"
+      "destination": "/api/index"
     },
     {
       "source": "/(.*)",

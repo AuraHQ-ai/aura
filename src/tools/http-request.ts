@@ -76,6 +76,7 @@ export function createHttpRequestTool(context?: ScheduleContext) {
           }
 
           const headers: Record<string, string> = { ...input.headers };
+          let requestUrl = input.url;
 
           if (input.credential_name) {
             const owner = input.credential_owner ?? context?.userId;
@@ -102,7 +103,92 @@ export function createHttpRequestTool(context?: ScheduleContext) {
               };
             }
 
-            headers["Authorization"] = `Bearer ${credResult.value}`;
+            switch (credResult.authScheme) {
+              case "bearer":
+              case "oauth_client":
+              case "google_service_account": {
+                headers["Authorization"] = `Bearer ${credResult.value}`;
+                break;
+              }
+              case "basic": {
+                let basicParsed: { username: string; password: string };
+                try {
+                  basicParsed = JSON.parse(credResult.value);
+                } catch {
+                  return {
+                    ok: false as const,
+                    error: "basic credential value must be JSON {username, password}",
+                  };
+                }
+                const encoded = Buffer.from(
+                  `${basicParsed.username}:${basicParsed.password}`
+                ).toString("base64");
+                headers["Authorization"] = `Basic ${encoded}`;
+                break;
+              }
+              case "header": {
+                let parsed: { key: string; secret: string };
+                try {
+                  parsed = JSON.parse(credResult.value);
+                } catch {
+                  return {
+                    ok: false as const,
+                    error: `Credential "${input.credential_name}" has auth_scheme header but its value is not valid JSON`,
+                  };
+                }
+                if (!parsed.key || !parsed.secret) {
+                  return {
+                    ok: false as const,
+                    error: `Credential "${input.credential_name}" must include key and secret for header auth`,
+                  };
+                }
+                if (!/^[a-zA-Z0-9\-_]+$/.test(parsed.key)) {
+                  return {
+                    ok: false as const,
+                    error: `Invalid header name "${parsed.key}": must contain only alphanumeric characters, hyphens, and underscores`,
+                  };
+                }
+                headers[parsed.key] = parsed.secret;
+                break;
+              }
+              case "query": {
+                // ⚠️ SECURITY WARNING: Query parameter authentication exposes secrets in URLs.
+                // Secrets will appear in:
+                // - Server access logs
+                // - Browser history
+                // - CDN/proxy logs
+                // - Referer headers when navigating away
+                // Use query auth only when required by the API and no better option exists.
+                let parsed: { key: string; secret: string };
+                try {
+                  parsed = JSON.parse(credResult.value);
+                } catch {
+                  return {
+                    ok: false as const,
+                    error: `Credential "${input.credential_name}" has auth_scheme query but its value is not valid JSON`,
+                  };
+                }
+                if (!parsed.key || !parsed.secret) {
+                  return {
+                    ok: false as const,
+                    error: `Credential "${input.credential_name}" must include key and secret for query auth`,
+                  };
+                }
+                logger.warn("Using query parameter auth - secrets will be exposed in URL", {
+                  credential: input.credential_name,
+                  url: input.url,
+                });
+                const urlObj = new URL(requestUrl);
+                urlObj.searchParams.set(parsed.key, parsed.secret);
+                requestUrl = urlObj.toString();
+                break;
+              }
+              default:
+                return {
+                  ok: false as const,
+                  error: `Unsupported auth scheme for credential "${input.credential_name}"`,
+                };
+            }
           }
 
           if (
@@ -120,10 +206,12 @@ export function createHttpRequestTool(context?: ScheduleContext) {
             hasCredential: !!input.credential_name,
           });
 
-          const response = await fetch(input.url, {
+          const response = await fetch(requestUrl, {
             method: input.method,
             headers,
-            body: input.body ? JSON.stringify(input.body) : undefined,
+            body: input.body
+              ? (typeof input.body === "string" ? input.body : JSON.stringify(input.body))
+              : undefined,
             redirect: "manual",
             signal: AbortSignal.timeout(input.timeout_ms),
           });

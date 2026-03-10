@@ -239,6 +239,20 @@
       "when": 1773312000000,
       "tag": "0033_action_log_approval_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1773100000000,
+      "tag": "0034_credential_auth_scheme",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1773100001000,
+      "tag": "0035_google_service_account_auth_scheme",
+      "breakpoints": true
     }
   ]
 }
