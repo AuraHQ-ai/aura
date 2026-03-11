@@ -289,6 +289,7 @@ export async function generateResponse(
     } catch (err: any) {
       if (isChannelTypeNotSupported(err)) {
         streamingFailed = true;
+        frozenStreamTs = streamer?.streamTs ?? null;
         streamingUnsupportedChannels.add(channelId);
         logger.warn(
           "chatStream not supported for this channel, falling back to postMessage",
@@ -303,6 +304,7 @@ export async function generateResponse(
         });
       } else if (isInvalidBlocks(err)) {
         streamingFailed = true;
+        frozenStreamTs = streamer?.streamTs ?? null;
         logger.warn("chatStream append returned invalid_blocks, falling back to postMessage", {
           channelId,
           slackError: err?.data?.error,
@@ -317,6 +319,7 @@ export async function generateResponse(
         });
       } else if (isMsgTooLong(err)) {
         streamingFailed = true;
+        frozenStreamTs = streamer?.streamTs ?? null;
         logger.warn("chatStream append returned msg_too_long, falling back to postMessage", {
           channelId,
           currentStreamLength,
@@ -335,6 +338,7 @@ export async function generateResponse(
           await streamer.append(payload);
         } catch (retryErr: any) {
           streamingFailed = true;
+          frozenStreamTs = streamer?.streamTs ?? null;
           logger.warn("chatStream append failed on retry after internal_error, falling back to postMessage", {
             channelId,
             originalError: err?.data?.error,
@@ -351,6 +355,7 @@ export async function generateResponse(
       } else {
         // Unknown streaming error — don't kill the response, fall back gracefully
         streamingFailed = true;
+        frozenStreamTs = streamer?.streamTs ?? null;
         logger.error("chatStream append got unexpected error, falling back to postMessage", {
           channelId,
           slackError: err?.data?.error,
@@ -425,6 +430,7 @@ export async function generateResponse(
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   let continuationCount = 0;
+  let frozenStreamTs: string | null = null;
   let tableBuffer: string[] = [];
   let lineCarry = "";
 
@@ -804,28 +810,7 @@ export async function generateResponse(
         try { await streamer.stop(); } catch { /* stream may already be broken */ }
       }
 
-      // Fallback: post the unsent portion via safePostMessage.
-      // If a continuation split partially succeeded, only post text that
-      // wasn't already streamed (fallbackStartIdx marks the boundary).
-      const unsentText = fallbackStartIdx > 0
-        ? finalText.slice(fallbackStartIdx)
-        : finalText;
-      const blocks: any[] = [];
-      const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
-      if (formattedUnsent) {
-        for (let i = 0; i < formattedUnsent.length; i += 3000) {
-          blocks.push({
-            type: "section",
-            text: { type: "mrkdwn", text: formattedUnsent.slice(i, i + 3000) },
-            expand: true,
-          });
-        }
-      }
-      if (pendingTableBlock) {
-        blocks.push(pendingTableBlock);
-      }
-
-      blocks.push({
+      const feedbackBlock = {
         type: "context_actions",
         elements: [{
           type: "feedback_buttons",
@@ -833,47 +818,112 @@ export async function generateResponse(
           positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
           negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
         }],
-      });
+      };
 
       const toolMeta = buildToolMetadata(toolCallRecords);
-      const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
+      let delivered = false;
 
-      try {
-        const fallbackResult = await safePostMessage(slackClient, {
-          channel: channelId,
-          text: fallbackText,
-          thread_ts: threadTs,
-          blocks,
-          ...(toolMeta && { metadata: toolMeta }),
-        });
+      // Strategy 1: chat.update on the frozen stream message (replaces partial with full response)
+      if (frozenStreamTs) {
+        const fullFormatted = formatForSlack(finalText);
+        const updateBlocks: any[] = [];
+        if (fullFormatted) {
+          for (let i = 0; i < fullFormatted.length; i += 3000) {
+            updateBlocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: fullFormatted.slice(i, i + 3000) },
+              expand: true,
+            });
+          }
+        }
+        if (pendingTableBlock) updateBlocks.push(pendingTableBlock);
+        updateBlocks.push(feedbackBlock);
 
-        if (!fallbackResult.ok) {
-          logger.warn("LLM response lost — channel does not support posting", {
-            channelId,
+        try {
+          await slackClient.chat.update({
+            channel: channelId,
+            ts: frozenStreamTs,
+            text: fullFormatted || "...",
+            blocks: updateBlocks,
+            ...(toolMeta && { metadata: toolMeta }),
+          });
+          delivered = true;
+          logger.info(`LLM completed in ${llmMs}ms (chat.update on frozen stream)`, {
             rawLength: finalText.length,
+            channelId,
+            frozenStreamTs,
             usage: { inputTokens, outputTokens, totalTokens },
           });
-        } else {
-          logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
-            rawLength: finalText.length,
+        } catch (updateErr: any) {
+          logger.warn("chat.update on frozen stream failed, falling back to safePostMessage", {
             channelId,
-            usage: { inputTokens, outputTokens, totalTokens },
+            frozenStreamTs,
+            error: updateErr?.message,
+            slackError: updateErr?.data?.error,
           });
         }
-      } catch (fallbackErr: any) {
-        logger.error("Fallback safePostMessage also failed — posting plain text", {
-          channelId,
-          error: fallbackErr?.message || String(fallbackErr),
-          slackError: fallbackErr?.data?.error,
-        });
+      }
+
+      // Strategy 2: post the unsent portion as a new message
+      if (!delivered) {
+        const unsentText = fallbackStartIdx > 0
+          ? finalText.slice(fallbackStartIdx)
+          : finalText;
+        const blocks: any[] = [];
+        const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
+        if (formattedUnsent) {
+          for (let i = 0; i < formattedUnsent.length; i += 3000) {
+            blocks.push({
+              type: "section",
+              text: { type: "mrkdwn", text: formattedUnsent.slice(i, i + 3000) },
+              expand: true,
+            });
+          }
+        }
+        if (pendingTableBlock) blocks.push(pendingTableBlock);
+        blocks.push(feedbackBlock);
+
+        const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
+
         try {
-          await slackClient.chat.postMessage({
+          const fallbackResult = await safePostMessage(slackClient, {
             channel: channelId,
-            text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
+            text: fallbackText,
             thread_ts: threadTs,
+            blocks,
+            ...(toolMeta && { metadata: toolMeta }),
           });
-        } catch {
-          logger.error("All message delivery paths failed", { channelId });
+
+          if (!fallbackResult.ok) {
+            logger.warn("LLM response lost — channel does not support posting", {
+              channelId,
+              rawLength: finalText.length,
+              usage: { inputTokens, outputTokens, totalTokens },
+            });
+          } else {
+            delivered = true;
+            logger.info(`LLM completed in ${llmMs}ms (fallback safePostMessage)`, {
+              rawLength: finalText.length,
+              channelId,
+              usage: { inputTokens, outputTokens, totalTokens },
+            });
+          }
+        } catch (fallbackErr: any) {
+          logger.error("Fallback safePostMessage also failed — posting plain text", {
+            channelId,
+            error: fallbackErr?.message || String(fallbackErr),
+            slackError: fallbackErr?.data?.error,
+          });
+          try {
+            await slackClient.chat.postMessage({
+              channel: channelId,
+              text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
+              thread_ts: threadTs,
+            });
+            delivered = true;
+          } catch {
+            logger.error("All message delivery paths failed", { channelId });
+          }
         }
       }
     } else {
