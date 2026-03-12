@@ -53,8 +53,6 @@ export function createPrepareStep(opts: {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
   const hasEffortSupport = opts.modelId ? supportsEffort(opts.modelId) : false;
-  const hasAdaptiveThinking = opts.modelId ? supportsAdaptiveThinking(opts.modelId) : false;
-  const hasThinkingSupport = opts.modelId ? isAnthropicModel(opts.modelId) : false;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
