@@ -189,12 +189,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       channelId: context.channelId,
     });
     // Still store the message for long-term memory, but don't respond
-    const storePromise = storeUserMessage(context, event);
-    if (waitUntil) {
-      waitUntil(storePromise);
-    } else {
-      await storePromise;
-    }
+    await scheduleStoreUserMessage(context, event, waitUntil);
     return;
   }
 
@@ -211,12 +206,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       messageTs: context.messageTs,
     });
     // Still store the message for long-term memory, even though we won't respond
-    const storePromise = storeUserMessage(context, event);
-    if (waitUntil) {
-      waitUntil(storePromise);
-    } else {
-      await storePromise;
-    }
+    await scheduleStoreUserMessage(context, event, waitUntil);
     return;
   }
 
@@ -377,12 +367,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       });
       await pauseSandbox().catch(() => {});
       // Still store the user's message for long-term memory
-      const storePromise = storeUserMessage(context, event);
-      if (waitUntil) {
-        waitUntil(storePromise);
-      } else {
-        await storePromise;
-      }
+      await scheduleStoreUserMessage(context, event, waitUntil);
       return;
     }
 
@@ -468,12 +453,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         invocationId: error.invocationId,
         channelId: context.channelId,
       });
-      const storePromise = storeUserMessage(context, event);
-      if (waitUntil) {
-        waitUntil(storePromise);
-      } else {
-        await storePromise;
-      }
+      await scheduleStoreUserMessage(context, event, waitUntil);
       return;
     }
 
@@ -570,6 +550,23 @@ async function handleTransparencyCommands(
   }
 
   return false;
+}
+
+/**
+ * Store the user's message, scheduling it as a background task via waitUntil
+ * when available, otherwise awaiting it inline.
+ */
+async function scheduleStoreUserMessage(
+  context: MessageContext,
+  event: SlackEvent,
+  waitUntil?: (promise: Promise<unknown>) => void,
+): Promise<void> {
+  const storePromise = storeUserMessage(context, event);
+  if (waitUntil) {
+    waitUntil(storePromise);
+  } else {
+    await storePromise;
+  }
 }
 
 /**
