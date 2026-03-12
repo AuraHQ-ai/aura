@@ -390,6 +390,57 @@ export const jobExecutions = pgTable(
   ],
 );
 
+// ── Job Execution Messages + Parts (full conversation persistence) ───────────
+
+export const jobExecutionMessages = pgTable(
+  "job_execution_messages",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    executionId: uuid("execution_id")
+      .notNull()
+      .references(() => jobExecutions.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    orderIndex: integer("order_index").notNull(),
+  },
+  (table) => [
+    index("idx_jem_execution").on(table.executionId, table.orderIndex),
+    check(
+      "jem_role_check",
+      sql`${table.role} IN ('system', 'user', 'assistant')`,
+    ),
+  ],
+);
+
+export const jobExecutionParts = pgTable(
+  "job_execution_parts",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => jobExecutionMessages.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    orderIndex: integer("order_index").notNull(),
+    textValue: text("text_value"),
+    toolCallId: text("tool_call_id"),
+    toolName: text("tool_name"),
+    toolInput: jsonb("tool_input"),
+    toolOutput: jsonb("tool_output"),
+    toolState: text("tool_state"),
+  },
+  (table) => [
+    index("idx_jep_message").on(table.messageId, table.orderIndex),
+    check(
+      "jep_type_check",
+      sql`${table.type} IN ('text', 'reasoning', 'tool-invocation', 'source', 'file', 'step-start')`,
+    ),
+  ],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(
@@ -803,3 +854,7 @@ export const content = pgTable(
 
 export type Content = typeof content.$inferSelect;
 export type NewContent = typeof content.$inferInsert;
+export type JobExecutionMessage = typeof jobExecutionMessages.$inferSelect;
+export type NewJobExecutionMessage = typeof jobExecutionMessages.$inferInsert;
+export type JobExecutionPart = typeof jobExecutionParts.$inferSelect;
+export type NewJobExecutionPart = typeof jobExecutionParts.$inferInsert;
