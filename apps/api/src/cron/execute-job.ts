@@ -6,6 +6,7 @@ import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext, PendingApprovalError } from "../lib/tool.js";
+import { getCurrentTimeContext } from "../lib/temporal.js";
 import {
   createConversationTrace,
   persistConversationInputs,
@@ -138,7 +139,7 @@ export async function executeJob(
         ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
         : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
 
-      systemPrompt = CONTINUATION_SYSTEM_PROMPT + skillIndex;
+      systemPrompt = getCurrentTimeContext(job.timezone) + "\n\n" + CONTINUATION_SYSTEM_PROMPT + skillIndex;
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
@@ -156,7 +157,7 @@ export async function executeJob(
         prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
       }
 
-      systemPrompt = JOB_SYSTEM_PROMPT + skillIndex;
+      systemPrompt = getCurrentTimeContext(job.timezone) + "\n\n" + JOB_SYSTEM_PROMPT + skillIndex;
 
       logger.info("Heartbeat: executing job", {
         jobId,

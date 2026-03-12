@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { JobExecution, ConversationMessage as ConversationMessageRow, ConversationPart } from "@schema";
@@ -45,14 +44,6 @@ function Collapsible({
       </button>
       {open && <div className="border-t px-3 py-2">{children}</div>}
     </div>
-  );
-}
-
-function PromptBlock({ text }: { text: string }) {
-  return (
-    <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[600px]">
-      {text}
-    </pre>
   );
 }
 
@@ -144,110 +135,205 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
   );
 }
 
-function TimelineView({ conversation }: { conversation: ConversationMessage[] }) {
-  const assistantMsgs = conversation.filter((m) => m.role === "assistant");
-  const [filter, setFilter] = useState("");
+const SYSTEM_PREVIEW_LENGTH = 200;
+const LONG_TEXT_THRESHOLD = 1000;
 
-  const lowerFilter = filter.toLowerCase();
-  const filteredMsgs = filter
-    ? assistantMsgs
-        .map((msg) => ({
-          ...msg,
-          parts: msg.parts.filter(
-            (p) =>
-              p.type === "error" ||
-              p.toolName?.toLowerCase().includes(lowerFilter) ||
-              p.textValue?.toLowerCase().includes(lowerFilter),
-          ),
-        }))
-        .filter((msg) => msg.parts.length > 0)
-    : assistantMsgs;
+function SystemMessageBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > SYSTEM_PREVIEW_LENGTH;
+  const preview = isLong ? text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..." : text;
+
+  return (
+    <div className="border rounded-md bg-muted/20">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <Badge variant="secondary" className="text-[10px]">system</Badge>
+        <span className="text-xs text-muted-foreground">
+          {text.length.toLocaleString()} chars
+        </span>
+      </div>
+      <div className="border-t px-3 py-2">
+        <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto max-h-[600px]">
+          {expanded ? text : preview}
+        </pre>
+        {isLong && (
+          <button
+            className="mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "Collapse" : "Expand full prompt"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function UserMessageBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(text.length <= LONG_TEXT_THRESHOLD);
+  const isLong = text.length > LONG_TEXT_THRESHOLD;
+
+  return (
+    <div className="border rounded-md bg-blue-50/50 dark:bg-blue-950/20">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <Badge variant="default" className="text-[10px]">user</Badge>
+        <span className="text-xs text-muted-foreground">
+          {text.length.toLocaleString()} chars
+        </span>
+      </div>
+      <div className="border-t px-3 py-2">
+        {expanded ? (
+          <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto max-h-[600px]">
+            {text}
+          </pre>
+        ) : (
+          <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto">
+            {text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..."}
+          </pre>
+        )}
+        {isLong && (
+          <button
+            className="mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "Collapse" : "Expand full message"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AssistantStepBlock({ msg, stepIndex }: { msg: ConversationMessage; stepIndex: number }) {
+  return (
+    <div className="border rounded-md">
+      <div className="flex items-center gap-2 px-3 py-2 bg-muted/30">
+        <Badge variant="secondary" className="text-[10px]">
+          Step {stepIndex}
+        </Badge>
+        <Badge variant="outline" className="text-[10px]">assistant</Badge>
+        <span className="text-xs text-muted-foreground ml-auto">
+          {formatDate(msg.createdAt)}
+        </span>
+      </div>
+      <div className="border-t px-3 py-2 space-y-2">
+        {msg.parts
+          .filter((p) => p.type !== "step-start")
+          .map((part) => {
+            if (part.type === "reasoning") {
+              return (
+                <Collapsible
+                  key={part.id}
+                  title="Reasoning"
+                  badge={
+                    <Badge variant="warning" className="text-[10px]">
+                      reasoning
+                    </Badge>
+                  }
+                >
+                  <pre className="whitespace-pre-wrap text-xs font-mono italic overflow-auto max-h-[400px] text-muted-foreground">
+                    {part.textValue}
+                  </pre>
+                </Collapsible>
+              );
+            }
+
+            if (part.type === "tool-invocation") {
+              return <ToolInvocationBlock key={part.id} part={part} />;
+            }
+
+            if (part.type === "error" && part.textValue) {
+              return (
+                <div
+                  key={part.id}
+                  className="rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Badge variant="destructive" className="text-[10px]">
+                      error
+                    </Badge>
+                  </div>
+                  <pre className="whitespace-pre-wrap font-mono text-xs text-destructive overflow-auto max-h-[400px]">
+                    {part.textValue}
+                  </pre>
+                </div>
+              );
+            }
+
+            if (part.type === "text" && part.textValue) {
+              return (
+                <div
+                  key={part.id}
+                  className="text-sm bg-muted/30 rounded-md px-3 py-2 border"
+                >
+                  <pre className="whitespace-pre-wrap font-mono text-xs overflow-auto max-h-[400px]">
+                    {part.textValue}
+                  </pre>
+                </div>
+              );
+            }
+
+            return null;
+          })}
+      </div>
+    </div>
+  );
+}
+
+function UnifiedTimeline({ conversation, execution }: { conversation: ConversationMessage[]; execution: JobExecution }) {
+  const [showRaw, setShowRaw] = useState(false);
+
+  const sorted = [...conversation].sort((a, b) => a.orderIndex - b.orderIndex);
+
+  let assistantStep = 0;
 
   return (
     <div className="space-y-3">
-      <input
-        type="text"
-        placeholder="Filter by tool name or text..."
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        className="w-full px-3 py-1.5 text-sm border rounded-md bg-background"
-      />
+      {sorted.map((msg) => {
+        if (msg.role === "system") {
+          const text = msg.parts.find((p) => p.type === "text")?.textValue;
+          if (!text) return null;
+          return <SystemMessageBlock key={msg.id} text={text} />;
+        }
 
-      {filteredMsgs.length === 0 && (
+        if (msg.role === "user") {
+          const text = msg.parts.find((p) => p.type === "text")?.textValue;
+          if (!text) return null;
+          return <UserMessageBlock key={msg.id} text={text} />;
+        }
+
+        if (msg.role === "assistant") {
+          assistantStep++;
+          return (
+            <AssistantStepBlock
+              key={msg.id}
+              msg={msg}
+              stepIndex={assistantStep}
+            />
+          );
+        }
+
+        return null;
+      })}
+
+      {sorted.length === 0 && (
         <p className="text-sm text-muted-foreground py-4 text-center">
-          {filter ? "No matching steps." : "No assistant steps recorded."}
+          No conversation data recorded for this execution.
         </p>
       )}
 
-      {filteredMsgs.map((msg, msgIdx) => (
-        <div key={msg.id} className="space-y-2">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="secondary" className="text-[10px]">
-              Step {msgIdx + 1}
-            </Badge>
-            <span>{formatDate(msg.createdAt)}</span>
-          </div>
-
-          {msg.parts
-            .filter((p) => p.type !== "step-start")
-            .map((part) => {
-              if (part.type === "reasoning") {
-                return (
-                  <Collapsible
-                    key={part.id}
-                    title="Reasoning"
-                    badge={
-                      <Badge variant="warning" className="text-[10px]">
-                        reasoning
-                      </Badge>
-                    }
-                  >
-                    <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto max-h-[400px]">
-                      {part.textValue}
-                    </pre>
-                  </Collapsible>
-                );
-              }
-
-              if (part.type === "tool-invocation") {
-                return <ToolInvocationBlock key={part.id} part={part} />;
-              }
-
-              if (part.type === "error" && part.textValue) {
-                return (
-                  <div
-                    key={part.id}
-                    className="rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2"
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge variant="destructive" className="text-[10px]">
-                        error
-                      </Badge>
-                    </div>
-                    <pre className="whitespace-pre-wrap font-mono text-xs text-destructive overflow-auto max-h-[400px]">
-                      {part.textValue}
-                    </pre>
-                  </div>
-                );
-              }
-
-              if (part.type === "text" && part.textValue) {
-                return (
-                  <div
-                    key={part.id}
-                    className="text-sm bg-muted/30 rounded-md px-3 py-2 border"
-                  >
-                    <pre className="whitespace-pre-wrap font-mono text-xs overflow-auto max-h-[400px]">
-                      {part.textValue}
-                    </pre>
-                  </div>
-                );
-              }
-
-              return null;
-            })}
-        </div>
-      ))}
+      <div className="border-t pt-3">
+        <button
+          className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+          onClick={() => setShowRaw(!showRaw)}
+        >
+          {showRaw ? "Hide" : "Show"} Raw JSON
+        </button>
+        {showRaw && (
+          <pre className="mt-2 whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[600px]">
+            {execution.steps ? JSON.stringify(execution.steps, null, 2) : "No legacy step data."}
+          </pre>
+        )}
+      </div>
     </div>
   );
 }
@@ -261,15 +347,6 @@ export function ExecutionDetail({
 }) {
   const { execution, conversation } = data;
 
-  const systemMsg = conversation.find((m) => m.role === "system");
-  const userMsg = conversation.find((m) => m.role === "user");
-
-  const systemPrompt =
-    systemMsg?.parts.find((p) => p.type === "text")?.textValue ?? null;
-  const userPrompt =
-    userMsg?.parts.find((p) => p.type === "text")?.textValue ?? null;
-
-  const hasConversation = conversation.length > 0;
   const tokenUsage = execution.tokenUsage as {
     inputTokens?: number;
     outputTokens?: number;
@@ -367,91 +444,7 @@ export function ExecutionDetail({
         </Card>
       )}
 
-      {!hasConversation && (
-        <Card>
-          <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No conversation data recorded for this execution.
-            {execution.steps != null && (
-              <span> Legacy step data is available in the raw JSON below.</span>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      <Tabs defaultValue={hasConversation ? "timeline" : "raw"}>
-        <TabsList>
-          {hasConversation && (
-            <>
-              <TabsTrigger value="timeline">Timeline</TabsTrigger>
-              <TabsTrigger value="system">System Prompt</TabsTrigger>
-              <TabsTrigger value="user">User Prompt</TabsTrigger>
-            </>
-          )}
-          <TabsTrigger value="raw">Raw Steps</TabsTrigger>
-        </TabsList>
-
-        {hasConversation && (
-          <>
-            <TabsContent value="timeline">
-              <TimelineView conversation={conversation} />
-            </TabsContent>
-
-            <TabsContent value="system">
-              <Card>
-                <CardContent className="pt-4">
-                  {systemPrompt ? (
-                    <Collapsible
-                      title={`System Prompt (${systemPrompt.length.toLocaleString()} chars)`}
-                      defaultOpen
-                    >
-                      <PromptBlock text={systemPrompt} />
-                    </Collapsible>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No system prompt recorded.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="user">
-              <Card>
-                <CardContent className="pt-4">
-                  {userPrompt ? (
-                    <Collapsible
-                      title={`User Prompt (${userPrompt.length.toLocaleString()} chars)`}
-                      defaultOpen
-                    >
-                      <PromptBlock text={userPrompt} />
-                    </Collapsible>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No user prompt recorded.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </>
-        )}
-
-        <TabsContent value="raw">
-          <Card>
-            <CardContent className="pt-4">
-              {execution.steps ? (
-                <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[600px]">
-                  {JSON.stringify(execution.steps, null, 2)}
-                </pre>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No step data available.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      <UnifiedTimeline conversation={conversation} execution={execution} />
     </>
   );
 }
