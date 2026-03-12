@@ -568,7 +568,7 @@ export function createEmailSyncTools(
           };
         }
       },
-      slack: { status: "Updating email threads...", output: (r) => r.ok === false ? r.error : `${r.updated ?? 0} threads updated` },
+      slack: { status: "Updating email threads...", output: (r) => r.ok === false ? (r.error ?? r.message) : `${r.updated ?? 0} threads updated` },
     }),
 
     search_emails: defineTool({
