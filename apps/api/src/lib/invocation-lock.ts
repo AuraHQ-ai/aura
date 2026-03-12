@@ -1,4 +1,4 @@
-import { eq, and, lt } from "drizzle-orm";
+import { eq, and, lt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { conversationLocks } from "@aura/db/schema";
 import { logger } from "./logger.js";
@@ -8,18 +8,30 @@ const CLEANUP_PROBABILITY = 0.05;
 
 /**
  * Claim an invocation for a conversation. Returns the invocation ID.
- * If another invocation is already running, it gets superseded.
+ *
+ * Uses Slack's message_ts for ordering so that a late-arriving cold-start
+ * for an older message can never overwrite a newer message's claim.
+ * The UPDATE only fires when the incoming message_ts is strictly greater
+ * than the stored one.
  */
-export async function claimInvocation(channelId: string, threadTs: string): Promise<string> {
+export async function claimInvocation(
+  channelId: string,
+  threadTs: string,
+  messageTs: string,
+): Promise<string> {
   const invocationId = crypto.randomUUID();
-  await db
-    .insert(conversationLocks)
-    .values({ channelId, threadTs, invocationId })
-    .onConflictDoUpdate({
-      target: [conversationLocks.channelId, conversationLocks.threadTs],
-      set: { invocationId, startedAt: new Date() },
-    });
-  logger.info("Claimed invocation lock", { channelId, threadTs, invocationId });
+
+  await db.execute(sql`
+    INSERT INTO conversation_locks (channel_id, thread_ts, invocation_id, message_ts, started_at)
+    VALUES (${channelId}, ${threadTs}, ${invocationId}, ${messageTs}, now())
+    ON CONFLICT (channel_id, thread_ts) DO UPDATE
+      SET invocation_id = ${invocationId},
+          message_ts    = ${messageTs},
+          started_at    = now()
+      WHERE conversation_locks.message_ts < ${messageTs}
+  `);
+
+  logger.info("Claimed invocation lock", { channelId, threadTs, messageTs, invocationId });
 
   if (Math.random() < CLEANUP_PROBABILITY) {
     cleanupStaleLocks().catch((err) => {

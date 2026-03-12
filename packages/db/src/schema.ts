@@ -501,6 +501,7 @@ export const conversationLocks = pgTable(
     channelId: text("channel_id").notNull(),
     threadTs: text("thread_ts").notNull(),
     invocationId: text("invocation_id").notNull(),
+    messageTs: text("message_ts").notNull(),
     startedAt: timestamptz("started_at").notNull().defaultNow(),
   },
   (table) => [

@@ -202,7 +202,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // Must run after shouldRespond so non-responding messages don't
   // supersede an in-progress invocation for this thread.
   const effectiveThreadTs = context.threadTs || context.messageTs;
-  const invocationId = await claimInvocation(context.channelId, effectiveThreadTs);
+  const invocationId = await claimInvocation(context.channelId, effectiveThreadTs, context.messageTs);
 
   logger.info("Processing message", {
     userId: context.userId,
