@@ -390,39 +390,66 @@ export const jobExecutions = pgTable(
   ],
 );
 
-// ── Job Execution Messages + Parts (full conversation persistence) ───────────
+// ── Conversation Traces + Messages + Parts (unified conversation persistence) ─
 
-export const jobExecutionMessages = pgTable(
-  "job_execution_messages",
+export const conversationTraces = pgTable(
+  "conversation_traces",
   {
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    executionId: uuid("execution_id")
-      .notNull()
-      .references(() => jobExecutions.id, { onDelete: "cascade" }),
-    role: text("role").notNull(),
+    sourceType: text("source_type").notNull(),
+    jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
+    channelId: text("channel_id"),
+    threadTs: text("thread_ts"),
+    userId: text("user_id"),
+    modelId: text("model_id"),
+    tokenUsage: jsonb("token_usage").$type<{ inputTokens: number; outputTokens: number; totalTokens: number }>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
-    orderIndex: integer("order_index").notNull(),
   },
   (table) => [
-    index("idx_jem_execution").on(table.executionId, table.orderIndex),
+    index("idx_ct_job_execution").on(table.jobExecutionId),
+    index("idx_ct_channel_thread").on(table.channelId, table.threadTs),
+    index("idx_ct_created_at").on(table.createdAt),
     check(
-      "jem_role_check",
+      "ct_source_type_check",
+      sql`${table.sourceType} IN ('job_execution', 'interactive')`,
+    ),
+  ],
+);
+
+export const conversationMessages = pgTable(
+  "conversation_messages",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversationTraces.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content"),
+    orderIndex: integer("order_index").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("idx_cm_conversation").on(table.conversationId, table.orderIndex),
+    check(
+      "cm_role_check",
       sql`${table.role} IN ('system', 'user', 'assistant')`,
     ),
   ],
 );
 
-export const jobExecutionParts = pgTable(
-  "job_execution_parts",
+export const conversationParts = pgTable(
+  "conversation_parts",
   {
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     messageId: uuid("message_id")
       .notNull()
-      .references(() => jobExecutionMessages.id, { onDelete: "cascade" }),
+      .references(() => conversationMessages.id, { onDelete: "cascade" }),
     type: text("type").notNull(),
     orderIndex: integer("order_index").notNull(),
     textValue: text("text_value"),
@@ -433,9 +460,9 @@ export const jobExecutionParts = pgTable(
     toolState: text("tool_state"),
   },
   (table) => [
-    index("idx_jep_message").on(table.messageId, table.orderIndex),
+    index("idx_cp_message").on(table.messageId, table.orderIndex),
     check(
-      "jep_type_check",
+      "cp_type_check",
       sql`${table.type} IN ('text', 'reasoning', 'tool-invocation', 'source', 'file', 'step-start', 'error')`,
     ),
   ],
@@ -854,7 +881,9 @@ export const content = pgTable(
 
 export type Content = typeof content.$inferSelect;
 export type NewContent = typeof content.$inferInsert;
-export type JobExecutionMessage = typeof jobExecutionMessages.$inferSelect;
-export type NewJobExecutionMessage = typeof jobExecutionMessages.$inferInsert;
-export type JobExecutionPart = typeof jobExecutionParts.$inferSelect;
-export type NewJobExecutionPart = typeof jobExecutionParts.$inferInsert;
+export type ConversationTrace = typeof conversationTraces.$inferSelect;
+export type NewConversationTrace = typeof conversationTraces.$inferInsert;
+export type ConversationMessage = typeof conversationMessages.$inferSelect;
+export type NewConversationMessage = typeof conversationMessages.$inferInsert;
+export type ConversationPart = typeof conversationParts.$inferSelect;
+export type NewConversationPart = typeof conversationParts.$inferInsert;

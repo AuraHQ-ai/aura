@@ -32,6 +32,13 @@ import { getSettingJSON } from "../lib/settings.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
+import {
+  createConversationTrace,
+  persistConversationInputs,
+  persistConversationSteps,
+  updateConversationTraceUsage,
+  type Step as ConversationStep,
+} from "../cron/persist-conversation.js";
 import type { SlackEvent } from "./context.js";
 
 /** Maximum message length we'll process (characters). Slack max is ~40k. */
@@ -384,6 +391,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     });
 
     // 7. Background tasks (via waitUntil so they don't block the response)
+    const fullSystemPrompt = [stablePrefix, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
     const backgroundTasks = runBackgroundTasks({
       context: { ...context, text: messageText },
       event,
@@ -394,6 +402,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       threadMessageCount: conversation.thread?.length ?? 0,
       tokenUsage: response.usage,
       modelId: response.modelId,
+      systemPrompt: fullSystemPrompt,
+      userPrompt: messageText,
+      stepsPromise: response.stepsPromise,
+      replyThreadTs,
       ...(() => {
         const all = (conversation.thread ?? conversation.recentMessages)
           .map(m => ({ displayName: m.displayName, text: m.text }));
@@ -550,8 +562,12 @@ async function runBackgroundTasks(params: {
   threadMessagesElided: boolean;
   tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
   modelId?: string;
+  systemPrompt?: string;
+  userPrompt?: string;
+  stepsPromise?: PromiseLike<any[]>;
+  replyThreadTs?: string;
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId } = params;
+  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, replyThreadTs } = params;
 
   try {
     // Store the user's message
@@ -629,6 +645,63 @@ async function runBackgroundTasks(params: {
       context.text,
       response,
     );
+
+    // Persist conversation trace for interactive messages
+    if (systemPrompt && userPrompt) {
+      try {
+        const conversationId = await createConversationTrace({
+          sourceType: "interactive",
+          channelId: context.channelId,
+          threadTs: replyThreadTs || context.threadTs,
+          userId: context.userId,
+          modelId,
+        });
+
+        const orderIndex = await persistConversationInputs(
+          conversationId,
+          systemPrompt,
+          userPrompt,
+        );
+
+        if (stepsPromise) {
+          try {
+            const rawSteps = await stepsPromise;
+            const conversationSteps: ConversationStep[] = rawSteps.map((step: any) => ({
+              text: step.text,
+              reasoning: step.reasoning,
+              toolCalls: step.toolCalls?.map((tc: any) => ({
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                input: tc.input,
+              })),
+              toolResults: step.toolResults?.map((tr: any) => ({
+                toolCallId: tr.toolCallId,
+                toolName: tr.toolName,
+                output: tr.output,
+              })),
+              finishReason: step.finishReason,
+            }));
+            await persistConversationSteps(conversationId, conversationSteps, orderIndex);
+          } catch (stepsErr: any) {
+            logger.error("Failed to persist conversation steps (non-fatal)", {
+              conversationId,
+              error: stepsErr.message,
+            });
+          }
+        }
+
+        if (tokenUsage) {
+          await updateConversationTraceUsage(conversationId, tokenUsage);
+        }
+
+        logger.info("Interactive conversation trace persisted", { conversationId });
+      } catch (traceErr: any) {
+        logger.error("Failed to persist interactive conversation trace (non-fatal)", {
+          error: traceErr.message,
+          channelId: context.channelId,
+        });
+      }
+    }
 
     // Set or update DM thread title for the Assistant History tab.
     // Runs last so the LLM call doesn't delay critical background work above.

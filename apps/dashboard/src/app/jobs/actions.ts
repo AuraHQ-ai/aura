@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { jobs, jobExecutions, jobExecutionMessages, jobExecutionParts } from "@schema";
+import { jobs, jobExecutions, conversationTraces, conversationMessages, conversationParts } from "@schema";
 import { eq, desc, asc, ilike, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -51,20 +51,29 @@ export async function getExecutionWithConversation(execId: string) {
     .where(eq(jobExecutions.id, execId));
   if (!exec) return null;
 
+  // Find conversation trace for this execution
+  const [trace] = await db
+    .select()
+    .from(conversationTraces)
+    .where(eq(conversationTraces.jobExecutionId, execId))
+    .limit(1);
+
+  if (!trace) return { execution: exec, conversation: [] };
+
   const msgs = await db
     .select()
-    .from(jobExecutionMessages)
-    .where(eq(jobExecutionMessages.executionId, execId))
-    .orderBy(asc(jobExecutionMessages.orderIndex));
+    .from(conversationMessages)
+    .where(eq(conversationMessages.conversationId, trace.id))
+    .orderBy(asc(conversationMessages.orderIndex));
 
   const msgIds = msgs.map((m) => m.id);
-  let parts: (typeof jobExecutionParts.$inferSelect)[] = [];
+  let parts: (typeof conversationParts.$inferSelect)[] = [];
   if (msgIds.length > 0) {
     parts = await db
       .select()
-      .from(jobExecutionParts)
-      .where(sql`${jobExecutionParts.messageId} IN ${msgIds}`)
-      .orderBy(asc(jobExecutionParts.orderIndex));
+      .from(conversationParts)
+      .where(sql`${conversationParts.messageId} IN ${msgIds}`)
+      .orderBy(asc(conversationParts.orderIndex));
   }
 
   const conversation = msgs.map((msg) => ({
