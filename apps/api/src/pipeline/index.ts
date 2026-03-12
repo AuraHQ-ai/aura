@@ -204,6 +204,15 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   const effectiveThreadTs = context.threadTs || context.messageTs;
   const invocationId = await claimInvocation(context.channelId, effectiveThreadTs, context.messageTs);
 
+  if (!invocationId) {
+    logger.info("Skipping message — a newer message already claimed this thread", {
+      channelId: context.channelId,
+      threadTs: effectiveThreadTs,
+      messageTs: context.messageTs,
+    });
+    return;
+  }
+
   logger.info("Processing message", {
     userId: context.userId,
     channelType: context.channelType,

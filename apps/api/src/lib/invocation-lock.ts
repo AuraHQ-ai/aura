@@ -7,7 +7,8 @@ const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
 const CLEANUP_PROBABILITY = 0.05;
 
 /**
- * Claim an invocation for a conversation. Returns the invocation ID.
+ * Claim an invocation for a conversation. Returns the invocation ID,
+ * or `null` if the claim was a no-op (a newer message already holds the lock).
  *
  * Uses Slack's message_ts for ordering so that a late-arriving cold-start
  * for an older message can never overwrite a newer message's claim.
@@ -18,10 +19,10 @@ export async function claimInvocation(
   channelId: string,
   threadTs: string,
   messageTs: string,
-): Promise<string> {
+): Promise<string | null> {
   const invocationId = crypto.randomUUID();
 
-  await db.execute(sql`
+  const result = await db.execute(sql`
     INSERT INTO conversation_locks (channel_id, thread_ts, invocation_id, message_ts, started_at)
     VALUES (${channelId}, ${threadTs}, ${invocationId}, ${messageTs}, now())
     ON CONFLICT (channel_id, thread_ts) DO UPDATE
@@ -29,7 +30,16 @@ export async function claimInvocation(
           message_ts    = ${messageTs},
           started_at    = now()
       WHERE conversation_locks.message_ts < ${messageTs}
+    RETURNING invocation_id
   `);
+
+  const rowCount = (result as any).rowCount ?? (result as any).rows?.length ?? 0;
+  if (rowCount === 0) {
+    logger.info("Invocation claim rejected — newer message already holds lock", {
+      channelId, threadTs, messageTs, invocationId,
+    });
+    return null;
+  }
 
   logger.info("Claimed invocation lock", { channelId, threadTs, messageTs, invocationId });
 
