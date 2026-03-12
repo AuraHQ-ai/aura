@@ -56,3 +56,18 @@ pnpm db:studio      # open Drizzle Studio
 - pgvector columns must all use the same dimensions (1536)
 - The sandbox (e2b) is a separate environment from Vercel — env vars don't automatically cross over
 - Schema lives in `packages/db/` — both apps import from `@aura/db/schema`
+
+## Drizzle migration rules (CRITICAL)
+- **Every SQL migration file with multiple statements MUST have `-->statement-breakpoint` between each statement.**
+- The journal has `breakpoints: true`, so Drizzle uses these markers to split the file into individual SQL commands.
+- Without the markers, Drizzle concatenates all statements into one string, and Postgres rejects multi-statement execution.
+- Example of a correct multi-statement migration:
+```sql
+ALTER TABLE "notes" ADD COLUMN "summary" text;
+-->statement-breakpoint
+ALTER TABLE "notes" ADD COLUMN "inject_in_context" boolean NOT NULL DEFAULT false;
+-->statement-breakpoint
+UPDATE "notes" SET "inject_in_context" = true WHERE "category" = 'skill';
+```
+- Single-statement migrations (one CREATE TABLE, one ALTER TABLE) do NOT need the marker.
+- **This is the #1 cause of failed Vercel builds.** Always check migration files before committing.
