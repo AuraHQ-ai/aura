@@ -76,39 +76,8 @@ export function createPrepareStep(opts: {
 
     if (hadToolFailure) failureCount++;
 
-    // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
-    if (hasEffortSupport) {
-      let newEffort = currentEffort;
-
-      if (stepNumber > 8 || hadToolFailure) {
-        if (currentEffort === "low") newEffort = "medium";
-        else if (currentEffort === "medium") newEffort = "high";
-      }
-
-      if (newEffort !== currentEffort) {
-        currentEffort = newEffort;
-        logger.info("prepareStep: escalating effort", {
-          stepNumber,
-          effort: currentEffort,
-        });
-      }
-    }
-
-    // --- Build Anthropic provider options (thinking + effort) ---
-    const anthropicOpts: Record<string, any> = {};
-    if (hasAdaptiveThinking) {
-      anthropicOpts.thinking = { type: "adaptive" };
-    } else if (hasThinkingSupport && opts.thinkingBudget) {
-      anthropicOpts.thinking = { type: "enabled", budgetTokens: opts.thinkingBudget };
-    }
-    if (hasEffortSupport) {
-      anthropicOpts.effort = currentEffort;
-    }
-    if (Object.keys(anthropicOpts).length > 0) {
-      providerOptions = { anthropic: anthropicOpts };
-    }
-
     // --- Model escalation: persistent failures → escalation model ---
+    // Runs before effort/thinking options so capability flags are recalculated.
     const readyToEscalateModel = hasEffortSupport
       ? (currentEffort === "high" && hadToolFailure)
       : (failureCount >= 3);
@@ -134,6 +103,44 @@ export function createPrepareStep(opts: {
 
     if (hasEscalatedModel && escalatedModel && !modelOverride) {
       modelOverride = escalatedModel.model;
+    }
+
+    // Recompute capability flags for the effective model (may differ after escalation)
+    const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
+    const activeHasEffortSupport = effectiveModelId ? supportsEffort(effectiveModelId) : false;
+    const activeHasAdaptiveThinking = effectiveModelId ? supportsAdaptiveThinking(effectiveModelId) : false;
+    const activeHasThinkingSupport = effectiveModelId ? isAnthropicModel(effectiveModelId) : false;
+
+    // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
+    if (activeHasEffortSupport) {
+      let newEffort = currentEffort;
+
+      if (stepNumber > 8 || hadToolFailure) {
+        if (currentEffort === "low") newEffort = "medium";
+        else if (currentEffort === "medium") newEffort = "high";
+      }
+
+      if (newEffort !== currentEffort) {
+        currentEffort = newEffort;
+        logger.info("prepareStep: escalating effort", {
+          stepNumber,
+          effort: currentEffort,
+        });
+      }
+    }
+
+    // --- Build Anthropic provider options (thinking + effort) ---
+    const anthropicOpts: Record<string, any> = {};
+    if (activeHasAdaptiveThinking) {
+      anthropicOpts.thinking = { type: "adaptive" };
+    } else if (activeHasThinkingSupport && opts.thinkingBudget) {
+      anthropicOpts.thinking = { type: "enabled", budgetTokens: opts.thinkingBudget };
+    }
+    if (activeHasEffortSupport) {
+      anthropicOpts.effort = currentEffort;
+    }
+    if (Object.keys(anthropicOpts).length > 0) {
+      providerOptions = { anthropic: anthropicOpts };
     }
 
     // --- Step limit warning ---
