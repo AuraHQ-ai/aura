@@ -1,7 +1,7 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort, supportsAdaptiveThinking, isAnthropicModel } from "../lib/ai.js";
+import { supportsEffort, supportsAdaptiveThinking, supportsThinking } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -74,8 +74,25 @@ export function createPrepareStep(opts: {
 
     if (hadToolFailure) failureCount++;
 
+    // --- Effort escalation (runs first so currentEffort is up to date for model escalation) ---
+    if (hasEffortSupport) {
+      let newEffort = currentEffort;
+
+      if (stepNumber > 8 || hadToolFailure) {
+        if (currentEffort === "low") newEffort = "medium";
+        else if (currentEffort === "medium") newEffort = "high";
+      }
+
+      if (newEffort !== currentEffort) {
+        currentEffort = newEffort;
+        logger.info("prepareStep: escalating effort", {
+          stepNumber,
+          effort: currentEffort,
+        });
+      }
+    }
+
     // --- Model escalation: persistent failures → escalation model ---
-    // Runs before effort/thinking options so capability flags are recalculated.
     const readyToEscalateModel = hasEffortSupport
       ? (currentEffort === "high" && hadToolFailure)
       : (failureCount >= 3);
@@ -107,25 +124,7 @@ export function createPrepareStep(opts: {
     const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
     const activeHasEffortSupport = effectiveModelId ? supportsEffort(effectiveModelId) : false;
     const activeHasAdaptiveThinking = effectiveModelId ? supportsAdaptiveThinking(effectiveModelId) : false;
-    const activeHasThinkingSupport = effectiveModelId ? isAnthropicModel(effectiveModelId) : false;
-
-    // --- Effort escalation (only for models supporting Anthropic `effort` param) ---
-    if (activeHasEffortSupport) {
-      let newEffort = currentEffort;
-
-      if (stepNumber > 8 || hadToolFailure) {
-        if (currentEffort === "low") newEffort = "medium";
-        else if (currentEffort === "medium") newEffort = "high";
-      }
-
-      if (newEffort !== currentEffort) {
-        currentEffort = newEffort;
-        logger.info("prepareStep: escalating effort", {
-          stepNumber,
-          effort: currentEffort,
-        });
-      }
-    }
+    const activeHasThinkingSupport = effectiveModelId ? supportsThinking(effectiveModelId) : false;
 
     // --- Build Anthropic provider options (thinking + effort) ---
     const anthropicOpts: Record<string, any> = {};
