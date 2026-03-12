@@ -577,6 +577,77 @@ async function handleTransparencyCommands(
   return false;
 }
 
+const STEPS_PROMISE_TIMEOUT_MS = 5_000;
+
+function mapRawStepsToConversationSteps(rawSteps: any[]): ConversationStep[] {
+  return rawSteps.map((step: any) => ({
+    text: step.text,
+    reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
+    toolCalls: step.toolCalls?.map((tc: any) => ({
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      input: tc.input,
+    })),
+    toolResults: step.toolResults?.map((tr: any) => ({
+      toolCallId: tr.toolCallId,
+      toolName: tr.toolName,
+      output: tr.output,
+    })),
+    finishReason: step.finishReason,
+  }));
+}
+
+async function persistConversationTrace(params: {
+  channelId: string;
+  threadTs?: string;
+  userId: string;
+  modelId?: string;
+  systemPrompt: string;
+  userPrompt: string;
+  stepsPromise?: PromiseLike<any[]>;
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  stepsTimeoutMs?: number;
+}): Promise<string> {
+  const { channelId, threadTs, userId, modelId, systemPrompt, userPrompt, stepsPromise, usage, stepsTimeoutMs } = params;
+
+  const conversationId = await createConversationTrace({
+    sourceType: "interactive",
+    channelId,
+    threadTs,
+    userId,
+    modelId,
+  });
+
+  const orderIndex = await persistConversationInputs(conversationId, systemPrompt, userPrompt);
+
+  if (stepsPromise) {
+    try {
+      let rawSteps: any[];
+      if (stepsTimeoutMs != null) {
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("stepsPromise timed out")), stepsTimeoutMs),
+        );
+        rawSteps = await Promise.race([stepsPromise, timeout]);
+      } else {
+        rawSteps = await stepsPromise;
+      }
+      const conversationSteps = mapRawStepsToConversationSteps(rawSteps);
+      await persistConversationSteps(conversationId, conversationSteps, orderIndex);
+    } catch (stepsErr: any) {
+      logger.error("Failed to persist conversation steps (non-fatal)", {
+        conversationId,
+        error: stepsErr.message,
+      });
+    }
+  }
+
+  if (usage) {
+    await updateConversationTraceUsage(conversationId, usage);
+  }
+
+  return conversationId;
+}
+
 /**
  * Store the user's message, scheduling it as a background task via waitUntil
  * when available, otherwise awaiting it inline.
@@ -642,46 +713,17 @@ async function persistInterruptedResponse(params: {
   // 3. Persist conversation trace
   if (systemPrompt && userPrompt) {
     try {
-      const conversationId = await createConversationTrace({
-        sourceType: "interactive",
+      const conversationId = await persistConversationTrace({
         channelId: context.channelId,
         threadTs: replyThreadTs || context.threadTs,
         userId: context.userId,
         modelId: response.modelId,
+        systemPrompt,
+        userPrompt,
+        stepsPromise: response.stepsPromise,
+        usage: response.usage,
+        stepsTimeoutMs: STEPS_PROMISE_TIMEOUT_MS,
       });
-
-      const orderIndex = await persistConversationInputs(conversationId, systemPrompt, userPrompt);
-
-      if (response.stepsPromise) {
-        try {
-          const rawSteps = await response.stepsPromise;
-          const conversationSteps: ConversationStep[] = rawSteps.map((step: any) => ({
-            text: step.text,
-            reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
-            toolCalls: step.toolCalls?.map((tc: any) => ({
-              toolCallId: tc.toolCallId,
-              toolName: tc.toolName,
-              input: tc.input,
-            })),
-            toolResults: step.toolResults?.map((tr: any) => ({
-              toolCallId: tr.toolCallId,
-              toolName: tr.toolName,
-              output: tr.output,
-            })),
-            finishReason: step.finishReason,
-          }));
-          await persistConversationSteps(conversationId, conversationSteps, orderIndex);
-        } catch (stepsErr: any) {
-          logger.error("Failed to persist conversation steps (non-fatal)", {
-            conversationId,
-            error: stepsErr.message,
-          });
-        }
-      }
-
-      if (response.usage) {
-        await updateConversationTraceUsage(conversationId, response.usage);
-      }
 
       logger.info("Interrupted conversation trace persisted", { conversationId });
     } catch (traceErr: any) {
@@ -821,50 +863,16 @@ async function runBackgroundTasks(params: {
     // Persist conversation trace for interactive messages
     if (systemPrompt && userPrompt) {
       try {
-        const conversationId = await createConversationTrace({
-          sourceType: "interactive",
+        const conversationId = await persistConversationTrace({
           channelId: context.channelId,
           threadTs: replyThreadTs || context.threadTs,
           userId: context.userId,
           modelId,
-        });
-
-        const orderIndex = await persistConversationInputs(
-          conversationId,
           systemPrompt,
           userPrompt,
-        );
-
-        if (stepsPromise) {
-          try {
-            const rawSteps = await stepsPromise;
-            const conversationSteps: ConversationStep[] = rawSteps.map((step: any) => ({
-              text: step.text,
-              reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
-              toolCalls: step.toolCalls?.map((tc: any) => ({
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                input: tc.input,
-              })),
-              toolResults: step.toolResults?.map((tr: any) => ({
-                toolCallId: tr.toolCallId,
-                toolName: tr.toolName,
-                output: tr.output,
-              })),
-              finishReason: step.finishReason,
-            }));
-            await persistConversationSteps(conversationId, conversationSteps, orderIndex);
-          } catch (stepsErr: any) {
-            logger.error("Failed to persist conversation steps (non-fatal)", {
-              conversationId,
-              error: stepsErr.message,
-            });
-          }
-        }
-
-        if (tokenUsage) {
-          await updateConversationTraceUsage(conversationId, tokenUsage);
-        }
+          stepsPromise,
+          usage: tokenUsage,
+        });
 
         logger.info("Interactive conversation trace persisted", { conversationId });
       } catch (traceErr: any) {
