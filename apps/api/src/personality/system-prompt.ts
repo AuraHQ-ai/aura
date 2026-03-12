@@ -316,11 +316,8 @@ function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): 
   if (facts) {
     if (facts.role) parts.push(`Role: ${facts.role}`);
     if (facts.team) parts.push(`Team: ${facts.team}`);
-    if (facts.interests && facts.interests.length > 0) {
-      parts.push(`Interests: ${facts.interests.join(", ")}`);
-    }
     if (facts.personalDetails && facts.personalDetails.length > 0) {
-      parts.push(`Personal: ${facts.personalDetails.join("; ")}`);
+      parts.push(`Personal: ${facts.personalDetails.slice(-10).join("; ")}`);
     }
   }
 

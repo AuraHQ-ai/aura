@@ -238,9 +238,9 @@ export async function getProfile(
 // ── Profile Consolidation ─────────────────────────────────────────────────
 
 const CAPS = {
-  interests: 100,
+  interests: 30,
   preferences: 100,
-  personalDetails: 50,
+  personalDetails: 20,
 } as const;
 
 const consolidatedSchema = z.object({
