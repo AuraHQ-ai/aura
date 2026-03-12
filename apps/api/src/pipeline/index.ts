@@ -671,7 +671,12 @@ async function persistInterruptedResponse(params: {
             finishReason: step.finishReason,
           }));
           await persistConversationSteps(conversationId, conversationSteps, orderIndex);
-        } catch {}
+        } catch (stepsErr: any) {
+          logger.error("Failed to persist conversation steps (non-fatal)", {
+            conversationId,
+            error: stepsErr.message,
+          });
+        }
       }
 
       if (response.usage) {
