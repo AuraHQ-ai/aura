@@ -210,6 +210,13 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       threadTs: effectiveThreadTs,
       messageTs: context.messageTs,
     });
+    // Still store the message for long-term memory, even though we won't respond
+    const storePromise = storeUserMessage(context, event);
+    if (waitUntil) {
+      waitUntil(storePromise);
+    } else {
+      await storePromise;
+    }
     return;
   }
 
@@ -369,6 +376,13 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         channelId: context.channelId,
       });
       await pauseSandbox().catch(() => {});
+      // Still store the user's message for long-term memory
+      const storePromise = storeUserMessage(context, event);
+      if (waitUntil) {
+        waitUntil(storePromise);
+      } else {
+        await storePromise;
+      }
       return;
     }
 
