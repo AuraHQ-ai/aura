@@ -5,8 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { ConversationMessage as ConversationMessageRow, ConversationPart } from "@schema";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { MarkdownContent } from "@/components/ui/markdown";
 
 export type ConversationMessageWithParts = ConversationMessageRow & { parts: ConversationPart[] };
 
@@ -161,16 +160,15 @@ function SystemMessageBlock({ text }: { text: string }) {
         </div>
       </div>
       <div className="border-t px-3 py-2">
-        {viewMode === "raw" ? (
+        {viewMode === "raw" || !expanded ? (
           <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto max-h-[600px]">
             {expanded ? text : preview}
           </pre>
         ) : (
-          <div className="prose prose-sm dark:prose-invert max-w-none overflow-auto max-h-[600px] text-xs">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {expanded ? text : preview}
-            </ReactMarkdown>
-          </div>
+          <MarkdownContent
+            content={text}
+            className="max-w-none overflow-auto max-h-[600px] text-xs"
+          />
         )}
         {isLong && (
           <button
