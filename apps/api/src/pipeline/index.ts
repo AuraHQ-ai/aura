@@ -781,7 +781,7 @@ async function runBackgroundTasks(params: {
   threadMessageCount: number;
   recentThreadMessages: Array<{ displayName: string; text: string }>;
   threadMessagesElided: boolean;
-  tokenUsage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  tokenUsage?: DetailedTokenUsage;
   modelId?: string;
   systemPrompt?: string;
   userPrompt?: string;
@@ -892,9 +892,61 @@ async function runBackgroundTasks(params: {
           modelId,
           systemPrompt,
           userPrompt,
+<<<<<<< HEAD
           stepsPromise,
           usage: tokenUsage,
         });
+=======
+        );
+
+        let stepUsages: StepUsage[] = [];
+        if (stepsPromise) {
+          try {
+            const rawSteps = await stepsPromise;
+            const conversationSteps: ConversationStep[] = rawSteps.map((step: any) => ({
+              text: step.text,
+              reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
+              toolCalls: step.toolCalls?.map((tc: any) => ({
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                input: tc.input,
+              })),
+              toolResults: step.toolResults?.map((tr: any) => ({
+                toolCallId: tr.toolCallId,
+                toolName: tr.toolName,
+                output: tr.output,
+              })),
+              finishReason: step.finishReason,
+              modelId: step.response?.modelId,
+              usage: step.usage ? {
+                inputTokens: step.usage.inputTokens ?? 0,
+                outputTokens: step.usage.outputTokens ?? 0,
+                totalTokens: step.usage.totalTokens ?? 0,
+                inputTokenDetails: step.usage.inputTokenDetails,
+                outputTokenDetails: step.usage.outputTokenDetails,
+              } : undefined,
+            }));
+            await persistConversationSteps(conversationId, conversationSteps, orderIndex);
+            stepUsages = buildStepUsages(rawSteps);
+          } catch (stepsErr: any) {
+            logger.error("Failed to persist conversation steps (non-fatal)", {
+              conversationId,
+              error: stepsErr.message,
+            });
+          }
+        }
+
+        if (tokenUsage) {
+          const detailedUsage: DetailedTokenUsage = {
+            inputTokens: tokenUsage.inputTokens,
+            outputTokens: tokenUsage.outputTokens,
+            totalTokens: tokenUsage.totalTokens,
+            inputTokenDetails: tokenUsage.inputTokenDetails,
+            outputTokenDetails: tokenUsage.outputTokenDetails,
+          };
+          await updateConversationTraceUsage(conversationId, detailedUsage, stepUsages);
+        }
+>>>>>>> 374ed2f (Fix: pass detailed token usage in interactive pipeline and remove dead code)
 
         logger.info("Interactive conversation trace persisted", { conversationId });
       } catch (traceErr: any) {
