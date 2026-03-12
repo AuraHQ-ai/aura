@@ -472,11 +472,12 @@ export async function buildStablePrefix(): Promise<string> {
 
       const NOTES_INDEX_MAX_CHARS = 16000;
       if (index.length > NOTES_INDEX_MAX_CHARS) {
+        const originalLength = index.length;
         index =
           index.slice(0, NOTES_INDEX_MAX_CHARS) +
           "\n\n[truncated — notes index exceeded ~4000 token limit, prune old notes or shorten summaries]";
         logger.warn("Notes index truncated", {
-          originalLength: index.length,
+          originalLength,
           noteCount: allNotes.length,
           limit: NOTES_INDEX_MAX_CHARS,
         });
