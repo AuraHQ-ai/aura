@@ -6,6 +6,7 @@ import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext, PendingApprovalError } from "../lib/tool.js";
+import { persistExecutionConversation } from "./persist-conversation.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -183,6 +184,27 @@ export async function executeJob(
     );
 
     const { text, steps, totalUsage: usage } = generateResult;
+
+    // Persist the full conversation for forensic inspection (non-blocking)
+    persistExecutionConversation(executionId, {
+      systemPrompt,
+      userPrompt: prompt,
+      steps: steps.map((step) => ({
+        text: step.text,
+        reasoning: (step as any).reasoning,
+        toolCalls: step.toolCalls?.map((tc) => ({
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+          input: tc.input,
+        })),
+        toolResults: step.toolResults?.map((tr) => ({
+          toolCallId: tr.toolCallId,
+          toolName: tr.toolName,
+          output: tr.output,
+        })),
+        finishReason: step.finishReason,
+      })),
+    });
 
     const serializedSteps = steps.map((step) => ({
       type: step.finishReason,

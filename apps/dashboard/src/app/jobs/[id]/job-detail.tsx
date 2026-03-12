@@ -82,8 +82,15 @@ export function JobDetail({ data }: { data: JobData }) {
             </TableHeader>
             <TableBody>
               {executions.map((exec) => (
-                <TableRow key={exec.id}>
-                  <TableCell className="text-sm">{formatDate(exec.startedAt)}</TableCell>
+                <TableRow key={exec.id} className="cursor-pointer hover:bg-muted/50">
+                  <TableCell className="text-sm">
+                    <Link
+                      href={`/jobs/${job.id}/executions/${exec.id}`}
+                      className="hover:underline"
+                    >
+                      {formatDate(exec.startedAt)}
+                    </Link>
+                  </TableCell>
                   <TableCell className="text-sm">{formatDate(exec.finishedAt)}</TableCell>
                   <TableCell>
                     <Badge variant={

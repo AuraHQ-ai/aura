@@ -260,6 +260,13 @@
       "when": 1773571200000,
       "tag": "0036_add_message_model",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1773657600000,
+      "tag": "0037_job_execution_conversation",
+      "breakpoints": true
     }
   ]
 }
