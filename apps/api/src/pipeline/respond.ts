@@ -857,12 +857,42 @@ export async function generateResponse(
 
       let updatedInPlace = false;
       if (frozenMessageTs) {
+        // chat.update replaces the entire message, so use the full text
+        // (not just the unsent tail) to avoid losing already-streamed content.
+        let updateBlocks = blocks;
+        let updateText = fallbackText;
+        if (fallbackStartIdx > 0) {
+          const fullFormatted = finalText ? formatForSlack(finalText) : "";
+          updateBlocks = [];
+          if (fullFormatted) {
+            for (let i = 0; i < fullFormatted.length; i += 3000) {
+              updateBlocks.push({
+                type: "section",
+                text: { type: "mrkdwn", text: fullFormatted.slice(i, i + 3000) },
+                expand: true,
+              });
+            }
+          }
+          if (pendingTableBlock) {
+            updateBlocks.push(pendingTableBlock);
+          }
+          updateBlocks.push({
+            type: "context_actions",
+            elements: [{
+              type: "feedback_buttons",
+              action_id: "aura_feedback",
+              positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
+              negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
+            }],
+          });
+          updateText = fullFormatted || "_I processed your request but had nothing to say._";
+        }
         try {
           const updateResult = await slackClient.chat.update({
             channel: channelId,
             ts: frozenMessageTs,
-            text: fallbackText,
-            blocks,
+            text: updateText,
+            blocks: updateBlocks,
             ...(toolMeta && { metadata: toolMeta }),
           });
           if (updateResult.ok) {
