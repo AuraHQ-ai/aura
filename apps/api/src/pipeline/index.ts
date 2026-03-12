@@ -624,10 +624,15 @@ async function persistConversationTrace(params: {
     try {
       let rawSteps: any[];
       if (stepsTimeoutMs != null) {
-        const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("stepsPromise timed out")), stepsTimeoutMs),
-        );
-        rawSteps = await Promise.race([stepsPromise, timeout]);
+        let timerId: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<never>((_, reject) => {
+          timerId = setTimeout(() => reject(new Error("stepsPromise timed out")), stepsTimeoutMs);
+        });
+        try {
+          rawSteps = await Promise.race([stepsPromise, timeout]);
+        } finally {
+          clearTimeout(timerId!);
+        }
       } else {
         rawSteps = await stepsPromise;
       }
