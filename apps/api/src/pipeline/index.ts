@@ -7,7 +7,7 @@ import {
   type MessageContext,
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
-import { generateResponse } from "./respond.js";
+import { generateResponse, type LLMResponse } from "./respond.js";
 import { InvocationSupersededError } from "./prepare-step.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import {
@@ -229,7 +229,13 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // - In DMs (top-level): chatStream requires a thread_ts, so we thread
   //   under the user's message. For non-streaming paths (transparency
   //   commands, empty mentions), we still use undefined to reply inline.
-  const replyThreadTs = context.threadTs || context.messageTs;
+    const replyThreadTs = context.threadTs || context.messageTs;
+
+  // Capture response & prompt state for persistence in the catch-block
+  // interruption path (Path 2) where const-scoped variables aren't accessible.
+  let capturedResponse: LLMResponse | undefined;
+  let capturedSystemPrompt: string | undefined;
+  let capturedUserPrompt: string | undefined;
 
   try {
     // ── Edge case: empty or near-empty message (but allow image-only) ───
@@ -332,6 +338,9 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     );
     const retrievalMs = Date.now() - retrievalStart;
 
+    capturedSystemPrompt = [stablePrefix, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+    capturedUserPrompt = messageText;
+
     // 4b. Download files if the message has attachments
     const botToken = process.env.SLACK_BOT_TOKEN || "";
     const fileParts = await downloadEventFiles(event, botToken);
@@ -360,14 +369,21 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       invocationId,
     });
     const llmMs = Date.now() - llmStart;
+    capturedResponse = response;
 
     if (response.interrupted) {
       logger.info("Pipeline interrupted — invocation superseded", {
         channelId: context.channelId,
       });
       await pauseSandbox().catch(() => {});
-      // Still store the user's message for long-term memory
       await scheduleStoreUserMessage(context, event, waitUntil);
+      await persistInterruptedResponse({
+        context,
+        response,
+        systemPrompt: capturedSystemPrompt,
+        userPrompt: capturedUserPrompt,
+        replyThreadTs,
+      });
       return;
     }
 
@@ -454,6 +470,15 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         channelId: context.channelId,
       });
       await scheduleStoreUserMessage(context, event, waitUntil);
+      if (capturedResponse) {
+        await persistInterruptedResponse({
+          context,
+          response: capturedResponse,
+          systemPrompt: capturedSystemPrompt,
+          userPrompt: capturedUserPrompt,
+          replyThreadTs,
+        });
+      }
       return;
     }
 
@@ -566,6 +591,97 @@ async function scheduleStoreUserMessage(
     waitUntil(storePromise);
   } else {
     await storePromise;
+  }
+}
+
+/**
+ * Best-effort persistence for interrupted assistant responses.
+ * Stores the assistant message, tool calls, and conversation trace
+ * so that search_my_conversations and the dashboard have a record.
+ * Does NOT run memory extraction or profile updates (too expensive;
+ * those will catch up on the next full invocation).
+ */
+async function persistInterruptedResponse(params: {
+  context: MessageContext;
+  response: LLMResponse;
+  systemPrompt?: string;
+  userPrompt?: string;
+  replyThreadTs?: string;
+}): Promise<void> {
+  const { context, response, systemPrompt, userPrompt, replyThreadTs } = params;
+
+  // 1. Store assistant message
+  const assistantTs = `${context.messageTs}-aura`;
+  await storeMessage({
+    slackTs: assistantTs,
+    slackThreadTs: context.threadTs || context.messageTs,
+    channelId: context.channelId,
+    channelType: context.channelType,
+    userId: "aura",
+    role: "assistant",
+    content: response.raw,
+    tokenUsage: response.usage,
+    model: response.modelId,
+  }).catch((err: any) => {
+    logger.error("Failed to store interrupted assistant message", { error: err.message });
+  });
+
+  // 2. Store tool call I/O if any
+  if (response.toolCalls.length > 0) {
+    await storeToolCallMessages(response.toolCalls, {
+      parentTs: context.messageTs,
+      threadTs: context.threadTs,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      userId: context.userId,
+    }).catch((err: any) => {
+      logger.error("Failed to store interrupted tool call messages", { error: err.message });
+    });
+  }
+
+  // 3. Persist conversation trace
+  if (systemPrompt && userPrompt) {
+    try {
+      const conversationId = await createConversationTrace({
+        sourceType: "interactive",
+        channelId: context.channelId,
+        threadTs: replyThreadTs || context.threadTs,
+        userId: context.userId,
+        modelId: response.modelId,
+      });
+
+      const orderIndex = await persistConversationInputs(conversationId, systemPrompt, userPrompt);
+
+      if (response.stepsPromise) {
+        try {
+          const rawSteps = await response.stepsPromise;
+          const conversationSteps: ConversationStep[] = rawSteps.map((step: any) => ({
+            text: step.text,
+            reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
+            toolCalls: step.toolCalls?.map((tc: any) => ({
+              toolCallId: tc.toolCallId,
+              toolName: tc.toolName,
+              input: tc.input,
+            })),
+            toolResults: step.toolResults?.map((tr: any) => ({
+              toolCallId: tr.toolCallId,
+              toolName: tr.toolName,
+              output: tr.output,
+            })),
+            finishReason: step.finishReason,
+          }));
+          await persistConversationSteps(conversationId, conversationSteps, orderIndex);
+        } catch {}
+      }
+
+      if (response.usage) {
+        await updateConversationTraceUsage(conversationId, response.usage);
+      }
+
+      logger.info("Interrupted conversation trace persisted", { conversationId });
+    } catch (traceErr: any) {
+      logger.error("Failed to persist interrupted conversation trace", { error: traceErr.message });
+    }
   }
 }
 
