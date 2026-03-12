@@ -18,7 +18,7 @@ CREATE TABLE "job_execution_parts" (
 	"tool_input" jsonb,
 	"tool_output" jsonb,
 	"tool_state" text,
-	CONSTRAINT "jep_type_check" CHECK ("job_execution_parts"."type" IN ('text', 'reasoning', 'tool-invocation', 'source', 'file', 'step-start'))
+	CONSTRAINT "jep_type_check" CHECK ("job_execution_parts"."type" IN ('text', 'reasoning', 'tool-invocation', 'source', 'file', 'step-start', 'error'))
 );
 --> statement-breakpoint
 ALTER TABLE "job_execution_messages" ADD CONSTRAINT "job_execution_messages_execution_id_job_executions_id_fk" FOREIGN KEY ("execution_id") REFERENCES "public"."job_executions"("id") ON DELETE cascade ON UPDATE no action;

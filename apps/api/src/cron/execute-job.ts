@@ -6,7 +6,12 @@ import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext, PendingApprovalError } from "../lib/tool.js";
-import { persistExecutionConversation } from "./persist-conversation.js";
+import {
+  persistConversationInputs,
+  persistConversationSteps,
+  persistConversationError,
+  type Step as ConversationStep,
+} from "./persist-conversation.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -96,6 +101,10 @@ export async function executeJob(
 
   const executionId = execution.id;
 
+  // Tracks next message order_index; set by persistConversationInputs,
+  // used by error handler if generate throws.
+  let conversationOrderIndex = 0;
+
   try {
     const planTopic = parseContinuationTag(job.description);
     const isContinuation = planTopic !== null;
@@ -174,6 +183,14 @@ export async function executeJob(
       systemPrompt,
     });
 
+    // Phase 1: persist the exact inputs BEFORE calling generate.
+    // If the process crashes mid-execution, we still have what was sent.
+    conversationOrderIndex = await persistConversationInputs(
+      executionId,
+      systemPrompt,
+      prompt,
+    );
+
     const generateResult = await executionContext.run(
       {
         triggeredBy: job.requestedBy,
@@ -185,26 +202,23 @@ export async function executeJob(
 
     const { text, steps, totalUsage: usage } = generateResult;
 
-    // Persist the full conversation for forensic inspection (non-blocking)
-    persistExecutionConversation(executionId, {
-      systemPrompt,
-      userPrompt: prompt,
-      steps: steps.map((step) => ({
-        text: step.text,
-        reasoning: (step as any).reasoning,
-        toolCalls: step.toolCalls?.map((tc) => ({
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          input: tc.input,
-        })),
-        toolResults: step.toolResults?.map((tr) => ({
-          toolCallId: tr.toolCallId,
-          toolName: tr.toolName,
-          output: tr.output,
-        })),
-        finishReason: step.finishReason,
+    // Phase 2a: persist assistant steps now that generate succeeded
+    const conversationSteps: ConversationStep[] = steps.map((step) => ({
+      text: step.text,
+      reasoning: (step as any).reasoning,
+      toolCalls: step.toolCalls?.map((tc) => ({
+        toolCallId: tc.toolCallId,
+        toolName: tc.toolName,
+        input: tc.input,
       })),
-    });
+      toolResults: step.toolResults?.map((tr) => ({
+        toolCallId: tr.toolCallId,
+        toolName: tr.toolName,
+        output: tr.output,
+      })),
+      finishReason: step.finishReason,
+    }));
+    await persistConversationSteps(executionId, conversationSteps, conversationOrderIndex);
 
     const serializedSteps = steps.map((step) => ({
       type: step.finishReason,
@@ -283,6 +297,9 @@ export async function executeJob(
 
     return true;
   } catch (error: any) {
+    // Persist the error in conversation history regardless of error type
+    await persistConversationError(executionId, error, conversationOrderIndex);
+
     // Governance: if a tool requires approval, suspend the job
     if (error instanceof PendingApprovalError) {
       try {
