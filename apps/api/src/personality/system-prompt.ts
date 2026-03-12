@@ -1,4 +1,4 @@
-import { eq, or, isNull, gt } from "drizzle-orm";
+import { eq, or, and, isNull, gt, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { notes } from "@aura/db/schema";
@@ -438,8 +438,13 @@ export async function buildStablePrefix(): Promise<string> {
     const allNotes = await db
       .select({ topic: notes.topic, category: notes.category, summary: notes.summary })
       .from(notes)
-      .where(or(isNull(notes.expiresAt), gt(notes.expiresAt, now)))
-      .orderBy(notes.category, notes.topic);
+      .where(
+        and(
+          eq(notes.injectInContext, true),
+          or(isNull(notes.expiresAt), gt(notes.expiresAt, now))
+        )
+      )
+      .orderBy(notes.category, desc(notes.importance), notes.topic);
 
     if (allNotes.length > 0) {
       const grouped = new Map<string, string[]>();

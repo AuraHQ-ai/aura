@@ -15,6 +15,7 @@ import {
   vector,
   date,
   check,
+  smallint,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -252,6 +253,8 @@ export const notes = pgTable(
     content: text("content").notNull(),
     category: text("category").notNull().default("knowledge"),
     summary: text("summary"),
+    injectInContext: boolean("inject_in_context").notNull().default(false),
+    importance: smallint("importance").notNull().default(50),
     embedding: vector("embedding", { dimensions: 1536 }),
     expiresAt: timestamptz("expires_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),

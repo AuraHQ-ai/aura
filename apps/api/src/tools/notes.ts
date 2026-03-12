@@ -87,6 +87,21 @@ export function createNoteTools(context?: ScheduleContext) {
           .describe(
             "A concise one-line summary (max 250 chars) for the auto-generated notes index. Skills: 'Load when: [trigger conditions]'. Knowledge: describe contents. Omit on update to preserve existing summary.",
           ),
+        inject_in_context: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether this note should appear in the auto-generated notes index injected into every prompt. Default false -- only promote important, curated notes.",
+          ),
+        importance: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Importance for sort order within category in the notes index (1-100, higher = more prominent). Default 50.",
+          ),
         expires_in: z
           .string()
           .optional()
@@ -94,7 +109,7 @@ export function createNoteTools(context?: ScheduleContext) {
             "When this note should expire, e.g. '2 hours', '3 days', '1 week'. Mainly useful for plan notes. Omit for no expiry.",
           ),
       }),
-      execute: async ({ topic, content, category, summary, expires_in }) => {
+      execute: async ({ topic, content, category, summary, inject_in_context, importance, expires_in }) => {
         try {
           if (
             topic === "self-directive" &&
@@ -130,6 +145,12 @@ export function createNoteTools(context?: ScheduleContext) {
           if (summary !== undefined) {
             updateSet.summary = summary;
           }
+          if (inject_in_context !== undefined) {
+            updateSet.injectInContext = inject_in_context;
+          }
+          if (importance !== undefined) {
+            updateSet.importance = importance;
+          }
           if (expires_in !== undefined) {
             updateSet.expiresAt = expiresAt;
           }
@@ -141,6 +162,8 @@ export function createNoteTools(context?: ScheduleContext) {
               content,
               category: effectiveCategory,
               summary: summary ?? null,
+              injectInContext: inject_in_context ?? false,
+              importance: importance ?? 50,
               expiresAt,
               updatedAt: savedAt,
             })
@@ -295,6 +318,21 @@ export function createNoteTools(context?: ScheduleContext) {
           .describe(
             "Update the note's summary (max 250 chars) for the auto-generated notes index. Omit to keep existing summary.",
           ),
+        inject_in_context: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether this note should appear in the auto-generated notes index. Omit to keep existing value.",
+          ),
+        importance: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Importance for sort order (1-100, higher = more prominent). Omit to keep existing value.",
+          ),
         start_line: z
           .number()
           .optional()
@@ -319,6 +357,8 @@ export function createNoteTools(context?: ScheduleContext) {
         operation,
         content,
         summary,
+        inject_in_context,
+        importance,
         start_line,
         end_line,
         line,
@@ -412,6 +452,12 @@ export function createNoteTools(context?: ScheduleContext) {
           };
           if (summary !== undefined) {
             editUpdate.summary = summary;
+          }
+          if (inject_in_context !== undefined) {
+            editUpdate.injectInContext = inject_in_context;
+          }
+          if (importance !== undefined) {
+            editUpdate.importance = importance;
           }
           await db
             .update(notes)
