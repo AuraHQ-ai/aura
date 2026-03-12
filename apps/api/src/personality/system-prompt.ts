@@ -354,24 +354,40 @@ function formatMentionedPeople(people: PersonProfile[]): string {
 function formatConversations(conversations: ConversationThread[]): string {
   if (conversations.length === 0) return "";
 
-  const MAX_THREAD_MESSAGES = 50;
+  const MAX_THREAD_MESSAGES = 20;
+  const MAX_TOTAL_CHARS = 12_000;
+
+  let totalChars = 0;
 
   const formatted = conversations
     .map((thread) => {
-      const allMsgs = thread.messages;
+      const humanMsgs = thread.messages.filter((m) => m.role !== "tool");
       const capped =
-        allMsgs.length <= MAX_THREAD_MESSAGES
-          ? allMsgs
-          : [allMsgs[0], ...allMsgs.slice(-MAX_THREAD_MESSAGES + 1)];
+        humanMsgs.length <= MAX_THREAD_MESSAGES
+          ? humanMsgs
+          : [humanMsgs[0], ...humanMsgs.slice(-MAX_THREAD_MESSAGES + 1)];
       const msgs = capped
         .map((m) => {
           const timeAgo = relativeTime(new Date(m.createdAt));
           const speaker = m.role === "assistant" ? "Aura" : m.userId;
-          return `  ${speaker} (${timeAgo}): ${m.content.length > 800 ? m.content.substring(0, 800) + "…" : m.content}`;
+          const content = m.content.length > 500 ? m.content.substring(0, 500) + "…" : m.content;
+          return `  ${speaker} (${timeAgo}): ${content}`;
         })
         .join("\n");
-      return `Thread in ${thread.channelId} (similarity: ${thread.bestSimilarity.toFixed(2)}):\n${msgs}`;
+      const threadBlock = `Thread in ${thread.channelId} (similarity: ${thread.bestSimilarity.toFixed(2)}):\n${msgs}`;
+
+      if (totalChars + threadBlock.length > MAX_TOTAL_CHARS) {
+        if (totalChars === 0) {
+          const truncated = threadBlock.substring(0, MAX_TOTAL_CHARS);
+          totalChars += truncated.length;
+          return truncated + "\n  [truncated]";
+        }
+        return null;
+      }
+      totalChars += threadBlock.length;
+      return threadBlock;
     })
+    .filter(Boolean)
     .join("\n\n");
 
   return `\n## Relevant past conversations\n\nThese are past conversation threads retrieved from your message history. Use them for context if relevant — reference specific things people said.\n\n${formatted}`;
