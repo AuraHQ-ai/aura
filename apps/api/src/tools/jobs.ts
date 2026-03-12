@@ -12,7 +12,6 @@ import { logger } from "../lib/logger.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
 import { executeJob } from "../cron/execute-job.js";
-import { buildSkillIndex } from "../lib/skill-index.js";
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
@@ -478,8 +477,7 @@ export function createJobTools(
           waitUntil(
             (async () => {
               try {
-                const skillIndex = await buildSkillIndex();
-                const executed = await executeJob(job, skillIndex, "dispatch");
+                const executed = await executeJob(job, "dispatch");
                 if (executed) {
                   logger.info("dispatch_headless: job executed immediately", {
                     jobId: job.id,

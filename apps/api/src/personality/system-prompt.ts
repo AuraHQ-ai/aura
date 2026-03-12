@@ -385,30 +385,16 @@ export interface SystemPromptLayers {
 }
 
 /**
- * Build the system prompt split into two cached layers.
+ * Build the stable prefix shared by both interactive and job execution paths.
  *
- * Layer 1 (stablePrefix): content that is identical across all requests —
- * personality, self-directive, notes-index, and skill index. Cached globally.
- *
- * Layer 2 (conversationContext): content that varies per conversation thread —
- * channel context, user profile, memories, past conversations, thread context.
- * Cached per-thread.
- *
- * Async because it queries the skill index and notes from the database.
+ * Returns: PERSONALITY + self-directive + notes-index + skill-index.
+ * Async because it queries notes and skills from the database.
  */
-export async function buildSystemPrompt(
-  context: SystemPromptContext,
-): Promise<SystemPromptLayers> {
-  const stableParts: string[] = [];
-  const conversationParts: string[] = [];
+export async function buildStablePrefix(): Promise<string> {
+  const parts: string[] = [];
 
-  // ── Layer 1: Stable prefix ──────────────────────────────────────────
+  parts.push(PERSONALITY);
 
-  // Core personality (always present)
-  stableParts.push(PERSONALITY);
-
-  // Self-directive: agent's own persistent context, loaded every invocation
-  // Hard cap at ~2000 tokens (~8000 chars) to prevent context-window overflow
   const SELF_DIRECTIVE_MAX_CHARS = 8000;
   try {
     const rows = await db
@@ -427,7 +413,7 @@ export async function buildSystemPrompt(
           limit: SELF_DIRECTIVE_MAX_CHARS,
         });
       }
-      stableParts.push(
+      parts.push(
         `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}`,
       );
     }
@@ -435,7 +421,6 @@ export async function buildSystemPrompt(
     logger.warn("Failed to load self-directive note", { error });
   }
 
-  // Notes index: table of contents of all knowledge, loaded every invocation
   const NOTES_INDEX_MAX_CHARS = 16000;
   try {
     const indexRows = await db
@@ -454,7 +439,7 @@ export async function buildSystemPrompt(
           limit: NOTES_INDEX_MAX_CHARS,
         });
       }
-      stableParts.push(
+      parts.push(
         `\n## Notes index\n\nMaster index of all your notes. Use read_note() to load full content, search_notes() to grep across all notes.\n\n${indexContent}`,
       );
     }
@@ -462,11 +447,27 @@ export async function buildSystemPrompt(
     logger.warn("Failed to load notes-index note", { error });
   }
 
-  // Skill index (progressive disclosure -- lightweight topic + first line)
   const skillIndex = await buildSkillIndex();
   if (skillIndex) {
-    stableParts.push(skillIndex);
+    parts.push(skillIndex);
   }
+
+  return parts.join("\n\n");
+}
+
+/**
+ * Build the full interactive system prompt split into two cached layers.
+ *
+ * Layer 1 (stablePrefix): identical across all requests (via buildStablePrefix).
+ * Layer 2 (conversationContext): varies per conversation thread.
+ */
+export async function buildSystemPrompt(
+  context: SystemPromptContext,
+): Promise<SystemPromptLayers> {
+  const conversationParts: string[] = [];
+
+  // ── Layer 1: Stable prefix ──────────────────────────────────────────
+  const stablePrefix = await buildStablePrefix();
 
   // ── Layer 2: Conversation context ───────────────────────────────────
 
@@ -509,7 +510,7 @@ export async function buildSystemPrompt(
   }
 
   return {
-    stablePrefix: stableParts.join("\n\n"),
+    stablePrefix,
     conversationContext: conversationParts.join("\n\n"),
   };
 }

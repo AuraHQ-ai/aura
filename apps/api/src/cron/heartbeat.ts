@@ -4,7 +4,6 @@ import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "@aura/db/schema";
 import type { FrequencyConfig } from "@aura/db/schema";
-import { buildSkillIndex } from "../lib/skill-index.js";
 import { logger } from "../lib/logger.js";
 import { executeJob, MAX_RETRIES } from "./execute-job.js";
 
@@ -142,11 +141,9 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     if (dueJobs.length > 0) {
       logger.info(`Heartbeat: ${dueJobs.length} jobs due (of ${pendingJobs.length} pending)`);
 
-      const skillIndex = await buildSkillIndex();
-
       for (const job of dueJobs) {
         try {
-          const ran = await executeJob(job, skillIndex, "heartbeat");
+          const ran = await executeJob(job, "heartbeat");
           if (ran) executed++;
         } catch (error: any) {
           logger.error("Heartbeat: job execution error", {
@@ -306,8 +303,7 @@ heartbeatApp.post("/api/execute-now", async (c) => {
   }
 
   try {
-    const skillIndex = await buildSkillIndex();
-    const executed = await executeJob(job, skillIndex, "dispatch");
+    const executed = await executeJob(job, "dispatch");
 
     if (!executed) {
       return c.json({ ok: false, jobId, message: "Job was not executed (already claimed)" }, 409);

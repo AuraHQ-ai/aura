@@ -7,6 +7,7 @@ import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext, PendingApprovalError } from "../lib/tool.js";
 import { getCurrentTimeContext } from "../lib/temporal.js";
+import { buildStablePrefix } from "../personality/system-prompt.js";
 import {
   createConversationTrace,
   persistConversationInputs,
@@ -25,29 +26,24 @@ export const MAX_RETRIES = 3;
 /** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
 const RETRY_DELAY_MS = 30 * 60 * 1000;
 
-// ── System Prompts ───────────────────────────────────────────────────────────
+// ── Job-specific additive instructions ───────────────────────────────────────
 
-const JOB_SYSTEM_PROMPT = `You are Aura executing a job autonomously. You have full access to your tools.
+const JOB_SPECIFIC_INSTRUCTIONS = `## Job execution mode
 
-Rules:
-- Execute the task described below. Use your tools to read channels, post messages, look up users, etc.
-- Post results to the channel specified unless the task says otherwise.
-- If you have "previous result" context, compare and highlight changes (e.g. "17 bugs yesterday, 22 today -- that's a spike").
-- If you discover something urgent or unexpected, you can:
-  - Create a follow-up job (create_job)
-  - DM the person who requested this to escalate (send_direct_message)
-  - Save findings to your notes for future reference (save_note / edit_note)
-- If the task no longer makes sense (channel deleted, user gone, etc.), note that in your result.
-- Be concise. Digests and summaries, not essays.
-- Do NOT respond conversationally. Just execute the task and report.`;
+You are executing a scheduled job autonomously. Additional rules for this mode:
+- Execute the task described below using your tools.
+- Post results to the specified channel unless the task says otherwise.
+- If you have "previous result" context, compare and highlight changes.
+- If you discover something urgent, escalate via DM or create a follow-up job.
+- Be concise. Digests and summaries, not essays.`;
 
-const CONTINUATION_SYSTEM_PROMPT = `You are Aura resuming a multi-step task. Your accumulated progress and context are below.
+const CONTINUATION_SPECIFIC_INSTRUCTIONS = `## Continuation mode
 
-Rules:
+You are resuming a multi-step task. Your accumulated progress and context are below. Additional rules for this mode:
 - Continue from where you left off. The plan note contains your progress, next steps, and context.
 - If you can't finish in this round, use checkpoint_plan again to save progress and schedule another continuation.
 - Post results in the thread you're continuing (routing is automatic).
-- Be concise and focused. Don't re-explain what was already done — just continue the work.
+- Be concise and focused. Don't re-explain what was already done -- just continue the work.
 - If the continuation depth limit is reached, explain your current status and ask if you should keep going.`;
 
 // ── Continuation Detection ───────────────────────────────────────────────────
@@ -72,7 +68,6 @@ async function loadPlanNote(topic: string): Promise<string | null> {
 
 export async function executeJob(
   job: typeof jobs.$inferSelect,
-  skillIndex: string,
   trigger: "heartbeat" | "dispatch" | "continuation" = "heartbeat",
 ): Promise<boolean> {
   const jobId = job.id;
@@ -131,6 +126,9 @@ export async function executeJob(
         ? `\n\nAuthorized credential IDs for this job: ${credentialIds.join(", ")}`
         : "";
 
+    const stablePrefix = await buildStablePrefix();
+    const timeContext = getCurrentTimeContext(job.timezone);
+
     if (isContinuation) {
       const planContent = await loadPlanNote(planTopic);
       const nextSteps = job.description.replace(CONTINUE_TAG_RE, "");
@@ -139,7 +137,7 @@ export async function executeJob(
         ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
         : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
 
-      systemPrompt = getCurrentTimeContext(job.timezone) + "\n\n" + CONTINUATION_SYSTEM_PROMPT + skillIndex;
+      systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + CONTINUATION_SPECIFIC_INSTRUCTIONS;
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
@@ -157,7 +155,7 @@ export async function executeJob(
         prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
       }
 
-      systemPrompt = getCurrentTimeContext(job.timezone) + "\n\n" + JOB_SYSTEM_PROMPT + skillIndex;
+      systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + JOB_SPECIFIC_INSTRUCTIONS;
 
       logger.info("Heartbeat: executing job", {
         jobId,

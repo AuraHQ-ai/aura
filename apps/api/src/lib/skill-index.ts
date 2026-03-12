@@ -31,8 +31,13 @@ export async function buildSkillIndex(): Promise<string> {
       const firstLine =
         s.content
           .split("\n")
-          .find((l) => l.trim() && !l.startsWith("#")) || "";
-      return `- ${s.topic}: ${firstLine.substring(0, 80)}`;
+          .find((l) => {
+            const trimmed = l.trim();
+            if (!trimmed || trimmed.startsWith("#")) return false;
+            if (/^[`|<\-\d]/.test(trimmed)) return false;
+            return /^[a-zA-Z*">]/.test(trimmed);
+          }) || "";
+      return `- ${s.topic}: ${firstLine.trim().substring(0, 200)}`;
     })
     .join("\n");
 
