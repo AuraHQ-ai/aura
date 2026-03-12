@@ -1,7 +1,7 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort, isAnthropicModel } from "../lib/ai.js";
+import { supportsEffort, supportsAdaptiveThinking, isAnthropicModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -53,6 +53,7 @@ export function createPrepareStep(opts: {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
   const hasEffortSupport = opts.modelId ? supportsEffort(opts.modelId) : false;
+  const hasAdaptiveThinking = opts.modelId ? supportsAdaptiveThinking(opts.modelId) : false;
   const hasThinkingSupport = opts.modelId ? isAnthropicModel(opts.modelId) : false;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
@@ -95,7 +96,9 @@ export function createPrepareStep(opts: {
 
     // --- Build Anthropic provider options (thinking + effort) ---
     const anthropicOpts: Record<string, any> = {};
-    if (hasThinkingSupport && opts.thinkingBudget) {
+    if (hasAdaptiveThinking) {
+      anthropicOpts.thinking = { type: "adaptive" };
+    } else if (hasThinkingSupport && opts.thinkingBudget) {
       anthropicOpts.thinking = { type: "enabled", budgetTokens: opts.thinkingBudget };
     }
     if (hasEffortSupport) {

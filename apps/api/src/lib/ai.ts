@@ -163,6 +163,15 @@ export function supportsEffort(modelId: string): boolean {
 }
 
 /**
+ * Check if a model supports adaptive thinking (`thinking.type: "adaptive"`).
+ * Opus 4.6 and Sonnet 4.6 use adaptive thinking; older models (Opus 4.5)
+ * still require manual `type: "enabled"` with `budgetTokens`.
+ */
+export function supportsAdaptiveThinking(modelId: string): boolean {
+  return /claude-(?:opus-4-6|sonnet-4-6)/.test(modelId);
+}
+
+/**
  * Check if a model is Anthropic (and thus supports extended thinking).
  */
 export function isAnthropicModel(modelId: string): boolean {
