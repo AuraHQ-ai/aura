@@ -451,8 +451,8 @@ export async function buildStablePrefix(): Promise<string> {
       for (const n of allNotes) {
         const cat = n.category || "knowledge";
         if (!grouped.has(cat)) grouped.set(cat, []);
-        const desc = n.summary ? `: ${n.summary}` : "";
-        grouped.get(cat)!.push(`- ${n.topic}${desc}`);
+        const summaryPart = n.summary ? `: ${n.summary}` : "";
+        grouped.get(cat)!.push(`- ${n.topic}${summaryPart}`);
       }
 
       const categoryOrder = ["skill", "knowledge", "plan"];
