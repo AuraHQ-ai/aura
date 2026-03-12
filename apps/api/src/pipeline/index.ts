@@ -900,14 +900,7 @@ async function runBackgroundTasks(params: {
         }
 
         if (tokenUsage) {
-          const detailedUsage: DetailedTokenUsage = {
-            inputTokens: tokenUsage.inputTokens,
-            outputTokens: tokenUsage.outputTokens,
-            totalTokens: tokenUsage.totalTokens,
-            inputTokenDetails: tokenUsage.inputTokenDetails,
-            outputTokenDetails: tokenUsage.outputTokenDetails,
-          };
-          await updateConversationTraceUsage(conversationId, detailedUsage, stepUsages);
+          await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);
         }
 >>>>>>> 374ed2f (Fix: pass detailed token usage in interactive pipeline and remove dead code)
 
