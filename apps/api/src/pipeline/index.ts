@@ -223,7 +223,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // - In DMs (top-level): chatStream requires a thread_ts, so we thread
   //   under the user's message. For non-streaming paths (transparency
   //   commands, empty mentions), we still use undefined to reply inline.
-  const replyThreadTs = context.threadTs ?? context.messageTs;
+  const replyThreadTs = context.threadTs || context.messageTs;
 
   try {
     // ── Edge case: empty or near-empty message (but allow image-only) ───
