@@ -160,13 +160,13 @@ function SystemMessageBlock({ text }: { text: string }) {
         </div>
       </div>
       <div className="border-t px-3 py-2">
-        {viewMode === "raw" || !expanded ? (
+        {viewMode === "raw" ? (
           <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto max-h-[600px]">
             {expanded ? text : preview}
           </pre>
         ) : (
           <MarkdownContent
-            content={text}
+            content={expanded ? text : preview}
             className="max-w-none overflow-auto max-h-[600px] text-xs"
           />
         )}
