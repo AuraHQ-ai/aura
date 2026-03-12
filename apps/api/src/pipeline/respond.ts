@@ -437,6 +437,7 @@ export async function generateResponse(
   let currentStreamLength = 0;
   let fallbackStartIdx = 0;
   let streamedRawIdx = 0;
+  let currentStreamStartIdx = 0;
   let pendingTableBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
@@ -540,6 +541,7 @@ export async function generateResponse(
     try {
       streamer = slackClient.chatStream(streamParams as any);
       currentStreamLength = 0;
+      currentStreamStartIdx = streamedRawIdx;
       continuationCount++;
       return true;
     } catch (startErr: any) {
@@ -861,14 +863,16 @@ export async function generateResponse(
 
       let updatedInPlace = false;
       if (frozenMessageTs) {
-        // chat.update replaces the entire message, so use the full text
-        // (not just the unsent tail) to avoid losing already-streamed content.
+        // chat.update replaces the entire message, so include this stream's
+        // portion (not just the unsent tail) to preserve already-streamed content.
+        // Use currentStreamStartIdx to avoid duplicating text from prior continuation messages.
         let updateBlocks = blocks;
         let updateText = fallbackText;
         if (fallbackStartIdx > 0) {
-          const fullFormatted = finalText ? formatForSlack(finalText) : "";
-          updateBlocks = buildResponseBlocks(fullFormatted, pendingTableBlock);
-          updateText = fullFormatted || "_I processed your request but had nothing to say._";
+          const streamPortionText = finalText ? finalText.slice(currentStreamStartIdx) : "";
+          const streamFormatted = streamPortionText ? formatForSlack(streamPortionText) : "";
+          updateBlocks = buildResponseBlocks(streamFormatted, pendingTableBlock);
+          updateText = streamFormatted || "_I processed your request but had nothing to say._";
         }
         try {
           const updateResult = await slackClient.chat.update({
