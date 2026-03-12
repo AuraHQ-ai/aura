@@ -152,11 +152,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     return;
   }
 
-  // 1b. Claim invocation lock (enables interruption detection)
-  const effectiveThreadTs = context.threadTs || context.messageTs;
-  const invocationId = await claimInvocation(context.channelId, effectiveThreadTs);
-
-  // 1c. Resolve Slack entity references (<@U...>, <#C...>) to readable names
+  // 1b. Resolve Slack entity references (<@U...>, <#C...>) to readable names
   context.text = await resolveSlackEntities(client, context.text);
 
   // 2. Should we respond?
@@ -201,6 +197,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     }
     return;
   }
+
+  // 2b. Claim invocation lock (enables interruption detection).
+  // Must run after shouldRespond so non-responding messages don't
+  // supersede an in-progress invocation for this thread.
+  const effectiveThreadTs = context.threadTs || context.messageTs;
+  const invocationId = await claimInvocation(context.channelId, effectiveThreadTs);
 
   logger.info("Processing message", {
     userId: context.userId,
@@ -352,6 +354,14 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       invocationId,
     });
     const llmMs = Date.now() - llmStart;
+
+    if (response.interrupted) {
+      logger.info("Pipeline interrupted — invocation superseded", {
+        channelId: context.channelId,
+      });
+      await pauseSandbox().catch(() => {});
+      return;
+    }
 
     // Pause sandbox once after all tool calls are complete for this turn.
     // This avoids the e2b multi-resume bug (e2b-dev/E2B#884) that causes

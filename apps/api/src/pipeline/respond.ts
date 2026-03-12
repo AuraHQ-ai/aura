@@ -163,6 +163,8 @@ export interface LLMResponse {
   modelId?: string;
   /** Promise that resolves to the conversation steps (for persistence) */
   stepsPromise?: PromiseLike<any[]>;
+  /** Whether the response was interrupted by a newer invocation */
+  interrupted?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1008,6 +1010,7 @@ export async function generateResponse(
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         toolCalls: toolCallRecords,
         modelId,
+        interrupted: true,
       };
     }
 

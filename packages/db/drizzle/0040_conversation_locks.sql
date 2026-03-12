@@ -1,4 +1,4 @@
-CREATE TABLE "conversation_locks" (
+CREATE TABLE IF NOT EXISTS "conversation_locks" (
   "channel_id" TEXT NOT NULL,
   "thread_ts" TEXT NOT NULL,
   "invocation_id" TEXT NOT NULL,
