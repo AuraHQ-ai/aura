@@ -2,7 +2,7 @@
 
 import { db } from "@/lib/db";
 import { jobs, jobExecutions, conversationTraces } from "@schema";
-import { eq, desc, ilike, sql } from "drizzle-orm";
+import { eq, desc, ilike, sql, inArray } from "drizzle-orm";
 import { fetchConversationWithParts } from "@/lib/queries";
 import { revalidatePath } from "next/cache";
 
@@ -46,7 +46,7 @@ export async function getJob(id: string) {
         costUsd: conversationTraces.costUsd,
       })
       .from(conversationTraces)
-      .where(sql`${conversationTraces.jobExecutionId} IN ${execIds}`);
+      .where(inArray(conversationTraces.jobExecutionId, execIds));
 
     execCosts = Object.fromEntries(
       costRows

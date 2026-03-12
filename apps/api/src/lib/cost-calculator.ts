@@ -93,10 +93,16 @@ function computeStepCost(
   const reasoningPrice = getPrice(pricing, "reasoning");
 
   let inputCost: number;
-  if (usage.inputTokenDetails) {
-    const noCacheTokens = usage.inputTokenDetails.noCacheTokens ?? 0;
-    const cacheReadTokens = usage.inputTokenDetails.cacheReadTokens ?? 0;
-    const cacheWriteTokens = usage.inputTokenDetails.cacheWriteTokens ?? 0;
+  const id = usage.inputTokenDetails;
+  if (
+    id &&
+    (id.noCacheTokens != null ||
+      id.cacheReadTokens != null ||
+      id.cacheWriteTokens != null)
+  ) {
+    const noCacheTokens = id.noCacheTokens ?? 0;
+    const cacheReadTokens = id.cacheReadTokens ?? 0;
+    const cacheWriteTokens = id.cacheWriteTokens ?? 0;
     inputCost =
       (noCacheTokens * inputPrice +
         cacheReadTokens * cacheReadPrice +
@@ -107,9 +113,10 @@ function computeStepCost(
   }
 
   let outputCost: number;
-  if (usage.outputTokenDetails) {
-    const textTokens = usage.outputTokenDetails.textTokens ?? 0;
-    const reasoningTokens = usage.outputTokenDetails.reasoningTokens ?? 0;
+  const od = usage.outputTokenDetails;
+  if (od && (od.textTokens != null || od.reasoningTokens != null)) {
+    const textTokens = od.textTokens ?? 0;
+    const reasoningTokens = od.reasoningTokens ?? 0;
     outputCost =
       (textTokens * outputPrice + reasoningTokens * reasoningPrice) /
       1_000_000;
