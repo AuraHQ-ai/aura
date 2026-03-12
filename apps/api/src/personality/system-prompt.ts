@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, or, isNull, gt } from "drizzle-orm";
 import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { notes } from "@aura/db/schema";
@@ -434,9 +434,11 @@ export async function buildStablePrefix(): Promise<string> {
   }
 
   try {
+    const now = new Date();
     const allNotes = await db
       .select({ topic: notes.topic, category: notes.category, summary: notes.summary })
       .from(notes)
+      .where(or(isNull(notes.expiresAt), gt(notes.expiresAt, now)))
       .orderBy(notes.category, notes.topic);
 
     if (allNotes.length > 0) {
@@ -460,6 +462,11 @@ export async function buildStablePrefix(): Promise<string> {
         const items = grouped.get(cat);
         if (items && items.length > 0) {
           index += `\n### ${categoryLabels[cat] || cat}\n${items.join("\n")}\n`;
+        }
+      }
+      for (const [cat, items] of grouped) {
+        if (!categoryOrder.includes(cat) && items.length > 0) {
+          index += `\n### ${cat}\n${items.join("\n")}\n`;
         }
       }
 
