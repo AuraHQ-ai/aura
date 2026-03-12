@@ -468,6 +468,12 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         invocationId: error.invocationId,
         channelId: context.channelId,
       });
+      const storePromise = storeUserMessage(context, event);
+      if (waitUntil) {
+        waitUntil(storePromise);
+      } else {
+        await storePromise;
+      }
       return;
     }
 
