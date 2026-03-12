@@ -827,30 +827,34 @@ export async function generateResponse(
       const unsentText = fallbackStartIdx > 0
         ? finalText.slice(fallbackStartIdx)
         : finalText;
-      const blocks: any[] = [];
-      const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
-      if (formattedUnsent) {
-        for (let i = 0; i < formattedUnsent.length; i += 3000) {
-          blocks.push({
-            type: "section",
-            text: { type: "mrkdwn", text: formattedUnsent.slice(i, i + 3000) },
-            expand: true,
-          });
+      const buildResponseBlocks = (formattedText: string, tableBlock?: any): any[] => {
+        const result: any[] = [];
+        if (formattedText) {
+          for (let i = 0; i < formattedText.length; i += 3000) {
+            result.push({
+              type: "section",
+              text: { type: "mrkdwn", text: formattedText.slice(i, i + 3000) },
+              expand: true,
+            });
+          }
         }
-      }
-      if (pendingTableBlock) {
-        blocks.push(pendingTableBlock);
-      }
+        if (tableBlock) {
+          result.push(tableBlock);
+        }
+        result.push({
+          type: "context_actions",
+          elements: [{
+            type: "feedback_buttons",
+            action_id: "aura_feedback",
+            positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
+            negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
+          }],
+        });
+        return result;
+      };
 
-      blocks.push({
-        type: "context_actions",
-        elements: [{
-          type: "feedback_buttons",
-          action_id: "aura_feedback",
-          positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
-          negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
-        }],
-      });
+      const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
+      const blocks = buildResponseBlocks(formattedUnsent, pendingTableBlock);
 
       const toolMeta = buildToolMetadata(toolCallRecords);
       const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
@@ -863,28 +867,7 @@ export async function generateResponse(
         let updateText = fallbackText;
         if (fallbackStartIdx > 0) {
           const fullFormatted = finalText ? formatForSlack(finalText) : "";
-          updateBlocks = [];
-          if (fullFormatted) {
-            for (let i = 0; i < fullFormatted.length; i += 3000) {
-              updateBlocks.push({
-                type: "section",
-                text: { type: "mrkdwn", text: fullFormatted.slice(i, i + 3000) },
-                expand: true,
-              });
-            }
-          }
-          if (pendingTableBlock) {
-            updateBlocks.push(pendingTableBlock);
-          }
-          updateBlocks.push({
-            type: "context_actions",
-            elements: [{
-              type: "feedback_buttons",
-              action_id: "aura_feedback",
-              positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
-              negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
-            }],
-          });
+          updateBlocks = buildResponseBlocks(fullFormatted, pendingTableBlock);
           updateText = fullFormatted || "_I processed your request but had nothing to say._";
         }
         try {
@@ -902,6 +885,12 @@ export async function generateResponse(
               channelId,
               frozenMessageTs,
               usage: { inputTokens, outputTokens, totalTokens },
+            });
+          } else {
+            logger.warn("chat.update returned ok:false, falling back to safePostMessage", {
+              channelId,
+              frozenMessageTs,
+              error: updateResult.error,
             });
           }
         } catch (updateErr: any) {
