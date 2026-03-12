@@ -251,6 +251,7 @@ export const notes = pgTable(
     topic: text("topic").notNull(),
     content: text("content").notNull(),
     category: text("category").notNull().default("knowledge"),
+    summary: text("summary"),
     embedding: vector("embedding", { dimensions: 1536 }),
     expiresAt: timestamptz("expires_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
