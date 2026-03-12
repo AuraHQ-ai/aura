@@ -144,6 +144,35 @@ function stepToParts(step: Step): PartRow[] {
   return parts;
 }
 
+/**
+ * Map raw AI SDK steps to ConversationStep (Step) objects for persistence.
+ */
+export function buildConversationSteps(rawSteps: any[]): Step[] {
+  return rawSteps.map((step: any) => ({
+    text: step.text,
+    reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
+    toolCalls: step.toolCalls?.map((tc: any) => ({
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      input: tc.input,
+    })),
+    toolResults: step.toolResults?.map((tr: any) => ({
+      toolCallId: tr.toolCallId,
+      toolName: tr.toolName,
+      output: tr.output,
+    })),
+    finishReason: step.finishReason,
+    modelId: step.response?.modelId,
+    usage: step.usage ? {
+      inputTokens: step.usage.inputTokens ?? 0,
+      outputTokens: step.usage.outputTokens ?? 0,
+      totalTokens: step.usage.totalTokens ?? 0,
+      inputTokenDetails: step.usage.inputTokenDetails,
+      outputTokenDetails: step.usage.outputTokenDetails,
+    } : undefined,
+  }));
+}
+
 // ── Phase 1: Persist inputs BEFORE generate ──────────────────────────────────
 // Saves system + user messages immediately so they survive crashes.
 // Returns the next orderIndex for assistant messages.

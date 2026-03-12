@@ -121,6 +121,25 @@ function computeStepCost(
 }
 
 /**
+ * Build per-step usage data from raw AI SDK steps.
+ * Filters to steps that have both a modelId and usage, then maps to StepUsage[].
+ */
+export function buildStepUsages(rawSteps: any[]): StepUsage[] {
+  return rawSteps
+    .filter((step: any) => step.response?.modelId && step.usage)
+    .map((step: any) => ({
+      modelId: step.response.modelId,
+      usage: {
+        inputTokens: step.usage.inputTokens ?? 0,
+        outputTokens: step.usage.outputTokens ?? 0,
+        totalTokens: step.usage.totalTokens ?? 0,
+        inputTokenDetails: step.usage.inputTokenDetails,
+        outputTokenDetails: step.usage.outputTokenDetails,
+      },
+    }));
+}
+
+/**
  * Compute total cost in USD for an array of steps.
  * Looks up pricing for each model and computes:
  *   Σ (token_count × price_per_million / 1_000_000) across all token types per step.

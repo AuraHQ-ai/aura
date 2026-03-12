@@ -14,9 +14,9 @@ import {
   persistConversationSteps,
   persistConversationError,
   updateConversationTraceUsage,
-  type Step as ConversationStep,
+  buildConversationSteps,
 } from "./persist-conversation.js";
-import type { StepUsage } from "../lib/cost-calculator.js";
+import { buildStepUsages } from "../lib/cost-calculator.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
@@ -214,29 +214,7 @@ export async function executeJob(
     const { text, steps, totalUsage: usage } = generateResult;
 
     // Phase 2a: persist assistant steps now that generate succeeded
-    const conversationSteps: ConversationStep[] = steps.map((step) => ({
-      text: step.text,
-      reasoning: Array.isArray((step as any).reasoning) ? (step as any).reasoning : undefined,
-      toolCalls: step.toolCalls?.map((tc) => ({
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        input: tc.input,
-      })),
-      toolResults: step.toolResults?.map((tr) => ({
-        toolCallId: tr.toolCallId,
-        toolName: tr.toolName,
-        output: tr.output,
-      })),
-      finishReason: step.finishReason,
-      modelId: step.response?.modelId,
-      usage: step.usage ? {
-        inputTokens: step.usage.inputTokens ?? 0,
-        outputTokens: step.usage.outputTokens ?? 0,
-        totalTokens: step.usage.totalTokens ?? 0,
-        inputTokenDetails: step.usage.inputTokenDetails,
-        outputTokenDetails: step.usage.outputTokenDetails,
-      } : undefined,
-    }));
+    const conversationSteps = buildConversationSteps(steps);
     await persistConversationSteps(conversationId, conversationSteps, conversationOrderIndex);
 
     const serializedSteps = steps.map((step) => ({
@@ -260,18 +238,7 @@ export async function executeJob(
       outputTokenDetails: usage.outputTokenDetails,
     };
 
-    const stepUsages: StepUsage[] = steps
-      .filter((step) => step.response?.modelId && step.usage)
-      .map((step) => ({
-        modelId: step.response!.modelId!,
-        usage: {
-          inputTokens: step.usage!.inputTokens ?? 0,
-          outputTokens: step.usage!.outputTokens ?? 0,
-          totalTokens: step.usage!.totalTokens ?? 0,
-          inputTokenDetails: step.usage!.inputTokenDetails,
-          outputTokenDetails: step.usage!.outputTokenDetails,
-        },
-      }));
+    const stepUsages = buildStepUsages(steps);
 
     // Update trace with token usage + cost
     await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);

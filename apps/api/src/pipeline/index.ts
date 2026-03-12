@@ -39,9 +39,9 @@ import {
   persistConversationInputs,
   persistConversationSteps,
   updateConversationTraceUsage,
-  type Step as ConversationStep,
+  buildConversationSteps,
 } from "../cron/persist-conversation.js";
-import type { StepUsage } from "../lib/cost-calculator.js";
+import { buildStepUsages, type StepUsage } from "../lib/cost-calculator.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 import type { SlackEvent } from "./context.js";
 
@@ -788,21 +788,6 @@ async function runBackgroundTasks(params: {
   stepsPromise?: PromiseLike<any[]>;
   replyThreadTs?: string;
 }): Promise<void> {
-  // Helper to build per-step usage data from resolved steps
-  function buildStepUsages(rawSteps: any[]): StepUsage[] {
-    return rawSteps
-      .filter((step: any) => step.response?.modelId && step.usage)
-      .map((step: any) => ({
-        modelId: step.response.modelId,
-        usage: {
-          inputTokens: step.usage.inputTokens ?? 0,
-          outputTokens: step.usage.outputTokens ?? 0,
-          totalTokens: step.usage.totalTokens ?? 0,
-          inputTokenDetails: step.usage.inputTokenDetails,
-          outputTokenDetails: step.usage.outputTokenDetails,
-        },
-      }));
-  }
   const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, replyThreadTs } = params;
 
   try {
@@ -903,29 +888,7 @@ async function runBackgroundTasks(params: {
         if (stepsPromise) {
           try {
             const rawSteps = await stepsPromise;
-            const conversationSteps: ConversationStep[] = rawSteps.map((step: any) => ({
-              text: step.text,
-              reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
-              toolCalls: step.toolCalls?.map((tc: any) => ({
-                toolCallId: tc.toolCallId,
-                toolName: tc.toolName,
-                input: tc.input,
-              })),
-              toolResults: step.toolResults?.map((tr: any) => ({
-                toolCallId: tr.toolCallId,
-                toolName: tr.toolName,
-                output: tr.output,
-              })),
-              finishReason: step.finishReason,
-              modelId: step.response?.modelId,
-              usage: step.usage ? {
-                inputTokens: step.usage.inputTokens ?? 0,
-                outputTokens: step.usage.outputTokens ?? 0,
-                totalTokens: step.usage.totalTokens ?? 0,
-                inputTokenDetails: step.usage.inputTokenDetails,
-                outputTokenDetails: step.usage.outputTokenDetails,
-              } : undefined,
-            }));
+            const conversationSteps = buildConversationSteps(rawSteps);
             await persistConversationSteps(conversationId, conversationSteps, orderIndex);
             stepUsages = buildStepUsages(rawSteps);
           } catch (stepsErr: any) {
