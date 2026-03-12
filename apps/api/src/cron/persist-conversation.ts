@@ -1,5 +1,5 @@
 import { db } from "../db/client.js";
-import { jobExecutionMessages, jobExecutionParts } from "@aura/db/schema";
+import { conversationTraces, conversationMessages, conversationParts } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -35,27 +35,54 @@ type PartRow = {
   toolState?: string | null;
 };
 
+// ── Create Conversation Trace ────────────────────────────────────────────────
+
+export async function createConversationTrace(params: {
+  sourceType: "job_execution" | "interactive";
+  jobExecutionId?: string;
+  channelId?: string;
+  threadTs?: string;
+  userId?: string;
+  modelId?: string;
+}): Promise<string> {
+  const [row] = await db
+    .insert(conversationTraces)
+    .values({
+      sourceType: params.sourceType,
+      jobExecutionId: params.jobExecutionId ?? null,
+      channelId: params.channelId ?? null,
+      threadTs: params.threadTs ?? null,
+      userId: params.userId ?? null,
+      modelId: params.modelId ?? null,
+    })
+    .returning({ id: conversationTraces.id });
+
+  return row.id;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function insertMessage(
-  executionId: string,
+  conversationId: string,
   role: string,
   orderIndex: number,
   parts: PartRow[],
+  content?: string | null,
 ) {
   const msgId = crypto.randomUUID();
 
-  const msgInsert = db.insert(jobExecutionMessages).values({
+  const msgInsert = db.insert(conversationMessages).values({
     id: msgId,
-    executionId,
+    conversationId,
     role,
+    content: content ?? null,
     orderIndex,
   });
 
   if (parts.length === 0) return msgInsert;
 
   return msgInsert.then(() =>
-    db.insert(jobExecutionParts).values(
+    db.insert(conversationParts).values(
       parts.map((p) => ({
         messageId: msgId,
         type: p.type,
@@ -108,23 +135,23 @@ function stepToParts(step: Step): PartRow[] {
 // Returns the next orderIndex for assistant messages.
 
 export async function persistConversationInputs(
-  executionId: string,
+  conversationId: string,
   systemPrompt: string,
   userPrompt: string,
 ): Promise<number> {
   try {
-    await insertMessage(executionId, "system", 0, [
+    await insertMessage(conversationId, "system", 0, [
       { type: "text", orderIndex: 0, textValue: systemPrompt },
-    ]);
-    await insertMessage(executionId, "user", 1, [
+    ], systemPrompt);
+    await insertMessage(conversationId, "user", 1, [
       { type: "text", orderIndex: 0, textValue: userPrompt },
-    ]);
+    ], userPrompt);
 
-    logger.info("persistConversationInputs: saved", { executionId });
+    logger.info("persistConversationInputs: saved", { conversationId });
     return 2;
   } catch (err: any) {
     logger.error("persistConversationInputs: failed (non-fatal)", {
-      executionId,
+      conversationId,
       error: err.message,
     });
     return 2;
@@ -134,34 +161,32 @@ export async function persistConversationInputs(
 // ── Phase 2a: Persist assistant steps AFTER generate succeeds ────────────────
 
 export async function persistConversationSteps(
-  executionId: string,
+  conversationId: string,
   steps: Step[],
   startOrderIndex: number,
 ): Promise<void> {
   try {
     for (let i = 0; i < steps.length; i++) {
       const parts = stepToParts(steps[i]);
-      await insertMessage(executionId, "assistant", startOrderIndex + i, parts);
+      await insertMessage(conversationId, "assistant", startOrderIndex + i, parts);
     }
 
     logger.info("persistConversationSteps: saved", {
-      executionId,
+      conversationId,
       stepCount: steps.length,
     });
   } catch (err: any) {
     logger.error("persistConversationSteps: failed (non-fatal)", {
-      executionId,
+      conversationId,
       error: err.message,
     });
   }
 }
 
 // ── Phase 2b: Persist error AFTER generate fails ─────────────────────────────
-// Saves whatever we know: the error message and optionally any partial steps
-// that were available on the error object.
 
 export async function persistConversationError(
-  executionId: string,
+  conversationId: string,
   error: Error,
   startOrderIndex: number,
 ): Promise<void> {
@@ -174,7 +199,7 @@ export async function persistConversationError(
       .filter(Boolean)
       .join(" ");
 
-    await insertMessage(executionId, "assistant", startOrderIndex, [
+    await insertMessage(conversationId, "assistant", startOrderIndex, [
       {
         type: "error",
         orderIndex: 0,
@@ -182,10 +207,30 @@ export async function persistConversationError(
       },
     ]);
 
-    logger.info("persistConversationError: saved", { executionId });
+    logger.info("persistConversationError: saved", { conversationId });
   } catch (err: any) {
     logger.error("persistConversationError: failed (non-fatal)", {
-      executionId,
+      conversationId,
+      error: err.message,
+    });
+  }
+}
+
+// ── Update token usage on a conversation trace ───────────────────────────────
+
+export async function updateConversationTraceUsage(
+  conversationId: string,
+  tokenUsage: { inputTokens: number; outputTokens: number; totalTokens: number },
+): Promise<void> {
+  try {
+    const { eq } = await import("drizzle-orm");
+    await db
+      .update(conversationTraces)
+      .set({ tokenUsage })
+      .where(eq(conversationTraces.id, conversationId));
+  } catch (err: any) {
+    logger.error("updateConversationTraceUsage: failed (non-fatal)", {
+      conversationId,
       error: err.message,
     });
   }

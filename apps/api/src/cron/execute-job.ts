@@ -7,9 +7,11 @@ import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext, PendingApprovalError } from "../lib/tool.js";
 import {
+  createConversationTrace,
   persistConversationInputs,
   persistConversationSteps,
   persistConversationError,
+  updateConversationTraceUsage,
   type Step as ConversationStep,
 } from "./persist-conversation.js";
 
@@ -104,6 +106,7 @@ export async function executeJob(
   // Tracks next message order_index; set by persistConversationInputs,
   // used by error handler if generate throws.
   let conversationOrderIndex = 0;
+  let conversationId: string | undefined;
 
   try {
     const planTopic = parseContinuationTag(job.description);
@@ -173,7 +176,7 @@ export async function executeJob(
       prompt += `\n\nIMPORTANT: Post your results to channel "${job.channelId}" using send_channel_message. Do NOT use send_direct_message.`;
     }
 
-    const { agent } = await createHeadlessAgent({
+    const { agent, modelId } = await createHeadlessAgent({
       slackClient,
       context: {
         userId: job.requestedBy,
@@ -183,10 +186,17 @@ export async function executeJob(
       systemPrompt,
     });
 
+    // Create a conversation trace for this job execution
+    conversationId = await createConversationTrace({
+      sourceType: "job_execution",
+      jobExecutionId: executionId,
+      modelId,
+    });
+
     // Phase 1: persist the exact inputs BEFORE calling generate.
     // If the process crashes mid-execution, we still have what was sent.
     conversationOrderIndex = await persistConversationInputs(
-      executionId,
+      conversationId,
       systemPrompt,
       prompt,
     );
@@ -218,7 +228,7 @@ export async function executeJob(
       })),
       finishReason: step.finishReason,
     }));
-    await persistConversationSteps(executionId, conversationSteps, conversationOrderIndex);
+    await persistConversationSteps(conversationId, conversationSteps, conversationOrderIndex);
 
     const serializedSteps = steps.map((step) => ({
       type: step.finishReason,
@@ -234,10 +244,13 @@ export async function executeJob(
     }));
 
     const tokenUsage = {
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      totalTokens: usage.totalTokens,
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+      totalTokens: usage.totalTokens ?? 0,
     };
+
+    // Update trace with token usage
+    await updateConversationTraceUsage(conversationId, tokenUsage);
 
     // Update execution trace with results
     await db
@@ -298,7 +311,9 @@ export async function executeJob(
     return true;
   } catch (error: any) {
     // Persist the error in conversation history regardless of error type
-    await persistConversationError(executionId, error, conversationOrderIndex);
+    if (conversationId) {
+      await persistConversationError(conversationId, error, conversationOrderIndex);
+    }
 
     // Governance: if a tool requires approval, suspend the job
     if (error instanceof PendingApprovalError) {

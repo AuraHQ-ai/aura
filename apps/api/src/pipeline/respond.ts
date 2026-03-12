@@ -158,6 +158,8 @@ export interface LLMResponse {
   toolCalls: ToolCallRecord[];
   /** Model ID used for this response */
   modelId?: string;
+  /** Promise that resolves to the conversation steps (for persistence) */
+  stepsPromise?: PromiseLike<any[]>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -960,6 +962,7 @@ export async function generateResponse(
       usage: { inputTokens, outputTokens, totalTokens },
       toolCalls: toolCallRecords,
       modelId,
+      stepsPromise: result.steps,
     };
   } catch (error: any) {
     clearTimeout(inactivityTimer);

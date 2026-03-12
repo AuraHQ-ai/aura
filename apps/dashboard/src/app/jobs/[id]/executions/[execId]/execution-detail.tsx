@@ -8,9 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 import { formatDate } from "@/lib/utils";
-import type { JobExecution, JobExecutionMessage, JobExecutionPart } from "@schema";
+import type { JobExecution, ConversationMessage as ConversationMessageRow, ConversationPart } from "@schema";
 
-type ConversationMessage = JobExecutionMessage & { parts: JobExecutionPart[] };
+type ConversationMessage = ConversationMessageRow & { parts: ConversationPart[] };
 
 interface ExecutionData {
   execution: JobExecution;
@@ -56,7 +56,7 @@ function PromptBlock({ text }: { text: string }) {
   );
 }
 
-function ToolInvocationBlock({ part }: { part: JobExecutionPart }) {
+function ToolInvocationBlock({ part }: { part: ConversationPart }) {
   const [showInput, setShowInput] = useState(false);
   const [showOutput, setShowOutput] = useState(false);
 
