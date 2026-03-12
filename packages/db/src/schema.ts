@@ -436,7 +436,7 @@ export const jobExecutionParts = pgTable(
     index("idx_jep_message").on(table.messageId, table.orderIndex),
     check(
       "jep_type_check",
-      sql`${table.type} IN ('text', 'reasoning', 'tool-invocation', 'source', 'file', 'step-start')`,
+      sql`${table.type} IN ('text', 'reasoning', 'tool-invocation', 'source', 'file', 'step-start', 'error')`,
     ),
   ],
 );

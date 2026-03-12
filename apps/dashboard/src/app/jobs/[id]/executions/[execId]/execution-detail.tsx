@@ -148,14 +148,16 @@ function TimelineView({ conversation }: { conversation: ConversationMessage[] })
   const assistantMsgs = conversation.filter((m) => m.role === "assistant");
   const [filter, setFilter] = useState("");
 
+  const lowerFilter = filter.toLowerCase();
   const filteredMsgs = filter
     ? assistantMsgs
         .map((msg) => ({
           ...msg,
           parts: msg.parts.filter(
             (p) =>
-              p.toolName?.toLowerCase().includes(filter.toLowerCase()) ||
-              p.textValue?.toLowerCase().includes(filter.toLowerCase()),
+              p.type === "error" ||
+              p.toolName?.toLowerCase().includes(lowerFilter) ||
+              p.textValue?.toLowerCase().includes(lowerFilter),
           ),
         }))
         .filter((msg) => msg.parts.length > 0)
@@ -209,6 +211,24 @@ function TimelineView({ conversation }: { conversation: ConversationMessage[] })
 
               if (part.type === "tool-invocation") {
                 return <ToolInvocationBlock key={part.id} part={part} />;
+              }
+
+              if (part.type === "error" && part.textValue) {
+                return (
+                  <div
+                    key={part.id}
+                    className="rounded-md border border-destructive/50 bg-destructive/5 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge variant="destructive" className="text-[10px]">
+                        error
+                      </Badge>
+                    </div>
+                    <pre className="whitespace-pre-wrap font-mono text-xs text-destructive overflow-auto max-h-[400px]">
+                      {part.textValue}
+                    </pre>
+                  </div>
+                );
               }
 
               if (part.type === "text" && part.textValue) {
