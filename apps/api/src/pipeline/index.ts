@@ -8,6 +8,7 @@ import {
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
 import { generateResponse } from "./respond.js";
+import { InvocationSupersededError } from "./prepare-step.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import {
   fetchConversationContext,
@@ -15,6 +16,7 @@ import {
   type ConversationContext,
 } from "./slack-context.js";
 import { storeMessage, claimEvent, storeToolCallMessages, storeChannelReadMessage } from "../memory/store.js";
+import { claimInvocation } from "../lib/invocation-lock.js";
 import type { ToolCallRecord } from "./respond.js";
 import { extractMemories } from "../memory/extract.js";
 import {
@@ -150,7 +152,11 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     return;
   }
 
-  // 1b. Resolve Slack entity references (<@U...>, <#C...>) to readable names
+  // 1b. Claim invocation lock (enables interruption detection)
+  const effectiveThreadTs = context.threadTs || context.messageTs;
+  const invocationId = await claimInvocation(context.channelId, effectiveThreadTs);
+
+  // 1c. Resolve Slack entity references (<@U...>, <#C...>) to readable names
   context.text = await resolveSlackEntities(client, context.text);
 
   // 2. Should we respond?
@@ -343,6 +349,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       teamId,
       recipientUserId: context.userId,
       channelType: context.channelType,
+      invocationId,
     });
     const llmMs = Date.now() - llmStart;
 
@@ -422,6 +429,14 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   } catch (error: any) {
     // Ensure sandbox is paused even on pipeline errors
     await pauseSandbox().catch(() => {});
+
+    if (error instanceof InvocationSupersededError) {
+      logger.info("Pipeline interrupted — invocation superseded", {
+        invocationId: error.invocationId,
+        channelId: context.channelId,
+      });
+      return;
+    }
 
     const errorMessage = error?.message || String(error);
     const errorName = error?.name || "UnknownError";

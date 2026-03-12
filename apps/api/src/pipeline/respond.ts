@@ -9,6 +9,7 @@ import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLo
 import { getSlackMeta } from "../lib/tool.js";
 import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
+import { InvocationSupersededError } from "./prepare-step.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -141,6 +142,8 @@ interface RespondOptions {
   channelType?: import("./context.js").ChannelType;
   /** Whether this is a headless/job execution (skip streaming, go straight to safePostMessage) */
   isHeadless?: boolean;
+  /** Invocation ID for conversation interruption detection */
+  invocationId?: string;
 }
 
 export interface LLMResponse {
@@ -395,6 +398,9 @@ export async function generateResponse(
     stablePrefix: options.stablePrefix,
     conversationContext: options.conversationContext,
     dynamicContext: options.dynamicContext,
+    invocationId: options.invocationId,
+    channelId: options.channelId,
+    threadTs: options.threadTs,
   });
 
   const streamCallOptions: Record<string, any> = {
@@ -979,6 +985,31 @@ export async function generateResponse(
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
     if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+
+    if (error instanceof InvocationSupersededError) {
+      logger.info("Stream interrupted — invocation superseded", {
+        invocationId: error.invocationId,
+        channelId,
+      });
+
+      if (streamer && !streamingFailed) {
+        try {
+          await streamer.stop({
+            chunks: [{ type: "markdown_text", text: "\n\n_[interrupted — new message received]_" }],
+          });
+        } catch {
+          // Stream may already be closed
+        }
+      }
+
+      return {
+        raw: accumulatedText + "\n\n_[interrupted — new message received]_",
+        alreadyPosted: true,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        toolCalls: toolCallRecords,
+        modelId,
+      };
+    }
 
     if (hasFiles && isUnsupportedFileError(error)) {
       logger.warn("LLM call failed due to unsupported file type, retrying without file parts", {

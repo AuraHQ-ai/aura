@@ -2,7 +2,15 @@ import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { supportsEffort, supportsAdaptiveThinking, supportsThinking } from "../lib/ai.js";
+import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
+
+export class InvocationSupersededError extends Error {
+  constructor(public readonly invocationId: string) {
+    super(`Invocation ${invocationId} was superseded by a newer message`);
+    this.name = "InvocationSupersededError";
+  }
+}
 
 export const STEP_LIMIT = 250;
 export const HEADLESS_STEP_LIMIT = 350;
@@ -49,6 +57,9 @@ export function createPrepareStep(opts: {
   modelId?: string;
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  invocationId?: string;
+  channelId?: string;
+  threadTs?: string;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
@@ -59,6 +70,20 @@ export function createPrepareStep(opts: {
   let failureCount = 0;
 
   return async ({ stepNumber, steps, messages }) => {
+    // --- Invocation staleness check (abort if superseded) ---
+    if (opts.invocationId && opts.channelId && opts.threadTs) {
+      const stillCurrent = await isInvocationCurrent(opts.channelId, opts.threadTs, opts.invocationId);
+      if (!stillCurrent) {
+        logger.info("Invocation superseded — aborting", {
+          invocationId: opts.invocationId,
+          channelId: opts.channelId,
+          threadTs: opts.threadTs,
+          stepNumber,
+        });
+        throw new InvocationSupersededError(opts.invocationId);
+      }
+    }
+
     let systemOverride: string | undefined;
     let providerOptions: ProviderOptions | undefined;
     let modelOverride: LanguageModel | undefined;
@@ -181,6 +206,9 @@ export function createInteractivePrepareStep(opts: {
   defaultEffort?: EffortLevel;
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  invocationId?: string;
+  channelId?: string;
+  threadTs?: string;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: STEP_LIMIT,
@@ -192,6 +220,9 @@ export function createInteractivePrepareStep(opts: {
     defaultEffort: opts.defaultEffort,
     thinkingBudget: opts.thinkingBudget,
     getEscalationModel: opts.getEscalationModel,
+    invocationId: opts.invocationId,
+    channelId: opts.channelId,
+    threadTs: opts.threadTs,
   });
 }
 
@@ -204,6 +235,9 @@ export function createHeadlessPrepareStep(opts: {
   defaultEffort?: EffortLevel;
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  invocationId?: string;
+  channelId?: string;
+  threadTs?: string;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: HEADLESS_STEP_LIMIT,
@@ -215,5 +249,8 @@ export function createHeadlessPrepareStep(opts: {
     defaultEffort: opts.defaultEffort,
     thinkingBudget: opts.thinkingBudget,
     getEscalationModel: opts.getEscalationModel,
+    invocationId: opts.invocationId,
+    channelId: opts.channelId,
+    threadTs: opts.threadTs,
   });
 }

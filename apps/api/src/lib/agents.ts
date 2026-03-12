@@ -24,6 +24,9 @@ export interface InteractiveAgentOptions {
   stablePrefix: string;
   conversationContext: string;
   dynamicContext?: string;
+  invocationId?: string;
+  channelId?: string;
+  threadTs?: string;
 }
 
 export interface InteractiveAgentResult {
@@ -56,6 +59,9 @@ export async function createInteractiveAgent(
       defaultEffort: "medium",
       thinkingBudget: 8000,
       getEscalationModel,
+      invocationId: options.invocationId,
+      channelId: options.channelId,
+      threadTs: options.threadTs,
     }),
   });
 

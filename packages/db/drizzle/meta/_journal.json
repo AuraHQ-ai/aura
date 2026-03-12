@@ -281,6 +281,13 @@
       "when": 1773830400000,
       "tag": "0039_add_notes_summary",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1773916800000,
+      "tag": "0040_conversation_locks",
+      "breakpoints": true
     }
   ]
 }

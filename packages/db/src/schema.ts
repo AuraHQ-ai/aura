@@ -15,6 +15,7 @@ import {
   vector,
   date,
   check,
+  primaryKey,
   smallint,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -492,6 +493,21 @@ export const eventLocks = pgTable(
   ],
 );
 
+// ── Conversation Locks (invocation dedup for interruption handling) ──────────
+
+export const conversationLocks = pgTable(
+  "conversation_locks",
+  {
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts").notNull(),
+    invocationId: text("invocation_id").notNull(),
+    startedAt: timestamptz("started_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.channelId, table.threadTs] }),
+  ],
+);
+
 // ── Error Events ────────────────────────────────────────────────────────────
 
 export const errorEvents = pgTable(
@@ -706,6 +722,8 @@ export type Resource = typeof resources.$inferSelect;
 export type NewResource = typeof resources.$inferInsert;
 export type EventLock = typeof eventLocks.$inferSelect;
 export type NewEventLock = typeof eventLocks.$inferInsert;
+export type ConversationLock = typeof conversationLocks.$inferSelect;
+export type NewConversationLock = typeof conversationLocks.$inferInsert;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type NewErrorEvent = typeof errorEvents.$inferInsert;
 export type JobExecution = typeof jobExecutions.$inferSelect;
