@@ -72,7 +72,16 @@ export function createPrepareStep(opts: {
   return async ({ stepNumber, steps, messages }) => {
     // --- Invocation staleness check (abort if superseded) ---
     if (opts.invocationId && opts.channelId && opts.threadTs) {
-      const stillCurrent = await isInvocationCurrent(opts.channelId, opts.threadTs, opts.invocationId);
+      let stillCurrent = true;
+      try {
+        stillCurrent = await isInvocationCurrent(opts.channelId, opts.threadTs, opts.invocationId);
+      } catch (err: any) {
+        logger.warn("Invocation check failed, assuming still current", {
+          invocationId: opts.invocationId,
+          error: err?.message,
+          stepNumber,
+        });
+      }
       if (!stillCurrent) {
         logger.info("Invocation superseded — aborting", {
           invocationId: opts.invocationId,
