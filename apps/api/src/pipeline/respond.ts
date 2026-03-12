@@ -539,6 +539,17 @@ export async function generateResponse(
   }
 
   try {
+    // Signal extended thinking phase to the user via Slack thread status
+    try {
+      await slackClient.assistant.threads.setStatus({
+        channel_id: channelId,
+        thread_ts: threadTs,
+        status: "Thinking deeply...",
+      });
+    } catch {
+      // Non-fatal: scope may not be configured or channel type unsupported
+    }
+
     const result = await agent.stream(streamCallOptions as any);
 
     for await (const chunk of result.fullStream) {

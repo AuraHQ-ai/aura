@@ -703,6 +703,51 @@ async function runBackgroundTasks(params: {
       }
     }
 
+    // Post optional reasoning trace as a thread reply (gated by env var)
+    if (process.env.SHOW_REASONING_IN_SLACK === "true" && stepsPromise && replyThreadTs) {
+      try {
+        const steps = await stepsPromise;
+        const reasoningTexts: string[] = [];
+        for (const step of steps) {
+          if ((step as any).reasoning) {
+            reasoningTexts.push((step as any).reasoning);
+          }
+        }
+
+        if (reasoningTexts.length > 0) {
+          const fullReasoning = reasoningTexts.join("\n\n---\n\n");
+          const reasoningTokens = Math.ceil(fullReasoning.length / 4);
+          const preview = fullReasoning.slice(0, 500);
+          const truncated = fullReasoning.length > 500;
+          const quotedPreview = preview
+            .split("\n")
+            .map((line) => `>${line}`)
+            .join("\n");
+
+          const replyText =
+            `:brain: _Reasoning trace_ (${reasoningTokens.toLocaleString()} tokens)\n` +
+            quotedPreview +
+            (truncated ? "\n>_Full trace available in dashboard_" : "");
+
+          await safePostMessage(client, {
+            channel: context.channelId,
+            text: replyText,
+            thread_ts: replyThreadTs,
+          });
+
+          logger.info("Posted reasoning trace to Slack", {
+            channelId: context.channelId,
+            reasoningLength: fullReasoning.length,
+            reasoningTokens,
+          });
+        }
+      } catch (reasoningErr: any) {
+        logger.warn("Failed to post reasoning trace to Slack (non-fatal)", {
+          error: reasoningErr?.message || String(reasoningErr),
+        });
+      }
+    }
+
     // Set or update DM thread title for the Assistant History tab.
     // Runs last so the LLM call doesn't delay critical background work above.
     if (context.isDm) {

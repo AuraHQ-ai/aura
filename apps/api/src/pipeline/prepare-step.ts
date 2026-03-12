@@ -1,7 +1,7 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort } from "../lib/ai.js";
+import { supportsEffort, isAnthropicModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 export const STEP_LIMIT = 250;
@@ -47,11 +47,13 @@ export function createPrepareStep(opts: {
   dynamicContext?: string;
   defaultEffort?: EffortLevel;
   modelId?: string;
+  thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
   const hasEffortSupport = opts.modelId ? supportsEffort(opts.modelId) : false;
+  const hasThinkingSupport = opts.modelId ? isAnthropicModel(opts.modelId) : false;
   let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
@@ -89,10 +91,18 @@ export function createPrepareStep(opts: {
           effort: currentEffort,
         });
       }
+    }
 
-      providerOptions = {
-        anthropic: { effort: currentEffort },
-      };
+    // --- Build Anthropic provider options (thinking + effort) ---
+    const anthropicOpts: Record<string, any> = {};
+    if (hasThinkingSupport && opts.thinkingBudget) {
+      anthropicOpts.thinking = { type: "enabled", budgetTokens: opts.thinkingBudget };
+    }
+    if (hasEffortSupport) {
+      anthropicOpts.effort = currentEffort;
+    }
+    if (Object.keys(anthropicOpts).length > 0) {
+      providerOptions = { anthropic: anthropicOpts };
     }
 
     // --- Model escalation: persistent failures → escalation model ---
@@ -162,6 +172,7 @@ export function createInteractivePrepareStep(opts: {
   dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
+  thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   return createPrepareStep({
@@ -172,6 +183,7 @@ export function createInteractivePrepareStep(opts: {
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
+    thinkingBudget: opts.thinkingBudget,
     getEscalationModel: opts.getEscalationModel,
   });
 }
@@ -183,6 +195,7 @@ export function createHeadlessPrepareStep(opts: {
   dynamicContext?: string;
   modelId?: string;
   defaultEffort?: EffortLevel;
+  thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
 }): PrepareStepFn {
   return createPrepareStep({
@@ -193,6 +206,7 @@ export function createHeadlessPrepareStep(opts: {
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
+    thinkingBudget: opts.thinkingBudget,
     getEscalationModel: opts.getEscalationModel,
   });
 }

@@ -54,6 +54,7 @@ export async function createInteractiveAgent(
       dynamicContext: options.dynamicContext,
       modelId,
       defaultEffort: "medium",
+      thinkingBudget: 8000,
       getEscalationModel,
     }),
   });
@@ -83,6 +84,7 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       stablePrefix: options.systemPrompt,
       modelId,
       defaultEffort: "medium",
+      thinkingBudget: 16000,
       getEscalationModel,
     }),
   });
