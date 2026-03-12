@@ -58,15 +58,13 @@ pnpm db:studio      # open Drizzle Studio
 - Schema lives in `packages/db/` — both apps import from `@aura/db/schema`
 
 ## Drizzle migration rules (CRITICAL)
-- **Every SQL migration file with multiple statements MUST have `-->statement-breakpoint` between each statement.**
+- **Every SQL migration file with multiple statements MUST have `--> statement-breakpoint` appended to the END of each statement line (same line, not a separate line).**
 - The journal has `breakpoints: true`, so Drizzle uses these markers to split the file into individual SQL commands.
 - Without the markers, Drizzle concatenates all statements into one string, and Postgres rejects multi-statement execution.
 - Example of a correct multi-statement migration:
 ```sql
-ALTER TABLE "notes" ADD COLUMN "summary" text;
--->statement-breakpoint
-ALTER TABLE "notes" ADD COLUMN "inject_in_context" boolean NOT NULL DEFAULT false;
--->statement-breakpoint
+ALTER TABLE "notes" ADD COLUMN "summary" text;--> statement-breakpoint
+ALTER TABLE "notes" ADD COLUMN "inject_in_context" boolean NOT NULL DEFAULT false;--> statement-breakpoint
 UPDATE "notes" SET "inject_in_context" = true WHERE "category" = 'skill';
 ```
 - Single-statement migrations (one CREATE TABLE, one ALTER TABLE) do NOT need the marker.
