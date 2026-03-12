@@ -58,7 +58,7 @@ export async function getExecutionWithConversation(execId: string) {
     .where(eq(conversationTraces.jobExecutionId, execId))
     .limit(1);
 
-  if (!trace) return { execution: exec, conversation: [] };
+  if (!trace) return { execution: exec, conversation: [], conversationTraceId: null };
 
   const msgs = await db
     .select()
@@ -81,7 +81,7 @@ export async function getExecutionWithConversation(execId: string) {
     parts: parts.filter((p) => p.messageId === msg.id),
   }));
 
-  return { execution: exec, conversation };
+  return { execution: exec, conversation, conversationTraceId: trace.id };
 }
 
 export async function toggleJobEnabled(id: string, enabled: boolean) {
