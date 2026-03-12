@@ -219,6 +219,14 @@ function UserMessageBlock({ text }: { text: string }) {
 }
 
 function AssistantStepBlock({ msg, stepIndex }: { msg: ConversationMessageWithParts; stepIndex: number }) {
+  const stepTokenUsage = msg.tokenUsage as {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+    outputTokenDetails?: { reasoningTokens?: number };
+  } | null;
+
   return (
     <div className="border rounded-md">
       <div className="flex items-center gap-2 px-3 py-2 bg-muted/30">
@@ -226,7 +234,20 @@ function AssistantStepBlock({ msg, stepIndex }: { msg: ConversationMessageWithPa
           Step {stepIndex}
         </Badge>
         <Badge variant="outline" className="text-[10px]">assistant</Badge>
-        <span className="text-xs text-muted-foreground ml-auto">
+        {msg.modelId && (
+          <span className="text-[10px] text-muted-foreground font-mono">
+            {msg.modelId}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground ml-auto flex items-center gap-2">
+          {stepTokenUsage && (
+            <span className="font-mono text-[10px]">
+              {(stepTokenUsage.inputTokens ?? 0).toLocaleString()} in / {(stepTokenUsage.outputTokens ?? 0).toLocaleString()} out
+              {stepTokenUsage.outputTokenDetails?.reasoningTokens
+                ? ` (${stepTokenUsage.outputTokenDetails.reasoningTokens.toLocaleString()} reasoning)`
+                : ""}
+            </span>
+          )}
           {formatDate(msg.createdAt)}
         </span>
       </div>

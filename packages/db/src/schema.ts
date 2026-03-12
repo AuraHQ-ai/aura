@@ -17,6 +17,7 @@ import {
   check,
   primaryKey,
   smallint,
+  numeric,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -395,6 +396,52 @@ export const jobExecutions = pgTable(
   ],
 );
 
+// ── Token usage types ────────────────────────────────────────────────────────
+
+export interface DetailedTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  inputTokenDetails?: {
+    noCacheTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  };
+  outputTokenDetails?: {
+    textTokens?: number;
+    reasoningTokens?: number;
+  };
+}
+
+// ── Model Pricing ───────────────────────────────────────────────────────────
+
+export const modelPricing = pgTable(
+  "model_pricing",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    modelId: text("model_id").notNull(),
+    tokenType: text("token_type").notNull(),
+    pricePerMillion: numeric("price_per_million").notNull(),
+    effectiveFrom: date("effective_from", { mode: "date" }).notNull(),
+    effectiveUntil: date("effective_until", { mode: "date" }),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("model_pricing_model_token_date_unique").on(
+      table.modelId,
+      table.tokenType,
+      table.effectiveFrom,
+    ),
+    index("model_pricing_model_id_idx").on(table.modelId),
+    check(
+      "model_pricing_token_type_check",
+      sql`${table.tokenType} IN ('input', 'cache_read', 'cache_write', 'output', 'reasoning')`,
+    ),
+  ],
+);
+
 // ── Conversation Traces + Messages + Parts (unified conversation persistence) ─
 
 export const conversationTraces = pgTable(
@@ -409,7 +456,8 @@ export const conversationTraces = pgTable(
     threadTs: text("thread_ts"),
     userId: text("user_id"),
     modelId: text("model_id"),
-    tokenUsage: jsonb("token_usage").$type<{ inputTokens: number; outputTokens: number; totalTokens: number }>(),
+    tokenUsage: jsonb("token_usage").$type<DetailedTokenUsage>(),
+    costUsd: numeric("cost_usd"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
@@ -435,6 +483,8 @@ export const conversationMessages = pgTable(
     role: text("role").notNull(),
     content: text("content"),
     orderIndex: integer("order_index").notNull(),
+    modelId: text("model_id"),
+    tokenUsage: jsonb("token_usage").$type<DetailedTokenUsage>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
@@ -910,3 +960,5 @@ export type ConversationMessage = typeof conversationMessages.$inferSelect;
 export type NewConversationMessage = typeof conversationMessages.$inferInsert;
 export type ConversationPart = typeof conversationParts.$inferSelect;
 export type NewConversationPart = typeof conversationParts.$inferInsert;
+export type ModelPricing = typeof modelPricing.$inferSelect;
+export type NewModelPricing = typeof modelPricing.$inferInsert;

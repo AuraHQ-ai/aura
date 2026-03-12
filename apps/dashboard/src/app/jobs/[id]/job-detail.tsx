@@ -10,9 +10,11 @@ import { ArrowLeft } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { Job, JobExecution } from "@schema";
 
+type ExecutionWithCost = JobExecution & { costUsd: string | null };
+
 interface JobData {
   job: Job;
-  executions: JobExecution[];
+  executions: ExecutionWithCost[];
 }
 
 export function JobDetail({ data }: { data: JobData }) {
@@ -76,6 +78,7 @@ export function JobDetail({ data }: { data: JobData }) {
                 <TableHead>Started</TableHead>
                 <TableHead>Finished</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Cost</TableHead>
                 <TableHead>Trigger</TableHead>
                 <TableHead>Error</TableHead>
               </TableRow>
@@ -101,6 +104,9 @@ export function JobDetail({ data }: { data: JobData }) {
                       {exec.status}
                     </Badge>
                   </TableCell>
+                  <TableCell className="text-sm font-mono text-muted-foreground">
+                    {exec.costUsd ? `$${parseFloat(exec.costUsd).toFixed(4)}` : "—"}
+                  </TableCell>
                   <TableCell className="text-sm">{exec.trigger}</TableCell>
                   <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
                     {exec.error || "—"}
@@ -109,7 +115,7 @@ export function JobDetail({ data }: { data: JobData }) {
               ))}
               {executions.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     No executions yet
                   </TableCell>
                 </TableRow>

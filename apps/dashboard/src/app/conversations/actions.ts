@@ -98,6 +98,7 @@ export async function getConversations(
       messageCount: messageCounts[trace.id] ?? 0,
       sourceLabel,
       tokenUsage,
+      costUsd: trace.costUsd,
     };
   });
 

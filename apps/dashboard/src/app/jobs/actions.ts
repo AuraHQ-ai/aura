@@ -37,7 +37,30 @@ export async function getJob(id: string) {
     .orderBy(desc(jobExecutions.startedAt))
     .limit(50);
 
-  return { job, executions };
+  const execIds = executions.map((e) => e.id);
+  let execCosts: Record<string, string | null> = {};
+  if (execIds.length > 0) {
+    const costRows = await db
+      .select({
+        jobExecutionId: conversationTraces.jobExecutionId,
+        costUsd: conversationTraces.costUsd,
+      })
+      .from(conversationTraces)
+      .where(sql`${conversationTraces.jobExecutionId} IN ${execIds}`);
+
+    execCosts = Object.fromEntries(
+      costRows
+        .filter((r) => r.jobExecutionId != null)
+        .map((r) => [r.jobExecutionId!, r.costUsd]),
+    );
+  }
+
+  const executionsWithCost = executions.map((exec) => ({
+    ...exec,
+    costUsd: execCosts[exec.id] ?? null,
+  }));
+
+  return { job, executions: executionsWithCost };
 }
 
 export async function getExecution(execId: string) {
@@ -59,11 +82,11 @@ export async function getExecutionWithConversation(execId: string) {
     .where(eq(conversationTraces.jobExecutionId, execId))
     .limit(1);
 
-  if (!trace) return { execution: exec, conversation: [], conversationTraceId: null };
+  if (!trace) return { execution: exec, conversation: [], conversationTraceId: null, costUsd: null };
 
   const conversation = await fetchConversationWithParts(trace.id);
 
-  return { execution: exec, conversation, conversationTraceId: trace.id };
+  return { execution: exec, conversation, conversationTraceId: trace.id, costUsd: trace.costUsd };
 }
 
 export async function toggleJobEnabled(id: string, enabled: boolean) {

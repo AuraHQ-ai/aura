@@ -21,6 +21,7 @@ interface ConversationRow {
     outputTokens?: number;
     totalTokens?: number;
   } | null;
+  costUsd: string | null;
   messageCount: number;
   createdAt: Date;
   channelId: string | null;
@@ -93,6 +94,7 @@ export function ConversationsTable({ conversations, total, page, pageSize }: Pro
             <TableHead>Source</TableHead>
             <TableHead>Source Label</TableHead>
             <TableHead>Model</TableHead>
+            <TableHead>Cost</TableHead>
             <TableHead>Tokens</TableHead>
             <TableHead>Messages</TableHead>
           </TableRow>
@@ -118,6 +120,9 @@ export function ConversationsTable({ conversations, total, page, pageSize }: Pro
               <TableCell className="text-sm text-muted-foreground font-mono">
                 {conv.modelId ?? "—"}
               </TableCell>
+              <TableCell className="text-sm text-muted-foreground font-mono">
+                {conv.costUsd ? `$${parseFloat(conv.costUsd).toFixed(4)}` : "—"}
+              </TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {conv.tokenUsage
                   ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
@@ -130,7 +135,7 @@ export function ConversationsTable({ conversations, total, page, pageSize }: Pro
           ))}
           {conversations.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+              <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                 No conversations found
               </TableCell>
             </TableRow>

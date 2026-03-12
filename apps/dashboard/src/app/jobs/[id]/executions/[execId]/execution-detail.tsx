@@ -14,6 +14,7 @@ interface ExecutionData {
   execution: JobExecution;
   conversation: ConversationMessageWithParts[];
   conversationTraceId?: string | null;
+  costUsd?: string | null;
 }
 
 export function ExecutionDetail({
@@ -23,7 +24,7 @@ export function ExecutionDetail({
   data: ExecutionData;
   jobId: string;
 }) {
-  const { execution, conversation, conversationTraceId } = data;
+  const { execution, conversation, conversationTraceId, costUsd } = data;
 
   const tokenUsage = execution.tokenUsage as {
     inputTokens?: number;
@@ -69,7 +70,7 @@ export function ExecutionDetail({
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-5">
         <Card>
           <CardHeader>
             <CardTitle>Started</CardTitle>
@@ -85,6 +86,16 @@ export function ExecutionDetail({
           <CardContent>
             <span className="text-sm">
               {formatDate(execution.finishedAt)}
+            </span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Cost</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <span className="text-sm font-mono">
+              {costUsd ? `$${parseFloat(costUsd).toFixed(4)}` : "—"}
             </span>
           </CardContent>
         </Card>

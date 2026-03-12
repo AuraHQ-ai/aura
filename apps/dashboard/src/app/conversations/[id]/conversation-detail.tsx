@@ -24,7 +24,18 @@ export function ConversationDetail({ data }: { data: ConversationData }) {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
+    inputTokenDetails?: {
+      noCacheTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+    };
+    outputTokenDetails?: {
+      textTokens?: number;
+      reasoningTokens?: number;
+    };
   } | null;
+
+  const costUsd = (trace as any).costUsd as string | null;
 
   return (
     <>
@@ -57,7 +68,7 @@ export function ConversationDetail({ data }: { data: ConversationData }) {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-5">
         <Card>
           <CardHeader>
             <CardTitle>Timestamp</CardTitle>
@@ -94,13 +105,38 @@ export function ConversationDetail({ data }: { data: ConversationData }) {
         </Card>
         <Card>
           <CardHeader>
+            <CardTitle>Cost</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <span className="text-sm font-mono">
+              {costUsd ? `$${parseFloat(costUsd).toFixed(4)}` : "—"}
+            </span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
             <CardTitle>Tokens</CardTitle>
           </CardHeader>
           <CardContent>
             {tokenUsage ? (
               <div className="text-sm space-y-0.5">
                 <div>In: {tokenUsage.inputTokens?.toLocaleString() ?? "—"}</div>
+                {tokenUsage.inputTokenDetails && (
+                  <div className="text-xs text-muted-foreground pl-2">
+                    {tokenUsage.inputTokenDetails.cacheReadTokens != null && (
+                      <span>cache read: {tokenUsage.inputTokenDetails.cacheReadTokens.toLocaleString()} </span>
+                    )}
+                    {tokenUsage.inputTokenDetails.cacheWriteTokens != null && (
+                      <span>write: {tokenUsage.inputTokenDetails.cacheWriteTokens.toLocaleString()}</span>
+                    )}
+                  </div>
+                )}
                 <div>Out: {tokenUsage.outputTokens?.toLocaleString() ?? "—"}</div>
+                {tokenUsage.outputTokenDetails?.reasoningTokens != null && tokenUsage.outputTokenDetails.reasoningTokens > 0 && (
+                  <div className="text-xs text-muted-foreground pl-2">
+                    reasoning: {tokenUsage.outputTokenDetails.reasoningTokens.toLocaleString()}
+                  </div>
+                )}
                 <div className="text-muted-foreground">Total: {tokenUsage.totalTokens?.toLocaleString() ?? "—"}</div>
               </div>
             ) : (

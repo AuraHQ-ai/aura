@@ -16,6 +16,8 @@ import {
   updateConversationTraceUsage,
   type Step as ConversationStep,
 } from "./persist-conversation.js";
+import type { StepUsage } from "../lib/cost-calculator.js";
+import type { DetailedTokenUsage } from "@aura/db/schema";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -226,6 +228,14 @@ export async function executeJob(
         output: tr.output,
       })),
       finishReason: step.finishReason,
+      modelId: step.response?.modelId,
+      usage: step.usage ? {
+        inputTokens: step.usage.inputTokens ?? 0,
+        outputTokens: step.usage.outputTokens ?? 0,
+        totalTokens: step.usage.totalTokens ?? 0,
+        inputTokenDetails: step.usage.inputTokenDetails,
+        outputTokenDetails: step.usage.outputTokenDetails,
+      } : undefined,
     }));
     await persistConversationSteps(conversationId, conversationSteps, conversationOrderIndex);
 
@@ -242,14 +252,29 @@ export async function executeJob(
       })),
     }));
 
-    const tokenUsage = {
+    const tokenUsage: DetailedTokenUsage = {
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
       totalTokens: usage.totalTokens ?? 0,
+      inputTokenDetails: usage.inputTokenDetails,
+      outputTokenDetails: usage.outputTokenDetails,
     };
 
-    // Update trace with token usage
-    await updateConversationTraceUsage(conversationId, tokenUsage);
+    const stepUsages: StepUsage[] = steps
+      .filter((step) => step.response?.modelId && step.usage)
+      .map((step) => ({
+        modelId: step.response!.modelId!,
+        usage: {
+          inputTokens: step.usage!.inputTokens ?? 0,
+          outputTokens: step.usage!.outputTokens ?? 0,
+          totalTokens: step.usage!.totalTokens ?? 0,
+          inputTokenDetails: step.usage!.inputTokenDetails,
+          outputTokenDetails: step.usage!.outputTokenDetails,
+        },
+      }));
+
+    // Update trace with token usage + cost
+    await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);
 
     // Update execution trace with results
     await db
