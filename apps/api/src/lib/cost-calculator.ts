@@ -145,15 +145,3 @@ export async function computeConversationCost(
 
   return totalCost;
 }
-
-/**
- * Compute cost for a single usage record with a known model.
- */
-export async function computeSingleStepCost(
-  modelId: string,
-  usage: DetailedTokenUsage,
-  asOfDate: Date = new Date(),
-): Promise<number> {
-  const pricing = await lookupPricing(modelId, asOfDate);
-  return computeStepCost(usage, pricing);
-}
