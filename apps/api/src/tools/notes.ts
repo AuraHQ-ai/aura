@@ -64,7 +64,7 @@ export function createNoteTools(context?: ScheduleContext) {
   return {
     save_note: defineTool({
       description:
-        "Create a new note or fully overwrite an existing one. Notes use a three-tier hierarchy: 'skill' (durable playbooks/protocols), 'plan' (ephemeral work-in-progress with expiry), 'knowledge' (general reference, default). Use for new notes or complete rewrites. For partial edits, use edit_note instead.",
+        "Create a new note or fully overwrite an existing one. Notes use a three-tier hierarchy: 'skill' (durable playbooks/protocols), 'plan' (ephemeral work-in-progress with expiry), 'knowledge' (general reference, default). Use for new notes or complete rewrites. For partial edits, use edit_note instead. Always set a concise summary (max 250 chars) -- it powers the auto-generated notes index in every prompt.",
       inputSchema: z.object({
         topic: z
           .string()
@@ -80,6 +80,28 @@ export function createNoteTools(context?: ScheduleContext) {
           .describe(
             "Note category: 'skill' for durable playbooks, 'plan' for ephemeral work-in-progress, 'knowledge' for general reference. Defaults to 'knowledge' for new notes. Omit to preserve existing category on update.",
           ),
+        summary: z
+          .string()
+          .max(250)
+          .optional()
+          .describe(
+            "A concise one-line summary (max 250 chars) for the auto-generated notes index. Skills: 'Load when: [trigger conditions]'. Knowledge: describe contents. Omit on update to preserve existing summary.",
+          ),
+        inject_in_context: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether this note should appear in the auto-generated notes index injected into every prompt. Default false -- only promote important, curated notes.",
+          ),
+        importance: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Importance for sort order within category in the notes index (1-100, higher = more prominent). Default 50.",
+          ),
         expires_in: z
           .string()
           .optional()
@@ -87,7 +109,7 @@ export function createNoteTools(context?: ScheduleContext) {
             "When this note should expire, e.g. '2 hours', '3 days', '1 week'. Mainly useful for plan notes. Omit for no expiry.",
           ),
       }),
-      execute: async ({ topic, content, category, expires_in }) => {
+      execute: async ({ topic, content, category, summary, inject_in_context, importance, expires_in }) => {
         try {
           if (
             topic === "self-directive" &&
@@ -120,6 +142,15 @@ export function createNoteTools(context?: ScheduleContext) {
           if (category !== undefined) {
             updateSet.category = category;
           }
+          if (summary !== undefined) {
+            updateSet.summary = summary;
+          }
+          if (inject_in_context !== undefined) {
+            updateSet.injectInContext = inject_in_context;
+          }
+          if (importance !== undefined) {
+            updateSet.importance = importance;
+          }
           if (expires_in !== undefined) {
             updateSet.expiresAt = expiresAt;
           }
@@ -130,6 +161,9 @@ export function createNoteTools(context?: ScheduleContext) {
               topic,
               content,
               category: effectiveCategory,
+              summary: summary ?? null,
+              injectInContext: inject_in_context ?? false,
+              importance: importance ?? 50,
               expiresAt,
               updatedAt: savedAt,
             })
@@ -163,7 +197,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
     read_note: defineTool({
       description:
-        "Read a note by topic. Returns the content with line numbers so you can reference specific lines for edit_note's replace_lines or insert_after_line operations. Check the notes-index first to orient, then use search_notes to find, then read_note to load.",
+        "Read a note by topic. Returns the content with line numbers so you can reference specific lines for edit_note's replace_lines or insert_after_line operations. Check the notes index in context first to orient, then use search_notes to find, then read_note to load.",
       inputSchema: z.object({
         topic: z.string().describe("The topic key of the note to read"),
       }),
@@ -268,7 +302,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
     edit_note: defineTool({
       description:
-        "Surgically edit an existing note without rewriting the whole thing. Supports: 'append' (add to end), 'prepend' (add to start), 'replace_lines' (replace a range of lines), 'insert_after_line' (insert after a specific line). Always use read_note first to see line numbers. Prefer this over save_note for partial updates.",
+        "Surgically edit an existing note without rewriting the whole thing. Supports: 'append' (add to end), 'prepend' (add to start), 'replace_lines' (replace a range of lines), 'insert_after_line' (insert after a specific line). Always use read_note first to see line numbers. Prefer this over save_note for partial updates. Optionally update the summary for the auto-generated notes index.",
       inputSchema: z.object({
         topic: z.string().describe("The topic key of the note to edit"),
         operation: z
@@ -277,6 +311,28 @@ export function createNoteTools(context?: ScheduleContext) {
         content: z
           .string()
           .describe("The new content to append, prepend, or insert"),
+        summary: z
+          .string()
+          .max(250)
+          .optional()
+          .describe(
+            "Update the note's summary (max 250 chars) for the auto-generated notes index. Omit to keep existing summary.",
+          ),
+        inject_in_context: z
+          .boolean()
+          .optional()
+          .describe(
+            "Whether this note should appear in the auto-generated notes index. Omit to keep existing value.",
+          ),
+        importance: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Importance for sort order (1-100, higher = more prominent). Omit to keep existing value.",
+          ),
         start_line: z
           .number()
           .optional()
@@ -300,6 +356,9 @@ export function createNoteTools(context?: ScheduleContext) {
         topic,
         operation,
         content,
+        summary,
+        inject_in_context,
+        importance,
         start_line,
         end_line,
         line,
@@ -386,9 +445,23 @@ export function createNoteTools(context?: ScheduleContext) {
           }
 
           const savedAt = new Date();
+          const editUpdate: Record<string, unknown> = {
+            content: newContent,
+            embedding: null,
+            updatedAt: savedAt,
+          };
+          if (summary !== undefined) {
+            editUpdate.summary = summary;
+          }
+          if (inject_in_context !== undefined) {
+            editUpdate.injectInContext = inject_in_context;
+          }
+          if (importance !== undefined) {
+            editUpdate.importance = importance;
+          }
           await db
             .update(notes)
-            .set({ content: newContent, embedding: null, updatedAt: savedAt })
+            .set(editUpdate)
             .where(eq(notes.topic, topic));
 
           updateNoteEmbedding(newContent, topic, savedAt);
@@ -466,7 +539,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
     search_notes: defineTool({
       description:
-        "Full-text search across all notes content. Use this before reading individual notes when looking for a keyword or term — saves tool calls vs. list_notes + sequential read_note. Supports two modes: 'text' (default, keyword search) and 'semantic' (vector similarity for conceptual matches). The navigation pattern is: notes-index (orient) → search_notes (find) → read_note (load).",
+        "Full-text search across all notes content. Use this before reading individual notes when looking for a keyword or term — saves tool calls vs. list_notes + sequential read_note. Supports two modes: 'text' (default, keyword search) and 'semantic' (vector similarity for conceptual matches). The navigation pattern is: notes index (orient) → search_notes (find) → read_note (load).",
       inputSchema: z.object({
         query: z
           .string()

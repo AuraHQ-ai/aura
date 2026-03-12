@@ -16,7 +16,7 @@ import { logger } from "../lib/logger.js";
 import { getMainModelId } from "../lib/ai.js";
 
 export interface AssembledPrompt {
-  /** Stable across all requests: personality + self-directive + notes-index + skill-index (cached globally) */
+  /** Stable across all requests: personality + self-directive + auto-generated notes index (cached globally) */
   stablePrefix: string;
   /** Stable within a conversation thread: channel + user + memories + conversations + thread (cached per-thread) */
   conversationContext: string;

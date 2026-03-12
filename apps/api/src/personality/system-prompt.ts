@@ -1,9 +1,8 @@
-import { eq } from "drizzle-orm";
+import { eq, or, and, isNull, gt, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { notes } from "@aura/db/schema";
 import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
-import { buildSkillIndex } from "../lib/skill-index.js";
 import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
@@ -99,7 +98,7 @@ These run continuously, not just when asked:
 - **Heartbeat**: A cron runs every 30 minutes and processes due jobs. One-shots fire at their scheduled time. Recurring jobs are evaluated against their cron schedule and frequency limits. The heartbeat also expires stale plan notes and flags abandoned work. You don't manage the heartbeat -- it runs automatically.
 - **Jobs**: Use create_job to codify recurring value-creating work. Each job has a playbook (execution guide) and frequency limits (so the heartbeat won't spam). The heartbeat evaluates jobs every 30 minutes and executes what's due. Use list_jobs to review. When you spot a new type of recurring work -- through conversations, channel monitoring, or your own initiative -- create a job for it. Jobs are how you accumulate operational knowledge: each one is a unit of value you deliver repeatedly without being asked.
 - **Self-directive**: You have a persistent note called "self-directive" that is loaded into your context on every single invocation, right after your personality. It's your institutional memory -- whatever you've found most important to always have at hand. Update it with edit_note or save_note when you learn something fundamental. Keep it under ~2000 tokens: dense, high-signal, no fluff. When it grows too long, consolidate and prune. Review it periodically during heartbeats.
-- **Notes-index**: You also have a note called "notes-index" loaded into your context on every invocation, right after the self-directive. It's a table of contents of all your notes -- topics, categories, one-line descriptions. Use it to orient before reading notes. If it doesn't exist yet, create it by listing all notes and building a structured index. Keep it under ~4000 tokens. When you create or delete notes, update the index.
+- **Notes index**: Auto-generated from the \`summary\` column in the notes table. When creating or updating notes, set a concise summary (max 250 chars). Skills should use 'Load when: [trigger conditions]'. Knowledge notes describe contents. The index is injected into every prompt automatically.
 - **Subagents for parallelism**: When work can be split into independent pieces (e.g. checking multiple channels, analyzing multiple datasets, investigating multiple bugs), use \`run_subagent\` to fan out and run them concurrently. Call it multiple times in one tool-call block for true parallelism. Don't use subagents for sequential work that depends on previous results -- that's just overhead.
 
 ## Who you are
@@ -216,11 +215,11 @@ You have tools for Slack, email, calendar, BigQuery, notes, jobs, web, sandbox, 
 - If something looks urgent during a job, escalate immediately.
 
 Knowledge hierarchy:
-- **Skill notes** (category: 'skill') -- durable operational knowledge. Playbooks, checklists, protocols. Your available skills are listed at the bottom of this prompt -- use read_note to load the full skill before starting complex work.
+- **Skill notes** (category: 'skill') -- durable operational knowledge. Playbooks, checklists, protocols. Skills with \`injectInContext\` appear in the notes index below; use search_notes to find others, then read_note to load the full skill before starting complex work.
 - **Plan notes** (category: 'plan') -- ephemeral work-in-progress. Have expiry dates. Use save_note with category 'plan' and an expires_in.
 - **Knowledge notes** (category: 'knowledge') -- general reference. Business map, gaps log, team facts. The default category.
 - **Memories** (automatic) -- facts about people, decisions, conversations. Extracted automatically.
-- **Navigating notes**: notes-index is always in context. Pattern: index (orient) -> search_notes (find) -> read_note (load).
+- **Navigating notes**: The auto-generated notes index is always in context. Pattern: index (orient) -> search_notes (find) -> read_note (load). Set good summaries when saving notes.
 
 Step budget:
 - You have up to 350 tool calls per job execution. Plan your work to fit within this budget.
@@ -391,7 +390,7 @@ function formatConversations(conversations: ConversationThread[]): string {
 }
 
 export interface SystemPromptLayers {
-  /** Stable across ALL requests: personality + self-directive + notes-index + skill-index */
+  /** Stable across ALL requests: personality + self-directive + auto-generated notes index */
   stablePrefix: string;
   /** Stable within a conversation thread: channel context + user profile + memories + conversations + thread context */
   conversationContext: string;
@@ -400,8 +399,8 @@ export interface SystemPromptLayers {
 /**
  * Build the stable prefix shared by both interactive and job execution paths.
  *
- * Returns: PERSONALITY + self-directive + notes-index + skill-index.
- * Async because it queries notes and skills from the database.
+ * Returns: PERSONALITY + self-directive + auto-generated notes index.
+ * Async because it queries notes from the database.
  */
 export async function buildStablePrefix(): Promise<string> {
   const parts: string[] = [];
@@ -434,35 +433,65 @@ export async function buildStablePrefix(): Promise<string> {
     logger.warn("Failed to load self-directive note", { error });
   }
 
-  const NOTES_INDEX_MAX_CHARS = 16000;
   try {
-    const indexRows = await db
-      .select({ content: notes.content })
+    const now = new Date();
+    const allNotes = await db
+      .select({ topic: notes.topic, category: notes.category, summary: notes.summary })
       .from(notes)
-      .where(eq(notes.topic, "notes-index"))
-      .limit(1);
-    if (indexRows[0]?.content) {
-      let indexContent = indexRows[0].content;
-      if (indexContent.length > NOTES_INDEX_MAX_CHARS) {
-        indexContent =
-          indexContent.slice(0, NOTES_INDEX_MAX_CHARS) +
-          "\n\n[truncated — notes-index exceeded ~4000 token limit, prune it]";
-        logger.warn("Notes-index note truncated", {
-          originalLength: indexRows[0].content.length,
+      .where(
+        and(
+          eq(notes.injectInContext, true),
+          or(isNull(notes.expiresAt), gt(notes.expiresAt, now))
+        )
+      )
+      .orderBy(notes.category, desc(notes.importance), notes.topic);
+
+    if (allNotes.length > 0) {
+      const grouped = new Map<string, string[]>();
+      for (const n of allNotes) {
+        const cat = n.category || "knowledge";
+        if (!grouped.has(cat)) grouped.set(cat, []);
+        const summaryPart = n.summary ? `: ${n.summary}` : "";
+        grouped.get(cat)!.push(`- ${n.topic}${summaryPart}`);
+      }
+
+      const categoryOrder = ["skill", "knowledge", "plan"];
+      const categoryLabels: Record<string, string> = {
+        skill: "Skills (load with read_note before complex tasks)",
+        knowledge: "Knowledge (reference)",
+        plan: "Plans (work-in-progress)",
+      };
+
+      let index = "\n## Your notes\n";
+      for (const cat of categoryOrder) {
+        const items = grouped.get(cat);
+        if (items && items.length > 0) {
+          index += `\n### ${categoryLabels[cat] || cat}\n${items.join("\n")}\n`;
+        }
+      }
+      for (const [cat, items] of grouped) {
+        if (!categoryOrder.includes(cat) && items.length > 0) {
+          index += `\n### ${cat}\n${items.join("\n")}\n`;
+        }
+      }
+
+      const NOTES_INDEX_MAX_CHARS = 16000;
+      if (index.length > NOTES_INDEX_MAX_CHARS) {
+        const originalLength = index.length;
+        index =
+          index.slice(0, NOTES_INDEX_MAX_CHARS) +
+          "\n\n[truncated — notes index exceeded ~4000 token limit, prune old notes or shorten summaries]";
+        logger.warn("Notes index truncated", {
+          originalLength,
+          noteCount: allNotes.length,
           limit: NOTES_INDEX_MAX_CHARS,
         });
       }
-      parts.push(
-        `\n## Notes index\n\nMaster index of all your notes. Use read_note() to load full content, search_notes() to grep across all notes.\n\n${indexContent}`,
-      );
+
+      parts.push(index);
     }
   } catch (error) {
-    logger.warn("Failed to load notes-index note", { error });
-  }
-
-  const skillIndex = await buildSkillIndex();
-  if (skillIndex) {
-    parts.push(skillIndex);
+    logger.warn("Failed to build notes index", { error });
   }
 
   return parts.join("\n\n");

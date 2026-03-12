@@ -249,7 +249,7 @@ export function withCacheControl(systemPrompt: string) {
  * Build a multi-breakpoint cached system message array for Anthropic prompt caching.
  *
  * Returns 2–3 system messages with cache control on the stable layers:
- *   1. stablePrefix (cached globally): personality + self-directive + notes-index + skill-index
+ *   1. stablePrefix (cached globally): personality + self-directive + auto-generated notes index
  *   2. conversationContext (cached per-thread): channel + user + memories + conversations + thread
  *   3. dynamicContext (uncached, optional): time, model, channelId, threadTs
  *

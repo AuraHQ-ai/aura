@@ -274,6 +274,13 @@
       "when": 1773744000000,
       "tag": "0038_unified_conversation_traces",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1773830400000,
+      "tag": "0039_add_notes_summary",
+      "breakpoints": true
     }
   ]
 }
