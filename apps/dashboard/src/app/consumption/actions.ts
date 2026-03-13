@@ -187,7 +187,12 @@ export async function getConsumptionData(): Promise<ConsumptionData> {
       SELECT
         COALESCE(SUM(("token_usage"->'inputTokenDetails'->>'cacheReadTokens')::bigint), 0) AS cache_read,
         COALESCE(SUM(("token_usage"->'inputTokenDetails'->>'cacheWriteTokens')::bigint), 0) AS cache_write,
-        COALESCE(SUM(("token_usage"->'inputTokenDetails'->>'noCacheTokens')::bigint), 0) AS uncached,
+        COALESCE(SUM(COALESCE(
+          ("token_usage"->'inputTokenDetails'->>'noCacheTokens')::bigint,
+          GREATEST(0, ("token_usage"->>'inputTokens')::bigint
+            - COALESCE(("token_usage"->'inputTokenDetails'->>'cacheReadTokens')::bigint, 0)
+            - COALESCE(("token_usage"->'inputTokenDetails'->>'cacheWriteTokens')::bigint, 0))
+        )), 0) AS uncached,
         COALESCE(SUM(("token_usage"->>'outputTokens')::bigint), 0) AS output_tokens
       FROM conversation_traces
       WHERE cost_usd IS NOT NULL AND created_at >= ${thirtyDaysAgo}
