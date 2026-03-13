@@ -36,6 +36,10 @@ export interface ChannelSession {
   conversationContext?: string;
   isDirectMessage: boolean;
   userTimezone?: string;
+  /** Human-readable channel name (e.g. "#dev (C0BNVKS77)"). Falls back to conversationId. */
+  channelDisplayName?: string;
+  /** True when conversationContext contains recent channel messages rather than a thread. */
+  isChannelHistory?: boolean;
   /** Additional user IDs to look up in the people DB (e.g. thread participants). */
   participantUserIds?: string[];
 }
@@ -106,7 +110,7 @@ export async function buildCorePrompt(
     ? "DM"
     : session.channel === "dashboard"
       ? "Dashboard chat"
-      : session.conversationId;
+      : (session.channelDisplayName ?? session.conversationId);
 
   const channelType = session.isDirectMessage ? "dm" : "public_channel";
 
@@ -117,7 +121,7 @@ export async function buildCorePrompt(
     channelContext,
     channelType,
     threadContext: session.conversationContext,
-    isChannelHistory: false,
+    isChannelHistory: session.isChannelHistory ?? false,
     mentionedPeople,
     interlocutor: interlocutor ?? undefined,
   });
