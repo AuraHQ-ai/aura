@@ -35,6 +35,8 @@ export interface ChannelSession {
   /** Pre-formatted recent messages — each connector provides its own format. */
   conversationContext?: string;
   isDirectMessage: boolean;
+  /** Specific channel type — when omitted, derived from isDirectMessage (dm vs public_channel). */
+  channelType?: "dm" | "public_channel" | "private_channel";
   userTimezone?: string;
   /** Human-readable channel name (e.g. "#dev (C0BNVKS77)"). Falls back to conversationId. */
   channelDisplayName?: string;
@@ -116,7 +118,7 @@ export async function buildCorePrompt(
       ? "Dashboard chat"
       : (session.channelDisplayName ?? session.conversationId);
 
-  const channelType = session.isDirectMessage ? "dm" : "public_channel";
+  const channelType = session.channelType ?? (session.isDirectMessage ? "dm" : "public_channel");
 
   const { stablePrefix, conversationContext } = await buildSystemPrompt({
     memories,

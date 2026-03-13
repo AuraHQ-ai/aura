@@ -63,19 +63,20 @@ export async function assemblePrompt(
     ]),
   ].filter((id) => id !== context.userId);
 
-  // Fetch user profile early so timezone is available for formatting
-  const userProfile = await getProfile(context.userId);
+  // Fetch user profile and resolve channel name in parallel
+  const [userProfile, channelDisplayName] = await Promise.all([
+    getProfile(context.userId),
+    (async (): Promise<string | undefined> => {
+      if (!context.isDm && client) {
+        const name = await resolveChannelName(client, context.channelId);
+        return name !== context.channelId
+          ? `#${name} (${context.channelId})`
+          : context.channelId;
+      }
+      return undefined;
+    })(),
+  ]);
   const userTimezone = userProfile?.timezone || undefined;
-
-  // Resolve channel name via Slack API before building the core prompt
-  let channelDisplayName: string | undefined;
-  if (!context.isDm && client) {
-    const name = await resolveChannelName(client, context.channelId);
-    channelDisplayName =
-      name !== context.channelId
-        ? `#${name} (${context.channelId})`
-        : context.channelId;
-  }
 
   // Format conversation context from live Slack data
   const useChannelFallback =
@@ -98,6 +99,7 @@ export async function assemblePrompt(
     messageText: queryText,
     conversationContext: threadContext,
     isDirectMessage: context.isDm,
+    channelType: context.channelType === "slack_list_item" ? "public_channel" : context.channelType,
     userTimezone,
     channelDisplayName,
     isChannelHistory,
