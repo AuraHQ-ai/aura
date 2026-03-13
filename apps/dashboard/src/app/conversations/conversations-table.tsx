@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Pagination } from "@/components/pagination";
-import { formatDate } from "@/lib/utils";
+import { formatDate, truncate } from "@/lib/utils";
 import { Search } from "lucide-react";
+import type { ThreadRow } from "./actions";
 
 interface ConversationRow {
   id: string;
@@ -26,16 +27,178 @@ interface ConversationRow {
   createdAt: Date;
   channelId: string | null;
   userId: string | null;
+  resolvedName: string | null;
+  messagePreview: string | null;
 }
+
+type ViewMode = "threads" | "invocations";
 
 interface Props {
   conversations: ConversationRow[];
+  threads: ThreadRow[];
   total: number;
   page: number;
   pageSize: number;
+  view: ViewMode;
 }
 
-export function ConversationsTable({ conversations, total, page, pageSize }: Props) {
+function ViewSwitcher({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
+  return (
+    <div className="inline-flex h-8 items-center justify-center rounded-md bg-muted p-0.5 text-muted-foreground">
+      <button
+        className={`inline-flex items-center justify-center whitespace-nowrap rounded px-2.5 py-1 text-[13px] font-medium transition-all cursor-pointer ${
+          view === "threads"
+            ? "bg-background text-foreground shadow"
+            : "hover:text-foreground"
+        }`}
+        onClick={() => onChange("threads")}
+      >
+        Threads
+      </button>
+      <button
+        className={`inline-flex items-center justify-center whitespace-nowrap rounded px-2.5 py-1 text-[13px] font-medium transition-all cursor-pointer ${
+          view === "invocations"
+            ? "bg-background text-foreground shadow"
+            : "hover:text-foreground"
+        }`}
+        onClick={() => onChange("invocations")}
+      >
+        Invocations
+      </button>
+    </div>
+  );
+}
+
+function formatPreview(name: string | null, preview: string | null): string {
+  const displayName = name ?? "Unknown";
+  if (!preview) return displayName;
+  const truncated = truncate(preview, 50);
+  return `${displayName} · "${truncated}"`;
+}
+
+function InvocationsTable({ conversations }: { conversations: ConversationRow[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Timestamp</TableHead>
+          <TableHead>Source</TableHead>
+          <TableHead>Preview</TableHead>
+          <TableHead>Model</TableHead>
+          <TableHead>Cost</TableHead>
+          <TableHead>Tokens</TableHead>
+          <TableHead>Steps</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {conversations.map((conv) => (
+          <TableRow key={conv.id}>
+            <TableCell className="text-sm text-muted-foreground">
+              <Link href={`/conversations/${conv.id}`} className="hover:underline">
+                {formatDate(conv.createdAt)}
+              </Link>
+            </TableCell>
+            <TableCell>
+              <Badge
+                variant={conv.sourceType === "interactive" ? "default" : "secondary"}
+              >
+                {conv.sourceType === "job_execution" ? "job" : "interactive"}
+              </Badge>
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
+              {conv.sourceType === "job_execution"
+                ? conv.sourceLabel
+                : formatPreview(conv.resolvedName, conv.messagePreview)}
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground font-mono">
+              {conv.modelId ?? "—"}
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground font-mono">
+              {conv.costUsd ? `$${parseFloat(conv.costUsd).toFixed(4)}` : "—"}
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground">
+              {conv.tokenUsage
+                ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
+                : "—"}
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground">
+              {conv.messageCount}
+            </TableCell>
+          </TableRow>
+        ))}
+        {conversations.length === 0 && (
+          <TableRow>
+            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+              No conversations found
+            </TableCell>
+          </TableRow>
+        )}
+      </TableBody>
+    </Table>
+  );
+}
+
+function ThreadsTable({ threads }: { threads: ThreadRow[] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Started</TableHead>
+          <TableHead>Last Active</TableHead>
+          <TableHead>Source</TableHead>
+          <TableHead>Preview</TableHead>
+          <TableHead>Messages</TableHead>
+          <TableHead>Cost</TableHead>
+          <TableHead>Tokens</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {threads.map((thread) => (
+          <TableRow key={`${thread.channelId}::${thread.threadTs}`}>
+            <TableCell className="text-sm text-muted-foreground">
+              <Link href={`/conversations/${thread.firstTraceId}`} className="hover:underline">
+                {formatDate(thread.firstTraceAt)}
+              </Link>
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground">
+              {formatDate(thread.lastTraceAt)}
+            </TableCell>
+            <TableCell>
+              <Badge
+                variant={thread.sourceType === "interactive" ? "default" : "secondary"}
+              >
+                {thread.sourceType === "job_execution" ? "job" : "interactive"}
+              </Badge>
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
+              {formatPreview(thread.resolvedName, thread.messagePreview)}
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground">
+              {thread.traceCount}
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground font-mono">
+              {thread.totalCostUsd > 0 ? `$${thread.totalCostUsd.toFixed(4)}` : "—"}
+            </TableCell>
+            <TableCell className="text-sm text-muted-foreground">
+              {thread.totalTokens > 0
+                ? `${thread.inputTokens.toLocaleString()} / ${thread.outputTokens.toLocaleString()}`
+                : "—"}
+            </TableCell>
+          </TableRow>
+        ))}
+        {threads.length === 0 && (
+          <TableRow>
+            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+              No threads found
+            </TableCell>
+          </TableRow>
+        )}
+      </TableBody>
+    </Table>
+  );
+}
+
+export function ConversationsTable({ conversations, threads, total, page, pageSize, view }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -64,9 +227,14 @@ export function ConversationsTable({ conversations, total, page, pageSize }: Pro
     updateParams({ sourceType: value === "all" ? null : value });
   }
 
+  function handleViewChange(newView: ViewMode) {
+    updateParams({ view: newView === "threads" ? null : newView });
+  }
+
   return (
     <>
       <div className="flex items-center gap-2">
+        <ViewSwitcher view={view} onChange={handleViewChange} />
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -87,61 +255,11 @@ export function ConversationsTable({ conversations, total, page, pageSize }: Pro
         </Select>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Timestamp</TableHead>
-            <TableHead>Source</TableHead>
-            <TableHead>Source Label</TableHead>
-            <TableHead>Model</TableHead>
-            <TableHead>Cost</TableHead>
-            <TableHead>Tokens</TableHead>
-            <TableHead>Messages</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {conversations.map((conv) => (
-            <TableRow key={conv.id}>
-              <TableCell className="text-sm text-muted-foreground">
-                <Link href={`/conversations/${conv.id}`} className="hover:underline">
-                  {formatDate(conv.createdAt)}
-                </Link>
-              </TableCell>
-              <TableCell>
-                <Badge
-                  variant={conv.sourceType === "interactive" ? "default" : "secondary"}
-                >
-                  {conv.sourceType === "job_execution" ? "job" : "interactive"}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
-                {conv.sourceLabel}
-              </TableCell>
-              <TableCell className="text-sm text-muted-foreground font-mono">
-                {conv.modelId ?? "—"}
-              </TableCell>
-              <TableCell className="text-sm text-muted-foreground font-mono">
-                {conv.costUsd ? `$${parseFloat(conv.costUsd).toFixed(4)}` : "—"}
-              </TableCell>
-              <TableCell className="text-sm text-muted-foreground">
-                {conv.tokenUsage
-                  ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
-                  : "—"}
-              </TableCell>
-              <TableCell className="text-sm text-muted-foreground">
-                {conv.messageCount}
-              </TableCell>
-            </TableRow>
-          ))}
-          {conversations.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                No conversations found
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+      {view === "threads" ? (
+        <ThreadsTable threads={threads} />
+      ) : (
+        <InvocationsTable conversations={conversations} />
+      )}
 
       <Pagination total={total} pageSize={pageSize} page={page} />
     </>
