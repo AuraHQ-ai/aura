@@ -1,5 +1,4 @@
 import type { WebClient } from "@slack/web-api";
-import { buildDynamicContext } from "../personality/system-prompt.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { MessageContext } from "./context.js";
@@ -7,9 +6,7 @@ import { resolveChannelName } from "./context.js";
 import type { ConversationContext } from "./slack-context.js";
 import { formatConversationContext } from "./slack-context.js";
 import { buildCorePrompt } from "./core-prompt.js";
-import { getMainModelId } from "../lib/ai.js";
 import { getProfile } from "../users/profiles.js";
-import { logger } from "../lib/logger.js";
 
 export interface AssembledPrompt {
   stablePrefix: string;
@@ -105,16 +102,10 @@ export async function assemblePrompt(
     channelDisplayName,
     isChannelHistory,
     participantUserIds,
+    userProfile,
   });
 
-  // Rebuild dynamic context with Slack-specific channel/thread info
-  const modelId = await getMainModelId();
-  let dynamicContext = buildDynamicContext({
-    userTimezone: core.userProfile?.timezone || undefined,
-    modelId,
-    channelId: context.channelId,
-    threadTs: context.threadTs,
-  });
+  let dynamicContext = core.dynamicContext;
 
   // Slack List item notification guidance
   if (context.slackListItemContext) {

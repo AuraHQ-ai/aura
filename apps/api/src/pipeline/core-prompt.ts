@@ -42,6 +42,8 @@ export interface ChannelSession {
   isChannelHistory?: boolean;
   /** Additional user IDs to look up in the people DB (e.g. thread participants). */
   participantUserIds?: string[];
+  /** Pre-fetched user profile to avoid redundant DB lookups. */
+  userProfile?: UserProfile | null;
 }
 
 // ── Core Prompt ──────────────────────────────────────────────────────────────
@@ -101,7 +103,9 @@ export async function buildCorePrompt(
             excludeThreadTs: session.threadId,
           })
         : Promise.resolve([] as ConversationThread[]),
-      getProfile(session.userId),
+      session.userProfile !== undefined
+        ? Promise.resolve(session.userProfile)
+        : getProfile(session.userId),
       lookupMentionedPeople(participantIds),
       lookupPerson(session.userId),
     ]);
