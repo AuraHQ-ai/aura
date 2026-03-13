@@ -75,11 +75,11 @@ export function JobDetail({ data }: { data: JobData }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Started</TableHead>
-                <TableHead>Finished</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Cost</TableHead>
-                <TableHead>Trigger</TableHead>
+                <TableHead className="w-[140px]">Started</TableHead>
+                <TableHead className="w-[140px]">Finished</TableHead>
+                <TableHead className="w-[80px]">Status</TableHead>
+                <TableHead className="w-[80px]">Cost</TableHead>
+                <TableHead className="w-[80px]">Trigger</TableHead>
                 <TableHead>Error</TableHead>
               </TableRow>
             </TableHeader>
