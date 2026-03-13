@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { conversationTraces, conversationMessages, conversationParts, type DetailedTokenUsage } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
-import { computeConversationCost, type StepUsage } from "../lib/cost-calculator.js";
+import { computeConversationCost, sumStepUsages, type StepUsage } from "../lib/cost-calculator.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -277,6 +277,14 @@ export async function updateConversationTraceUsage(
 ): Promise<void> {
   try {
     let costUsd: string | null = null;
+
+    // Use cumulative tokens from stepUsages when available (the SDK's
+    // tokenUsage is just the *last* step, not the sum of all steps).
+    const cumulativeUsage =
+      stepUsages && stepUsages.length > 0
+        ? sumStepUsages(stepUsages)
+        : tokenUsage;
+
     if (stepUsages && stepUsages.length > 0) {
       try {
         const cost = await computeConversationCost(stepUsages);
@@ -292,7 +300,7 @@ export async function updateConversationTraceUsage(
     await db
       .update(conversationTraces)
       .set({
-        tokenUsage,
+        tokenUsage: cumulativeUsage,
         ...(costUsd != null && { costUsd }),
       })
       .where(eq(conversationTraces.id, conversationId));

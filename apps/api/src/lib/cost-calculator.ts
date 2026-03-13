@@ -171,3 +171,53 @@ export async function computeConversationCost(
 
   return totalCost;
 }
+
+/**
+ * Sum per-step usages into a single cumulative DetailedTokenUsage.
+ * Use this instead of the SDK's top-level usage (which is just the last step).
+ */
+export function sumStepUsages(steps: StepUsage[]): DetailedTokenUsage {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalTokens = 0;
+  let noCacheTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let textTokens = 0;
+  let reasoningTokens = 0;
+  let hasInputDetails = false;
+  let hasOutputDetails = false;
+
+  for (const step of steps) {
+    inputTokens += step.usage.inputTokens ?? 0;
+    outputTokens += step.usage.outputTokens ?? 0;
+    totalTokens += step.usage.totalTokens ?? 0;
+
+    const id = step.usage.inputTokenDetails;
+    if (id) {
+      hasInputDetails = true;
+      noCacheTokens += id.noCacheTokens ?? 0;
+      cacheReadTokens += id.cacheReadTokens ?? 0;
+      cacheWriteTokens += id.cacheWriteTokens ?? 0;
+    }
+
+    const od = step.usage.outputTokenDetails;
+    if (od) {
+      hasOutputDetails = true;
+      textTokens += od.textTokens ?? 0;
+      reasoningTokens += od.reasoningTokens ?? 0;
+    }
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(hasInputDetails && {
+      inputTokenDetails: { noCacheTokens, cacheReadTokens, cacheWriteTokens },
+    }),
+    ...(hasOutputDetails && {
+      outputTokenDetails: { textTokens, reasoningTokens },
+    }),
+  };
+}

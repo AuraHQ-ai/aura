@@ -47,17 +47,26 @@ export async function getConversations(
   const traceIds = traces.map((t) => t.id);
 
   let messageCounts: Record<string, number> = {};
+  let cumulativeTokens: Record<string, { inputTokens: number; outputTokens: number; totalTokens: number }> = {};
   if (traceIds.length > 0) {
     const rows = await db
       .select({
         conversationId: conversationMessages.conversationId,
         count: sql<number>`count(*)::int`,
+        inputTokens: sql<number>`coalesce(sum((token_usage->>'inputTokens')::int), 0)::int`,
+        outputTokens: sql<number>`coalesce(sum((token_usage->>'outputTokens')::int), 0)::int`,
+        totalTokens: sql<number>`coalesce(sum((token_usage->>'totalTokens')::int), 0)::int`,
       })
       .from(conversationMessages)
       .where(sql`${conversationMessages.conversationId} IN ${traceIds}`)
       .groupBy(conversationMessages.conversationId);
 
     messageCounts = Object.fromEntries(rows.map((r) => [r.conversationId, r.count]));
+    cumulativeTokens = Object.fromEntries(rows.map((r) => [r.conversationId, {
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      totalTokens: r.totalTokens,
+    }]));
   }
 
   const jobExecIds = traces
@@ -79,11 +88,18 @@ export async function getConversations(
   }
 
   const items = traces.map((trace) => {
-    const tokenUsage = trace.tokenUsage as {
+    const traceTokenUsage = trace.tokenUsage as {
       inputTokens?: number;
       outputTokens?: number;
       totalTokens?: number;
     } | null;
+
+    // Prefer cumulative tokens from conversation_messages (sum of all steps)
+    // over trace-level tokens (which may only reflect the last step for older conversations).
+    const cumulative = cumulativeTokens[trace.id];
+    const tokenUsage = cumulative && cumulative.totalTokens > 0
+      ? cumulative
+      : traceTokenUsage;
 
     let sourceLabel: string;
     if (trace.sourceType === "job_execution" && trace.jobExecutionId) {
@@ -113,6 +129,27 @@ export async function getConversation(id: string) {
   if (!trace) return null;
 
   const conversation = await fetchConversationWithParts(trace.id);
+
+  // Compute cumulative tokens from all assistant messages (sum of all steps).
+  // The trace-level tokenUsage may only reflect the last step for older conversations.
+  const [cumulative] = await db
+    .select({
+      inputTokens: sql<number>`coalesce(sum((token_usage->>'inputTokens')::int), 0)::int`,
+      outputTokens: sql<number>`coalesce(sum((token_usage->>'outputTokens')::int), 0)::int`,
+      totalTokens: sql<number>`coalesce(sum((token_usage->>'totalTokens')::int), 0)::int`,
+    })
+    .from(conversationMessages)
+    .where(eq(conversationMessages.conversationId, id));
+
+  // Override trace tokenUsage with cumulative if available
+  if (cumulative && cumulative.totalTokens > 0) {
+    (trace as any).tokenUsage = {
+      ...((trace.tokenUsage as any) ?? {}),
+      inputTokens: cumulative.inputTokens,
+      outputTokens: cumulative.outputTokens,
+      totalTokens: cumulative.totalTokens,
+    };
+  }
 
   let jobName: string | null = null;
   let jobId: string | null = null;
