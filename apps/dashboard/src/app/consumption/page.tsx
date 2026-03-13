@@ -2,12 +2,9 @@ import { getConsumptionData } from "./actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ConsumptionCharts } from "./consumption-charts";
 
-export const dynamic = "force-dynamic";
+import { formatCost } from "./utils";
 
-function formatCost(cost: number): string {
-  if (cost === 0) return "$0.00";
-  return cost < 0.01 ? "< $0.01" : `$${cost.toFixed(2)}`;
-}
+export const dynamic = "force-dynamic";
 
 export default async function ConsumptionPage() {
   const data = await getConsumptionData();

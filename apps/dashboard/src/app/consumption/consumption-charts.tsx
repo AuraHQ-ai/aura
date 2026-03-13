@@ -12,11 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { ConsumptionData } from "./actions";
-
-function formatCost(cost: number): string {
-  if (cost === 0) return "$0.00";
-  return cost < 0.01 ? "< $0.01" : `$${cost.toFixed(2)}`;
-}
+import { formatCost } from "./utils";
 
 export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
   const chartData = data.dailyCost.map((d) => ({
@@ -124,7 +120,7 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
               </TableHeader>
               <TableBody>
                 {data.perJob.map((j, i) => (
-                  <TableRow key={j.jobName || i}>
+                  <TableRow key={`${j.jobName}-${j.creatorName}-${i}`}>
                     <TableCell className="font-medium">{j.jobName || "Unknown"}</TableCell>
                     <TableCell>{j.creatorName || "—"}</TableCell>
                     <TableCell className="text-right">{j.executionCount}</TableCell>
