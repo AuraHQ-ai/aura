@@ -8,7 +8,7 @@ import {
   jobExecutions,
   userProfiles,
 } from "@schema";
-import { eq, desc, sql, and, type SQL } from "drizzle-orm";
+import { eq, desc, asc, sql, and, type SQL } from "drizzle-orm";
 import { fetchConversationWithParts } from "@/lib/queries";
 
 export async function getConversations(
@@ -372,5 +372,80 @@ export async function getConversation(id: string) {
     conversation,
     jobName,
     jobId,
+  };
+}
+
+export async function getThreadTraces(channelId: string, threadTs: string) {
+  const traces = await db
+    .select()
+    .from(conversationTraces)
+    .where(
+      and(
+        eq(conversationTraces.channelId, channelId),
+        eq(conversationTraces.threadTs, threadTs),
+      ),
+    )
+    .orderBy(asc(conversationTraces.createdAt));
+
+  if (traces.length === 0) return null;
+
+  const totalCost = traces.reduce(
+    (sum, t) => sum + (t.costUsd ? parseFloat(t.costUsd) : 0),
+    0,
+  );
+
+  const participants = [
+    ...new Set(traces.map((t) => t.userId).filter(Boolean)),
+  ] as string[];
+
+  let participantNames: Record<string, string> = {};
+  if (participants.length > 0) {
+    const profileRows = await db
+      .select({
+        slackUserId: userProfiles.slackUserId,
+        displayName: userProfiles.displayName,
+      })
+      .from(userProfiles)
+      .where(sql`${userProfiles.slackUserId} IN ${participants}`);
+
+    participantNames = Object.fromEntries(
+      profileRows.map((r) => [r.slackUserId, r.displayName]),
+    );
+  }
+
+  const firstTraceId = traces[0].id;
+  const [previewRow] = await db
+    .select({ content: conversationMessages.content })
+    .from(conversationMessages)
+    .where(
+      and(
+        eq(conversationMessages.conversationId, firstTraceId),
+        eq(conversationMessages.role, "user"),
+      ),
+    )
+    .orderBy(asc(conversationMessages.orderIndex))
+    .limit(1);
+
+  const conversationDataList = await Promise.all(
+    traces.map((t) => getConversation(t.id)),
+  );
+
+  return {
+    conversations: conversationDataList.filter(
+      (d): d is NonNullable<typeof d> => d !== null,
+    ),
+    meta: {
+      channelId,
+      threadTs,
+      totalCost,
+      traceCount: traces.length,
+      startedAt: traces[0].createdAt,
+      endedAt: traces[traces.length - 1].createdAt,
+      participants: participants.map((id) => ({
+        userId: id,
+        displayName: participantNames[id] ?? null,
+      })),
+      messagePreview: previewRow?.content ?? null,
+    },
   };
 }

@@ -156,7 +156,7 @@ function ThreadsTable({ threads }: { threads: ThreadRow[] }) {
         {threads.map((thread) => (
           <TableRow key={`${thread.channelId}::${thread.threadTs}`}>
             <TableCell className="text-sm text-muted-foreground">
-              <Link href={`/conversations/${thread.firstTraceId}`} className="hover:underline">
+              <Link href={`/conversations/threads/${thread.channelId}/${thread.threadTs}`} className="hover:underline">
                 {formatDate(thread.firstTraceAt)}
               </Link>
             </TableCell>
