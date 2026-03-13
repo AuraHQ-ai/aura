@@ -85,7 +85,7 @@ export function JobDetail({ data }: { data: JobData }) {
             </TableHeader>
             <TableBody>
               {executions.map((exec) => (
-                <TableRow key={exec.id} className="cursor-pointer hover:bg-muted/50">
+                <TableRow key={exec.id} className={exec.conversationTraceId ? "cursor-pointer hover:bg-muted/50" : ""}>
                   <TableCell className="text-sm">
                     {exec.conversationTraceId ? (
                       <Link

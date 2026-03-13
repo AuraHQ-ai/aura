@@ -119,7 +119,7 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
                 <TableHead>Granted By</TableHead>
                 <TableHead>Granted At</TableHead>
                 <TableHead>Revoked</TableHead>
-                <TableHead className="w-10" />
+                <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
             <TableBody>
