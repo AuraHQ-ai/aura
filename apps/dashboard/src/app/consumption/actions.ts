@@ -152,7 +152,7 @@ export async function getConsumptionData(): Promise<ConsumptionData> {
       WHERE ct.cost_usd IS NOT NULL
         AND ct.created_at >= ${thirtyDaysAgo}
         AND ct.source_type = 'job_execution'
-      GROUP BY j.name, up.display_name
+      GROUP BY j.id, j.name, up.display_name
       ORDER BY total_cost DESC
       LIMIT 20
     `);
