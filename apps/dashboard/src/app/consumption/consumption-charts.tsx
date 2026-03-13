@@ -3,75 +3,47 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from "recharts";
-
-interface ConsumptionData {
-  dailyUsage: Array<{
-    date: string;
-    totalInput: number;
-    totalOutput: number;
-    totalTokens: number;
-    messageCount: number;
-    estimatedCost: number;
-  }>;
-  perUser: Array<{
-    userId: string;
-    displayName: string | null;
-    totalInput: number;
-    totalOutput: number;
-    totalTokens: number;
-    messageCount: number;
-    estimatedCost: number;
-  }>;
-  perJob: Array<{
-    jobId: string | null;
-    jobName: string | null;
-    totalTokens: number;
-    executionCount: number;
-    estimatedCost: number;
-  }>;
-  totals: {
-    totalTokens: number;
-    totalMessages: number;
-    avgDaily: number;
-    totalCost: number;
-  };
-}
+import type { ConsumptionData } from "./actions";
 
 function formatCost(cost: number): string {
+  if (cost === 0) return "$0.00";
   return cost < 0.01 ? "< $0.01" : `$${cost.toFixed(2)}`;
 }
 
 export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
-  const chartData = data.dailyUsage.map((d) => ({
+  const chartData = data.dailyCost.map((d) => ({
     date: d.date.slice(5),
-    input: d.totalInput,
-    output: d.totalOutput,
-    cost: Number(d.estimatedCost.toFixed(4)),
+    cost: Number(d.cost.toFixed(4)),
+    conversations: d.conversations,
   }));
+
+  const totalTokens =
+    data.tokenBreakdown.cacheRead +
+    data.tokenBreakdown.cacheWrite +
+    data.tokenBreakdown.uncached +
+    data.tokenBreakdown.output;
 
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Daily Token Usage (30 days)</CardTitle>
+          <CardTitle className="text-base">Daily Cost (30 days)</CardTitle>
         </CardHeader>
         <CardContent>
           {chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData}>
+              <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="date" className="text-xs" />
-                <YAxis yAxisId="tokens" className="text-xs" />
-                <YAxis yAxisId="cost" orientation="right" className="text-xs" tickFormatter={(v) => `$${v}`} />
+                <YAxis className="text-xs" tickFormatter={(v) => `$${v}`} />
                 <Tooltip
                   contentStyle={{
                     background: "var(--bg)",
@@ -80,18 +52,23 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
                     fontSize: "12px",
                   }}
                   formatter={(value: number, name: string) =>
-                    name === "Cost ($)" ? [`$${value.toFixed(4)}`, name] : [value.toLocaleString(), name]
+                    name === "Cost" ? [`$${value.toFixed(4)}`, name] : [value.toLocaleString(), name]
                   }
                 />
-                <Legend />
-                <Line yAxisId="tokens" type="monotone" dataKey="input" stroke="#3b82f6" name="Input" strokeWidth={2} dot={false} />
-                <Line yAxisId="tokens" type="monotone" dataKey="output" stroke="#8b5cf6" name="Output" strokeWidth={2} dot={false} />
-                <Line yAxisId="cost" type="monotone" dataKey="cost" stroke="#f59e0b" name="Cost ($)" strokeWidth={2} dot={false} />
-              </LineChart>
+                <Area
+                  type="monotone"
+                  dataKey="cost"
+                  stroke="#3b82f6"
+                  fill="#3b82f6"
+                  fillOpacity={0.1}
+                  name="Cost"
+                  strokeWidth={2}
+                />
+              </AreaChart>
             </ResponsiveContainer>
           ) : (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              No token usage data yet. Usage will appear after messages are processed.
+              No cost data yet. Costs will appear after conversations with cost tracking are processed.
             </p>
           )}
         </CardContent>
@@ -100,25 +77,25 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
       <div className="grid gap-3 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">By User</CardTitle>
+            <CardTitle className="text-base">Cost by User</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
-                  <TableHead>Tokens</TableHead>
-                  <TableHead>Cost</TableHead>
-                  <TableHead>Messages</TableHead>
+                  <TableHead className="text-right">Interactive</TableHead>
+                  <TableHead className="text-right">Jobs</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {data.perUser.map((u) => (
                   <TableRow key={u.userId}>
                     <TableCell className="font-medium">{u.displayName || u.userId}</TableCell>
-                    <TableCell>{u.totalTokens.toLocaleString()}</TableCell>
-                    <TableCell>{formatCost(u.estimatedCost)}</TableCell>
-                    <TableCell>{u.messageCount}</TableCell>
+                    <TableCell className="text-right">{formatCost(u.interactiveCost)}</TableCell>
+                    <TableCell className="text-right">{formatCost(u.jobCost)}</TableCell>
+                    <TableCell className="text-right font-medium">{formatCost(u.totalCost)}</TableCell>
                   </TableRow>
                 ))}
                 {data.perUser.length === 0 && (
@@ -133,25 +110,25 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">By Job</CardTitle>
+            <CardTitle className="text-base">Cost by Job</CardTitle>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Job</TableHead>
-                  <TableHead>Tokens</TableHead>
-                  <TableHead>Cost</TableHead>
-                  <TableHead>Executions</TableHead>
+                  <TableHead>Creator</TableHead>
+                  <TableHead className="text-right">Runs</TableHead>
+                  <TableHead className="text-right">Cost</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {data.perJob.map((j, i) => (
-                  <TableRow key={j.jobId || i}>
-                    <TableCell className="font-medium">{j.jobName || j.jobId || "Unknown"}</TableCell>
-                    <TableCell>{j.totalTokens.toLocaleString()}</TableCell>
-                    <TableCell>{formatCost(j.estimatedCost)}</TableCell>
-                    <TableCell>{j.executionCount}</TableCell>
+                  <TableRow key={j.jobName || i}>
+                    <TableCell className="font-medium">{j.jobName || "Unknown"}</TableCell>
+                    <TableCell>{j.creatorName || "—"}</TableCell>
+                    <TableCell className="text-right">{j.executionCount}</TableCell>
+                    <TableCell className="text-right font-medium">{formatCost(j.totalCost)}</TableCell>
                   </TableRow>
                 ))}
                 {data.perJob.length === 0 && (
@@ -164,6 +141,34 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
           </CardContent>
         </Card>
       </div>
+
+      {totalTokens > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Token Breakdown (30 days)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 md:grid-cols-4">
+              <div>
+                <p className="text-sm text-muted-foreground">Cache Read</p>
+                <p className="text-lg font-semibold">{data.tokenBreakdown.cacheRead.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Cache Write</p>
+                <p className="text-lg font-semibold">{data.tokenBreakdown.cacheWrite.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Uncached Input</p>
+                <p className="text-lg font-semibold">{data.tokenBreakdown.uncached.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Output</p>
+                <p className="text-lg font-semibold">{data.tokenBreakdown.output.toLocaleString()}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </>
   );
 }

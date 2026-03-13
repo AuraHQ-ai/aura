@@ -1,163 +1,216 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { messages, jobExecutions, jobs, userProfiles } from "@schema";
-import { desc, sql, eq } from "drizzle-orm";
+import { conversationTraces } from "@schema";
+import { sql } from "drizzle-orm";
 
-// Cost per 1M tokens (input / output) by model family.
-// Historical messages without a model field use the default rate.
-const MODEL_COSTS: Record<string, { input: number; output: number }> = {
-  "anthropic/claude-sonnet-4": { input: 3.0, output: 15.0 },
-  "anthropic/claude-4-5-sonnet": { input: 3.0, output: 15.0 },
-  "anthropic/claude-haiku-4-5": { input: 0.8, output: 4.0 },
-  "anthropic/claude-3-5-sonnet": { input: 3.0, output: 15.0 },
-  "anthropic/claude-3-5-haiku": { input: 0.8, output: 4.0 },
-};
-const DEFAULT_COST = { input: 3.0, output: 15.0 };
-
-function getCostRate(model: string | null): { input: number; output: number } {
-  if (!model) return DEFAULT_COST;
-  return MODEL_COSTS[model] ?? DEFAULT_COST;
+export interface ConsumptionData {
+  dailyCost: Array<{ date: string; cost: number; conversations: number }>;
+  perUser: Array<{
+    userId: string;
+    displayName: string | null;
+    interactiveCost: number;
+    jobCost: number;
+    totalCost: number;
+    conversations: number;
+  }>;
+  perJob: Array<{
+    jobName: string | null;
+    creatorName: string | null;
+    executionCount: number;
+    totalCost: number;
+  }>;
+  totals: { totalCost: number; conversations: number; avgDailyCost: number };
+  tokenBreakdown: {
+    cacheRead: number;
+    cacheWrite: number;
+    uncached: number;
+    output: number;
+  };
 }
 
-function computeCost(inputTokens: number, outputTokens: number, model: string | null): number {
-  const rate = getCostRate(model);
-  return (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000;
-}
-
-const emptyResult = {
-  dailyUsage: [] as { date: string; totalInput: number; totalOutput: number; totalTokens: number; messageCount: number; estimatedCost: number }[],
-  perUser: [] as { userId: string; displayName: string | null; totalInput: number; totalOutput: number; totalTokens: number; messageCount: number; estimatedCost: number }[],
-  perJob: [] as { jobId: string | null; jobName: string | null; totalTokens: number; executionCount: number; estimatedCost: number }[],
-  totals: { totalTokens: 0, totalMessages: 0, avgDaily: 0, totalCost: 0 },
+const emptyResult: ConsumptionData = {
+  dailyCost: [],
+  perUser: [],
+  perJob: [],
+  totals: { totalCost: 0, conversations: 0, avgDailyCost: 0 },
+  tokenBreakdown: { cacheRead: 0, cacheWrite: 0, uncached: 0, output: 0 },
 };
 
-export async function getConsumptionData() {
+export async function getConsumptionData(): Promise<ConsumptionData> {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   try {
-    // Daily usage with cost estimation
-    const dailyUsage = await db
+    const dailyCost = await db
       .select({
-        date: sql<string>`date_trunc('day', ${messages.createdAt})::date::text`.as("date"),
-        totalInput: sql<number>`coalesce(sum(("token_usage"->>'inputTokens')::int), 0)`.as("total_input"),
-        totalOutput: sql<number>`coalesce(sum(("token_usage"->>'outputTokens')::int), 0)`.as("total_output"),
-        totalTokens: sql<number>`coalesce(sum(("token_usage"->>'totalTokens')::int), 0)`.as("total_tokens"),
-        messageCount: sql<number>`count(*)`.as("message_count"),
+        date: sql<string>`date_trunc('day', ${conversationTraces.createdAt})::date::text`.as("date"),
+        cost: sql<string>`coalesce(sum(${conversationTraces.costUsd}), 0)`.as("cost"),
+        conversations: sql<number>`count(*)::int`.as("conversations"),
       })
-      .from(messages)
-      .where(sql`"token_usage" IS NOT NULL AND ${messages.createdAt} >= ${thirtyDaysAgo}`)
-      .groupBy(sql`date_trunc('day', ${messages.createdAt})::date`)
-      .orderBy(sql`date_trunc('day', ${messages.createdAt})::date`);
+      .from(conversationTraces)
+      .where(sql`${conversationTraces.costUsd} IS NOT NULL AND ${conversationTraces.createdAt} >= ${thirtyDaysAgo}`)
+      .groupBy(sql`date_trunc('day', ${conversationTraces.createdAt})::date`)
+      .orderBy(sql`date_trunc('day', ${conversationTraces.createdAt})::date`);
 
-    const dailyUsageWithCost = dailyUsage.map((d) => ({
-      ...d,
-      estimatedCost: computeCost(d.totalInput, d.totalOutput, null),
+    const dailyCostData = dailyCost.map((d) => ({
+      date: d.date,
+      cost: Number(d.cost),
+      conversations: Number(d.conversations),
     }));
 
-    // Per-user: attribute assistant message tokens to the thread-initiating human user.
-    // Each assistant message with token_usage has a slack_thread_ts pointing to the
-    // root of the conversation. We find the first user message in that thread to
-    // identify the human who triggered the cost.
-    const perUser = await db.execute(sql`
-      WITH attributed AS (
-        SELECT
-          COALESCE(
-            (SELECT m2.user_id FROM messages m2
-             WHERE m2.slack_ts = m.slack_thread_ts AND m2.role = 'user'
-             LIMIT 1),
-            m.user_id
-          ) AS attributed_user_id,
-          ("token_usage"->>'inputTokens')::int AS input_tokens,
-          ("token_usage"->>'outputTokens')::int AS output_tokens,
-          ("token_usage"->>'totalTokens')::int AS total_tokens,
-          m.model
-        FROM messages m
-        WHERE "token_usage" IS NOT NULL AND m.created_at >= ${thirtyDaysAgo}
-      )
+    const interactiveResult = await db.execute(sql`
       SELECT
-        a.attributed_user_id AS user_id,
+        ct.user_id,
         up.display_name,
-        COALESCE(SUM(a.input_tokens), 0)::int AS total_input,
-        COALESCE(SUM(a.output_tokens), 0)::int AS total_output,
-        COALESCE(SUM(a.total_tokens), 0)::int AS total_tokens,
-        COUNT(*)::int AS message_count
-      FROM attributed a
-      LEFT JOIN user_profiles up ON up.slack_user_id = a.attributed_user_id
-      GROUP BY a.attributed_user_id, up.display_name
-      ORDER BY total_tokens DESC
+        COALESCE(SUM(ct.cost_usd), 0) AS interactive_cost,
+        COUNT(*)::int AS conversations
+      FROM conversation_traces ct
+      LEFT JOIN user_profiles up ON up.slack_user_id = ct.user_id
+      WHERE ct.cost_usd IS NOT NULL
+        AND ct.created_at >= ${thirtyDaysAgo}
+        AND ct.source_type = 'interactive'
+      GROUP BY ct.user_id, up.display_name
+    `);
+
+    const jobCostResult = await db.execute(sql`
+      SELECT
+        j.requested_by AS user_id,
+        up.display_name,
+        COALESCE(SUM(ct.cost_usd), 0) AS job_cost,
+        COUNT(*)::int AS conversations
+      FROM conversation_traces ct
+      JOIN job_executions je ON je.id = ct.job_execution_id
+      JOIN jobs j ON j.id = je.job_id
+      LEFT JOIN user_profiles up ON up.slack_user_id = j.requested_by
+      WHERE ct.cost_usd IS NOT NULL
+        AND ct.created_at >= ${thirtyDaysAgo}
+        AND ct.source_type = 'job_execution'
+      GROUP BY j.requested_by, up.display_name
+    `);
+
+    const interactiveRows = ((interactiveResult as any).rows ?? interactiveResult) as Array<{
+      user_id: string;
+      display_name: string | null;
+      interactive_cost: string;
+      conversations: number;
+    }>;
+
+    const jobCostRows = ((jobCostResult as any).rows ?? jobCostResult) as Array<{
+      user_id: string;
+      display_name: string | null;
+      job_cost: string;
+      conversations: number;
+    }>;
+
+    const userMap = new Map<string, ConsumptionData["perUser"][number]>();
+
+    for (const row of interactiveRows) {
+      const ic = Number(row.interactive_cost);
+      userMap.set(row.user_id, {
+        userId: row.user_id,
+        displayName: row.display_name,
+        interactiveCost: ic,
+        jobCost: 0,
+        totalCost: ic,
+        conversations: Number(row.conversations),
+      });
+    }
+
+    for (const row of jobCostRows) {
+      const jc = Number(row.job_cost);
+      const existing = userMap.get(row.user_id);
+      if (existing) {
+        existing.jobCost = jc;
+        existing.totalCost += jc;
+        existing.conversations += Number(row.conversations);
+      } else {
+        userMap.set(row.user_id, {
+          userId: row.user_id,
+          displayName: row.display_name,
+          interactiveCost: 0,
+          jobCost: jc,
+          totalCost: jc,
+          conversations: Number(row.conversations),
+        });
+      }
+    }
+
+    const perUser = Array.from(userMap.values())
+      .sort((a, b) => b.totalCost - a.totalCost)
+      .slice(0, 20);
+
+    const perJobResult = await db.execute(sql`
+      SELECT
+        j.name AS job_name,
+        up.display_name AS creator_name,
+        COUNT(DISTINCT je.id)::int AS execution_count,
+        COALESCE(SUM(ct.cost_usd), 0) AS total_cost
+      FROM conversation_traces ct
+      JOIN job_executions je ON je.id = ct.job_execution_id
+      JOIN jobs j ON j.id = je.job_id
+      LEFT JOIN user_profiles up ON up.slack_user_id = j.requested_by
+      WHERE ct.cost_usd IS NOT NULL
+        AND ct.created_at >= ${thirtyDaysAgo}
+        AND ct.source_type = 'job_execution'
+      GROUP BY j.name, up.display_name
+      ORDER BY total_cost DESC
       LIMIT 20
     `);
 
-    const perUserRows = ((perUser as any).rows ?? perUser) as Array<{
-      user_id: string;
-      display_name: string | null;
-      total_input: number;
-      total_output: number;
-      total_tokens: number;
-      message_count: number;
+    const perJobRows = ((perJobResult as any).rows ?? perJobResult) as Array<{
+      job_name: string | null;
+      creator_name: string | null;
+      execution_count: number;
+      total_cost: string;
     }>;
 
-    const perUserData = perUserRows.map((u) => ({
-      userId: u.user_id,
-      displayName: u.display_name,
-      totalInput: Number(u.total_input),
-      totalOutput: Number(u.total_output),
-      totalTokens: Number(u.total_tokens),
-      messageCount: Number(u.message_count),
-      estimatedCost: computeCost(Number(u.total_input), Number(u.total_output), null),
+    const perJob = perJobRows.map((j) => ({
+      jobName: j.job_name,
+      creatorName: j.creator_name,
+      executionCount: Number(j.execution_count),
+      totalCost: Number(j.total_cost),
     }));
 
-    // Per-job: use the correct key names (inputTokens/outputTokens/totalTokens for
-    // new executions, input/output/total for legacy ones)
-    const perJob = await db
+    const [totalsRow] = await db
       .select({
-        jobId: jobExecutions.jobId,
-        jobName: jobs.name,
-        totalTokens: sql<number>`coalesce(sum(
-          COALESCE(("token_usage"->>'totalTokens')::int, ("token_usage"->>'total')::int, 0)
-        ), 0)`.as("total_tokens"),
-        totalInput: sql<number>`coalesce(sum(
-          COALESCE(("token_usage"->>'inputTokens')::int, ("token_usage"->>'input')::int, 0)
-        ), 0)`.as("total_input"),
-        totalOutput: sql<number>`coalesce(sum(
-          COALESCE(("token_usage"->>'outputTokens')::int, ("token_usage"->>'output')::int, 0)
-        ), 0)`.as("total_output"),
-        executionCount: sql<number>`count(*)`.as("execution_count"),
+        totalCost: sql<string>`coalesce(sum(${conversationTraces.costUsd}), 0)`.as("total_cost"),
+        conversations: sql<number>`count(*)::int`.as("conversations"),
       })
-      .from(jobExecutions)
-      .leftJoin(jobs, eq(jobExecutions.jobId, jobs.id))
-      .where(sql`"token_usage" IS NOT NULL AND ${jobExecutions.startedAt} >= ${thirtyDaysAgo}`)
-      .groupBy(jobExecutions.jobId, jobs.name)
-      .orderBy(desc(sql`total_tokens`))
-      .limit(20);
+      .from(conversationTraces)
+      .where(sql`${conversationTraces.costUsd} IS NOT NULL AND ${conversationTraces.createdAt} >= ${thirtyDaysAgo}`);
 
-    const perJobWithCost = perJob.map((j) => ({
-      ...j,
-      estimatedCost: computeCost(j.totalInput, j.totalOutput, null),
-    }));
+    const totalCost = Number(totalsRow.totalCost);
+    const conversations = Number(totalsRow.conversations);
+    const avgDailyCost = dailyCostData.length > 0 ? totalCost / dailyCostData.length : 0;
 
-    const [totals] = await db
-      .select({
-        totalTokens: sql<number>`coalesce(sum(("token_usage"->>'totalTokens')::int), 0)`.as("total_tokens"),
-        totalInput: sql<number>`coalesce(sum(("token_usage"->>'inputTokens')::int), 0)`.as("total_input"),
-        totalOutput: sql<number>`coalesce(sum(("token_usage"->>'outputTokens')::int), 0)`.as("total_output"),
-        totalMessages: sql<number>`count(*)`.as("total_messages"),
-      })
-      .from(messages)
-      .where(sql`"token_usage" IS NOT NULL AND ${messages.createdAt} >= ${thirtyDaysAgo}`);
+    const tokenResult = await db.execute(sql`
+      SELECT
+        COALESCE(SUM(("token_usage"->'inputTokenDetails'->>'cacheReadTokens')::bigint), 0) AS cache_read,
+        COALESCE(SUM(("token_usage"->'inputTokenDetails'->>'cacheWriteTokens')::bigint), 0) AS cache_write,
+        COALESCE(SUM(("token_usage"->'inputTokenDetails'->>'noCacheTokens')::bigint), 0) AS uncached,
+        COALESCE(SUM(("token_usage"->>'outputTokens')::bigint), 0) AS output_tokens
+      FROM conversation_traces
+      WHERE cost_usd IS NOT NULL AND created_at >= ${thirtyDaysAgo}
+    `);
 
-    const totalCost = computeCost(totals.totalInput || 0, totals.totalOutput || 0, null);
+    const tokenRows = ((tokenResult as any).rows ?? tokenResult) as Array<{
+      cache_read: string;
+      cache_write: string;
+      uncached: string;
+      output_tokens: string;
+    }>;
+    const tb = tokenRows[0];
 
     return {
-      dailyUsage: dailyUsageWithCost,
-      perUser: perUserData,
-      perJob: perJobWithCost,
-      totals: {
-        totalTokens: totals.totalTokens || 0,
-        totalMessages: totals.totalMessages || 0,
-        avgDaily: dailyUsage.length > 0 ? Math.round((totals.totalTokens || 0) / dailyUsage.length) : 0,
-        totalCost,
+      dailyCost: dailyCostData,
+      perUser,
+      perJob,
+      totals: { totalCost, conversations, avgDailyCost },
+      tokenBreakdown: {
+        cacheRead: Number(tb?.cache_read || 0),
+        cacheWrite: Number(tb?.cache_write || 0),
+        uncached: Number(tb?.uncached || 0),
+        output: Number(tb?.output_tokens || 0),
       },
     };
   } catch {
