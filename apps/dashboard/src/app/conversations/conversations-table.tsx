@@ -147,7 +147,7 @@ function ThreadsTable({ threads }: { threads: ThreadRow[] }) {
           <TableHead>Last Active</TableHead>
           <TableHead>Source</TableHead>
           <TableHead>Preview</TableHead>
-          <TableHead>Messages</TableHead>
+          <TableHead>Invocations</TableHead>
           <TableHead>Cost</TableHead>
           <TableHead>Tokens</TableHead>
         </TableRow>

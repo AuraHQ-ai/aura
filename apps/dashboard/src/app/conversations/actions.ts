@@ -246,7 +246,6 @@ export async function getThreads(
     }
   }
 
-  const allTraceIds = threadRows.map((t) => t.firstTraceId).filter(Boolean);
   const allChannelThreadKeys = threadRows.map(
     (t) => `${t.channelId}::${t.threadTs}`,
   );
@@ -267,7 +266,7 @@ export async function getThreads(
         eq(conversationMessages.conversationId, conversationTraces.id),
       )
       .where(
-        sql`${conversationTraces.channelId} IS NOT NULL AND ${conversationTraces.threadTs} IS NOT NULL AND concat(${conversationTraces.channelId}, '::', ${conversationTraces.threadTs}) IN ${allChannelThreadKeys}`,
+        sql`${where} AND concat(${conversationTraces.channelId}, '::', ${conversationTraces.threadTs}) IN ${allChannelThreadKeys}`,
       )
       .groupBy(conversationTraces.channelId, conversationTraces.threadTs);
 
