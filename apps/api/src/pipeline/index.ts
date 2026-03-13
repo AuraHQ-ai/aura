@@ -590,7 +590,7 @@ async function persistConversationTrace(params: {
   systemPrompt: string;
   userPrompt: string;
   stepsPromise?: PromiseLike<any[]>;
-  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  usage?: DetailedTokenUsage;
   stepsTimeoutMs?: number;
 }): Promise<string> {
   const { channelId, threadTs, userId, modelId, systemPrompt, userPrompt, stepsPromise, usage, stepsTimeoutMs } = params;
