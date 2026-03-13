@@ -100,9 +100,9 @@ function computeStepCost(
       id.cacheReadTokens != null ||
       id.cacheWriteTokens != null)
   ) {
-    const noCacheTokens = id.noCacheTokens ?? 0;
     const cacheReadTokens = id.cacheReadTokens ?? 0;
     const cacheWriteTokens = id.cacheWriteTokens ?? 0;
+    const noCacheTokens = id.noCacheTokens ?? Math.max(0, (usage.inputTokens ?? 0) - cacheReadTokens - cacheWriteTokens);
     inputCost =
       (noCacheTokens * inputPrice +
         cacheReadTokens * cacheReadPrice +

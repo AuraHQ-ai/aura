@@ -581,23 +581,6 @@ async function handleTransparencyCommands(
 
 const STEPS_PROMISE_TIMEOUT_MS = 5_000;
 
-function mapRawStepsToConversationSteps(rawSteps: any[]): ConversationStep[] {
-  return rawSteps.map((step: any) => ({
-    text: step.text,
-    reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
-    toolCalls: step.toolCalls?.map((tc: any) => ({
-      toolCallId: tc.toolCallId,
-      toolName: tc.toolName,
-      input: tc.input,
-    })),
-    toolResults: step.toolResults?.map((tr: any) => ({
-      toolCallId: tr.toolCallId,
-      toolName: tr.toolName,
-      output: tr.output,
-    })),
-    finishReason: step.finishReason,
-  }));
-}
 
 async function persistConversationTrace(params: {
   channelId: string;
@@ -622,6 +605,7 @@ async function persistConversationTrace(params: {
 
   const orderIndex = await persistConversationInputs(conversationId, systemPrompt, userPrompt);
 
+  let stepUsages: StepUsage[] = [];
   if (stepsPromise) {
     try {
       let rawSteps: any[];
@@ -638,8 +622,9 @@ async function persistConversationTrace(params: {
       } else {
         rawSteps = await stepsPromise;
       }
-      const conversationSteps = mapRawStepsToConversationSteps(rawSteps);
+      const conversationSteps = buildConversationSteps(rawSteps);
       await persistConversationSteps(conversationId, conversationSteps, orderIndex);
+      stepUsages = buildStepUsages(rawSteps);
     } catch (stepsErr: any) {
       logger.error("Failed to persist conversation steps (non-fatal)", {
         conversationId,
@@ -649,7 +634,7 @@ async function persistConversationTrace(params: {
   }
 
   if (usage) {
-    await updateConversationTraceUsage(conversationId, usage);
+    await updateConversationTraceUsage(conversationId, usage, stepUsages);
   }
 
   return conversationId;
@@ -877,32 +862,9 @@ async function runBackgroundTasks(params: {
           modelId,
           systemPrompt,
           userPrompt,
-<<<<<<< HEAD
           stepsPromise,
           usage: tokenUsage,
         });
-=======
-        );
-
-        let stepUsages: StepUsage[] = [];
-        if (stepsPromise) {
-          try {
-            const rawSteps = await stepsPromise;
-            const conversationSteps = buildConversationSteps(rawSteps);
-            await persistConversationSteps(conversationId, conversationSteps, orderIndex);
-            stepUsages = buildStepUsages(rawSteps);
-          } catch (stepsErr: any) {
-            logger.error("Failed to persist conversation steps (non-fatal)", {
-              conversationId,
-              error: stepsErr.message,
-            });
-          }
-        }
-
-        if (tokenUsage) {
-          await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);
-        }
->>>>>>> 374ed2f (Fix: pass detailed token usage in interactive pipeline and remove dead code)
 
         logger.info("Interactive conversation trace persisted", { conversationId });
       } catch (traceErr: any) {
