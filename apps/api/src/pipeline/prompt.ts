@@ -6,8 +6,9 @@ import type { MessageContext } from "./context.js";
 import { resolveChannelName } from "./context.js";
 import type { ConversationContext } from "./slack-context.js";
 import { formatConversationContext } from "./slack-context.js";
-import { buildCorePrompt, lookupPerson, lookupMentionedPeople } from "./core-prompt.js";
+import { buildCorePrompt } from "./core-prompt.js";
 import { getMainModelId } from "../lib/ai.js";
+import { getProfile } from "../users/profiles.js";
 import { logger } from "../lib/logger.js";
 
 export interface AssembledPrompt {
@@ -65,14 +66,31 @@ export async function assemblePrompt(
     ]),
   ].filter((id) => id !== context.userId);
 
+  // Fetch user profile early so timezone is available for formatting
+  const userProfile = await getProfile(context.userId);
+  const userTimezone = userProfile?.timezone || undefined;
+
+  // Resolve channel name via Slack API before building the core prompt
+  let channelDisplayName: string | undefined;
+  if (!context.isDm && client) {
+    const name = await resolveChannelName(client, context.channelId);
+    channelDisplayName =
+      name !== context.channelId
+        ? `#${name} (${context.channelId})`
+        : context.channelId;
+  }
+
   // Format conversation context from live Slack data
   const useChannelFallback =
     context.isDm || !!context.threadTs || conversation.auraRecentlyActive;
   const threadContext = await formatConversationContext(
     conversation,
     useChannelFallback,
-    undefined,
+    userTimezone,
   );
+
+  const isChannelHistory =
+    !conversation.thread?.length && !!threadContext && !context.isDm;
 
   // Delegate to the channel-agnostic core
   const core = await buildCorePrompt({
@@ -83,22 +101,11 @@ export async function assemblePrompt(
     messageText: queryText,
     conversationContext: threadContext,
     isDirectMessage: context.isDm,
+    userTimezone,
+    channelDisplayName,
+    isChannelHistory,
     participantUserIds,
   });
-
-  // Slack-specific: resolve channel name via API
-  let channelContext: string;
-  if (context.isDm) {
-    channelContext = "DM";
-  } else if (client) {
-    const name = await resolveChannelName(client, context.channelId);
-    channelContext =
-      name !== context.channelId
-        ? `#${name} (${context.channelId})`
-        : context.channelId;
-  } else {
-    channelContext = context.channelId;
-  }
 
   // Rebuild dynamic context with Slack-specific channel/thread info
   const modelId = await getMainModelId();
