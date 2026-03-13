@@ -27,6 +27,7 @@ export const channelTypeEnum = pgEnum("channel_type", [
   "dm",
   "public_channel",
   "private_channel",
+  "dashboard",
 ]);
 
 export const messageRoleEnum = pgEnum("message_role", [
@@ -56,7 +57,8 @@ export const messages = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    slackTs: text("slack_ts").notNull(),
+    externalId: text("external_id").notNull(),
+    slackTs: text("slack_ts"),
     slackThreadTs: text("slack_thread_ts"),
     channelId: text("channel_id").notNull(),
     channelType: channelTypeEnum("channel_type").notNull(),
@@ -70,7 +72,7 @@ export const messages = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("messages_slack_ts_idx").on(table.slackTs),
+    uniqueIndex("messages_external_id_idx").on(table.externalId),
     index("messages_channel_created_idx").on(table.channelId, table.createdAt),
     index("messages_thread_idx").on(table.slackThreadTs),
     index("messages_embedding_idx").using(
@@ -451,6 +453,7 @@ export const conversationTraces = pgTable(
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     sourceType: text("source_type").notNull(),
+    source: text("source").notNull().default("slack"),
     jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
     channelId: text("channel_id"),
     threadTs: text("thread_ts"),

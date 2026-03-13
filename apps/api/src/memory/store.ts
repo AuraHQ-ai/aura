@@ -6,10 +6,10 @@ import { logger } from "../lib/logger.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
 import type { ChannelType } from "../pipeline/context.js";
 
-export type DbChannelType = "dm" | "public_channel" | "private_channel";
+export type DbChannelType = "dm" | "public_channel" | "private_channel" | "dashboard";
 
-export function toDbChannelType(ct: ChannelType): DbChannelType {
-  if (ct === "dm" || ct === "public_channel" || ct === "private_channel") return ct;
+export function toDbChannelType(ct: ChannelType | "dashboard"): DbChannelType {
+  if (ct === "dm" || ct === "public_channel" || ct === "private_channel" || ct === "dashboard") return ct;
   return "public_channel";
 }
 
@@ -30,8 +30,11 @@ export async function claimEvent(eventTs: string, channelId: string): Promise<bo
 /**
  * Store a raw message (user or assistant) to the messages table.
  * Generates and stores a vector embedding for semantic search.
+ *
+ * Uses `externalId` as the dedup key. For Slack, pass the slack_ts.
+ * For other channels, pass a unique identifier (e.g. UUID).
  */
-export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { channelType: ChannelType }): Promise<string> {
+export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { channelType: ChannelType | "dashboard" }): Promise<string> {
   try {
     let embedding: number[] | null = null;
     if (message.content && message.content.trim().length > 0) {
@@ -40,7 +43,7 @@ export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { 
       } catch (error) {
         logger.error("Failed to embed message — storing without embedding", {
           error: String(error),
-          slackTs: message.slackTs,
+          externalId: message.externalId,
           contentLength: message.content.length,
         });
       }
@@ -49,7 +52,7 @@ export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { 
     const [inserted] = await db
       .insert(messages)
       .values({ ...message, channelType: toDbChannelType(message.channelType), embedding })
-      .onConflictDoNothing({ target: messages.slackTs })
+      .onConflictDoNothing({ target: messages.externalId })
       .returning({ id: messages.id });
 
     if (inserted) {
@@ -62,18 +65,17 @@ export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { 
       return inserted.id;
     }
 
-    // Message already exists (duplicate slack_ts)
     const existing = await db
       .select({ id: messages.id })
       .from(messages)
-      .where(eq(messages.slackTs, message.slackTs))
+      .where(eq(messages.externalId, message.externalId))
       .limit(1);
 
     return existing[0]?.id ?? "";
   } catch (error) {
     logger.error("Failed to store message", {
       error: String(error),
-      slackTs: message.slackTs,
+      externalId: message.externalId,
     });
     throw error;
   }
@@ -280,6 +282,7 @@ export async function storeToolCallMessages(
   if (toolCalls.length === 0) return;
 
   const messagesToStore: NewMessage[] = toolCalls.map((tc, i) => ({
+    externalId: `${ctx.parentTs}-tool-${i}`,
     slackTs: `${ctx.parentTs}-tool-${i}`,
     slackThreadTs: ctx.threadTs || ctx.parentTs,
     channelId: ctx.channelId,
@@ -302,7 +305,7 @@ export async function storeToolCallMessages(
       const result = await db
         .insert(messages)
         .values(msg)
-        .onConflictDoNothing({ target: messages.slackTs })
+        .onConflictDoNothing({ target: messages.externalId })
         .returning({ id: messages.id });
       if (result.length > 0) storedCount++;
     } catch (error) {
@@ -345,6 +348,7 @@ export async function storeChannelReadMessage(
   );
 
   const msg: NewMessage = {
+    externalId: `${ctx.parentTs}-chread-${ctx.toolIndex}`,
     slackTs: `${ctx.parentTs}-chread-${ctx.toolIndex}`,
     slackThreadTs: ctx.threadTs || ctx.parentTs,
     channelId: ctx.channelId,
@@ -365,7 +369,7 @@ export async function storeChannelReadMessage(
     await db
       .insert(messages)
       .values(msg)
-      .onConflictDoNothing({ target: messages.slackTs });
+      .onConflictDoNothing({ target: messages.externalId });
     logger.info("Stored channel read message", {
       channel: channelName,
       messageCount: readMessages.length,

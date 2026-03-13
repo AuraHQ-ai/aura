@@ -676,6 +676,7 @@ async function persistInterruptedResponse(params: {
   // 1. Store assistant message
   const assistantTs = `${context.messageTs}-aura`;
   await storeMessage({
+    externalId: assistantTs,
     slackTs: assistantTs,
     slackThreadTs: context.threadTs || context.messageTs,
     channelId: context.channelId,
@@ -730,6 +731,7 @@ async function persistInterruptedResponse(params: {
 async function storeUserMessage(context: MessageContext, event: SlackEvent): Promise<void> {
   try {
     await storeMessage({
+      externalId: context.messageTs,
       slackTs: context.messageTs,
       slackThreadTs: context.threadTs,
       channelId: context.channelId,
@@ -778,6 +780,7 @@ async function runBackgroundTasks(params: {
   try {
     // Store the user's message
     const userMessageId = await storeMessage({
+      externalId: context.messageTs,
       slackTs: context.messageTs,
       slackThreadTs: context.threadTs,
       channelId: context.channelId,
@@ -791,6 +794,7 @@ async function runBackgroundTasks(params: {
     // Store Aura's response with a pseudo-timestamp
     const assistantTs = `${context.messageTs}-aura`;
     await storeMessage({
+      externalId: assistantTs,
       slackTs: assistantTs,
       slackThreadTs: context.threadTs || context.messageTs,
       channelId: context.channelId,

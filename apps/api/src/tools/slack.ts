@@ -3,27 +3,13 @@ import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { defineTool, binaryToModelOutput, registerToolNames } from "../lib/tool.js";
 import { isAdmin } from "../lib/permissions.js";
-import { createNoteTools } from "./notes.js";
+import { createCoreTools } from "./core.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
-import { createSandboxTools } from "./sandbox.js";
-import { createBrowserTools } from "./browser.js";
-import { createWebTools } from "./web.js";
-import { createBigQueryTools } from "./bigquery.js";
 import { createTableTools } from "./table.js";
-import { createCursorAgentTools } from "./cursor-agent.js";
-import { createConversationSearchTools } from "./conversations.js";
-import { createEmailTools, createGmailEATools } from "./email.js";
-import { createEmailSyncTools } from "./email-sync.js";
-import { createSheetsTools } from "./sheets.js";
-import { createDriveTools } from "./drive.js";
-import { createPeopleTools } from "./people.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
-import { createResourceTools } from "./resources.js";
-import { createCredentialTools } from "./credentials.js";
-import { createHttpRequestTool } from "./http-request.js";
-import { createDateTimeTools } from "./datetime.js";
+import { createEmailSyncTools } from "./email-sync.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -543,8 +529,8 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
   }
 
   const tools: Record<string, any> = {
-    // ── Date/Time Tools (eager — always available) ───────────────────────
-    ...createDateTimeTools(),
+    // ── Core Tools (channel-agnostic, shared with Dashboard etc.) ────────
+    ...createCoreTools(context),
 
     list_channels: defineTool({
       description:
@@ -2950,66 +2936,13 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
       slack: { status: "Setting status...", detail: (i) => i.status_text },
     }),
 
-    // ── Slack Lists Write Tools ────────────────────────────────────────────
+    // ── Slack-only Tools (require WebClient) ───────────────────────────
     ...createListWriteTools(client),
-
-    // ── Note / Scratchpad Tools (with context for checkpoint_plan routing) ─
-    ...createNoteTools(context),
-
-    // ── Resource Tools (raw external source material) ──────────────────────
-    ...createResourceTools(context),
-
-    // ── Job Tools (unified: one-shots, recurring, continuations) ─────────
     ...createJobTools(client, context),
-
-    // ── Web Tools ────────────────────────────────────────────────────────
-    ...createWebTools(),
-
-    // ── Sandbox Tools ────────────────────────────────────────────────────
-    ...createSandboxTools(context),
-
-    // ── Browser Tools (Browserbase + Playwright) ──────────────────────────
-    ...createBrowserTools(context),
-
-    // ── BigQuery Tools ────────────────────────────────────────────────────
-    ...createBigQueryTools(context),
-
-    // ── Email Tools (Gmail) ──────────────────────────────────────────────
-    ...createEmailTools(context),
-    ...createGmailEATools(context),
-
-    // ── Email Staging Pipeline (sync + triage + digest) ──────────────────
     ...createEmailSyncTools(client, context),
-
-    // ── Google Sheets Tools ───────────────────────────────────────────────
-    ...createSheetsTools(context),
-
-    // ── Google Drive Tools ────────────────────────────────────────────────
-    ...createDriveTools(context),
-
-    // ── Table Tools (native Slack table blocks) ──────────────────────────
     ...createTableTools(client, context),
-
-    // ── Cursor Agent Tools (async code agent dispatch) ──────────────────
-    ...createCursorAgentTools(context),
-
-    // ── Conversation Search Tools (search stored messages DB) ─────────
-    ...createConversationSearchTools(context),
-
-    // ── Subagent Tools (isolated context subtask delegation) ─────────
     ...createSubagentTools(client, context),
-
-    // ── Voice & SMS Tools (ElevenLabs + Twilio) ─────────────────────
     ...createVoiceTools(client, context),
-
-    // ── People Data Tools (structured person records) ────────────────
-    ...createPeopleTools(context),
-
-    // ── Credential Tools (secure credential retrieval) ──────────────
-    ...createCredentialTools(context),
-
-    // ── HTTP Request Tool (governed external API calls) ─────────────
-    ...createHttpRequestTool(context),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────

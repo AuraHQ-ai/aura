@@ -10,8 +10,11 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@ai-sdk/react": "^3.0.118",
     "@aura/db": "workspace:*",
     "@neondatabase/serverless": "^1.0.2",
+    "@streamdown/code": "^1.1.0",
+    "ai": "^6.0.116",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.44.7",
@@ -22,8 +25,10 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.7.2",
     "recharts": "^2.15.0",
     "remark-gfm": "^4.0.1",
+    "streamdown": "^2.4.0",
     "tailwind-merge": "^3.0.0"
   },
   "devDependencies": {

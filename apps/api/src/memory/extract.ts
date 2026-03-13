@@ -7,6 +7,7 @@ import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
 import type { NewMemory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
+import type { DbChannelType } from "./store.js";
 
 // ── User ID Normalization ───────────────────────────────────────────────────
 
@@ -181,7 +182,7 @@ interface ExtractionContext {
   userMessage: string;
   assistantResponse: string;
   userId: string;
-  channelType: ChannelType;
+  channelType: ChannelType | DbChannelType;
   sourceMessageId?: string;
   displayName?: string;
 }

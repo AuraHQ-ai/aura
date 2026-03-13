@@ -4,6 +4,7 @@ import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
+import { dashboardChatApp } from "./routes/dashboard-chat.js";
 import { runPipeline } from "./pipeline/index.js";
 import {
   publishHomeTab,
@@ -112,6 +113,9 @@ app.route("/", heartbeatApp);
 
 // Mount ElevenLabs voice webhook routes
 app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);
+
+// Mount dashboard chat route
+app.route("/api/dashboard/chat", dashboardChatApp);
 
 // ── Slack Signature Verification ────────────────────────────────────────────
 
@@ -246,6 +250,7 @@ app.post("/api/slack/events", async (c) => {
 
           const { storeMessage } = await import("./memory/store.js");
           await storeMessage({
+            externalId: `reaction-${event.event_ts}`,
             slackTs: `reaction-${event.event_ts}`,
             channelId: event.item.channel || "",
             channelType: "public_channel",

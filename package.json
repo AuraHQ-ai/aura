@@ -2,6 +2,7 @@
   "name": "aura-monorepo",
   "private": true,
   "scripts": {
+    "dev": "pnpm --filter aura-api --filter aura-dashboard --parallel dev",
     "db:generate": "pnpm --filter @aura/db db:generate",
     "db:migrate": "pnpm --filter @aura/db db:migrate",
     "db:push": "pnpm --filter @aura/db db:push",
