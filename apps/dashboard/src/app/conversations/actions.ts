@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import {
   conversationTraces,
   conversationMessages,
+  conversationParts,
   jobs,
   jobExecutions,
   userProfiles,
@@ -426,14 +427,115 @@ export async function getThreadTraces(channelId: string, threadTs: string) {
     .orderBy(asc(conversationMessages.orderIndex))
     .limit(1);
 
-  const conversationDataList = await Promise.all(
-    traces.map((t) => getConversation(t.id)),
-  );
+  const traceIds = traces.map((t) => t.id);
+
+  // Batch: fetch all messages for all traces at once
+  const allMessages = traceIds.length > 0
+    ? await db
+        .select()
+        .from(conversationMessages)
+        .where(sql`${conversationMessages.conversationId} IN ${traceIds}`)
+        .orderBy(asc(conversationMessages.orderIndex))
+    : [];
+
+  // Batch: fetch all parts for those messages
+  const allMsgIds = allMessages.map((m) => m.id);
+  const allParts = allMsgIds.length > 0
+    ? await db
+        .select()
+        .from(conversationParts)
+        .where(sql`${conversationParts.messageId} IN ${allMsgIds}`)
+        .orderBy(asc(conversationParts.orderIndex))
+    : [];
+
+  // Group messages by conversation, attach parts
+  const messagesByConv: Record<string, typeof allMessages> = {};
+  for (const msg of allMessages) {
+    (messagesByConv[msg.conversationId] ??= []).push(msg);
+  }
+  const partsByMsg: Record<string, typeof allParts> = {};
+  for (const part of allParts) {
+    (partsByMsg[part.messageId] ??= []).push(part);
+  }
+
+  const conversationsByTrace: Record<string, Array<(typeof allMessages)[0] & { parts: typeof allParts }>> = {};
+  for (const traceId of traceIds) {
+    conversationsByTrace[traceId] = (messagesByConv[traceId] ?? []).map((msg) => ({
+      ...msg,
+      parts: partsByMsg[msg.id] ?? [],
+    }));
+  }
+
+  // Batch: cumulative token aggregation for all traces
+  let cumulativeTokensByTrace: Record<string, { inputTokens: number; outputTokens: number; totalTokens: number }> = {};
+  if (traceIds.length > 0) {
+    const tokenRows = await db
+      .select({
+        conversationId: conversationMessages.conversationId,
+        inputTokens: sql<number>`coalesce(sum((token_usage->>'inputTokens')::int), 0)::int`,
+        outputTokens: sql<number>`coalesce(sum((token_usage->>'outputTokens')::int), 0)::int`,
+        totalTokens: sql<number>`coalesce(sum((token_usage->>'totalTokens')::int), 0)::int`,
+      })
+      .from(conversationMessages)
+      .where(sql`${conversationMessages.conversationId} IN ${traceIds}`)
+      .groupBy(conversationMessages.conversationId);
+
+    for (const row of tokenRows) {
+      cumulativeTokensByTrace[row.conversationId] = {
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        totalTokens: row.totalTokens,
+      };
+    }
+  }
+
+  // Batch: job execution lookups
+  const jobExecIds = traces
+    .map((t) => t.jobExecutionId)
+    .filter((id): id is string => id != null);
+
+  let jobInfoByExecId: Record<string, { jobId: string; jobName: string | null }> = {};
+  if (jobExecIds.length > 0) {
+    const jobRows = await db
+      .select({
+        execId: jobExecutions.id,
+        jobId: jobs.id,
+        jobName: jobs.name,
+      })
+      .from(jobExecutions)
+      .innerJoin(jobs, eq(jobs.id, jobExecutions.jobId))
+      .where(sql`${jobExecutions.id} IN ${jobExecIds}`);
+
+    for (const row of jobRows) {
+      jobInfoByExecId[row.execId] = { jobId: row.jobId, jobName: row.jobName };
+    }
+  }
+
+  // Assemble results reusing already-fetched traces
+  const conversationDataList = traces.map((trace) => {
+    const cumulative = cumulativeTokensByTrace[trace.id];
+    const traceWithTokens = { ...trace };
+    if (cumulative && cumulative.totalTokens > 0) {
+      (traceWithTokens as any).tokenUsage = {
+        ...((trace.tokenUsage as any) ?? {}),
+        inputTokens: cumulative.inputTokens,
+        outputTokens: cumulative.outputTokens,
+        totalTokens: cumulative.totalTokens,
+      };
+    }
+
+    const jobInfo = trace.jobExecutionId ? jobInfoByExecId[trace.jobExecutionId] ?? null : null;
+
+    return {
+      trace: traceWithTokens,
+      conversation: conversationsByTrace[trace.id] ?? [],
+      jobName: jobInfo?.jobName ?? null,
+      jobId: jobInfo?.jobId ?? null,
+    };
+  });
 
   return {
-    conversations: conversationDataList.filter(
-      (d): d is NonNullable<typeof d> => d !== null,
-    ),
+    conversations: conversationDataList,
     meta: {
       channelId,
       threadTs,

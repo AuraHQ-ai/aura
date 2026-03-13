@@ -113,7 +113,7 @@ export default async function ThreadDetailPage({
               <div className="border-t border-border mb-8" />
             )}
             <div className="space-y-4">
-              <ConversationDetail data={conv} />
+              <ConversationDetail data={conv} embedded />
             </div>
           </div>
         ))}

@@ -17,7 +17,13 @@ interface ConversationData {
   jobId: string | null;
 }
 
-export function ConversationDetail({ data }: { data: ConversationData }) {
+export function ConversationDetail({
+  data,
+  embedded = false,
+}: {
+  data: ConversationData;
+  embedded?: boolean;
+}) {
   const { trace, conversation, jobName, jobId } = data;
 
   const tokenUsage = trace.tokenUsage as {
@@ -40,13 +46,17 @@ export function ConversationDetail({ data }: { data: ConversationData }) {
   return (
     <>
       <div className="flex items-center gap-3">
-        <Link href="/conversations">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
+        {!embedded && (
+          <Link href="/conversations">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+        )}
         <div>
-          <h1 className="text-base font-semibold">Conversation Detail</h1>
+          {!embedded && (
+            <h1 className="text-base font-semibold">Conversation Detail</h1>
+          )}
           <p className="text-xs text-muted-foreground font-mono">
             {trace.id}
           </p>
