@@ -61,12 +61,12 @@ export function UsersTable({ users, total, page, pageSize }: Props) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Slack ID</TableHead>
+            <TableHead className="w-[160px]">Name</TableHead>
+            <TableHead className="w-[120px]">Slack ID</TableHead>
             <TableHead>Job Title</TableHead>
-            <TableHead>Interactions</TableHead>
-            <TableHead>Last Active</TableHead>
-            <TableHead>Joined</TableHead>
+            <TableHead className="w-[100px]">Interactions</TableHead>
+            <TableHead className="w-[140px]">Last Active</TableHead>
+            <TableHead className="w-[140px]">Joined</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

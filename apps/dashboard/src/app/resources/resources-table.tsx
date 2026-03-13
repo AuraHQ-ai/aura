@@ -64,10 +64,10 @@ export function ResourcesTable({ resources, total, page, pageSize }: Props) {
         <TableHeader>
           <TableRow>
             <TableHead>Title</TableHead>
-            <TableHead>Source</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Crawled</TableHead>
-            <TableHead>Updated</TableHead>
+            <TableHead className="w-[80px]">Source</TableHead>
+            <TableHead className="w-[80px]">Status</TableHead>
+            <TableHead className="w-[140px]">Crawled</TableHead>
+            <TableHead className="w-[140px]">Updated</TableHead>
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>

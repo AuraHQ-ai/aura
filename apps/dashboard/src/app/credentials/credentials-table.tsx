@@ -92,10 +92,10 @@ export function CredentialsTable({ credentials, total, page, pageSize }: Props) 
         <TableHeader>
           <TableRow>
             <TableHead>Name</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Owner</TableHead>
-            <TableHead>Grants</TableHead>
-            <TableHead>Expires</TableHead>
+            <TableHead className="w-[80px]">Type</TableHead>
+            <TableHead className="w-[160px]">Owner</TableHead>
+            <TableHead className="w-[70px]">Grants</TableHead>
+            <TableHead className="w-[140px]">Expires</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

@@ -76,9 +76,9 @@ export function NotesTable({ notes, total, page, pageSize }: { notes: Note[]; to
         <TableHeader>
           <TableRow>
             <TableHead>Topic</TableHead>
-            <TableHead>Category</TableHead>
-            <TableHead>Updated</TableHead>
-            <TableHead>Expires</TableHead>
+            <TableHead className="w-[100px]">Category</TableHead>
+            <TableHead className="w-[140px]">Updated</TableHead>
+            <TableHead className="w-[140px]">Expires</TableHead>
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>

@@ -3,7 +3,6 @@
 import { db } from "@/lib/db";
 import { jobs, jobExecutions, conversationTraces } from "@schema";
 import { eq, desc, ilike, sql, inArray } from "drizzle-orm";
-import { fetchConversationWithParts } from "@/lib/queries";
 import { revalidatePath } from "next/cache";
 
 export async function getJobs(search?: string, page = 1, limit = 100) {
@@ -38,55 +37,31 @@ export async function getJob(id: string) {
     .limit(50);
 
   const execIds = executions.map((e) => e.id);
-  let execCosts: Record<string, string | null> = {};
+  let traceByExec: Record<string, { costUsd: string | null; traceId: string }> = {};
   if (execIds.length > 0) {
-    const costRows = await db
+    const traceRows = await db
       .select({
         jobExecutionId: conversationTraces.jobExecutionId,
         costUsd: conversationTraces.costUsd,
+        traceId: conversationTraces.id,
       })
       .from(conversationTraces)
       .where(inArray(conversationTraces.jobExecutionId, execIds));
 
-    execCosts = Object.fromEntries(
-      costRows
+    traceByExec = Object.fromEntries(
+      traceRows
         .filter((r) => r.jobExecutionId != null)
-        .map((r) => [r.jobExecutionId!, r.costUsd]),
+        .map((r) => [r.jobExecutionId!, { costUsd: r.costUsd, traceId: r.traceId }]),
     );
   }
 
-  const executionsWithCost = executions.map((exec) => ({
+  const executionsWithTrace = executions.map((exec) => ({
     ...exec,
-    costUsd: execCosts[exec.id] ?? null,
+    costUsd: traceByExec[exec.id]?.costUsd ?? null,
+    conversationTraceId: traceByExec[exec.id]?.traceId ?? null,
   }));
 
-  return { job, executions: executionsWithCost };
-}
-
-export async function getExecution(execId: string) {
-  const [exec] = await db.select().from(jobExecutions).where(eq(jobExecutions.id, execId));
-  return exec ?? null;
-}
-
-export async function getExecutionWithConversation(execId: string) {
-  const [exec] = await db
-    .select()
-    .from(jobExecutions)
-    .where(eq(jobExecutions.id, execId));
-  if (!exec) return null;
-
-  // Find conversation trace for this execution
-  const [trace] = await db
-    .select()
-    .from(conversationTraces)
-    .where(eq(conversationTraces.jobExecutionId, execId))
-    .limit(1);
-
-  if (!trace) return { execution: exec, conversation: [], conversationTraceId: null, costUsd: null };
-
-  const conversation = await fetchConversationWithParts(trace.id);
-
-  return { execution: exec, conversation, conversationTraceId: trace.id, costUsd: trace.costUsd };
+  return { job, executions: executionsWithTrace };
 }
 
 export async function toggleJobEnabled(id: string, enabled: boolean) {

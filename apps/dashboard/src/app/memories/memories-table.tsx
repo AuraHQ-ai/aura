@@ -85,10 +85,10 @@ export function MemoriesTable({ memories, total, page, pageSize }: Props) {
         <TableHeader>
           <TableRow>
             <TableHead>Content</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Relevance</TableHead>
-            <TableHead>Shareable</TableHead>
-            <TableHead>Created</TableHead>
+            <TableHead className="w-[90px]">Type</TableHead>
+            <TableHead className="w-[80px]">Relevance</TableHead>
+            <TableHead className="w-[80px]">Shareable</TableHead>
+            <TableHead className="w-[140px]">Created</TableHead>
             <TableHead className="w-10" />
           </TableRow>
         </TableHeader>

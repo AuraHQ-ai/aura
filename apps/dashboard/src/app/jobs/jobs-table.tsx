@@ -59,14 +59,14 @@ export function JobsTable({ jobs, total, page, pageSize }: Props) {
         <TableHeader>
           <TableRow>
             <TableHead>Name</TableHead>
-            <TableHead>Requested By</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Schedule</TableHead>
-            <TableHead>Enabled</TableHead>
-            <TableHead>Executions</TableHead>
-            <TableHead>Last Run</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead>Priority</TableHead>
+            <TableHead className="w-[120px]">Requested By</TableHead>
+            <TableHead className="w-[80px]">Status</TableHead>
+            <TableHead className="w-[120px]">Schedule</TableHead>
+            <TableHead className="w-[70px]">Enabled</TableHead>
+            <TableHead className="w-[90px]">Executions</TableHead>
+            <TableHead className="w-[140px]">Last Run</TableHead>
+            <TableHead className="w-[140px]">Created</TableHead>
+            <TableHead className="w-[80px]">Priority</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

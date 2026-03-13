@@ -81,13 +81,13 @@ function InvocationsTable({ conversations }: { conversations: ConversationRow[] 
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Timestamp</TableHead>
-          <TableHead>Source</TableHead>
+          <TableHead className="w-[140px]">Timestamp</TableHead>
+          <TableHead className="w-[80px]">Source</TableHead>
           <TableHead>Preview</TableHead>
-          <TableHead>Model</TableHead>
-          <TableHead>Cost</TableHead>
-          <TableHead>Tokens</TableHead>
-          <TableHead>Steps</TableHead>
+          <TableHead className="w-[160px]">Model</TableHead>
+          <TableHead className="w-[90px]">Cost</TableHead>
+          <TableHead className="w-[140px]">Tokens</TableHead>
+          <TableHead className="w-[60px]">Steps</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -105,7 +105,7 @@ function InvocationsTable({ conversations }: { conversations: ConversationRow[] 
                 {conv.sourceType === "job_execution" ? "job" : "interactive"}
               </Badge>
             </TableCell>
-            <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
+            <TableCell className="text-sm text-muted-foreground">
               {conv.sourceType === "job_execution"
                 ? conv.sourceLabel
                 : formatPreview(conv.resolvedName, conv.messagePreview)}
@@ -143,13 +143,13 @@ function ThreadsTable({ threads }: { threads: ThreadRow[] }) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Started</TableHead>
-          <TableHead>Last Active</TableHead>
-          <TableHead>Source</TableHead>
+          <TableHead className="w-[140px]">Started</TableHead>
+          <TableHead className="w-[140px]">Last Active</TableHead>
+          <TableHead className="w-[80px]">Source</TableHead>
           <TableHead>Preview</TableHead>
-          <TableHead>Messages</TableHead>
-          <TableHead>Cost</TableHead>
-          <TableHead>Tokens</TableHead>
+          <TableHead className="w-[80px]">Messages</TableHead>
+          <TableHead className="w-[90px]">Cost</TableHead>
+          <TableHead className="w-[140px]">Tokens</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -170,7 +170,7 @@ function ThreadsTable({ threads }: { threads: ThreadRow[] }) {
                 {thread.sourceType === "job_execution" ? "job" : "interactive"}
               </Badge>
             </TableCell>
-            <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
+            <TableCell className="text-sm text-muted-foreground">
               {formatPreview(thread.resolvedName, thread.messagePreview)}
             </TableCell>
             <TableCell className="text-sm text-muted-foreground">

@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
   ({ className, ...props }, ref) => (
-    <table ref={ref} className={cn("relative w-full caption-bottom text-sm", className)} {...props} />
+    <table ref={ref} className={cn("relative w-full table-fixed caption-bottom text-sm", className)} {...props} />
   ),
 );
 Table.displayName = "Table";
@@ -33,7 +33,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, React.ThHTMLAttributes<
   ({ className, ...props }, ref) => (
     <th
       ref={ref}
-      className={cn("h-8 px-3 text-left align-middle text-[13px] font-medium text-muted-foreground bg-muted [&:has([role=checkbox])]:pr-0", className)}
+      className={cn("h-8 px-3 text-left align-middle text-[13px] font-medium text-muted-foreground bg-muted overflow-hidden text-ellipsis whitespace-nowrap [&:has([role=checkbox])]:pr-0", className)}
       {...props}
     />
   ),
@@ -42,7 +42,7 @@ TableHead.displayName = "TableHead";
 
 const TableCell = React.forwardRef<HTMLTableCellElement, React.TdHTMLAttributes<HTMLTableCellElement>>(
   ({ className, ...props }, ref) => (
-    <td ref={ref} className={cn("px-3 py-2.5 align-middle text-[13px] [&:has([role=checkbox])]:pr-0", className)} {...props} />
+    <td ref={ref} className={cn("px-3 py-2.5 align-middle text-[13px] overflow-hidden text-ellipsis whitespace-nowrap [&:has([role=checkbox])]:pr-0", className)} {...props} />
   ),
 );
 TableCell.displayName = "TableCell";

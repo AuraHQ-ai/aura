@@ -80,9 +80,9 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
-                  <TableHead className="text-right">Interactive</TableHead>
-                  <TableHead className="text-right">Jobs</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="w-[100px] text-right">Interactive</TableHead>
+                  <TableHead className="w-[100px] text-right">Jobs</TableHead>
+                  <TableHead className="w-[100px] text-right">Total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -113,9 +113,9 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Job</TableHead>
-                  <TableHead>Creator</TableHead>
-                  <TableHead className="text-right">Runs</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
+                  <TableHead className="w-[140px]">Creator</TableHead>
+                  <TableHead className="w-[80px] text-right">Runs</TableHead>
+                  <TableHead className="w-[100px] text-right">Cost</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

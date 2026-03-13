@@ -125,17 +125,17 @@ export function SettingsForm({ settings }: { settings: Setting[] }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Key</TableHead>
+                <TableHead className="w-[200px]">Key</TableHead>
                 <TableHead>Value</TableHead>
-                <TableHead>Updated</TableHead>
-                <TableHead>By</TableHead>
+                <TableHead className="w-[140px]">Updated</TableHead>
+                <TableHead className="w-[120px]">By</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {nonModelSettings.map((s) => (
                 <TableRow key={s.key}>
                   <TableCell className="font-mono text-sm">{s.key}</TableCell>
-                  <TableCell className="text-sm max-w-md truncate">{s.value}</TableCell>
+                  <TableCell className="text-sm">{s.value}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
                 </TableRow>

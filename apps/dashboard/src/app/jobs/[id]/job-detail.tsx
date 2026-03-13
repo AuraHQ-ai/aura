@@ -10,11 +10,11 @@ import { ArrowLeft } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { Job, JobExecution } from "@schema";
 
-type ExecutionWithCost = JobExecution & { costUsd: string | null };
+type ExecutionWithTrace = JobExecution & { costUsd: string | null; conversationTraceId: string | null };
 
 interface JobData {
   job: Job;
-  executions: ExecutionWithCost[];
+  executions: ExecutionWithTrace[];
 }
 
 export function JobDetail({ data }: { data: JobData }) {
@@ -87,12 +87,16 @@ export function JobDetail({ data }: { data: JobData }) {
               {executions.map((exec) => (
                 <TableRow key={exec.id} className="cursor-pointer hover:bg-muted/50">
                   <TableCell className="text-sm">
-                    <Link
-                      href={`/jobs/${job.id}/executions/${exec.id}`}
-                      className="hover:underline"
-                    >
-                      {formatDate(exec.startedAt)}
-                    </Link>
+                    {exec.conversationTraceId ? (
+                      <Link
+                        href={`/conversations/${exec.conversationTraceId}`}
+                        className="hover:underline"
+                      >
+                        {formatDate(exec.startedAt)}
+                      </Link>
+                    ) : (
+                      formatDate(exec.startedAt)
+                    )}
                   </TableCell>
                   <TableCell className="text-sm">{formatDate(exec.finishedAt)}</TableCell>
                   <TableCell>

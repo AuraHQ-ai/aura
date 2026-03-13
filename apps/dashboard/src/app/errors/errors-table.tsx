@@ -76,11 +76,11 @@ export function ErrorsTable({ errors, total, page, pageSize }: Props) {
         <TableHeader>
           <TableRow>
             <TableHead className="w-10" />
-            <TableHead>Error</TableHead>
-            <TableHead>Code</TableHead>
+            <TableHead className="w-[180px]">Error</TableHead>
+            <TableHead className="w-[80px]">Code</TableHead>
             <TableHead>Message</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Time</TableHead>
+            <TableHead className="w-[80px]">Status</TableHead>
+            <TableHead className="w-[140px]">Time</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -101,7 +101,7 @@ export function ErrorsTable({ errors, total, page, pageSize }: Props) {
               <TableCell>
                 {err.errorCode ? <Badge variant="outline">{err.errorCode}</Badge> : "—"}
               </TableCell>
-              <TableCell className="text-sm text-muted-foreground max-w-md">
+              <TableCell className="text-sm text-muted-foreground">
                 {truncate(err.errorMessage, 80)}
               </TableCell>
               <TableCell>

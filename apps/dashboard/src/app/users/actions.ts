@@ -28,7 +28,7 @@ export async function getUsers(search?: string, page = 1, limit = 100) {
     .from(userProfiles)
     .leftJoin(people, eq(userProfiles.personId, people.id))
     .where(where)
-    .orderBy(desc(userProfiles.lastInteractionAt))
+    .orderBy(sql`${userProfiles.lastInteractionAt} desc nulls last`)
     .limit(limit)
     .offset(offset);
 
