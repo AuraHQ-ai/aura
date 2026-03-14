@@ -42,7 +42,7 @@ export interface SlackAppMentionEvent {
 
 export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
-export type ChannelType = "dm" | "public_channel" | "private_channel" | "slack_list_item";
+export type ChannelType = "dm" | "dashboard" | "public_channel" | "private_channel" | "slack_list_item";
 
 export interface SlackListItemContext {
   /** The message ts that doubles as the list item's thread_ts */

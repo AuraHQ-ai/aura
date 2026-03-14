@@ -36,7 +36,7 @@ export interface ChannelSession {
   conversationContext?: string;
   isDirectMessage: boolean;
   /** Specific channel type — when omitted, derived from isDirectMessage (dm vs public_channel). */
-  channelType?: "dm" | "public_channel" | "private_channel";
+  channelType?: ChannelType;
   userTimezone?: string;
   /** Human-readable channel name (e.g. "#dev (C0BNVKS77)"). Falls back to conversationId. */
   channelDisplayName?: string;
@@ -112,13 +112,13 @@ export async function buildCorePrompt(
       lookupPerson(session.userId),
     ]);
 
-  const channelContext = session.isDirectMessage
-    ? "DM"
-    : session.channel === "dashboard"
-      ? "Dashboard chat"
+  const channelContext = session.channel === "dashboard"
+    ? "Dashboard chat"
+    : session.isDirectMessage
+      ? "DM"
       : (session.channelDisplayName ?? session.conversationId);
 
-  const channelType = session.channelType ?? (session.isDirectMessage ? "dm" : "public_channel");
+  const channelType = session.channelType ?? (session.channel === "dashboard" ? "dashboard" : session.isDirectMessage ? "dm" : "public_channel");
 
   const { stablePrefix, conversationContext } = await buildSystemPrompt({
     memories,
