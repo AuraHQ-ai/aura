@@ -8,12 +8,21 @@ import {
   useDefaultLayout,
   usePanelRef,
 } from "react-resizable-panels";
+import type { LayoutStorage } from "react-resizable-panels";
 import { LogOut, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MobileNav } from "./sidebar";
 import { ThemeToggle } from "./theme-toggle";
 import { ChatPanel } from "./chat/chat-panel";
 import type { Session } from "@/lib/auth";
+
+const ssrSafeStorage: LayoutStorage = {
+  getItem: (key: string) =>
+    typeof window !== "undefined" ? localStorage.getItem(key) : null,
+  setItem: (key: string, value: string) => {
+    if (typeof window !== "undefined") localStorage.setItem(key, value);
+  },
+};
 
 interface DashboardShellProps {
   session: Session | null;
@@ -25,6 +34,7 @@ export function DashboardShell({ session, children }: DashboardShellProps) {
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: "aura-dashboard-layout",
+    storage: ssrSafeStorage,
   });
 
   const initiallyOpen = defaultLayout ? (defaultLayout["chat"] ?? 0) > 0 : false;
