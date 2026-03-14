@@ -81,45 +81,47 @@ export function MemoriesTable({ memories, total, page, pageSize }: Props) {
         </select>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Content</TableHead>
-            <TableHead className="w-[90px]">Type</TableHead>
-            <TableHead className="w-[80px]">Relevance</TableHead>
-            <TableHead className="w-[80px]">Shareable</TableHead>
-            <TableHead className="w-[140px]">Created</TableHead>
-            <TableHead className="w-10" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {memories.map((memory) => (
-            <TableRow key={memory.id}>
-              <TableCell>
-                <Link href={`/memories/${memory.id}`} className="hover:underline">
-                  {truncate(memory.content, 80)}
-                </Link>
-              </TableCell>
-              <TableCell><Badge variant="secondary">{memory.type}</Badge></TableCell>
-              <TableCell>{memory.relevanceScore.toFixed(2)}</TableCell>
-              <TableCell>{memory.shareable ? "Yes" : "No"}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(memory.createdAt)}</TableCell>
-              <TableCell>
-                <Button variant="ghost" size="icon" onClick={() => setDeleteId(memory.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-          {memories.length === 0 && (
+      <div className="overflow-x-auto">
+        <Table className="min-w-[700px]">
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                No memories found
-              </TableCell>
+              <TableHead>Content</TableHead>
+              <TableHead className="w-[90px]">Type</TableHead>
+              <TableHead className="w-[80px]">Relevance</TableHead>
+              <TableHead className="w-[80px]">Shareable</TableHead>
+              <TableHead className="w-[140px]">Created</TableHead>
+              <TableHead className="w-10" />
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {memories.map((memory) => (
+              <TableRow key={memory.id}>
+                <TableCell>
+                  <Link href={`/memories/${memory.id}`} className="hover:underline">
+                    {truncate(memory.content, 80)}
+                  </Link>
+                </TableCell>
+                <TableCell><Badge variant="secondary">{memory.type}</Badge></TableCell>
+                <TableCell>{memory.relevanceScore.toFixed(2)}</TableCell>
+                <TableCell>{memory.shareable ? "Yes" : "No"}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(memory.createdAt)}</TableCell>
+                <TableCell>
+                  <Button variant="ghost" size="icon" onClick={() => setDeleteId(memory.id)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {memories.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  No memories found
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       <Pagination total={total} pageSize={pageSize} page={page} />
 

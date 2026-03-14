@@ -50,7 +50,7 @@ export function UserDetail({ data }: { data: UserData }) {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader><CardTitle>Interactions</CardTitle></CardHeader>
           <CardContent>
@@ -89,7 +89,7 @@ export function UserDetail({ data }: { data: UserData }) {
           {person ? (
             <Card>
               <CardContent className="pt-4 space-y-3">
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="text-sm font-medium">Job Title</label>
                     <Input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
@@ -126,12 +126,12 @@ export function UserDetail({ data }: { data: UserData }) {
             {memories.map((m) => (
               <Link key={m.id} href={`/memories/${m.id}`} className="block">
                 <Card className="hover:bg-muted/50 transition-colors">
-                  <CardContent className="py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary">{m.type}</Badge>
-                      <span className="text-sm">{truncate(m.content, 80)}</span>
+                  <CardContent className="py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Badge variant="secondary" className="shrink-0">{m.type}</Badge>
+                      <span className="text-sm truncate">{truncate(m.content, 80)}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground">{formatDate(m.createdAt)}</span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">{formatDate(m.createdAt)}</span>
                   </CardContent>
                 </Card>
               </Link>

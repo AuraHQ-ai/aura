@@ -80,7 +80,7 @@ export function MemoryDetail({ memory }: { memory: MemoryWithUsers }) {
       </Card>
 
       {editing && (
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <Card>
             <CardHeader><CardTitle className="text-sm">Relevance Score</CardTitle></CardHeader>
             <CardContent>
@@ -127,7 +127,7 @@ export function MemoryDetail({ memory }: { memory: MemoryWithUsers }) {
       )}
 
       {!editing && (
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <Card>
             <CardHeader><CardTitle className="text-sm">Relevance Score</CardTitle></CardHeader>
             <CardContent>

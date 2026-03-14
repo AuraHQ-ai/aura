@@ -34,7 +34,7 @@ export default async function ResourceDetailPage({ params }: { params: Promise<{
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         <Card>
           <CardHeader><CardTitle className="text-sm">Source</CardTitle></CardHeader>
           <CardContent><Badge variant="outline">{resource.source}</Badge></CardContent>

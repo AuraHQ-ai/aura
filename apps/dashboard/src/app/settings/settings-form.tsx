@@ -84,7 +84,7 @@ export function SettingsForm({ settings }: { settings: Setting[] }) {
       <Card>
         <CardHeader><CardTitle className="text-base">Model Selection</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Main Model</label>
               <Select value={mainModel} onChange={(e) => setMainModel(e.target.value)}>
@@ -122,33 +122,35 @@ export function SettingsForm({ settings }: { settings: Setting[] }) {
       <Card>
         <CardHeader><CardTitle className="text-base">All Settings</CardTitle></CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[200px]">Key</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead className="w-[140px]">Updated</TableHead>
-                <TableHead className="w-[120px]">By</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {nonModelSettings.map((s) => (
-                <TableRow key={s.key}>
-                  <TableCell className="font-mono text-sm">{s.key}</TableCell>
-                  <TableCell className="text-sm">{s.value}</TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
+          <div className="overflow-x-auto">
+            <Table className="min-w-[550px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[200px]">Key</TableHead>
+                  <TableHead>Value</TableHead>
+                  <TableHead className="w-[140px]">Updated</TableHead>
+                  <TableHead className="w-[120px]">By</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {nonModelSettings.map((s) => (
+                  <TableRow key={s.key}>
+                    <TableCell className="font-mono text-sm">{s.key}</TableCell>
+                    <TableCell className="text-sm">{s.value}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader><CardTitle className="text-base">Edit Setting</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2">
             <Input placeholder="Key" value={editKey} onChange={(e) => setEditKey(e.target.value)} />
             <Input placeholder="Value" value={editValue} onChange={(e) => setEditValue(e.target.value)} />
           </div>

@@ -72,45 +72,47 @@ export function NotesTable({ notes, total, page, pageSize }: { notes: Note[]; to
         </Button>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Topic</TableHead>
-            <TableHead className="w-[100px]">Category</TableHead>
-            <TableHead className="w-[140px]">Updated</TableHead>
-            <TableHead className="w-[140px]">Expires</TableHead>
-            <TableHead className="w-10" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {notes.map((note) => (
-            <TableRow key={note.id}>
-              <TableCell>
-                <Link href={`/notes/${note.id}`} className="font-medium hover:underline">
-                  {truncate(note.topic, 60)}
-                </Link>
-              </TableCell>
-              <TableCell>
-                <Badge variant="secondary">{note.category}</Badge>
-              </TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(note.updatedAt)}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(note.expiresAt)}</TableCell>
-              <TableCell>
-                <Button variant="ghost" size="icon" onClick={() => setDeleteId(note.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-          {notes.length === 0 && (
+      <div className="overflow-x-auto">
+        <Table className="min-w-[600px]">
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                No notes found
-              </TableCell>
+              <TableHead>Topic</TableHead>
+              <TableHead className="w-[100px]">Category</TableHead>
+              <TableHead className="w-[140px]">Updated</TableHead>
+              <TableHead className="w-[140px]">Expires</TableHead>
+              <TableHead className="w-10" />
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {notes.map((note) => (
+              <TableRow key={note.id}>
+                <TableCell>
+                  <Link href={`/notes/${note.id}`} className="font-medium hover:underline">
+                    {truncate(note.topic, 60)}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="secondary">{note.category}</Badge>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(note.updatedAt)}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(note.expiresAt)}</TableCell>
+                <TableCell>
+                  <Button variant="ghost" size="icon" onClick={() => setDeleteId(note.id)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {notes.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  No notes found
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       <Pagination total={total} pageSize={pageSize} page={page} />
 

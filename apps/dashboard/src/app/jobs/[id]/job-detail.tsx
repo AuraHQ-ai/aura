@@ -22,15 +22,15 @@ export function JobDetail({ data }: { data: JobData }) {
 
   return (
     <>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Link href="/jobs">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
-        <div>
+        <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold">{job.name}</h1>
-          <p className="text-sm text-muted-foreground">{job.description}</p>
+          <p className="text-sm text-muted-foreground truncate">{job.description}</p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <Badge variant={job.enabled ? "success" : "secondary"}>
             {job.enabled ? "Enabled" : "Disabled"}
           </Badge>
@@ -38,7 +38,7 @@ export function JobDetail({ data }: { data: JobData }) {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader><CardTitle>Schedule</CardTitle></CardHeader>
           <CardContent>
@@ -72,60 +72,62 @@ export function JobDetail({ data }: { data: JobData }) {
         </TabsList>
 
         <TabsContent value="executions">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[140px]">Started</TableHead>
-                <TableHead className="w-[140px]">Finished</TableHead>
-                <TableHead className="w-[80px]">Status</TableHead>
-                <TableHead className="w-[80px]">Cost</TableHead>
-                <TableHead className="w-[80px]">Trigger</TableHead>
-                <TableHead>Error</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {executions.map((exec) => (
-                <TableRow key={exec.id} className={exec.conversationTraceId ? "cursor-pointer hover:bg-muted/50" : ""}>
-                  <TableCell className="text-sm">
-                    {exec.conversationTraceId ? (
-                      <Link
-                        href={`/conversations/${exec.conversationTraceId}`}
-                        className="hover:underline"
-                      >
-                        {formatDate(exec.startedAt)}
-                      </Link>
-                    ) : (
-                      formatDate(exec.startedAt)
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">{formatDate(exec.finishedAt)}</TableCell>
-                  <TableCell>
-                    <Badge variant={
-                      exec.status === "completed" ? "success" :
-                      exec.status === "failed" ? "destructive" :
-                      "secondary"
-                    }>
-                      {exec.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm font-mono text-muted-foreground">
-                    {exec.costUsd ? `$${parseFloat(exec.costUsd).toFixed(4)}` : "—"}
-                  </TableCell>
-                  <TableCell className="text-sm">{exec.trigger}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
-                    {exec.error || "—"}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {executions.length === 0 && (
+          <div className="overflow-x-auto">
+            <Table className="min-w-[700px]">
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    No executions yet
-                  </TableCell>
+                  <TableHead className="w-[140px]">Started</TableHead>
+                  <TableHead className="w-[140px]">Finished</TableHead>
+                  <TableHead className="w-[80px]">Status</TableHead>
+                  <TableHead className="w-[80px]">Cost</TableHead>
+                  <TableHead className="w-[80px]">Trigger</TableHead>
+                  <TableHead>Error</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {executions.map((exec) => (
+                  <TableRow key={exec.id} className={exec.conversationTraceId ? "cursor-pointer hover:bg-muted/50" : ""}>
+                    <TableCell className="text-sm">
+                      {exec.conversationTraceId ? (
+                        <Link
+                          href={`/conversations/${exec.conversationTraceId}`}
+                          className="hover:underline"
+                        >
+                          {formatDate(exec.startedAt)}
+                        </Link>
+                      ) : (
+                        formatDate(exec.startedAt)
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm">{formatDate(exec.finishedAt)}</TableCell>
+                    <TableCell>
+                      <Badge variant={
+                        exec.status === "completed" ? "success" :
+                        exec.status === "failed" ? "destructive" :
+                        "secondary"
+                      }>
+                        {exec.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm font-mono text-muted-foreground">
+                      {exec.costUsd ? `$${parseFloat(exec.costUsd).toFixed(4)}` : "—"}
+                    </TableCell>
+                    <TableCell className="text-sm">{exec.trigger}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
+                      {exec.error || "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {executions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      No executions yet
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </TabsContent>
 
         <TabsContent value="playbook">

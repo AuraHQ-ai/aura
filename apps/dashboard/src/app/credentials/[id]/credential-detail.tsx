@@ -65,15 +65,15 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
 
   return (
     <>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Link href="/credentials">
           <Button variant="ghost" size="icon"><ArrowLeft className="h-4 w-4" /></Button>
         </Link>
-        <div>
-          <h1 className="text-base font-semibold font-mono">{data.name}</h1>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-base font-semibold font-mono truncate">{data.name}</h1>
           <p className="text-sm text-muted-foreground">Owned by {data.ownerName}</p>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <Badge variant="secondary">{data.type}</Badge>
           <Button variant="outline" size="sm" onClick={() => setShowUpdateValue(true)}>Update Value</Button>
           <Button variant="destructive" size="sm" onClick={handleDelete}>
@@ -82,7 +82,7 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         <Card>
           <CardHeader><CardTitle className="text-sm">Value</CardTitle></CardHeader>
           <CardContent>
@@ -111,73 +111,77 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
               <UserPlus className="h-4 w-4" /> Add Grant
             </Button>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Grantee</TableHead>
-                <TableHead>Permission</TableHead>
-                <TableHead>Granted By</TableHead>
-                <TableHead>Granted At</TableHead>
-                <TableHead>Revoked</TableHead>
-                <TableHead className="w-20" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.grants.map((g) => (
-                <TableRow key={g.id}>
-                  <TableCell className="font-medium">{data.granteeNames[g.granteeId] || g.granteeId}</TableCell>
-                  <TableCell><Badge variant="outline">{g.permission}</Badge></TableCell>
-                  <TableCell className="text-sm">{g.grantedBy}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{formatDate(g.grantedAt)}</TableCell>
-                  <TableCell>{g.revokedAt ? formatDate(g.revokedAt) : "—"}</TableCell>
-                  <TableCell>
-                    {!g.revokedAt && (
-                      <Button variant="ghost" size="sm" onClick={() => handleRevoke(g.id)}>
-                        Revoke
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {data.grants.length === 0 && (
+          <div className="overflow-x-auto">
+            <Table className="min-w-[600px]">
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-4">
-                    No grants
-                  </TableCell>
+                  <TableHead>Grantee</TableHead>
+                  <TableHead>Permission</TableHead>
+                  <TableHead>Granted By</TableHead>
+                  <TableHead>Granted At</TableHead>
+                  <TableHead>Revoked</TableHead>
+                  <TableHead className="w-20" />
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {data.grants.map((g) => (
+                  <TableRow key={g.id}>
+                    <TableCell className="font-medium">{data.granteeNames[g.granteeId] || g.granteeId}</TableCell>
+                    <TableCell><Badge variant="outline">{g.permission}</Badge></TableCell>
+                    <TableCell className="text-sm">{g.grantedBy}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{formatDate(g.grantedAt)}</TableCell>
+                    <TableCell>{g.revokedAt ? formatDate(g.revokedAt) : "—"}</TableCell>
+                    <TableCell>
+                      {!g.revokedAt && (
+                        <Button variant="ghost" size="sm" onClick={() => handleRevoke(g.id)}>
+                          Revoke
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {data.grants.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-4">
+                      No grants
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </TabsContent>
 
         <TabsContent value="audit">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Action</TableHead>
-                <TableHead>By</TableHead>
-                <TableHead>Context</TableHead>
-                <TableHead>Time</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.auditLog.map((entry) => (
-                <TableRow key={entry.id}>
-                  <TableCell><Badge variant="outline">{entry.action}</Badge></TableCell>
-                  <TableCell className="text-sm">{entry.accessedBy}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{entry.context || "—"}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{formatDate(entry.timestamp)}</TableCell>
-                </TableRow>
-              ))}
-              {data.auditLog.length === 0 && (
+          <div className="overflow-x-auto">
+            <Table className="min-w-[500px]">
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
-                    No audit entries
-                  </TableCell>
+                  <TableHead>Action</TableHead>
+                  <TableHead>By</TableHead>
+                  <TableHead>Context</TableHead>
+                  <TableHead>Time</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {data.auditLog.map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell><Badge variant="outline">{entry.action}</Badge></TableCell>
+                    <TableCell className="text-sm">{entry.accessedBy}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{entry.context || "—"}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{formatDate(entry.timestamp)}</TableCell>
+                  </TableRow>
+                ))}
+                {data.auditLog.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
+                      No audit entries
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </TabsContent>
       </Tabs>
 

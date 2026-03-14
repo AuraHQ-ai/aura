@@ -65,7 +65,7 @@ export default async function DashboardPage() {
     <div className="space-y-4">
       <h1 className="text-lg font-semibold tracking-tight">Overview</h1>
 
-      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Notes</CardTitle>
@@ -108,7 +108,7 @@ export default async function DashboardPage() {
         </Card>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Recent Errors</CardTitle>
@@ -119,14 +119,14 @@ export default async function DashboardPage() {
             ) : (
               <div className="space-y-3">
                 {stats.recentErrors.map((err) => (
-                  <div key={err.id} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{err.errorName}</span>
-                      {err.errorCode && <Badge variant="outline">{err.errorCode}</Badge>}
+                  <div key={err.id} className="flex items-center justify-between gap-3 text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-medium truncate">{err.errorName}</span>
+                      {err.errorCode && <Badge variant="outline" className="shrink-0">{err.errorCode}</Badge>}
                     </div>
-                    <div className="flex items-center gap-2 text-muted-foreground">
+                    <div className="flex items-center gap-2 text-muted-foreground shrink-0">
                       {err.resolved && <Badge variant="success">Resolved</Badge>}
-                      <span className="text-xs">{formatDate(err.timestamp)}</span>
+                      <span className="text-xs whitespace-nowrap">{formatDate(err.timestamp)}</span>
                     </div>
                   </div>
                 ))}
@@ -145,9 +145,10 @@ export default async function DashboardPage() {
             ) : (
               <div className="space-y-3">
                 {stats.recentExecutions.map((exec) => (
-                  <div key={exec.id} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
+                  <div key={exec.id} className="flex items-center justify-between gap-3 text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
                       <Badge
+                        className="shrink-0"
                         variant={
                           exec.status === "completed" ? "success" :
                           exec.status === "failed" ? "destructive" :
@@ -156,9 +157,9 @@ export default async function DashboardPage() {
                       >
                         {exec.status}
                       </Badge>
-                      <span className="text-muted-foreground">{exec.trigger}</span>
+                      <span className="text-muted-foreground truncate">{exec.trigger}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
                       {formatDate(exec.startedAt)}
                     </span>
                   </div>

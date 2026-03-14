@@ -78,123 +78,127 @@ function formatPreview(name: string | null, preview: string | null): string {
 
 function InvocationsTable({ conversations }: { conversations: ConversationRow[] }) {
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-[140px]">Timestamp</TableHead>
-          <TableHead className="w-[80px]">Source</TableHead>
-          <TableHead>Preview</TableHead>
-          <TableHead className="w-[160px]">Model</TableHead>
-          <TableHead className="w-[90px]">Cost</TableHead>
-          <TableHead className="w-[140px]">Tokens</TableHead>
-          <TableHead className="w-[60px]">Steps</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {conversations.map((conv) => (
-          <TableRow key={conv.id}>
-            <TableCell className="text-sm text-muted-foreground">
-              <Link href={`/conversations/${conv.id}`} className="hover:underline">
-                {formatDate(conv.createdAt)}
-              </Link>
-            </TableCell>
-            <TableCell>
-              <Badge
-                variant={conv.sourceType === "interactive" ? "default" : "secondary"}
-              >
-                {conv.sourceType === "job_execution" ? "job" : "interactive"}
-              </Badge>
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground">
-              {conv.sourceType === "job_execution"
-                ? conv.sourceLabel
-                : formatPreview(conv.resolvedName, conv.messagePreview)}
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground font-mono">
-              {conv.modelId ?? "—"}
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground font-mono">
-              {conv.costUsd ? `$${parseFloat(conv.costUsd).toFixed(4)}` : "—"}
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground">
-              {conv.tokenUsage
-                ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
-                : "—"}
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground">
-              {conv.messageCount}
-            </TableCell>
-          </TableRow>
-        ))}
-        {conversations.length === 0 && (
+    <div className="overflow-x-auto">
+      <Table className="min-w-[800px]">
+        <TableHeader>
           <TableRow>
-            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-              No conversations found
-            </TableCell>
+            <TableHead className="w-[140px]">Timestamp</TableHead>
+            <TableHead className="w-[80px]">Source</TableHead>
+            <TableHead>Preview</TableHead>
+            <TableHead className="w-[160px]">Model</TableHead>
+            <TableHead className="w-[90px]">Cost</TableHead>
+            <TableHead className="w-[140px]">Tokens</TableHead>
+            <TableHead className="w-[60px]">Steps</TableHead>
           </TableRow>
-        )}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {conversations.map((conv) => (
+            <TableRow key={conv.id}>
+              <TableCell className="text-sm text-muted-foreground">
+                <Link href={`/conversations/${conv.id}`} className="hover:underline">
+                  {formatDate(conv.createdAt)}
+                </Link>
+              </TableCell>
+              <TableCell>
+                <Badge
+                  variant={conv.sourceType === "interactive" ? "default" : "secondary"}
+                >
+                  {conv.sourceType === "job_execution" ? "job" : "interactive"}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {conv.sourceType === "job_execution"
+                  ? conv.sourceLabel
+                  : formatPreview(conv.resolvedName, conv.messagePreview)}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground font-mono">
+                {conv.modelId ?? "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground font-mono">
+                {conv.costUsd ? `$${parseFloat(conv.costUsd).toFixed(4)}` : "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {conv.tokenUsage
+                  ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
+                  : "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {conv.messageCount}
+              </TableCell>
+            </TableRow>
+          ))}
+          {conversations.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                No conversations found
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
 function ThreadsTable({ threads }: { threads: ThreadRow[] }) {
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-[140px]">Started</TableHead>
-          <TableHead className="w-[140px]">Last Active</TableHead>
-          <TableHead className="w-[80px]">Source</TableHead>
-          <TableHead>Preview</TableHead>
-          <TableHead className="w-[80px]">Messages</TableHead>
-          <TableHead className="w-[90px]">Cost</TableHead>
-          <TableHead className="w-[140px]">Tokens</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {threads.map((thread) => (
-          <TableRow key={`${thread.channelId}::${thread.threadTs}`}>
-            <TableCell className="text-sm text-muted-foreground">
-              <Link href={`/conversations/threads/${thread.channelId}/${thread.threadTs}`} className="hover:underline">
-                {formatDate(thread.firstTraceAt)}
-              </Link>
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground">
-              {formatDate(thread.lastTraceAt)}
-            </TableCell>
-            <TableCell>
-              <Badge
-                variant={thread.sourceType === "interactive" ? "default" : "secondary"}
-              >
-                {thread.sourceType === "job_execution" ? "job" : "interactive"}
-              </Badge>
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground">
-              {formatPreview(thread.resolvedName, thread.messagePreview)}
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground">
-              {thread.traceCount}
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground font-mono">
-              {thread.totalCostUsd > 0 ? `$${thread.totalCostUsd.toFixed(4)}` : "—"}
-            </TableCell>
-            <TableCell className="text-sm text-muted-foreground">
-              {thread.totalTokens > 0
-                ? `${thread.inputTokens.toLocaleString()} / ${thread.outputTokens.toLocaleString()}`
-                : "—"}
-            </TableCell>
-          </TableRow>
-        ))}
-        {threads.length === 0 && (
+    <div className="overflow-x-auto">
+      <Table className="min-w-[800px]">
+        <TableHeader>
           <TableRow>
-            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-              No threads found
-            </TableCell>
+            <TableHead className="w-[140px]">Started</TableHead>
+            <TableHead className="w-[140px]">Last Active</TableHead>
+            <TableHead className="w-[80px]">Source</TableHead>
+            <TableHead>Preview</TableHead>
+            <TableHead className="w-[80px]">Messages</TableHead>
+            <TableHead className="w-[90px]">Cost</TableHead>
+            <TableHead className="w-[140px]">Tokens</TableHead>
           </TableRow>
-        )}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {threads.map((thread) => (
+            <TableRow key={`${thread.channelId}::${thread.threadTs}`}>
+              <TableCell className="text-sm text-muted-foreground">
+                <Link href={`/conversations/threads/${thread.channelId}/${thread.threadTs}`} className="hover:underline">
+                  {formatDate(thread.firstTraceAt)}
+                </Link>
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {formatDate(thread.lastTraceAt)}
+              </TableCell>
+              <TableCell>
+                <Badge
+                  variant={thread.sourceType === "interactive" ? "default" : "secondary"}
+                >
+                  {thread.sourceType === "job_execution" ? "job" : "interactive"}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {formatPreview(thread.resolvedName, thread.messagePreview)}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {thread.traceCount}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground font-mono">
+                {thread.totalCostUsd > 0 ? `$${thread.totalCostUsd.toFixed(4)}` : "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {thread.totalTokens > 0
+                  ? `${thread.inputTokens.toLocaleString()} / ${thread.outputTokens.toLocaleString()}`
+                  : "—"}
+              </TableCell>
+            </TableRow>
+          ))}
+          {threads.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                No threads found
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 

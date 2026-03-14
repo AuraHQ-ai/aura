@@ -55,64 +55,66 @@ export function JobsTable({ jobs, total, page, pageSize }: Props) {
         />
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead className="w-[120px]">Requested By</TableHead>
-            <TableHead className="w-[80px]">Status</TableHead>
-            <TableHead className="w-[120px]">Schedule</TableHead>
-            <TableHead className="w-[70px]">Enabled</TableHead>
-            <TableHead className="w-[90px]">Executions</TableHead>
-            <TableHead className="w-[140px]">Last Run</TableHead>
-            <TableHead className="w-[140px]">Created</TableHead>
-            <TableHead className="w-[80px]">Priority</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {jobs.map((job) => (
-            <TableRow key={job.id}>
-              <TableCell>
-                <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
-                  {job.name}
-                </Link>
-              </TableCell>
-              <TableCell className="text-muted-foreground text-sm">{job.requestedBy}</TableCell>
-              <TableCell>
-                <Badge variant={job.status === "completed" ? "success" : job.status === "failed" ? "destructive" : "secondary"}>
-                  {job.status}
-                </Badge>
-              </TableCell>
-              <TableCell className="font-mono text-sm text-muted-foreground">{job.cronSchedule || "—"}</TableCell>
-              <TableCell>
-                <button
-                  onClick={() => handleToggle(job.id, job.enabled)}
-                  className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer ${
-                    job.enabled ? "bg-emerald-500" : "bg-muted"
-                  }`}
-                >
-                  <span
-                    className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                      job.enabled ? "translate-x-4" : "translate-x-0.5"
-                    }`}
-                  />
-                </button>
-              </TableCell>
-              <TableCell>{job.executionCount}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(job.lastExecutedAt)}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(job.createdAt)}</TableCell>
-              <TableCell><Badge variant="outline">{job.priority}</Badge></TableCell>
-            </TableRow>
-          ))}
-          {jobs.length === 0 && (
+      <div className="overflow-x-auto">
+        <Table className="min-w-[960px]">
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                No jobs found
-              </TableCell>
+              <TableHead>Name</TableHead>
+              <TableHead className="w-[120px]">Requested By</TableHead>
+              <TableHead className="w-[80px]">Status</TableHead>
+              <TableHead className="w-[120px]">Schedule</TableHead>
+              <TableHead className="w-[70px]">Enabled</TableHead>
+              <TableHead className="w-[90px]">Executions</TableHead>
+              <TableHead className="w-[140px]">Last Run</TableHead>
+              <TableHead className="w-[140px]">Created</TableHead>
+              <TableHead className="w-[80px]">Priority</TableHead>
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {jobs.map((job) => (
+              <TableRow key={job.id}>
+                <TableCell>
+                  <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">
+                    {job.name}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-sm">{job.requestedBy}</TableCell>
+                <TableCell>
+                  <Badge variant={job.status === "completed" ? "success" : job.status === "failed" ? "destructive" : "secondary"}>
+                    {job.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="font-mono text-sm text-muted-foreground">{job.cronSchedule || "—"}</TableCell>
+                <TableCell>
+                  <button
+                    onClick={() => handleToggle(job.id, job.enabled)}
+                    className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer ${
+                      job.enabled ? "bg-emerald-500" : "bg-muted"
+                    }`}
+                  >
+                    <span
+                      className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                        job.enabled ? "translate-x-4" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </TableCell>
+                <TableCell>{job.executionCount}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(job.lastExecutedAt)}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(job.createdAt)}</TableCell>
+                <TableCell><Badge variant="outline">{job.priority}</Badge></TableCell>
+              </TableRow>
+            ))}
+            {jobs.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                  No jobs found
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       <Pagination total={total} pageSize={pageSize} page={page} />
     </>

@@ -88,39 +88,41 @@ export function CredentialsTable({ credentials, total, page, pageSize }: Props) 
         </Button>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead className="w-[80px]">Type</TableHead>
-            <TableHead className="w-[160px]">Owner</TableHead>
-            <TableHead className="w-[70px]">Grants</TableHead>
-            <TableHead className="w-[140px]">Expires</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {credentials.map((cred) => (
-            <TableRow key={cred.id}>
-              <TableCell>
-                <Link href={`/credentials/${cred.id}`} className="font-medium hover:underline font-mono">
-                  {cred.name}
-                </Link>
-              </TableCell>
-              <TableCell><Badge variant="secondary">{cred.type}</Badge></TableCell>
-              <TableCell className="text-sm">{cred.ownerName}</TableCell>
-              <TableCell>{cred.grantCount}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(cred.expiresAt)}</TableCell>
-            </TableRow>
-          ))}
-          {credentials.length === 0 && (
+      <div className="overflow-x-auto">
+        <Table className="min-w-[550px]">
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                No credentials found
-              </TableCell>
+              <TableHead>Name</TableHead>
+              <TableHead className="w-[80px]">Type</TableHead>
+              <TableHead className="w-[160px]">Owner</TableHead>
+              <TableHead className="w-[70px]">Grants</TableHead>
+              <TableHead className="w-[140px]">Expires</TableHead>
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {credentials.map((cred) => (
+              <TableRow key={cred.id}>
+                <TableCell>
+                  <Link href={`/credentials/${cred.id}`} className="font-medium hover:underline font-mono">
+                    {cred.name}
+                  </Link>
+                </TableCell>
+                <TableCell><Badge variant="secondary">{cred.type}</Badge></TableCell>
+                <TableCell className="text-sm">{cred.ownerName}</TableCell>
+                <TableCell>{cred.grantCount}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(cred.expiresAt)}</TableCell>
+              </TableRow>
+            ))}
+            {credentials.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  No credentials found
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       <Pagination total={total} pageSize={pageSize} page={page} />
 

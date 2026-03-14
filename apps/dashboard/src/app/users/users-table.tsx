@@ -58,41 +58,43 @@ export function UsersTable({ users, total, page, pageSize }: Props) {
         />
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[160px]">Name</TableHead>
-            <TableHead className="w-[120px]">Slack ID</TableHead>
-            <TableHead>Job Title</TableHead>
-            <TableHead className="w-[100px]">Interactions</TableHead>
-            <TableHead className="w-[140px]">Last Active</TableHead>
-            <TableHead className="w-[140px]">Joined</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {users.map((user) => (
-            <TableRow key={user.id}>
-              <TableCell>
-                <Link href={`/users/${user.slackUserId}`} className="font-medium hover:underline">
-                  {user.displayName}
-                </Link>
-              </TableCell>
-              <TableCell className="font-mono text-sm text-muted-foreground">{user.slackUserId}</TableCell>
-              <TableCell className="text-muted-foreground">{user.jobTitle || "—"}</TableCell>
-              <TableCell>{user.interactionCount}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(user.lastInteractionAt)}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(user.createdAt)}</TableCell>
-            </TableRow>
-          ))}
-          {users.length === 0 && (
+      <div className="overflow-x-auto">
+        <Table className="min-w-[700px]">
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                No users found
-              </TableCell>
+              <TableHead className="w-[160px]">Name</TableHead>
+              <TableHead className="w-[120px]">Slack ID</TableHead>
+              <TableHead>Job Title</TableHead>
+              <TableHead className="w-[100px]">Interactions</TableHead>
+              <TableHead className="w-[140px]">Last Active</TableHead>
+              <TableHead className="w-[140px]">Joined</TableHead>
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {users.map((user) => (
+              <TableRow key={user.id}>
+                <TableCell>
+                  <Link href={`/users/${user.slackUserId}`} className="font-medium hover:underline">
+                    {user.displayName}
+                  </Link>
+                </TableCell>
+                <TableCell className="font-mono text-sm text-muted-foreground">{user.slackUserId}</TableCell>
+                <TableCell className="text-muted-foreground">{user.jobTitle || "—"}</TableCell>
+                <TableCell>{user.interactionCount}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(user.lastInteractionAt)}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(user.createdAt)}</TableCell>
+              </TableRow>
+            ))}
+            {users.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  No users found
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       <Pagination total={total} pageSize={pageSize} page={page} />
     </>

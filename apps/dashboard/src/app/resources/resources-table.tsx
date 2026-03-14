@@ -60,53 +60,55 @@ export function ResourcesTable({ resources, total, page, pageSize }: Props) {
         />
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Title</TableHead>
-            <TableHead className="w-[80px]">Source</TableHead>
-            <TableHead className="w-[80px]">Status</TableHead>
-            <TableHead className="w-[140px]">Crawled</TableHead>
-            <TableHead className="w-[140px]">Updated</TableHead>
-            <TableHead className="w-10" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {resources.map((resource) => (
-            <TableRow key={resource.id}>
-              <TableCell>
-                <Link href={`/resources/${resource.id}`} className="font-medium hover:underline">
-                  {truncate(resource.title || resource.url, 60)}
-                </Link>
-              </TableCell>
-              <TableCell><Badge variant="outline">{resource.source}</Badge></TableCell>
-              <TableCell>
-                <Badge variant={
-                  resource.status === "ready" ? "success" :
-                  resource.status === "error" ? "destructive" :
-                  "warning"
-                }>
-                  {resource.status}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(resource.crawledAt)}</TableCell>
-              <TableCell className="text-muted-foreground text-sm">{formatDate(resource.updatedAt)}</TableCell>
-              <TableCell>
-                <Button variant="ghost" size="icon" onClick={() => setDeleteId(resource.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-          {resources.length === 0 && (
+      <div className="overflow-x-auto">
+        <Table className="min-w-[600px]">
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                No resources found
-              </TableCell>
+              <TableHead>Title</TableHead>
+              <TableHead className="w-[80px]">Source</TableHead>
+              <TableHead className="w-[80px]">Status</TableHead>
+              <TableHead className="w-[140px]">Crawled</TableHead>
+              <TableHead className="w-[140px]">Updated</TableHead>
+              <TableHead className="w-10" />
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {resources.map((resource) => (
+              <TableRow key={resource.id}>
+                <TableCell>
+                  <Link href={`/resources/${resource.id}`} className="font-medium hover:underline">
+                    {truncate(resource.title || resource.url, 60)}
+                  </Link>
+                </TableCell>
+                <TableCell><Badge variant="outline">{resource.source}</Badge></TableCell>
+                <TableCell>
+                  <Badge variant={
+                    resource.status === "ready" ? "success" :
+                    resource.status === "error" ? "destructive" :
+                    "warning"
+                  }>
+                    {resource.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(resource.crawledAt)}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">{formatDate(resource.updatedAt)}</TableCell>
+                <TableCell>
+                  <Button variant="ghost" size="icon" onClick={() => setDeleteId(resource.id)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+            {resources.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  No resources found
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
       <Pagination total={total} pageSize={pageSize} page={page} />
 

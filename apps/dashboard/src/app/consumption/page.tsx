@@ -13,7 +13,7 @@ export default async function ConsumptionPage() {
     <div className="space-y-4">
       <h1 className="text-lg font-semibold tracking-tight">Consumption</h1>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Total Cost (30d)</CardTitle>

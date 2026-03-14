@@ -70,7 +70,7 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Cost by User</CardTitle>
@@ -144,7 +144,7 @@ export function ConsumptionCharts({ data }: { data: ConsumptionData }) {
             <CardTitle className="text-base">Token Breakdown (30 days)</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
               <div>
                 <p className="text-sm text-muted-foreground">Cache Read</p>
                 <p className="text-lg font-semibold">{data.tokenBreakdown.cacheRead.toLocaleString()}</p>
