@@ -11,8 +11,7 @@
   "pnpm": {
     "overrides": {
       "e2b>chalk": "4.1.2",
-      "@types/react": "^19.0.0",
-      "@types/react-dom": "^19.0.0"
+      "react-jsx-parser>@types/react": "^19.0.0"
     }
   }
 }
