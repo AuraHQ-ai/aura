@@ -70,7 +70,13 @@ export const InlineCitationCardTrigger = ({
     >
       {sources[0] ? (
         <>
-          {new URL(sources[0]).hostname}{" "}
+          {(() => {
+            try {
+              return new URL(sources[0]).hostname;
+            } catch {
+              return sources[0];
+            }
+          })()}{" "}
           {sources.length > 1 && `+${sources.length - 1}`}
         </>
       ) : (
