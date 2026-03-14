@@ -1,6 +1,5 @@
 import {
   buildSystemPrompt,
-  buildStablePrefix,
   buildDynamicContext,
   type PersonProfile,
 } from "../personality/system-prompt.js";
