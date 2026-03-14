@@ -19,6 +19,7 @@ import {
   updateConversationTraceUsage,
   buildConversationSteps,
 } from "../cron/persist-conversation.js";
+import { storeMessage } from "../memory/store.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { logger } from "../lib/logger.js";
 
@@ -124,6 +125,34 @@ async function persistDashboardConversation(params: {
   const { userId, modelId, userMessage, assistantText, systemPrompt, steps, totalUsage } = params;
 
   try {
+    const userExternalId = `dashboard-${userId}-${Date.now()}`;
+    const assistantExternalId = `${userExternalId}-aura`;
+
+    await Promise.all([
+      storeMessage({
+        externalId: userExternalId,
+        channelId: "dashboard",
+        channelType: "dashboard",
+        userId,
+        role: "user",
+        content: userMessage,
+      }),
+      storeMessage({
+        externalId: assistantExternalId,
+        channelId: "dashboard",
+        channelType: "dashboard",
+        userId: "aura",
+        role: "assistant",
+        content: assistantText,
+        tokenUsage: {
+          inputTokens: totalUsage.inputTokens ?? 0,
+          outputTokens: totalUsage.outputTokens ?? 0,
+          totalTokens: totalUsage.totalTokens ?? 0,
+        },
+        model: modelId,
+      }),
+    ]);
+
     await extractMemories({
       userMessage,
       assistantResponse: assistantText,
