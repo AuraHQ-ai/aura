@@ -64,6 +64,7 @@ dashboardChatApp.post("/", async (c) => {
         )
         .map((p) => p.text)
         .join("") || "Hello";
+    const messageId = lastUserMessage?.id ?? crypto.randomUUID();
 
     const prompt = await buildCorePrompt({
       channel: "dashboard",
@@ -92,6 +93,7 @@ dashboardChatApp.post("/", async (c) => {
         waitUntil(
           persistDashboardConversation({
             userId,
+            messageId,
             modelId,
             userMessage: messageText,
             assistantText: text,
@@ -115,6 +117,7 @@ dashboardChatApp.post("/", async (c) => {
 
 async function persistDashboardConversation(params: {
   userId: string;
+  messageId: string;
   modelId: string;
   userMessage: string;
   assistantText: string;
@@ -122,10 +125,10 @@ async function persistDashboardConversation(params: {
   steps: StepResult<any>[];
   totalUsage: LanguageModelUsage;
 }): Promise<void> {
-  const { userId, modelId, userMessage, assistantText, systemPrompt, steps, totalUsage } = params;
+  const { userId, messageId, modelId, userMessage, assistantText, systemPrompt, steps, totalUsage } = params;
 
   try {
-    const userExternalId = `dashboard-${userId}-${Date.now()}`;
+    const userExternalId = `dashboard-${userId}-${messageId}`;
     const assistantExternalId = `${userExternalId}-aura`;
 
     await Promise.all([
