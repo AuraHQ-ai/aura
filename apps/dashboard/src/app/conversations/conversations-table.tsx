@@ -6,7 +6,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Pagination } from "@/components/pagination";
 import { formatDate, truncate } from "@/lib/utils";
 import { Search } from "lucide-react";
@@ -250,12 +250,16 @@ export function ConversationsTable({ conversations, threads, total, page, pageSi
         </div>
         <Select
           value={searchParams.get("sourceType") || "all"}
-          onChange={(e) => handleSourceType(e.target.value)}
-          className="w-[160px]"
+          onValueChange={(v) => handleSourceType(v)}
         >
-          <option value="all">All sources</option>
-          <option value="interactive">Interactive</option>
-          <option value="job_execution">Job execution</option>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All sources</SelectItem>
+            <SelectItem value="interactive">Interactive</SelectItem>
+            <SelectItem value="job_execution">Job execution</SelectItem>
+          </SelectContent>
         </Select>
       </div>
 

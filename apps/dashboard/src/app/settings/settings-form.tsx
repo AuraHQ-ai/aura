@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { setSetting } from "./actions";
@@ -87,29 +87,38 @@ export function SettingsForm({ settings }: { settings: Setting[] }) {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Main Model</label>
-              <Select value={mainModel} onChange={(e) => setMainModel(e.target.value)}>
-                <option value="">Default</option>
-                {MAIN_MODELS.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
+              <Select value={mainModel || "__default"} onValueChange={(v) => setMainModel(v === "__default" ? "" : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default">Default</SelectItem>
+                  {MAIN_MODELS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Fast Model</label>
-              <Select value={fastModel} onChange={(e) => setFastModel(e.target.value)}>
-                <option value="">Default</option>
-                {FAST_MODELS.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
+              <Select value={fastModel || "__default"} onValueChange={(v) => setFastModel(v === "__default" ? "" : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default">Default</SelectItem>
+                  {FAST_MODELS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Embedding Model</label>
-              <Select value={embeddingModel} onChange={(e) => setEmbeddingModel(e.target.value)}>
-                <option value="">Default</option>
-                {EMBEDDING_MODELS.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
+              <Select value={embeddingModel || "__default"} onValueChange={(v) => setEmbeddingModel(v === "__default" ? "" : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__default">Default</SelectItem>
+                  {EMBEDDING_MODELS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
           </div>
