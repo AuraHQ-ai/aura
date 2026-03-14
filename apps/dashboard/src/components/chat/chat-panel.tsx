@@ -251,17 +251,17 @@ function ToolBadge({ name, state }: { name: string; state: string }) {
     <div
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]",
-        state === "result"
+        state === "output-available"
           ? "border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400"
-          : state === "error"
+          : state === "output-error"
             ? "border-destructive/30 bg-destructive/10 text-destructive"
             : "border-border bg-muted text-muted-foreground",
       )}
     >
-      {(state === "call" || state === "partial-call") && (
+      {(state === "input-available" || state === "input-streaming") && (
         <Loader2 className="h-2.5 w-2.5 animate-spin" />
       )}
-      {state === "result" && (
+      {state === "output-available" && (
         <svg className="h-2.5 w-2.5" viewBox="0 0 12 12" fill="none">
           <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
