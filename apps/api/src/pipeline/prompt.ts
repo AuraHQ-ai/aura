@@ -5,7 +5,7 @@ import type { MessageContext } from "./context.js";
 import { resolveChannelName } from "./context.js";
 import type { ConversationContext } from "./slack-context.js";
 import { formatConversationContext } from "./slack-context.js";
-import { buildCorePrompt } from "./core-prompt.js";
+import { buildCorePrompt, type RetrievalMetadata } from "./core-prompt.js";
 import { getProfile } from "../users/profiles.js";
 
 export interface AssembledPrompt {
@@ -15,6 +15,7 @@ export interface AssembledPrompt {
   memories: Memory[];
   conversations: ConversationThread[];
   userProfile: UserProfile | null;
+  retrievalMetadata: RetrievalMetadata;
 }
 
 /**
@@ -131,5 +132,6 @@ If the thread content is sparse, try list_slack_list_items to find the item by m
     memories: core.memories,
     conversations: core.conversations,
     userProfile: core.userProfile,
+    retrievalMetadata: core.retrievalMetadata,
   };
 }
