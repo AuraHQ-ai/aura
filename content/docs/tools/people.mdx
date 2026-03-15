@@ -1,0 +1,37 @@
+---
+title: "People"
+description: "Structured contact database for team and external contacts."
+---
+
+# People Database
+
+Aura maintains a structured database of people she interacts with -- team members, external contacts, candidates, and partners. This goes beyond Slack profiles to include learned preferences, communication styles, and relationship context.
+
+## What's Stored
+
+For each person, Aura tracks:
+
+- **Identity** — Name, email, Slack ID, role, team
+- **Preferences** — Preferred language, communication style, timezone
+- **Notes** — Free-form observations from conversations
+- **Interaction history** — Frequency and recency of conversations
+
+## How It's Used
+
+The people database feeds into every conversation:
+
+1. **Before responding**, Aura checks the person's profile for language preference, communication style, and role
+2. **During conversations**, relevant personal context surfaces naturally ("You mentioned last week...")
+3. **Cross-referencing** — Aura can connect people working on similar problems across the org
+
+## Tools
+
+- `get_person` — Look up a person's full profile by name or Slack ID
+- `search_people` — Find people by partial name, role, or team
+- `update_person` — Update profile fields (admin only)
+
+## Privacy
+
+- DM-sourced personal details are private by default
+- Aura won't share one person's DM content with another unless explicitly asked by an admin
+- The People DB stores facts, not conversation transcripts

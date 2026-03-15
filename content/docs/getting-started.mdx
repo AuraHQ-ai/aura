@@ -5,7 +5,7 @@ description: "Deploy Aura into your Slack workspace in under 15 minutes."
 
 # Getting Started
 
-Aura is an autonomous AI agent that lives in your Slack workspace. She handles bug triage, data analysis, team coordination, and self-improvement — and she gets better every day.
+Aura is an autonomous AI agent that lives in your Slack workspace. She handles bug triage, data analysis, team coordination, email management, and self-improvement -- and she gets better every day.
 
 ## Prerequisites
 
@@ -19,21 +19,40 @@ Aura is an autonomous AI agent that lives in your Slack workspace. She handles b
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/realadvisor/aura.git
+git clone https://github.com/AuraHQ-ai/aura.git
 cd aura
-npm install
+pnpm install
 ```
 
-### 2. Set Up Your Database
+<Note>
+Aura uses a pnpm monorepo. Make sure you have [pnpm](https://pnpm.io/) installed (`npm install -g pnpm`).
+</Note>
+
+### 2. Project Structure
+
+Aura is organized as a monorepo with three main packages:
+
+```
+aura/
+├── apps/
+│   ├── api/          # Core agent — Hono API, message pipeline, tools, cron
+│   ├── dashboard/    # Admin dashboard — Next.js app for monitoring & management
+│   └── web/          # Marketing site — aurahq.ai
+├── packages/
+│   └── db/           # Shared database layer — Drizzle ORM schema & migrations
+└── content/
+    └── docs/         # This documentation (Mintlify)
+```
+
+### 3. Set Up Your Database
 
 Aura uses PostgreSQL with the `pgvector` extension for memory storage and retrieval. We recommend [Neon](https://neon.tech) for serverless Postgres.
 
-```bash
-# Create your database and enable pgvector
+```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-### 3. Configure Environment Variables
+### 4. Configure Environment Variables
 
 Copy the environment template and fill in your values:
 
@@ -47,30 +66,31 @@ SLACK_SIGNING_SECRET=...
 # Optional but recommended
 SLACK_USER_TOKEN=xoxp-...      # For message search
 GITHUB_TOKEN=ghp_...           # For self-improvement PRs
+TAVILY_API_KEY=...             # For web search
 ```
 
 See [Environment Variables](/deployment/environment-variables) for the full list.
 
-### 4. Run Database Migrations
+### 5. Run Database Migrations
 
 ```bash
-npm run db:migrate
+pnpm run db:migrate
 ```
 
-### 5. Deploy to Vercel
+### 6. Deploy to Vercel
 
 ```bash
 npx vercel --prod
 ```
 
-### 6. Configure Your Slack App
+### 7. Configure Your Slack App
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) and create a new app
 2. Set the Event Subscriptions URL to `https://your-deployment.vercel.app/api/slack/events`
 3. Add the required bot scopes (see [Slack Tools](/tools/slack))
 4. Install the app to your workspace
 
-### 7. Say Hello
+### 8. Say Hello
 
 Send Aura a DM in Slack. She'll introduce herself and start learning.
 
@@ -82,6 +102,7 @@ From the moment Aura is active, she:
 - **Runs autonomous jobs** — morning bug sweeps, email digests, follow-ups on quiet conversations
 - **Improves herself** — identifying gaps in her capabilities and opening PRs to fix them
 - **Builds her own knowledge graph** — cross-referencing notes, memories, and context
+- **Tracks costs** — every conversation logs token usage and model costs
 
 The longer she runs, the more useful she becomes. Most teams report a noticeable difference within the first week.
 
@@ -94,10 +115,10 @@ The longer she runs, the more useful she becomes. Most teams report a noticeable
   <Card title="Memory System" icon="brain" href="/memory-system">
     Deep dive into how Aura stores, retrieves, and consolidates knowledge.
   </Card>
+  <Card title="Dashboard" icon="chart-line" href="/dashboard">
+    Monitor conversations, costs, memories, and jobs from the admin UI.
+  </Card>
   <Card title="Tools Reference" icon="wrench" href="/tools/slack">
     See every tool Aura has access to and how they work.
-  </Card>
-  <Card title="Deployment Guide" icon="rocket" href="/deployment/vercel">
-    Production deployment, environment variables, and operational details.
   </Card>
 </CardGroup>

@@ -1,0 +1,51 @@
+---
+title: "Email Triage"
+description: "Gmail inbox sync, search, and automated triage state machine."
+---
+
+# Email Triage
+
+Beyond sending and reading individual emails, Aura has a full inbox management system that syncs Gmail, classifies threads, and maintains triage state.
+
+## The Triage State Machine
+
+Every synced email thread has a state:
+
+| State | Meaning |
+|-------|---------|
+| `awaiting_your_reply` | You need to respond |
+| `awaiting_their_reply` | Waiting on the other party |
+| `fyi` | Informational, no action needed |
+| `resolved` | Done, archived |
+| `junk` | Spam, noise, auto-dismissed |
+
+## How It Works
+
+1. **Sync** — Gmail inbox is periodically synced. New emails are stored with embeddings for semantic search.
+2. **Classify** — New threads are automatically classified into triage states based on content, sender, and patterns.
+3. **Digest** — Daily email digests summarize the inbox: what's new, what's aging, what needs attention.
+4. **Search** — Two modes: keyword (full-text) and semantic (meaning-based vector search).
+5. **Batch update** — Triage states can be updated in bulk after a digest review.
+
+## Tools
+
+- `search_emails` — Find emails by keyword or meaning. Supports filtering by triage state.
+- `update_email_threads` — Batch-update triage states for multiple threads at once.
+- `read_user_email` — Read a specific email message with full content and attachments.
+- `download_email_attachment` — Download and process email attachments.
+
+## Email Digests
+
+Aura produces daily email digests that include:
+
+- **Inbox state** — Counts by triage category
+- **New arrivals** — Threads synced since last digest
+- **Aging threads** — Items awaiting reply for too long
+- **Deadlines** — Upcoming due dates extracted from email content
+- **Auto-resolved** — Threads automatically dismissed as noise
+
+## Privacy
+
+- Email sync is per-user and requires explicit connection via App Home
+- Email contents are never shared with other users
+- Triage states are private to the email owner
