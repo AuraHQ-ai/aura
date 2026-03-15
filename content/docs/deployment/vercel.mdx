@@ -7,12 +7,30 @@ description: "How Aura runs on Vercel serverless functions with automatic deploy
 
 Aura's backend runs on Vercel serverless functions. Merging to `main` triggers an automatic production deploy.
 
+## Monorepo Structure
+
+Aura is a pnpm monorepo with multiple packages:
+
+```
+aura/
+├── apps/
+│   ├── api/          # Backend API (Hono, serverless functions)
+│   ├── dashboard/    # Admin dashboard (Next.js)
+│   └── web/          # Landing page + blog (Next.js)
+├── packages/
+│   └── db/           # Shared database schema (Drizzle ORM)
+└── content/
+    └── docs/         # Documentation (Mintlify)
+```
+
+Each `apps/*` project deploys as a separate Vercel project.
+
 ## Architecture
 
 - **Runtime:** Node.js serverless functions
 - **Framework:** Hono for HTTP routing
-- **Entry point:** `api/index.ts` → routes all requests through the Hono app
-- **Build:** `tsc` compiles TypeScript, then `tsx src/db/migrate.ts` runs pending migrations
+- **Entry point:** `apps/api/src/app.ts` exports the Hono app; `apps/api/api/index.ts` is the Vercel handler
+- **Build:** `tsc` compiles TypeScript, then `pnpm --filter @aura/db db:migrate` runs pending Drizzle migrations
 
 ## Deployment Flow
 
@@ -20,12 +38,12 @@ Aura's backend runs on Vercel serverless functions. Merging to `main` triggers a
 Push to main → Vercel Build → tsc → Run Migrations → Deploy
 ```
 
-The `vercel-build` script in `package.json` handles both compilation and migrations:
+The `vercel-build` script in `apps/api/package.json`:
 
 ```json
 {
   "scripts": {
-    "vercel-build": "tsc && tsx src/db/migrate.ts"
+    "vercel-build": "pnpm --filter @aura/db db:migrate"
   }
 }
 ```
@@ -34,28 +52,29 @@ The `vercel-build` script in `package.json` handles both compilation and migrati
 
 1. **Never push directly to `main`.** Vercel auto-deploys, so any push goes straight to production. Always use feature branches and PRs.
 2. **Migrations run on every deploy.** Drizzle handles idempotency — running the same migration twice is safe.
-3. **Serverless = stateless.** In-memory state only lasts for one request. Don't rely on module-level caches persisting.
+3. **Drizzle migration format:** Always include `-->statement-breakpoint` between SQL statements in migration files.
+4. **Serverless = stateless.** In-memory state only lasts for one request. Don't rely on module-level caches persisting.
+5. **Function timeout:** 800 seconds max. Plan long-running tasks accordingly.
+
+## Multiple Projects
+
+| Project | Domain | Contents |
+|---------|--------|----------|
+| `aura` | `api.aurahq.ai` | Backend API, Slack events, cron |
+| `aura-dashboard` | Dashboard domain | Admin UI (conversations, memories, credentials, errors) |
+| `aurahq-web` | `aurahq.ai` | Landing page + blog (Next.js) |
+| Mintlify | `docs.aurahq.ai` | Documentation |
 
 ## Monitoring
 
 ### Runtime Logs
 
 ```bash
-npx --yes vercel@50.13.2 logs aura-alpha-five.vercel.app --scope realadvisor
+npx --yes vercel@latest logs <deployment-url> --scope <your-scope>
 ```
 
 ### Build Logs
 
 ```bash
-npx --yes vercel@50.13.2 inspect <deployment-url> --logs --scope realadvisor
+npx --yes vercel@latest inspect <deployment-url> --logs --scope <your-scope>
 ```
-
-## Multiple Projects
-
-The recommended setup uses separate Vercel projects:
-
-| Project | Domain | Contents |
-|---------|--------|----------|
-| `aura` (existing) | `api.aurahq.ai` | Backend API, Slack events, cron |
-| `aurahq-web` (new) | `aurahq.ai` | Landing page + blog (Next.js) |
-| Mintlify | `docs.aurahq.ai` | Documentation |

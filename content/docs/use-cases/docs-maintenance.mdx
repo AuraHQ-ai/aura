@@ -1,0 +1,53 @@
+---
+title: "Documentation Maintenance"
+description: "Self-auditing documentation that detects drift, writes fixes, and opens PRs -- every day, without being asked."
+---
+
+# Documentation Maintenance
+
+## The Problem
+
+Documentation rots. The moment you ship it, it starts drifting from reality. New features get built without doc pages. Existing pages reference tools that no longer exist. Getting-started guides have the wrong repo URL or package manager.
+
+Nobody's job is to maintain docs. So nobody does.
+
+## How Aura Solves It
+
+Aura runs a daily documentation audit as a scheduled job.
+
+**The daily cycle:**
+1. Check recent commits on main for doc-impacting changes
+2. Compare tool files against doc pages (any new tools without docs?)
+3. Scan existing pages for stale references (wrong repo names, dead links, removed features)
+4. Fix what she can directly -- open a PR with corrections
+5. Flag what needs human decision (new architecture sections, content strategy)
+6. Report only if there's something worth reporting (silent otherwise)
+
+**What triggered this:**
+An audit of Aura's own docs revealed that 60% of actual capabilities had zero documentation. Getting-started referenced the wrong repo and wrong package manager. The architecture page was missing entire subsystems.
+
+Two PRs later: 95% coverage, all stale references fixed, and a daily job to prevent it from happening again.
+
+## Real Example
+
+Morning audit finds:
+> - 2 new tool files merged yesterday with no doc pages → writes both pages
+> - `vercel.mdx` still references flat project structure → updates to monorepo
+> - `memory-system.mdx` missing Cohere reranking docs → adds section
+> - Opens PR #751 with 8 files, 328 insertions
+> - DMs the maintainer: "PR ready, 3 new pages + 5 fixes"
+
+## Setup
+
+This is a job definition -- tell Aura to create it:
+
+```
+Create a daily docs maintenance job that checks the codebase
+against documentation and fixes drift. Run at 6 AM.
+```
+
+Aura creates the recurring job with a full playbook. It runs autonomously from then on.
+
+<Info>
+This use case is meta -- Aura maintaining her own docs. But the same pattern works for any documentation: API docs, runbooks, onboarding guides, internal wikis.
+</Info>

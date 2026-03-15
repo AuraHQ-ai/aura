@@ -1,0 +1,73 @@
+---
+title: "Resources"
+description: "Ingest, search, and retrieve URLs, PDFs, YouTube transcripts, and other content — 4 tools."
+---
+
+# Resources
+
+Aura can ingest external content (web pages, PDFs, YouTube videos, Notion pages) into a searchable knowledge base. Ingested resources are stored with embeddings for semantic search.
+
+**Required env vars:** `TAVILY_API_KEY` (for enhanced extraction), `OPENAI_API_KEY` (for embeddings)
+
+---
+
+## `ingest_resource`
+
+Fetch a URL, extract its content, and store it in the resources database with embeddings.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | **yes** | URL to ingest (web page, PDF, YouTube, Notion, GitHub) |
+| `source` | string | no | Source type: `web`, `youtube`, `notion`, `github`, `pdf`, `docs`, `slack` |
+| `metadata` | object | no | Additional metadata to store with the resource |
+
+Supports:
+- **Web pages** — extracted via Tavily or HTML stripping
+- **YouTube** — transcript extraction
+- **PDFs** — text extraction
+- **Notion/GitHub** — fetched and converted to markdown
+
+Resources are deduplicated by URL hash. Re-ingesting updates the content.
+
+---
+
+## `search_resources`
+
+Search ingested resources by keyword or semantic similarity.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | **yes** | Search query |
+| `mode` | string | no | `text` (keyword, default) or `semantic` (vector similarity) |
+| `source` | string | no | Filter by source type |
+| `limit` | number | no | Max results (default 10) |
+
+---
+
+## `get_resource`
+
+Retrieve a specific resource by ID with its full content.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | **yes** | Resource UUID |
+
+---
+
+## `list_resources`
+
+List recently ingested resources.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source` | string | no | Filter by source type |
+| `limit` | number | no | Max results (default 20) |
+
+---
+
+## Use Cases
+
+- **Meeting prep** — ingest a company's website before a call
+- **Competitive analysis** — ingest competitor pages for comparison
+- **Documentation** — ingest external docs for reference during development
+- **Research** — build a searchable corpus from multiple sources

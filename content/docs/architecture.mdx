@@ -7,15 +7,50 @@ description: "How Aura's message pipeline, memory system, tools, and self-improv
 
 Aura is a Hono-based application deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses Claude models for reasoning.
 
+## Monorepo Structure
+
+```
+aura/
+├── apps/
+│   ├── api/            # Core agent (Hono + Vercel Functions)
+│   │   └── src/
+│   │       ├── pipeline/    # Message processing, prompt assembly
+│   │       ├── tools/       # 23 tool modules (Slack, email, BigQuery, etc.)
+│   │       ├── memory/      # Extract, store, retrieve, consolidate
+│   │       ├── cron/        # Heartbeat, memory consolidation, email sync
+│   │       └── routes/      # API routes (Slack events, dashboard, chat)
+│   ├── dashboard/      # Admin UI (Next.js)
+│   │   └── src/app/
+│   │       ├── conversations/   # Conversation traces & threads
+│   │       ├── consumption/     # Token usage & cost tracking
+│   │       ├── memories/        # Memory browser
+│   │       ├── notes/           # Notes manager
+│   │       ├── jobs/            # Job scheduler & history
+│   │       ├── credentials/     # Encrypted credential store
+│   │       ├── errors/          # Error event log
+│   │       ├── users/           # User profiles
+│   │       ├── resources/       # Ingested resources
+│   │       └── settings/        # Instance configuration
+│   └── web/            # Marketing site (aurahq.ai)
+├── packages/
+│   └── db/             # Shared DB layer (Drizzle ORM)
+│       ├── src/schema.ts    # Full database schema
+│       └── drizzle/         # Migration files
+└── content/
+    └── docs/           # Documentation (Mintlify)
+```
+
 ## System Overview
 
 ```
-Slack Events → Vercel Function → Hono Router → Message Pipeline → Claude (AI SDK)
+Slack Event → Vercel Function → Hono Router → Message Pipeline → Claude (Vercel AI SDK)
                                                       ↕
                                               PostgreSQL + pgvector
-                                              (memories, messages, notes, jobs)
+                                      (memories, messages, conversations, notes, jobs)
                                                       ↕
-                                              Tools (Slack, BigQuery, GitHub, Gmail, ...)
+                                              Tools (23 modules)
+                                                      ↕
+                                              Admin Dashboard (Next.js)
 ```
 
 ## Message Pipeline
@@ -23,56 +58,72 @@ Slack Events → Vercel Function → Hono Router → Message Pipeline → Claude
 When a Slack message arrives:
 
 1. **Event deduplication** — Slack sometimes sends duplicate events. The `event_locks` table prevents double-processing.
-2. **Context loading** — Recent conversation history, relevant memories, user profile, and channel context are loaded in parallel.
+2. **Context loading** — Recent conversation history, relevant memories, user profile, notes index, and channel context are loaded in parallel.
 3. **Memory retrieval** — Hybrid search (vector + full-text) finds relevant memories from past conversations.
-4. **LLM reasoning** — Claude processes the message with full context and available tools.
-5. **Response streaming** — The response streams back to Slack in real-time using `chatStream`.
-6. **Memory extraction** — Facts, decisions, and sentiments are extracted from the conversation and stored as new memories.
+4. **Prompt assembly** — System prompt is built from personality, self-directive, notes index, memories, and user profile.
+5. **LLM reasoning** — Claude processes the message with full context and available tools. Extended thinking captures the reasoning trace.
+6. **Response streaming** — The response streams back to Slack in real-time via the Vercel AI SDK.
+7. **Conversation persistence** — The full conversation trace (messages, tool calls, reasoning, token usage) is stored with cost tracking.
+8. **Memory extraction** — Facts, decisions, and sentiments are extracted from the conversation and stored as new memories.
 
-## Memory System
+## Conversation Traces
 
-Aura's memory is a PostgreSQL database with pgvector embeddings. See [Memory System](/memory-system) for the deep dive.
+Every conversation is persisted with full detail:
 
-Key tables:
-- `memories` — Extracted facts, decisions, personal details, relationships
-- `messages` — Raw conversation history with embeddings
-- `notes` — Agent-authored knowledge articles (the "scratchpad")
-- `user_profiles` — Per-user communication preferences and known facts
+- **Messages** — User input, assistant responses, tool calls and results
+- **Reasoning traces** — Extended thinking content from Claude
+- **Token usage** — Input, output, and cache tokens per turn
+- **Cost tracking** — Per-conversation cost in USD based on model pricing
+- **Metadata** — Channel, thread, user, model, duration
+
+The [Dashboard](/dashboard) provides a UI for browsing conversation traces, filtering by user/channel, and analyzing costs.
 
 ## Tool System
 
-Tools are defined using the AI SDK `tool()` function with Zod schemas. Each tool has:
-- An `inputSchema` describing its parameters
-- A `description` that guides the LLM on when and how to use it
-- An `execute` function that performs the action
+Tools are defined using the Vercel AI SDK `tool()` function with Zod schemas. Aura has **23 tool modules** organized by domain:
 
-Tool categories:
-- **Slack** — Send messages, search conversations, manage channels
-- **Email** — Read, search, compose via Gmail
-- **Data** — BigQuery queries, Google Sheets, Drive
-- **Calendar** — View and create events
-- **Sandbox** — Run arbitrary code in an isolated Linux VM (via E2B)
-- **Notes** — Read and write to the knowledge graph
-- **Jobs** — Schedule and manage autonomous tasks
-- **Self-improvement** — Read own source code, file GitHub issues, dispatch agents
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **Slack** | Messages, channels, threads, reactions, lists, tables | Full workspace interaction |
+| **Email** | Gmail read, search, compose, sync, triage | Inbox management with state machine |
+| **Data** | BigQuery, Google Sheets, Google Drive | Data warehouse and document access |
+| **Web** | Search, read URLs, browser automation | External information gathering |
+| **Code** | Sandbox (shell), GitHub CLI, subagents | Code execution and development |
+| **Memory** | Notes, conversations, people | Knowledge management |
+| **Scheduling** | Jobs, datetime | Autonomous task scheduling |
+| **Integration** | HTTP requests, credentials, Cursor agents | External API access |
+| **Communication** | Voice, resources | Phone calls, content ingestion |
+
+Each tool has a description that guides the LLM on when and how to use it -- these descriptions are a critical part of Aura's behavior.
 
 ## Heartbeat & Cron
 
 A heartbeat runs every 30 minutes via Vercel Cron. It:
-1. Checks for due jobs (both scheduled and recurring)
-2. Executes each job with full tool access
-3. Logs execution traces for debugging
 
-Jobs include bug sweeps, email digests, memory consolidation, and follow-ups.
+1. Checks for due jobs (both one-shot and recurring)
+2. Evaluates cron schedules and frequency limits
+3. Executes each job with full tool access (up to 350 tool calls per job)
+4. Logs execution traces for debugging
+5. Retries failed jobs (3x with 30-min backoff)
 
-## Self-Improvement
+Additional cron jobs:
+- **Memory consolidation** — Daily at 4 AM UTC. Decays old memories, merges duplicates.
+- **Email sync** — Periodic inbox sync for connected Gmail accounts.
+- **Note expiry** — Cleans up expired plan notes.
 
-Aura can modify her own codebase through a controlled loop:
-1. Identify a gap (failed retrieval, tool error, user feedback)
-2. Read relevant source code via the GitHub API
-3. File an issue describing the problem
-4. Dispatch a Cursor agent to write the fix
-5. Open a PR for human review
-6. The PR is reviewed and merged (or not) by a human
+## Extended Thinking
 
-The safety constraint: Aura cannot push to `main`. All changes go through PRs with human approval.
+Aura uses Claude's extended thinking capability, which captures the model's reasoning process before generating a response. These reasoning traces are:
+
+- Stored alongside conversation messages
+- Visible in the dashboard for debugging
+- Useful for understanding why Aura made specific decisions or tool calls
+
+## Credential System
+
+Users store API keys and OAuth credentials through Aura's Slack App Home. Credentials are:
+
+- Encrypted at rest (AES-256-GCM)
+- Scoped per user -- Aura can only access credentials the owner has stored
+- Injected server-side into HTTP requests (the LLM never sees raw keys)
+- Support both static tokens and OAuth client credentials with automatic token refresh

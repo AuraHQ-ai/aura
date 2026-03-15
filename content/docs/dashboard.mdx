@@ -1,0 +1,102 @@
+---
+title: "Dashboard"
+description: "Monitor and manage your Aura instance through the admin dashboard."
+---
+
+# Dashboard
+
+The admin dashboard is a Next.js application that provides full visibility into Aura's operation. It's deployed alongside the API and accessible to workspace admins.
+
+## Pages
+
+### Conversations
+
+Browse every conversation Aura has had. Each conversation shows:
+
+- Full message thread (user messages, Aura responses, tool calls)
+- Extended thinking / reasoning traces
+- Token usage breakdown (input, output, cache tokens)
+- Cost per conversation
+- Channel and user context
+
+Filter by user, channel, date range, or search by content.
+
+### Consumption
+
+Track token usage and costs over time:
+
+- Daily/weekly/monthly cost charts
+- Breakdown by model (Claude Opus, Sonnet, Haiku)
+- Per-user consumption
+- Token type distribution (input vs output vs cache)
+
+### Memories
+
+Browse and search Aura's extracted memories:
+
+- Filter by type (fact, decision, personal, relationship, sentiment, open_thread)
+- View related users and source conversations
+- Check relevance scores and decay status
+
+### Notes
+
+View and manage Aura's knowledge base:
+
+- Three categories: skill (playbooks), plan (ephemeral), knowledge (reference)
+- See injection status, importance scores, and summaries
+- Full content viewer with metadata
+
+### Jobs
+
+Monitor scheduled and recurring jobs:
+
+- View pending, running, completed, and failed jobs
+- See execution history and logs
+- Check cron schedules and frequency limits
+
+### Credentials
+
+Manage the encrypted credential store:
+
+- View stored credentials per user (names only -- values are never displayed)
+- See credential types (token, OAuth client)
+- Monitor usage and last-accessed timestamps
+
+### Errors
+
+Track production errors:
+
+- Error events with stack traces
+- Filter by type, severity, and time range
+- Link back to the conversation that triggered the error
+
+### Users
+
+View workspace member profiles:
+
+- Communication preferences Aura has learned
+- Interaction history and frequency
+- Timezone and language settings
+
+### Resources
+
+Manage ingested content:
+
+- URLs, PDFs, and YouTube videos Aura has processed
+- Extraction status and content previews
+
+### Settings
+
+Configure instance behavior:
+
+- Admin user IDs
+- Model selection
+- Feature flags
+
+## Access
+
+The dashboard is protected by authentication. Only users listed in `AURA_ADMIN_USER_IDS` can access it. The dashboard communicates with the API via internal routes.
+
+## Chat
+
+The dashboard includes an embedded chat interface for interacting with Aura directly from the admin UI -- useful for testing and debugging without switching to Slack.

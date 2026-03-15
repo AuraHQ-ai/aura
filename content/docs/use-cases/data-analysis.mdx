@@ -1,0 +1,65 @@
+---
+title: "Data Analysis"
+description: "Query your data warehouse with business context -- not just SQL output, but answers and implications."
+---
+
+# Data Analysis
+
+## The Problem
+
+Your data is in BigQuery, Stripe, Close CRM, and a dozen other places. Getting an answer means:
+
+1. Knowing which table to query
+2. Writing correct SQL (with the right joins, filters, currency conversions)
+3. Interpreting the result in business context
+4. Presenting it in a way that drives decisions
+
+Most of the time, the person with the question isn't the person who can write the query.
+
+## How Aura Solves It
+
+Ask a question in plain language. Aura writes the query, runs it, and gives you the answer with context.
+
+**What she does:**
+- Inspects table schemas before querying (never guesses column names)
+- Handles common traps: cents-to-euros conversion, epoch timestamps, NULL semantics, MRR normalization
+- Cross-references across data sources (BigQuery pipeline data + Stripe billing + Close CRM contacts)
+- Presents results as native Slack tables, not code blocks
+- Adds business interpretation ("this is 15% above last month, driven by Spain")
+
+**Built-in guardrails:**
+- Currency amounts stored in cents are automatically divided by 100
+- Epoch timestamps are converted to human-readable dates
+- Google Ads data is validated against known inflation traps
+- Queries are read-only -- Aura can't modify your data
+
+## Real Example
+
+> **Question:** "How did Spain do in February?"
+>
+> **Aura's response:**
+> Spain closed 34 deals in February for €89.2K total MRR added.
+> Top performer: [name] with 12 closes (€31K).
+> Compared to January: +22% in deal count, +18% in MRR.
+> Pipeline for March: 47 qualified leads, projected close rate 38%.
+
+Not a SQL query. Not a spreadsheet. A business answer.
+
+## Supported Data Sources
+
+| Source | Access Method | What You Can Query |
+|--------|--------------|-------------------|
+| BigQuery | Direct SQL via `bq` CLI | Pipeline, leads, valuations, traffic, reviews |
+| Stripe | API via stored credentials | Subscriptions, MRR, churn, invoices, failed payments |
+| Close CRM | API via stored credentials | Leads, activities, pipeline stages, rep performance |
+| Google Sheets | Sheets API | Comp models, planning docs, custom trackers |
+
+## Setup
+
+1. Grant Aura BigQuery read access (service account)
+2. Store API credentials in App Home (Stripe, Close, etc.)
+3. Aura maps the schema automatically on first query and maintains a data warehouse reference
+
+<Warning>
+Aura applies guardrails to prevent common data mistakes, but always sanity-check numbers that drive major decisions. She'll tell you when she's uncertain about a join or assumption.
+</Warning>

@@ -1,0 +1,96 @@
+---
+title: "Cursor Agents"
+description: "Dispatch async Cursor Cloud agents for complex multi-file code tasks — 6 tools."
+---
+
+# Cursor Agents
+
+Aura can dispatch [Cursor](https://cursor.sh) Cloud Agents for complex multi-file code changes that would take too long in the sandbox. Agents run asynchronously in the background (3-30 minutes), create a branch, make changes, and open a PR. Results arrive via webhook DM.
+
+**Required env vars:** `CURSOR_API_KEY`
+
+**Admin-only.** All Cursor agent tools require admin permissions.
+
+---
+
+## `dispatch_cursor_agent`
+
+Dispatch an async agent to work on a code task. Returns immediately with an agent ID — don't wait or poll.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `issue_description` | string | **yes** | Detailed description of the task |
+| `branch_prefix` | string | no | Branch prefix (default `cursor`) — agent creates `cursor/{slug}` |
+| `ref` | string | no | Git ref to base work on (default `main`) |
+| `key_files` | string[] | no | Key files for the agent to focus on |
+| `cursor_rules` | string | no | Additional `.cursor/rules` content injected for this task |
+| `repo` | string | no | GitHub repo (default: `AuraHQ-ai/aura`) |
+
+**Best practices:**
+- Always specify `key_files` to reduce agent wandering
+- Include `cursor_rules` for project-specific conventions (e.g. Drizzle migration breakpoints)
+- Say "create a PR" explicitly in the description — agents sometimes finish without opening one
+
+---
+
+## `check_cursor_agent`
+
+Check the status of a dispatched agent.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent_id` | string | **yes** | Agent ID from `dispatch_cursor_agent` |
+
+Returns status (`running`, `completed`, `failed`), elapsed time, and result details including PR URL if completed.
+
+---
+
+## `followup_cursor_agent`
+
+Send a follow-up message to a running or completed agent — like a code review comment. The agent will continue working based on your feedback.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent_id` | string | **yes** | Agent ID |
+| `message` | string | **yes** | Follow-up instruction or review feedback |
+
+---
+
+## `get_cursor_conversation`
+
+Retrieve the full conversation history of an agent session — useful for understanding what the agent did and why.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent_id` | string | **yes** | Agent ID |
+
+---
+
+## `stop_cursor_agent`
+
+Stop a running agent.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent_id` | string | **yes** | Agent ID |
+
+---
+
+## `list_cursor_agents`
+
+List recent Cursor agents. Optionally filter by PR URL.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `pr_url` | string | no | Filter by PR URL |
+
+---
+
+## When to Use Cursor Agents vs Sandbox
+
+| Use Case | Tool |
+|----------|------|
+| Simple one-line fix, typo, config change | `run_command` (sandbox) |
+| Read code, explore repo, run tests | `run_command` (sandbox) |
+| Multi-file refactor, new feature, complex bug fix | `dispatch_cursor_agent` |
+| Changes requiring understanding of 5+ files | `dispatch_cursor_agent` |

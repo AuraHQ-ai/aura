@@ -17,22 +17,53 @@ Or your custom deployment URL.
 
 ## Authentication
 
-- **Slack events** are verified using the Slack signing secret
+- **Slack events** are verified using the Slack signing secret (`SLACK_SIGNING_SECRET`)
 - **Cron endpoints** are protected by Vercel's `CRON_SECRET` header
 - **Health check** is unauthenticated
+- **Dashboard API** uses session-based auth via OAuth
 
-## Endpoints
+## Core Endpoints
 
-See the [OpenAPI specification](/openapi.yaml) for full request/response schemas.
+### `POST /api/slack/events`
 
-<Card title="Slack Events" icon="slack" href="/api-reference/slack-events">
-  Webhook endpoint for Slack event subscriptions.
-</Card>
+Webhook endpoint for Slack event subscriptions. Receives all Slack events (messages, app mentions, reactions, etc.) and routes them to the appropriate handler.
 
-<Card title="Health Check" icon="heart-pulse" href="/api-reference/health">
-  Simple health check returning system status.
-</Card>
+**Auth:** Slack signing secret verification on every request.
 
-<Card title="Cron: Heartbeat" icon="clock" href="/api-reference/cron-heartbeat">
-  Periodic job execution trigger (runs every 30 minutes).
-</Card>
+### `GET /api/health`
+
+Simple health check. Returns `200 OK` with basic system status.
+
+**Auth:** None.
+
+### `GET /api/cron/heartbeat`
+
+Periodic job execution trigger. Evaluates all pending and recurring jobs, executes what's due. Runs every 30 minutes via Vercel Cron.
+
+**Auth:** `CRON_SECRET` header.
+
+### `GET /api/cron/consolidate`
+
+Nightly memory consolidation. Decays old memories, merges duplicates, and cleans up stale data. Runs daily at 4 AM UTC.
+
+**Auth:** `CRON_SECRET` header.
+
+### `POST /api/chat`
+
+Streaming chat endpoint for the dashboard's AI Elements chat interface. Accepts messages and returns streamed AI responses.
+
+**Auth:** Dashboard session cookie.
+
+### `POST /api/cursor/webhook`
+
+Webhook endpoint for Cursor Cloud Agent completion notifications. Receives results when dispatched agents finish their work.
+
+**Auth:** Webhook signature verification.
+
+## Dashboard API
+
+The admin dashboard (`apps/dashboard`) has its own API routes for authentication:
+
+- `GET /api/auth/login` — Initiate OAuth login
+- `GET /api/auth/callback` — OAuth callback handler
+- `POST /api/auth/logout` — End session

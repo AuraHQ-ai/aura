@@ -1,0 +1,61 @@
+---
+title: "Code Review & PRs"
+description: "From issue to merged PR -- dispatching agents, reviewing changes, managing branches, shipping fixes."
+---
+
+# Code Review & PRs
+
+## The Problem
+
+Small fixes and improvements pile up. Each one is "just 20 minutes" but between context-switching, branch management, CI, and review, they take half a day. Meanwhile, the backlog grows.
+
+Code review itself is a bottleneck -- waiting for someone to look at a PR, catching the same patterns repeatedly, missing things because the reviewer doesn't have full context.
+
+## How Aura Solves It
+
+Aura operates across the full development cycle:
+
+**Issue → PR:**
+- Takes a GitHub issue or verbal description
+- Dispatches a Cursor cloud agent with a precise prompt (repo context, coding standards, target files)
+- Monitors agent progress and handles failures
+- Reviews the resulting PR before requesting human review
+
+**Code review:**
+- Reads diffs with full repo context
+- Flags patterns: missing error handling, schema migrations without breakpoints, stale references
+- Cross-references with past bugs and known issues
+- Comments with specific, actionable feedback
+
+**Branch management:**
+- Maintains clean git hygiene (fetch before branch, stash dirty state, rebase before merge)
+- Handles the tedious parts: rebasing, conflict resolution, closing zombie PRs
+- Pushes to existing branches for iterations instead of creating new ones
+
+## Real Example
+
+A documentation audit reveals 13 tool categories with zero docs. Instead of creating 13 tickets:
+
+1. Aura creates a branch, writes 8 new documentation pages and fixes 3 existing ones
+2. Opens a PR with 601 insertions across 12 files
+3. After merge, does a second pass: 3 more pages, 5 stale page fixes
+4. Creates a recurring daily job to prevent future drift
+
+Total time from "do it" to PR: ~3 minutes per round.
+
+## What Aura Can't Do (Yet)
+
+- She can't approve PRs or merge to main without human sign-off
+- Complex architectural changes need human design decisions
+- She dispatches Cursor agents but doesn't control their IDE session directly
+
+## Setup
+
+Aura needs:
+1. GitHub access (configured via `gh` CLI in the sandbox)
+2. Cursor API credentials (for agent dispatch)
+3. Repository context (she builds this automatically by exploring the codebase)
+
+<Tip>
+For best results, keep a `CLAUDE.md` or `CURSOR_RULES` in your repo root. Aura and the agents she dispatches will follow those conventions automatically.
+</Tip>

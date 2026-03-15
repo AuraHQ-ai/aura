@@ -32,7 +32,22 @@
             "group": "Getting Started",
             "pages": [
               "getting-started",
-              "architecture"
+              "architecture",
+              "dashboard"
+            ]
+          },
+          {
+            "group": "Use Cases",
+            "pages": [
+              "use-cases/overview",
+              "use-cases/email-triage",
+              "use-cases/team-pulse",
+              "use-cases/bug-triage",
+              "use-cases/data-analysis",
+              "use-cases/sales-ops",
+              "use-cases/candidate-screening",
+              "use-cases/code-review",
+              "use-cases/docs-maintenance"
             ]
           },
           {
@@ -47,12 +62,22 @@
             "pages": [
               "tools/slack",
               "tools/email",
+              "tools/email-sync",
               "tools/bigquery",
               "tools/sandbox",
-              "tools/voice",
               "tools/notes",
               "tools/jobs",
-              "tools/web"
+              "tools/web",
+              "tools/browser",
+              "tools/credentials",
+              "tools/people",
+              "tools/lists",
+              "tools/tables",
+              "tools/subagents",
+              "tools/voice",
+              "tools/cursor-agent",
+              "tools/resources",
+              "tools/conversations"
             ]
           },
           {
