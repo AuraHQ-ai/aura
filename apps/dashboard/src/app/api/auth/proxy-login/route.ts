@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import {
+  getAppUrl,
   getSafeReturnTo,
   isAllowedOrigin,
   verifyOriginSignature,
@@ -24,7 +25,7 @@ export async function GET(request: NextRequest) {
     return new NextResponse("Invalid origin signature", { status: 403 });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = getAppUrl();
   const cookieStore = await cookies();
 
   cookieStore.set(OAUTH_PROXY_ORIGIN_COOKIE, origin, {

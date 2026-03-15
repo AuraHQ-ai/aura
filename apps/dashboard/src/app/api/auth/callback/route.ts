@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { createSession, getSessionCookieName } from "@/lib/auth";
 import {
   buildAppRedirectUrl,
+  getAppUrl,
   getSafeReturnTo,
   OAUTH_RETURN_TO_COOKIE,
 } from "@/lib/auth-redirect";
@@ -12,7 +13,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const code = searchParams.get("code");
   const state = searchParams.get("state");
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = getAppUrl();
 
   const cookieStore = await cookies();
   const savedState = cookieStore.get("oauth_state")?.value;

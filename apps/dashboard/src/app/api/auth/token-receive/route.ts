@@ -5,14 +5,14 @@ import {
   getSessionCookieName,
   verifyTransferToken,
 } from "@/lib/auth";
-import { buildAppRedirectUrl, getSafeReturnTo } from "@/lib/auth-redirect";
+import { buildAppRedirectUrl, getAppUrl, getSafeReturnTo } from "@/lib/auth-redirect";
 
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get("token");
   const returnTo = getSafeReturnTo(
     request.nextUrl.searchParams.get("returnTo"),
   );
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = getAppUrl();
 
   if (!token) {
     return NextResponse.redirect(`${appUrl}/unauthorized?reason=missing_token`);
