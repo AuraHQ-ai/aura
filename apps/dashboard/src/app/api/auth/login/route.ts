@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   const returnTo = getSafeReturnTo(request.nextUrl.searchParams.get("returnTo"));
 
   // Non-production environments delegate to production's OAuth proxy
-  const isProduction = appUrl.startsWith(PRODUCTION_URL);
+  const isProduction = new URL(appUrl).origin === PRODUCTION_URL;
   if (!isProduction) {
     const proxyUrl = new URL(`${PRODUCTION_URL}/api/auth/proxy-login`);
     proxyUrl.searchParams.set("origin", appUrl);

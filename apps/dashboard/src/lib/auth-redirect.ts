@@ -6,7 +6,9 @@ export const PRODUCTION_URL = "https://app.aurahq.ai";
 export function isAllowedOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
-    if (url.hostname === "localhost") return true;
+    const isLocalhost = url.hostname === "localhost";
+    if (!isLocalhost && url.protocol !== "https:") return false;
+    if (isLocalhost) return true;
     if (url.hostname === "app.aurahq.ai") return true;
 
     const extra = process.env.DASHBOARD_ALLOWED_ORIGINS;
