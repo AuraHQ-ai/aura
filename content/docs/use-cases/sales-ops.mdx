@@ -1,0 +1,50 @@
+---
+title: "Sales Operations"
+description: "Commission calculations, pipeline tracking, and comp model iteration -- in conversation, not spreadsheets."
+---
+
+# Sales Operations
+
+## The Problem
+
+Sales operations runs on spreadsheets. Commission calculations are manual, error-prone, and take hours. Comp model changes require rebuilding formulas. Pipeline tracking means switching between CRM, spreadsheets, and Slack.
+
+When a sales leader asks "what would happen if we changed the commission structure?" -- that's a day of spreadsheet work.
+
+## How Aura Solves It
+
+Aura turns sales ops into a conversation.
+
+**Commission calculations:**
+- Reads the comp model (from Google Sheets, notes, or conversation)
+- Pulls actual sales data from CRM/BigQuery
+- Calculates commissions per rep, per team, per period
+- Presents results as Slack tables with breakdowns
+
+**Comp model iteration:**
+- "What if we add an NDR quarterly bonus?" → Aura models it against historical data
+- "What does a linear MRR formula look like vs. tiered?" → Side-by-side comparison
+- Changes are modeled in conversation, then locked into the comp sheet when approved
+
+**Pipeline tracking:**
+- Current pipeline by stage, rep, and market
+- Close rate projections based on historical conversion
+- Alerts when pipeline coverage drops below target
+
+## Real Example
+
+A Head of Sales and Aura iterate on a new comp model over 200+ messages:
+
+1. Start with the existing tiered structure
+2. Model a linear MRR formula against last quarter's data
+3. Add an NDR quarterly bonus component
+4. Compare payout across all reps under both models
+5. Lock the final version into a Google Sheet
+
+What would have taken a week of spreadsheet work happened in a few days of async conversation -- with every assumption documented and every number traceable.
+
+## Setup
+
+1. Share the current comp model (spreadsheet, doc, or just describe it)
+2. Connect CRM data (Close API credentials in App Home)
+3. Aura builds the calculation engine and maintains it as the model evolves

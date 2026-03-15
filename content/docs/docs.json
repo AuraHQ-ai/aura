@@ -37,6 +37,20 @@
             ]
           },
           {
+            "group": "Use Cases",
+            "pages": [
+              "use-cases/overview",
+              "use-cases/email-triage",
+              "use-cases/team-pulse",
+              "use-cases/bug-triage",
+              "use-cases/data-analysis",
+              "use-cases/sales-ops",
+              "use-cases/candidate-screening",
+              "use-cases/code-review",
+              "use-cases/docs-maintenance"
+            ]
+          },
+          {
             "group": "Core Systems",
             "pages": [
               "memory-system",
