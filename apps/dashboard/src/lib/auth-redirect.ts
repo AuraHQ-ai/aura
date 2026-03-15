@@ -28,7 +28,8 @@ export function verifyOriginSignature(origin: string, sig: string): boolean {
 export function isAllowedOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
-    if (url.hostname === "localhost") return true;
+    if (url.hostname === "localhost")
+      return url.protocol === "http:" || url.protocol === "https:";
     return url.protocol === "https:";
   } catch {
     return false;
