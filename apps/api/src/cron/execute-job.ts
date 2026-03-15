@@ -128,7 +128,7 @@ export async function executeJob(
         ? `\n\nAuthorized credential IDs for this job: ${credentialIds.join(", ")}`
         : "";
 
-    const stablePrefix = await buildStablePrefix();
+    const { text: stablePrefix } = await buildStablePrefix();
     const timeContext = getCurrentTimeContext(job.timezone);
 
     if (isContinuation) {

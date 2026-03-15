@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { conversationTraces, conversationMessages, conversationParts, type DetailedTokenUsage } from "@aura/db/schema";
+import { conversationTraces, conversationMessages, conversationParts, type DetailedTokenUsage, type RetrievalMetadataJson } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { computeConversationCost, sumStepUsages, type StepUsage } from "../lib/cost-calculator.js";
 
@@ -55,6 +55,7 @@ export async function createConversationTrace(params: {
   threadTs?: string;
   userId?: string;
   modelId?: string;
+  retrievalMetadata?: RetrievalMetadataJson;
 }): Promise<string> {
   const [row] = await db
     .insert(conversationTraces)
@@ -66,6 +67,7 @@ export async function createConversationTrace(params: {
       threadTs: params.threadTs ?? null,
       userId: params.userId ?? null,
       modelId: params.modelId ?? null,
+      retrievalMetadata: params.retrievalMetadata ?? null,
     })
     .returning({ id: conversationTraces.id });
 

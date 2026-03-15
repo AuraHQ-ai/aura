@@ -446,6 +446,15 @@ export const modelPricing = pgTable(
 
 // ── Conversation Traces + Messages + Parts (unified conversation persistence) ─
 
+export interface RetrievalMetadataJson {
+  memoryCount?: number;
+  memoryIds?: string[];
+  conversationThreadCount?: number;
+  conversationThreadTs?: string[];
+  stablePrefixTokens?: number;
+  conversationContextTokens?: number;
+}
+
 export const conversationTraces = pgTable(
   "conversation_traces",
   {
@@ -461,6 +470,7 @@ export const conversationTraces = pgTable(
     modelId: text("model_id"),
     tokenUsage: jsonb("token_usage").$type<DetailedTokenUsage>(),
     costUsd: numeric("cost_usd"),
+    retrievalMetadata: jsonb("retrieval_metadata").$type<RetrievalMetadataJson>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [

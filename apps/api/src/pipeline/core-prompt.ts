@@ -2,11 +2,15 @@ import {
   buildSystemPrompt,
   buildDynamicContext,
   type PersonProfile,
+  type StablePrefixMetrics,
+  type ConversationContextMetrics,
 } from "../personality/system-prompt.js";
 import {
   retrieveMemories,
   retrieveConversations,
   type ConversationThread,
+  type MemoryRetrievalResult,
+  type ConversationRetrievalResult,
 } from "../memory/retrieve.js";
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
@@ -49,6 +53,15 @@ export interface ChannelSession {
 
 // ── Core Prompt ──────────────────────────────────────────────────────────────
 
+export interface RetrievalMetadata {
+  memoryCount?: number;
+  memoryIds?: string[];
+  conversationThreadCount?: number;
+  conversationThreadTs?: string[];
+  stablePrefixTokens?: number;
+  conversationContextTokens?: number;
+}
+
 export interface CorePrompt {
   stablePrefix: string;
   conversationContext: string;
@@ -56,6 +69,7 @@ export interface CorePrompt {
   memories: Memory[];
   conversations: ConversationThread[];
   userProfile: UserProfile | null;
+  retrievalMetadata: RetrievalMetadata;
 }
 
 /**
@@ -84,7 +98,10 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
-  const [memories, conversations, userProfile, mentionedPeople, interlocutor] =
+  const emptyMemoryResult: MemoryRetrievalResult = { memories: [], metadata: { ids: [], count: 0 } };
+  const emptyConversationResult: ConversationRetrievalResult = { threads: [], metadata: { threadTs: [], count: 0 } };
+
+  const [memoryResult, conversationResult, userProfile, mentionedPeople, interlocutor] =
     await Promise.all([
       queryEmbedding
         ? retrieveMemories({
@@ -93,7 +110,7 @@ export async function buildCorePrompt(
             currentUserId: session.userId,
             limit: 15,
           })
-        : Promise.resolve([] as Memory[]),
+        : Promise.resolve(emptyMemoryResult),
       queryEmbedding
         ? retrieveConversations({
             query: session.messageText,
@@ -103,13 +120,16 @@ export async function buildCorePrompt(
             minSimilarity: 0.35,
             excludeThreadTs: session.threadId,
           })
-        : Promise.resolve([] as ConversationThread[]),
+        : Promise.resolve(emptyConversationResult),
       session.userProfile !== undefined
         ? Promise.resolve(session.userProfile)
         : getProfile(session.userId),
       lookupMentionedPeople(participantIds),
       lookupPerson(session.userId),
     ]);
+
+  const memories = memoryResult.memories;
+  const conversations = conversationResult.threads;
 
   const channelContext = session.channel === "dashboard"
     ? "Dashboard chat"
@@ -145,6 +165,15 @@ export async function buildCorePrompt(
       "\n\nYou are responding via the Aura Dashboard chat panel (not Slack). Keep responses concise and well-formatted with markdown.";
   }
 
+  const retrievalMetadata: RetrievalMetadata = {
+    memoryCount: memories.length,
+    memoryIds: memories.map((m) => m.id),
+    conversationThreadCount: conversations.length,
+    conversationThreadTs: conversations.map((t) => t.threadTs),
+    stablePrefixTokens: Math.round(stablePrefix.length / 4),
+    conversationContextTokens: Math.round(conversationContext.length / 4),
+  };
+
   logger.debug(`Built core prompt in ${Date.now() - start}ms`, {
     channel: session.channel,
     memoryCount: memories.length,
@@ -159,6 +188,7 @@ export async function buildCorePrompt(
     memories,
     conversations,
     userProfile,
+    retrievalMetadata,
   };
 }
 

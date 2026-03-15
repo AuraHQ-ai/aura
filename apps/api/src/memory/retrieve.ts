@@ -63,9 +63,17 @@ async function extractLexemes(
  * 5. Rerank top candidates with Cohere (or fall back to legacy scoring)
  * 6. Return top-K memories
  */
+export interface MemoryRetrievalResult {
+  memories: Memory[];
+  metadata: {
+    ids: string[];
+    count: number;
+  };
+}
+
 export async function retrieveMemories(
   options: RetrievalOptions,
-): Promise<Memory[]> {
+): Promise<MemoryRetrievalResult> {
   const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false } = options;
   const start = Date.now();
 
@@ -165,8 +173,16 @@ export async function retrieveMemories(
     const rawResults = ((executeResult as any).rows ?? executeResult) as Array<Record<string, any>>;
 
     if (rawResults.length === 0) {
-      logger.info(`No memory candidates found in ${Date.now() - start}ms`);
-      return [];
+      logger.info("Memory retrieval trace", {
+        query: query.substring(0, 200),
+        method: "hybrid-rrf",
+        candidateCount: 0,
+        returnedCount: 0,
+        lexemeCount: lexemes.length,
+        lexemes,
+        retrievedMemories: [],
+      });
+      return { memories: [], metadata: { ids: [], count: 0 } };
     }
 
     // NOTE: manual mapping required because hybrid SQL CTEs bypass Drizzle's auto-mapping.
@@ -215,17 +231,24 @@ export async function retrieveMemories(
       });
 
       scored.sort((a, b) => b.score - a.score);
-      topMemories = scored.slice(0, limit).map((s) => s.memory);
+      const scoredSlice = scored.slice(0, limit);
+      topMemories = scoredSlice.map((s) => s.memory);
 
-      logger.info(
-        `Retrieved ${topMemories.length} memories (hybrid+reranked) in ${Date.now() - start}ms`,
-        {
-          query: query.substring(0, 100),
-          totalCandidates: results.length,
-          lexemeCount: lexemes.length,
-          method: "hybrid-rrf+cohere-rerank",
-        },
-      );
+      logger.info("Memory retrieval trace", {
+        query: query.substring(0, 200),
+        method: "hybrid-rrf+cohere-rerank",
+        candidateCount: results.length,
+        returnedCount: topMemories.length,
+        lexemeCount: lexemes.length,
+        lexemes,
+        retrievedMemories: scoredSlice.map((s) => ({
+          id: s.memory.id,
+          type: s.memory.type,
+          contentPreview: s.memory.content.substring(0, 120),
+          score: s.score,
+          createdAt: s.memory.createdAt,
+        })),
+      });
     } else {
       const RRF_K = 60;
       const maxRrfScore = 2 / (1 + RRF_K);
@@ -246,26 +269,39 @@ export async function retrieveMemories(
       });
 
       scored.sort((a, b) => b.score - a.score);
-      topMemories = scored.slice(0, limit).map((s) => s.memory);
+      const scoredSlice = scored.slice(0, limit);
+      topMemories = scoredSlice.map((s) => s.memory);
 
-      logger.info(
-        `Retrieved ${topMemories.length} memories (hybrid+legacy scoring) in ${Date.now() - start}ms`,
-        {
-          query: query.substring(0, 100),
-          totalCandidates: results.length,
-          lexemeCount: lexemes.length,
-          method: "hybrid-rrf+legacy",
-        },
-      );
+      logger.info("Memory retrieval trace", {
+        query: query.substring(0, 200),
+        method: "hybrid-rrf+legacy",
+        candidateCount: results.length,
+        returnedCount: topMemories.length,
+        lexemeCount: lexemes.length,
+        lexemes,
+        retrievedMemories: scoredSlice.map((s) => ({
+          id: s.memory.id,
+          type: s.memory.type,
+          contentPreview: s.memory.content.substring(0, 120),
+          score: s.score,
+          createdAt: s.memory.createdAt,
+        })),
+      });
     }
 
-    return topMemories;
+    return {
+      memories: topMemories,
+      metadata: {
+        ids: topMemories.map((m) => m.id),
+        count: topMemories.length,
+      },
+    };
   } catch (error) {
     logger.error("Memory retrieval failed", {
       error: String(error),
       query: query.substring(0, 100),
     });
-    return [];
+    return { memories: [], metadata: { ids: [], count: 0 } };
   }
 }
 
@@ -307,9 +343,17 @@ interface ConversationRetrievalOptions {
  * 4. Fetch all messages belonging to each matched thread
  * 5. Return full threads sorted by best match score
  */
+export interface ConversationRetrievalResult {
+  threads: ConversationThread[];
+  metadata: {
+    threadTs: string[];
+    count: number;
+  };
+}
+
 export async function retrieveConversations(
   options: ConversationRetrievalOptions,
-): Promise<ConversationThread[]> {
+): Promise<ConversationRetrievalResult> {
   const {
     query,
     queryEmbedding: precomputed,
@@ -342,7 +386,7 @@ export async function retrieveConversations(
       logger.debug("No relevant messages found for conversation retrieval", {
         query: query.substring(0, 100),
       });
-      return [];
+      return { threads: [], metadata: { threadTs: [], count: 0 } };
     }
 
     // Group by thread: use slack_thread_ts if present, otherwise slack_ts (top-level message)
@@ -385,7 +429,7 @@ export async function retrieveConversations(
       .sort((a, b) => b[1].combinedScore - a[1].combinedScore)
       .slice(0, threadLimit);
 
-    if (sortedThreads.length === 0) return [];
+    if (sortedThreads.length === 0) return { threads: [], metadata: { threadTs: [], count: 0 } };
 
     // Fetch all messages for each thread
     const threadKeys = sortedThreads.map(([key]) => key);
@@ -415,17 +459,30 @@ export async function retrieveConversations(
       },
     );
 
-    logger.info(
-      `Retrieved ${conversationThreads.length} conversation threads (${relevant.length} matched messages) in ${Date.now() - start}ms`,
-      { query: query.substring(0, 100) },
-    );
+    logger.info("Conversation retrieval trace", {
+      query: query.substring(0, 200),
+      threadCount: conversationThreads.length,
+      threads: conversationThreads.map(t => ({
+        threadTs: t.threadTs,
+        channelId: t.channelId,
+        messageCount: t.messages.length,
+        bestSimilarity: t.bestSimilarity,
+        messagePreview: t.messages[0]?.content?.substring(0, 100),
+      })),
+    });
 
-    return conversationThreads;
+    return {
+      threads: conversationThreads,
+      metadata: {
+        threadTs: conversationThreads.map((t) => t.threadTs),
+        count: conversationThreads.length,
+      },
+    };
   } catch (error) {
     logger.error("Conversation retrieval failed", {
       error: String(error),
       query: query.substring(0, 100),
     });
-    return [];
+    return { threads: [], metadata: { threadTs: [], count: 0 } };
   }
 }
