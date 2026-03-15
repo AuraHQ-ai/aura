@@ -5,6 +5,17 @@ export const OAUTH_PROXY_ORIGIN_COOKIE = "oauth_proxy_origin";
 
 export const PRODUCTION_URL = "https://app.aurahq.ai";
 
+/**
+ * Resolves the app's base URL. On Vercel preview deployments, uses the
+ * auto-provided VERCEL_URL so login redirects back to the preview — not prod.
+ */
+export function getAppUrl(): string {
+  if (process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+}
+
 function getProxySecret(): Buffer {
   const secret = process.env.DASHBOARD_SESSION_SECRET;
   if (!secret) throw new Error("DASHBOARD_SESSION_SECRET is not configured");
