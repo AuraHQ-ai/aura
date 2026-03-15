@@ -4,18 +4,24 @@ import { cookies } from "next/headers";
 import {
   getSafeReturnTo,
   isAllowedOrigin,
+  verifyOriginSignature,
   OAUTH_PROXY_ORIGIN_COOKIE,
   OAUTH_RETURN_TO_COOKIE,
 } from "@/lib/auth-redirect";
 
 export async function GET(request: NextRequest) {
   const origin = request.nextUrl.searchParams.get("origin");
+  const sig = request.nextUrl.searchParams.get("sig");
   const returnTo = getSafeReturnTo(
     request.nextUrl.searchParams.get("returnTo"),
   );
 
   if (!origin || !isAllowedOrigin(origin)) {
     return new NextResponse("Invalid origin", { status: 400 });
+  }
+
+  if (!sig || !verifyOriginSignature(origin, sig)) {
+    return new NextResponse("Invalid origin signature", { status: 403 });
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";

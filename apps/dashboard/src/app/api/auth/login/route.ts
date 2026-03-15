@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import {
   getSafeReturnTo,
+  signOrigin,
   OAUTH_RETURN_TO_COOKIE,
   PRODUCTION_URL,
 } from "@/lib/auth-redirect";
@@ -16,6 +17,7 @@ export async function GET(request: NextRequest) {
   if (!isProduction) {
     const proxyUrl = new URL(`${PRODUCTION_URL}/api/auth/proxy-login`);
     proxyUrl.searchParams.set("origin", appUrl);
+    proxyUrl.searchParams.set("sig", signOrigin(appUrl));
     if (returnTo) proxyUrl.searchParams.set("returnTo", returnTo);
     return NextResponse.redirect(proxyUrl.toString());
   }
