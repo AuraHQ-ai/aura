@@ -39,7 +39,7 @@ export async function createInteractiveAgent(
   options: InteractiveAgentOptions,
 ): Promise<InteractiveAgentResult> {
   const { modelId, model } = await getMainModel();
-  const tools = await createSlackTools(options.slackClient, options.context, modelId);
+  const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const systemMessages = buildCachedSystemMessages(
     options.stablePrefix,
     options.conversationContext,
@@ -75,11 +75,12 @@ export interface HeadlessAgentOptions {
   slackClient: WebClient;
   context?: { userId?: string; channelId?: string; threadTs?: string };
   systemPrompt: string;
+  invocationId?: string;
 }
 
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
   const { modelId, model } = await getMainModel();
-  const tools = await createSlackTools(options.slackClient, options.context, modelId);
+  const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
 
   const agent = new ToolLoopAgent({
     model,
