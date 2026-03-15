@@ -233,7 +233,7 @@ export function createPrepareStep(opts: {
   };
 }
 
-/** Factory for interactive Slack agent prepareStep (250-step limit). */
+/** Factory for interactive Slack agent prepareStep (250-step limit, with context compaction). */
 export function createInteractivePrepareStep(opts: {
   stablePrefix: string;
   conversationContext?: string;
@@ -259,6 +259,7 @@ export function createInteractivePrepareStep(opts: {
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
+    enableCompaction: true,
   });
 }
 
