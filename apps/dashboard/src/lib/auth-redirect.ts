@@ -20,8 +20,10 @@ export function signOrigin(origin: string): string {
 
 export function verifyOriginSignature(origin: string, sig: string): boolean {
   const expected = signOrigin(origin);
-  if (expected.length !== sig.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
+  const expectedBuf = Buffer.from(expected);
+  const sigBuf = Buffer.from(sig);
+  if (expectedBuf.length !== sigBuf.length) return false;
+  return crypto.timingSafeEqual(expectedBuf, sigBuf);
 }
 
 /** Basic sanity check — real trust comes from the HMAC signature. */
