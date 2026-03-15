@@ -9,6 +9,7 @@ export function isAllowedOrigin(origin: string): boolean {
     const isLocalhost = url.hostname === "localhost";
     if (!isLocalhost && url.protocol !== "https:") return false;
     if (isLocalhost) return true;
+    if (url.hostname.endsWith("-aurahq.vercel.app")) return true;
     if (url.hostname === "app.aurahq.ai") return true;
 
     const extra = process.env.DASHBOARD_ALLOWED_ORIGINS;
