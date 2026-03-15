@@ -518,6 +518,18 @@ export function createJobTools(
             set.executeAt = parsed.next().toDate();
           }
 
+          // Timezone-only change: recalculate executeAt against existing cron
+          if (updates.timezone !== undefined && updates.recurring === undefined) {
+            const cron = job.cronSchedule;
+            if (cron && job.executeAt) {
+              const parsed = CronExpressionParser.parse(cron, {
+                currentDate: new Date(),
+                tz: updates.timezone,
+              });
+              set.executeAt = parsed.next().toDate();
+            }
+          }
+
           // Re-enable a disabled job
           if (updates.enabled === true && job.enabled === 0) {
             set.enabled = 1;
