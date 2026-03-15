@@ -1,0 +1,39 @@
+---
+title: "Browser"
+description: "Web browsing and automation via Playwright and Browserbase."
+---
+
+# Browser
+
+Aura can browse the web interactively using a headless browser powered by [Browserbase](https://browserbase.com) and Playwright. This goes beyond simple URL fetching -- she can click, scroll, fill forms, take screenshots, and navigate multi-page flows.
+
+## When to Use What
+
+| Need | Tool |
+|------|------|
+| Read a webpage's text content | `read_url` |
+| Search for information | `web_search` |
+| Interactive browsing (click, scroll, fill forms) | `browse` |
+| Take a screenshot of a page | `browse` |
+
+## Capabilities
+
+- **Navigate** to any URL
+- **Click** elements by selector or text
+- **Fill** form fields
+- **Screenshot** the current page
+- **Extract** text from specific elements
+- **Scroll** and paginate through content
+- **Handle** JavaScript-heavy single-page apps
+
+## Use Cases
+
+- Checking if a website is up and what it looks like
+- Filling out forms or completing multi-step workflows
+- Scraping content from JavaScript-rendered pages
+- Taking visual screenshots for reporting
+- Navigating authenticated web UIs (with stored credentials)
+
+## Infrastructure
+
+Browser sessions run on [Browserbase](https://browserbase.com), a managed headless browser service. Each session is isolated and ephemeral. Requires a `BROWSERBASE_API_KEY` and `BROWSERBASE_PROJECT_ID` in environment variables.

@@ -32,7 +32,8 @@
             "group": "Getting Started",
             "pages": [
               "getting-started",
-              "architecture"
+              "architecture",
+              "dashboard"
             ]
           },
           {
@@ -47,12 +48,19 @@
             "pages": [
               "tools/slack",
               "tools/email",
+              "tools/email-sync",
               "tools/bigquery",
               "tools/sandbox",
-              "tools/voice",
               "tools/notes",
               "tools/jobs",
-              "tools/web"
+              "tools/web",
+              "tools/browser",
+              "tools/credentials",
+              "tools/people",
+              "tools/lists",
+              "tools/tables",
+              "tools/subagents",
+              "tools/voice"
             ]
           },
           {

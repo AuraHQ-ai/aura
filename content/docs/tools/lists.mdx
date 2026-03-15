@@ -1,0 +1,38 @@
+---
+title: "Slack Lists"
+description: "Interact with Slack Lists for bug tracking, task management, and project coordination."
+---
+
+# Slack Lists
+
+Aura can read and interact with [Slack Lists](https://slack.com/features/lists) -- structured databases inside Slack used for bug tracking, task management, and more.
+
+## Capabilities
+
+- **Read list items** — Fetch all items (rows) from a Slack List with their fields
+- **Get item details** — Read a specific item's full fields and metadata
+- **Comment on items** — Each list item has a thread; Aura can post comments using the item's `thread_channel_id` and `thread_ts`
+- **Update items** — Modify field values on list items (status, assignee, priority, etc.)
+
+## Tools
+
+- `list_slack_list_items` — Retrieve items from a Slack List (supports pagination)
+- `get_slack_list_item` — Get full details for a specific item
+- `send_thread_reply` — Comment on a list item's thread (using thread_channel_id + thread_ts from the item)
+- `update_slack_list_item` — Update fields on a list item
+
+## Use Case: Bug Triage
+
+Aura runs recurring bug triage jobs that:
+
+1. Read new items from the bug tracker Slack List
+2. Check each item's thread for existing comments
+3. Investigate the bug (check error logs, search codebase)
+4. Post findings as a thread comment
+5. Update item status or priority based on investigation
+
+## Important Notes
+
+- Always call `get_slack_list_item` before `update_slack_list_item` to discover the exact column IDs and value formats
+- Always check a thread with `read_thread_replies` before posting to avoid duplicate comments
+- List IDs can be found in the Slack List URL or by searching channels
