@@ -43,13 +43,33 @@ CREATE TABLE memories (
 );
 ```
 
-## Retrieval: Hybrid Search
+## Retrieval: Hybrid Search + Reranking
 
-Aura uses hybrid search combining vector similarity and full-text search. This is critical — vector search alone fails for proper nouns and specific terms.
+Aura uses a three-stage retrieval pipeline to find the most relevant memories:
 
-1. **Vector search** finds semantically similar memories (cosine similarity via HNSW index)
-2. **Full-text search** finds lexically matching memories (GIN index on tsvector)
-3. Results are merged with configurable weighting (default: 70% vector, 30% text)
+### Stage 1: Hybrid Candidate Retrieval
+
+Two search strategies run in parallel and their results are fused using **Reciprocal Rank Fusion (RRF)**:
+
+1. **Vector search** — the user's message is embedded and compared against memory embeddings via cosine similarity (HNSW index). Finds semantically similar memories even when wording differs.
+
+2. **Full-text search** — up to 8 positional lexemes are extracted from the query using PostgreSQL's `to_tsvector`. Each lexeme is searched independently (per-term limit of 25 results) to catch exact mentions that vector search might miss — especially proper nouns, technical terms, and specific identifiers.
+
+RRF combines both ranked lists with a smoothing constant of 60, ensuring that memories appearing in both lists rank highest.
+
+### Stage 2: Cohere Reranking
+
+The top candidates from RRF are passed through [Cohere's `rerank-v3.5`](https://cohere.com/rerank) model. This cross-encoder evaluates each candidate against the full query and re-scores them for fine-grained relevance. This stage catches cases where a keyword match is topically irrelevant, or where a subtle semantic match deserves higher ranking.
+
+**Required env var:** `COHERE_API_KEY`
+
+### Stage 3: Privacy Filtering & Scoring
+
+After reranking, memories are filtered based on channel privacy rules and sorted by a composite score combining rerank relevance, original relevance score, and recency.
+
+## Conversation Retrieval
+
+In addition to discrete memory facts, Aura retrieves full conversation threads from her message history. The same query embedding is used to find relevant past messages via cosine similarity, then entire threads are reconstructed and scored with a recency boost (80% similarity, 20% recency within 30 days).
 
 ## Memory Extraction
 
@@ -62,11 +82,11 @@ After every conversation turn, Aura extracts new memories:
 
 ## Consolidation
 
-A nightly consolidation job maintains memory quality:
+A nightly consolidation job (4 AM UTC) maintains memory quality:
 
-- **Decay** — Old memories with low relevance scores are gradually deprioritized
-- **Merge** — Duplicate or near-duplicate memories are consolidated
-- **Strengthen** — Frequently accessed memories get relevance boosts
+- **Decay** — relevance scores decrease by 0.5% per day (~50% after 138 days)
+- **Merge** — memories with >95% cosine similarity are consolidated
+- **Strengthen** — frequently accessed memories get relevance boosts
 - **Expire** — `open_thread` memories are resolved or aged out
 
 ## Privacy
@@ -79,6 +99,12 @@ Memory respects channel boundaries:
 
 ## Notes: The Knowledge Graph
 
-Beyond extracted memories, Aura maintains a self-authored knowledge base in the `notes` table. These are longer-form documents on specific topics — team processes, technical decisions, project status.
+Beyond extracted memories, Aura maintains a self-authored knowledge base in the `notes` table. Notes use a three-tier hierarchy:
 
-Notes are cross-referenced via embeddings, creating a semantic graph where related knowledge is connected by meaning rather than explicit links.
+| Category | Purpose | Lifetime |
+|----------|---------|----------|
+| `skill` | Durable playbooks, protocols, checklists | Permanent |
+| `plan` | Work-in-progress, ephemeral context | Has expiry date |
+| `knowledge` | General reference, business context | Permanent (default) |
+
+Notes with `inject_in_context: true` appear in every prompt via the auto-generated notes index, ensuring critical operational knowledge is always available. Each note has an importance score (1-100) for sort order and a summary (max 250 chars) that powers the index.

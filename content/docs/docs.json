@@ -60,7 +60,10 @@
               "tools/lists",
               "tools/tables",
               "tools/subagents",
-              "tools/voice"
+              "tools/voice",
+              "tools/cursor-agent",
+              "tools/resources",
+              "tools/conversations"
             ]
           },
           {

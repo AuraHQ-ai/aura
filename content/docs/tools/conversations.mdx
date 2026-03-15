@@ -1,0 +1,37 @@
+---
+title: "Conversations"
+description: "Search Aura's stored message history across all channels and DMs — 1 tool."
+---
+
+# Conversations
+
+Every message Aura sends and receives is stored in PostgreSQL with vector embeddings. The conversations tool lets you search this history by keyword or meaning.
+
+---
+
+## `search_my_conversations`
+
+Search Aura's message database. Supports keyword search and semantic (meaning-based) search. Results are grouped by conversation thread with surrounding context.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | no | Search term or phrase. Required for semantic mode. |
+| `mode` | string | no | `text` (keyword, default) or `semantic` (vector similarity) |
+| `user_id` | string | no | Filter by Slack user ID |
+| `channel_id` | string | no | Filter by Slack channel ID |
+| `since` | string | no | Only messages after this ISO 8601 date |
+| `until` | string | no | Only messages before this ISO 8601 date |
+| `role` | string | no | Filter by `user` or `assistant` |
+| `limit` | number | no | Max messages (default 20, max 50) |
+| `offset` | number | no | Skip messages for pagination |
+
+**When to use this vs `search_messages`:**
+
+| Scenario | Use |
+|----------|-----|
+| DM conversations with Aura | `search_my_conversations` |
+| What someone said to Aura | `search_my_conversations` |
+| Workspace-wide message search | `search_messages` |
+| Messages in channels Aura hasn't joined | `search_messages` |
+
+`search_my_conversations` searches Aura's own database, so it has better coverage of her conversations than Slack's search index. Use `search_messages` for broader workspace searches.
