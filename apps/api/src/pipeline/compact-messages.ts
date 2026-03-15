@@ -18,7 +18,7 @@ function getOutputText(output: unknown): string | null {
   if (o.type === "text" || o.type === "error-text") return o.value as string;
   if (o.type === "json" || o.type === "error-json") {
     try {
-      return JSON.stringify(o.value);
+      return JSON.stringify(o.value) ?? null;
     } catch {
       return null;
     }
