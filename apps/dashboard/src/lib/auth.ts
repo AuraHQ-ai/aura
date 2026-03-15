@@ -30,6 +30,7 @@ export async function getSession(): Promise<Session | null> {
     if (!token) return null;
 
     const { payload } = await jwtVerify(token, getSecret());
+    if (payload.purpose) return null;
     return {
       slackUserId: payload.slackUserId as string,
       name: payload.name as string,

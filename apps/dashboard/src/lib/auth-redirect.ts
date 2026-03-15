@@ -7,8 +7,14 @@ export function isAllowedOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
     if (url.hostname === "localhost") return true;
-    if (url.hostname.endsWith(".vercel.app")) return true;
     if (url.hostname === "app.aurahq.ai") return true;
+
+    const extra = process.env.DASHBOARD_ALLOWED_ORIGINS;
+    if (extra) {
+      const allowed = extra.split(",").map((s) => s.trim().toLowerCase());
+      if (allowed.includes(url.hostname.toLowerCase())) return true;
+    }
+
     return false;
   } catch {
     return false;
