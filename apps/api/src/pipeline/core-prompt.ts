@@ -3,7 +3,6 @@ import {
   buildDynamicContext,
   type PersonProfile,
   type StablePrefixMetrics,
-  type ConversationContextMetrics,
 } from "../personality/system-prompt.js";
 import {
   retrieveMemories,
@@ -15,7 +14,7 @@ import {
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
-import type { Memory, UserProfile } from "@aura/db/schema";
+import type { Memory, UserProfile, RetrievalMetadataJson } from "@aura/db/schema";
 import { people } from "@aura/db/schema";
 import { db } from "../db/client.js";
 import { inArray, eq } from "drizzle-orm";
@@ -53,14 +52,7 @@ export interface ChannelSession {
 
 // ── Core Prompt ──────────────────────────────────────────────────────────────
 
-export interface RetrievalMetadata {
-  memoryCount?: number;
-  memoryIds?: string[];
-  conversationThreadCount?: number;
-  conversationThreadTs?: string[];
-  stablePrefixTokens?: number;
-  conversationContextTokens?: number;
-}
+export type RetrievalMetadata = RetrievalMetadataJson;
 
 export interface CorePrompt {
   stablePrefix: string;

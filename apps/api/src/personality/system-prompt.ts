@@ -401,16 +401,6 @@ export interface StablePrefixResult {
   metrics: StablePrefixMetrics;
 }
 
-export interface ConversationContextMetrics {
-  channelContextChars: number;
-  userProfileChars: number;
-  mentionedPeopleChars: number;
-  memoriesChars: number;
-  conversationsChars: number;
-  threadContextChars: number;
-  totalChars: number;
-}
-
 export interface SystemPromptLayers {
   /** Stable across ALL requests: personality + self-directive + auto-generated notes index */
   stablePrefix: string;
