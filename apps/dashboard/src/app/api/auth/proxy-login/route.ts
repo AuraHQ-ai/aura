@@ -3,24 +3,31 @@ import crypto from "node:crypto";
 import { cookies } from "next/headers";
 import {
   getSafeReturnTo,
+  isAllowedOrigin,
+  OAUTH_PROXY_ORIGIN_COOKIE,
   OAUTH_RETURN_TO_COOKIE,
-  PRODUCTION_URL,
 } from "@/lib/auth-redirect";
 
 export async function GET(request: NextRequest) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const returnTo = getSafeReturnTo(request.nextUrl.searchParams.get("returnTo"));
+  const origin = request.nextUrl.searchParams.get("origin");
+  const returnTo = getSafeReturnTo(
+    request.nextUrl.searchParams.get("returnTo"),
+  );
 
-  // Non-production environments delegate to production's OAuth proxy
-  const isProduction = appUrl.startsWith(PRODUCTION_URL);
-  if (!isProduction) {
-    const proxyUrl = new URL(`${PRODUCTION_URL}/api/auth/proxy-login`);
-    proxyUrl.searchParams.set("origin", appUrl);
-    if (returnTo) proxyUrl.searchParams.set("returnTo", returnTo);
-    return NextResponse.redirect(proxyUrl.toString());
+  if (!origin || !isAllowedOrigin(origin)) {
+    return new NextResponse("Invalid origin", { status: 400 });
   }
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const cookieStore = await cookies();
+
+  cookieStore.set(OAUTH_PROXY_ORIGIN_COOKIE, origin, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    maxAge: 300,
+    path: "/",
+  });
 
   if (returnTo) {
     cookieStore.set(OAUTH_RETURN_TO_COOKIE, returnTo, {
@@ -47,7 +54,7 @@ export async function GET(request: NextRequest) {
     response_type: "code",
     client_id: process.env.SLACK_CLIENT_ID!,
     scope: "openid profile email",
-    redirect_uri: `${appUrl}/api/auth/callback`,
+    redirect_uri: `${appUrl}/api/auth/proxy-callback`,
     state,
     nonce: crypto.randomBytes(16).toString("hex"),
   });

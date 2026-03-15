@@ -1,4 +1,19 @@
 export const OAUTH_RETURN_TO_COOKIE = "oauth_return_to";
+export const OAUTH_PROXY_ORIGIN_COOKIE = "oauth_proxy_origin";
+
+export const PRODUCTION_URL = "https://app.aurahq.ai";
+
+export function isAllowedOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    if (url.hostname === "localhost") return true;
+    if (url.hostname.endsWith(".vercel.app")) return true;
+    if (url.hostname === "app.aurahq.ai") return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 export function getSafeReturnTo(returnTo: string | null | undefined) {
   if (!returnTo || !returnTo.startsWith("/")) {

@@ -40,6 +40,29 @@ export async function getSession(): Promise<Session | null> {
   }
 }
 
+export async function createTransferToken(payload: Session): Promise<string> {
+  return new SignJWT({
+    ...(payload as unknown as Record<string, unknown>),
+    purpose: "transfer",
+  })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("60s")
+    .sign(getSecret());
+}
+
+export async function verifyTransferToken(token: string): Promise<Session> {
+  const { payload } = await jwtVerify(token, getSecret());
+  if (payload.purpose !== "transfer") {
+    throw new Error("Invalid token purpose");
+  }
+  return {
+    slackUserId: payload.slackUserId as string,
+    name: payload.name as string,
+    picture: payload.picture as string,
+  };
+}
+
 export function getSessionCookieName() {
   return COOKIE_NAME;
 }
