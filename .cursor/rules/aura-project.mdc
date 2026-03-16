@@ -117,6 +117,17 @@ Before building anything, **read the platform's documentation and search for exi
 - **NEVER push to `main`** -- always create a feature branch and open a PR (see Deployment section)
 - For self-edits to `system-prompt.ts`, flag as "self-edit" in the PR
 
+## Architecture: API-Only Dashboard
+
+The dashboard (`apps/dashboard`) is a **pure client** of the API (`apps/api`). It MUST NOT:
+- Import or use `drizzle-orm` for queries
+- Hold `DATABASE_URL` or any database credentials
+- Query Postgres directly (no server actions with DB access)
+
+All data access goes through the Hono API at `/api/dashboard/*`, authenticated with `DASHBOARD_API_SECRET`. Server actions in the dashboard are thin `fetch()` wrappers over API endpoints using the helpers in `apps/dashboard/src/lib/api.ts`.
+
+The API route files live in `apps/api/src/routes/dashboard/` with a shared auth middleware in `index.ts`. When adding a new dashboard feature that needs data, add an API endpoint first, then call it from the dashboard.
+
 ## TypeScript
 
 - Always run `npx tsc --noEmit` before committing (in the relevant app directory).

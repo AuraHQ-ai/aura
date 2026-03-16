@@ -4,7 +4,7 @@ import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
-import { dashboardChatApp } from "./routes/dashboard-chat.js";
+import { dashboardApp } from "./routes/dashboard/index.js";
 import { runPipeline } from "./pipeline/index.js";
 import {
   publishHomeTab,
@@ -70,43 +70,6 @@ app.get("/api/health", (c) => {
 
 // ── Dashboard API (authenticated with DASHBOARD_API_SECRET) ─────────────────
 
-app.get("/api/memories/search", async (c) => {
-  const secret = process.env.DASHBOARD_API_SECRET;
-  if (!secret) return c.json({ error: "Not configured" }, 503);
-
-  const auth = c.req.header("authorization");
-  if (auth !== `Bearer ${secret}`) return c.json({ error: "Unauthorized" }, 401);
-
-  const q = c.req.query("q");
-  if (!q) return c.json({ error: "Missing q parameter" }, 400);
-
-  const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 50);
-
-  const { retrieveMemories } = await import("./memory/retrieve.js");
-  const results = await retrieveMemories({
-    query: q,
-    currentUserId: "admin",
-    limit,
-    minRelevanceScore: 0,
-    adminMode: true,
-  });
-
-  return c.json({
-    ok: true,
-    memories: results.map((m) => ({
-      id: m.id,
-      content: m.content,
-      type: m.type,
-      sourceChannelType: m.sourceChannelType,
-      relevanceScore: m.relevanceScore,
-      shareable: m.shareable,
-      createdAt: m.createdAt,
-      updatedAt: m.updatedAt,
-      relatedUserIds: m.relatedUserIds,
-    })),
-  });
-});
-
 // Mount cron routes
 app.route("/", cronApp);
 app.route("/", heartbeatApp);
@@ -114,8 +77,8 @@ app.route("/", heartbeatApp);
 // Mount ElevenLabs voice webhook routes
 app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);
 
-// Mount dashboard chat route
-app.route("/api/dashboard/chat", dashboardChatApp);
+// Mount dashboard API (all /api/dashboard/* routes with shared auth middleware)
+app.route("/api/dashboard", dashboardApp);
 
 // ── Slack Signature Verification ────────────────────────────────────────────
 
