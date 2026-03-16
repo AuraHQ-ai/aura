@@ -202,7 +202,7 @@ export async function executeJob(
     const onStepFinish = progressTs && job.channelId
       ? async (stepResult: { toolCalls: Array<{ toolName: string }> }) => {
           stepCount++;
-          const toolNames = stepResult.toolCalls.map((tc) => tc.toolName);
+          const toolNames = stepResult.toolCalls?.map((tc) => tc.toolName) ?? [];
           const toolSummary = toolNames.length > 0
             ? toolNames.join(", ")
             : "thinking";
