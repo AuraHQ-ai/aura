@@ -1,6 +1,6 @@
 "use server";
 
-import { apiGet, apiPatch, apiDelete } from "@/lib/api";
+import { apiGet, apiGetOrNull, apiPatch, apiDelete } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 
 export async function getMemories(search?: string, type?: string, page = 1, limit = 100) {
@@ -13,11 +13,11 @@ export async function getMemories(search?: string, type?: string, page = 1, limi
 }
 
 export async function searchMemoriesKeyword(query: string) {
-  return apiGet<any[]>(`/memories?search=${encodeURIComponent(query)}&limit=50`);
+  return apiGet<{ items: any[]; total: number }>(`/memories?search=${encodeURIComponent(query)}&limit=50`);
 }
 
 export async function getMemory(id: string) {
-  return apiGet<any>(`/memories/${id}`);
+  return apiGetOrNull<any>(`/memories/${id}`);
 }
 
 export async function updateMemory(

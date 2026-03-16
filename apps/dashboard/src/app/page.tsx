@@ -11,7 +11,7 @@ async function getStats() {
     memories: number;
     users: number;
     activeJobs: number;
-    recentErrorsCount: number;
+    errorsLast24h: number;
     recentErrors: Array<{
       id: string;
       errorName: string;
@@ -75,7 +75,7 @@ export default async function DashboardPage() {
             <CardTitle className="text-sm font-medium">Errors (24h)</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold">{stats.recentErrorsCount}</div>
+            <div className="text-xl font-bold">{stats.errorsLast24h}</div>
           </CardContent>
         </Card>
       </div>

@@ -1,6 +1,6 @@
 "use server";
 
-import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
+import { apiGet, apiGetOrNull, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 
 export async function getCredentials(
@@ -18,7 +18,7 @@ export async function getCredentials(
 }
 
 export async function getCredential(id: string) {
-  return apiGet<any>(`/credentials/${id}`);
+  return apiGetOrNull<any>(`/credentials/${id}`);
 }
 
 export async function createCredential(data: {
