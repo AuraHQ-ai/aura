@@ -1,6 +1,4 @@
-import { db } from "@/lib/db";
-import { notes, memories, userProfiles, jobs, errorEvents, jobExecutions } from "@schema";
-import { count, eq, sql, desc, gte } from "drizzle-orm";
+import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
@@ -8,54 +6,28 @@ import { formatDate } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 async function getStats() {
-  const [notesCount] = await db.select({ value: count() }).from(notes);
-  const [memoriesCount] = await db.select({ value: count() }).from(memories);
-  const [usersCount] = await db.select({ value: count() }).from(userProfiles);
-  const [activeJobsCount] = await db
-    .select({ value: count() })
-    .from(jobs)
-    .where(eq(jobs.enabled, 1));
-
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const [recentErrorsCount] = await db
-    .select({ value: count() })
-    .from(errorEvents)
-    .where(gte(errorEvents.timestamp, oneDayAgo));
-
-  const recentErrors = await db
-    .select({
-      id: errorEvents.id,
-      errorName: errorEvents.errorName,
-      errorCode: errorEvents.errorCode,
-      timestamp: errorEvents.timestamp,
-      resolved: errorEvents.resolved,
-    })
-    .from(errorEvents)
-    .orderBy(desc(errorEvents.timestamp))
-    .limit(5);
-
-  const recentExecutions = await db
-    .select({
-      id: jobExecutions.id,
-      jobId: jobExecutions.jobId,
-      status: jobExecutions.status,
-      startedAt: jobExecutions.startedAt,
-      finishedAt: jobExecutions.finishedAt,
-      trigger: jobExecutions.trigger,
-    })
-    .from(jobExecutions)
-    .orderBy(desc(jobExecutions.startedAt))
-    .limit(5);
-
-  return {
-    notes: notesCount.value,
-    memories: memoriesCount.value,
-    users: usersCount.value,
-    activeJobs: activeJobsCount.value,
-    recentErrorsCount: recentErrorsCount.value,
-    recentErrors,
-    recentExecutions,
-  };
+  return apiGet<{
+    notes: number;
+    memories: number;
+    users: number;
+    activeJobs: number;
+    recentErrorsCount: number;
+    recentErrors: Array<{
+      id: string;
+      errorName: string;
+      errorCode: string | null;
+      timestamp: Date;
+      resolved: boolean;
+    }>;
+    recentExecutions: Array<{
+      id: string;
+      jobId: string;
+      status: string;
+      startedAt: Date;
+      finishedAt: Date | null;
+      trigger: string;
+    }>;
+  }>("/stats");
 }
 
 export default async function DashboardPage() {

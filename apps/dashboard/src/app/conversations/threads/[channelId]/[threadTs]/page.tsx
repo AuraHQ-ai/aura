@@ -93,7 +93,7 @@ export default async function ThreadDetailPage({
           <CardContent>
             <div className="flex flex-wrap gap-1">
               {meta.participants.length > 0 ? (
-                meta.participants.map((p) => (
+                meta.participants.map((p: { userId: string; displayName: string | null }) => (
                   <Badge key={p.userId} variant="secondary" className="text-xs">
                     {p.displayName ?? p.userId}
                   </Badge>
@@ -107,7 +107,7 @@ export default async function ThreadDetailPage({
       </div>
 
       <div className="space-y-8">
-        {conversations.map((conv, i) => (
+        {conversations.map((conv: any, i: number) => (
           <div key={conv.trace.id}>
             {i > 0 && (
               <div className="border-t border-border mb-8" />

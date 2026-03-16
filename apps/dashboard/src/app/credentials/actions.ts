@@ -1,102 +1,24 @@
 "use server";
 
-import { db } from "@/lib/db";
-import { credentials, credentialGrants, credentialAuditLog, userProfiles } from "@schema";
-import { eq, desc, count, ilike, sql } from "drizzle-orm";
-import { encryptCredential, decryptCredential, maskCredential } from "@/lib/credentials";
+import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 
-export async function getCredentials(search?: string, page = 1, limit = 100) {
-  const offset = (page - 1) * limit;
-  const where = search ? ilike(credentials.name, `%${search}%`) : undefined;
-
-  const [{ value: total }] = await db
-    .select({ value: sql<number>`count(*)::int` })
-    .from(credentials)
-    .where(where);
-
-  const creds = await db
-    .select({
-      id: credentials.id,
-      name: credentials.name,
-      type: credentials.type,
-      ownerId: credentials.ownerId,
-      expiresAt: credentials.expiresAt,
-      createdAt: credentials.createdAt,
-    })
-    .from(credentials)
-    .where(where)
-    .orderBy(desc(credentials.createdAt))
-    .limit(limit)
-    .offset(offset);
-
-  const result = [];
-  for (const cred of creds) {
-    const [grantCount] = await db
-      .select({ value: count() })
-      .from(credentialGrants)
-      .where(eq(credentialGrants.credentialId, cred.id));
-
-    const [owner] = await db
-      .select({ displayName: userProfiles.displayName })
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, cred.ownerId));
-
-    result.push({
-      ...cred,
-      grantCount: grantCount.value,
-      ownerName: owner?.displayName || cred.ownerId,
-    });
-  }
-
-  return { items: result, total };
+export async function getCredentials(
+  search?: string,
+  page = 1,
+  limit = 100,
+) {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  params.set("page", String(page));
+  params.set("limit", String(limit));
+  return apiGet<{ items: any[]; total: number }>(
+    `/credentials?${params}`,
+  );
 }
 
 export async function getCredential(id: string) {
-  const [cred] = await db.select().from(credentials).where(eq(credentials.id, id));
-  if (!cred) return null;
-
-  let maskedValue = "";
-  try {
-    maskedValue = maskCredential(decryptCredential(cred.value));
-  } catch {
-    maskedValue = "••••••••";
-  }
-
-  const grants = await db
-    .select()
-    .from(credentialGrants)
-    .where(eq(credentialGrants.credentialId, id));
-
-  const granteeNames: Record<string, string> = {};
-  for (const g of grants) {
-    const [profile] = await db
-      .select({ displayName: userProfiles.displayName })
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, g.granteeId));
-    granteeNames[g.granteeId] = profile?.displayName || g.granteeId;
-  }
-
-  const auditLog = await db
-    .select()
-    .from(credentialAuditLog)
-    .where(eq(credentialAuditLog.credentialId, id))
-    .orderBy(desc(credentialAuditLog.timestamp))
-    .limit(50);
-
-  const [owner] = await db
-    .select({ displayName: userProfiles.displayName })
-    .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, cred.ownerId));
-
-  return {
-    ...cred,
-    maskedValue,
-    ownerName: owner?.displayName || cred.ownerId,
-    grants,
-    granteeNames,
-    auditLog,
-  };
+  return apiGet<any>(`/credentials/${id}`);
 }
 
 export async function createCredential(data: {
@@ -107,51 +29,39 @@ export async function createCredential(data: {
   expiresAt?: string;
   tokenUrl?: string;
 }) {
-  const encrypted = encryptCredential(data.value);
-  const [cred] = await db
-    .insert(credentials)
-    .values({
-      name: data.name,
-      type: data.type,
-      ownerId: data.ownerId,
-      value: encrypted,
-      expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
-      tokenUrl: data.tokenUrl || null,
-    })
-    .returning();
+  const result = await apiPost<any>("/credentials", data);
   revalidatePath("/credentials");
-  return cred;
+  return result;
 }
 
 export async function updateCredentialValue(id: string, value: string) {
-  const encrypted = encryptCredential(value);
-  await db
-    .update(credentials)
-    .set({ value: encrypted, updatedAt: new Date() })
-    .where(eq(credentials.id, id));
+  await apiPatch(`/credentials/${id}/value`, { value });
   revalidatePath(`/credentials/${id}`);
 }
 
-export async function grantCredentialAccess(credentialId: string, granteeId: string, permission: string, grantedBy: string) {
-  await db
-    .insert(credentialGrants)
-    .values({ credentialId, granteeId, permission, grantedBy })
-    .onConflictDoUpdate({
-      target: [credentialGrants.credentialId, credentialGrants.granteeId],
-      set: { permission, grantedBy, grantedAt: new Date(), revokedAt: null },
-    });
+export async function grantCredentialAccess(
+  credentialId: string,
+  granteeId: string,
+  permission: string,
+  grantedBy: string,
+) {
+  await apiPost(`/credentials/${credentialId}/grants`, {
+    granteeId,
+    permission,
+    grantedBy,
+  });
   revalidatePath(`/credentials/${credentialId}`);
 }
 
-export async function revokeCredentialAccess(grantId: string, credentialId: string) {
-  await db
-    .update(credentialGrants)
-    .set({ revokedAt: new Date() })
-    .where(eq(credentialGrants.id, grantId));
+export async function revokeCredentialAccess(
+  grantId: string,
+  credentialId: string,
+) {
+  await apiDelete(`/credentials/${credentialId}/grants/${grantId}`);
   revalidatePath(`/credentials/${credentialId}`);
 }
 
 export async function deleteCredential(id: string) {
-  await db.delete(credentials).where(eq(credentials.id, id));
+  await apiDelete(`/credentials/${id}`);
   revalidatePath("/credentials");
 }

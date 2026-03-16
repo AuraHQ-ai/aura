@@ -57,6 +57,13 @@ pnpm db:studio      # open Drizzle Studio
 - The sandbox (e2b) is a separate environment from Vercel — env vars don't automatically cross over
 - Schema lives in `packages/db/` — both apps import from `@aura/db/schema`
 
+## Architecture: API-Only Dashboard
+- The dashboard (`apps/dashboard`) is a **pure client** of the API — it MUST NOT hold `DATABASE_URL`, import `drizzle-orm` for queries, or access Postgres directly
+- All data flows through the Hono API at `/api/dashboard/*`, authenticated with `DASHBOARD_API_SECRET`
+- Dashboard server actions are thin `fetch()` wrappers using `apps/dashboard/src/lib/api.ts`
+- API routes live in `apps/api/src/routes/dashboard/` with shared auth middleware in `index.ts`
+- When adding a new dashboard feature, add an API endpoint first, then call it from the dashboard
+
 ## Drizzle migration rules (CRITICAL)
 - **Every SQL migration file with multiple statements MUST have `--> statement-breakpoint` appended to the END of each statement line (same line, not a separate line).**
 - The journal has `breakpoints: true`, so Drizzle uses these markers to split the file into individual SQL commands.

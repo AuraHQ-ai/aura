@@ -12,7 +12,6 @@
   "dependencies": {
     "@ai-sdk/react": "^3.0.118",
     "@aura/db": "workspace:*",
-    "@neondatabase/serverless": "^1.0.2",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
     "@rive-app/react-webgl2": "^4.27.1",
     "@streamdown/cjk": "^1.0.2",
