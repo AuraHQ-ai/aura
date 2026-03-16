@@ -95,6 +95,7 @@ export async function executeJob(
 
   const executionId = execution.id;
   let progressTs: string | undefined;
+  const jobLabel = job.name || job.description.slice(0, 60);
 
   try {
     const planTopic = parseContinuationTag(job.description);
@@ -175,7 +176,6 @@ export async function executeJob(
     });
 
     // Post initial progress indicator (if we have a channel to post to)
-    const jobLabel = job.name || job.description.slice(0, 60);
     if (job.channelId) {
       try {
         const result = await slackClient.chat.postMessage({
@@ -356,13 +356,13 @@ export async function executeJob(
           await slackClient.chat.update({
             channel: job.channelId,
             ts: progressTs,
-            text: `⏸️ Awaiting approval: ${job.name || job.description.slice(0, 60)}`,
+            text: `⏸️ Awaiting approval: ${jobLabel}`,
             blocks: [
               {
                 type: "section",
                 text: {
                   type: "mrkdwn",
-                  text: `⏸️ *Awaiting approval:* ${job.name || job.description.slice(0, 60)}`,
+                  text: `⏸️ *Awaiting approval:* ${jobLabel}`,
                 },
               },
             ],
@@ -398,32 +398,22 @@ export async function executeJob(
       });
     }
 
-    // Update progress indicator to show failure
-    if (progressTs && job.channelId) {
-      try {
-        await slackClient.chat.update({
-          channel: job.channelId,
-          ts: progressTs,
-          text: `❌ Job failed: ${job.name || job.description.slice(0, 60)}`,
-          blocks: [
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: `❌ *Failed:* ${job.name || job.description.slice(0, 60)}\n_Check job trace for details._`,
-              },
-            },
-          ],
-        });
-      } catch (e) {
-        logger.warn("executeJob: failed to update progress indicator on failure", { jobId, error: e });
-      }
-    }
-
     // Retry logic
     const newRetries = job.retries + 1;
 
     if (newRetries < MAX_RETRIES) {
+      // Delete progress indicator — a new one will be created on retry
+      if (progressTs && job.channelId) {
+        try {
+          await slackClient.chat.delete({
+            channel: job.channelId,
+            ts: progressTs,
+          });
+        } catch (e) {
+          logger.warn("executeJob: failed to delete progress indicator on retry", { jobId, error: e });
+        }
+      }
+
       const retryAt = new Date(Date.now() + RETRY_DELAY_MS);
       await db
         .update(jobs)
@@ -437,6 +427,28 @@ export async function executeJob(
         retryAt: retryAt.toISOString(),
       });
     } else {
+      // Update progress indicator to show permanent failure
+      if (progressTs && job.channelId) {
+        try {
+          await slackClient.chat.update({
+            channel: job.channelId,
+            ts: progressTs,
+            text: `❌ Job failed: ${jobLabel}`,
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `❌ *Failed:* ${jobLabel}\n_Check job trace for details._`,
+                },
+              },
+            ],
+          });
+        } catch (e) {
+          logger.warn("executeJob: failed to update progress indicator on failure", { jobId, error: e });
+        }
+      }
+
       await db
         .update(jobs)
         .set({
