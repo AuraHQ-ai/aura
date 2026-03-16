@@ -409,6 +409,175 @@ export function createJobTools(
       slack: { status: "Cancelling job...", output: (r) => r.ok === false ? r.error : 'Job cancelled' },
     }),
 
+    update_job: defineTool({
+      description:
+        "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, or re-enable a disabled job. Accepts job name or ID.",
+      inputSchema: z.object({
+        job_id: z.string().optional().describe("UUID of the job to update"),
+        name: z
+          .string()
+          .optional()
+          .describe("Name of the job to update (alternative to job_id)"),
+        updates: z.object({
+          description: z.string().optional(),
+          playbook: z.string().optional(),
+          recurring: z
+            .string()
+            .optional()
+            .describe("New cron expression, e.g. '0 9 * * 1-5'"),
+          timezone: z.string().optional(),
+          channel_name: z.string().optional(),
+          priority: z.enum(["high", "normal", "low"]).optional(),
+          enabled: z
+            .boolean()
+            .optional()
+            .describe("Re-enable a disabled job by setting to true"),
+          max_per_day: z.number().optional(),
+          min_interval_hours: z.number().optional(),
+        }).describe("Fields to update. Only provided fields are changed."),
+      }),
+      execute: async ({ job_id, name, updates }) => {
+        try {
+          if (!job_id && !name) {
+            return { ok: false as const, error: "Provide either job_id or name." };
+          }
+
+          const condition = job_id
+            ? eq(jobs.id, job_id)
+            : eq(jobs.name, name!);
+
+          const rows = await db
+            .select()
+            .from(jobs)
+            .where(condition)
+            .limit(1);
+
+          if (rows.length === 0) {
+            return {
+              ok: false as const,
+              error: `No job found with ${job_id ? `ID "${job_id}"` : `name "${name}"`}.`,
+            };
+          }
+
+          const job = rows[0];
+
+          logger.info("update_job tool called", {
+            name: job.name,
+            fields: Object.keys(updates).filter(
+              (k) => updates[k as keyof typeof updates] !== undefined,
+            ),
+          });
+
+          const set: Record<string, unknown> = { updatedAt: new Date() };
+
+          if (updates.description !== undefined) set.description = updates.description;
+          if (updates.playbook !== undefined) set.playbook = updates.playbook || null;
+          if (updates.priority !== undefined) set.priority = updates.priority;
+          if (updates.timezone !== undefined) set.timezone = updates.timezone;
+
+          // Resolve channel name to ID
+          if (updates.channel_name !== undefined) {
+            const channel = await resolveChannelByName(client, updates.channel_name);
+            if (!channel) {
+              return { ok: false as const, error: `Could not find channel "${updates.channel_name}".` };
+            }
+            set.channelId = channel.id;
+          }
+
+          // Merge frequency config with existing JSONB instead of replacing
+          if (updates.max_per_day !== undefined || updates.min_interval_hours !== undefined) {
+            const existing: FrequencyConfig = job.frequencyConfig ?? {};
+            set.frequencyConfig = {
+              ...existing,
+              ...(updates.min_interval_hours !== undefined && {
+                minIntervalHours: updates.min_interval_hours,
+              }),
+              ...(updates.max_per_day !== undefined && {
+                maxPerDay: updates.max_per_day,
+              }),
+            };
+          }
+
+          // Validate and apply new cron schedule
+          if (updates.recurring !== undefined) {
+            try {
+              CronExpressionParser.parse(updates.recurring);
+            } catch {
+              return {
+                ok: false as const,
+                error: `Invalid cron expression "${updates.recurring}". Use standard 5-field syntax, e.g. '0 9 * * 1-5'.`,
+              };
+            }
+            set.cronSchedule = updates.recurring;
+
+            const tz = updates.timezone ?? job.timezone ?? "UTC";
+            const parsed = CronExpressionParser.parse(updates.recurring, {
+              currentDate: new Date(),
+              tz,
+            });
+            set.executeAt = parsed.next().toDate();
+          }
+
+          // Timezone-only change: recalculate executeAt against existing cron
+          if (updates.timezone !== undefined && updates.recurring === undefined) {
+            const cron = job.cronSchedule;
+            if (cron && job.executeAt) {
+              const parsed = CronExpressionParser.parse(cron, {
+                currentDate: new Date(),
+                tz: updates.timezone,
+              });
+              set.executeAt = parsed.next().toDate();
+            }
+          }
+
+          // Re-enable a disabled job
+          if (updates.enabled === true && job.enabled === 0) {
+            set.enabled = 1;
+            set.status = "pending";
+
+            // Recalculate next execution if not already set by a cron update above
+            if (!set.executeAt) {
+              const cron = (set.cronSchedule as string | undefined) ?? job.cronSchedule;
+              if (cron) {
+                const tz = (set.timezone as string | undefined) ?? job.timezone ?? "UTC";
+                const parsed = CronExpressionParser.parse(cron, {
+                  currentDate: new Date(),
+                  tz,
+                });
+                set.executeAt = parsed.next().toDate();
+              }
+            }
+          } else if (updates.enabled === false) {
+            set.enabled = 0;
+          }
+
+          await db.update(jobs).set(set).where(condition);
+
+          // Fetch the updated row for the response
+          const [updated] = await db.select().from(jobs).where(condition).limit(1);
+
+          return {
+            ok: true as const,
+            message: `Job "${updated.name}" updated.`,
+            job: {
+              name: updated.name,
+              description: updated.description,
+              cronSchedule: updated.cronSchedule,
+              enabled: updated.enabled === 1,
+              nextExecution: updated.executeAt?.toISOString() ?? null,
+            },
+          };
+        } catch (error: any) {
+          logger.error("update_job tool failed", { error: error.message });
+          return { ok: false as const, error: `Failed to update job: ${error.message}` };
+        }
+      },
+      slack: {
+        status: "Updating job...",
+        output: (r) => r.ok === false ? r.error : "Job updated",
+      },
+    }),
+
     dispatch_headless: defineTool({
       description:
         "Dispatch a task for immediate headless execution (no Slack streaming overhead). Creates a job and triggers it NOW — no waiting for the 30-min heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. The task runs as full Aura with all tools. Results are posted to the callback channel/thread when done. Admin-only.",
