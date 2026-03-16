@@ -45,6 +45,8 @@ export interface ChannelSession {
   participantUserIds?: string[];
   /** Pre-fetched user profile to avoid redundant DB lookups. */
   userProfile?: UserProfile | null;
+  /** Override the model ID injected into the dynamic context (e.g. when the dashboard user selects a specific model). */
+  modelIdOverride?: string;
 }
 
 // ── Core Prompt ──────────────────────────────────────────────────────────────
@@ -131,7 +133,7 @@ export async function buildCorePrompt(
     interlocutor: interlocutor ?? undefined,
   });
 
-  const modelId = await getMainModelId();
+  const modelId = session.modelIdOverride ?? await getMainModelId();
 
   let dynamicContext = buildDynamicContext({
     userTimezone: session.userTimezone ?? userProfile?.timezone ?? undefined,

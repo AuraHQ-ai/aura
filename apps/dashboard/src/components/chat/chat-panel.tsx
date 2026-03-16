@@ -14,6 +14,16 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
@@ -58,6 +68,54 @@ import {
 import { usePromptInputAttachments } from "@/components/ai-elements/prompt-input";
 import { Spinner } from "@/components/ui/spinner";
 
+// ── Model catalog ────────────────────────────────────────────────────────────
+
+const MODEL_GROUPS = [
+  {
+    label: "Anthropic",
+    models: [
+      { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
+      { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      { value: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
+      { value: "anthropic/claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+      { value: "anthropic/claude-haiku-4-5", label: "Claude Haiku 4.5" },
+    ],
+  },
+  {
+    label: "OpenAI",
+    models: [
+      { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
+      { value: "openai/gpt-5.2", label: "GPT-5.2" },
+      { value: "openai/gpt-5.1-thinking", label: "GPT-5.1 Thinking" },
+      { value: "openai/gpt-4o", label: "GPT-4o" },
+    ],
+  },
+  {
+    label: "Google",
+    models: [
+      { value: "google/gemini-3-pro-preview", label: "Gemini 3 Pro" },
+      { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    ],
+  },
+  {
+    label: "Other",
+    models: [
+      { value: "xai/grok-4.1-fast-reasoning", label: "Grok 4.1 Fast" },
+      { value: "deepseek/deepseek-v3.2-thinking", label: "DeepSeek V3.2" },
+    ],
+  },
+] as const;
+
+const DEFAULT_MODEL = "anthropic/claude-opus-4-6";
+
+function getModelLabel(value: string): string {
+  for (const group of MODEL_GROUPS) {
+    const found = group.models.find((m) => m.value === value);
+    if (found) return found.label;
+  }
+  return value;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface ChatThread {
@@ -69,25 +127,29 @@ interface ChatThread {
 
 interface ChatPanelProps {
   onClose: () => void;
+  userId?: string;
 }
 
 // ── Main Component ──────────────────────────────────────────────────────────
 
-export function ChatPanel({ onClose }: ChatPanelProps) {
+export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const [currentThreadId, setCurrentThreadId] = useState<string>(() => crypto.randomUUID());
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
   const threadIdRef = useRef(currentThreadId);
   threadIdRef.current = currentThreadId;
+  const selectedModelRef = useRef(selectedModel);
+  selectedModelRef.current = selectedModel;
 
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/chat",
-        body: () => ({ threadId: threadIdRef.current }),
+        body: () => ({ threadId: threadIdRef.current, userId, modelId: selectedModelRef.current }),
       }),
-    [],
+    [userId],
   );
 
   const { messages, sendMessage, status, error, stop, setMessages } = useChat({
@@ -205,7 +267,7 @@ export function ChatPanel({ onClose }: ChatPanelProps) {
           onNewChat={handleNewChat}
         />
       ) : isEmpty ? (
-        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} />
+        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} />
       ) : (
         <>
           {/* Messages */}
@@ -243,7 +305,7 @@ export function ChatPanel({ onClose }: ChatPanelProps) {
           </Conversation>
 
           {/* Input */}
-          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} />
+          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} />
         </>
       )}
     </div>
@@ -256,10 +318,14 @@ function EmptyState({
   onSubmit,
   status,
   onStop,
+  selectedModel,
+  onModelChange,
 }: {
   onSubmit: (msg: PromptInputMessage) => void;
   status: ReturnType<typeof useChat>["status"];
   onStop: () => void;
+  selectedModel: string;
+  onModelChange: (value: string) => void;
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center">
@@ -269,7 +335,7 @@ function EmptyState({
         your data, notes, or memories.
       </p>
       <div className="w-full">
-        <ChatInput onSubmit={onSubmit} status={status} onStop={onStop} />
+        <ChatInput onSubmit={onSubmit} status={status} onStop={onStop} selectedModel={selectedModel} onModelChange={onModelChange} />
       </div>
     </div>
   );
@@ -281,10 +347,14 @@ function ChatInput({
   onSubmit,
   status,
   onStop,
+  selectedModel,
+  onModelChange,
 }: {
   onSubmit: (msg: PromptInputMessage) => void;
   status: ReturnType<typeof useChat>["status"];
   onStop: () => void;
+  selectedModel: string;
+  onModelChange: (value: string) => void;
 }) {
   return (
     <div className="px-2 pb-1.5">
@@ -295,17 +365,20 @@ function ChatInput({
           className="min-h-8 text-[13px] px-2.5 py-2"
         />
         <PromptInputFooter className="justify-between px-1.5 pb-1 pt-0">
-          <PromptInputTools>
-            <PromptInputActionMenu>
-              <PromptInputActionMenuTrigger>
-                <PaperclipIcon className="size-3.5" />
-              </PromptInputActionMenuTrigger>
-              <PromptInputActionMenuContent>
-                <PromptInputActionAddAttachments />
-                <PromptInputActionAddScreenshot />
-              </PromptInputActionMenuContent>
-            </PromptInputActionMenu>
-          </PromptInputTools>
+          <div className="flex items-center gap-1">
+            <ModelSelector value={selectedModel} onChange={onModelChange} />
+            <PromptInputTools>
+              <PromptInputActionMenu>
+                <PromptInputActionMenuTrigger>
+                  <PaperclipIcon className="size-3.5" />
+                </PromptInputActionMenuTrigger>
+                <PromptInputActionMenuContent>
+                  <PromptInputActionAddAttachments />
+                  <PromptInputActionAddScreenshot />
+                </PromptInputActionMenuContent>
+              </PromptInputActionMenu>
+            </PromptInputTools>
+          </div>
           <SubmitButton status={status} onStop={onStop} />
         </PromptInputFooter>
       </PromptInput>
@@ -517,6 +590,37 @@ function MessageItem({
         })}
       </MessageContent>
     </Message>
+  );
+}
+
+// ── Model Selector ──────────────────────────────────────────────────────────
+
+function ModelSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-6 gap-1 border-none bg-transparent px-1 text-[11px] text-muted-foreground shadow-none hover:text-foreground focus-visible:ring-0">
+        <SelectValue>{getModelLabel(value)}</SelectValue>
+      </SelectTrigger>
+      <SelectContent align="start" side="top">
+        {MODEL_GROUPS.map((group, gi) => (
+          <SelectGroup key={group.label}>
+            {gi > 0 && <SelectSeparator />}
+            <SelectLabel>{group.label}</SelectLabel>
+            {group.models.map((model) => (
+              <SelectItem key={model.value} value={model.value} className="text-[13px]">
+                {model.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

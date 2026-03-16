@@ -111,6 +111,8 @@ async function createBaseOAuth2Client() {
 /**
  * Get an authenticated OAuth2Client for a given user.
  * No args = Aura's own token (U0AFEC1C69F). Pass a userId for per-user tokens.
+ * Returns the client or throws with a descriptive error.
+ * For callers that prefer null, use getOAuth2ClientSafe().
  */
 export async function getOAuth2Client(userId?: string) {
   const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
@@ -122,6 +124,31 @@ export async function getOAuth2Client(userId?: string) {
   oauth2Client.setCredentials({ refresh_token: tokenRow.refreshToken });
 
   return oauth2Client;
+}
+
+export async function getOAuth2ClientOrError(userId?: string): Promise<
+  { client: Awaited<ReturnType<typeof getOAuth2Client>> & {}; error?: never } |
+  { client?: never; error: string }
+> {
+  const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
+  const tokenRow = await getUserRefreshToken(resolvedUserId);
+  if (!tokenRow) {
+    return { error: `No Google OAuth token found for user '${resolvedUserId}'. They need to authorize via OAuth first (ask Aura to generate an auth link in Slack).` };
+  }
+
+  const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return { error: "Google OAuth is not configured on this server (GOOGLE_EMAIL_CLIENT_ID / GOOGLE_EMAIL_CLIENT_SECRET env vars are missing)." };
+  }
+
+  const oauth2Client = await createBaseOAuth2Client();
+  if (!oauth2Client) {
+    return { error: "Failed to create Google OAuth client." };
+  }
+
+  oauth2Client.setCredentials({ refresh_token: tokenRow.refreshToken });
+  return { client: oauth2Client };
 }
 
 /**

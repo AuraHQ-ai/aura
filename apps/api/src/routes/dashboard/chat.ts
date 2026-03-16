@@ -10,8 +10,9 @@ import {
 import { waitUntil } from "@vercel/functions";
 import { eq, and, sql, asc } from "drizzle-orm";
 import { conversationTraces, conversationMessages, conversationParts } from "@aura/db/schema";
+import { gateway } from "@ai-sdk/gateway";
 import { db } from "../../db/client.js";
-import { getMainModel, getMainModelId, buildCachedSystemMessages } from "../../lib/ai.js";
+import { getMainModel, getMainModelId, buildCachedSystemMessages, withAnthropicFallback, type WrappableModel } from "../../lib/ai.js";
 import { buildCorePrompt } from "../../pipeline/core-prompt.js";
 import { createCoreTools } from "../../tools/core.js";
 import { extractMemories } from "../../memory/extract.js";
@@ -221,10 +222,22 @@ dashboardChatApp.post("/", async (c) => {
 
   const userId = (body.userId as string) || "dashboard-admin";
   const threadId = (body.threadId as string) || null;
+  const requestedModelId = (body.modelId as string) || null;
 
   try {
-    const { model } = await getMainModel();
-    const modelId = await getMainModelId();
+    let model: WrappableModel;
+    let modelId: string;
+
+    if (requestedModelId) {
+      modelId = requestedModelId;
+      model = withAnthropicFallback(gateway(modelId), modelId);
+      logger.info("Dashboard chat using requested model", { modelId });
+    } else {
+      const resolved = await getMainModel();
+      model = resolved.model;
+      modelId = await getMainModelId();
+      logger.info("Dashboard chat using default model", { modelId });
+    }
 
     const lastUserMessage = [...messages]
       .reverse()
@@ -244,6 +257,7 @@ dashboardChatApp.post("/", async (c) => {
       conversationId: "dashboard",
       messageText,
       isDirectMessage: true,
+      modelIdOverride: modelId,
     });
 
     const systemMessages = buildCachedSystemMessages(
@@ -252,7 +266,7 @@ dashboardChatApp.post("/", async (c) => {
       prompt.dynamicContext,
     );
 
-    const tools = createCoreTools();
+    const tools = createCoreTools({ userId, channelId: "dashboard" });
     const modelMessages = await convertToModelMessages(messages);
 
     const result = streamText({

@@ -348,7 +348,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
     check_calendar: defineTool({
       description:
-        "List upcoming calendar events. Defaults to the caller's account. Set user_name to access another user's calendar (requires their OAuth access). Use calendar_id to check a specific calendar (e.g. a colleague's calendar via your own token).",
+        "List upcoming calendar events. OMIT user_name to check the caller's own calendar — the caller's identity is automatically resolved from the conversation context. Only set user_name when checking ANOTHER user's calendar. Use calendar_id to check a specific calendar (e.g. a colleague's calendar via your own token).",
       inputSchema: z.object({
         time_min: z
           .string()
@@ -375,7 +375,7 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe(
-            "Access another user's calendar instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
+            "ONLY set this to access ANOTHER user's calendar. OMIT for the caller's own calendar (auto-resolved from context).",
           ),
         calendar_id: z
           .string()
@@ -392,24 +392,35 @@ export function createEmailTools(context?: ScheduleContext) {
             return { ok: false, error: resolveError };
           }
 
-          const { listEvents } = await import("../lib/calendar.js");
-          const events = await listEvents({
-            calendarId: calendar_id || undefined,
-            timeMin: time_min,
-            timeMax: time_max,
-            maxResults: max_results,
-            query: query || undefined,
-          }, resolvedUserId);
-          if (!events) {
-            return {
-              ok: false,
-              error: user_name
-                ? `No calendar access for '${user_name}'. They may need to authorize Aura via OAuth first.`
-                : context?.userId
-                  ? "You need to connect your Google account first. Ask me to generate an auth link."
-                  : "Calendar is not configured. The OAuth token may need calendar scopes.",
-            };
+          const { getCalendarClientOrError } = await import("../lib/calendar.js");
+          const calResult = await getCalendarClientOrError(resolvedUserId);
+          if (calResult.error) {
+            return { ok: false, error: calResult.error };
           }
+
+          const client = calResult.client!;
+          const calendarId = calendar_id || "primary";
+          const now = new Date().toISOString();
+          const res = await client.events.list({
+            calendarId,
+            timeMin: time_min || now,
+            timeMax: time_max,
+            maxResults: max_results || 20,
+            singleEvents: true,
+            orderBy: "startTime",
+            q: query || undefined,
+          });
+
+          const events = (res.data.items || []).map((e: any) => ({
+            id: e.id || "",
+            summary: e.summary || "(no title)",
+            start: e.start?.dateTime || e.start?.date || "",
+            end: e.end?.dateTime || e.end?.date || "",
+            location: e.location || undefined,
+            attendees: e.attendees?.map((a: any) => ({ email: a.email || "", responseStatus: a.responseStatus })),
+            htmlLink: e.htmlLink || undefined,
+            status: e.status || undefined,
+          }));
           return { ok: true, count: events.length, events };
         } catch (error: any) {
           logger.error("check_calendar failed", { error: error.message });

@@ -119,7 +119,7 @@ function gatewayFallbackMiddleware(
  * For non-Anthropic models, returns the model unchanged.
  * For Anthropic models, wraps with fallback middleware.
  */
-function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: string): WrappableModel {
+export function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: string): WrappableModel {
   const directId = toDirectAnthropicId(gatewayId);
   if (!directId) {
     return gatewayModel;

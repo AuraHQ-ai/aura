@@ -10,9 +10,8 @@ export function createDateTimeTools() {
     get_current_datetime: defineTool({
       description:
         "Return the current date, time, day-of-week, and a mini week calendar. " +
-        "Use this tool whenever the user asks about today's date, the current time, " +
-        "what day it is, or anything requiring an accurate real-time timestamp. " +
-        "Do NOT guess the date from memory — always call this tool for a deterministic answer.",
+        "The current date/time is already in the system prompt — only call this tool when you need a different timezone or a fresh timestamp mid-conversation. " +
+        "Do NOT call this just to check today's date before another tool call — use the date from your system context.",
       inputSchema: z.object({
         timezone: z
           .string()
