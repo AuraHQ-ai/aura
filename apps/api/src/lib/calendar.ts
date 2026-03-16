@@ -48,53 +48,6 @@ export async function getCalendarClientOrError(userId?: string): Promise<
   return { client: new calendar_v3.Calendar({ auth: result.client }) };
 }
 
-// ── List Events ─────────────────────────────────────────────────────────────
-
-export async function listEvents(opts: {
-  calendarId?: string;
-  timeMin?: string;
-  timeMax?: string;
-  maxResults?: number;
-  query?: string;
-}, userId?: string): Promise<CalendarEvent[] | null> {
-  const client = await getCalendarClient(userId);
-  if (!client) return null;
-
-  const calendarId = opts.calendarId || "primary";
-  const now = new Date().toISOString();
-
-  const res = await client.events.list({
-    calendarId,
-    timeMin: opts.timeMin || now,
-    timeMax: opts.timeMax,
-    maxResults: opts.maxResults || 20,
-    singleEvents: true,
-    orderBy: "startTime",
-    q: opts.query,
-  });
-
-  return (res.data.items || []).map((e) => ({
-    id: e.id || "",
-    summary: e.summary || "(no title)",
-    description: e.description || undefined,
-    start: e.start?.dateTime || e.start?.date || "",
-    end: e.end?.dateTime || e.end?.date || "",
-    location: e.location || undefined,
-    attendees: e.attendees?.map((a) => ({
-      email: a.email || "",
-      responseStatus: a.responseStatus || undefined,
-    })),
-    htmlLink: e.htmlLink || undefined,
-    status: e.status || undefined,
-    organizer: e.organizer
-      ? {
-          email: e.organizer.email || "",
-          displayName: e.organizer.displayName || undefined,
-        }
-      : undefined,
-  }));
-}
-
 // ── Create Event ────────────────────────────────────────────────────────────
 
 export async function createEvent(opts: {
