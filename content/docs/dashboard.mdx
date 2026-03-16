@@ -93,9 +93,18 @@ Configure instance behavior:
 - Model selection
 - Feature flags
 
-## Access
+## Access & Authentication
 
-The dashboard is protected by authentication. Only users listed in `AURA_ADMIN_USER_IDS` can access it. The dashboard communicates with the API via internal routes.
+The dashboard uses Slack OAuth for login. Only users listed in `AURA_ADMIN_USER_IDS` can access it.
+
+### Auth Proxy
+
+Preview and branch deployments authenticate via an auth proxy flow. The production instance acts as the OAuth provider, and preview deployments redirect through it to obtain session tokens. This avoids needing to register separate OAuth redirect URLs for every preview deploy.
+
+The flow uses HMAC-SHA256 origin verification (via `DASHBOARD_SESSION_SECRET`) to ensure only legitimate deployments can request authentication. Short-lived transfer tokens (60s expiry) are used to pass credentials between origins, with strict validation to prevent token reuse as session tokens.
+
+**Required env vars:** `DASHBOARD_SESSION_SECRET`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`.
+
 
 ## Chat
 
