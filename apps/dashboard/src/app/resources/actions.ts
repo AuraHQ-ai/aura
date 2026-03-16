@@ -1,6 +1,6 @@
 "use server";
 
-import { apiGet, apiGetOrNull, apiDelete } from "@/lib/api";
+import { apiGet, apiDelete } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 
 export async function getResources(
@@ -22,7 +22,7 @@ export async function getResources(
 }
 
 export async function getResource(id: string) {
-  return apiGetOrNull<any>(`/resources/${id}`);
+  return apiGet<any>(`/resources/${id}`);
 }
 
 export async function deleteResource(id: string) {

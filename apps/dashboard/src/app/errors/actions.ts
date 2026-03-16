@@ -1,6 +1,6 @@
 "use server";
 
-import { apiGet, apiGetOrNull, apiPatch } from "@/lib/api";
+import { apiGet, apiPatch } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 
 export async function getErrors(resolved?: string, search?: string, page = 1, limit = 100) {
@@ -13,7 +13,7 @@ export async function getErrors(resolved?: string, search?: string, page = 1, li
 }
 
 export async function getError(id: string) {
-  return apiGetOrNull<any>(`/errors/${id}`);
+  return apiGet<any>(`/errors/${id}`);
 }
 
 export async function resolveErrors(ids: string[]) {

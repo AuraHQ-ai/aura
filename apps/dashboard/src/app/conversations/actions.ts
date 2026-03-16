@@ -1,6 +1,6 @@
 "use server";
 
-import { apiGet, apiGetOrNull } from "@/lib/api";
+import { apiGet } from "@/lib/api";
 
 export interface ThreadRow {
   channelId: string;
@@ -52,14 +52,14 @@ export async function getThreads(
 }
 
 export async function getConversation(id: string) {
-  return apiGetOrNull<any>(`/conversations/${id}`);
+  return apiGet<any>(`/conversations/${id}`);
 }
 
 export async function getThreadTraces(
   channelId: string,
   threadTs: string,
 ) {
-  return apiGetOrNull<any>(
+  return apiGet<any>(
     `/conversations/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(threadTs)}`,
   );
 }

@@ -1,6 +1,6 @@
 "use server";
 
-import { apiGet, apiGetOrNull, apiPatch } from "@/lib/api";
+import { apiGet, apiPatch } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 
 export async function getJobs(search?: string, page = 1, limit = 100) {
@@ -12,7 +12,7 @@ export async function getJobs(search?: string, page = 1, limit = 100) {
 }
 
 export async function getJob(id: string) {
-  return apiGetOrNull<any>(`/jobs/${id}`);
+  return apiGet<any>(`/jobs/${id}`);
 }
 
 export async function toggleJobEnabled(id: string, enabled: boolean) {

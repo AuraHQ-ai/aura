@@ -32,7 +32,7 @@ dashboardUsersApp.get("/", async (c) => {
         .from(userProfiles)
         .leftJoin(people, eq(userProfiles.personId, people.id))
         .where(where)
-        .orderBy(sql`${userProfiles.lastInteractionAt} desc nulls last`)
+        .orderBy(desc(userProfiles.lastInteractionAt))
         .limit(limit)
         .offset(offset),
       db
