@@ -37,7 +37,8 @@ dashboardMemoriesApp.get("/", async (c) => {
           adminMode: true,
         });
 
-        const items = results.map(({ embedding, ...rest }) => rest);
+        let items = results.map(({ embedding, ...rest }) => rest);
+        if (type) items = items.filter((m) => m.type === type);
         return c.json({ items, total: items.length });
       } catch {
         logger.warn("Hybrid memory search failed, falling back to full-text");
