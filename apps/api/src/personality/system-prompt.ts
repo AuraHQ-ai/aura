@@ -390,6 +390,18 @@ function formatConversations(conversations: ConversationThread[]): string {
   return `\n## Relevant past conversations\n\nThese are past conversation threads retrieved from your message history. Use them for context if relevant — reference specific things people said.\n\n${formatted}`;
 }
 
+export interface StablePrefixMetrics {
+  personalityChars: number;
+  selfDirectiveChars: number;
+  notesIndexChars: number;
+  totalChars: number;
+}
+
+export interface StablePrefixResult {
+  text: string;
+  metrics: StablePrefixMetrics;
+}
+
 export interface SystemPromptLayers {
   /** Stable across ALL requests: personality + self-directive + auto-generated notes index */
   stablePrefix: string;
@@ -403,11 +415,13 @@ export interface SystemPromptLayers {
  * Returns: PERSONALITY + self-directive + auto-generated notes index.
  * Async because it queries notes from the database.
  */
-export async function buildStablePrefix(): Promise<string> {
+export async function buildStablePrefix(): Promise<StablePrefixResult> {
   const parts: string[] = [];
 
+  const personalityChars = PERSONALITY.length;
   parts.push(PERSONALITY);
 
+  let selfDirectiveChars = 0;
   const SELF_DIRECTIVE_MAX_CHARS = 8000;
   try {
     const rows = await db
@@ -426,14 +440,15 @@ export async function buildStablePrefix(): Promise<string> {
           limit: SELF_DIRECTIVE_MAX_CHARS,
         });
       }
-      parts.push(
-        `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}`,
-      );
+      const block = `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}`;
+      selfDirectiveChars = block.length;
+      parts.push(block);
     }
   } catch (error) {
     logger.warn("Failed to load self-directive note", { error });
   }
 
+  let notesIndexChars = 0;
   try {
     const now = new Date();
     const allNotes = await db
@@ -489,13 +504,24 @@ export async function buildStablePrefix(): Promise<string> {
         });
       }
 
+      notesIndexChars = index.length;
       parts.push(index);
     }
   } catch (error) {
     logger.warn("Failed to build notes index", { error });
   }
 
-  return parts.join("\n\n");
+  const text = parts.join("\n\n");
+
+  return {
+    text,
+    metrics: {
+      personalityChars,
+      selfDirectiveChars,
+      notesIndexChars,
+      totalChars: text.length,
+    },
+  };
 }
 
 /**
@@ -510,51 +536,89 @@ export async function buildSystemPrompt(
   const conversationParts: string[] = [];
 
   // ── Layer 1: Stable prefix ──────────────────────────────────────────
-  const stablePrefix = await buildStablePrefix();
+  const { text: stablePrefix, metrics: stablePrefixMetrics } = await buildStablePrefix();
 
   // ── Layer 2: Conversation context ───────────────────────────────────
 
   // Channel context
+  let channelContextStr: string;
   if (context.channelType === "dm") {
-    conversationParts.push(`You're in a private DM. Be conversational and personal.`);
+    channelContextStr = `You're in a private DM. Be conversational and personal.`;
   } else {
-    conversationParts.push(
-      `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`,
-    );
+    channelContextStr = `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`;
   }
+  conversationParts.push(channelContextStr);
+  const channelContextChars = channelContextStr.length;
 
   // User profile (if available)
+  let userProfileChars = 0;
   if (context.userProfile) {
-    conversationParts.push(formatUserProfile(context.userProfile, context.interlocutor));
+    const profileStr = formatUserProfile(context.userProfile, context.interlocutor);
+    conversationParts.push(profileStr);
+    userProfileChars = profileStr.length;
   }
 
-
   // Mentioned people context (from people DB)
+  let mentionedPeopleChars = 0;
   if (context.mentionedPeople?.length) {
-    conversationParts.push(formatMentionedPeople(context.mentionedPeople));
+    const mentionedStr = formatMentionedPeople(context.mentionedPeople);
+    conversationParts.push(mentionedStr);
+    mentionedPeopleChars = mentionedStr.length;
   }
 
   // Retrieved memories
+  let memoriesChars = 0;
   if (context.memories.length > 0) {
-    conversationParts.push(formatMemories(context.memories));
+    const memoriesStr = formatMemories(context.memories);
+    conversationParts.push(memoriesStr);
+    memoriesChars = memoriesStr.length;
   }
 
   // Retrieved conversation threads
+  let conversationsChars = 0;
   if (context.conversations && context.conversations.length > 0) {
-    conversationParts.push(formatConversations(context.conversations));
+    const conversationsStr = formatConversations(context.conversations);
+    conversationParts.push(conversationsStr);
+    conversationsChars = conversationsStr.length;
   }
 
   // Conversation context (thread or recent channel messages)
+  let threadContextChars = 0;
   if (context.threadContext) {
     const heading = context.isChannelHistory
       ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
       : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
     conversationParts.push(heading);
+    threadContextChars = heading.length;
   }
+
+  const conversationContext = conversationParts.join("\n\n");
+  const conversationContextTotal = conversationContext.length;
+  const grandTotal = stablePrefixMetrics.totalChars + conversationContextTotal;
+
+  logger.info("System prompt assembled", {
+    stablePrefix: {
+      personality: stablePrefixMetrics.personalityChars,
+      selfDirective: stablePrefixMetrics.selfDirectiveChars,
+      notesIndex: stablePrefixMetrics.notesIndexChars,
+      total: stablePrefixMetrics.totalChars,
+    },
+    conversationContext: {
+      channelContext: channelContextChars,
+      userProfile: userProfileChars,
+      mentionedPeople: mentionedPeopleChars,
+      memories: memoriesChars,
+      conversations: conversationsChars,
+      threadContext: threadContextChars,
+      total: conversationContextTotal,
+    },
+    grandTotal,
+    estimatedTokens: Math.round(grandTotal / 4),
+  });
 
   return {
     stablePrefix,
-    conversationContext: conversationParts.join("\n\n"),
+    conversationContext,
   };
 }
 

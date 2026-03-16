@@ -42,7 +42,7 @@ import {
   buildConversationSteps,
 } from "../cron/persist-conversation.js";
 import { buildStepUsages, type StepUsage } from "../lib/cost-calculator.js";
-import type { DetailedTokenUsage } from "@aura/db/schema";
+import type { DetailedTokenUsage, RetrievalMetadataJson } from "@aura/db/schema";
 import type { SlackEvent } from "./context.js";
 
 /** Maximum message length we'll process (characters). Slack max is ~40k. */
@@ -333,7 +333,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { stablePrefix, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
+    const { stablePrefix, conversationContext, dynamicContext, memories, conversations, retrievalMetadata } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
@@ -449,6 +449,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       userPrompt: messageText,
       stepsPromise: response.stepsPromise,
       replyThreadTs,
+      retrievalMetadata,
       ...(() => {
         const all = (conversation.thread ?? conversation.recentMessages)
           .map(m => ({ displayName: m.displayName, text: m.text }));
@@ -592,8 +593,9 @@ async function persistConversationTrace(params: {
   stepsPromise?: PromiseLike<any[]>;
   usage?: DetailedTokenUsage;
   stepsTimeoutMs?: number;
+  retrievalMetadata?: RetrievalMetadataJson;
 }): Promise<string> {
-  const { channelId, threadTs, userId, modelId, systemPrompt, userPrompt, stepsPromise, usage, stepsTimeoutMs } = params;
+  const { channelId, threadTs, userId, modelId, systemPrompt, userPrompt, stepsPromise, usage, stepsTimeoutMs, retrievalMetadata } = params;
 
   const conversationId = await createConversationTrace({
     sourceType: "interactive",
@@ -601,6 +603,7 @@ async function persistConversationTrace(params: {
     threadTs,
     userId,
     modelId,
+    retrievalMetadata,
   });
 
   const orderIndex = await persistConversationInputs(conversationId, systemPrompt, userPrompt);
@@ -774,8 +777,9 @@ async function runBackgroundTasks(params: {
   userPrompt?: string;
   stepsPromise?: PromiseLike<any[]>;
   replyThreadTs?: string;
+  retrievalMetadata?: RetrievalMetadataJson;
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, replyThreadTs } = params;
+  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, replyThreadTs, retrievalMetadata } = params;
 
   try {
     // Store the user's message
@@ -868,6 +872,7 @@ async function runBackgroundTasks(params: {
           userPrompt,
           stepsPromise,
           usage: tokenUsage,
+          retrievalMetadata,
         });
 
         logger.info("Interactive conversation trace persisted", { conversationId });

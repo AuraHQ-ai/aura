@@ -83,7 +83,7 @@ app.get("/api/memories/search", async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") || "20", 10), 50);
 
   const { retrieveMemories } = await import("./memory/retrieve.js");
-  const results = await retrieveMemories({
+  const { memories: results } = await retrieveMemories({
     query: q,
     currentUserId: "admin",
     limit,
