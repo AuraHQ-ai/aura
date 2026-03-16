@@ -178,7 +178,7 @@ export function DashboardShell({ session, children }: DashboardShellProps) {
         collapsedSize="0%"
         onResize={handleChatResize}
       >
-        {chatOpen && <ChatPanel onClose={toggleChat} />}
+        {chatOpen && <ChatPanel onClose={toggleChat} userId={session?.slackUserId} />}
       </Panel>
     </Group>
   );

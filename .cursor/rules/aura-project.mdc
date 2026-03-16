@@ -128,6 +128,16 @@ All data access goes through the Hono API at `/api/dashboard/*`, authenticated w
 
 The API route files live in `apps/api/src/routes/dashboard/` with a shared auth middleware in `index.ts`. When adding a new dashboard feature that needs data, add an API endpoint first, then call it from the dashboard.
 
+## Multi-Channel LLM Pipeline
+
+All LLM responses go through `createAgenticStream()` in `apps/api/src/pipeline/generate.ts`. This function applies `prepareStep` middleware (thinking, effort escalation, model escalation, step limits, message pruning) uniformly across all channels.
+
+Channel connectors (Slack, Dashboard, etc.) handle **delivery only** — they MUST NOT configure model behavior directly (no manual `providerOptions`, no inline thinking config). When improving LLM behavior (new thinking strategy, cost controls, pruning logic), change `generate.ts` or `prepare-step.ts` so every channel benefits.
+
+- **Dashboard**: calls `createAgenticStream()` → pipes to `toUIMessageStreamResponse()`
+- **Slack**: uses the same `prepareStep` via `createInteractivePrepareStep()` in its agent pipeline
+- **New channels**: must use `createAgenticStream()`, not raw `streamText()`
+
 ## TypeScript
 
 - Always run `npx tsc --noEmit` before committing (in the relevant app directory).

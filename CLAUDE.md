@@ -64,6 +64,12 @@ pnpm db:studio      # open Drizzle Studio
 - API routes live in `apps/api/src/routes/dashboard/` with shared auth middleware in `index.ts`
 - When adding a new dashboard feature, add an API endpoint first, then call it from the dashboard
 
+## Multi-Channel LLM Pipeline
+- All LLM responses go through `createAgenticStream()` in `apps/api/src/pipeline/generate.ts`
+- This applies `prepareStep` middleware (thinking, effort, escalation, pruning) uniformly across channels
+- Channel connectors handle delivery only — NEVER configure model behavior (providerOptions, thinking) in connector code
+- New channels must use `createAgenticStream()`, not raw `streamText()`
+
 ## Drizzle migration rules (CRITICAL)
 - **Every SQL migration file with multiple statements MUST have `--> statement-breakpoint` appended to the END of each statement line (same line, not a separate line).**
 - The journal has `breakpoints: true`, so Drizzle uses these markers to split the file into individual SQL commands.

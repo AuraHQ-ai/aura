@@ -36,6 +36,18 @@ async function getCalendarClient(userId?: string) {
   return new calendar_v3.Calendar({ auth });
 }
 
+export async function getCalendarClientOrError(userId?: string): Promise<
+  { client: NonNullable<Awaited<ReturnType<typeof getCalendarClient>>>; error?: never } |
+  { client?: never; error: string }
+> {
+  const { getOAuth2ClientOrError } = await import("./gmail.js");
+  const result = await getOAuth2ClientOrError(userId);
+  if (result.error) return { error: result.error };
+
+  const { calendar_v3 } = await import("@googleapis/calendar");
+  return { client: new calendar_v3.Calendar({ auth: result.client }) };
+}
+
 // ── List Events ─────────────────────────────────────────────────────────────
 
 export async function listEvents(opts: {

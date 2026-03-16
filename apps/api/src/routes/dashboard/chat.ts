@@ -1,8 +1,6 @@
 import { Hono } from "hono";
 import {
-  streamText,
   convertToModelMessages,
-  stepCountIs,
   type UIMessage,
   type StepResult,
   type LanguageModelUsage,
@@ -10,9 +8,11 @@ import {
 import { waitUntil } from "@vercel/functions";
 import { eq, and, sql, asc } from "drizzle-orm";
 import { conversationTraces, conversationMessages, conversationParts } from "@aura/db/schema";
+import { gateway } from "@ai-sdk/gateway";
 import { db } from "../../db/client.js";
-import { getMainModel, getMainModelId, buildCachedSystemMessages } from "../../lib/ai.js";
+import { getMainModel, getMainModelId, withAnthropicFallback, type WrappableModel } from "../../lib/ai.js";
 import { buildCorePrompt } from "../../pipeline/core-prompt.js";
+import { createAgenticStream } from "../../pipeline/generate.js";
 import { createCoreTools } from "../../tools/core.js";
 import { extractMemories } from "../../memory/extract.js";
 import {
@@ -25,8 +25,6 @@ import {
 import { storeMessage } from "../../memory/store.js";
 import { buildStepUsages } from "../../lib/cost-calculator.js";
 import { logger } from "../../lib/logger.js";
-
-const MAX_STEPS = 20;
 
 export const dashboardChatApp = new Hono();
 
@@ -221,10 +219,22 @@ dashboardChatApp.post("/", async (c) => {
 
   const userId = (body.userId as string) || "dashboard-admin";
   const threadId = (body.threadId as string) || null;
+  const requestedModelId = (body.modelId as string) || null;
 
   try {
-    const { model } = await getMainModel();
-    const modelId = await getMainModelId();
+    let model: WrappableModel;
+    let modelId: string;
+
+    if (requestedModelId) {
+      modelId = requestedModelId;
+      model = withAnthropicFallback(gateway(modelId), modelId);
+      logger.info("Dashboard chat using requested model", { modelId });
+    } else {
+      const resolved = await getMainModel();
+      model = resolved.model;
+      modelId = await getMainModelId();
+      logger.info("Dashboard chat using default model", { modelId });
+    }
 
     const lastUserMessage = [...messages]
       .reverse()
@@ -244,23 +254,33 @@ dashboardChatApp.post("/", async (c) => {
       conversationId: "dashboard",
       messageText,
       isDirectMessage: true,
+      modelIdOverride: modelId,
     });
 
-    const systemMessages = buildCachedSystemMessages(
-      prompt.stablePrefix,
-      prompt.conversationContext,
-      prompt.dynamicContext,
-    );
+    const tools = createCoreTools({ userId, channelId: "dashboard" });
 
-    const tools = createCoreTools();
+    // Log message parts for debugging tool call conversion issues
+    for (const msg of messages) {
+      const partTypes = msg.parts?.map((p: any) => p.type) ?? [];
+      if (partTypes.some((t: string) => t.startsWith("tool") || t === "dynamic-tool" || t === "step-start")) {
+        logger.info("Dashboard chat message with tools", { id: msg.id, role: msg.role, partTypes });
+      }
+    }
+
     const modelMessages = await convertToModelMessages(messages);
 
-    const result = streamText({
+    const result = createAgenticStream({
       model,
-      system: systemMessages,
-      messages: modelMessages,
+      modelId,
       tools,
-      stopWhen: stepCountIs(MAX_STEPS),
+      stablePrefix: prompt.stablePrefix,
+      conversationContext: prompt.conversationContext,
+      dynamicContext: prompt.dynamicContext,
+      messages: modelMessages,
+      maxSteps: 20,
+      channelId: "dashboard",
+      threadTs: threadId ?? undefined,
+      userId,
       onFinish: ({ steps, totalUsage, text }) => {
         logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
         waitUntil(
