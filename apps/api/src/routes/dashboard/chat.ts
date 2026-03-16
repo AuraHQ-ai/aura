@@ -277,6 +277,7 @@ dashboardChatApp.post("/", async (c) => {
       conversationContext: prompt.conversationContext,
       dynamicContext: prompt.dynamicContext,
       messages: modelMessages,
+      maxSteps: 20,
       channelId: "dashboard",
       threadTs: threadId ?? undefined,
       userId,

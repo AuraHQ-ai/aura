@@ -414,12 +414,19 @@ export function createEmailTools(context?: ScheduleContext) {
           const events = (res.data.items || []).map((e: any) => ({
             id: e.id || "",
             summary: e.summary || "(no title)",
+            description: e.description || undefined,
             start: e.start?.dateTime || e.start?.date || "",
             end: e.end?.dateTime || e.end?.date || "",
             location: e.location || undefined,
             attendees: e.attendees?.map((a: any) => ({ email: a.email || "", responseStatus: a.responseStatus })),
             htmlLink: e.htmlLink || undefined,
             status: e.status || undefined,
+            organizer: e.organizer
+              ? {
+                  email: e.organizer.email || "",
+                  displayName: e.organizer.displayName || undefined,
+                }
+              : undefined,
           }));
           return { ok: true, count: events.length, events };
         } catch (error: any) {
