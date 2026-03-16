@@ -1,6 +1,6 @@
 "use server";
 
-import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
+import { apiGet, apiGetOrNull, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 
 export async function getNotes(search?: string, category?: string, page = 1, limit = 100) {
@@ -13,7 +13,7 @@ export async function getNotes(search?: string, category?: string, page = 1, lim
 }
 
 export async function getNote(id: string) {
-  return apiGet<any>(`/notes/${id}`);
+  return apiGetOrNull<any>(`/notes/${id}`);
 }
 
 export async function createNote(data: { topic: string; content: string; category: string; expiresAt?: string }) {

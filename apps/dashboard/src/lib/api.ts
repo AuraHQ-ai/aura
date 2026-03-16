@@ -20,6 +20,19 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json();
 }
 
+export async function apiGetOrNull<T>(path: string): Promise<T | null> {
+  const res = await fetch(`${API_URL}/api/dashboard${path}`, {
+    headers: headers(),
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => "Unknown error");
+    throw new Error(`API GET ${path} failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API_URL}/api/dashboard${path}`, {
     method: "POST",
