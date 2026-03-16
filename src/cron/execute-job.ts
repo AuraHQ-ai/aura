@@ -350,6 +350,28 @@ export async function executeJob(
         })
         .where(eq(jobs.id, jobId));
 
+      // Update progress indicator to show approval suspension
+      if (progressTs && job.channelId) {
+        try {
+          await slackClient.chat.update({
+            channel: job.channelId,
+            ts: progressTs,
+            text: `⏸️ Awaiting approval: ${job.name || job.description.slice(0, 60)}`,
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `⏸️ *Awaiting approval:* ${job.name || job.description.slice(0, 60)}`,
+                },
+              },
+            ],
+          });
+        } catch (e) {
+          logger.warn("executeJob: failed to update progress indicator on approval suspension", { jobId, error: e });
+        }
+      }
+
       logger.info("executeJob: job suspended awaiting approval", {
         jobId,
         jobName: job.name,
