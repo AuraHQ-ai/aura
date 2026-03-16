@@ -1,8 +1,6 @@
 import { Hono } from "hono";
 import {
-  streamText,
   convertToModelMessages,
-  stepCountIs,
   type UIMessage,
   type StepResult,
   type LanguageModelUsage,
@@ -12,8 +10,9 @@ import { eq, and, sql, asc } from "drizzle-orm";
 import { conversationTraces, conversationMessages, conversationParts } from "@aura/db/schema";
 import { gateway } from "@ai-sdk/gateway";
 import { db } from "../../db/client.js";
-import { getMainModel, getMainModelId, buildCachedSystemMessages, withAnthropicFallback, type WrappableModel } from "../../lib/ai.js";
+import { getMainModel, getMainModelId, withAnthropicFallback, type WrappableModel } from "../../lib/ai.js";
 import { buildCorePrompt } from "../../pipeline/core-prompt.js";
+import { createAgenticStream } from "../../pipeline/generate.js";
 import { createCoreTools } from "../../tools/core.js";
 import { extractMemories } from "../../memory/extract.js";
 import {
@@ -26,8 +25,6 @@ import {
 import { storeMessage } from "../../memory/store.js";
 import { buildStepUsages } from "../../lib/cost-calculator.js";
 import { logger } from "../../lib/logger.js";
-
-const MAX_STEPS = 20;
 
 export const dashboardChatApp = new Hono();
 
@@ -260,21 +257,29 @@ dashboardChatApp.post("/", async (c) => {
       modelIdOverride: modelId,
     });
 
-    const systemMessages = buildCachedSystemMessages(
-      prompt.stablePrefix,
-      prompt.conversationContext,
-      prompt.dynamicContext,
-    );
-
     const tools = createCoreTools({ userId, channelId: "dashboard" });
+
+    // Log message parts for debugging tool call conversion issues
+    for (const msg of messages) {
+      const partTypes = msg.parts?.map((p: any) => p.type) ?? [];
+      if (partTypes.some((t: string) => t.startsWith("tool") || t === "dynamic-tool" || t === "step-start")) {
+        logger.info("Dashboard chat message with tools", { id: msg.id, role: msg.role, partTypes });
+      }
+    }
+
     const modelMessages = await convertToModelMessages(messages);
 
-    const result = streamText({
+    const result = createAgenticStream({
       model,
-      system: systemMessages,
-      messages: modelMessages,
+      modelId,
       tools,
-      stopWhen: stepCountIs(MAX_STEPS),
+      stablePrefix: prompt.stablePrefix,
+      conversationContext: prompt.conversationContext,
+      dynamicContext: prompt.dynamicContext,
+      messages: modelMessages,
+      channelId: "dashboard",
+      threadTs: threadId ?? undefined,
+      userId,
       onFinish: ({ steps, totalUsage, text }) => {
         logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
         waitUntil(

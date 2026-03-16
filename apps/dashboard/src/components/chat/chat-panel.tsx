@@ -519,9 +519,11 @@ function MessageItem({
             case "text":
               if (!part.text) return null;
               return (
-                <MessageResponse key={i} className="text-[13px]">
-                  {part.text}
-                </MessageResponse>
+                <div key={i} style={{ fontSize: 13 }} className="[&_*]:![font-size:inherit] [&_h1]:![font-size:15px] [&_h2]:![font-size:14px] [&_h3]:![font-size:13px]">
+                  <MessageResponse>
+                    {part.text}
+                  </MessageResponse>
+                </div>
               );
 
             case "reasoning":
@@ -541,14 +543,15 @@ function MessageItem({
             case "dynamic-tool": {
               const dynPart = part as DynamicToolUIPart;
               return (
-                <Tool key={i}>
+                <Tool key={i} className="mb-1 rounded-sm border-muted">
                   <ToolHeader
                     type={dynPart.type}
                     state={dynPart.state}
                     toolName={dynPart.toolName}
                     title={formatToolName(dynPart.toolName)}
+                    className="px-2 py-1.5 gap-2"
                   />
-                  <ToolContent>
+                  <ToolContent className="max-h-60 overflow-y-auto px-2 py-1.5 space-y-1.5">
                     <ToolInput input={dynPart.input} />
                     {dynPart.output !== undefined && (
                       <ToolOutput
@@ -566,13 +569,14 @@ function MessageItem({
                 const toolPart = part as ToolUIPart;
                 const toolName = toolPart.type.replace(/^tool-/, "");
                 return (
-                  <Tool key={i}>
+                  <Tool key={i} className="mb-1 rounded-sm border-muted">
                     <ToolHeader
                       type={toolPart.type}
                       state={toolPart.state}
                       title={formatToolName(toolName)}
+                      className="px-2 py-1.5 gap-2"
                     />
-                    <ToolContent>
+                    <ToolContent className="max-h-60 overflow-y-auto px-2 py-1.5 space-y-1.5">
                       <ToolInput input={toolPart.input} />
                       {toolPart.output !== undefined && (
                         <ToolOutput
