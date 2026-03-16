@@ -57,10 +57,12 @@ export async function resolveSlackUserId(
     const { userProfiles } = await import("@aura/db/schema");
     const { ilike } = await import("drizzle-orm");
 
+    const escaped = trimmed.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
     const [exact] = await db
       .select({ slackUserId: userProfiles.slackUserId })
       .from(userProfiles)
-      .where(ilike(userProfiles.displayName, trimmed))
+      .where(ilike(userProfiles.displayName, escaped))
       .limit(1);
     if (exact) return exact.slackUserId;
 
@@ -68,7 +70,7 @@ export async function resolveSlackUserId(
     const [prefix] = await db
       .select({ slackUserId: userProfiles.slackUserId })
       .from(userProfiles)
-      .where(ilike(userProfiles.displayName, `${trimmed}%`))
+      .where(ilike(userProfiles.displayName, `${escaped}%`))
       .orderBy(sql`${userProfiles.interactionCount} DESC NULLS LAST`)
       .limit(1);
     if (prefix) return prefix.slackUserId;
