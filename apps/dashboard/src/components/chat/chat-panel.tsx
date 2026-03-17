@@ -67,44 +67,35 @@ import {
 } from "@/components/ai-elements/attachments";
 import { usePromptInputAttachments } from "@/components/ai-elements/prompt-input";
 import { Spinner } from "@/components/ui/spinner";
+import { MAIN_MODELS, FAST_MODELS } from "@aura/db/models";
 
 // ── Model catalog ────────────────────────────────────────────────────────────
 
-const MODEL_GROUPS = [
-  {
-    label: "Anthropic",
-    models: [
-      { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
-      { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-      { value: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-      { value: "anthropic/claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
-      { value: "anthropic/claude-haiku-4-5", label: "Claude Haiku 4.5" },
-    ],
-  },
-  {
-    label: "OpenAI",
-    models: [
-      { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
-      { value: "openai/gpt-5.2", label: "GPT-5.2" },
-      { value: "openai/gpt-5.1-thinking", label: "GPT-5.1 Thinking" },
-      { value: "openai/gpt-4o", label: "GPT-4o" },
-    ],
-  },
-  {
-    label: "Google",
-    models: [
-      { value: "google/gemini-3-pro-preview", label: "Gemini 3 Pro" },
-      { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-    ],
-  },
-  {
-    label: "Other",
-    models: [
-      { value: "xai/grok-4.1-fast-reasoning", label: "Grok 4.1 Fast" },
-      { value: "deepseek/deepseek-v3.2-thinking", label: "DeepSeek V3.2" },
-    ],
-  },
-] as const;
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  xai: "xAI",
+  deepseek: "DeepSeek",
+};
+
+function buildModelGroups() {
+  const allModels = [...MAIN_MODELS, ...FAST_MODELS];
+  const seen = new Set<string>();
+  const groups: Record<string, { value: string; label: string }[]> = {};
+
+  for (const m of allModels) {
+    if (seen.has(m.value)) continue;
+    seen.add(m.value);
+    const provider = m.value.split("/")[0];
+    const groupLabel = PROVIDER_LABELS[provider] ?? provider;
+    (groups[groupLabel] ??= []).push(m);
+  }
+
+  return Object.entries(groups).map(([label, models]) => ({ label, models }));
+}
+
+const MODEL_GROUPS = buildModelGroups();
 
 const DEFAULT_MODEL = "anthropic/claude-opus-4-6";
 
