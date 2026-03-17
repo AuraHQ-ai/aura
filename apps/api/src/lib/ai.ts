@@ -8,6 +8,7 @@ import {
 export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
 import { logger } from "./logger.js";
+import { MODEL_DEFAULTS } from "./models.js";
 
 /**
  * All LLM and embedding calls go through Vercel AI Gateway.
@@ -26,7 +27,7 @@ import { logger } from "./logger.js";
  */
 
 /** Default main model ID used across the codebase. */
-export const DEFAULT_MAIN_MODEL = "anthropic/claude-sonnet-4-20250514";
+export const DEFAULT_MAIN_MODEL = MODEL_DEFAULTS.main;
 
 /**
  * Resolve the main model ID string (no gateway wrapping).
@@ -34,7 +35,7 @@ export const DEFAULT_MAIN_MODEL = "anthropic/claude-sonnet-4-20250514";
  */
 export async function getMainModelId(): Promise<string> {
   const override = await getSetting("model_main");
-  return override || process.env.MODEL_MAIN || DEFAULT_MAIN_MODEL;
+  return override || process.env.MODEL_MAIN || MODEL_DEFAULTS.main;
 }
 
 /**
@@ -138,7 +139,7 @@ export function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: s
 export async function getFastModel() {
   const override = await getSetting("model_fast");
   const gatewayId =
-    override || process.env.MODEL_FAST || "anthropic/claude-haiku-4-5";
+    override || process.env.MODEL_FAST || MODEL_DEFAULTS.fast;
   const gatewayModel = gateway(gatewayId);
   return withAnthropicFallback(gatewayModel, gatewayId);
 }
@@ -150,7 +151,7 @@ export async function getFastModel() {
 export async function getEmbeddingModel() {
   const override = await getSetting("model_embedding");
   const gatewayId =
-    override || process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small";
+    override || process.env.MODEL_EMBEDDING || MODEL_DEFAULTS.embedding;
   return gateway.embedding(gatewayId);
 }
 
@@ -216,9 +217,9 @@ export async function getEscalationModel() {
  * Static references kept for backward compatibility where async isn't feasible.
  * These use env vars only (no DB lookup) and include Anthropic fallback support.
  */
-const STATIC_MAIN_MODEL_ID = process.env.MODEL_MAIN || "anthropic/claude-sonnet-4-20250514";
-const STATIC_FAST_MODEL_ID = process.env.MODEL_FAST || "anthropic/claude-haiku-4-5";
-const STATIC_EMBEDDING_MODEL_ID = process.env.MODEL_EMBEDDING || "openai/text-embedding-3-small";
+const STATIC_MAIN_MODEL_ID = process.env.MODEL_MAIN || MODEL_DEFAULTS.main;
+const STATIC_FAST_MODEL_ID = process.env.MODEL_FAST || MODEL_DEFAULTS.fast;
+const STATIC_EMBEDDING_MODEL_ID = process.env.MODEL_EMBEDDING || MODEL_DEFAULTS.embedding;
 
 export const mainModel = withAnthropicFallback(
   gateway(STATIC_MAIN_MODEL_ID),

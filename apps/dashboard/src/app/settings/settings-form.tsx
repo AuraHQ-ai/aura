@@ -12,44 +12,24 @@ import { Save } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { Setting } from "@schema";
 
-const MAIN_MODELS = [
-  { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
-  { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-  { value: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-  { value: "anthropic/claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
-  { value: "openai/gpt-5.3-codex", label: "GPT-5.3 Codex" },
-  { value: "openai/gpt-5.2", label: "GPT-5.2" },
-  { value: "openai/gpt-5.1-thinking", label: "GPT-5.1 Thinking" },
-  { value: "openai/gpt-4o", label: "GPT-4o" },
-  { value: "google/gemini-3-pro-preview", label: "Gemini 3 Pro" },
-  { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-  { value: "xai/grok-4.1-fast-reasoning", label: "Grok 4.1 Fast" },
-  { value: "deepseek/deepseek-v3.2-thinking", label: "DeepSeek V3.2 Thinking" },
-];
+interface ModelOption {
+  value: string;
+  label: string;
+}
 
-const FAST_MODELS = [
-  { value: "anthropic/claude-haiku-4-5", label: "Claude Haiku 4.5" },
-  { value: "openai/gpt-5.1-instant", label: "GPT-5.1 Instant" },
-  { value: "openai/gpt-5-mini", label: "GPT-5 Mini" },
-  { value: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
-  { value: "google/gemini-3-flash", label: "Gemini 3 Flash" },
-  { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { value: "xai/grok-4.1-fast-non-reasoning", label: "Grok 4.1 Fast NR" },
-  { value: "xai/grok-code-fast-1", label: "Grok Code Fast 1" },
-  { value: "deepseek/deepseek-v3.2", label: "DeepSeek V3.2" },
-];
-
-const EMBEDDING_MODELS = [
-  { value: "openai/text-embedding-3-small", label: "OpenAI Embedding 3 Small (1536d)" },
-  { value: "openai/text-embedding-3-large", label: "OpenAI Embedding 3 Large (3072d)" },
-  { value: "google/text-embedding-005", label: "Google Embedding 005" },
-];
+interface ModelCatalog {
+  main: ModelOption[];
+  fast: ModelOption[];
+  embedding: ModelOption[];
+  defaults: { main: string; fast: string; embedding: string };
+}
 
 function getSettingValue(settings: Setting[], key: string): string {
   return settings.find((s) => s.key === key)?.value || "";
 }
 
-export function SettingsForm({ settings }: { settings: Setting[] }) {
+export function SettingsForm({ settings, models }: { settings: Setting[]; models: ModelCatalog }) {
+  const { main: MAIN_MODELS, fast: FAST_MODELS, embedding: EMBEDDING_MODELS } = models;
   const router = useRouter();
   const [mainModel, setMainModel] = useState(getSettingValue(settings, "model_main"));
   const [fastModel, setFastModel] = useState(getSettingValue(settings, "model_fast"));
