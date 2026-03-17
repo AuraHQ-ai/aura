@@ -26,9 +26,6 @@ import { MODEL_DEFAULTS } from "./models.js";
  * directly using ANTHROPIC_API_KEY.
  */
 
-/** Default main model ID used across the codebase. */
-export const DEFAULT_MAIN_MODEL = MODEL_DEFAULTS.main;
-
 /**
  * Resolve the main model ID string (no gateway wrapping).
  * Priority: DB setting > env var > default
