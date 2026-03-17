@@ -11,6 +11,7 @@ import { dashboardCredentialsApp } from "./credentials.js";
 import { dashboardResourcesApp } from "./resources.js";
 import { dashboardConsumptionApp } from "./consumption.js";
 import { dashboardSettingsApp } from "./settings.js";
+import { dashboardModelsApp } from "./models.js";
 
 export const dashboardApp = new Hono();
 
@@ -35,3 +36,4 @@ dashboardApp.route("/credentials", dashboardCredentialsApp);
 dashboardApp.route("/resources", dashboardResourcesApp);
 dashboardApp.route("/consumption", dashboardConsumptionApp);
 dashboardApp.route("/settings", dashboardSettingsApp);
+dashboardApp.route("/models", dashboardModelsApp);

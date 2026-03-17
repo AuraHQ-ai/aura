@@ -14,7 +14,7 @@ import {
   EMBEDDING_MODELS,
   MODEL_DEFAULTS,
   type ModelOption,
-} from "@aura/db/models";
+} from "../lib/models.js";
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
 

@@ -11,10 +11,6 @@
     "./schema": {
       "types": "./src/schema.ts",
       "default": "./dist/schema.js"
-    },
-    "./models": {
-      "types": "./src/models.ts",
-      "default": "./dist/models.js"
     }
   },
   "scripts": {

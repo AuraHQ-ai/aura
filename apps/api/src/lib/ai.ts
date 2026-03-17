@@ -8,7 +8,7 @@ import {
 export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
 import { logger } from "./logger.js";
-import { MODEL_DEFAULTS } from "@aura/db/models";
+import { MODEL_DEFAULTS } from "./models.js";
 
 /**
  * All LLM and embedding calls go through Vercel AI Gateway.

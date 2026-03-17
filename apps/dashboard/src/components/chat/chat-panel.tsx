@@ -67,9 +67,18 @@ import {
 } from "@/components/ai-elements/attachments";
 import { usePromptInputAttachments } from "@/components/ai-elements/prompt-input";
 import { Spinner } from "@/components/ui/spinner";
-import { MAIN_MODELS, FAST_MODELS } from "@aura/db/models";
 
 // ── Model catalog ────────────────────────────────────────────────────────────
+
+interface ModelOption {
+  value: string;
+  label: string;
+}
+
+interface ModelGroup {
+  label: string;
+  models: ModelOption[];
+}
 
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
@@ -79,10 +88,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: "DeepSeek",
 };
 
-function buildModelGroups() {
-  const allModels = [...MAIN_MODELS, ...FAST_MODELS];
+function buildModelGroups(main: ModelOption[], fast: ModelOption[]): ModelGroup[] {
+  const allModels = [...main, ...fast];
   const seen = new Set<string>();
-  const groups: Record<string, { value: string; label: string }[]> = {};
+  const groups: Record<string, ModelOption[]> = {};
 
   for (const m of allModels) {
     if (seen.has(m.value)) continue;
@@ -95,12 +104,10 @@ function buildModelGroups() {
   return Object.entries(groups).map(([label, models]) => ({ label, models }));
 }
 
-const MODEL_GROUPS = buildModelGroups();
-
 const DEFAULT_MODEL = "anthropic/claude-opus-4-6";
 
-function getModelLabel(value: string): string {
-  for (const group of MODEL_GROUPS) {
+function getModelLabel(groups: ModelGroup[], value: string): string {
+  for (const group of groups) {
     const found = group.models.find((m) => m.value === value);
     if (found) return found.label;
   }
@@ -129,6 +136,7 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const [showHistory, setShowHistory] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
+  const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
   const threadIdRef = useRef(currentThreadId);
   threadIdRef.current = currentThreadId;
   const selectedModelRef = useRef(selectedModel);
@@ -149,6 +157,16 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
 
   const isStreaming = status === "streaming";
   const isEmpty = messages.length === 0 && !loadingThread;
+
+  // Fetch model catalog on mount
+  useEffect(() => {
+    fetch("/api/chat/models")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setModelGroups(buildModelGroups(data.main ?? [], data.fast ?? []));
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch thread list on mount and after each completed response
   const fetchThreads = useCallback(async () => {
@@ -258,7 +276,7 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
           onNewChat={handleNewChat}
         />
       ) : isEmpty ? (
-        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} />
+        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelGroups={modelGroups} />
       ) : (
         <>
           {/* Messages */}
@@ -296,7 +314,7 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
           </Conversation>
 
           {/* Input */}
-          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} />
+          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelGroups={modelGroups} />
         </>
       )}
     </div>
@@ -311,12 +329,14 @@ function EmptyState({
   onStop,
   selectedModel,
   onModelChange,
+  modelGroups,
 }: {
   onSubmit: (msg: PromptInputMessage) => void;
   status: ReturnType<typeof useChat>["status"];
   onStop: () => void;
   selectedModel: string;
   onModelChange: (value: string) => void;
+  modelGroups: ModelGroup[];
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center">
@@ -326,7 +346,7 @@ function EmptyState({
         your data, notes, or memories.
       </p>
       <div className="w-full">
-        <ChatInput onSubmit={onSubmit} status={status} onStop={onStop} selectedModel={selectedModel} onModelChange={onModelChange} />
+        <ChatInput onSubmit={onSubmit} status={status} onStop={onStop} selectedModel={selectedModel} onModelChange={onModelChange} modelGroups={modelGroups} />
       </div>
     </div>
   );
@@ -340,12 +360,14 @@ function ChatInput({
   onStop,
   selectedModel,
   onModelChange,
+  modelGroups,
 }: {
   onSubmit: (msg: PromptInputMessage) => void;
   status: ReturnType<typeof useChat>["status"];
   onStop: () => void;
   selectedModel: string;
   onModelChange: (value: string) => void;
+  modelGroups: ModelGroup[];
 }) {
   return (
     <div className="px-2 pb-1.5">
@@ -357,7 +379,7 @@ function ChatInput({
         />
         <PromptInputFooter className="justify-between px-1.5 pb-1 pt-0">
           <div className="flex items-center gap-1">
-            <ModelSelector value={selectedModel} onChange={onModelChange} />
+            <ModelSelector value={selectedModel} onChange={onModelChange} groups={modelGroups} />
             <PromptInputTools>
               <PromptInputActionMenu>
                 <PromptInputActionMenuTrigger>
@@ -593,17 +615,19 @@ function MessageItem({
 function ModelSelector({
   value,
   onChange,
+  groups,
 }: {
   value: string;
   onChange: (value: string) => void;
+  groups: ModelGroup[];
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className="h-6 gap-1 border-none bg-transparent px-1 text-[11px] text-muted-foreground shadow-none hover:text-foreground focus-visible:ring-0">
-        <SelectValue>{getModelLabel(value)}</SelectValue>
+        <SelectValue>{getModelLabel(groups, value)}</SelectValue>
       </SelectTrigger>
       <SelectContent align="start" side="top">
-        {MODEL_GROUPS.map((group, gi) => (
+        {groups.map((group, gi) => (
           <SelectGroup key={group.label}>
             {gi > 0 && <SelectSeparator />}
             <SelectLabel>{group.label}</SelectLabel>

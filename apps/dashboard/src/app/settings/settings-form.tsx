@@ -11,13 +11,25 @@ import { setSetting } from "./actions";
 import { Save } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import type { Setting } from "@schema";
-import { MAIN_MODELS, FAST_MODELS, EMBEDDING_MODELS } from "@aura/db/models";
+
+interface ModelOption {
+  value: string;
+  label: string;
+}
+
+interface ModelCatalog {
+  main: ModelOption[];
+  fast: ModelOption[];
+  embedding: ModelOption[];
+  defaults: { main: string; fast: string; embedding: string };
+}
 
 function getSettingValue(settings: Setting[], key: string): string {
   return settings.find((s) => s.key === key)?.value || "";
 }
 
-export function SettingsForm({ settings }: { settings: Setting[] }) {
+export function SettingsForm({ settings, models }: { settings: Setting[]; models: ModelCatalog }) {
+  const { main: MAIN_MODELS, fast: FAST_MODELS, embedding: EMBEDDING_MODELS } = models;
   const router = useRouter();
   const [mainModel, setMainModel] = useState(getSettingValue(settings, "model_main"));
   const [fastModel, setFastModel] = useState(getSettingValue(settings, "model_fast"));
