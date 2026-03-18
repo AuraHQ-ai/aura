@@ -120,38 +120,65 @@ ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET DEFAULT 'default
 ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 
 -- 6. Add foreign key constraints referencing workspaces(id)
+ALTER TABLE "messages" DROP CONSTRAINT IF EXISTS "messages_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "memories" DROP CONSTRAINT IF EXISTS "memories_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "memories" ADD CONSTRAINT "memories_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "notes" DROP CONSTRAINT IF EXISTS "notes_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "notes" ADD CONSTRAINT "notes_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "people" DROP CONSTRAINT IF EXISTS "people_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "people" ADD CONSTRAINT "people_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "addresses" DROP CONSTRAINT IF EXISTS "addresses_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "addresses" ADD CONSTRAINT "addresses_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "user_profiles" DROP CONSTRAINT IF EXISTS "user_profiles_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "user_profiles" ADD CONSTRAINT "user_profiles_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "channels" DROP CONSTRAINT IF EXISTS "channels_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "channels" ADD CONSTRAINT "channels_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "settings" DROP CONSTRAINT IF EXISTS "settings_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "settings" ADD CONSTRAINT "settings_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "jobs" DROP CONSTRAINT IF EXISTS "jobs_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "jobs" ADD CONSTRAINT "jobs_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "job_executions" DROP CONSTRAINT IF EXISTS "job_executions_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "job_executions" ADD CONSTRAINT "job_executions_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "credentials" DROP CONSTRAINT IF EXISTS "credentials_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "credentials" ADD CONSTRAINT "credentials_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "credential_grants" DROP CONSTRAINT IF EXISTS "credential_grants_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "credential_grants" ADD CONSTRAINT "credential_grants_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "credential_audit_log" DROP CONSTRAINT IF EXISTS "credential_audit_log_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "credential_audit_log" ADD CONSTRAINT "credential_audit_log_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "oauth_tokens" DROP CONSTRAINT IF EXISTS "oauth_tokens_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "oauth_tokens" ADD CONSTRAINT "oauth_tokens_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "emails_raw" DROP CONSTRAINT IF EXISTS "emails_raw_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "emails_raw" ADD CONSTRAINT "emails_raw_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "event_locks" DROP CONSTRAINT IF EXISTS "event_locks_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "event_locks" ADD CONSTRAINT "event_locks_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "feedback" DROP CONSTRAINT IF EXISTS "feedback_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "feedback" ADD CONSTRAINT "feedback_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "error_events" DROP CONSTRAINT IF EXISTS "error_events_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "error_events" ADD CONSTRAINT "error_events_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "model_pricing" DROP CONSTRAINT IF EXISTS "model_pricing_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "model_pricing" ADD CONSTRAINT "model_pricing_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "conversation_traces" DROP CONSTRAINT IF EXISTS "conversation_traces_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "conversation_traces" ADD CONSTRAINT "conversation_traces_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "conversation_messages" DROP CONSTRAINT IF EXISTS "conversation_messages_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "conversation_messages" ADD CONSTRAINT "conversation_messages_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "conversation_parts" DROP CONSTRAINT IF EXISTS "conversation_parts_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "conversation_parts" ADD CONSTRAINT "conversation_parts_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "conversation_locks" DROP CONSTRAINT IF EXISTS "conversation_locks_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "conversation_locks" ADD CONSTRAINT "conversation_locks_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "action_log" DROP CONSTRAINT IF EXISTS "action_log_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "action_log" ADD CONSTRAINT "action_log_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "approval_policies" DROP CONSTRAINT IF EXISTS "approval_policies_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "approval_policies" ADD CONSTRAINT "approval_policies_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 
 -- 7. Change settings PK from (key) to composite (workspace_id, key)
-ALTER TABLE "settings" DROP CONSTRAINT "settings_pkey";--> statement-breakpoint
+ALTER TABLE "settings" DROP CONSTRAINT IF EXISTS "settings_pkey";--> statement-breakpoint
+ALTER TABLE "settings" DROP CONSTRAINT IF EXISTS "settings_workspace_id_key_pk";--> statement-breakpoint
 ALTER TABLE "settings" ADD CONSTRAINT "settings_workspace_id_key_pk" PRIMARY KEY ("workspace_id", "key");--> statement-breakpoint
 
 -- 7b. Change conversation_locks PK from (channel_id, thread_ts) to (workspace_id, channel_id, thread_ts)
-ALTER TABLE "conversation_locks" DROP CONSTRAINT "conversation_locks_pkey";--> statement-breakpoint
+ALTER TABLE "conversation_locks" DROP CONSTRAINT IF EXISTS "conversation_locks_pkey";--> statement-breakpoint
+ALTER TABLE "conversation_locks" DROP CONSTRAINT IF EXISTS "conversation_locks_workspace_id_channel_id_thread_ts_pk";--> statement-breakpoint
 ALTER TABLE "conversation_locks" ADD CONSTRAINT "conversation_locks_workspace_id_channel_id_thread_ts_pk" PRIMARY KEY ("workspace_id", "channel_id", "thread_ts");--> statement-breakpoint
 
 -- 8. Drop old unique indexes
@@ -182,10 +209,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS "emails_raw_workspace_user_gmail_msg_idx" ON "
 CREATE UNIQUE INDEX IF NOT EXISTS "oauth_tokens_workspace_user_provider_idx" ON "oauth_tokens" USING btree ("workspace_id", "user_id", "provider");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "event_locks_workspace_event_ts_channel_id_idx" ON "event_locks" USING btree ("workspace_id", "event_ts", "channel_id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "messages_workspace_external_id_idx" ON "messages" USING btree ("workspace_id", "external_id");--> statement-breakpoint
+ALTER TABLE "credentials" DROP CONSTRAINT IF EXISTS "credentials_workspace_owner_id_name_unique";--> statement-breakpoint
 ALTER TABLE "credentials" ADD CONSTRAINT "credentials_workspace_owner_id_name_unique" UNIQUE ("workspace_id", "owner_id", "name");--> statement-breakpoint
+ALTER TABLE "credential_grants" DROP CONSTRAINT IF EXISTS "credential_grants_workspace_credential_id_grantee_id_unique";--> statement-breakpoint
 ALTER TABLE "credential_grants" ADD CONSTRAINT "credential_grants_workspace_credential_id_grantee_id_unique" UNIQUE ("workspace_id", "credential_id", "grantee_id");--> statement-breakpoint
+ALTER TABLE "feedback" DROP CONSTRAINT IF EXISTS "feedback_workspace_unique_vote";--> statement-breakpoint
 ALTER TABLE "feedback" ADD CONSTRAINT "feedback_workspace_unique_vote" UNIQUE ("workspace_id", "message_ts", "channel_id", "user_id");--> statement-breakpoint
+ALTER TABLE "model_pricing" DROP CONSTRAINT IF EXISTS "model_pricing_workspace_model_token_date_unique";--> statement-breakpoint
 ALTER TABLE "model_pricing" ADD CONSTRAINT "model_pricing_workspace_model_token_date_unique" UNIQUE ("workspace_id", "model_id", "token_type", "effective_from");--> statement-breakpoint
+ALTER TABLE "action_log" DROP CONSTRAINT IF EXISTS "action_log_workspace_idempotency_key_unique";--> statement-breakpoint
 ALTER TABLE "action_log" ADD CONSTRAINT "action_log_workspace_idempotency_key_unique" UNIQUE ("workspace_id", "idempotency_key");--> statement-breakpoint
 
 -- 10. Add workspace_id indexes on high-traffic tables for query performance
