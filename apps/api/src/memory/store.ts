@@ -52,7 +52,7 @@ export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { 
     const [inserted] = await db
       .insert(messages)
       .values({ ...message, channelType: toDbChannelType(message.channelType), embedding })
-      .onConflictDoNothing({ target: messages.externalId })
+      .onConflictDoNothing({ target: [messages.workspaceId, messages.externalId] })
       .returning({ id: messages.id });
 
     if (inserted) {
@@ -305,7 +305,7 @@ export async function storeToolCallMessages(
       const result = await db
         .insert(messages)
         .values(msg)
-        .onConflictDoNothing({ target: messages.externalId })
+        .onConflictDoNothing({ target: [messages.workspaceId, messages.externalId] })
         .returning({ id: messages.id });
       if (result.length > 0) storedCount++;
     } catch (error) {
@@ -369,7 +369,7 @@ export async function storeChannelReadMessage(
     await db
       .insert(messages)
       .values(msg)
-      .onConflictDoNothing({ target: messages.externalId });
+      .onConflictDoNothing({ target: [messages.workspaceId, messages.externalId] });
     logger.info("Stored channel read message", {
       channel: channelName,
       messageCount: readMessages.length,

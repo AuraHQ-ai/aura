@@ -87,7 +87,7 @@ export const messages = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("messages_external_id_idx").on(table.externalId),
+    uniqueIndex("messages_workspace_external_id_idx").on(table.workspaceId, table.externalId),
     index("messages_channel_created_idx").on(table.channelId, table.createdAt),
     index("messages_thread_idx").on(table.slackThreadTs),
     index("messages_embedding_idx").using(

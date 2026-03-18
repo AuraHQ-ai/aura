@@ -164,6 +164,7 @@ DROP INDEX IF EXISTS "addresses_channel_value_idx";--> statement-breakpoint
 DROP INDEX IF EXISTS "emails_raw_user_gmail_msg_idx";--> statement-breakpoint
 DROP INDEX IF EXISTS "oauth_tokens_user_provider_idx";--> statement-breakpoint
 DROP INDEX IF EXISTS "event_locks_event_ts_channel_id_idx";--> statement-breakpoint
+DROP INDEX IF EXISTS "messages_external_id_idx";--> statement-breakpoint
 ALTER TABLE "credentials" DROP CONSTRAINT IF EXISTS "credentials_owner_id_name_unique";--> statement-breakpoint
 ALTER TABLE "credential_grants" DROP CONSTRAINT IF EXISTS "credential_grants_credential_id_grantee_id_unique";--> statement-breakpoint
 ALTER TABLE "feedback" DROP CONSTRAINT IF EXISTS "feedback_unique_vote";--> statement-breakpoint
@@ -180,6 +181,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "addresses_workspace_channel_value_idx" ON "ad
 CREATE UNIQUE INDEX IF NOT EXISTS "emails_raw_workspace_user_gmail_msg_idx" ON "emails_raw" USING btree ("workspace_id", "user_id", "gmail_message_id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "oauth_tokens_workspace_user_provider_idx" ON "oauth_tokens" USING btree ("workspace_id", "user_id", "provider");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "event_locks_workspace_event_ts_channel_id_idx" ON "event_locks" USING btree ("workspace_id", "event_ts", "channel_id");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "messages_workspace_external_id_idx" ON "messages" USING btree ("workspace_id", "external_id");--> statement-breakpoint
 ALTER TABLE "credentials" ADD CONSTRAINT "credentials_workspace_owner_id_name_unique" UNIQUE ("workspace_id", "owner_id", "name");--> statement-breakpoint
 ALTER TABLE "credential_grants" ADD CONSTRAINT "credential_grants_workspace_credential_id_grantee_id_unique" UNIQUE ("workspace_id", "credential_id", "grantee_id");--> statement-breakpoint
 ALTER TABLE "feedback" ADD CONSTRAINT "feedback_workspace_unique_vote" UNIQUE ("workspace_id", "message_ts", "channel_id", "user_id");--> statement-breakpoint
