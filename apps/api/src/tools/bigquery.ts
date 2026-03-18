@@ -419,9 +419,10 @@ export function createBigQueryTools(context?: ScheduleContext) {
       slack: {
         status: "Running a SQL query...",
         detail: (input) =>
-          input.sql.length <= 120
-            ? input.sql
-            : input.sql.slice(0, 119) + "…",
+          !input.sql ? undefined
+            : input.sql.length <= 120
+              ? input.sql
+              : input.sql.slice(0, 119) + "…",
         output: (result) => {
           if ("error" in result && typeof result.error === "string") return result.error;
           if ("total_rows" in result) return `${result.total_rows ?? 0} rows`;

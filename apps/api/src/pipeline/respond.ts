@@ -644,7 +644,8 @@ export async function generateResponse(
           const slackMeta = getSlackMeta(tools[chunk.toolName]);
           const title = slackMeta?.status ?? "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
-          const details = slackMeta?.detail?.(inputArgs);
+          let details: string | undefined;
+          try { details = slackMeta?.detail?.(inputArgs); } catch { /* partial input args — safe to ignore */ }
           const toolCallPayload = {
             chunks: [{
               type: "task_update",
@@ -701,9 +702,11 @@ export async function generateResponse(
           }
 
           const outputAny = output as any;
-          const taskOutput = resultSlackMeta?.output?.(output)
-            ?? (isError && outputAny.error ? String(outputAny.error) : undefined);
-          const sources = resultSlackMeta?.sources?.(output);
+          let taskOutput: string | undefined;
+          try { taskOutput = resultSlackMeta?.output?.(output); } catch { /* safe to ignore — display-only */ }
+          taskOutput ??= (isError && outputAny.error ? String(outputAny.error) : undefined);
+          let sources: Array<{ type: "url"; url: string; text: string }> | undefined;
+          try { sources = resultSlackMeta?.sources?.(output); } catch { /* safe to ignore — display-only */ }
 
           const toolResultPayload = {
             chunks: [{

@@ -132,9 +132,10 @@ export function createSandboxTools(context?: ScheduleContext) {
       slack: {
         status: "Running a command in the sandbox...",
         detail: (input) =>
-          input.command.length <= 120
-            ? input.command
-            : input.command.slice(0, 119) + "…",
+          !input.command ? undefined
+            : input.command.length <= 120
+              ? input.command
+              : input.command.slice(0, 119) + "…",
         output: (result) => {
           if ("ok" in result && !result.ok) return result.error;
           if (!("exit_code" in result)) return undefined;
