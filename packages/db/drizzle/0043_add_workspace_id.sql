@@ -210,7 +210,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "oauth_tokens_workspace_user_provider_idx" ON 
 CREATE UNIQUE INDEX IF NOT EXISTS "event_locks_workspace_event_ts_channel_id_idx" ON "event_locks" USING btree ("workspace_id", "event_ts", "channel_id");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "messages_workspace_external_id_idx" ON "messages" USING btree ("workspace_id", "external_id");--> statement-breakpoint
 ALTER TABLE "credentials" DROP CONSTRAINT IF EXISTS "credentials_workspace_owner_id_name_unique";--> statement-breakpoint
-ALTER TABLE "credentials" ADD CONSTRAINT "credentials_workspace_owner_id_name_unique" UNIQUE ("workspace_id", "owner_id", "name");--> statement-breakpoint
+ALTER TABLE "credentials" ADD CONSTRAINT "credentials_workspace_owner_id_name_unique" UNIQUE ("workspace_id", "owner_user_id", "key");--> statement-breakpoint
 ALTER TABLE "credential_grants" DROP CONSTRAINT IF EXISTS "credential_grants_workspace_credential_id_grantee_id_unique";--> statement-breakpoint
 ALTER TABLE "credential_grants" ADD CONSTRAINT "credential_grants_workspace_credential_id_grantee_id_unique" UNIQUE ("workspace_id", "credential_id", "grantee_id");--> statement-breakpoint
 ALTER TABLE "feedback" DROP CONSTRAINT IF EXISTS "feedback_workspace_unique_vote";--> statement-breakpoint
