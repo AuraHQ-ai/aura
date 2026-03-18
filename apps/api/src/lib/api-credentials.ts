@@ -146,7 +146,7 @@ export async function storeApiCredential(
       expiresAt: expiresAt ?? null,
     })
     .onConflictDoUpdate({
-      target: [credentials.ownerId, credentials.name],
+      target: [credentials.workspaceId, credentials.ownerId, credentials.name],
       set: {
         value: encrypted,
         type,
@@ -478,7 +478,7 @@ export async function grantApiCredentialAccess(
       grantedBy: granterId,
     })
     .onConflictDoUpdate({
-      target: [credentialGrants.credentialId, credentialGrants.granteeId],
+      target: [credentialGrants.workspaceId, credentialGrants.credentialId, credentialGrants.granteeId],
       set: {
         permission,
         grantedBy: granterId,

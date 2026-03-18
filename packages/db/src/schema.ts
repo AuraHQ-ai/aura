@@ -261,7 +261,7 @@ export const channels = pgTable(
 export const settings = pgTable(
   "settings",
   {
-    workspaceId: workspaceId(),
+    workspaceId: workspaceId().references(() => workspaces.id),
     key: text("key").notNull(),
     value: text("value").notNull(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
@@ -596,7 +596,7 @@ export const conversationLocks = pgTable(
     startedAt: timestamptz("started_at").notNull().defaultNow(),
   },
   (table) => [
-    primaryKey({ columns: [table.channelId, table.threadTs] }),
+    primaryKey({ columns: [table.workspaceId, table.channelId, table.threadTs] }),
   ],
 );
 

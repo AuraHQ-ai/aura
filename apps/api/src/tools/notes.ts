@@ -168,7 +168,7 @@ export function createNoteTools(context?: ScheduleContext) {
               updatedAt: savedAt,
             })
             .onConflictDoUpdate({
-              target: notes.topic,
+              target: [notes.workspaceId, notes.topic],
               set: updateSet,
             });
 
@@ -747,7 +747,7 @@ export function createNoteTools(context?: ScheduleContext) {
                 updatedAt: savedAt,
               })
               .onConflictDoUpdate({
-                target: notes.topic,
+                target: [notes.workspaceId, notes.topic],
                 set: {
                   content: noteContent,
                   category: "plan",
@@ -795,7 +795,7 @@ export function createNoteTools(context?: ScheduleContext) {
               updatedAt: savedAt,
             })
             .onConflictDoUpdate({
-              target: notes.topic,
+              target: [notes.workspaceId, notes.topic],
               set: {
                 content: noteContent,
                 category: "plan",

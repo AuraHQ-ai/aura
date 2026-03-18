@@ -234,7 +234,7 @@ export function createJobTools(
               updatedAt: new Date(),
             })
             .onConflictDoUpdate({
-              target: jobs.name,
+              target: [jobs.workspaceId, jobs.name],
               set: updateSet,
             });
 

@@ -150,6 +150,10 @@ ALTER TABLE "approval_policies" ADD CONSTRAINT "approval_policies_workspace_id_w
 ALTER TABLE "settings" DROP CONSTRAINT "settings_pkey";--> statement-breakpoint
 ALTER TABLE "settings" ADD CONSTRAINT "settings_workspace_id_key_pk" PRIMARY KEY ("workspace_id", "key");--> statement-breakpoint
 
+-- 7b. Change conversation_locks PK from (channel_id, thread_ts) to (workspace_id, channel_id, thread_ts)
+ALTER TABLE "conversation_locks" DROP CONSTRAINT "conversation_locks_pkey";--> statement-breakpoint
+ALTER TABLE "conversation_locks" ADD CONSTRAINT "conversation_locks_workspace_id_channel_id_thread_ts_pk" PRIMARY KEY ("workspace_id", "channel_id", "thread_ts");--> statement-breakpoint
+
 -- 8. Drop old unique indexes
 DROP INDEX IF EXISTS "notes_topic_idx";--> statement-breakpoint
 DROP INDEX IF EXISTS "jobs_name_idx";--> statement-breakpoint

@@ -53,7 +53,7 @@ dashboardSettingsApp.put("/:key", async (c) => {
         updatedBy: "dashboard",
       })
       .onConflictDoUpdate({
-        target: settings.key,
+        target: [settings.workspaceId, settings.key],
         set: {
           value,
           updatedAt: new Date(),
