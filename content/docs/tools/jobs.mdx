@@ -1,6 +1,6 @@
 ---
 title: "Jobs & Scheduling Tools"
-description: "One-shot reminders, recurring cron jobs, headless execution, and background tasks — 5 tools."
+description: "One-shot reminders, recurring cron jobs, headless execution, and background tasks — 6 tools."
 ---
 
 # Jobs & Scheduling Tools
@@ -53,6 +53,28 @@ Cancel a pending one-shot job, or disable a recurring job (preserves its definit
 |-------|------|----------|-------------|
 | `job_id` | string | conditional | UUID of the job to cancel |
 | `name` | string | conditional | Name of the job to cancel (alternative to `job_id`) |
+---
+
+## `update_job`
+
+Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, or re-enable a disabled job.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `job_id` | string | conditional | UUID of the job to update |
+| `name` | string | conditional | Name of the job to update (alternative to `job_id`) |
+| `updates` | object | **yes** | Fields to update (only provided fields are changed) |
+| `updates.description` | string | no | New job description |
+| `updates.playbook` | string | no | New execution playbook |
+| `updates.recurring` | string | no | New cron expression, e.g. `0 9 * * 1-5` |
+| `updates.timezone` | string | no | New IANA timezone for cron schedule |
+| `updates.channel_name` | string | no | New channel to post results in |
+| `updates.priority` | enum | no | `high`, `normal`, or `low` |
+| `updates.enabled` | boolean | no | Re-enable a disabled job by setting to `true` |
+| `updates.max_per_day` | number | no | New max executions per day |
+| `updates.min_interval_hours` | number | no | New minimum hours between executions |
+
+When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time.
 
 ---
 
