@@ -82,3 +82,11 @@ UPDATE "notes" SET "inject_in_context" = true WHERE "category" = 'skill';
 ```
 - Single-statement migrations (one CREATE TABLE, one ALTER TABLE) do NOT need the marker.
 - **This is the #1 cause of failed Vercel builds.** Always check migration files before committing.
+
+## Multi-tenancy: workspace_id on every table (CRITICAL)
+Every table MUST include a `workspace_id` column using the `workspaceId()` helper from `packages/db/src/schema.ts`. This enables multi-workspace tenant isolation.
+
+- Use `workspaceId: workspaceId().references(() => workspaces.id)` on every new table
+- Unique constraints must be composite with `workspace_id` (e.g. `uniqueIndex("my_table_workspace_name_idx").on(table.workspaceId, table.name)`)
+- The `workspaces` table itself is the only exception
+- Never create a table without `workspace_id` -- it will break multi-tenant isolation and require a migration to fix later
