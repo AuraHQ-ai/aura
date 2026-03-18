@@ -703,10 +703,8 @@ export async function generateResponse(
 
           const outputAny = output as any;
           let taskOutput: string | undefined;
-          try {
-            taskOutput = resultSlackMeta?.output?.(output)
-              ?? (isError && outputAny.error ? String(outputAny.error) : undefined);
-          } catch { /* safe to ignore — display-only */ }
+          try { taskOutput = resultSlackMeta?.output?.(output); } catch { /* safe to ignore — display-only */ }
+          taskOutput ??= (isError && outputAny.error ? String(outputAny.error) : undefined);
           let sources: Array<{ type: "url"; url: string; text: string }> | undefined;
           try { sources = resultSlackMeta?.sources?.(output); } catch { /* safe to ignore — display-only */ }
 
