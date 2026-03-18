@@ -67,57 +67,57 @@ UPDATE "conversation_locks" SET "workspace_id" = 'default' WHERE "workspace_id" 
 UPDATE "action_log" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 UPDATE "approval_policies" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 
--- 5. Set NOT NULL and DEFAULT on all workspace_id columns
-ALTER TABLE "messages" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+-- 5. Set DEFAULT and NOT NULL on all workspace_id columns (DEFAULT first to avoid NOT NULL violations from concurrent inserts)
 ALTER TABLE "messages" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "memories" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "messages" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "memories" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "notes" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "memories" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "notes" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "people" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "notes" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "people" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "addresses" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "people" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "addresses" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "user_profiles" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "addresses" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "user_profiles" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "channels" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "user_profiles" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "channels" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "settings" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "channels" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "settings" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "jobs" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "settings" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "jobs" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "job_executions" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "jobs" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "job_executions" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "credentials" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "job_executions" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "credentials" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "credential_grants" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "credentials" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "credential_grants" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "credential_audit_log" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "credential_grants" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "credential_audit_log" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "oauth_tokens" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "credential_audit_log" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "oauth_tokens" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "emails_raw" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "oauth_tokens" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "emails_raw" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "event_locks" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "emails_raw" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "event_locks" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "feedback" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "event_locks" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "feedback" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "error_events" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "feedback" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "error_events" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "model_pricing" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "error_events" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "model_pricing" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "conversation_traces" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "model_pricing" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_traces" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "conversation_messages" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "conversation_traces" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_messages" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "conversation_parts" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "conversation_messages" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_parts" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "conversation_locks" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "conversation_parts" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_locks" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "action_log" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "conversation_locks" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "action_log" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
-ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "action_log" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 
 -- 6. Add foreign key constraints referencing workspaces(id)
 ALTER TABLE "messages" ADD CONSTRAINT "messages_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
