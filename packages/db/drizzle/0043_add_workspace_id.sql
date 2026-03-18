@@ -13,32 +13,32 @@ CREATE TABLE IF NOT EXISTS "workspaces" (
 -- 2. Seed default workspace (must exist before FK constraints)
 INSERT INTO "workspaces" ("id", "name") VALUES ('default', 'Default') ON CONFLICT DO NOTHING;--> statement-breakpoint
 
--- 3. Add nullable workspace_id columns to all 25 tables
-ALTER TABLE "messages" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "memories" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "notes" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "people" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "addresses" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "user_profiles" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "channels" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "settings" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "jobs" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "job_executions" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "credentials" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "credential_grants" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "credential_audit_log" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "oauth_tokens" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "emails_raw" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "event_locks" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "feedback" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "error_events" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "model_pricing" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "conversation_traces" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "conversation_messages" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "conversation_parts" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "conversation_locks" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "action_log" ADD COLUMN "workspace_id" text;--> statement-breakpoint
-ALTER TABLE "approval_policies" ADD COLUMN "workspace_id" text;--> statement-breakpoint
+-- 3. Add workspace_id columns with DEFAULT to all 25 tables (DEFAULT ensures concurrent inserts from old code won't produce NULLs)
+ALTER TABLE "messages" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "memories" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "notes" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "people" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "addresses" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "user_profiles" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "channels" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "settings" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "jobs" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "job_executions" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "credentials" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "credential_grants" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "credential_audit_log" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "oauth_tokens" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "emails_raw" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "event_locks" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "feedback" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "error_events" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "model_pricing" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "conversation_traces" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "conversation_messages" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "conversation_parts" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "conversation_locks" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "action_log" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
+ALTER TABLE "approval_policies" ADD COLUMN "workspace_id" text DEFAULT 'default';--> statement-breakpoint
 
 -- 4. Backfill all existing rows with 'default'
 UPDATE "messages" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
