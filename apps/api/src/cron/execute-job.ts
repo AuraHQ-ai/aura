@@ -19,8 +19,6 @@ import {
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 
-import { getBotToken } from "../lib/workspace-token.js";
-
 const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN || "");
 
 /** Max retries before marking as failed */

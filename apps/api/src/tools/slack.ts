@@ -2430,8 +2430,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
       }),
       execute: async ({ file_id, save_to_disk }) => {
         try {
-          const { getBotToken } = await import("../lib/workspace-token.js");
-          const botToken = await getBotToken();
+          const botToken = client.token;
           if (!botToken) {
             return {
               ok: false,
