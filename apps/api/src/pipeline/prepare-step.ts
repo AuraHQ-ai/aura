@@ -4,6 +4,15 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { supportsEffort, supportsAdaptiveThinking, supportsThinking } from "../lib/ai.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
+import { compactMessages } from "./compact-messages.js";
+
+export { compactMessages } from "./compact-messages.js";
+export {
+  COMPACTION_START_STEP,
+  COMPACTION_KEEP_RECENT,
+  COMPACTION_MAX_RESULT_LENGTH,
+} from "./compact-messages.js";
+export type { CompactionResult } from "./compact-messages.js";
 
 export class InvocationSupersededError extends Error {
   constructor(public readonly invocationId: string) {
@@ -60,6 +69,7 @@ export function createPrepareStep(opts: {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  enableCompaction?: boolean;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
@@ -192,8 +202,25 @@ export function createPrepareStep(opts: {
       });
     }
 
+    // --- Context compaction (headless mode only) ---
+    let effectiveMessages = messages;
+
+    if (opts.enableCompaction) {
+      const compaction = compactMessages(messages, stepNumber);
+      effectiveMessages = compaction.messages;
+
+      if (compaction.compactedCount > 0) {
+        logger.info("prepareStep: compacting messages", {
+          stepNumber,
+          totalMessages: messages.length,
+          compactedCount: compaction.compactedCount,
+          estimatedTokensSaved: compaction.estimatedTokensSaved,
+        });
+      }
+    }
+
     const prunedMessages = pruneMessages({
-      messages,
+      messages: effectiveMessages,
       reasoning: "before-last-message",
     });
 
@@ -206,7 +233,7 @@ export function createPrepareStep(opts: {
   };
 }
 
-/** Factory for interactive Slack agent prepareStep (250-step limit). */
+/** Factory for interactive Slack agent prepareStep (250-step limit, no context compaction). */
 export function createInteractivePrepareStep(opts: {
   stablePrefix: string;
   conversationContext?: string;
@@ -235,7 +262,7 @@ export function createInteractivePrepareStep(opts: {
   });
 }
 
-/** Factory for headless job execution prepareStep (350-step limit). */
+/** Factory for headless job execution prepareStep (350-step limit, with context compaction). */
 export function createHeadlessPrepareStep(opts: {
   stablePrefix: string;
   conversationContext?: string;
@@ -261,5 +288,6 @@ export function createHeadlessPrepareStep(opts: {
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
+    enableCompaction: true,
   });
 }
