@@ -99,24 +99,34 @@ ALTER TABLE "oauth_tokens" ALTER COLUMN "workspace_id" SET NOT NULL;--> statemen
 ALTER TABLE "emails_raw" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
 ALTER TABLE "emails_raw" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "event_locks" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "event_locks" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "event_locks" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "feedback" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "feedback" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "feedback" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "error_events" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "error_events" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "error_events" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "model_pricing" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "model_pricing" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "model_pricing" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_traces" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "conversation_traces" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "conversation_traces" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_messages" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "conversation_messages" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "conversation_messages" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_parts" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "conversation_parts" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "conversation_parts" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_locks" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "conversation_locks" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "conversation_locks" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "action_log" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "action_log" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "action_log" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "approval_policies" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 
 -- 6. Add foreign key constraints referencing workspaces(id)
