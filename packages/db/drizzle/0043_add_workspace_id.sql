@@ -69,54 +69,79 @@ UPDATE "approval_policies" SET "workspace_id" = 'default' WHERE "workspace_id" I
 
 -- 5. Set DEFAULT and NOT NULL on all workspace_id columns (DEFAULT first to avoid NOT NULL violations from concurrent inserts)
 ALTER TABLE "messages" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "messages" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "messages" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "memories" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "memories" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "memories" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "notes" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "notes" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "notes" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "people" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "people" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "people" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "addresses" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "addresses" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "addresses" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "user_profiles" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "user_profiles" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "user_profiles" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "channels" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "channels" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "channels" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "settings" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "settings" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "settings" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "jobs" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "jobs" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "jobs" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "job_executions" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "job_executions" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "job_executions" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "credentials" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "credentials" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "credentials" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "credential_grants" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "credential_grants" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "credential_grants" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "credential_audit_log" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "credential_audit_log" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "credential_audit_log" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "oauth_tokens" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "oauth_tokens" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "oauth_tokens" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "emails_raw" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "emails_raw" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "emails_raw" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "event_locks" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "event_locks" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "event_locks" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "feedback" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "feedback" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "feedback" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "error_events" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "error_events" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "error_events" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "model_pricing" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "model_pricing" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "model_pricing" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_traces" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "conversation_traces" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "conversation_traces" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_messages" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "conversation_messages" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "conversation_messages" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_parts" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "conversation_parts" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "conversation_parts" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "conversation_locks" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "conversation_locks" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "conversation_locks" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "action_log" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "action_log" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "action_log" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET DEFAULT 'default';--> statement-breakpoint
+UPDATE "approval_policies" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;--> statement-breakpoint
 ALTER TABLE "approval_policies" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement-breakpoint
 
 -- 6. Add foreign key constraints referencing workspaces(id)
@@ -197,6 +222,59 @@ ALTER TABLE "credential_grants" DROP CONSTRAINT IF EXISTS "credential_grants_cre
 ALTER TABLE "feedback" DROP CONSTRAINT IF EXISTS "feedback_unique_vote";--> statement-breakpoint
 ALTER TABLE "model_pricing" DROP CONSTRAINT IF EXISTS "model_pricing_model_token_date_unique";--> statement-breakpoint
 ALTER TABLE "action_log" DROP CONSTRAINT IF EXISTS "action_log_idempotency_key_unique";--> statement-breakpoint
+
+-- 8b. Ensure all columns referenced by workspace-scoped unique constraints exist.
+-- The credentials / credential_grants tables may predate migration 0027 or have
+-- a divergent schema on prod, so we defensively add every missing column.
+DO $$ BEGIN
+  -- credentials: needs owner_id, name for UNIQUE(workspace_id, owner_id, name)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='owner_id') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='user_id') THEN
+      ALTER TABLE "credentials" RENAME COLUMN "user_id" TO "owner_id";
+    ELSE
+      ALTER TABLE "credentials" ADD COLUMN "owner_id" text;
+    END IF;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='name') THEN
+    ALTER TABLE "credentials" ADD COLUMN "name" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='value') THEN
+    ALTER TABLE "credentials" ADD COLUMN "value" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='key_version') THEN
+    ALTER TABLE "credentials" ADD COLUMN "key_version" integer DEFAULT 1;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='expires_at') THEN
+    ALTER TABLE "credentials" ADD COLUMN "expires_at" timestamptz;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='type') THEN
+    ALTER TABLE "credentials" ADD COLUMN "type" text DEFAULT 'token';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='token_url') THEN
+    ALTER TABLE "credentials" ADD COLUMN "token_url" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='sandbox_env_name') THEN
+    ALTER TABLE "credentials" ADD COLUMN "sandbox_env_name" text;
+  END IF;
+
+  -- credential_grants: needs grantee_id, credential_id for UNIQUE(workspace_id, credential_id, grantee_id)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='grantee_id') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='user_id') THEN
+      ALTER TABLE "credential_grants" RENAME COLUMN "user_id" TO "grantee_id";
+    ELSE
+      ALTER TABLE "credential_grants" ADD COLUMN "grantee_id" text;
+    END IF;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='credential_id') THEN
+    ALTER TABLE "credential_grants" ADD COLUMN "credential_id" uuid;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='permission') THEN
+    ALTER TABLE "credential_grants" ADD COLUMN "permission" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='granted_by') THEN
+    ALTER TABLE "credential_grants" ADD COLUMN "granted_by" text;
+  END IF;
+END $$;--> statement-breakpoint
 
 -- 9. Create new workspace-scoped composite unique indexes
 CREATE UNIQUE INDEX IF NOT EXISTS "notes_workspace_topic_idx" ON "notes" USING btree ("workspace_id", "topic");--> statement-breakpoint
