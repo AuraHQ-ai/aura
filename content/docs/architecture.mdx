@@ -5,7 +5,7 @@ description: "How Aura's message pipeline, memory system, tools, and self-improv
 
 # Architecture
 
-Aura is a Hono-based application deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses Claude models for reasoning.
+Aura is a Hono-based application deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses LLMs (Claude, Grok) for reasoning via the Vercel AI SDK.
 
 ## Monorepo Structure
 
@@ -118,6 +118,16 @@ Aura uses Claude's extended thinking capability, which captures the model's reas
 - Stored alongside conversation messages
 - Visible in the dashboard for debugging
 - Useful for understanding why Aura made specific decisions or tool calls
+
+## Multi-Tenancy
+
+Aura's database schema is workspace-scoped. A central `workspaces` table (keyed by Slack team ID) owns all data, and every major table includes a `workspace_id` foreign key:
+
+- **Workspace isolation** -- Memories, messages, conversations, notes, jobs, credentials, user profiles, and settings are all scoped to a workspace ID. Unique constraints are composite (workspace_id + original key) so multiple workspaces can coexist in a single database.
+- **Backwards compatibility** -- Existing single-workspace deployments use a `'default'` workspace ID, seeded automatically by the migration. No configuration changes needed.
+- **Schema enforcement** -- `workspace_id` is `NOT NULL` with a default value and foreign key constraint on all scoped tables. The `workspaceId()` helper in the schema ensures consistent column definitions.
+
+This is Phase 1 (schema + migration). Query-level filtering by workspace is not yet enforced at the application layer.
 
 ## Credential System
 
