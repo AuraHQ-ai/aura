@@ -10,6 +10,7 @@ import { createTableTools } from "./table.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createEmailSyncTools } from "./email-sync.js";
+import { createScratchpadTools } from "./scratchpad.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -485,7 +486,7 @@ export async function resolveChannelById(
  * Create Slack tools for the AI SDK.
  * Each tool receives the WebClient via closure.
  */
-export async function createSlackTools(client: WebClient, context?: ScheduleContext, modelId?: string) {
+export async function createSlackTools(client: WebClient, context?: ScheduleContext, modelId?: string, invocationId?: string) {
   // Resolve thread coordinates for Slack List items.
   // List channels use the list ID with a C prefix (F088... → C088...).
   // Each root message in the channel has a slack_list.list_record_id field
@@ -2943,6 +2944,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     ...createTableTools(client, context),
     ...createSubagentTools(client, context),
     ...createVoiceTools(client, context),
+    ...createScratchpadTools(invocationId ?? crypto.randomUUID()),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
