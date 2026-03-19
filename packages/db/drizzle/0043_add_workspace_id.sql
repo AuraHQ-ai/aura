@@ -208,6 +208,42 @@ ALTER TABLE "feedback" DROP CONSTRAINT IF EXISTS "feedback_unique_vote";--> stat
 ALTER TABLE "model_pricing" DROP CONSTRAINT IF EXISTS "model_pricing_model_token_date_unique";--> statement-breakpoint
 ALTER TABLE "action_log" DROP CONSTRAINT IF EXISTS "action_log_idempotency_key_unique";--> statement-breakpoint
 
+-- 8b. Normalize legacy credential column names before workspace-scoped unique constraints.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'credentials' AND column_name = 'owner_id'
+  ) THEN
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'credentials' AND column_name = 'user_id'
+    ) THEN
+      ALTER TABLE "credentials" RENAME COLUMN "user_id" TO "owner_id";
+    ELSE
+      ALTER TABLE "credentials" ADD COLUMN "owner_id" text;
+    END IF;
+  END IF;
+END $$;--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'credential_grants' AND column_name = 'grantee_id'
+  ) THEN
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'credential_grants' AND column_name = 'user_id'
+    ) THEN
+      ALTER TABLE "credential_grants" RENAME COLUMN "user_id" TO "grantee_id";
+    ELSE
+      ALTER TABLE "credential_grants" ADD COLUMN "grantee_id" text;
+    END IF;
+  END IF;
+END $$;--> statement-breakpoint
+
 -- 9. Create new workspace-scoped composite unique indexes
 CREATE UNIQUE INDEX IF NOT EXISTS "notes_workspace_topic_idx" ON "notes" USING btree ("workspace_id", "topic");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "jobs_workspace_name_idx" ON "jobs" USING btree ("workspace_id", "name");--> statement-breakpoint
