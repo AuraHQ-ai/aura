@@ -14,7 +14,7 @@ import { getMainModelId } from "../lib/ai.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { people } from "@aura/db/schema";
 import { db } from "../db/client.js";
-import { inArray, eq } from "drizzle-orm";
+import { inArray, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { logger } from "../lib/logger.js";
 
@@ -47,6 +47,71 @@ export interface ChannelSession {
   userProfile?: UserProfile | null;
   /** Override the model ID injected into the dynamic context (e.g. when the dashboard user selects a specific model). */
   modelIdOverride?: string;
+}
+
+// ── Usage Stats ──────────────────────────────────────────────────────────────
+
+function arrow(current: number, previous: number): string {
+  if (previous === 0) return "";
+  if (current > previous) return "↑";
+  if (current < previous) return "↓";
+  return "→";
+}
+
+export async function getUsageStats(): Promise<string> {
+  try {
+    interface UsageRow {
+      users_this_week: string;
+      users_last_week: string;
+      received_this_week: string;
+      sent_this_week: string;
+      received_last_week: string;
+      sent_last_week: string;
+    }
+
+    const result = await db.execute(sql`
+      SELECT
+        COUNT(DISTINCT CASE WHEN created_at > now() - INTERVAL '7 days' THEN user_id END) AS users_this_week,
+        COUNT(DISTINCT CASE WHEN created_at > now() - INTERVAL '14 days' AND created_at <= now() - INTERVAL '7 days' THEN user_id END) AS users_last_week,
+        COUNT(CASE WHEN created_at > now() - INTERVAL '7 days' AND role = 'user' THEN 1 END) AS received_this_week,
+        COUNT(CASE WHEN created_at > now() - INTERVAL '7 days' AND role = 'assistant' THEN 1 END) AS sent_this_week,
+        COUNT(CASE WHEN created_at > now() - INTERVAL '14 days' AND created_at <= now() - INTERVAL '7 days' AND role = 'user' THEN 1 END) AS received_last_week,
+        COUNT(CASE WHEN created_at > now() - INTERVAL '14 days' AND created_at <= now() - INTERVAL '7 days' AND role = 'assistant' THEN 1 END) AS sent_last_week
+      FROM messages
+      WHERE created_at > now() - INTERVAL '14 days'
+        AND role IN ('user', 'assistant')
+    `);
+
+    const resultRows = ((result as any).rows ?? result) as UsageRow[];
+    const r = resultRows[0];
+    if (!r) return "";
+
+    const usersNow = Number(r.users_this_week);
+    const usersPrev = Number(r.users_last_week);
+    const recvNow = Number(r.received_this_week);
+    const sentNow = Number(r.sent_this_week);
+    const recvPrev = Number(r.received_last_week);
+    const sentPrev = Number(r.sent_last_week);
+
+    const usersArrow = arrow(usersNow, usersPrev);
+    const usersDetail = usersPrev > 0
+      ? ` (${usersArrow} from ${usersPrev} prior week)`
+      : "";
+
+    const msgArrow = arrow(recvNow + sentNow, recvPrev + sentPrev);
+    const msgDetail = recvPrev + sentPrev > 0
+      ? ` (${msgArrow} from ${sentPrev}/${recvPrev})`
+      : "";
+
+    return [
+      "## Usage (last 7 days)",
+      `Unique users: ${usersNow}${usersDetail}`,
+      `Messages: sent ${sentNow} / received ${recvNow}${msgDetail}`,
+    ].join("\n");
+  } catch (error) {
+    logger.error("Failed to fetch usage stats", { error: String(error) });
+    return "";
+  }
 }
 
 // ── Core Prompt ──────────────────────────────────────────────────────────────
@@ -86,7 +151,7 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
-  const [memories, conversations, userProfile, mentionedPeople, interlocutor] =
+  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats] =
     await Promise.all([
       queryEmbedding
         ? retrieveMemories({
@@ -111,6 +176,7 @@ export async function buildCorePrompt(
         : getProfile(session.userId),
       lookupMentionedPeople(participantIds),
       lookupPerson(session.userId),
+      getUsageStats(),
     ]);
 
   const channelContext = session.channel === "dashboard"
@@ -140,6 +206,7 @@ export async function buildCorePrompt(
     modelId,
     channelId: session.conversationId,
     threadTs: session.threadId,
+    usageStats,
   });
 
   if (session.channel === "dashboard") {
