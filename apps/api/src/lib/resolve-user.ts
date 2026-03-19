@@ -15,11 +15,13 @@ export async function resolveSlackUserId(
   }
 
   // Try Slack API first (fast, cached, has display names)
-  if (process.env.SLACK_BOT_TOKEN) {
+  const { getBotToken } = await import("./workspace-token.js");
+  const resolvedBotToken = await getBotToken();
+  if (resolvedBotToken) {
     try {
       const { WebClient } = await import("@slack/web-api");
       const { getUserList } = await import("../tools/slack.js");
-      const client = new WebClient(process.env.SLACK_BOT_TOKEN);
+      const client = new WebClient(resolvedBotToken);
       const users = await getUserList(client);
 
       const normalizedInput = trimmed.toLowerCase();

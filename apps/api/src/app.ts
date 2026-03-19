@@ -5,7 +5,9 @@ import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
+import { slackOAuthApp } from "./routes/slack-oauth.js";
 import { runPipeline } from "./pipeline/index.js";
+import { getWorkspaceInfo } from "./lib/workspace-token.js";
 import {
   publishHomeTab,
   ACTION_TO_SETTING,
@@ -40,16 +42,28 @@ import { notes, feedback } from "@aura/db/schema";
 // ── Config ──────────────────────────────────────────────────────────────────
 
 const signingSecret = process.env.SLACK_SIGNING_SECRET || "";
-const botToken = process.env.SLACK_BOT_TOKEN || "";
-const botUserId = process.env.AURA_BOT_USER_ID || "";
+const legacyBotToken = process.env.SLACK_BOT_TOKEN || "";
 
-if (!signingSecret || !botToken) {
+if (!signingSecret || !legacyBotToken) {
   logger.warn(
     "SLACK_SIGNING_SECRET or SLACK_BOT_TOKEN not set — Slack handlers will not work",
   );
 }
 
-const slackClient = new WebClient(botToken);
+const defaultSlackClient = new WebClient(legacyBotToken);
+
+async function getSlackClientAndBotUserId(teamId?: string): Promise<{ client: WebClient; botUserId: string }> {
+  const { botToken, botUserId } = await getWorkspaceInfo(teamId);
+  const client = (botToken && botToken !== legacyBotToken)
+    ? new WebClient(botToken)
+    : defaultSlackClient;
+  return { client, botUserId };
+}
+
+async function getSlackClientForTeam(teamId?: string): Promise<WebClient> {
+  const { client } = await getSlackClientAndBotUserId(teamId);
+  return client;
+}
 
 // ── Hono App ────────────────────────────────────────────────────────────────
 
@@ -79,6 +93,9 @@ app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);
 
 // Mount dashboard API (all /api/dashboard/* routes with shared auth middleware)
 app.route("/api/dashboard", dashboardApp);
+
+// Mount Slack OAuth install routes
+app.route("/api/slack", slackOAuthApp);
 
 // ── Slack Signature Verification ────────────────────────────────────────────
 
@@ -166,11 +183,14 @@ app.post("/api/slack/events", async (c) => {
   // Process the event
   if (body.event) {
     const event = body.event;
+    const teamId: string | undefined = body.team_id;
 
     // Handle reaction events -- store as memory + governance approval
     if (event.type === "reaction_added" && event.user && event.item) {
       const reactionPromise = (async () => {
         try {
+          const slackClient = await getSlackClientForTeam(teamId);
+
           // ── Governance: check if this is an approval/rejection reaction ──
           if (
             event.item?.type === "message" &&
@@ -239,6 +259,7 @@ app.post("/api/slack/events", async (c) => {
     if (event.type === "assistant_thread_started") {
       const threadStartPromise = (async () => {
         try {
+          const slackClient = await getSlackClientForTeam(teamId);
           const channelId = event.assistant_thread?.channel_id;
           const threadTs = event.assistant_thread?.thread_ts;
           if (!channelId || !threadTs) return;
@@ -264,7 +285,10 @@ app.post("/api/slack/events", async (c) => {
 
     // Handle App Home opened
     if (event.type === "app_home_opened") {
-      const homePromise = publishHomeTab(slackClient, event.user).catch(
+      const homePromise = (async () => {
+        const slackClient = await getSlackClientForTeam(teamId);
+        await publishHomeTab(slackClient, event.user);
+      })().catch(
         (err) => {
           recordError("app_home", err, { userId: event.user });
         },
@@ -283,21 +307,24 @@ app.post("/api/slack/events", async (c) => {
     // On Vercel, we must acknowledge within 3 seconds, so we process
     // in the background using waitUntil where available.
     const userId = event.user || "unknown";
-    const pipelinePromise = executionContext.run(
-      {
-        triggeredBy: userId,
-        triggerType: "user_message",
-        channelId: event.channel || undefined,
-        threadTs: event.thread_ts || event.ts || undefined,
-      },
-      () =>
-        runPipeline({
-          event,
-          client: slackClient,
-          botUserId,
-          teamId: body.team_id,
-        }),
-    ).catch((err) => {
+    const pipelinePromise = (async () => {
+      const { client: slackClient, botUserId: resolvedBotUserId } = await getSlackClientAndBotUserId(teamId);
+      return executionContext.run(
+        {
+          triggeredBy: userId,
+          triggerType: "user_message",
+          channelId: event.channel || undefined,
+          threadTs: event.thread_ts || event.ts || undefined,
+        },
+        () =>
+          runPipeline({
+            event,
+            client: slackClient,
+            botUserId: resolvedBotUserId,
+            teamId,
+          }),
+      );
+    })().catch((err) => {
       recordError("pipeline", err, {
         eventType: event.type,
         channel: event.channel,
@@ -341,6 +368,9 @@ app.post("/api/slack/interactions", async (c) => {
     return c.json({ error: "Invalid payload JSON" }, 400);
   }
 
+  const interactionTeamId: string | undefined = payload.team?.id;
+  const slackClientPromise = getSlackClientForTeam(interactionTeamId);
+
   // Handle block_actions
   if (payload.type === "block_actions" && payload.actions) {
     const userId = payload.user?.id;
@@ -361,6 +391,7 @@ app.post("/api/slack/interactions", async (c) => {
         if (messageTs && channelId && userId) {
           const feedbackPromise = (async () => {
             try {
+              const slackClient = await slackClientPromise;
               await db.insert(feedback).values({
                 messageTs,
                 channelId,
@@ -410,6 +441,7 @@ app.post("/api/slack/interactions", async (c) => {
 
         const savePromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             await setSetting(settingKey, newValue, userId);
             await publishHomeTab(slackClient, userId);
           } catch (err) {
@@ -422,11 +454,14 @@ app.post("/api/slack/interactions", async (c) => {
 
       const credentialKey = CREDENTIAL_ACTIONS[action.action_id];
       if (credentialKey && payload.trigger_id) {
-        const modalPromise = openCredentialModal(
-          slackClient,
-          payload.trigger_id,
-          credentialKey,
-        ).catch((err) => {
+        const modalPromise = (async () => {
+          const slackClient = await slackClientPromise;
+          await openCredentialModal(
+            slackClient,
+            payload.trigger_id,
+            credentialKey,
+          );
+        })().catch((err) => {
           recordError("interactions.credential_modal", err, {
             userId,
             credentialKey,
@@ -437,10 +472,13 @@ app.post("/api/slack/interactions", async (c) => {
 
       // ── User API Credential actions ──────────────────────────────────
       if (action.action_id === "api_credential_add" && payload.trigger_id) {
-        const addPromise = openAddCredentialModal(
-          slackClient,
-          payload.trigger_id,
-        ).catch((err) => {
+        const addPromise = (async () => {
+          const slackClient = await slackClientPromise;
+          await openAddCredentialModal(
+            slackClient,
+            payload.trigger_id,
+          );
+        })().catch((err) => {
           recordError("interactions.api_credential_add_modal", err, { userId });
         });
         waitUntil(addPromise);
@@ -449,28 +487,29 @@ app.post("/api/slack/interactions", async (c) => {
       // Dynamic modal: swap fields when credential type changes
       if (action.action_id === "cred_type" && payload.view) {
         const selectedType = (action.selected_option?.value || "token") as "token" | "oauth_client";
-        // Preserve the name field value if already filled
         const currentName = payload.view.state?.values?.cred_name_block?.cred_name?.value || "";
         const blocks = buildAddCredentialBlocks(selectedType);
-        // Inject current name value into the block
         if (currentName) {
           const nameBlock = blocks.find((b: any) => b.block_id === "cred_name_block");
           if (nameBlock) {
             nameBlock.element.initial_value = currentName;
           }
         }
-        const updatePromise = slackClient.views.update({
-          view_id: payload.view.id,
-          hash: payload.view.hash,
-          view: {
-            type: "modal",
-            callback_id: "api_credential_add_submit",
-            title: { type: "plain_text", text: "Add API Credential" },
-            submit: { type: "plain_text", text: "Save" },
-            close: { type: "plain_text", text: "Cancel" },
-            blocks,
-          },
-        }).catch((err: unknown) => {
+        const updatePromise = (async () => {
+          const slackClient = await slackClientPromise;
+          await slackClient.views.update({
+            view_id: payload.view.id,
+            hash: payload.view.hash,
+            view: {
+              type: "modal",
+              callback_id: "api_credential_add_submit",
+              title: { type: "plain_text", text: "Add API Credential" },
+              submit: { type: "plain_text", text: "Save" },
+              close: { type: "plain_text", text: "Cancel" },
+              blocks,
+            },
+          });
+        })().catch((err: unknown) => {
           recordError("interactions.cred_type_switch", err, { userId, selectedType });
         });
         waitUntil(updatePromise);
@@ -486,12 +525,15 @@ app.post("/api/slack/interactions", async (c) => {
             const creds = await listApiCredentials(userId);
             const cred = creds.find((c) => c.id === credId);
             const credName = cred?.name ?? "credential";
-            const updatePromise = openUpdateCredentialModal(
-              slackClient,
-              payload.trigger_id,
-              credId,
-              credName,
-            ).catch((err) => {
+            const updatePromise = (async () => {
+              const slackClient = await slackClientPromise;
+              await openUpdateCredentialModal(
+                slackClient,
+                payload.trigger_id,
+                credId,
+                credName,
+              );
+            })().catch((err) => {
               recordError("interactions.api_credential_update_modal", err, { userId, credId });
             });
             waitUntil(updatePromise);
@@ -499,11 +541,14 @@ app.post("/api/slack/interactions", async (c) => {
         } else if (selectedValue.startsWith("api_credential_share_")) {
           const credId = selectedValue.replace("api_credential_share_", "");
           if (payload.trigger_id) {
-            const sharePromise = openShareCredentialModal(
-              slackClient,
-              payload.trigger_id,
-              credId,
-            ).catch((err) => {
+            const sharePromise = (async () => {
+              const slackClient = await slackClientPromise;
+              await openShareCredentialModal(
+                slackClient,
+                payload.trigger_id,
+                credId,
+              );
+            })().catch((err) => {
               recordError("interactions.api_credential_share_modal", err, { userId, credId });
             });
             waitUntil(sharePromise);
@@ -512,6 +557,7 @@ app.post("/api/slack/interactions", async (c) => {
           const credId = selectedValue.replace("api_credential_delete_", "");
           const deletePromise = (async () => {
             try {
+              const slackClient = await slackClientPromise;
               await deleteApiCredential(credId, userId);
               await publishHomeTab(slackClient, userId);
             } catch (err) {
@@ -523,11 +569,14 @@ app.post("/api/slack/interactions", async (c) => {
           const rest = selectedValue.slice("api_credential_access_".length);
           const lastUnderscore = rest.lastIndexOf("_");
           const credId = lastUnderscore > 0 ? rest.substring(0, lastUnderscore) : rest;
-          const accessPromise = openCredentialAccessModal(
-            slackClient,
-            payload.trigger_id,
-            credId,
-          ).catch((err) => {
+          const accessPromise = (async () => {
+            const slackClient = await slackClientPromise;
+            await openCredentialAccessModal(
+              slackClient,
+              payload.trigger_id,
+              credId,
+            );
+          })().catch((err) => {
             recordError("interactions.api_credential_access_modal", err, { userId, credId });
           });
           waitUntil(accessPromise);
@@ -539,6 +588,7 @@ app.post("/api/slack/interactions", async (c) => {
         const token = action.action_id.replace("confirm_approve_", "");
         const approvePromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             const entry = resolveConfirmation(token, true);
             if (entry && entry.userId === userId) {
               const channelId = payload.channel?.id;
@@ -560,6 +610,7 @@ app.post("/api/slack/interactions", async (c) => {
         const token = action.action_id.replace("confirm_deny_", "");
         const denyPromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             const entry = resolveConfirmation(token, false);
             if (entry && entry.userId === userId) {
               const channelId = payload.channel?.id;
@@ -591,6 +642,7 @@ app.post("/api/slack/interactions", async (c) => {
         const actionLogId = action.action_id.replace("governance_approve_", "");
         const approvePromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             const { handleApprovalReaction } = await import("./lib/approval.js");
             await handleApprovalReaction({
               actionLogId,
@@ -619,6 +671,7 @@ app.post("/api/slack/interactions", async (c) => {
         const actionLogId = action.action_id.replace("governance_reject_", "");
         const rejectPromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             const { handleApprovalReaction } = await import("./lib/approval.js");
             await handleApprovalReaction({
               actionLogId,
@@ -658,6 +711,7 @@ app.post("/api/slack/interactions", async (c) => {
       if (credentialKey && newValue) {
         const savePromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             const { setCredential } = await import("./lib/credentials.js");
             await setCredential(credentialKey, newValue, userId);
             await publishHomeTab(slackClient, userId);
@@ -695,6 +749,7 @@ app.post("/api/slack/interactions", async (c) => {
         const expiresAt = expiryStr ? new Date(expiryStr) : undefined;
         const addPromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             await storeApiCredential(userId, name, value, expiresAt, credType, tokenUrl);
             await publishHomeTab(slackClient, userId);
           } catch (err) {
@@ -712,6 +767,7 @@ app.post("/api/slack/interactions", async (c) => {
       if (credentialId && value) {
         const updatePromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             const creds = await listApiCredentials(userId);
             const cred = creds.find((c) => c.id === credentialId);
             if (!cred) return;
@@ -744,6 +800,7 @@ app.post("/api/slack/interactions", async (c) => {
       if (credentialId && granteeId && permission) {
         const sharePromise = (async () => {
           try {
+            const slackClient = await slackClientPromise;
             await grantApiCredentialAccess(credentialId, userId, granteeId, permission as "read" | "write" | "admin");
             await publishHomeTab(slackClient, userId);
           } catch (err) {
@@ -1007,7 +1064,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         }
       }
 
-      const dmResult = await slackClient.conversations.open({
+      const dmResult = await defaultSlackClient.conversations.open({
         users: dmTarget,
       });
       const dmChannelId = dmResult.channel?.id;
@@ -1015,7 +1072,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       if (dmChannelId) {
         const useThreadTs =
           channelId === dmChannelId && threadTs ? threadTs : undefined;
-        await safePostMessage(slackClient, {
+        await safePostMessage(defaultSlackClient, {
           channel: dmChannelId,
           thread_ts: useThreadTs,
           text: message,
@@ -1032,7 +1089,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         channelId !== "unknown" &&
         channelId !== dmChannelId
       ) {
-        await safePostMessage(slackClient, {
+        await safePostMessage(defaultSlackClient, {
           channel: channelId,
           thread_ts: threadTs || undefined,
           text: message,

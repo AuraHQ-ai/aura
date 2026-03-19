@@ -28,9 +28,10 @@ async function buildUserLookup(): Promise<Map<string, string>> {
 }
 
 async function buildUserLookupInner(): Promise<Map<string, string>> {
-  const botToken = process.env.SLACK_BOT_TOKEN;
+  const { getBotToken } = await import("../lib/workspace-token.js");
+  const botToken = await getBotToken();
   if (!botToken) {
-    logger.warn("SLACK_BOT_TOKEN not set — skipping user ID normalization");
+    logger.warn("No bot token available — skipping user ID normalization");
     return new Map();
   }
 

@@ -344,8 +344,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     capturedUserPrompt = messageText;
 
     // 4b. Download files if the message has attachments
-    const botToken = process.env.SLACK_BOT_TOKEN || "";
-    const fileParts = await downloadEventFiles(event, botToken);
+    const fileParts = await downloadEventFiles(event, client.token ?? "");
     if (fileParts.length > 0) {
       logger.info("Files ready for LLM", {
         count: fileParts.length,

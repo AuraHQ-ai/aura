@@ -19,8 +19,7 @@ import {
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 
-const botToken = process.env.SLACK_BOT_TOKEN || "";
-const slackClient = new WebClient(botToken);
+const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN || "");
 
 /** Max retries before marking as failed */
 export const MAX_RETRIES = 3;
