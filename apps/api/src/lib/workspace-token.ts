@@ -70,10 +70,12 @@ export async function getWorkspaceInfo(teamId?: string): Promise<{ botToken: str
         .where(and(eq(workspaces.id, teamId), eq(workspaces.isActive, true)))
         .limit(1);
 
-      return {
-        botToken: workspace?.botToken || process.env.SLACK_BOT_TOKEN || "",
-        botUserId: workspace?.botUserId || process.env.AURA_BOT_USER_ID || "",
-      };
+      if (workspace?.botToken) {
+        return {
+          botToken: workspace.botToken,
+          botUserId: workspace.botUserId || "",
+        };
+      }
     } catch (error) {
       logger.warn("Failed to look up workspace info, falling back to env", {
         teamId,

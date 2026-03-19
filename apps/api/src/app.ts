@@ -7,7 +7,7 @@ import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
 import { slackOAuthApp } from "./routes/slack-oauth.js";
 import { runPipeline } from "./pipeline/index.js";
-import { getBotToken, getBotUserId, getWorkspaceInfo } from "./lib/workspace-token.js";
+import { getWorkspaceInfo } from "./lib/workspace-token.js";
 import {
   publishHomeTab,
   ACTION_TO_SETTING,
@@ -52,14 +52,17 @@ if (!signingSecret || !legacyBotToken) {
 
 const defaultSlackClient = new WebClient(legacyBotToken);
 
-async function getSlackClientForTeam(teamId?: string): Promise<WebClient> {
-  if (!teamId) return defaultSlackClient;
+async function getSlackClientAndBotUserId(teamId?: string): Promise<{ client: WebClient; botUserId: string }> {
+  const { botToken, botUserId } = await getWorkspaceInfo(teamId);
+  const client = (botToken && botToken !== legacyBotToken)
+    ? new WebClient(botToken)
+    : defaultSlackClient;
+  return { client, botUserId };
+}
 
-  const token = await getBotToken(teamId);
-  if (token && token !== legacyBotToken) {
-    return new WebClient(token);
-  }
-  return defaultSlackClient;
+async function getSlackClientForTeam(teamId?: string): Promise<WebClient> {
+  const { client } = await getSlackClientAndBotUserId(teamId);
+  return client;
 }
 
 // ── Hono App ────────────────────────────────────────────────────────────────
@@ -305,10 +308,7 @@ app.post("/api/slack/events", async (c) => {
     // in the background using waitUntil where available.
     const userId = event.user || "unknown";
     const pipelinePromise = (async () => {
-      const { botToken: resolvedToken, botUserId: resolvedBotUserId } = await getWorkspaceInfo(teamId);
-      const slackClient = (resolvedToken && resolvedToken !== legacyBotToken)
-        ? new WebClient(resolvedToken)
-        : defaultSlackClient;
+      const { client: slackClient, botUserId: resolvedBotUserId } = await getSlackClientAndBotUserId(teamId);
       return executionContext.run(
         {
           triggeredBy: userId,

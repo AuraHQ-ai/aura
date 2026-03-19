@@ -159,8 +159,8 @@ slackOAuthApp.get("/oauth-callback", async (c) => {
     const scopes = data.scope;
     const installerUserId = data.authed_user?.id;
 
-    if (!teamId || !botToken) {
-      logger.error("Slack OAuth response missing team or token", {
+    if (!teamId || !botToken || !botUserId) {
+      logger.error("Slack OAuth response missing team, token, or bot_user_id", {
         team: data.team,
         bot_user_id: data.bot_user_id,
         scope: data.scope,
