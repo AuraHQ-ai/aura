@@ -223,39 +223,56 @@ ALTER TABLE "feedback" DROP CONSTRAINT IF EXISTS "feedback_unique_vote";--> stat
 ALTER TABLE "model_pricing" DROP CONSTRAINT IF EXISTS "model_pricing_model_token_date_unique";--> statement-breakpoint
 ALTER TABLE "action_log" DROP CONSTRAINT IF EXISTS "action_log_idempotency_key_unique";--> statement-breakpoint
 
--- 8b. Normalize legacy credential column names before workspace-scoped unique constraints.
+-- 8b. Ensure all columns referenced by workspace-scoped unique constraints exist.
+-- The credentials / credential_grants tables may predate migration 0027 or have
+-- a divergent schema on prod, so we defensively add every missing column.
 DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'credentials' AND column_name = 'owner_id'
-  ) THEN
-    IF EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = 'credentials' AND column_name = 'user_id'
-    ) THEN
+  -- credentials: needs owner_id, name for UNIQUE(workspace_id, owner_id, name)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='owner_id') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='user_id') THEN
       ALTER TABLE "credentials" RENAME COLUMN "user_id" TO "owner_id";
     ELSE
       ALTER TABLE "credentials" ADD COLUMN "owner_id" text;
     END IF;
   END IF;
-END $$;--> statement-breakpoint
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'credential_grants' AND column_name = 'grantee_id'
-  ) THEN
-    IF EXISTS (
-      SELECT 1
-      FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = 'credential_grants' AND column_name = 'user_id'
-    ) THEN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='name') THEN
+    ALTER TABLE "credentials" ADD COLUMN "name" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='value') THEN
+    ALTER TABLE "credentials" ADD COLUMN "value" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='key_version') THEN
+    ALTER TABLE "credentials" ADD COLUMN "key_version" integer DEFAULT 1;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='expires_at') THEN
+    ALTER TABLE "credentials" ADD COLUMN "expires_at" timestamptz;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='type') THEN
+    ALTER TABLE "credentials" ADD COLUMN "type" text DEFAULT 'token';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='token_url') THEN
+    ALTER TABLE "credentials" ADD COLUMN "token_url" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credentials' AND column_name='sandbox_env_name') THEN
+    ALTER TABLE "credentials" ADD COLUMN "sandbox_env_name" text;
+  END IF;
+
+  -- credential_grants: needs grantee_id, credential_id for UNIQUE(workspace_id, credential_id, grantee_id)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='grantee_id') THEN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='user_id') THEN
       ALTER TABLE "credential_grants" RENAME COLUMN "user_id" TO "grantee_id";
     ELSE
       ALTER TABLE "credential_grants" ADD COLUMN "grantee_id" text;
     END IF;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='credential_id') THEN
+    ALTER TABLE "credential_grants" ADD COLUMN "credential_id" uuid;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='permission') THEN
+    ALTER TABLE "credential_grants" ADD COLUMN "permission" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='credential_grants' AND column_name='granted_by') THEN
+    ALTER TABLE "credential_grants" ADD COLUMN "granted_by" text;
   END IF;
 END $$;--> statement-breakpoint
 
