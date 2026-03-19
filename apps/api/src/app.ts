@@ -51,11 +51,19 @@ if (!signingSecret || !legacyBotToken) {
 }
 
 const defaultSlackClient = new WebClient(legacyBotToken);
+const teamClientCache = new Map<string, WebClient>();
 
 async function getSlackClientForTeam(teamId?: string): Promise<WebClient> {
+  if (!teamId) return defaultSlackClient;
+
+  const cached = teamClientCache.get(teamId);
+  if (cached) return cached;
+
   const token = await getBotToken(teamId);
   if (token && token !== legacyBotToken) {
-    return new WebClient(token);
+    const client = new WebClient(token);
+    teamClientCache.set(teamId, client);
+    return client;
   }
   return defaultSlackClient;
 }

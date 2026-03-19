@@ -102,6 +102,14 @@ slackOAuthApp.get("/oauth-callback", async (c) => {
     return c.json({ error: "Invalid OAuth state — possible CSRF" }, 403);
   }
 
+  setCookie(c, "slack_oauth_state", "", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/api/slack",
+    maxAge: 0,
+  });
+
   if (!code) {
     return c.json({ error: "Missing code parameter" }, 400);
   }
