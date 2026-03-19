@@ -309,6 +309,13 @@
       "when": 1774176000000,
       "tag": "0043_add_workspace_id",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1774262400000,
+      "tag": "0044_add_workspace_oauth_columns",
+      "breakpoints": true
     }
   ]
 }

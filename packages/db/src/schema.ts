@@ -61,6 +61,11 @@ export const workspaces = pgTable("workspaces", {
   installedAt: timestamptz("installed_at").notNull().defaultNow(),
   plan: text("plan").default("free"),
   settings: jsonb("settings").$type<Record<string, unknown>>(),
+  botToken: text("bot_token"),
+  botUserId: text("bot_user_id"),
+  installerUserId: text("installer_user_id"),
+  scopes: text("scopes"),
+  isActive: boolean("is_active").notNull().default(true),
 });
 
 // ── Messages ───────────────────────────────────────────────────────────────

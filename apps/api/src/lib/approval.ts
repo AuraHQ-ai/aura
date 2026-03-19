@@ -151,7 +151,13 @@ export async function requestApproval(args: {
   slackClient?: InstanceType<typeof import("@slack/web-api").WebClient> | null;
 }): Promise<void> {
   const { actionLogId, toolName, params, riskTier, policy, context, slackClient: injectedSlackClient } = args;
-  const slackClient = injectedSlackClient ?? new WebClient(process.env.SLACK_BOT_TOKEN);
+  let resolvedSlackClient = injectedSlackClient;
+  if (!resolvedSlackClient) {
+    const { getBotToken } = await import("./workspace-token.js");
+    const token = await getBotToken();
+    resolvedSlackClient = new WebClient(token);
+  }
+  const slackClient = resolvedSlackClient;
 
   const row = await db
     .select()

@@ -15,12 +15,11 @@ import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
-const botToken = process.env.SLACK_BOT_TOKEN || "";
 const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
 
 const VOICE_TESTING_CHANNEL = process.env.ELEVENLABS_VOICE_CHANNEL || "";
 
-const slackClient = new WebClient(botToken);
+const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN || "");
 const elevenlabs = new ElevenLabsClient();
 
 // ── Cached User List ─────────────────────────────────────────────────────────
