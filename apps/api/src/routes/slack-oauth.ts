@@ -1,8 +1,19 @@
 import { Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
+import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { workspaces } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 const SCOPES = [
   "assistant:write",
@@ -50,11 +61,21 @@ slackOAuthApp.get("/install", (c) => {
     return c.json({ error: "OAuth not configured" }, 500);
   }
 
+  const state = crypto.randomUUID();
+  setCookie(c, "slack_oauth_state", state, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/api/slack",
+    maxAge: 600,
+  });
+
   const redirectUri = getRedirectUri();
   const authorizeUrl = new URL("https://slack.com/oauth/v2/authorize");
   authorizeUrl.searchParams.set("client_id", clientId);
   authorizeUrl.searchParams.set("scope", SCOPES);
   authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+  authorizeUrl.searchParams.set("state", state);
 
   return c.redirect(authorizeUrl.toString());
 });
@@ -68,8 +89,15 @@ slackOAuthApp.get("/oauth-callback", async (c) => {
   if (error) {
     logger.warn("Slack OAuth denied by user", { error });
     return c.html(
-      `<html><body><h1>Installation cancelled</h1><p>${error}</p></body></html>`,
+      `<html><body><h1>Installation cancelled</h1><p>${escapeHtml(error)}</p></body></html>`,
     );
+  }
+
+  const stateParam = c.req.query("state");
+  const stateCookie = getCookie(c, "slack_oauth_state");
+  if (!stateParam || !stateCookie || stateParam !== stateCookie) {
+    logger.warn("Slack OAuth state mismatch", { stateParam, stateCookie });
+    return c.json({ error: "Invalid OAuth state — possible CSRF" }, 403);
   }
 
   if (!code) {
@@ -110,7 +138,7 @@ slackOAuthApp.get("/oauth-callback", async (c) => {
     if (!data.ok) {
       logger.error("Slack OAuth token exchange failed", { error: data.error });
       return c.html(
-        `<html><body><h1>Installation failed</h1><p>Slack returned: ${data.error}</p></body></html>`,
+        `<html><body><h1>Installation failed</h1><p>Slack returned: ${escapeHtml(data.error ?? "unknown error")}</p></body></html>`,
       );
     }
 
@@ -173,7 +201,7 @@ slackOAuthApp.get("/oauth-callback", async (c) => {
 <body>
   <div class="card">
     <h1>Aura has been installed!</h1>
-    <p>Successfully added to <span class="team">${teamName || teamId}</span>.</p>
+    <p>Successfully added to <span class="team">${escapeHtml(teamName || teamId)}</span>.</p>
     <p>You can now use Aura in your Slack workspace. Try sending a message in a DM or mentioning @Aura in a channel.</p>
   </div>
 </body>
