@@ -90,6 +90,7 @@ export const messages = pgTable(
     uniqueIndex("messages_workspace_external_id_idx").on(table.workspaceId, table.externalId),
     index("messages_channel_created_idx").on(table.channelId, table.createdAt),
     index("messages_thread_idx").on(table.slackThreadTs),
+    index("messages_role_created_idx").on(table.role, table.createdAt),
     index("messages_embedding_idx").using(
       "hnsw",
       table.embedding.op("vector_cosine_ops"),
