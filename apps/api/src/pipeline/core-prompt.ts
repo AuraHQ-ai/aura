@@ -71,8 +71,8 @@ export async function getUsageStats(): Promise<string> {
 
     const result = await db.execute(sql`
       SELECT
-        COUNT(DISTINCT CASE WHEN created_at > now() - INTERVAL '7 days' THEN user_id END) AS users_this_week,
-        COUNT(DISTINCT CASE WHEN created_at > now() - INTERVAL '14 days' AND created_at <= now() - INTERVAL '7 days' THEN user_id END) AS users_last_week,
+        COUNT(DISTINCT CASE WHEN created_at > now() - INTERVAL '7 days' AND role = 'user' THEN user_id END) AS users_this_week,
+        COUNT(DISTINCT CASE WHEN created_at > now() - INTERVAL '14 days' AND created_at <= now() - INTERVAL '7 days' AND role = 'user' THEN user_id END) AS users_last_week,
         COUNT(CASE WHEN created_at > now() - INTERVAL '7 days' AND role = 'user' THEN 1 END) AS received_this_week,
         COUNT(CASE WHEN created_at > now() - INTERVAL '7 days' AND role = 'assistant' THEN 1 END) AS sent_this_week,
         COUNT(CASE WHEN created_at > now() - INTERVAL '14 days' AND created_at <= now() - INTERVAL '7 days' AND role = 'user' THEN 1 END) AS received_last_week,
