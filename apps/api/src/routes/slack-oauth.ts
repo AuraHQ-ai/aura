@@ -38,14 +38,16 @@ const SCOPES = [
 ].join(",");
 
 function getRedirectUri(): string {
-  const base =
-    process.env.SLACK_OAUTH_REDIRECT_URI ||
-    process.env.VERCEL_PROJECT_PRODUCTION_URL;
-  if (base?.startsWith("http")) {
-    return `${base}/api/slack/oauth-callback`;
+  const explicit = process.env.SLACK_OAUTH_REDIRECT_URI;
+  if (explicit) {
+    return explicit;
   }
-  if (base) {
-    return `https://${base}/api/slack/oauth-callback`;
+  const host = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  if (host?.startsWith("http")) {
+    return `${host}/api/slack/oauth-callback`;
+  }
+  if (host) {
+    return `https://${host}/api/slack/oauth-callback`;
   }
   return "https://aura-alpha-five.vercel.app/api/slack/oauth-callback";
 }

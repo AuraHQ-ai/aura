@@ -43,7 +43,6 @@ import { notes, feedback } from "@aura/db/schema";
 
 const signingSecret = process.env.SLACK_SIGNING_SECRET || "";
 const legacyBotToken = process.env.SLACK_BOT_TOKEN || "";
-const legacyBotUserId = process.env.AURA_BOT_USER_ID || "";
 
 if (!signingSecret || !legacyBotToken) {
   logger.warn(
