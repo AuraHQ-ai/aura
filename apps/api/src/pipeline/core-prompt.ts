@@ -51,6 +51,9 @@ export interface ChannelSession {
 
 // ── Usage Stats ──────────────────────────────────────────────────────────────
 
+const USAGE_STATS_TTL_MS = 5 * 60 * 1000; // 5 minutes
+let usageStatsCache: { value: string; expiresAt: number } | null = null;
+
 function arrow(current: number, previous: number): string {
   if (previous === 0) return "";
   if (current > previous) return "↑";
@@ -59,6 +62,9 @@ function arrow(current: number, previous: number): string {
 }
 
 export async function getUsageStats(): Promise<string> {
+  if (usageStatsCache && Date.now() < usageStatsCache.expiresAt) {
+    return usageStatsCache.value;
+  }
   try {
     interface UsageRow {
       users_this_week: string;
@@ -103,11 +109,14 @@ export async function getUsageStats(): Promise<string> {
       ? ` (${msgArrow} from ${sentPrev}/${recvPrev})`
       : "";
 
-    return [
+    const stats = [
       "## Usage (last 7 days)",
       `Unique users: ${usersNow}${usersDetail}`,
       `Messages: sent ${sentNow} / received ${recvNow}${msgDetail}`,
     ].join("\n");
+
+    usageStatsCache = { value: stats, expiresAt: Date.now() + USAGE_STATS_TTL_MS };
+    return stats;
   } catch (error) {
     logger.error("Failed to fetch usage stats", { error: String(error) });
     return "";
