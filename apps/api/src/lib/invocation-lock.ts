@@ -19,13 +19,14 @@ export async function claimInvocation(
   channelId: string,
   threadTs: string,
   messageTs: string,
+  workspaceId: string = "default",
 ): Promise<string | null> {
   const invocationId = crypto.randomUUID();
 
   const result = await db.execute(sql`
-    INSERT INTO conversation_locks (channel_id, thread_ts, invocation_id, message_ts, started_at)
-    VALUES (${channelId}, ${threadTs}, ${invocationId}, ${messageTs}, now())
-    ON CONFLICT (channel_id, thread_ts) DO UPDATE
+    INSERT INTO conversation_locks (workspace_id, channel_id, thread_ts, invocation_id, message_ts, started_at)
+    VALUES (${workspaceId}, ${channelId}, ${threadTs}, ${invocationId}, ${messageTs}, now())
+    ON CONFLICT (workspace_id, channel_id, thread_ts) DO UPDATE
       SET invocation_id = ${invocationId},
           message_ts    = ${messageTs},
           started_at    = now()

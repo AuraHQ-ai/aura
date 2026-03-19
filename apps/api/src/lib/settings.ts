@@ -34,7 +34,7 @@ export async function setSetting(
       .insert(settings)
       .values({ key, value, updatedBy, updatedAt: new Date() })
       .onConflictDoUpdate({
-        target: settings.key,
+        target: [settings.workspaceId, settings.key],
         set: { value, updatedBy, updatedAt: new Date() },
       });
 

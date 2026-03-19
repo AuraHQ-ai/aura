@@ -58,7 +58,7 @@ export async function getOrCreateProfile(
       displayName,
       timezone,
     })
-    .onConflictDoNothing({ target: userProfiles.slackUserId })
+    .onConflictDoNothing({ target: [userProfiles.workspaceId, userProfiles.slackUserId] })
     .returning();
 
   if (result.length > 0) {

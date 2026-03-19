@@ -367,7 +367,7 @@ app.post("/api/slack/interactions", async (c) => {
                 userId,
                 value: action.value,
               }).onConflictDoUpdate({
-                target: [feedback.messageTs, feedback.channelId, feedback.userId],
+                target: [feedback.workspaceId, feedback.messageTs, feedback.channelId, feedback.userId],
                 set: { value: sql`excluded.value` },
               });
 

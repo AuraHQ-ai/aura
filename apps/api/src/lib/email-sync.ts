@@ -365,7 +365,7 @@ export async function syncEmails(
           .insert(emailsRaw)
           .values(rows)
           .onConflictDoNothing({
-            target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+            target: [emailsRaw.workspaceId, emailsRaw.userId, emailsRaw.gmailMessageId],
           });
         result.synced += insertResult.rowCount ?? 0;
         result.skipped += rows.length - (insertResult.rowCount ?? 0);
@@ -425,7 +425,7 @@ export async function syncEmails(
           .insert(emailsRaw)
           .values(retryRows)
           .onConflictDoNothing({
-            target: [emailsRaw.userId, emailsRaw.gmailMessageId],
+            target: [emailsRaw.workspaceId, emailsRaw.userId, emailsRaw.gmailMessageId],
           });
         result.synced += insertResult.rowCount ?? 0;
         result.skipped += retryRows.length - (insertResult.rowCount ?? 0);

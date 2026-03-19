@@ -49,6 +49,20 @@ export const memoryTypeEnum = pgEnum("memory_type", [
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
 
+// Helper for workspace_id columns
+const workspaceId = () => text("workspace_id").notNull().default("default");
+
+// ── Workspaces ────────────────────────────────────────────────────────────
+
+export const workspaces = pgTable("workspaces", {
+  id: text("id").primaryKey(),
+  name: text("name"),
+  domain: text("domain"),
+  installedAt: timestamptz("installed_at").notNull().defaultNow(),
+  plan: text("plan").default("free"),
+  settings: jsonb("settings").$type<Record<string, unknown>>(),
+});
+
 // ── Messages ───────────────────────────────────────────────────────────────
 
 export const messages = pgTable(
@@ -57,6 +71,7 @@ export const messages = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     externalId: text("external_id").notNull(),
     slackTs: text("slack_ts"),
     slackThreadTs: text("slack_thread_ts"),
@@ -72,7 +87,7 @@ export const messages = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("messages_external_id_idx").on(table.externalId),
+    uniqueIndex("messages_workspace_external_id_idx").on(table.workspaceId, table.externalId),
     index("messages_channel_created_idx").on(table.channelId, table.createdAt),
     index("messages_thread_idx").on(table.slackThreadTs),
     index("messages_embedding_idx").using(
@@ -90,6 +105,7 @@ export const memories = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     content: text("content").notNull(),
     type: memoryTypeEnum("type").notNull(),
     sourceMessageId: uuid("source_message_id").references(() => messages.id),
@@ -145,6 +161,7 @@ export const userProfiles = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     slackUserId: text("slack_user_id").notNull(),
     displayName: text("display_name").notNull(),
     timezone: text("timezone"),
@@ -165,7 +182,7 @@ export const userProfiles = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("user_profiles_slack_user_id_idx").on(table.slackUserId),
+    uniqueIndex("user_profiles_workspace_slack_user_id_idx").on(table.workspaceId, table.slackUserId),
   ],
 );
 
@@ -177,6 +194,7 @@ export const people = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     displayName: text("display_name"),
     slackUserId: text("slack_user_id"),
     jobTitle: text("job_title"),
@@ -189,8 +207,8 @@ export const people = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("people_slack_user_id_idx")
-      .on(table.slackUserId)
+    uniqueIndex("people_workspace_slack_user_id_idx")
+      .on(table.workspaceId, table.slackUserId)
       .where(sql`slack_user_id IS NOT NULL`),
   ],
 );
@@ -203,6 +221,7 @@ export const addresses = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     personId: uuid("person_id")
       .notNull()
       .references(() => people.id),
@@ -212,7 +231,7 @@ export const addresses = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("addresses_channel_value_idx").on(table.channel, table.value),
+    uniqueIndex("addresses_workspace_channel_value_idx").on(table.workspaceId, table.channel, table.value),
     index("addresses_person_id_idx").on(table.personId),
   ],
 );
@@ -225,6 +244,7 @@ export const channels = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     slackChannelId: text("slack_channel_id").notNull(),
     name: text("name").notNull(),
     type: channelTypeEnum("type").notNull(),
@@ -232,18 +252,25 @@ export const channels = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("channels_slack_channel_id_idx").on(table.slackChannelId),
+    uniqueIndex("channels_workspace_slack_channel_id_idx").on(table.workspaceId, table.slackChannelId),
   ],
 );
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-export const settings = pgTable("settings", {
-  key: text("key").primaryKey(),
-  value: text("value").notNull(),
-  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-  updatedBy: text("updated_by"),
-});
+export const settings = pgTable(
+  "settings",
+  {
+    workspaceId: workspaceId().references(() => workspaces.id),
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+    updatedBy: text("updated_by"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.key] }),
+  ],
+);
 
 // ── Notes (agent scratchpad with three-tier hierarchy) ──────────────────────
 
@@ -253,6 +280,7 @@ export const notes = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     topic: text("topic").notNull(),
     content: text("content").notNull(),
     category: text("category").notNull().default("knowledge"),
@@ -265,7 +293,7 @@ export const notes = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("notes_topic_idx").on(table.topic),
+    uniqueIndex("notes_workspace_topic_idx").on(table.workspaceId, table.topic),
     index("notes_category_idx").on(table.category),
     index("notes_embedding_idx").using(
       "hnsw",
@@ -335,6 +363,7 @@ export const jobs = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     name: text("name").notNull(),
     description: text("description").notNull(),
     playbook: text("playbook"),
@@ -362,7 +391,7 @@ export const jobs = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("jobs_name_idx").on(table.name),
+    uniqueIndex("jobs_workspace_name_idx").on(table.workspaceId, table.name),
     index("jobs_enabled_idx").on(table.enabled),
     index("jobs_status_execute_idx").on(table.status, table.executeAt),
     check(
@@ -380,6 +409,7 @@ export const jobExecutions = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     jobId: uuid("job_id").references(() => jobs.id),
     startedAt: timestamptz("started_at").notNull().defaultNow(),
     finishedAt: timestamptz("finished_at"),
@@ -423,6 +453,7 @@ export const modelPricing = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     modelId: text("model_id").notNull(),
     tokenType: text("token_type").notNull(),
     pricePerMillion: numeric("price_per_million").notNull(),
@@ -431,7 +462,8 @@ export const modelPricing = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    unique("model_pricing_model_token_date_unique").on(
+    unique("model_pricing_workspace_model_token_date_unique").on(
+      table.workspaceId,
       table.modelId,
       table.tokenType,
       table.effectiveFrom,
@@ -452,6 +484,7 @@ export const conversationTraces = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     sourceType: text("source_type").notNull(),
     source: text("source").notNull().default("slack"),
     jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
@@ -480,6 +513,7 @@ export const conversationMessages = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversationTraces.id, { onDelete: "cascade" }),
@@ -505,6 +539,7 @@ export const conversationParts = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     messageId: uuid("message_id")
       .notNull()
       .references(() => conversationMessages.id, { onDelete: "cascade" }),
@@ -534,12 +569,14 @@ export const eventLocks = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     eventTs: text("event_ts").notNull(),
     channelId: text("channel_id").notNull(),
     claimedAt: timestamptz("claimed_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("event_locks_event_ts_channel_id_idx").on(
+    uniqueIndex("event_locks_workspace_event_ts_channel_id_idx").on(
+      table.workspaceId,
       table.eventTs,
       table.channelId,
     ),
@@ -551,6 +588,7 @@ export const eventLocks = pgTable(
 export const conversationLocks = pgTable(
   "conversation_locks",
   {
+    workspaceId: workspaceId().references(() => workspaces.id),
     channelId: text("channel_id").notNull(),
     threadTs: text("thread_ts").notNull(),
     invocationId: text("invocation_id").notNull(),
@@ -558,7 +596,7 @@ export const conversationLocks = pgTable(
     startedAt: timestamptz("started_at").notNull().defaultNow(),
   },
   (table) => [
-    primaryKey({ columns: [table.channelId, table.threadTs] }),
+    primaryKey({ columns: [table.workspaceId, table.channelId, table.threadTs] }),
   ],
 );
 
@@ -570,6 +608,7 @@ export const errorEvents = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     timestamp: timestamptz("timestamp").notNull().defaultNow(),
     errorName: text("error_name").notNull(),
     errorMessage: text("error_message").notNull(),
@@ -596,6 +635,7 @@ export const emailsRaw = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     userId: text("user_id").notNull(),
     gmailMessageId: text("gmail_message_id").notNull(),
     gmailThreadId: text("gmail_thread_id").notNull(),
@@ -621,7 +661,8 @@ export const emailsRaw = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("emails_raw_user_gmail_msg_idx").on(
+    uniqueIndex("emails_raw_workspace_user_gmail_msg_idx").on(
+      table.workspaceId,
       table.userId,
       table.gmailMessageId,
     ),
@@ -642,6 +683,7 @@ export const oauthTokens = pgTable(
   "oauth_tokens",
   {
     id: serial("id").primaryKey(),
+    workspaceId: workspaceId().references(() => workspaces.id),
     userId: text("user_id").notNull(),
     provider: text("provider").notNull().default("google"),
     email: text("email"),
@@ -651,7 +693,8 @@ export const oauthTokens = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("oauth_tokens_user_provider_idx").on(
+    uniqueIndex("oauth_tokens_workspace_user_provider_idx").on(
+      table.workspaceId,
       table.userId,
       table.provider,
     ),
@@ -697,6 +740,7 @@ export const actionLog = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     toolName: text("tool_name").notNull(),
     params: jsonb("params").notNull(),
     triggerType: text("trigger_type").notNull(),
@@ -724,7 +768,7 @@ export const actionLog = pgTable(
       "action_log_trigger_type_check",
       sql`${table.triggerType} IN ('user_message','scheduled_job','autonomous')`,
     ),
-    unique("action_log_idempotency_key_unique").on(table.idempotencyKey),
+    unique("action_log_workspace_idempotency_key_unique").on(table.workspaceId, table.idempotencyKey),
     index("action_log_tool_name_idx").on(table.toolName),
     index("action_log_triggered_by_idx").on(table.triggeredBy),
     index("action_log_status_idx").on(table.status),
@@ -740,6 +784,7 @@ export const approvalPolicies = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     toolPattern: text("tool_pattern"),
     urlPattern: text("url_pattern"),
     httpMethods: text("http_methods").array(),
@@ -760,6 +805,8 @@ export const approvalPolicies = pgTable(
 
 // ── Type exports ───────────────────────────────────────────────────────────
 
+export type Workspace = typeof workspaces.$inferSelect;
+export type NewWorkspace = typeof workspaces.$inferInsert;
 export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Memory = typeof memories.$inferSelect;
@@ -812,6 +859,7 @@ export const feedback = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     messageTs: text("message_ts").notNull(),
     channelId: text("channel_id").notNull(),
     userId: text("user_id").notNull(),
@@ -819,7 +867,7 @@ export const feedback = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique("feedback_unique_vote").on(table.messageTs, table.channelId, table.userId),
+    unique("feedback_workspace_unique_vote").on(table.workspaceId, table.messageTs, table.channelId, table.userId),
   ],
 );
 
@@ -834,6 +882,7 @@ export const credentials = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     ownerId: text("owner_id").notNull(),
     name: text("name").notNull(),
     type: text("type").notNull().default("token"),
@@ -846,7 +895,7 @@ export const credentials = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    unique("credentials_owner_id_name_unique").on(table.ownerId, table.name),
+    unique("credentials_workspace_owner_id_name_unique").on(table.workspaceId, table.ownerId, table.name),
     check(
       "credentials_name_check",
       sql`${table.name} ~ '^[a-z][a-z0-9_]{1,62}$'`,
@@ -864,6 +913,7 @@ export const credentialGrants = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     credentialId: uuid("credential_id")
       .notNull()
       .references(() => credentials.id, { onDelete: "cascade" }),
@@ -874,7 +924,8 @@ export const credentialGrants = pgTable(
     revokedAt: timestamptz("revoked_at"),
   },
   (table) => [
-    unique("credential_grants_credential_id_grantee_id_unique").on(
+    unique("credential_grants_workspace_credential_id_grantee_id_unique").on(
+      table.workspaceId,
       table.credentialId,
       table.granteeId,
     ),
@@ -892,6 +943,7 @@ export const credentialAuditLog = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     credentialId: uuid("credential_id").references(() => credentials.id, {
       onDelete: "set null",
     }),

@@ -796,7 +796,7 @@ export async function saveUserRefreshToken(
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [oauthTokens.userId, oauthTokens.provider],
+      target: [oauthTokens.workspaceId, oauthTokens.userId, oauthTokens.provider],
       set: {
         refreshToken,
         email: email || undefined,

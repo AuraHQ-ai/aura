@@ -151,7 +151,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
               updatedAt: new Date(),
             })
             .onConflictDoUpdate({
-              target: notes.topic,
+              target: [notes.workspaceId, notes.topic],
               set: {
                 content: trackingContent,
                 category: "plan",
@@ -316,7 +316,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
                 updatedAt: new Date(),
               })
               .onConflictDoUpdate({
-                target: notes.topic,
+                target: [notes.workspaceId, notes.topic],
                 set: {
                   content: trackingRows[0].content + followupNote,
                   expiresAt: sevenDays,

@@ -208,7 +208,7 @@ dashboardCredentialsApp.post("/:id/grants", async (c) => {
         grantedBy: body.grantedBy,
       })
       .onConflictDoUpdate({
-        target: [credentialGrants.credentialId, credentialGrants.granteeId],
+        target: [credentialGrants.workspaceId, credentialGrants.credentialId, credentialGrants.granteeId],
         set: {
           permission: body.permission,
           grantedBy: body.grantedBy,

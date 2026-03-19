@@ -55,6 +55,15 @@ Before building anything, **read the platform's documentation and search for exi
 - **Drizzle config**: `packages/db/drizzle.config.ts`
 - Both apps depend on `@aura/db` (workspace link) — import via `@aura/db/schema`
 
+### Multi-tenancy: workspace_id on every table (CRITICAL)
+
+Every new table MUST include a `workspace_id` column for multi-workspace tenant isolation.
+
+- Use `workspaceId: workspaceId().references(() => workspaces.id)` — the `workspaceId()` helper is defined at the top of `packages/db/src/schema.ts`
+- Unique constraints must be composite with `workspace_id` (e.g. `uniqueIndex("my_table_workspace_name_idx").on(table.workspaceId, table.name)`)
+- The `workspaces` table itself is the only exception
+- Never create a table without `workspace_id` — it will break tenant isolation and require a migration to fix later
+
 ## Environment Variables
 
 - **Add env vars via CLI**: `printf '%s' 'value' | npx --yes vercel@50.13.2 env add VAR_NAME production --scope realadvisor`
