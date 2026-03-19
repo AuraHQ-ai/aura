@@ -56,3 +56,34 @@ export async function getBotUserId(teamId?: string): Promise<string> {
 
   return process.env.AURA_BOT_USER_ID || "";
 }
+
+/**
+ * Fetch both botToken and botUserId in a single DB query.
+ * Use this when both values are needed to avoid redundant lookups.
+ */
+export async function getWorkspaceInfo(teamId?: string): Promise<{ botToken: string; botUserId: string }> {
+  if (teamId) {
+    try {
+      const [workspace] = await db
+        .select({ botToken: workspaces.botToken, botUserId: workspaces.botUserId })
+        .from(workspaces)
+        .where(and(eq(workspaces.id, teamId), eq(workspaces.isActive, true)))
+        .limit(1);
+
+      return {
+        botToken: workspace?.botToken || process.env.SLACK_BOT_TOKEN || "",
+        botUserId: workspace?.botUserId || process.env.AURA_BOT_USER_ID || "",
+      };
+    } catch (error) {
+      logger.warn("Failed to look up workspace info, falling back to env", {
+        teamId,
+        error: String(error),
+      });
+    }
+  }
+
+  return {
+    botToken: process.env.SLACK_BOT_TOKEN || "",
+    botUserId: process.env.AURA_BOT_USER_ID || "",
+  };
+}

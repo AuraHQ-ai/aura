@@ -7,7 +7,7 @@ import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
 import { slackOAuthApp } from "./routes/slack-oauth.js";
 import { runPipeline } from "./pipeline/index.js";
-import { getBotToken, getBotUserId } from "./lib/workspace-token.js";
+import { getBotToken, getBotUserId, getWorkspaceInfo } from "./lib/workspace-token.js";
 import {
   publishHomeTab,
   ACTION_TO_SETTING,
@@ -51,19 +51,13 @@ if (!signingSecret || !legacyBotToken) {
 }
 
 const defaultSlackClient = new WebClient(legacyBotToken);
-const teamClientCache = new Map<string, WebClient>();
 
 async function getSlackClientForTeam(teamId?: string): Promise<WebClient> {
   if (!teamId) return defaultSlackClient;
 
-  const cached = teamClientCache.get(teamId);
-  if (cached) return cached;
-
   const token = await getBotToken(teamId);
   if (token && token !== legacyBotToken) {
-    const client = new WebClient(token);
-    teamClientCache.set(teamId, client);
-    return client;
+    return new WebClient(token);
   }
   return defaultSlackClient;
 }
@@ -311,8 +305,10 @@ app.post("/api/slack/events", async (c) => {
     // in the background using waitUntil where available.
     const userId = event.user || "unknown";
     const pipelinePromise = (async () => {
-      const slackClient = await getSlackClientForTeam(teamId);
-      const resolvedBotUserId = await getBotUserId(teamId);
+      const { botToken: resolvedToken, botUserId: resolvedBotUserId } = await getWorkspaceInfo(teamId);
+      const slackClient = (resolvedToken && resolvedToken !== legacyBotToken)
+        ? new WebClient(resolvedToken)
+        : defaultSlackClient;
       return executionContext.run(
         {
           triggeredBy: userId,
