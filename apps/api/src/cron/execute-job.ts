@@ -79,11 +79,11 @@ export async function executeJob(
   const claimed = await db
     .update(jobs)
     .set({ status: "running", updatedAt: new Date() })
-    .where(and(eq(jobs.id, jobId), eq(jobs.status, "pending")))
+    .where(and(eq(jobs.id, jobId), eq(jobs.status, "pending"), eq(jobs.enabled, 1)))
     .returning({ id: jobs.id });
 
   if (claimed.length === 0) {
-    logger.info("executeJob: job already claimed, skipping", { jobId, jobName: job.name });
+    logger.info("executeJob: job already claimed or disabled, skipping", { jobId, jobName: job.name });
     return false;
   }
 
