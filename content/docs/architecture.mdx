@@ -43,7 +43,7 @@ aura/
 ## System Overview
 
 ```
-Slack Event → Vercel Function → Hono Router → Message Pipeline → Claude (Vercel AI SDK)
+Slack Event → Vercel Function → Hono Router → Message Pipeline → LLM (Vercel AI SDK)
                                                       ↕
                                               PostgreSQL + pgvector
                                       (memories, messages, conversations, notes, jobs)
@@ -60,8 +60,8 @@ When a Slack message arrives:
 1. **Event deduplication** — Slack sometimes sends duplicate events. The `event_locks` table prevents double-processing.
 2. **Context loading** — Recent conversation history, relevant memories, user profile, notes index, and channel context are loaded in parallel.
 3. **Memory retrieval** — Hybrid search (vector + full-text) finds relevant memories from past conversations.
-4. **Prompt assembly** — System prompt is built from personality, self-directive, notes index, memories, and user profile.
-5. **LLM reasoning** — Claude processes the message with full context and available tools. Extended thinking captures the reasoning trace.
+4. **Prompt assembly** — System prompt is built from personality, self-directive, notes index, memories, user profile, and usage stats (7-day activity metrics with week-over-week trends).
+5. **LLM reasoning** — The configured model (Claude, Grok, etc.) processes the message with full context and available tools. Extended thinking captures the reasoning trace (Claude models).
 6. **Response streaming** — The response streams back to Slack in real-time via the Vercel AI SDK.
 7. **Conversation persistence** — The full conversation trace (messages, tool calls, reasoning, token usage) is stored with cost tracking.
 8. **Memory extraction** — Facts, decisions, and sentiments are extracted from the conversation and stored as new memories.
@@ -71,7 +71,7 @@ When a Slack message arrives:
 Every conversation is persisted with full detail:
 
 - **Messages** — User input, assistant responses, tool calls and results
-- **Reasoning traces** — Extended thinking content from Claude
+- **Reasoning traces** — Extended thinking content (Claude models)
 - **Token usage** — Input, output, and cache tokens per turn
 - **Cost tracking** — Per-conversation cost in USD based on model pricing
 - **Metadata** — Channel, thread, user, model, duration
