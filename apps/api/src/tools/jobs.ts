@@ -486,7 +486,7 @@ export function createJobTools(
 
           if (updates.description !== undefined) set.description = updates.description;
           if (updates.playbook !== undefined) set.playbook = updates.playbook || null;
-          if (updates.script !== undefined) set.script = updates.script ?? null;
+          if (updates.script !== undefined) set.script = updates.script || null;
           if (updates.priority !== undefined) set.priority = updates.priority;
           if (updates.timezone !== undefined) set.timezone = updates.timezone;
 
