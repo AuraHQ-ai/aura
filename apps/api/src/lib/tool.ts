@@ -12,6 +12,7 @@ import { logger } from "./logger.js";
 export interface ExecutionContext {
   triggeredBy: string;
   triggerType: "user_message" | "scheduled_job" | "autonomous";
+  callingUserId?: string;
   jobId?: string;
   channelId?: string;
   threadTs?: string;

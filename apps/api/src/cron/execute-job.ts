@@ -206,6 +206,7 @@ export async function executeJob(
       {
         triggeredBy: job.requestedBy,
         triggerType: "scheduled_job",
+        callingUserId: job.requestedBy,
         jobId: job.id,
       },
       () => agent.generate({ prompt }),
