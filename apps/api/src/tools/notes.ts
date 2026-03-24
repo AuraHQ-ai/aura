@@ -4,7 +4,7 @@ import { eq, and, gt, or, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes, jobs } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { embedText } from "../lib/embeddings.js";
@@ -28,6 +28,8 @@ async function getNoteByTopic(
   topic: string;
   content: string;
   category: string;
+  ownerId: string | null;
+  visibility: string;
   expiresAt: Date | null;
   updatedAt: Date;
 } | null> {
@@ -113,8 +115,7 @@ export function createNoteTools(context?: ScheduleContext) {
         try {
           if (
             topic === "self-directive" &&
-            !isAdmin(context?.userId) &&
-            context?.userId !== "aura"
+            !(await hasRole(context?.userId, "admin"))
           ) {
             return { ok: false, error: "Only admins can edit the self-directive." };
           }
@@ -132,6 +133,12 @@ export function createNoteTools(context?: ScheduleContext) {
           }
 
           const effectiveCategory = category ?? "knowledge";
+
+          const SYSTEM_TOPICS = ["self-directive", "business-map", "gaps-log"];
+          const isSystemNote =
+            SYSTEM_TOPICS.includes(topic) || effectiveCategory === "skill";
+          const ownerId = isSystemNote ? null : (context?.userId ?? null);
+          const visibility = isSystemNote ? "system" : "shared";
 
           const savedAt = new Date();
           const updateSet: Record<string, unknown> = {
@@ -154,6 +161,8 @@ export function createNoteTools(context?: ScheduleContext) {
           if (expires_in !== undefined) {
             updateSet.expiresAt = expiresAt;
           }
+          updateSet.ownerId = ownerId;
+          updateSet.visibility = visibility;
 
           await db
             .insert(notes)
@@ -164,6 +173,8 @@ export function createNoteTools(context?: ScheduleContext) {
               summary: summary ?? null,
               injectInContext: inject_in_context ?? false,
               importance: importance ?? 50,
+              ownerId,
+              visibility,
               expiresAt,
               updatedAt: savedAt,
             })
@@ -258,6 +269,18 @@ export function createNoteTools(context?: ScheduleContext) {
           conditions.push(
             or(isNull(notes.expiresAt), gt(notes.expiresAt, now))!,
           );
+
+          // Visibility scoping: users see shared + system + their own private notes
+          const userId = context?.userId;
+          if (userId && userId !== "aura") {
+            conditions.push(
+              or(
+                eq(notes.visibility, "shared"),
+                eq(notes.visibility, "system"),
+                eq(notes.ownerId, userId),
+              )!,
+            );
+          }
 
           const allNotes = await db
             .select({
@@ -366,8 +389,7 @@ export function createNoteTools(context?: ScheduleContext) {
         try {
           if (
             topic === "self-directive" &&
-            !isAdmin(context?.userId) &&
-            context?.userId !== "aura"
+            !(await hasRole(context?.userId, "admin"))
           ) {
             return { ok: false, error: "Only admins can edit the self-directive." };
           }
@@ -378,6 +400,10 @@ export function createNoteTools(context?: ScheduleContext) {
               ok: false,
               error: `No note found with topic "${topic}". Use save_note to create it first.`,
             };
+          }
+
+          if (note.visibility === "system" && !(await hasRole(context?.userId, "admin"))) {
+            return { ok: false, error: "Only admins can edit system notes." };
           }
 
           const lines = note.content.split("\n");
@@ -499,8 +525,7 @@ export function createNoteTools(context?: ScheduleContext) {
         try {
           if (
             topic === "self-directive" &&
-            !isAdmin(context?.userId) &&
-            context?.userId !== "aura"
+            !(await hasRole(context?.userId, "admin"))
           ) {
             return { ok: false, error: "Only admins can delete the self-directive." };
           }
@@ -511,6 +536,10 @@ export function createNoteTools(context?: ScheduleContext) {
               ok: false,
               error: `No note found with topic "${topic}".`,
             };
+          }
+
+          if (note.visibility === "system" && !(await hasRole(context?.userId, "admin"))) {
+            return { ok: false, error: "Only admins can delete system notes." };
           }
 
           await db.delete(notes).where(eq(notes.topic, topic));
@@ -565,6 +594,21 @@ export function createNoteTools(context?: ScheduleContext) {
             const queryEmbedding = await embedText(trimmed);
             const embeddingLiteral = JSON.stringify(queryEmbedding);
 
+            const searchConditions = [
+              sql`${notes.embedding} IS NOT NULL`,
+              or(isNull(notes.expiresAt), gt(notes.expiresAt, new Date()))!,
+            ];
+            const searchUserId = context?.userId;
+            if (searchUserId && searchUserId !== "aura") {
+              searchConditions.push(
+                or(
+                  eq(notes.visibility, "shared"),
+                  eq(notes.visibility, "system"),
+                  eq(notes.ownerId, searchUserId),
+                )!,
+              );
+            }
+
             const results = await db
               .select({
                 topic: notes.topic,
@@ -574,12 +618,7 @@ export function createNoteTools(context?: ScheduleContext) {
                 similarity: sql<number>`1 - (${notes.embedding} <=> ${embeddingLiteral}::vector)`.as("similarity"),
               })
               .from(notes)
-              .where(
-                and(
-                  sql`${notes.embedding} IS NOT NULL`,
-                  or(isNull(notes.expiresAt), gt(notes.expiresAt, new Date()))!,
-                ),
-              )
+              .where(and(...searchConditions))
               .orderBy(sql`${notes.embedding} <=> ${embeddingLiteral}::vector`)
               .limit(limit);
 
@@ -603,6 +642,10 @@ export function createNoteTools(context?: ScheduleContext) {
           }
 
           // mode === "text": existing tsvector + ILIKE fallback
+          const textUserId = context?.userId;
+          const visibilityClause = textUserId && textUserId !== "aura"
+            ? sql`AND (visibility IN ('shared', 'system') OR owner_id = ${textUserId})`
+            : sql``;
           let rows: any[];
           try {
             const results = await db.execute(sql`
@@ -619,6 +662,7 @@ export function createNoteTools(context?: ScheduleContext) {
               WHERE to_tsvector('english', unaccent(content))
                 @@ websearch_to_tsquery('english', unaccent(${trimmed}))
                 AND (expires_at IS NULL OR expires_at > now())
+                ${visibilityClause}
               ORDER BY rank DESC
               LIMIT ${limit}
             `);
@@ -636,6 +680,7 @@ export function createNoteTools(context?: ScheduleContext) {
               FROM notes
               WHERE lower(content) LIKE ${pattern} ESCAPE '\\'
                 AND (expires_at IS NULL OR expires_at > now())
+                ${visibilityClause}
               ORDER BY updated_at DESC
               LIMIT ${limit}
             `);
@@ -706,8 +751,7 @@ export function createNoteTools(context?: ScheduleContext) {
         try {
           if (
             topic === "self-directive" &&
-            !isAdmin(context?.userId) &&
-            context?.userId !== "aura"
+            !(await hasRole(context?.userId, "admin"))
           ) {
             return { ok: false, error: "Only admins can edit the self-directive." };
           }
