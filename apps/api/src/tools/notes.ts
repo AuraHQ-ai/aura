@@ -745,10 +745,10 @@ export function createNoteTools(context?: ScheduleContext) {
       }) => {
         try {
           if (
-            topic === "self-directive" &&
+            SYSTEM_TOPICS.includes(topic) &&
             !(await hasRole(context?.userId, "admin"))
           ) {
-            return { ok: false, error: "Only admins can edit the self-directive." };
+            return { ok: false, error: "Only admins can edit system notes." };
           }
 
           // Reject topics containing ']' — they break the [CONTINUE:topic] tag parser
@@ -761,6 +761,10 @@ export function createNoteTools(context?: ScheduleContext) {
 
           // Read existing plan note to check continuation depth
           const existing = await getNoteByTopic(topic);
+
+          if (existing?.visibility === "system" && !(await hasRole(context?.userId, "admin"))) {
+            return { ok: false, error: "Only admins can overwrite system notes." };
+          }
           let depth = 0;
           if (existing) {
             depth = parseContinuationDepth(existing.content);
