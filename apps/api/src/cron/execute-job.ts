@@ -248,6 +248,9 @@ export async function executeJob(
           });
         }
       } catch (scriptErr: any) {
+        if (scriptOutput) {
+          throw scriptErr;
+        }
         logger.warn("executeJob: script execution error, falling through to LLM", {
           jobId,
           jobName: job.name,
