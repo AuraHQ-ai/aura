@@ -194,15 +194,18 @@ export async function ensureUserHome(
 
     const userHome = `/mnt/aura-files/users/${userId}`;
 
-    await sandbox.commands.run(
+    const mkdirResult = await sandbox.commands.run(
       `mkdir -p "${userHome}"/{downloads,repos,projects}`,
       { timeoutMs: 10_000, envs },
     );
-
-    await sandbox.commands.run(
-      `ln -sfn "${userHome}" /home/user/me`,
-      { timeoutMs: 5_000, envs },
-    );
+    if (mkdirResult.exitCode !== 0) {
+      logger.warn("Failed to create per-user home directories", {
+        userId,
+        exitCode: mkdirResult.exitCode,
+        stderr: mkdirResult.stderr,
+      });
+      return fallback;
+    }
 
     userHomeReady.add(userId);
     logger.info("Per-user home ready", { userId, userHome });
