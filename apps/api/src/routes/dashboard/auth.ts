@@ -32,38 +32,52 @@ dashboardAuthApp.post("/check-role", async (c) => {
       if (ALLOWED_ROLES.includes(role)) {
         return c.json({ allowed: true, role });
       }
-      return c.json({ allowed: false, reason: "insufficient_role", role });
     }
 
-    const ownerCount = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(userProfiles)
-      .where(eq(userProfiles.role, "owner"));
+    // Bootstrap: if no owners exist yet, promote this user to owner.
+    // Uses an advisory lock to prevent a race where multiple concurrent
+    // requests all see zero owners and each insert themselves as owner.
+    const bootstrapResult = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(42)`);
 
-    if ((ownerCount[0]?.count ?? 0) > 0) {
-      return c.json({ allowed: false, reason: "no_profile" });
-    }
+      const ownerCount = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(userProfiles)
+        .where(eq(userProfiles.role, "owner"));
 
-    const inserted = await db
-      .insert(userProfiles)
-      .values({
-        slackUserId,
-        displayName: name || "Owner",
-        role: "owner",
-      })
-      .onConflictDoUpdate({
-        target: [userProfiles.workspaceId, userProfiles.slackUserId],
-        set: { role: "owner", updatedAt: new Date() },
-      })
-      .returning({ role: userProfiles.role });
+      if ((ownerCount[0]?.count ?? 0) > 0) {
+        return null;
+      }
 
-    logger.info("Auto-seeded first user as owner", { slackUserId });
+      const inserted = await tx
+        .insert(userProfiles)
+        .values({
+          slackUserId,
+          displayName: name || "Owner",
+          role: "owner",
+        })
+        .onConflictDoUpdate({
+          target: [userProfiles.workspaceId, userProfiles.slackUserId],
+          set: { role: "owner", updatedAt: new Date() },
+        })
+        .returning({ role: userProfiles.role });
 
-    return c.json({
-      allowed: true,
-      role: inserted[0]?.role ?? "owner",
-      bootstrapped: true,
+      return inserted[0]?.role ?? "owner";
     });
+
+    if (bootstrapResult) {
+      logger.info("Auto-seeded first user as owner", { slackUserId });
+      return c.json({
+        allowed: true,
+        role: bootstrapResult,
+        bootstrapped: true,
+      });
+    }
+
+    if (existing.length > 0) {
+      return c.json({ allowed: false, reason: "insufficient_role", role: existing[0].role });
+    }
+    return c.json({ allowed: false, reason: "no_profile" });
   } catch (error) {
     logger.error("Failed to check role", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);

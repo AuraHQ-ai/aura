@@ -72,7 +72,14 @@ export async function GET(request: NextRequest) {
   const name = userInfo.name || "Admin";
   const picture = userInfo.picture || "";
 
-  const roleResult = await checkRole({ slackUserId, name, picture });
+  let roleResult;
+  try {
+    roleResult = await checkRole({ slackUserId, name, picture });
+  } catch {
+    return NextResponse.redirect(
+      `${appUrl}/unauthorized?reason=check_failed`,
+    );
+  }
   if (!roleResult.allowed) {
     return NextResponse.redirect(
       `${appUrl}/unauthorized?reason=not_admin`,
