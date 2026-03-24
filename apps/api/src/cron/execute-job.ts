@@ -179,6 +179,84 @@ export async function executeJob(
       prompt += `\n\nIMPORTANT: Post your results to channel "${job.channelId}" using send_channel_message. Do NOT use send_direct_message.`;
     }
 
+    // ── Script execution layer ──────────────────────────────────────────────
+    let scriptOutput: string | null = null;
+
+    if (job.script) {
+      try {
+        const { getOrCreateSandbox, truncateOutput } = await import("../lib/sandbox.js");
+        const sandbox = await getOrCreateSandbox();
+
+        const scriptResult = await sandbox.commands.run(job.script, {
+          timeoutMs: 120_000,
+          cwd: "/home/user",
+        });
+
+        if (scriptResult.exitCode === 0) {
+          scriptOutput = truncateOutput(scriptResult.stdout, 50_000);
+
+          if (!job.playbook) {
+            const resultText = scriptOutput || "(script produced no output)";
+
+            if (job.channelId && job.threadTs) {
+              await safePostMessage(slackClient, {
+                channel: job.channelId,
+                thread_ts: job.threadTs,
+                text: resultText,
+              });
+            } else if (job.channelId) {
+              await safePostMessage(slackClient, {
+                channel: job.channelId,
+                text: resultText,
+              });
+            }
+
+            const now = new Date();
+            const todayStr = now.toISOString().slice(0, 10);
+            const isNewDay = job.lastExecutionDate !== todayStr;
+
+            await db.update(jobs).set({
+              status: isRecurring ? "pending" : "completed",
+              result: resultText.slice(0, 2000),
+              lastResult: resultText.slice(0, 2000),
+              lastExecutedAt: now,
+              executionCount: sql`${jobs.executionCount} + 1`,
+              todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
+              lastExecutionDate: todayStr,
+              retries: 0,
+              updatedAt: now,
+            }).where(eq(jobs.id, jobId));
+
+            await db.update(jobExecutions).set({
+              status: "completed",
+              finishedAt: now,
+              summary: resultText.slice(0, 500),
+            }).where(eq(jobExecutions.id, executionId));
+
+            logger.info("executeJob: script-only job completed", { jobId, jobName: job.name });
+            return true;
+          }
+        } else {
+          logger.warn("executeJob: script failed, falling through to LLM", {
+            jobId,
+            jobName: job.name,
+            exitCode: scriptResult.exitCode,
+            stderr: scriptResult.stderr?.slice(0, 500),
+          });
+        }
+      } catch (scriptErr: any) {
+        logger.warn("executeJob: script execution error, falling through to LLM", {
+          jobId,
+          jobName: job.name,
+          error: scriptErr.message,
+        });
+      }
+    }
+
+    if (scriptOutput) {
+      prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`\n\n---\n\n${prompt}`;
+    }
+
     const { agent, modelId } = await createHeadlessAgent({
       slackClient,
       context: {

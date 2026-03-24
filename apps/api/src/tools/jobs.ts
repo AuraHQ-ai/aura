@@ -46,6 +46,12 @@ export function createJobTools(
           .describe(
             "Step-by-step execution guide (markdown). For complex recurring jobs. The heartbeat uses this as the prompt.",
           ),
+        script: z
+          .string()
+          .optional()
+          .describe(
+            "Shell command or path to a script to run before/instead of LLM invocation. Script-only (no playbook): output posted directly, zero LLM cost. Hybrid (with playbook): script output fed as context to a smaller LLM prompt.",
+          ),
         execute_in: z
           .string()
           .optional()
@@ -85,6 +91,7 @@ export function createJobTools(
         name,
         description,
         playbook,
+        script,
         execute_in,
         recurring,
         channel_name,
@@ -208,6 +215,7 @@ export function createJobTools(
             retries: 0,
           };
           if (playbook !== undefined) updateSet.playbook = playbook || null;
+          if (script !== undefined) updateSet.script = script || null;
           if (recurring !== undefined) updateSet.cronSchedule = recurring || null;
           updateSet.frequencyConfig = frequencyConfig;
           if (channel_name !== undefined) updateSet.channelId = channelId;
@@ -223,6 +231,7 @@ export function createJobTools(
               name: jobName,
               description,
               playbook: playbook || null,
+              script: script || null,
               cronSchedule: recurring || null,
               frequencyConfig,
               channelId: channelId || context?.channelId || "",
@@ -421,6 +430,11 @@ export function createJobTools(
         updates: z.object({
           description: z.string().optional(),
           playbook: z.string().optional(),
+          script: z
+            .string()
+            .nullable()
+            .optional()
+            .describe("Shell command or path to a script. Set to null to remove."),
           recurring: z
             .string()
             .optional()
@@ -472,6 +486,7 @@ export function createJobTools(
 
           if (updates.description !== undefined) set.description = updates.description;
           if (updates.playbook !== undefined) set.playbook = updates.playbook || null;
+          if (updates.script !== undefined) set.script = updates.script ?? null;
           if (updates.priority !== undefined) set.priority = updates.priority;
           if (updates.timezone !== undefined) set.timezone = updates.timezone;
 
