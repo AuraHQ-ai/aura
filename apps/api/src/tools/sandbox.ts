@@ -4,6 +4,7 @@ import {
   getSandboxEnvs,
   truncateOutput,
   clearCachedSandbox,
+  ensureUserHome,
 } from "../lib/sandbox.js";
 import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -62,15 +63,18 @@ export function createSandboxTools(context?: ScheduleContext) {
           const sandbox = await getOrCreateSandbox();
           const envs = await getSandboxEnvs();
 
+          const userId = context?.userId || "aura";
+          const userHome = await ensureUserHome(sandbox, userId, envs);
+
           logger.info("run_command tool: executing", {
             command: command.substring(0, 100),
             workdir,
           });
 
           const result = await sandbox.commands.run(command, {
-            cwd: workdir || "/home/user",
+            cwd: workdir || userHome,
             timeoutMs: timeout_seconds * 1000,
-            envs,
+            envs: { ...envs, USER_HOME: userHome, PERSISTENT_HOME: userHome },
           });
 
           const stdout = truncateOutput(result.stdout || "", 4000);

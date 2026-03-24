@@ -163,6 +163,59 @@ async function setupSandboxFilesystem(
 }
 
 /**
+ * Ensure per-user persistent home directory exists on the GCS mount.
+ * Creates directory structure and symlinks on first call per user per session.
+ * Falls back gracefully if GCS mount is unavailable.
+ */
+const userHomeReady = new Set<string>();
+
+export async function ensureUserHome(
+  sandbox: any,
+  userId: string,
+  envs: Record<string, string>,
+): Promise<string> {
+  const fallback = "/home/user";
+  if (!userId || userId === "aura") return fallback;
+
+  if (userHomeReady.has(userId)) {
+    return `/mnt/aura-files/users/${userId}`;
+  }
+
+  try {
+    const mountCheck = await sandbox.commands.run(
+      "mountpoint -q /mnt/aura-files && echo mounted || echo not",
+      { timeoutMs: 5_000, envs },
+    );
+    if (mountCheck.stdout?.trim() !== "mounted") {
+      logger.info("GCS not mounted, falling back to /home/user", { userId });
+      return fallback;
+    }
+
+    const userHome = `/mnt/aura-files/users/${userId}`;
+
+    await sandbox.commands.run(
+      `mkdir -p "${userHome}"/{downloads,repos,projects}`,
+      { timeoutMs: 10_000, envs },
+    );
+
+    await sandbox.commands.run(
+      `ln -sfn "${userHome}" /home/user/me`,
+      { timeoutMs: 5_000, envs },
+    );
+
+    userHomeReady.add(userId);
+    logger.info("Per-user home ready", { userId, userHome });
+    return userHome;
+  } catch (error: any) {
+    logger.warn("Failed to set up per-user home, using fallback", {
+      userId,
+      error: error.message,
+    });
+    return fallback;
+  }
+}
+
+/**
  * Get or create a sandbox. Tries to resume a previously paused sandbox,
  * creates a new one if none exists or resume fails.
  */
@@ -307,9 +360,17 @@ export async function writeToSandbox(
   filename: string,
   data: Buffer,
   subdir: string = "downloads",
+  userId?: string,
 ): Promise<string> {
   const sandbox = await getOrCreateSandbox();
-  const dir = `/home/user/${subdir}`;
+  const envs = await getSandboxEnvs();
+
+  let base = "/home/user";
+  if (userId) {
+    base = await ensureUserHome(sandbox, userId, envs);
+  }
+
+  const dir = `${base}/${subdir}`;
   await sandbox.commands.run(`mkdir -p "${dir}"`, { timeoutMs: 5_000 });
   const safeName = nodePath.basename(filename);
   const path = `${dir}/${safeName}`;
