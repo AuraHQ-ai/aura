@@ -184,12 +184,14 @@ export async function executeJob(
 
     if (job.script) {
       try {
-        const { getOrCreateSandbox, truncateOutput } = await import("../lib/sandbox.js");
+        const { getOrCreateSandbox, truncateOutput, getSandboxEnvs } = await import("../lib/sandbox.js");
         const sandbox = await getOrCreateSandbox();
+        const envs = await getSandboxEnvs();
 
         const scriptResult = await sandbox.commands.run(job.script, {
           timeoutMs: 120_000,
           cwd: "/home/user",
+          envs,
         });
 
         if (scriptResult.exitCode === 0) {
@@ -217,6 +219,7 @@ export async function executeJob(
 
             await db.update(jobs).set({
               status: isRecurring ? "pending" : "completed",
+              ...(isRecurring ? { executeAt: null } : {}),
               result: resultText.slice(0, 2000),
               lastResult: resultText.slice(0, 2000),
               lastExecutedAt: now,
