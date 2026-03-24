@@ -8,7 +8,9 @@ ALTER TABLE "notes" ADD COLUMN "visibility" text NOT NULL DEFAULT 'shared';--> s
 
 -- Create tool_definitions table
 CREATE TABLE "tool_definitions" (
-  "tool_name" text PRIMARY KEY,
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  "workspace_id" text NOT NULL DEFAULT 'default' REFERENCES "workspaces"("id"),
+  "tool_name" text NOT NULL,
   "min_role" text NOT NULL DEFAULT 'admin',
   "description" text,
   "category" text,
@@ -16,10 +18,13 @@ CREATE TABLE "tool_definitions" (
   "updated_at" timestamptz NOT NULL DEFAULT now()
 );--> statement-breakpoint
 
+CREATE UNIQUE INDEX "tool_definitions_workspace_tool_name_idx" ON "tool_definitions" ("workspace_id", "tool_name");--> statement-breakpoint
+
 -- Create tool_credential_slots table
 CREATE TABLE "tool_credential_slots" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  "tool_name" text NOT NULL REFERENCES "tool_definitions"("tool_name"),
+  "workspace_id" text NOT NULL DEFAULT 'default' REFERENCES "workspaces"("id"),
+  "tool_definition_id" uuid NOT NULL REFERENCES "tool_definitions"("id"),
   "credential_type" text NOT NULL,
   "required" boolean NOT NULL DEFAULT true,
   "scope" text NOT NULL DEFAULT 'shared',
@@ -30,26 +35,28 @@ CREATE TABLE "tool_credential_slots" (
 -- Create rate_limits table
 CREATE TABLE "rate_limits" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  "workspace_id" text NOT NULL DEFAULT 'default' REFERENCES "workspaces"("id"),
   "role" text NOT NULL,
   "resource" text NOT NULL,
-  "max_value" integer NOT NULL,
-  UNIQUE("role", "resource")
+  "max_value" integer NOT NULL
 );--> statement-breakpoint
 
+ALTER TABLE "rate_limits" ADD CONSTRAINT "rate_limits_workspace_role_resource_unique" UNIQUE ("workspace_id", "role", "resource");--> statement-breakpoint
+
 -- Seed default rate limits
-INSERT INTO "rate_limits" ("role", "resource", "max_value") VALUES
-  ('member', 'active_jobs', 5),
-  ('member', 'notes', 20),
-  ('member', 'sandbox_calls_per_day', 0),
-  ('member', 'cursor_agents_per_day', 0),
-  ('member', 'subagent_calls_per_day', 0),
-  ('power_user', 'active_jobs', 20),
-  ('power_user', 'notes', 50),
-  ('power_user', 'sandbox_calls_per_day', 50),
-  ('power_user', 'cursor_agents_per_day', 3),
-  ('power_user', 'subagent_calls_per_day', 10),
-  ('admin', 'active_jobs', 100),
-  ('admin', 'notes', 200),
-  ('admin', 'sandbox_calls_per_day', 200),
-  ('admin', 'cursor_agents_per_day', 10),
-  ('admin', 'subagent_calls_per_day', 50);
+INSERT INTO "rate_limits" ("workspace_id", "role", "resource", "max_value") VALUES
+  ('default', 'member', 'active_jobs', 5),
+  ('default', 'member', 'notes', 20),
+  ('default', 'member', 'sandbox_calls_per_day', 0),
+  ('default', 'member', 'cursor_agents_per_day', 0),
+  ('default', 'member', 'subagent_calls_per_day', 0),
+  ('default', 'power_user', 'active_jobs', 20),
+  ('default', 'power_user', 'notes', 50),
+  ('default', 'power_user', 'sandbox_calls_per_day', 50),
+  ('default', 'power_user', 'cursor_agents_per_day', 3),
+  ('default', 'power_user', 'subagent_calls_per_day', 10),
+  ('default', 'admin', 'active_jobs', 100),
+  ('default', 'admin', 'notes', 200),
+  ('default', 'admin', 'sandbox_calls_per_day', 200),
+  ('default', 'admin', 'cursor_agents_per_day', 10),
+  ('default', 'admin', 'subagent_calls_per_day', 50);

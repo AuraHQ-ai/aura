@@ -809,14 +809,24 @@ export const approvalPolicies = pgTable(
 
 // ── Tool Definitions (permission metadata per tool) ─────────────────────────
 
-export const toolDefinitions = pgTable("tool_definitions", {
-  toolName: text("tool_name").primaryKey(),
-  minRole: text("min_role").notNull().default("admin"),
-  description: text("description"),
-  category: text("category"),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-});
+export const toolDefinitions = pgTable(
+  "tool_definitions",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    toolName: text("tool_name").notNull(),
+    minRole: text("min_role").notNull().default("admin"),
+    description: text("description"),
+    category: text("category"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("tool_definitions_workspace_tool_name_idx").on(table.workspaceId, table.toolName),
+  ],
+);
 
 // ── Tool Credential Slots ───────────────────────────────────────────────────
 
@@ -824,9 +834,10 @@ export const toolCredentialSlots = pgTable("tool_credential_slots", {
   id: uuid("id")
     .primaryKey()
     .default(sql`gen_random_uuid()`),
-  toolName: text("tool_name")
+  workspaceId: workspaceId().references(() => workspaces.id),
+  toolDefinitionId: uuid("tool_definition_id")
     .notNull()
-    .references(() => toolDefinitions.toolName),
+    .references(() => toolDefinitions.id),
   credentialType: text("credential_type").notNull(),
   required: boolean("required").notNull().default(true),
   scope: text("scope").notNull().default("shared"),
@@ -842,12 +853,13 @@ export const rateLimits = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     role: text("role").notNull(),
     resource: text("resource").notNull(),
     maxValue: integer("max_value").notNull(),
   },
   (table) => [
-    unique("rate_limits_role_resource_unique").on(table.role, table.resource),
+    unique("rate_limits_workspace_role_resource_unique").on(table.workspaceId, table.role, table.resource),
   ],
 );
 
