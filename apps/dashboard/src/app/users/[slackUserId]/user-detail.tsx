@@ -8,7 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { updatePerson } from "../actions";
+import { updatePerson, updateUserRole } from "../actions";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ArrowLeft, Save } from "lucide-react";
 import { formatDate, truncate } from "@/lib/utils";
 import type { UserProfile, Person, Memory } from "@schema";
@@ -26,7 +33,23 @@ export function UserDetail({ data }: { data: UserData }) {
   const [preferredLanguage, setPreferredLanguage] = useState(person?.preferredLanguage || "");
   const [gender, setGender] = useState(person?.gender || "");
   const [notes, setNotes] = useState(person?.notes || "");
+  const [role, setRole] = useState(profile.role || "member");
   const [saving, setSaving] = useState(false);
+  const [savingRole, setSavingRole] = useState(false);
+
+  const roleOptions = [
+    { value: "owner", label: "Owner" },
+    { value: "admin", label: "Admin" },
+    { value: "power_user", label: "Power User" },
+    { value: "member", label: "Member" },
+  ] as const;
+
+  async function handleSaveRole() {
+    setSavingRole(true);
+    await updateUserRole(profile.slackUserId, role);
+    setSavingRole(false);
+    router.refresh();
+  }
 
   async function handleSave() {
     if (!person?.id) return;
@@ -86,6 +109,31 @@ export function UserDetail({ data }: { data: UserData }) {
         </TabsList>
 
         <TabsContent value="profile">
+          <Card className="mb-3">
+            <CardContent className="pt-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-sm font-medium">Role</label>
+                  <Select value={role} onValueChange={setRole}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {roleOptions.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <Button onClick={handleSaveRole} disabled={savingRole} size="sm">
+                <Save className="h-4 w-4" /> {savingRole ? "Saving..." : "Save Role"}
+              </Button>
+            </CardContent>
+          </Card>
+
           {person ? (
             <Card>
               <CardContent className="pt-4 space-y-3">
