@@ -113,11 +113,18 @@ export function createNoteTools(context?: ScheduleContext) {
       }),
       execute: async ({ topic, content, category, summary, inject_in_context, importance, expires_in }) => {
         try {
-          if (
-            topic === "self-directive" &&
-            !(await hasRole(context?.userId, "admin"))
-          ) {
-            return { ok: false, error: "Only admins can edit the self-directive." };
+          const SYSTEM_TOPICS = ["self-directive", "business-map", "gaps-log"];
+          const effectiveCategory = category ?? "knowledge";
+          const isSystemNote =
+            SYSTEM_TOPICS.includes(topic) || effectiveCategory === "skill";
+
+          if (isSystemNote && !(await hasRole(context?.userId, "admin"))) {
+            return { ok: false, error: "Only admins can create or overwrite system notes." };
+          }
+
+          const existingNote = await getNoteByTopic(topic);
+          if (existingNote?.visibility === "system" && !(await hasRole(context?.userId, "admin"))) {
+            return { ok: false, error: "Only admins can overwrite system notes." };
           }
 
           let expiresAt: Date | null = null;
@@ -132,11 +139,6 @@ export function createNoteTools(context?: ScheduleContext) {
             expiresAt = new Date(Date.now() + ms);
           }
 
-          const effectiveCategory = category ?? "knowledge";
-
-          const SYSTEM_TOPICS = ["self-directive", "business-map", "gaps-log"];
-          const isSystemNote =
-            SYSTEM_TOPICS.includes(topic) || effectiveCategory === "skill";
           const ownerId = isSystemNote ? null : (context?.userId ?? null);
           const visibility = isSystemNote ? "system" : "shared";
 

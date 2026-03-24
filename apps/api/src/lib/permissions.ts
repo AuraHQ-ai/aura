@@ -2,12 +2,14 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { userProfiles } from "@aura/db/schema";
 
-const ROLE_HIERARCHY: Record<string, number> = {
+const ROLE_HIERARCHY = {
   member: 0,
   power_user: 1,
   admin: 2,
   owner: 3,
-};
+} as const;
+
+type Role = keyof typeof ROLE_HIERARCHY;
 
 /**
  * Check whether a user has at least the specified role.
@@ -15,7 +17,7 @@ const ROLE_HIERARCHY: Record<string, number> = {
  */
 export async function hasRole(
   userId: string | undefined,
-  minimumRole: keyof typeof ROLE_HIERARCHY = "admin"
+  minimumRole: Role = "admin"
 ): Promise<boolean> {
   if (!userId) return false;
 
@@ -29,8 +31,8 @@ export async function hasRole(
       .limit(1);
 
     if (profile.length > 0 && profile[0].role) {
-      const userLevel = ROLE_HIERARCHY[profile[0].role] ?? 0;
-      const requiredLevel = ROLE_HIERARCHY[minimumRole] ?? 0;
+      const userLevel = ROLE_HIERARCHY[profile[0].role as Role] ?? 0;
+      const requiredLevel = ROLE_HIERARCHY[minimumRole];
       return userLevel >= requiredLevel;
     }
   } catch {
@@ -41,7 +43,10 @@ export async function hasRole(
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean);
-  if (adminIds.includes(userId)) return true;
+  if (adminIds.includes(userId)) {
+    const requiredLevel = ROLE_HIERARCHY[minimumRole];
+    return ROLE_HIERARCHY.admin >= requiredLevel;
+  }
 
   return false;
 }
@@ -59,20 +64,4 @@ export function isAdmin(userId: string | undefined): boolean {
     .map((id) => id.trim())
     .filter(Boolean);
   return adminIds.includes(userId);
-}
-
-/**
- * Get the user's role from the database.
- */
-export async function getUserRole(userId: string): Promise<string> {
-  try {
-    const profile = await db
-      .select({ role: userProfiles.role })
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, userId))
-      .limit(1);
-    return profile[0]?.role ?? "member";
-  } catch {
-    return "member";
-  }
 }
