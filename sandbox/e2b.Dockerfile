@@ -64,12 +64,13 @@ RUN npm install -g pnpm
 # Claude Code
 RUN npm install -g @anthropic-ai/claude-code
 
-# gcsfuse (GCS bucket mounts)
-RUN echo "deb https://packages.cloud.google.com/apt gcsfuse-jammy main" \
+# gcsfuse (GCS bucket mounts) — must succeed at build time
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/gcsfuse.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/gcsfuse.gpg] https://packages.cloud.google.com/apt gcsfuse-jammy main" \
     | tee /etc/apt/sources.list.d/gcsfuse.list > /dev/null \
     && apt-get update -qq && apt-get install -y gcsfuse \
-    && rm -rf /var/lib/apt/lists/* \
-    || true
+    && rm -rf /var/lib/apt/lists/*
 
 # Working dirs
 RUN mkdir -p /home/user/downloads /home/user/data /home/user/aura
