@@ -65,9 +65,7 @@ RUN npm install -g pnpm
 RUN npm install -g @anthropic-ai/claude-code
 
 # gcsfuse (GCS bucket mounts) — must succeed at build time
-RUN echo "deb https://packages.cloud.google.com/apt gcsfuse-jammy main" \
-    | tee /etc/apt/sources.list.d/gcsfuse.list > /dev/null \
-    && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
     | gpg --dearmor -o /usr/share/keyrings/gcsfuse.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/gcsfuse.gpg] https://packages.cloud.google.com/apt gcsfuse-jammy main" \
     | tee /etc/apt/sources.list.d/gcsfuse.list > /dev/null \

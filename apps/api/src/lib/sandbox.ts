@@ -24,6 +24,7 @@ export function clearCachedSandbox(): void {
     });
     cachedSandbox = null;
   }
+  userHomeReady.clear();
 }
 
 /**
@@ -228,6 +229,7 @@ export async function getOrCreateSandbox(): Promise<any> {
       return cachedSandbox;
     } catch {
       cachedSandbox = null;
+      userHomeReady.clear();
     }
   }
 
@@ -348,6 +350,7 @@ export async function pauseSandbox(): Promise<void> {
     throw error;
   } finally {
     cachedSandbox = null;
+    userHomeReady.clear();
   }
 }
 
