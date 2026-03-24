@@ -6,7 +6,7 @@ import {
   releaseSession,
   bufferToBase64,
 } from "../lib/browser.js";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
@@ -123,10 +123,10 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
         timeout_seconds,
       }) => {
         // Admin-only check
-        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can use the browse tool.",
+            error: "Only power users and above can use the browse tool.",
           };
         }
 

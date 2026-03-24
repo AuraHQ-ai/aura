@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { defineTool, binaryToModelOutput, registerToolNames } from "../lib/tool.js";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { createCoreTools } from "./core.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
@@ -1591,7 +1591,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
       execute: async ({ limit, cursor: inputCursor }) => {
         try {
           // Authorization: only admins can list all DM conversations
-          if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          if (!(await hasRole(context?.userId, "admin"))) {
             return {
               ok: false,
               error:
@@ -2331,7 +2331,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
           let fileBuffer: Buffer;
           if (file_path) {
-            if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+            if (!(await hasRole(context?.userId, "admin"))) {
               return {
                 ok: false,
                 error: "Only admins can access sandbox files.",
