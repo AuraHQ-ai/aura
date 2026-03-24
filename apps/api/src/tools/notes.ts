@@ -163,8 +163,10 @@ export function createNoteTools(context?: ScheduleContext) {
           if (expires_in !== undefined) {
             updateSet.expiresAt = expiresAt;
           }
-          updateSet.ownerId = ownerId;
-          updateSet.visibility = visibility;
+          if (category !== undefined) {
+            updateSet.ownerId = ownerId;
+            updateSet.visibility = visibility;
+          }
 
           await db
             .insert(notes)

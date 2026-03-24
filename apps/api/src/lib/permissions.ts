@@ -33,7 +33,7 @@ export async function hasRole(
     if (profile.length > 0 && profile[0].role) {
       const userLevel = ROLE_HIERARCHY[profile[0].role as Role] ?? 0;
       const requiredLevel = ROLE_HIERARCHY[minimumRole];
-      return userLevel >= requiredLevel;
+      if (userLevel >= requiredLevel) return true;
     }
   } catch {
     // DB query failed — fall through to env var fallback
