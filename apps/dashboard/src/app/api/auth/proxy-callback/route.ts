@@ -8,7 +8,7 @@ import {
   OAUTH_PROXY_ORIGIN_COOKIE,
   OAUTH_RETURN_TO_COOKIE,
 } from "@/lib/auth-redirect";
-import { isAdmin } from "@/lib/permissions";
+import { checkRole } from "@/lib/auth-check";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -69,7 +69,11 @@ export async function GET(request: NextRequest) {
   }
 
   const slackUserId = userInfo["https://slack.com/user_id"] || userInfo.sub;
-  if (!isAdmin(slackUserId)) {
+  const name = userInfo.name || "Admin";
+  const picture = userInfo.picture || "";
+
+  const roleResult = await checkRole({ slackUserId, name, picture });
+  if (!roleResult.allowed) {
     return NextResponse.redirect(
       `${appUrl}/unauthorized?reason=not_admin`,
     );
@@ -77,8 +81,8 @@ export async function GET(request: NextRequest) {
 
   const transferToken = await createTransferToken({
     slackUserId,
-    name: userInfo.name || "Admin",
-    picture: userInfo.picture || "",
+    name,
+    picture,
   });
 
   const redirectUrl = new URL("/api/auth/token-receive", origin);
