@@ -8,9 +8,12 @@
  * Reads e2b.Dockerfile as the single source of truth via fromDockerfile().
  * Requires E2B_API_KEY in .env or environment.
  */
-import "dotenv/config";
+import { config } from "dotenv";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+
+config({ path: resolve(__dirname, "..", ".env") });
+
 import { Template, defaultBuildLogger } from "e2b";
 
 const isProd = process.argv.includes("--prod");
