@@ -14,6 +14,7 @@ import { getMainModel, getMainModelId, withAnthropicFallback, type WrappableMode
 import { buildCorePrompt } from "../../pipeline/core-prompt.js";
 import { createAgenticStream } from "../../pipeline/generate.js";
 import { createCoreTools } from "../../tools/core.js";
+import { executionContext } from "../../lib/tool.js";
 import { extractMemories } from "../../memory/extract.js";
 import {
   createConversationTrace,
@@ -269,37 +270,40 @@ dashboardChatApp.post("/", async (c) => {
 
     const modelMessages = await convertToModelMessages(messages);
 
-    const result = createAgenticStream({
-      model,
-      modelId,
-      tools,
-      stablePrefix: prompt.stablePrefix,
-      conversationContext: prompt.conversationContext,
-      dynamicContext: prompt.dynamicContext,
-      messages: modelMessages,
-      maxSteps: 20,
-      channelId: "dashboard",
-      threadTs: threadId ?? undefined,
-      userId,
-      onFinish: ({ steps, totalUsage, text }) => {
-        logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
-        waitUntil(
-          persistDashboardConversation({
-            userId,
-            messageId,
-            modelId,
-            threadId,
-            userMessage: messageText,
-            assistantText: text,
-            systemPrompt: prompt.stablePrefix,
-            steps,
-            totalUsage,
-          }).catch((err) => {
-            logger.error("persistDashboardConversation rejected", { error: String(err) });
-          }),
-        );
-      },
-    });
+    const result = executionContext.run(
+      { triggeredBy: userId, triggerType: "user_message", callingUserId: userId, channelId: "dashboard" },
+      () => createAgenticStream({
+        model,
+        modelId,
+        tools,
+        stablePrefix: prompt.stablePrefix,
+        conversationContext: prompt.conversationContext,
+        dynamicContext: prompt.dynamicContext,
+        messages: modelMessages,
+        maxSteps: 20,
+        channelId: "dashboard",
+        threadTs: threadId ?? undefined,
+        userId,
+        onFinish: ({ steps, totalUsage, text }) => {
+          logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
+          waitUntil(
+            persistDashboardConversation({
+              userId,
+              messageId,
+              modelId,
+              threadId,
+              userMessage: messageText,
+              assistantText: text,
+              systemPrompt: prompt.stablePrefix,
+              steps,
+              totalUsage,
+            }).catch((err) => {
+              logger.error("persistDashboardConversation rejected", { error: String(err) });
+            }),
+          );
+        },
+      }),
+    );
 
     return result.toUIMessageStreamResponse({
       originalMessages: messages,
