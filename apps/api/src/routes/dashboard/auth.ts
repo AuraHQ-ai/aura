@@ -34,6 +34,10 @@ dashboardAuthApp.post("/check-role", async (c) => {
       }
     }
 
+    if (existing.length > 0) {
+      return c.json({ allowed: false, reason: "insufficient_role", role: existing[0].role });
+    }
+
     // Bootstrap: if no owners exist yet, promote this user to owner.
     // Uses an advisory lock to prevent a race where multiple concurrent
     // requests all see zero owners and each insert themselves as owner.
@@ -74,9 +78,6 @@ dashboardAuthApp.post("/check-role", async (c) => {
       });
     }
 
-    if (existing.length > 0) {
-      return c.json({ allowed: false, reason: "insufficient_role", role: existing[0].role });
-    }
     return c.json({ allowed: false, reason: "no_profile" });
   } catch (error) {
     logger.error("Failed to check role", { error: String(error) });
