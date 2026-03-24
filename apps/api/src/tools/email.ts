@@ -1,7 +1,7 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { logger } from "../lib/logger.js";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { resolveSlackUserId, resolveEffectiveUserId } from "../lib/resolve-user.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
@@ -76,7 +76,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
           if (user_name) {
             const callerId = context?.userId;
-            if (!callerId || (callerId !== resolvedUserId && !isAdmin(callerId))) {
+            if (!callerId || (callerId !== resolvedUserId && !(await hasRole(callerId, "admin")))) {
               return { ok: false, error: "You can only send email from your own account. Ask an admin for help." };
             }
           }
@@ -156,7 +156,7 @@ export function createEmailTools(context?: ScheduleContext) {
 
           if (user_name) {
             const callerId = context?.userId;
-            if (!callerId || (callerId !== resolvedUserId && !isAdmin(callerId))) {
+            if (!callerId || (callerId !== resolvedUserId && !(await hasRole(callerId, "admin")))) {
               return { ok: false, error: "You can only reply from your own email account. Ask an admin for help." };
             }
           }
@@ -760,7 +760,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           }
 
           const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+          if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
             return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
@@ -837,7 +837,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           }
 
           const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+          if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
             return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
@@ -917,7 +917,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           }
 
           const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+          if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
             return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
@@ -984,7 +984,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           }
 
           const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+          if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
             return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
@@ -1044,7 +1044,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           }
 
           const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+          if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
             return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
@@ -1122,7 +1122,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           }
 
           const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+          if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
             return { ok: false, error: "You can only access your own email. Ask an admin for help." };
           }
 
@@ -1232,7 +1232,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           }
 
           const callerId = context?.userId;
-          if (callerId && callerId !== resolvedUserId && !isAdmin(callerId)) {
+          if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
             return { ok: false, error: "You can only generate an auth URL for your own account. Ask an admin for help." };
           }
 

@@ -2,7 +2,7 @@ import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { runSubagent } from "../lib/subagent.js";
 import { getFastModel, getMainModel } from "../lib/ai.js";
 import type { ScheduleContext } from "@aura/db/schema";
@@ -111,8 +111,8 @@ export function createSubagentTools(
         model_preference,
         max_steps,
       }) => {
-        if (context?.userId && !isAdmin(context.userId)) {
-          return { ok: false as const, error: "Admin-only tool" };
+        if (context?.userId && !(await hasRole(context.userId, "power_user"))) {
+          return { ok: false as const, error: "Power user or above required" };
         }
 
         const { modelId, model } =

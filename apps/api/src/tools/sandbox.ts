@@ -5,7 +5,7 @@ import {
   truncateOutput,
   clearCachedSandbox,
 } from "../lib/sandbox.js";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { defineTool } from "../lib/tool.js";
 import type { ScheduleContext } from "@aura/db/schema";
@@ -43,10 +43,10 @@ export function createSandboxTools(context?: ScheduleContext) {
           ),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
-        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can run sandbox commands.",
+            error: "Only power users and above can run sandbox commands.",
           };
         }
 
