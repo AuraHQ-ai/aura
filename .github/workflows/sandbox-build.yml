@@ -36,6 +36,8 @@ jobs:
         if: env.TEMPLATE_ID != ''
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
           printf '%s' "$TEMPLATE_ID" | npx --yes vercel@50.13.2 env rm E2B_TEMPLATE_ID production --yes --scope realadvisor --token "$VERCEL_TOKEN" 2>/dev/null || true
           printf '%s' "$TEMPLATE_ID" | npx --yes vercel@50.13.2 env add E2B_TEMPLATE_ID production --scope realadvisor --token "$VERCEL_TOKEN"
