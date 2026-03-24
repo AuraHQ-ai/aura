@@ -178,6 +178,11 @@ export async function ensureUserHome(
   const fallback = "/home/user";
   if (!userId || userId === "aura") return fallback;
 
+  if (!/^[a-zA-Z0-9_-]+$/.test(userId)) {
+    logger.warn("Invalid userId rejected by ensureUserHome", { userId });
+    return fallback;
+  }
+
   if (userHomeReady.has(userId)) {
     return `/mnt/aura-files/users/${userId}`;
   }
@@ -369,10 +374,10 @@ export async function writeToSandbox(
   userId?: string,
 ): Promise<string> {
   const sandbox = await getOrCreateSandbox();
-  const envs = await getSandboxEnvs();
 
   let base = "/home/user";
   if (userId) {
+    const envs = await getSandboxEnvs();
     base = await ensureUserHome(sandbox, userId, envs);
   }
 
