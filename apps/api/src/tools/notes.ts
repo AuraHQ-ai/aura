@@ -54,6 +54,8 @@ function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
   }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
 }
 
+const SYSTEM_TOPICS = ["self-directive", "business-map", "gaps-log"];
+
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
 /**
@@ -113,7 +115,6 @@ export function createNoteTools(context?: ScheduleContext) {
       }),
       execute: async ({ topic, content, category, summary, inject_in_context, importance, expires_in }) => {
         try {
-          const SYSTEM_TOPICS = ["self-directive", "business-map", "gaps-log"];
           const effectiveCategory = category ?? "knowledge";
           const isSystemNote =
             SYSTEM_TOPICS.includes(topic) || effectiveCategory === "skill";
@@ -163,10 +164,8 @@ export function createNoteTools(context?: ScheduleContext) {
           if (expires_in !== undefined) {
             updateSet.expiresAt = expiresAt;
           }
-          if (category !== undefined) {
-            updateSet.ownerId = ownerId;
-            updateSet.visibility = visibility;
-          }
+          updateSet.ownerId = ownerId;
+          updateSet.visibility = visibility;
 
           await db
             .insert(notes)
@@ -391,13 +390,6 @@ export function createNoteTools(context?: ScheduleContext) {
         line,
       }) => {
         try {
-          if (
-            topic === "self-directive" &&
-            !(await hasRole(context?.userId, "admin"))
-          ) {
-            return { ok: false, error: "Only admins can edit the self-directive." };
-          }
-
           const note = await getNoteByTopic(topic);
           if (!note) {
             return {
@@ -406,7 +398,10 @@ export function createNoteTools(context?: ScheduleContext) {
             };
           }
 
-          if (note.visibility === "system" && !(await hasRole(context?.userId, "admin"))) {
+          if (
+            (SYSTEM_TOPICS.includes(topic) || note.visibility === "system") &&
+            !(await hasRole(context?.userId, "admin"))
+          ) {
             return { ok: false, error: "Only admins can edit system notes." };
           }
 
@@ -527,13 +522,6 @@ export function createNoteTools(context?: ScheduleContext) {
       }),
       execute: async ({ topic }) => {
         try {
-          if (
-            topic === "self-directive" &&
-            !(await hasRole(context?.userId, "admin"))
-          ) {
-            return { ok: false, error: "Only admins can delete the self-directive." };
-          }
-
           const note = await getNoteByTopic(topic);
           if (!note) {
             return {
@@ -542,7 +530,10 @@ export function createNoteTools(context?: ScheduleContext) {
             };
           }
 
-          if (note.visibility === "system" && !(await hasRole(context?.userId, "admin"))) {
+          if (
+            (SYSTEM_TOPICS.includes(topic) || note.visibility === "system") &&
+            !(await hasRole(context?.userId, "admin"))
+          ) {
             return { ok: false, error: "Only admins can delete system notes." };
           }
 
