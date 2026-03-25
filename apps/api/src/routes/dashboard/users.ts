@@ -1,12 +1,40 @@
-import { Hono } from "hono";
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { eq, sql, ilike, desc } from "drizzle-orm";
 import { userProfiles, people, memories } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
+import { errorSchema, paginationQuerySchema } from "./schemas.js";
 
-export const dashboardUsersApp = new Hono();
+export const dashboardUsersApp = new OpenAPIHono();
 
-dashboardUsersApp.get("/", async (c) => {
+const listUsersRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Users"],
+  summary: "List users",
+  request: {
+    query: paginationQuerySchema,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            items: z.array(z.any()),
+            total: z.number(),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardUsersApp.openapi(listUsersRoute, async (c) => {
   try {
     const search = c.req.query("search") ?? "";
     const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10));
@@ -42,14 +70,40 @@ dashboardUsersApp.get("/", async (c) => {
         .where(where),
     ]);
 
-    return c.json({ items, total: countResult[0]?.count ?? 0 });
+    return c.json({ items, total: countResult[0]?.count ?? 0 } as any, 200);
   } catch (error) {
     logger.error("Failed to list users", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardUsersApp.get("/:slackUserId", async (c) => {
+const getUserRoute = createRoute({
+  method: "get",
+  path: "/{slackUserId}",
+  tags: ["Users"],
+  summary: "Get user detail by Slack user ID",
+  request: {
+    params: z.object({
+      slackUserId: z.string().openapi({ param: { name: "slackUserId", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardUsersApp.openapi(getUserRoute, async (c) => {
   try {
     const slackUserId = c.req.param("slackUserId");
 
@@ -93,7 +147,7 @@ dashboardUsersApp.get("/:slackUserId", async (c) => {
       .orderBy(desc(memories.createdAt))
       .limit(20);
 
-    return c.json({ profile, person, memories: userMemories });
+    return c.json({ profile, person, memories: userMemories } as any, 200);
   } catch (error) {
     logger.error("Failed to get user detail", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -102,7 +156,47 @@ dashboardUsersApp.get("/:slackUserId", async (c) => {
 
 const VALID_ROLES = ["owner", "admin", "power_user", "member"] as const;
 
-dashboardUsersApp.patch("/:slackUserId/role", async (c) => {
+const updateUserRoleRoute = createRoute({
+  method: "patch",
+  path: "/{slackUserId}/role",
+  tags: ["Users"],
+  summary: "Update user role",
+  request: {
+    params: z.object({
+      slackUserId: z.string().openapi({ param: { name: "slackUserId", in: "path" } }),
+    }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            role: z.string(),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    400: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Bad request",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardUsersApp.openapi(updateUserRoleRoute, async (c) => {
   try {
     const slackUserId = c.req.param("slackUserId");
 
@@ -130,7 +224,7 @@ dashboardUsersApp.patch("/:slackUserId/role", async (c) => {
       return c.json({ error: "User not found" }, 404);
     }
 
-    return c.json(result[0]);
+    return c.json(result[0] as any, 200);
   } catch (error) {
     logger.error("Failed to update user role", {
       error: error instanceof Error ? error.stack : String(error),
@@ -140,7 +234,46 @@ dashboardUsersApp.patch("/:slackUserId/role", async (c) => {
   }
 });
 
-dashboardUsersApp.patch("/person/:personId", async (c) => {
+const updatePersonRoute = createRoute({
+  method: "patch",
+  path: "/person/{personId}",
+  tags: ["Users"],
+  summary: "Update person details",
+  request: {
+    params: z.object({
+      personId: z.string().openapi({ param: { name: "personId", in: "path" } }),
+    }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            jobTitle: z.string().optional(),
+            preferredLanguage: z.string().optional(),
+            gender: z.string().optional(),
+            notes: z.string().optional(),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardUsersApp.openapi(updatePersonRoute, async (c) => {
   try {
     const personId = c.req.param("personId");
     const body = await c.req.json<{
@@ -166,7 +299,7 @@ dashboardUsersApp.patch("/person/:personId", async (c) => {
       return c.json({ error: "Person not found" }, 404);
     }
 
-    return c.json(result[0]);
+    return c.json(result[0] as any, 200);
   } catch (error) {
     logger.error("Failed to update person", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);

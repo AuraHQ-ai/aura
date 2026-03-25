@@ -1,12 +1,53 @@
-import { Hono } from "hono";
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { conversationTraces } from "@aura/db/schema";
 import { sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
+import { errorSchema } from "./schemas.js";
 
-export const dashboardConsumptionApp = new Hono();
+export const dashboardConsumptionApp = new OpenAPIHono();
 
-dashboardConsumptionApp.get("/", async (c) => {
+const getConsumptionRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Consumption"],
+  summary: "Get cost and token consumption data (last 30 days)",
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            dailyCost: z.array(z.object({
+              date: z.string(),
+              cost: z.number(),
+              conversations: z.number(),
+            })),
+            perUser: z.array(z.any()),
+            perJob: z.array(z.any()),
+            totals: z.object({
+              totalCost: z.number(),
+              conversations: z.number(),
+              avgDailyCost: z.number(),
+            }),
+            tokenBreakdown: z.object({
+              cacheRead: z.number(),
+              cacheWrite: z.number(),
+              uncached: z.number(),
+              output: z.number(),
+            }),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
   try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
@@ -27,7 +68,6 @@ dashboardConsumptionApp.get("/", async (c) => {
       conversations: Number(d.conversations),
     }));
 
-    // Per-user interactive cost
     const interactiveResult = await db.execute(sql`
       SELECT
         ct.user_id,
@@ -42,7 +82,6 @@ dashboardConsumptionApp.get("/", async (c) => {
       GROUP BY ct.user_id, up.display_name
     `);
 
-    // Per-user job cost
     const jobCostResult = await db.execute(sql`
       SELECT
         j.requested_by AS user_id,
@@ -117,7 +156,6 @@ dashboardConsumptionApp.get("/", async (c) => {
       .sort((a, b) => b.totalCost - a.totalCost)
       .slice(0, 20);
 
-    // Per-job cost
     const perJobResult = await db.execute(sql`
       SELECT
         j.name AS job_name,
@@ -150,7 +188,6 @@ dashboardConsumptionApp.get("/", async (c) => {
       totalCost: Number(j.total_cost),
     }));
 
-    // Totals
     const [totalsRow] = await db
       .select({
         totalCost: sql<string>`coalesce(sum(${conversationTraces.costUsd}), 0)`.as("total_cost"),
@@ -163,7 +200,6 @@ dashboardConsumptionApp.get("/", async (c) => {
     const conversations = Number(totalsRow.conversations);
     const avgDailyCost = dailyCost.length > 0 ? totalCost / dailyCost.length : 0;
 
-    // Token breakdown
     const tokenResult = await db.execute(sql`
       SELECT
         COALESCE(SUM(("token_usage"->'inputTokenDetails'->>'cacheReadTokens')::bigint), 0) AS cache_read,
@@ -187,18 +223,21 @@ dashboardConsumptionApp.get("/", async (c) => {
     }>;
     const tb = tokenRows[0];
 
-    return c.json({
-      dailyCost,
-      perUser,
-      perJob,
-      totals: { totalCost, conversations, avgDailyCost },
-      tokenBreakdown: {
-        cacheRead: Number(tb?.cache_read || 0),
-        cacheWrite: Number(tb?.cache_write || 0),
-        uncached: Number(tb?.uncached || 0),
-        output: Number(tb?.output_tokens || 0),
-      },
-    });
+    return c.json(
+      {
+        dailyCost,
+        perUser,
+        perJob,
+        totals: { totalCost, conversations, avgDailyCost },
+        tokenBreakdown: {
+          cacheRead: Number(tb?.cache_read || 0),
+          cacheWrite: Number(tb?.cache_write || 0),
+          uncached: Number(tb?.uncached || 0),
+          output: Number(tb?.output_tokens || 0),
+        },
+      } as any,
+      200,
+    );
   } catch (error) {
     logger.error("Failed to fetch consumption data", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);

@@ -1,14 +1,59 @@
-import { Hono } from "hono";
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { eq, sql } from "drizzle-orm";
 import { userProfiles } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
+import { errorSchema } from "./schemas.js";
 
-export const dashboardAuthApp = new Hono();
+export const dashboardAuthApp = new OpenAPIHono();
 
 const ALLOWED_ROLES = ["owner", "admin", "power_user"];
 
-dashboardAuthApp.post("/check-role", async (c) => {
+const checkRoleRoute = createRoute({
+  method: "post",
+  path: "/check-role",
+  tags: ["Auth"],
+  summary: "Check user role and bootstrap first owner",
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            slackUserId: z.string(),
+            name: z.string().optional(),
+            picture: z.string().optional(),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            allowed: z.boolean(),
+            role: z.string().optional(),
+            reason: z.string().optional(),
+            bootstrapped: z.boolean().optional(),
+          }),
+        },
+      },
+      description: "Role check result",
+    },
+    400: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Bad request",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardAuthApp.openapi(checkRoleRoute, async (c) => {
   try {
     const body = await c.req.json<{
       slackUserId: string;
@@ -30,17 +75,14 @@ dashboardAuthApp.post("/check-role", async (c) => {
     if (existing.length > 0) {
       const role = existing[0].role;
       if (ALLOWED_ROLES.includes(role)) {
-        return c.json({ allowed: true, role });
+        return c.json({ allowed: true, role } as any, 200);
       }
     }
 
     if (existing.length > 0) {
-      return c.json({ allowed: false, reason: "insufficient_role", role: existing[0].role });
+      return c.json({ allowed: false, reason: "insufficient_role", role: existing[0].role } as any, 200);
     }
 
-    // Bootstrap: if no owners exist yet, promote this user to owner.
-    // Uses an advisory lock to prevent a race where multiple concurrent
-    // requests all see zero owners and each insert themselves as owner.
     const bootstrapResult = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(42)`);
 
@@ -71,14 +113,17 @@ dashboardAuthApp.post("/check-role", async (c) => {
 
     if (bootstrapResult) {
       logger.info("Auto-seeded first user as owner", { slackUserId });
-      return c.json({
-        allowed: true,
-        role: bootstrapResult,
-        bootstrapped: true,
-      });
+      return c.json(
+        {
+          allowed: true,
+          role: bootstrapResult,
+          bootstrapped: true,
+        } as any,
+        200,
+      );
     }
 
-    return c.json({ allowed: false, reason: "no_profile" });
+    return c.json({ allowed: false, reason: "no_profile" } as any, 200);
   } catch (error) {
     logger.error("Failed to check role", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);

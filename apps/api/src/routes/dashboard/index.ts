@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { dashboardAuthApp } from "./auth.js";
 import { dashboardChatApp } from "./chat.js";
 import { dashboardStatsApp } from "./stats.js";
@@ -14,7 +14,7 @@ import { dashboardConsumptionApp } from "./consumption.js";
 import { dashboardSettingsApp } from "./settings.js";
 import { dashboardModelsApp } from "./models.js";
 
-export const dashboardApp = new Hono();
+export const dashboardApp = new OpenAPIHono();
 
 dashboardApp.use("*", async (c, next) => {
   const secret = process.env.DASHBOARD_API_SECRET;
@@ -39,3 +39,8 @@ dashboardApp.route("/resources", dashboardResourcesApp);
 dashboardApp.route("/consumption", dashboardConsumptionApp);
 dashboardApp.route("/settings", dashboardSettingsApp);
 dashboardApp.route("/models", dashboardModelsApp);
+
+dashboardApp.doc31("/openapi.json", {
+  openapi: "3.1.0",
+  info: { title: "Aura Dashboard API", version: "1.0.0" },
+});

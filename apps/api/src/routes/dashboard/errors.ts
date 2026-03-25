@@ -1,12 +1,45 @@
-import { Hono } from "hono";
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { eq, sql, ilike, desc, and, inArray } from "drizzle-orm";
 import { errorEvents } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
+import { errorSchema, idParamSchema } from "./schemas.js";
 
-export const dashboardErrorsApp = new Hono();
+export const dashboardErrorsApp = new OpenAPIHono();
 
-dashboardErrorsApp.get("/", async (c) => {
+const listErrorsRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Errors"],
+  summary: "List error events",
+  request: {
+    query: z.object({
+      search: z.string().optional(),
+      resolved: z.string().optional(),
+      page: z.coerce.number().optional(),
+      limit: z.coerce.number().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            items: z.array(z.any()),
+            total: z.number(),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardErrorsApp.openapi(listErrorsRoute, async (c) => {
   try {
     const search = c.req.query("search") ?? "";
     const resolved = c.req.query("resolved");
@@ -40,14 +73,38 @@ dashboardErrorsApp.get("/", async (c) => {
         .where(where),
     ]);
 
-    return c.json({ items, total: countResult[0]?.count ?? 0 });
+    return c.json({ items, total: countResult[0]?.count ?? 0 } as any, 200);
   } catch (error) {
     logger.error("Failed to list errors", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardErrorsApp.get("/:id", async (c) => {
+const getErrorRoute = createRoute({
+  method: "get",
+  path: "/{id}",
+  tags: ["Errors"],
+  summary: "Get error event by ID",
+  request: {
+    params: idParamSchema,
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardErrorsApp.openapi(getErrorRoute, async (c) => {
   try {
     const id = c.req.param("id");
 
@@ -61,14 +118,51 @@ dashboardErrorsApp.get("/:id", async (c) => {
       return c.json({ error: "Error not found" }, 404);
     }
 
-    return c.json(rows[0]);
+    return c.json(rows[0] as any, 200);
   } catch (error) {
     logger.error("Failed to get error", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardErrorsApp.patch("/", async (c) => {
+const bulkResolveErrorsRoute = createRoute({
+  method: "patch",
+  path: "/",
+  tags: ["Errors"],
+  summary: "Bulk resolve errors",
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            ids: z.array(z.string()),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ resolved: z.number() }),
+        },
+      },
+      description: "Success",
+    },
+    400: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Bad request",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardErrorsApp.openapi(bulkResolveErrorsRoute, async (c) => {
   try {
     const body = await c.req.json<{ ids: string[] }>();
 
@@ -82,7 +176,7 @@ dashboardErrorsApp.patch("/", async (c) => {
       .where(inArray(errorEvents.id, body.ids))
       .returning({ id: errorEvents.id });
 
-    return c.json({ resolved: updated.length });
+    return c.json({ resolved: updated.length } as any, 200);
   } catch (error) {
     logger.error("Failed to bulk resolve errors", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
