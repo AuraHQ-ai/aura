@@ -768,7 +768,16 @@ export function createJobTools(
                 : {
                     stepCount: Array.isArray(e.steps)
                       ? (e.steps as unknown[]).length
-                      : null,
+                      : e.steps &&
+                          typeof e.steps === "object" &&
+                          Array.isArray(
+                            (e.steps as Record<string, unknown>).steps,
+                          )
+                        ? (
+                            (e.steps as Record<string, unknown>)
+                              .steps as unknown[]
+                          ).length
+                        : null,
                   }),
             })),
           };

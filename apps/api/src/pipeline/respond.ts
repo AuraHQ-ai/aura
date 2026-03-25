@@ -10,6 +10,7 @@ import { getSlackMeta } from "../lib/tool.js";
 import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 import { InvocationSupersededError } from "./prepare-step.js";
+import { cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
@@ -251,6 +252,7 @@ export async function generateResponse(
   const start = Date.now();
   const { slackClient, channelId, threadTs } = options;
   const hasFiles = options.files && options.files.length > 0;
+  const invocationId = options.invocationId ?? crypto.randomUUID();
 
   // ── Smart routing: skip streaming when it's known to fail ──────────
   const skipStreaming =
@@ -397,7 +399,7 @@ export async function generateResponse(
     stablePrefix: options.stablePrefix,
     conversationContext: options.conversationContext,
     dynamicContext: options.dynamicContext,
-    invocationId: options.invocationId,
+    invocationId,
     channelId: options.channelId,
     threadTs: options.threadTs,
   });
@@ -1158,5 +1160,7 @@ export async function generateResponse(
     }
 
     throw error;
+  } finally {
+    cleanupScratchpad(invocationId);
   }
 }
