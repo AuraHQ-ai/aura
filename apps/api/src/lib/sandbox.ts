@@ -108,6 +108,59 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
 }
 
 /**
+ * Clone or update the aura-tools repo at /opt/aura-tools.
+ * Contains shared scripts, templates, and utilities for sandbox tasks.
+ * Non-fatal -- sandbox works fine without the tools repo.
+ */
+async function setupToolsRepo(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<void> {
+  try {
+    if (!envs.GH_TOKEN) {
+      logger.info("Skipping aura-tools clone — GH_TOKEN not available");
+      return;
+    }
+
+    const existsCheck = await sandbox.commands.run(
+      "test -d /opt/aura-tools/.git && echo exists || echo missing",
+      { timeoutMs: 5_000, envs },
+    );
+
+    if (existsCheck.stdout?.trim() === "exists") {
+      const pullResult = await sandbox.commands.run(
+        "cd /opt/aura-tools && git pull --ff-only origin main 2>/dev/null || true",
+        { timeoutMs: 15_000, envs },
+      );
+      if (pullResult.exitCode === 0) {
+        logger.info("aura-tools repo updated via pull");
+      } else {
+        logger.warn("aura-tools pull had non-zero exit", {
+          exitCode: pullResult.exitCode,
+          stderr: pullResult.stderr,
+        });
+      }
+    } else {
+      const cloneUrl = `https://x-access-token:${envs.GH_TOKEN}@github.com/AuraHQ-ai/aura-tools.git`;
+      const cloneResult = await sandbox.commands.run(
+        `git clone ${cloneUrl} /opt/aura-tools`,
+        { timeoutMs: 30_000, envs },
+      );
+      if (cloneResult.exitCode === 0) {
+        logger.info("aura-tools repo cloned to /opt/aura-tools");
+      } else {
+        logger.warn("aura-tools clone failed", {
+          exitCode: cloneResult.exitCode,
+          stderr: cloneResult.stderr,
+        });
+      }
+    }
+  } catch (error: any) {
+    logger.warn("Failed to set up aura-tools repo", { error: error.message });
+  }
+}
+
+/**
  * Mount the GCS bucket `gs://aura-files` at `/mnt/aura-files`.
  * Installs gcsfuse if needed and uses the base64-encoded SA key from envs.
  * Non-fatal -- sandbox works fine without the mount.
@@ -279,6 +332,7 @@ export async function getOrCreateSandbox(): Promise<any> {
 
     if (cachedSandbox) {
       await setupSandboxFilesystem(cachedSandbox, envs);
+      await setupToolsRepo(cachedSandbox, envs);
       return cachedSandbox;
     }
   }
@@ -336,6 +390,7 @@ export async function getOrCreateSandbox(): Promise<any> {
   }
 
   await setupSandboxFilesystem(sandbox, envs);
+  await setupToolsRepo(sandbox, envs);
 
   return sandbox;
 }
