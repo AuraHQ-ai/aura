@@ -1,0 +1,47 @@
+name: Rebuild E2B Sandbox Template
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sandbox/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm --filter aura-sandbox install
+
+      - name: Build sandbox template
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+        run: |
+          OUTPUT=$(pnpm --filter aura-sandbox build:prod 2>&1)
+          echo "$OUTPUT"
+          TEMPLATE_ID=$(echo "$OUTPUT" | grep 'Template ID:' | awk '{print $NF}')
+          echo "TEMPLATE_ID=$TEMPLATE_ID" >> "$GITHUB_ENV"
+
+      - name: Update Vercel env var and redeploy
+        if: env.TEMPLATE_ID != ''
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          printf '%s' "$TEMPLATE_ID" | npx --yes vercel@50.13.2 env rm E2B_TEMPLATE_ID production --yes --scope realadvisor --token "$VERCEL_TOKEN" 2>/dev/null || true
+          printf '%s' "$TEMPLATE_ID" | npx --yes vercel@50.13.2 env add E2B_TEMPLATE_ID production --scope realadvisor --token "$VERCEL_TOKEN"
+          npx --yes vercel@50.13.2 --prod --scope realadvisor --token "$VERCEL_TOKEN"
+          echo "Deployed with E2B_TEMPLATE_ID=$TEMPLATE_ID"
