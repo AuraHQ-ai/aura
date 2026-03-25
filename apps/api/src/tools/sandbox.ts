@@ -74,7 +74,7 @@ export function createSandboxTools(context?: ScheduleContext) {
           const result = await sandbox.commands.run(command, {
             cwd: workdir || userHome,
             timeoutMs: timeout_seconds * 1000,
-            envs: { ...envs, USER_HOME: userHome, PERSISTENT_HOME: userHome },
+            envs: { ...envs, USER_HOME: userHome, PERSISTENT_HOME: userHome, SLACK_USER_ID: userId },
           });
 
           const stdout = truncateOutput(result.stdout || "", 4000);
