@@ -957,6 +957,7 @@ export const credentials = pgTable(
     value: text("value").notNull(),
     keyVersion: integer("key_version").notNull().default(1),
     sandboxEnvName: text("sandbox_env_name"),
+    scope: text("scope").notNull().default("shared"),
     expiresAt: timestamptz("expires_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
@@ -970,6 +971,10 @@ export const credentials = pgTable(
     check(
       "credentials_type_check",
       sql`${table.type} IN ('token', 'oauth_client')`,
+    ),
+    check(
+      "credentials_scope_check",
+      sql`${table.scope} IN ('shared', 'admin_only', 'per_user')`,
     ),
   ],
 );

@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { defineTool, binaryToModelOutput, registerToolNames } from "../lib/tool.js";
-import { hasRole } from "../lib/permissions.js";
+import { defineTool, binaryToModelOutput, registerToolNames, filterToolsByCredentials } from "../lib/tool.js";
+import { resolveUserCredentials } from "../lib/permissions.js";
 import { createCoreTools } from "./core.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
@@ -531,7 +531,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
   const tools: Record<string, any> = {
     // ── Core Tools (channel-agnostic, shared with Dashboard etc.) ────────
-    ...createCoreTools(context),
+    ...(await createCoreTools(context)),
 
     list_channels: defineTool({
       description:
@@ -1573,6 +1573,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     }),
 
     list_dm_conversations: defineTool({
+      requiredCredentials: ["admin_access"],
       description:
         "List DM conversations Aura has had. Returns the list of users Aura has open DM channels with. Supports cursor pagination — pass the returned next_cursor in follow-up calls to paginate through ALL DM channels. Admin-only.",
       inputSchema: z.object({
@@ -1591,15 +1592,6 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
       }),
       execute: async ({ limit, cursor: inputCursor }) => {
         try {
-          // Authorization: only admins can list all DM conversations
-          if (!(await hasRole(context?.userId, "admin"))) {
-            return {
-              ok: false,
-              error:
-                "Only admins can list all DM conversations. Use read_dm_history to check your own DM with Aura.",
-            };
-          }
-
           // Pre-load user list to avoid N+1 API calls for name resolution
           const allUsers = await getUserList(client);
           const userNameMap = new Map<string, string>();
@@ -2281,7 +2273,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
     upload_file: defineTool({
       description:
-        "Upload a file to Slack, optionally sharing to a channel or thread. Two modes: (1) Pass `content` for text files (CSV, JSON, code) — inline string. (2) Pass `file_path` for binary files (images, audio, PDFs) — reads the file from the sandbox filesystem. Exactly one of `content` or `file_path` must be provided. The channel parameter accepts any Slack destination: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID ('D0AF1K2EBH8'), group DM ID ('G01234'), or a username/display name ('Joan') to open a DM. Use thread_ts to post into a specific thread (including Slack List item comment threads).",
+        "Upload a file to Slack, optionally sharing to a channel or thread. Two modes: (1) Pass `content` for text files (CSV, JSON, code) — inline string. (2) Pass `file_path` for binary files (images, audio, PDFs) — reads the file from the sandbox filesystem (requires sandbox access). Exactly one of `content` or `file_path` must be provided. The channel parameter accepts any Slack destination: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID ('D0AF1K2EBH8'), group DM ID ('G01234'), or a username/display name ('Joan') to open a DM. Use thread_ts to post into a specific thread (including Slack List item comment threads).",
       inputSchema: z.object({
         content: z
           .string()
@@ -2343,10 +2335,10 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
           let fileBuffer: Buffer;
           if (file_path) {
-            if (!(await hasRole(context?.userId, "admin"))) {
+            if (!process.env.E2B_API_KEY) {
               return {
                 ok: false,
-                error: "Only admins can access sandbox files.",
+                error: "Sandbox access requires E2B_API_KEY to be configured.",
               };
             }
             const { getOrCreateSandbox } = await import("../lib/sandbox.js");
@@ -2957,6 +2949,20 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     ...createVoiceTools(client, context),
     ...createScratchpadTools(invocationId ?? crypto.randomUUID()),
   };
+
+  // ── Credential-driven tool gating ──────────────────────────────────
+  try {
+    const userCreds = await resolveUserCredentials(context?.userId);
+    const filteredTools = filterToolsByCredentials(tools, userCreds);
+    for (const k of Object.keys(tools)) {
+      if (!(k in filteredTools)) delete tools[k];
+    }
+  } catch (e: any) {
+    logger.warn("createSlackTools: credential filtering failed, keeping all tools", {
+      userId: context?.userId,
+      error: e.message,
+    });
+  }
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
   // When running on an Anthropic model, mark infrequently-used tools as

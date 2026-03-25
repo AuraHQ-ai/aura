@@ -4,7 +4,6 @@ import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { voiceCalls } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
-import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import type { WebClient } from "@slack/web-api";
 import { resolveSlackDestination } from "./slack.js";
@@ -188,17 +187,14 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
   if (process.env.ELEVENLABS_API_KEY) {
     // ── list_voice_agents ───────────────────────────────────────────
     tools.list_voice_agents = defineTool({
+      requiredCredentials: ["elevenlabs_api_key"],
       description:
         "List available ElevenLabs voice agents, phone numbers, and voices. " +
         "Call this BEFORE place_call when the user asks to call with a specific agent, " +
         "voice, or phone number so you can resolve names to IDs. " +
-        "Results are cached for 10 minutes. Admin-only.",
+        "Results are cached for 10 minutes.",
       inputSchema: z.object({}),
       execute: async () => {
-        if (!(await hasRole(context?.userId, "power_user"))) {
-          return { ok: false, error: "Only power users and above can list voice agents." };
-        }
-
         try {
           const data = await getElevenLabsData();
 
@@ -244,6 +240,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
     const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
 
     tools.place_call = defineTool({
+      requiredCredentials: ["elevenlabs_api_key"],
       description:
         "Initiate an outbound phone call via ElevenLabs + Twilio. " +
         "Use list_voice_agents first to discover available agents/phones/voices. " +
@@ -315,13 +312,6 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         context: callContext,
         language,
       }) => {
-        if (!(await hasRole(context?.userId, "power_user"))) {
-          return {
-            ok: false,
-            error: "Only power users and above can initiate phone calls.",
-          };
-        }
-
         const apiKey = process.env.ELEVENLABS_API_KEY;
         if (!apiKey) {
           return { ok: false, error: "ELEVENLABS_API_KEY not configured." };
@@ -508,8 +498,9 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
   }
 
   tools.send_sms = defineTool({
+    requiredCredentials: ["elevenlabs_api_key"],
     description:
-      "Send an SMS text message via Twilio. Use for quick notifications or when someone isn't responding to Slack. Admin-only.",
+      "Send an SMS text message via Twilio. Use for quick notifications or when someone isn't responding to Slack.",
     inputSchema: z.object({
       phone_number: z
         .string()
@@ -521,13 +512,6 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         .describe("The SMS message body to send."),
     }),
     execute: async ({ phone_number, message }) => {
-      if (!(await hasRole(context?.userId, "power_user"))) {
-        return {
-          ok: false,
-          error: "Only power users and above can send SMS messages.",
-        };
-      }
-
       const recentSms = await db
         .select({ count: sql`count(*)` })
         .from(voiceCalls)
@@ -644,6 +628,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
   // ── send_voice_note ─────────────────────────────────────────────
   if (process.env.ELEVENLABS_API_KEY) {
     tools.send_voice_note = defineTool({
+      requiredCredentials: ["elevenlabs_api_key"],
       description:
         "Generate a voice note from text using ElevenLabs TTS and upload it to Slack as an mp3. " +
         "Great for sending audio messages, pronunciation demos, or adding a personal touch. " +
@@ -672,10 +657,6 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           .describe("Thread timestamp to attach the voice note to a specific thread."),
       }),
       execute: async ({ text, voice_id, language, channel, thread_ts }) => {
-        if (!(await hasRole(context?.userId, "power_user"))) {
-          return { ok: false, error: "Only power users and above can send voice notes." };
-        }
-
         const recentNotes = await db
           .select({ count: sql`count(*)` })
           .from(voiceCalls)

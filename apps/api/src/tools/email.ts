@@ -16,6 +16,7 @@ const AURA_BOT_USER_ID = "U0AFEC1C69F";
 export function createEmailTools(context?: ScheduleContext) {
   return {
     send_email: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
         "Send an email. Defaults to sending from Aura's configured email address. Set user_name to send from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Use for external communication, follow-ups, outreach, and reports. Never send emails without being asked or having a clear reason (job, follow-up, etc.). Body is sent as plain text — keep it professional but conversational, same tone as Slack. DM privacy applies: don't email someone's private Slack DM content to others. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
@@ -123,6 +124,7 @@ export function createEmailTools(context?: ScheduleContext) {
     }),
 
     reply_to_email: defineTool({
+      requiredCredentials: ["google_oauth"],
       description: "Reply to an existing email thread. Defaults to replying from Aura's configured email address. Set user_name to reply from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Requires message_id and thread_id from read_user_emails or read_user_email.",
       inputSchema: z.object({
         message_id: z
@@ -690,6 +692,7 @@ export function createGmailEATools(context?: ScheduleContext) {
 
   return {
     create_gmail_draft: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
         "Create a draft email in a user's Gmail account. Defaults to the caller's account. The user must have granted Aura OAuth access first. Supports optional file attachments (base64-encoded).",
       inputSchema: z.object({
@@ -803,6 +806,7 @@ export function createGmailEATools(context?: ScheduleContext) {
     }),
 
     list_gmail_drafts: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
         "List draft emails in a user's Gmail account. Defaults to the caller's account. The user must have granted Aura OAuth access.",
       inputSchema: z.object({
@@ -868,6 +872,7 @@ export function createGmailEATools(context?: ScheduleContext) {
     }),
 
     read_user_emails: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
         "Read recent emails from a user's Gmail inbox. Defaults to the caller's account. The user must have granted Aura OAuth access. Supports pagination via page_token.",
       inputSchema: z.object({
@@ -954,6 +959,7 @@ export function createGmailEATools(context?: ScheduleContext) {
     }),
 
     read_user_email: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
         "Read the full content of a specific email from a user's Gmail account by message ID. Defaults to the caller's account.",
       inputSchema: z.object({
@@ -1014,6 +1020,7 @@ export function createGmailEATools(context?: ScheduleContext) {
     }),
 
     delete_gmail_draft: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
         "Delete a draft email from a user's Gmail account. Defaults to the caller's account. The user must have granted Aura OAuth access.",
       inputSchema: z.object({
@@ -1074,6 +1081,7 @@ export function createGmailEATools(context?: ScheduleContext) {
     }),
 
     download_email_attachment: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
         "Download an attachment from a Gmail message. Defaults to the caller's account. Returns base64-encoded file content by default. When save_to_disk is true, the file is written to /home/user/downloads/{filename} on the sandbox filesystem and the path is returned instead of base64. Use save_to_disk when you need to process the file with shell tools like pdftotext, or pass it to other commands. Use read_user_email first to get the message_id and attachment_id. The returned base64 can be passed directly to create_gmail_draft attachments.",
       inputSchema: z.object({
@@ -1205,6 +1213,7 @@ export function createGmailEATools(context?: ScheduleContext) {
     }),
 
     generate_gmail_auth_url: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
         "Generate a Google OAuth consent URL for a user to connect their Gmail account to Aura. DM the resulting URL to the user — they click it, authorize in Google, and their Gmail is connected for reading and drafting.",
       inputSchema: z.object({

@@ -20,8 +20,9 @@ export function createEmailSyncTools(
 ) {
   return {
     sync_emails: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
-        "Sync emails from a user's Gmail into the staging pipeline. Supports date windows (after/before), relative dates (newer_than), or raw Gmail queries. Resumable — re-running with the same query skips already-synced emails. Admin-only.",
+        "Sync emails from a user's Gmail into the staging pipeline. Supports date windows (after/before), relative dates (newer_than), or raw Gmail queries. Resumable — re-running with the same query skips already-synced emails.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -72,13 +73,6 @@ export function createEmailSyncTools(
         classify,
         max_messages,
       }) => {
-        if (!(await hasRole(context?.userId, "admin"))) {
-          return {
-            ok: false,
-            error: "This tool is restricted to admin users only.",
-          };
-        }
-
         try {
           const user = await resolveUserByName(client, user_name);
           if (!user) {
@@ -163,8 +157,9 @@ export function createEmailSyncTools(
     }),
 
     email_digest: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
-        "Get an email digest for a user: returns structured data with counts and thread objects (each with gmail_thread_id). Use threads[].gmail_thread_id for follow-up actions. Admin-only.",
+        "Get an email digest for a user: returns structured data with counts and thread objects (each with gmail_thread_id). Use threads[].gmail_thread_id for follow-up actions.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -177,13 +172,6 @@ export function createEmailSyncTools(
           .describe("Include FYI-level threads (default false)"),
       }),
       execute: async ({ user_name, include_fyi }) => {
-        if (!(await hasRole(context?.userId, "admin"))) {
-          return {
-            ok: false,
-            error: "This tool is restricted to admin users only.",
-          };
-        }
-
         try {
           const user = await resolveUserByName(client, user_name);
           if (!user) {
@@ -441,8 +429,9 @@ export function createEmailSyncTools(
     }),
 
     update_email_threads: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
-        "Batch-update triage states for multiple email threads at once. Accepts an array of {gmail_thread_id, thread_state, reason?}. Use after email_digest to dismiss/resolve/reclassify several threads in one call. Admin-only.",
+        "Batch-update triage states for multiple email threads at once. Accepts an array of {gmail_thread_id, thread_state, reason?}. Use after email_digest to dismiss/resolve/reclassify several threads in one call.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -466,13 +455,6 @@ export function createEmailSyncTools(
           .describe("Array of thread updates to apply"),
       }),
       execute: async ({ user_name, updates }) => {
-        if (!(await hasRole(context?.userId, "admin"))) {
-          return {
-            ok: false as const,
-            error: "This tool is restricted to admin users only.",
-          };
-        }
-
         try {
           const user = await resolveUserByName(client, user_name);
           if (!user) {
@@ -572,8 +554,9 @@ export function createEmailSyncTools(
     }),
 
     search_emails: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
-        "Search synced emails by keyword (text mode) or meaning (semantic mode). Text mode uses PostgreSQL full-text search on subject + body. Semantic mode embeds the query and finds similar email threads via cosine similarity. Returns one result per thread (latest email). Admin-only.",
+        "Search synced emails by keyword (text mode) or meaning (semantic mode). Text mode uses PostgreSQL full-text search on subject + body. Semantic mode embeds the query and finds similar email threads via cosine similarity. Returns one result per thread (latest email).",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -599,13 +582,6 @@ export function createEmailSyncTools(
           .describe("Max results to return (default 10, max 20)"),
       }),
       execute: async ({ user_name, query, mode, thread_state, limit }) => {
-        if (!(await hasRole(context?.userId, "admin"))) {
-          return {
-            ok: false as const,
-            error: "This tool is restricted to admin users only.",
-          };
-        }
-
         try {
           const user = await resolveUserByName(client, user_name);
           if (!user) {

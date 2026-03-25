@@ -38,6 +38,7 @@ function stripHtml(html: string): string {
 export function createWebTools() {
   return {
     web_search: defineTool({
+      requiredCredentials: ["tavily_api_key"],
       description:
         "Search the web for current information, documentation, news, or anything outside the Slack workspace. Don't search the web for things you can find in the workspace — use search_messages or read_channel_history instead. Requires TAVILY_API_KEY.",
       inputSchema: z.object({

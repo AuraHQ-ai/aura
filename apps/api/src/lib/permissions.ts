@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { userProfiles } from "@aura/db/schema";
+import { userProfiles, credentials, credentialGrants, oauthTokens } from "@aura/db/schema";
 import { executionContext } from "./tool.js";
 import { logger } from "./logger.js";
 
@@ -95,4 +95,94 @@ export function isAdmin(userId: string | undefined): boolean {
     .map((id) => id.trim())
     .filter(Boolean);
   return adminIds.includes(userId);
+}
+
+/**
+ * Resolve which credential names a user has access to.
+ * Returns a Set<string> of credential names based on:
+ * - scope='shared' → all users
+ * - scope='admin_only' → only admin+ users
+ * - scope='per_user' → only the credential owner
+ * - credential_grants → explicit grants (non-revoked)
+ *
+ * Also includes synthetic credential names for well-known env vars:
+ * "admin_access" for admin users, and env-based credentials that
+ * aren't in the DB (e2b_api_key, browserbase_api_key, etc.).
+ */
+export async function resolveUserCredentials(
+  userId: string | undefined,
+): Promise<Set<string>> {
+  const result = new Set<string>();
+
+  const effectiveUserId = resolveCallingUserId(userId);
+  if (!effectiveUserId) return result;
+
+  const isUserAdmin = await hasRole(effectiveUserId, "admin");
+
+  if (isUserAdmin) {
+    result.add("admin_access");
+  }
+
+  // Synthetic credentials from env vars (infra-level, not stored in DB)
+  if (process.env.E2B_API_KEY) result.add("e2b_api_key");
+  if (process.env.BROWSERBASE_API_KEY) result.add("browserbase_api_key");
+  if (process.env.CURSOR_API_KEY) result.add("cursor_api_key");
+  if (process.env.ELEVENLABS_API_KEY) result.add("elevenlabs_api_key");
+  if (process.env.TAVILY_API_KEY) result.add("tavily_api_key");
+  if (process.env.GOOGLE_BQ_CREDENTIALS || process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+    result.add("google_bq_credentials");
+  }
+
+  try {
+    const allCreds = await db
+      .select({ name: credentials.name, scope: credentials.scope, ownerId: credentials.ownerId })
+      .from(credentials);
+
+    for (const cred of allCreds) {
+      const scope = cred.scope || "shared";
+      if (scope === "shared") {
+        result.add(cred.name);
+      } else if (scope === "admin_only" && isUserAdmin) {
+        result.add(cred.name);
+      } else if (scope === "per_user" && cred.ownerId === effectiveUserId) {
+        result.add(cred.name);
+      }
+    }
+
+    const grants = await db
+      .select({ credentialName: credentials.name })
+      .from(credentialGrants)
+      .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
+      .where(
+        eq(credentialGrants.granteeId, effectiveUserId),
+      );
+
+    for (const grant of grants) {
+      result.add(grant.credentialName);
+    }
+  } catch (e: any) {
+    logger.warn("resolveUserCredentials: DB query failed, returning env-based credentials only", {
+      userId: effectiveUserId,
+      error: e.message,
+    });
+  }
+
+  // google_oauth: check if user has OAuth tokens (synthetic per-user credential)
+  try {
+    const tokens = await db
+      .select({ id: oauthTokens.id })
+      .from(oauthTokens)
+      .where(eq(oauthTokens.userId, effectiveUserId))
+      .limit(1);
+    if (tokens.length > 0) {
+      result.add("google_oauth");
+    }
+    if (isUserAdmin) {
+      result.add("google_oauth");
+    }
+  } catch {
+    // oauthTokens table may not exist yet; skip
+  }
+
+  return result;
 }

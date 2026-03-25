@@ -7,7 +7,6 @@ import { db } from "../db/client.js";
 import { jobs, jobExecutions } from "@aura/db/schema";
 import type { FrequencyConfig, ScheduleContext } from "@aura/db/schema";
 import { waitUntil } from "@vercel/functions";
-import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
@@ -184,9 +183,9 @@ export function createJobTools(
           const jobName = name || `job-${Date.now().toString(36)}`;
           const requestedBy = context?.userId || "aura";
 
-          // Per-user job limit for non-admins (also exempt "aura" identity used by heartbeat)
+          // Per-user job limit (exempt "aura" identity used by heartbeat)
           const MAX_JOBS_PER_USER = 5;
-          if (!(await hasRole(context?.userId, "admin"))) {
+          if (requestedBy !== "aura") {
             const activeCount = await db
               .select({ count: sql<number>`count(*)::int` })
               .from(jobs)
@@ -201,7 +200,7 @@ export function createJobTools(
             if ((activeCount[0]?.count ?? 0) >= MAX_JOBS_PER_USER) {
               return {
                 ok: false,
-                error: `You have ${MAX_JOBS_PER_USER} active jobs already. Cancel some before creating new ones, or ask an admin.`,
+                error: `You have ${MAX_JOBS_PER_USER} active jobs already. Cancel some before creating new ones.`,
               };
             }
           }
@@ -594,6 +593,7 @@ export function createJobTools(
     }),
 
     dispatch_headless: defineTool({
+      requiredCredentials: ["admin_access"],
       description:
         "Dispatch a task for immediate headless execution (no Slack streaming overhead). Creates a job and triggers it NOW — no waiting for the 30-min heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. The task runs as full Aura with all tools. Results are posted to the callback channel/thread when done. Admin-only.",
       inputSchema: z.object({
@@ -630,12 +630,6 @@ export function createJobTools(
         name,
         playbook,
       }) => {
-        if (!(await hasRole(context?.userId, "admin"))) {
-          return {
-            ok: false,
-            error: "Only admins can dispatch headless executions.",
-          };
-        }
 
         try {
           const cbChannel = callback_channel || context?.channelId;

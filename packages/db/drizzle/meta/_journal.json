@@ -330,6 +330,13 @@
       "when": 1774435200000,
       "tag": "0046_add_job_script",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1774521600000,
+      "tag": "0047_credential_scope",
+      "breakpoints": true
     }
   ]
 }

@@ -53,8 +53,10 @@ async function loadE2B() {
  * accessed via the credentials table through the governed http_request
  * tool. This prevents run_command from bypassing the governance layer.
  */
-export async function getSandboxEnvs(): Promise<Record<string, string>> {
+export async function getSandboxEnvs(userId?: string): Promise<Record<string, string>> {
   const envs: Record<string, string> = {};
+
+  // Infra-level env vars always included (needed for sandbox operation)
   const ghToken = await getCredential("github_token");
   if (ghToken) {
     envs.GITHUB_TOKEN = ghToken;
@@ -72,8 +74,6 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
   if (process.env.OPENAI_API_KEY) {
     envs.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   }
-  // POSTHOG_API_KEY and CLAAP_API_KEY removed — external service
-  // credentials should flow through the governed http_request tool.
   const saKeyB64 =
     process.env.GOOGLE_SA_KEY_B64 ||
     (process.env.GOOGLE_SERVICE_ACCOUNT_KEY
@@ -83,13 +83,34 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
     envs.GOOGLE_SA_KEY_B64 = saKeyB64;
   }
 
+  // Resolve user's accessible credential names for filtering
+  let userCredNames: Set<string> | null = null;
+  if (userId) {
+    try {
+      const { resolveUserCredentials } = await import("./permissions.js");
+      userCredNames = await resolveUserCredentials(userId);
+    } catch (e: any) {
+      logger.warn("getSandboxEnvs: credential resolution failed, injecting all DB credentials", {
+        userId,
+        error: e.message,
+      });
+    }
+  }
+
   try {
     const rows = await db
-      .select({ sandboxEnvName: credentials.sandboxEnvName, value: credentials.value })
+      .select({
+        name: credentials.name,
+        sandboxEnvName: credentials.sandboxEnvName,
+        value: credentials.value,
+      })
       .from(credentials)
       .where(isNotNull(credentials.sandboxEnvName));
     for (const row of rows) {
       if (row.sandboxEnvName) {
+        if (userCredNames && !userCredNames.has(row.name)) {
+          continue;
+        }
         try {
           envs[row.sandboxEnvName] = decryptCredential(row.value);
         } catch (e: any) {
@@ -377,7 +398,7 @@ export async function writeToSandbox(
 
   let base = "/home/user";
   if (userId) {
-    const envs = await getSandboxEnvs();
+    const envs = await getSandboxEnvs(userId);
     base = await ensureUserHome(sandbox, userId, envs);
   }
 
