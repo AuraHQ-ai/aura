@@ -1973,7 +1973,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
     edit_canvas: defineTool({
       description:
-        "Edit an existing Slack Canvas. Supports inserting content at start/end or before/after a section, replacing or deleting a section, or renaming the canvas.",
+        "Edit an existing Slack Canvas. Supports: insert at start/end, insert before/after a section, replace a section (with section_id) or the entire canvas (without section_id), delete a section, or rename.",
       inputSchema: z.object({
         canvas_id: z.string().describe("The ID of the Canvas to edit"),
         operation: z
@@ -1997,7 +1997,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
           .string()
           .optional()
           .describe(
-            "Section ID (required for replace, delete, insert_before, insert_after). Use read_canvas to find section IDs.",
+            "Section ID (required for delete, insert_before, insert_after; optional for replace — omit to replace entire canvas). Use read_canvas to find section IDs.",
           ),
       }),
       execute: async ({ canvas_id, operation, content, section_id }) => {
@@ -2022,8 +2022,19 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
               };
             }
             changes = [{ operation: "delete", section_id }];
+          } else if (operation === "replace") {
+            if (!content) {
+              return { ok: false, error: "Content is required for replace operations." };
+            }
+            // section_id is optional for replace: with it, replaces a section; without, replaces entire canvas
+            changes = [
+              {
+                operation: "replace",
+                ...(section_id ? { section_id } : {}),
+                document_content: { type: "markdown", markdown: content },
+              },
+            ];
           } else if (
-            operation === "replace" ||
             operation === "insert_before" ||
             operation === "insert_after"
           ) {
