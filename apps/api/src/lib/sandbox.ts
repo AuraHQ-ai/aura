@@ -133,6 +133,10 @@ async function setupToolsRepo(
     );
 
     if (existsCheck.stdout?.trim() === "exists") {
+      await sandbox.commands.run(
+        `cd /opt/aura-tools && git remote set-url origin https://x-access-token:$GH_TOKEN@github.com/${toolsRepo}.git`,
+        { timeoutMs: 5_000, envs },
+      );
       const pullResult = await sandbox.commands.run(
         "cd /opt/aura-tools && git pull --ff-only origin main",
         { timeoutMs: 15_000, envs },
