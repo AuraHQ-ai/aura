@@ -27,8 +27,8 @@ async function main() {
   console.log("This will take 5-10 minutes...\n");
 
   const result = await Template.build(template, tag, {
-    cpuCount: 2,
-    memoryMB: 2048,
+    cpuCount: 4,
+    memoryMB: 4096,
     onBuildLogs: defaultBuildLogger(),
   });
 
