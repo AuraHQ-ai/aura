@@ -1,0 +1,82 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-background: var(--bg);
+  --color-foreground: var(--text-primary);
+  --color-muted: var(--bg-subtle);
+  --color-muted-foreground: var(--text-secondary);
+  --color-border: var(--col-border);
+  --color-ring: var(--accent);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--bg);
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #fff;
+  --color-card: var(--bg);
+  --color-card-foreground: var(--text-primary);
+  --color-popover: var(--bg);
+  --color-popover-foreground: var(--text-primary);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--bg);
+  --color-secondary: var(--bg-subtle);
+  --color-secondary-foreground: var(--text-primary);
+  --color-input: var(--col-border);
+  --radius-sm: 0.1875rem;
+  --radius-md: 0.3125rem;
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
+}
+
+:root {
+  --col-border: #e5e5e5;
+  --text-primary: #0a0a0a;
+  --text-secondary: #555;
+  --text-muted: #999;
+  --bg: #fff;
+  --bg-subtle: #f5f5f5;
+  --accent: #0a0a0a;
+  --sidebar-bg: #fafafa;
+  --sidebar-border: #e5e5e5;
+}
+
+.dark {
+  --col-border: #262626;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #555;
+  --bg: #09090b;
+  --bg-subtle: #18181b;
+  --accent: #fafafa;
+  --sidebar-bg: #0f0f12;
+  --sidebar-border: #262626;
+}
+
+* {
+  box-sizing: border-box;
+  border-color: var(--col-border);
+}
+
+html {
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* Resizable panel separator */
+[data-separator] {
+  transition: background-color 0.15s ease;
+}
+[data-separator]:hover,
+[data-separator][data-resize-handle-active] {
+  background-color: var(--accent) !important;
+}
