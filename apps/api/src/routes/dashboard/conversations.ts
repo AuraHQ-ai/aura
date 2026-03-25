@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, asc, sql, and, type SQL } from "drizzle-orm";
 import {
   conversationTraces,
@@ -10,12 +10,45 @@ import {
 } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
+import { errorSchema, createDashboardApp } from "./schemas.js";
 
-export const dashboardConversationsApp = new Hono();
+export const dashboardConversationsApp = createDashboardApp();
 
 // ── List invocations ────────────────────────────────────────────────────────
 
-dashboardConversationsApp.get("/", async (c) => {
+const listConversationsRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Conversations"],
+  summary: "List invocations",
+  request: {
+    query: z.object({
+      sourceType: z.string().optional(),
+      search: z.string().optional(),
+      page: z.coerce.number().optional(),
+      limit: z.coerce.number().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            items: z.array(z.any()),
+            total: z.number(),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
   try {
     const sourceType = c.req.query("sourceType");
     const search = c.req.query("search");
@@ -133,7 +166,7 @@ dashboardConversationsApp.get("/", async (c) => {
       };
     });
 
-    return c.json({ items, total });
+    return c.json({ items, total } as any, 200);
   } catch (error) {
     logger.error("Failed to list conversations", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -142,7 +175,39 @@ dashboardConversationsApp.get("/", async (c) => {
 
 // ── List threads ────────────────────────────────────────────────────────────
 
-dashboardConversationsApp.get("/threads", async (c) => {
+const listThreadsRoute = createRoute({
+  method: "get",
+  path: "/threads",
+  tags: ["Conversations"],
+  summary: "List conversation threads",
+  request: {
+    query: z.object({
+      sourceType: z.string().optional(),
+      search: z.string().optional(),
+      page: z.coerce.number().optional(),
+      limit: z.coerce.number().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            items: z.array(z.any()),
+            total: z.number(),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
   try {
     const sourceType = c.req.query("sourceType");
     const search = c.req.query("search");
@@ -257,7 +322,7 @@ dashboardConversationsApp.get("/threads", async (c) => {
       };
     });
 
-    return c.json({ items, total });
+    return c.json({ items, total } as any, 200);
   } catch (error) {
     logger.error("Failed to list threads", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -266,7 +331,33 @@ dashboardConversationsApp.get("/threads", async (c) => {
 
 // ── Single conversation (trace + messages/parts) ────────────────────────────
 
-dashboardConversationsApp.get("/:id", async (c) => {
+const getConversationRoute = createRoute({
+  method: "get",
+  path: "/{id}",
+  tags: ["Conversations"],
+  summary: "Get single conversation with messages and parts",
+  request: {
+    params: z.object({
+      id: z.string().openapi({ param: { name: "id", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardConversationsApp.openapi(getConversationRoute, async (c) => {
   try {
     const id = c.req.param("id");
     const [trace] = await db.select().from(conversationTraces).where(eq(conversationTraces.id, id));
@@ -323,7 +414,7 @@ dashboardConversationsApp.get("/:id", async (c) => {
       }
     }
 
-    return c.json({ trace: traceWithTokens, conversation, jobName, jobId });
+    return c.json({ trace: traceWithTokens, conversation, jobName, jobId } as any, 200);
   } catch (error) {
     logger.error("Failed to get conversation", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -332,7 +423,34 @@ dashboardConversationsApp.get("/:id", async (c) => {
 
 // ── Thread detail (all traces in a thread) ──────────────────────────────────
 
-dashboardConversationsApp.get("/threads/:channelId/:threadTs", async (c) => {
+const getThreadDetailRoute = createRoute({
+  method: "get",
+  path: "/threads/{channelId}/{threadTs}",
+  tags: ["Conversations"],
+  summary: "Get thread detail with all traces",
+  request: {
+    params: z.object({
+      channelId: z.string().openapi({ param: { name: "channelId", in: "path" } }),
+      threadTs: z.string().openapi({ param: { name: "threadTs", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
   try {
     const channelId = c.req.param("channelId");
     const threadTs = c.req.param("threadTs");
@@ -438,19 +556,22 @@ dashboardConversationsApp.get("/threads/:channelId/:threadTs", async (c) => {
       };
     });
 
-    return c.json({
-      conversations,
-      meta: {
-        channelId,
-        threadTs,
-        totalCost,
-        traceCount: traces.length,
-        startedAt: traces[0].createdAt,
-        endedAt: traces[traces.length - 1].createdAt,
-        participants: participants.map((id) => ({ userId: id, displayName: participantNames[id] ?? null })),
-        messagePreview: previewRow?.content ?? null,
-      },
-    });
+    return c.json(
+      {
+        conversations,
+        meta: {
+          channelId,
+          threadTs,
+          totalCost,
+          traceCount: traces.length,
+          startedAt: traces[0].createdAt,
+          endedAt: traces[traces.length - 1].createdAt,
+          participants: participants.map((id) => ({ userId: id, displayName: participantNames[id] ?? null })),
+          messagePreview: previewRow?.content ?? null,
+        },
+      } as any,
+      200,
+    );
   } catch (error) {
     logger.error("Failed to get thread traces", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);

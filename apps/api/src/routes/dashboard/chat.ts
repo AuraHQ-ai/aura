@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import {
   convertToModelMessages,
   type UIMessage,
@@ -26,13 +26,41 @@ import {
 import { storeMessage } from "../../memory/store.js";
 import { buildStepUsages } from "../../lib/cost-calculator.js";
 import { logger } from "../../lib/logger.js";
+import { errorSchema, createDashboardApp } from "./schemas.js";
 
-export const dashboardChatApp = new Hono();
+export const dashboardChatApp = createDashboardApp();
 
 // ── List dashboard chat threads ─────────────────────────────────────────────
 
-dashboardChatApp.get("/threads", async (c) => {
+const listChatThreadsRoute = createRoute({
+  method: "get",
+  path: "/threads",
+  tags: ["Chat"],
+  summary: "List dashboard chat threads",
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            threads: z.array(z.object({
+              threadId: z.string().nullable(),
+              preview: z.string().nullable(),
+              lastActivityAt: z.string().nullable(),
+              messageCount: z.number(),
+            })),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
 
+dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
   try {
     const threadRows = await db
       .select({
@@ -80,7 +108,7 @@ dashboardChatApp.get("/threads", async (c) => {
       messageCount: row.traceCount,
     }));
 
-    return c.json({ threads });
+    return c.json({ threads } as any, 200);
   } catch (error) {
     logger.error("Failed to list dashboard threads", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -89,8 +117,39 @@ dashboardChatApp.get("/threads", async (c) => {
 
 // ── Load messages for a dashboard chat thread ───────────────────────────────
 
-dashboardChatApp.get("/threads/:threadId/messages", async (c) => {
+const getThreadMessagesRoute = createRoute({
+  method: "get",
+  path: "/threads/{threadId}/messages",
+  tags: ["Chat"],
+  summary: "Load messages for a dashboard chat thread",
+  request: {
+    params: z.object({
+      threadId: z.string().openapi({ param: { name: "threadId", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            messages: z.array(z.record(z.string(), z.unknown())),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    400: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Bad request",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
 
+dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
   const threadId = c.req.param("threadId");
   if (!threadId) return c.json({ error: "threadId is required" }, 400);
 
@@ -108,7 +167,7 @@ dashboardChatApp.get("/threads/:threadId/messages", async (c) => {
       .orderBy(asc(conversationTraces.createdAt));
 
     if (traces.length === 0) {
-      return c.json({ messages: [] });
+      return c.json({ messages: [] } as any, 200);
     }
 
     const traceIds = traces.map((t) => t.id);
@@ -156,7 +215,7 @@ dashboardChatApp.get("/threads/:threadId/messages", async (c) => {
       }
     }
 
-    return c.json({ messages: uiMessages });
+    return c.json({ messages: uiMessages } as any, 200);
   } catch (error) {
     logger.error("Failed to load thread messages", { error: String(error), threadId });
     return c.json({ error: "Internal server error" }, 500);
@@ -205,7 +264,47 @@ function partsToUIParts(
 
 // ── Dashboard chat (streaming) ──────────────────────────────────────────────
 
-dashboardChatApp.post("/", async (c) => {
+const postChatRoute = createRoute({
+  method: "post",
+  path: "/",
+  tags: ["Chat"],
+  summary: "Send a chat message (streaming response)",
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            messages: z.array(z.any()),
+            userId: z.string().optional(),
+            threadId: z.string().nullable().optional(),
+            modelId: z.string().nullable().optional(),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "text/event-stream": {
+          schema: z.any(),
+        },
+      },
+      description: "Streaming response",
+    },
+    400: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Bad request",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardChatApp.openapi(postChatRoute, async (c) => {
   let body: Record<string, unknown>;
   try {
     body = await c.req.json();
@@ -260,7 +359,6 @@ dashboardChatApp.post("/", async (c) => {
 
     const tools = createCoreTools({ userId, channelId: "dashboard" });
 
-    // Log message parts for debugging tool call conversion issues
     for (const msg of messages) {
       const partTypes = msg.parts?.map((p: any) => p.type) ?? [];
       if (partTypes.some((t: string) => t.startsWith("tool") || t === "dynamic-tool" || t === "step-start")) {

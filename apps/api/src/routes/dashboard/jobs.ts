@@ -1,12 +1,40 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import { eq, sql, ilike, desc } from "drizzle-orm";
 import { jobs, jobExecutions, conversationTraces } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
+import { errorSchema, paginationQuerySchema, idParamSchema, createDashboardApp } from "./schemas.js";
 
-export const dashboardJobsApp = new Hono();
+export const dashboardJobsApp = createDashboardApp();
 
-dashboardJobsApp.get("/", async (c) => {
+const listJobsRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Jobs"],
+  summary: "List jobs",
+  request: {
+    query: paginationQuerySchema,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            items: z.array(z.any()),
+            total: z.number(),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardJobsApp.openapi(listJobsRoute, async (c) => {
   try {
     const search = c.req.query("search") ?? "";
     const page = Math.max(1, parseInt(c.req.query("page") ?? "1", 10));
@@ -29,14 +57,45 @@ dashboardJobsApp.get("/", async (c) => {
         .where(where),
     ]);
 
-    return c.json({ items, total: countResult[0]?.count ?? 0 });
+    return c.json({ items, total: countResult[0]?.count ?? 0 } as any, 200);
   } catch (error) {
     logger.error("Failed to list jobs", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardJobsApp.get("/:id", async (c) => {
+const getJobRoute = createRoute({
+  method: "get",
+  path: "/{id}",
+  tags: ["Jobs"],
+  summary: "Get job detail with executions",
+  request: {
+    params: idParamSchema,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            job: z.any(),
+            executions: z.array(z.any()),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardJobsApp.openapi(getJobRoute, async (c) => {
   try {
     const id = c.req.param("id");
 
@@ -85,14 +144,46 @@ dashboardJobsApp.get("/:id", async (c) => {
       conversationTraceId: traceMap[e.id]?.traceId ?? null,
     }));
 
-    return c.json({ job, executions: enrichedExecutions });
+    return c.json({ job, executions: enrichedExecutions } as any, 200);
   } catch (error) {
     logger.error("Failed to get job detail", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardJobsApp.patch("/:id", async (c) => {
+const toggleJobRoute = createRoute({
+  method: "patch",
+  path: "/{id}",
+  tags: ["Jobs"],
+  summary: "Toggle job enabled/disabled",
+  request: {
+    params: idParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({ enabled: z.boolean() }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardJobsApp.openapi(toggleJobRoute, async (c) => {
   try {
     const id = c.req.param("id");
     const body = await c.req.json<{ enabled: boolean }>();
@@ -110,7 +201,7 @@ dashboardJobsApp.patch("/:id", async (c) => {
       return c.json({ error: "Job not found" }, 404);
     }
 
-    return c.json(result[0]);
+    return c.json(result[0] as any, 200);
   } catch (error) {
     logger.error("Failed to toggle job", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);

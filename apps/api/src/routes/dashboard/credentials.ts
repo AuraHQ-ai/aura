@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
 import { eq, ilike, sql, desc } from "drizzle-orm";
 import {
   credentials,
@@ -13,10 +13,38 @@ import {
   decryptCredential,
   maskCredential,
 } from "../../lib/credentials.js";
+import { errorSchema, paginationQuerySchema, idParamSchema, okSchema, createDashboardApp } from "./schemas.js";
 
-export const dashboardCredentialsApp = new Hono();
+export const dashboardCredentialsApp = createDashboardApp();
 
-dashboardCredentialsApp.get("/", async (c) => {
+const listCredentialsRoute = createRoute({
+  method: "get",
+  path: "/",
+  tags: ["Credentials"],
+  summary: "List credentials",
+  request: {
+    query: paginationQuerySchema,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            items: z.array(z.any()),
+            total: z.number(),
+          }),
+        },
+      },
+      description: "Success",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(listCredentialsRoute, async (c) => {
   try {
     const search = c.req.query("search");
     const page = Math.max(1, Number(c.req.query("page")) || 1);
@@ -58,14 +86,48 @@ dashboardCredentialsApp.get("/", async (c) => {
         .where(where),
     ]);
 
-    return c.json({ items, total });
+    return c.json({ items, total } as any, 200);
   } catch (error) {
     logger.error("Failed to list credentials", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardCredentialsApp.post("/", async (c) => {
+const createCredentialRoute = createRoute({
+  method: "post",
+  path: "/",
+  tags: ["Credentials"],
+  summary: "Create a credential",
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            name: z.string(),
+            type: z.string(),
+            ownerId: z.string(),
+            value: z.string(),
+            expiresAt: z.string().optional(),
+            tokenUrl: z.string().optional(),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Created",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(createCredentialRoute, async (c) => {
   try {
     const body = await c.req.json<{
       name: string;
@@ -97,14 +159,38 @@ dashboardCredentialsApp.post("/", async (c) => {
         createdAt: credentials.createdAt,
       });
 
-    return c.json(created, 201);
+    return c.json(created as any, 201);
   } catch (error) {
     logger.error("Failed to create credential", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardCredentialsApp.get("/:id", async (c) => {
+const getCredentialRoute = createRoute({
+  method: "get",
+  path: "/{id}",
+  tags: ["Credentials"],
+  summary: "Get credential detail",
+  request: {
+    params: idParamSchema,
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(getCredentialRoute, async (c) => {
   try {
     const id = c.req.param("id");
 
@@ -148,27 +234,62 @@ dashboardCredentialsApp.get("/:id", async (c) => {
         .limit(1),
     ]);
 
-    return c.json({
-      id: cred.id,
-      name: cred.name,
-      type: cred.type,
-      ownerId: cred.ownerId,
-      ownerName: ownerRow[0]?.displayName ?? null,
-      maskedValue,
-      tokenUrl: cred.tokenUrl,
-      expiresAt: cred.expiresAt,
-      createdAt: cred.createdAt,
-      updatedAt: cred.updatedAt,
-      grants,
-      auditLog,
-    });
+    return c.json(
+      {
+        id: cred.id,
+        name: cred.name,
+        type: cred.type,
+        ownerId: cred.ownerId,
+        ownerName: ownerRow[0]?.displayName ?? null,
+        maskedValue,
+        tokenUrl: cred.tokenUrl,
+        expiresAt: cred.expiresAt,
+        createdAt: cred.createdAt,
+        updatedAt: cred.updatedAt,
+        grants,
+        auditLog,
+      } as any,
+      200,
+    );
   } catch (error) {
     logger.error("Failed to get credential", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardCredentialsApp.patch("/:id/value", async (c) => {
+const updateCredentialValueRoute = createRoute({
+  method: "patch",
+  path: "/{id}/value",
+  tags: ["Credentials"],
+  summary: "Update credential value",
+  request: {
+    params: idParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({ value: z.string() }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: okSchema } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(updateCredentialValueRoute, async (c) => {
   try {
     const id = c.req.param("id");
     const { value } = await c.req.json<{ value: string }>();
@@ -183,14 +304,46 @@ dashboardCredentialsApp.patch("/:id/value", async (c) => {
 
     if (!updated) return c.json({ error: "Not found" }, 404);
 
-    return c.json({ ok: true });
+    return c.json({ ok: true } as any, 200);
   } catch (error) {
     logger.error("Failed to update credential value", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardCredentialsApp.post("/:id/grants", async (c) => {
+const createGrantRoute = createRoute({
+  method: "post",
+  path: "/{id}/grants",
+  tags: ["Credentials"],
+  summary: "Grant credential access",
+  request: {
+    params: idParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            granteeId: z.string(),
+            permission: z.string(),
+            grantedBy: z.string(),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Created",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(createGrantRoute, async (c) => {
   try {
     const credentialId = c.req.param("id");
     const body = await c.req.json<{
@@ -218,14 +371,41 @@ dashboardCredentialsApp.post("/:id/grants", async (c) => {
       })
       .returning();
 
-    return c.json(grant, 201);
+    return c.json(grant as any, 201);
   } catch (error) {
     logger.error("Failed to grant credential access", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardCredentialsApp.delete("/:id/grants/:grantId", async (c) => {
+const revokeGrantRoute = createRoute({
+  method: "delete",
+  path: "/{id}/grants/{grantId}",
+  tags: ["Credentials"],
+  summary: "Revoke credential grant",
+  request: {
+    params: z.object({
+      id: z.string().openapi({ param: { name: "id", in: "path" } }),
+      grantId: z.string().openapi({ param: { name: "grantId", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: okSchema } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(revokeGrantRoute, async (c) => {
   try {
     const grantId = c.req.param("grantId");
 
@@ -237,14 +417,38 @@ dashboardCredentialsApp.delete("/:id/grants/:grantId", async (c) => {
 
     if (!revoked) return c.json({ error: "Not found" }, 404);
 
-    return c.json({ ok: true });
+    return c.json({ ok: true } as any, 200);
   } catch (error) {
     logger.error("Failed to revoke credential grant", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-dashboardCredentialsApp.delete("/:id", async (c) => {
+const deleteCredentialRoute = createRoute({
+  method: "delete",
+  path: "/{id}",
+  tags: ["Credentials"],
+  summary: "Delete a credential",
+  request: {
+    params: idParamSchema,
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: okSchema } },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(deleteCredentialRoute, async (c) => {
   try {
     const id = c.req.param("id");
 
@@ -255,7 +459,7 @@ dashboardCredentialsApp.delete("/:id", async (c) => {
 
     if (!deleted) return c.json({ error: "Not found" }, 404);
 
-    return c.json({ ok: true });
+    return c.json({ ok: true } as any, 200);
   } catch (error) {
     logger.error("Failed to delete credential", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
