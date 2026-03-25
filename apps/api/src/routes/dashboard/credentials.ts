@@ -1,4 +1,4 @@
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createRoute, z } from "@hono/zod-openapi";
 import { eq, ilike, sql, desc } from "drizzle-orm";
 import {
   credentials,
@@ -13,9 +13,9 @@ import {
   decryptCredential,
   maskCredential,
 } from "../../lib/credentials.js";
-import { errorSchema, paginationQuerySchema, idParamSchema, okSchema } from "./schemas.js";
+import { errorSchema, paginationQuerySchema, idParamSchema, okSchema, createDashboardApp } from "./schemas.js";
 
-export const dashboardCredentialsApp = new OpenAPIHono();
+export const dashboardCredentialsApp = createDashboardApp();
 
 const listCredentialsRoute = createRoute({
   method: "get",

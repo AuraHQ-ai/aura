@@ -1,4 +1,4 @@
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createRoute, z } from "@hono/zod-openapi";
 import {
   convertToModelMessages,
   type UIMessage,
@@ -26,9 +26,9 @@ import {
 import { storeMessage } from "../../memory/store.js";
 import { buildStepUsages } from "../../lib/cost-calculator.js";
 import { logger } from "../../lib/logger.js";
-import { errorSchema } from "./schemas.js";
+import { errorSchema, createDashboardApp } from "./schemas.js";
 
-export const dashboardChatApp = new OpenAPIHono();
+export const dashboardChatApp = createDashboardApp();
 
 // ── List dashboard chat threads ─────────────────────────────────────────────
 

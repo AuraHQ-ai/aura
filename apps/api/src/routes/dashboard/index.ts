@@ -1,4 +1,3 @@
-import { OpenAPIHono } from "@hono/zod-openapi";
 import { dashboardAuthApp } from "./auth.js";
 import { dashboardChatApp } from "./chat.js";
 import { dashboardStatsApp } from "./stats.js";
@@ -13,8 +12,9 @@ import { dashboardResourcesApp } from "./resources.js";
 import { dashboardConsumptionApp } from "./consumption.js";
 import { dashboardSettingsApp } from "./settings.js";
 import { dashboardModelsApp } from "./models.js";
+import { createDashboardApp } from "./schemas.js";
 
-export const dashboardApp = new OpenAPIHono();
+export const dashboardApp = createDashboardApp();
 
 dashboardApp.use("*", async (c, next) => {
   const secret = process.env.DASHBOARD_API_SECRET;

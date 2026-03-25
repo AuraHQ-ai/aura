@@ -1,7 +1,8 @@
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createRoute, z } from "@hono/zod-openapi";
 import { MAIN_MODELS, FAST_MODELS, EMBEDDING_MODELS, MODEL_DEFAULTS } from "../../lib/models.js";
+import { createDashboardApp } from "./schemas.js";
 
-export const dashboardModelsApp = new OpenAPIHono();
+export const dashboardModelsApp = createDashboardApp();
 
 const listModelsRoute = createRoute({
   method: "get",

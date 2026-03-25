@@ -1,11 +1,11 @@
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createRoute, z } from "@hono/zod-openapi";
 import { eq, sql, ilike, desc } from "drizzle-orm";
 import { userProfiles, people, memories } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
-import { errorSchema, paginationQuerySchema } from "./schemas.js";
+import { errorSchema, paginationQuerySchema, createDashboardApp } from "./schemas.js";
 
-export const dashboardUsersApp = new OpenAPIHono();
+export const dashboardUsersApp = createDashboardApp();
 
 const listUsersRoute = createRoute({
   method: "get",
