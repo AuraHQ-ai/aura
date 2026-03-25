@@ -25,7 +25,7 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 |----------|-------------|
 | `SLACK_USER_TOKEN` | Slack user token (`xoxp-...`) for message search |
 | `GITHUB_TOKEN` | GitHub PAT for reading source code and opening PRs |
-| `AURA_ADMIN_USER_IDS` | Comma-separated Slack user IDs with admin access |
+| `AURA_ADMIN_USER_IDS` | Comma-separated Slack user IDs with admin access. Fallback for users without a DB role — see [Permissions](/permissions) |
 | `E2B_API_KEY` | E2B API key for sandbox access |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings and audio transcription |
 | `AURA_BOT_USER_ID` | Aura's own Slack bot user ID |
