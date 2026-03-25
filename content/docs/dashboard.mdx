@@ -95,7 +95,7 @@ Configure instance behavior:
 
 ## Access & Authentication
 
-The dashboard uses Slack OAuth for login. Only users listed in `AURA_ADMIN_USER_IDS` can access it.
+The dashboard uses Slack OAuth for login. Access requires an `admin` or `owner` role (see [Permissions](/permissions)). The `AURA_ADMIN_USER_IDS` env var serves as a fallback for users without a database role.
 
 ### Auth Proxy
 

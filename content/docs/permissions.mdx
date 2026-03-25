@@ -1,0 +1,100 @@
+---
+title: "Permissions"
+description: "Role-based access control: user roles, tool permissions, note scoping, and rate limits."
+---
+
+# Permissions
+
+Aura uses a four-tier role system to control access to tools, notes, and resources. Roles are stored in the database (`user_profiles.role`) with an env var fallback for backwards compatibility.
+
+## Roles
+
+| Role | Level | Description |
+|------|-------|-------------|
+| `member` | 0 | Default role. Can chat with Aura, use basic tools, see shared notes. |
+| `power_user` | 1 | Extended access: sandbox, browser, voice, Cursor agents, subagents. |
+| `admin` | 2 | Full access: cross-user email/Slack, system note editing, job management. |
+| `owner` | 3 | Everything. Reserved for workspace owners. |
+
+Roles are hierarchical — a user with `admin` automatically has all `power_user` and `member` permissions.
+
+## How Roles Are Checked
+
+The `hasRole(userId, minimumRole)` function in `apps/api/src/lib/permissions.ts` is the single source of truth:
+
+1. Look up `user_profiles.role` in the database
+2. If a DB role exists, compare it against the minimum required role and return the result
+3. If no DB profile exists (or query fails), fall back to `AURA_ADMIN_USER_IDS` env var — users listed there get `admin`-level access
+4. The system user `aura` always passes all role checks
+
+<Warning>
+If a user has an explicit role in the database, the env var is **not** consulted. A user demoted to `member` in the DB won't regain admin via the env var. This is intentional — the DB is authoritative once set.
+</Warning>
+
+## Tool Permissions
+
+Each tool category requires a minimum role:
+
+| Tool | Minimum Role |
+|------|-------------|
+| Sandbox (shell commands) | `power_user` |
+| Browser | `power_user` |
+| Cursor Agent | `power_user` |
+| Subagents | `power_user` |
+| Voice | `power_user` |
+| Cross-user email access | `admin` |
+| Cross-user Slack actions | `admin` |
+| Headless job dispatch | `admin` |
+| Job limit bypass | `admin` |
+| System note editing | `admin` |
+
+Members can still use Slack messaging, notes (their own + shared), web search, and basic tools.
+
+## Note Scoping
+
+Notes have `owner_id` and `visibility` fields:
+
+- **`shared`** — Visible to all users (default for user-created notes)
+- **`system`** — Protected notes like `self-directive`, `business-map`, `gaps-log`, and all skill notes. Only admins can create, edit, or delete these.
+- **Private notes** — Scoped by `owner_id`. Users see shared notes, system notes, and their own private notes.
+
+System topics (`self-directive`, `business-map`, `gaps-log`) are always protected regardless of their visibility column value.
+
+## Rate Limits
+
+Default rate limits are seeded per role:
+
+| Resource | Member | Power User | Admin |
+|----------|--------|------------|-------|
+| Active jobs | 5 | 20 | 100 |
+| Notes | 20 | 50 | 200 |
+| Sandbox calls/day | 0 | 50 | 200 |
+| Cursor agents/day | 0 | 3 | 10 |
+| Subagent calls/day | 0 | 10 | 50 |
+
+Rate limits are stored in the `rate_limits` table and are workspace-scoped, so different workspaces can have different limits.
+
+<Note>
+Owners have no seeded rate limits — they're unlimited by default.
+</Note>
+
+## Managing Roles
+
+Roles can be set in two ways:
+
+1. **Dashboard** — Navigate to Users → select a user → Profile tab → Role dropdown. Requires admin access.
+2. **Database** — Update `user_profiles.role` directly.
+
+## Migration from `AURA_ADMIN_USER_IDS`
+
+The env var still works as a fallback for users without a DB profile. For new deployments, set roles via the dashboard instead. The env var will be deprecated in a future release.
+
+## Database Schema
+
+The permission system adds these tables:
+
+- **`user_profiles.role`** — `text NOT NULL DEFAULT 'member'` on the existing user profiles table
+- **`tool_definitions`** — Per-tool minimum role configuration (workspace-scoped)
+- **`tool_credential_slots`** — Credential requirements per tool
+- **`rate_limits`** — Per-role resource limits (workspace-scoped, unique on `workspace_id + role + resource`)
+- **`notes.owner_id`** / **`notes.visibility`** — User scoping for notes
