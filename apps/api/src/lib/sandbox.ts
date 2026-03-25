@@ -109,7 +109,7 @@ export async function getSandboxEnvs(): Promise<Record<string, string>> {
 
 /**
  * Clone or update the aura-tools repo at /opt/aura-tools.
- * Contains shared scripts, templates, and utilities for sandbox tasks.
+ * Repo is resolved from TOOLS_REPO env var (e.g. "realadvisor/aura-tools").
  * Non-fatal -- sandbox works fine without the tools repo.
  */
 async function setupToolsRepo(
@@ -117,6 +117,11 @@ async function setupToolsRepo(
   envs: Record<string, string>,
 ): Promise<void> {
   try {
+    const toolsRepo = process.env.TOOLS_REPO;
+    if (!toolsRepo) {
+      logger.info("Skipping aura-tools clone — TOOLS_REPO not configured");
+      return;
+    }
     if (!envs.GH_TOKEN) {
       logger.info("Skipping aura-tools clone — GH_TOKEN not available");
       return;
@@ -141,17 +146,18 @@ async function setupToolsRepo(
         });
       }
     } else {
-      const cloneUrl = `https://x-access-token:${envs.GH_TOKEN}@github.com/AuraHQ-ai/aura-tools.git`;
+      const cloneUrl = `https://x-access-token:${envs.GH_TOKEN}@github.com/${toolsRepo}.git`;
       const cloneResult = await sandbox.commands.run(
         `git clone ${cloneUrl} /opt/aura-tools`,
         { timeoutMs: 30_000, envs },
       );
       if (cloneResult.exitCode === 0) {
-        logger.info("aura-tools repo cloned to /opt/aura-tools");
+        logger.info("aura-tools repo cloned to /opt/aura-tools", { repo: toolsRepo });
       } else {
         logger.warn("aura-tools clone failed", {
           exitCode: cloneResult.exitCode,
           stderr: cloneResult.stderr,
+          repo: toolsRepo,
         });
       }
     }
