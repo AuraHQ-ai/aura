@@ -75,6 +75,9 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
     && apt-get update -qq && apt-get install -y gcsfuse \
     && rm -rf /var/lib/apt/lists/*
 
+# Enable allow_other for FUSE mounts by non-root users
+RUN echo "user_allow_other" >> /etc/fuse.conf
+
 # Working dirs
 RUN mkdir -p /home/user/downloads /home/user/data /home/user/aura \
     && chown -R user:user /home/user
