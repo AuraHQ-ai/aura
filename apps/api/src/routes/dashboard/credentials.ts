@@ -61,6 +61,7 @@ dashboardCredentialsApp.openapi(listCredentialsRoute, async (c) => {
           id: credentials.id,
           name: credentials.name,
           type: credentials.type,
+          scope: credentials.scope,
           ownerId: credentials.ownerId,
           expiresAt: credentials.expiresAt,
           createdAt: credentials.createdAt,
@@ -134,6 +135,7 @@ dashboardCredentialsApp.openapi(createCredentialRoute, async (c) => {
       type: string;
       ownerId: string;
       value: string;
+      scope?: string;
       expiresAt?: string;
       tokenUrl?: string;
     }>();
@@ -147,6 +149,7 @@ dashboardCredentialsApp.openapi(createCredentialRoute, async (c) => {
         type: body.type,
         ownerId: body.ownerId,
         value: encrypted,
+        scope: body.scope || "member",
         expiresAt: body.expiresAt ? new Date(body.expiresAt) : undefined,
         tokenUrl: body.tokenUrl,
       })
@@ -154,6 +157,7 @@ dashboardCredentialsApp.openapi(createCredentialRoute, async (c) => {
         id: credentials.id,
         name: credentials.name,
         type: credentials.type,
+        scope: credentials.scope,
         ownerId: credentials.ownerId,
         expiresAt: credentials.expiresAt,
         createdAt: credentials.createdAt,
@@ -202,7 +206,12 @@ dashboardCredentialsApp.openapi(getCredentialRoute, async (c) => {
 
     if (!cred) return c.json({ error: "Not found" }, 404);
 
-    const maskedValue = maskCredential(decryptCredential(cred.value));
+    let maskedValue: string;
+    try {
+      maskedValue = maskCredential(decryptCredential(cred.value));
+    } catch {
+      maskedValue = "••••••••";
+    }
 
     const [grants, auditLog, ownerRow] = await Promise.all([
       db
@@ -239,6 +248,7 @@ dashboardCredentialsApp.openapi(getCredentialRoute, async (c) => {
         id: cred.id,
         name: cred.name,
         type: cred.type,
+        scope: cred.scope,
         ownerId: cred.ownerId,
         ownerName: ownerRow[0]?.displayName ?? null,
         maskedValue,
@@ -253,6 +263,32 @@ dashboardCredentialsApp.openapi(getCredentialRoute, async (c) => {
     );
   } catch (error) {
     logger.error("Failed to get credential", { error: String(error) });
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+const VALID_SCOPES = ["member", "power_user", "admin", "owner", "per_user"] as const;
+
+dashboardCredentialsApp.patch("/:id/scope", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const { scope } = await c.req.json<{ scope: string }>();
+
+    if (!VALID_SCOPES.includes(scope as (typeof VALID_SCOPES)[number])) {
+      return c.json({ error: `Invalid scope. Must be one of: ${VALID_SCOPES.join(", ")}` }, 400);
+    }
+
+    const [updated] = await db
+      .update(credentials)
+      .set({ scope, updatedAt: new Date() })
+      .where(eq(credentials.id, id))
+      .returning({ id: credentials.id });
+
+    if (!updated) return c.json({ error: "Not found" }, 404);
+
+    return c.json({ ok: true });
+  } catch (error) {
+    logger.error("Failed to update credential scope", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });

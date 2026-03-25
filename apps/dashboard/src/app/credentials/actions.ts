@@ -26,12 +26,18 @@ export async function createCredential(data: {
   type: string;
   ownerId: string;
   value: string;
+  scope?: string;
   expiresAt?: string;
   tokenUrl?: string;
 }) {
   const result = await apiPost<any>("/credentials", data);
   revalidatePath("/credentials");
   return result;
+}
+
+export async function updateCredentialScope(id: string, scope: string) {
+  await apiPatch(`/credentials/${id}/scope`, { scope });
+  revalidatePath(`/credentials/${id}`);
 }
 
 export async function updateCredentialValue(id: string, value: string) {

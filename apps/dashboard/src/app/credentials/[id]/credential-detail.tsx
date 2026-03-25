@@ -9,11 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Dialog, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   updateCredentialValue,
+  updateCredentialScope,
   grantCredentialAccess,
   revokeCredentialAccess,
   deleteCredential,
@@ -37,6 +38,16 @@ export interface WorkspaceUser {
   slackUserId: string;
   displayName: string | null;
 }
+
+const SCOPE_LABELS: Record<string, string> = {
+  member: "Everyone (member+)",
+  power_user: "Power User+",
+  admin: "Admin+",
+  owner: "Owner Only",
+  per_user: "Per User (owner only)",
+};
+
+const VALID_SCOPES = ["member", "power_user", "admin", "owner", "per_user"] as const;
 
 export function CredentialDetail({ data, users }: { data: CredentialData; users: WorkspaceUser[] }) {
   const router = useRouter();
@@ -73,6 +84,11 @@ export function CredentialDetail({ data, users }: { data: CredentialData; users:
     router.refresh();
   }
 
+  async function handleScopeChange(scope: string) {
+    await updateCredentialScope(data.id, scope);
+    router.refresh();
+  }
+
   async function handleDelete() {
     if (!confirm("Delete this credential?")) return;
     await deleteCredential(data.id);
@@ -98,11 +114,25 @@ export function CredentialDetail({ data, users }: { data: CredentialData; users:
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-4">
         <Card>
           <CardHeader><CardTitle className="text-sm">Value</CardTitle></CardHeader>
           <CardContent>
             <code className="text-sm font-mono">{data.maskedValue}</code>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Scope (min role)</CardTitle></CardHeader>
+          <CardContent>
+            <select
+              value={data.scope}
+              onChange={(e) => handleScopeChange(e.target.value)}
+              className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm"
+            >
+              {VALID_SCOPES.map((s) => (
+                <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
+              ))}
+            </select>
           </CardContent>
         </Card>
         <Card>
@@ -202,23 +232,26 @@ export function CredentialDetail({ data, users }: { data: CredentialData; users:
       </Tabs>
 
       <Dialog open={showUpdateValue} onOpenChange={setShowUpdateValue}>
-        <DialogHeader>
-          <DialogTitle>Update Credential Value</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <Input type="password" placeholder="New value" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setShowUpdateValue(false)}>Cancel</Button>
-            <Button onClick={handleUpdateValue}>Update</Button>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update Credential Value</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input type="password" placeholder="New value" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowUpdateValue(false)}>Cancel</Button>
+              <Button onClick={handleUpdateValue}>Update</Button>
+            </div>
           </div>
-        </div>
+        </DialogContent>
       </Dialog>
 
       <Dialog open={showGrant} onOpenChange={setShowGrant}>
-        <DialogHeader>
-          <DialogTitle>Grant Access</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Grant Access</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
           <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -277,6 +310,7 @@ export function CredentialDetail({ data, users }: { data: CredentialData; users:
             <Button onClick={handleGrant}>Grant</Button>
           </div>
         </div>
+        </DialogContent>
       </Dialog>
     </>
   );
