@@ -371,6 +371,7 @@ export const jobs = pgTable(
     name: text("name").notNull(),
     description: text("description").notNull(),
     playbook: text("playbook"),
+    script: text("script"),
     cronSchedule: text("cron_schedule"),
     frequencyConfig: jsonb("frequency_config").$type<FrequencyConfig>(),
     channelId: text("channel_id"),
