@@ -118,6 +118,28 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 | [Vercel](https://vercel.com) | `VERCEL_TOKEN` | Deployment logs, self-diagnosis |
 | [Cohere](https://cohere.com) | `COHERE_API_KEY` | Reranking for better memory retrieval |
 | [Browserbase CF](https://browserbase.com) | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Auth'd domains via Cloudflare Access |
+| Self-authored tools | `TOOLS_REPO` | Runtime scripts repo, cloned to `/opt/aura-tools` on sandbox init |
+
+---
+
+## Self-authored tools
+
+Aura can write, version, and execute her own scripts to handle repeated tasks without full LLM reasoning. These live in a separate repo (set via `TOOLS_REPO`, e.g. `your-org/aura-tools`).
+
+The repo is cloned to `/opt/aura-tools/` on every sandbox startup and kept up to date via `git pull`. Tools follow a simple contract: JSON in, JSON out, exit code 0/1. Any runtime works (Python, Node, bash, TypeScript).
+
+```
+aura-tools/
+├── manifest.json           # Registry of all tools
+├── runner.py               # Input validation, execution, usage tracking
+└── example_tool/
+    ├── tool.json           # Schema, runtime, description
+    └── main.py             # Implementation
+```
+
+Tools compose with the **job system** via the `script` field -- a job can run a tool (zero tokens) and feed its output to an LLM for judgment work. Combined with **persistent storage** (`/mnt/aura-data/<user>/`), this enables stateful recurring workflows that get cheaper with every iteration.
+
+To get started, fork the [aura-tools starter](https://github.com/AuraHQ-ai/aura-tools) and set `TOOLS_REPO=your-org/aura-tools` in your environment.
 
 ---
 
