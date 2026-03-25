@@ -109,21 +109,49 @@ export function isAdmin(userId: string | undefined): boolean {
  * "admin_access" for admin users, and env-based credentials that
  * aren't in the DB (e2b_api_key, browserbase_api_key, etc.).
  */
+/**
+ * Look up a user's role from the DB. Returns 'member' if not found.
+ */
+async function getUserRole(userId: string): Promise<Role> {
+  try {
+    const profile = await db
+      .select({ role: userProfiles.role })
+      .from(userProfiles)
+      .where(eq(userProfiles.slackUserId, userId))
+      .limit(1);
+    if (profile.length > 0 && profile[0].role) {
+      return profile[0].role as Role;
+    }
+  } catch {
+    // fall through
+  }
+  return "member";
+}
+
+/**
+ * Resolve the set of credential *names* a user can access.
+ *
+ * Credential scope uses the role hierarchy directly:
+ * - 'member' -> everyone can access
+ * - 'power_user' -> power_user, admin, owner
+ * - 'admin' -> admin, owner
+ * - 'owner' -> owner only
+ * - 'per_user' -> only the credential owner
+ *
+ * Plus explicit grants and synthetic env-var-based credentials.
+ */
 export async function resolveUserCredentials(
-  userId: string | undefined,
+  userId?: string,
 ): Promise<Set<string>> {
+  const effectiveUserId = resolveCallingUserId(userId);
   const result = new Set<string>();
 
-  const effectiveUserId = resolveCallingUserId(userId);
   if (!effectiveUserId) return result;
 
-  const isUserAdmin = await hasRole(effectiveUserId, "admin");
+  const userRole = await getUserRole(effectiveUserId);
+  const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
 
-  if (isUserAdmin) {
-    result.add("admin_access");
-  }
-
-  // Synthetic credentials from env vars (infra-level, not stored in DB)
+  // Synthetic credentials from env vars (not yet stored in DB)
   if (process.env.E2B_API_KEY) result.add("e2b_api_key");
   if (process.env.BROWSERBASE_API_KEY) result.add("browserbase_api_key");
   if (process.env.CURSOR_API_KEY) result.add("cursor_api_key");
@@ -133,22 +161,33 @@ export async function resolveUserCredentials(
     result.add("google_bq_credentials");
   }
 
+  // Admin-only synthetic: only admins get these "virtual" credentials
+  if (userLevel >= ROLE_HIERARCHY.admin) {
+    result.add("admin_access");
+  }
+
   try {
     const allCreds = await db
       .select({ name: credentials.name, scope: credentials.scope, ownerId: credentials.ownerId })
       .from(credentials);
 
     for (const cred of allCreds) {
-      const scope = cred.scope || "shared";
-      if (scope === "shared") {
-        result.add(cred.name);
-      } else if (scope === "admin_only" && isUserAdmin) {
-        result.add(cred.name);
-      } else if (scope === "per_user" && cred.ownerId === effectiveUserId) {
-        result.add(cred.name);
+      const scope = (cred.scope || "member") as Role | "per_user";
+      if (scope === "per_user") {
+        // Only the credential owner gets it
+        if (cred.ownerId === effectiveUserId) {
+          result.add(cred.name);
+        }
+      } else {
+        // Role-based scope: user needs at least this role
+        const requiredLevel = ROLE_HIERARCHY[scope as Role] ?? 0;
+        if (userLevel >= requiredLevel) {
+          result.add(cred.name);
+        }
       }
     }
 
+    // Explicit grants always work regardless of scope
     const grants = await db
       .select({ credentialName: credentials.name })
       .from(credentialGrants)
@@ -177,7 +216,8 @@ export async function resolveUserCredentials(
     if (tokens.length > 0) {
       result.add("google_oauth");
     }
-    if (isUserAdmin) {
+    // Admins can manage all users' email
+    if (userLevel >= ROLE_HIERARCHY.admin) {
       result.add("google_oauth");
     }
   } catch {

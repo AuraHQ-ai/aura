@@ -65,12 +65,8 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
   if (process.env.ANTHROPIC_API_KEY) {
     envs.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   }
-  if (process.env.DATABASE_URL) {
-    envs.DATABASE_URL = process.env.DATABASE_URL;
-  }
-  if (process.env.VERCEL_TOKEN) {
-    envs.VERCEL_TOKEN = process.env.VERCEL_TOKEN;
-  }
+  // DATABASE_URL and VERCEL_TOKEN: admin-only (scoped via resolveUserCredentials)
+  // These are injected below only if the user has admin_access credential
   if (process.env.OPENAI_API_KEY) {
     envs.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   }
@@ -123,6 +119,16 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
     }
   } catch (e: any) {
     logger.warn("Failed to query credentials for sandbox injection", { error: e.message });
+  }
+
+  // Admin-only env vars: only injected if user has admin_access
+  if (userCredNames?.has("admin_access")) {
+    if (process.env.DATABASE_URL) {
+      envs.DATABASE_URL = process.env.DATABASE_URL;
+    }
+    if (process.env.VERCEL_TOKEN) {
+      envs.VERCEL_TOKEN = process.env.VERCEL_TOKEN;
+    }
   }
 
   return envs;

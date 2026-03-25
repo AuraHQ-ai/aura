@@ -20,7 +20,7 @@ export function createEmailSyncTools(
 ) {
   return {
     sync_emails: defineTool({
-      requiredCredentials: ["google_oauth"],
+      requiredCredentials: ["admin_access"],
       description:
         "Sync emails from a user's Gmail into the staging pipeline. Supports date windows (after/before), relative dates (newer_than), or raw Gmail queries. Resumable — re-running with the same query skips already-synced emails.",
       inputSchema: z.object({
@@ -157,7 +157,7 @@ export function createEmailSyncTools(
     }),
 
     email_digest: defineTool({
-      requiredCredentials: ["google_oauth"],
+      requiredCredentials: ["admin_access"],
       description:
         "Get an email digest for a user: returns structured data with counts and thread objects (each with gmail_thread_id). Use threads[].gmail_thread_id for follow-up actions.",
       inputSchema: z.object({
@@ -429,7 +429,7 @@ export function createEmailSyncTools(
     }),
 
     update_email_threads: defineTool({
-      requiredCredentials: ["google_oauth"],
+      requiredCredentials: ["admin_access"],
       description:
         "Batch-update triage states for multiple email threads at once. Accepts an array of {gmail_thread_id, thread_state, reason?}. Use after email_digest to dismiss/resolve/reclassify several threads in one call.",
       inputSchema: z.object({
@@ -554,7 +554,7 @@ export function createEmailSyncTools(
     }),
 
     search_emails: defineTool({
-      requiredCredentials: ["google_oauth"],
+      requiredCredentials: ["admin_access"],
       description:
         "Search synced emails by keyword (text mode) or meaning (semantic mode). Text mode uses PostgreSQL full-text search on subject + body. Semantic mode embeds the query and finds similar email threads via cosine similarity. Returns one result per thread (latest email).",
       inputSchema: z.object({

@@ -10,7 +10,7 @@ import {
   publishHomeTab,
   ACTION_TO_SETTING,
   CREDENTIAL_ACTIONS,
-  isAdmin,
+  hasRole,
   openCredentialModal,
   openAddCredentialModal,
   buildAddCredentialBlocks,
@@ -400,7 +400,7 @@ app.post("/api/slack/interactions", async (c) => {
       }
 
       // Admin-only settings changes
-      if (!userId || !isAdmin(userId)) {
+      if (!userId || !(await hasRole(userId, "admin"))) {
         logger.warn("Non-admin attempted settings change", { userId });
         continue;
       }
@@ -650,7 +650,7 @@ app.post("/api/slack/interactions", async (c) => {
     const callbackId = payload.view?.callback_id;
     const userId = payload.user?.id;
 
-    if (callbackId === "credential_submit" && userId && isAdmin(userId)) {
+    if (callbackId === "credential_submit" && userId && (await hasRole(userId, "admin"))) {
       const credentialKey = payload.view?.private_metadata;
       const newValue =
         payload.view?.state?.values?.credential_input_block?.credential_value

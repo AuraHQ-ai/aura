@@ -1,6 +1,6 @@
 import type { WebClient } from "@slack/web-api";
 import { getAllSettings } from "../lib/settings.js";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { getCredential, maskCredential } from "../lib/credentials.js";
 import {
@@ -595,7 +595,7 @@ export async function publishHomeTab(
 ): Promise<void> {
   try {
     const currentSettings = await getAllSettings();
-    const admin = isAdmin(userId);
+    const admin = await hasRole(userId, "admin");
 
     const mainValue = currentSettings.model_main || DEFAULTS.model_main;
     const fastValue = currentSettings.model_fast || DEFAULTS.model_fast;
@@ -696,7 +696,7 @@ export async function publishHomeTab(
       },
     });
 
-    logger.info("Published App Home tab", { userId, isAdmin: admin });
+    logger.info("Published App Home tab", { userId, isAdminRole: admin });
   } catch (error) {
     logger.error("Failed to publish App Home tab", { userId, error });
   }
@@ -711,4 +711,4 @@ export const ACTION_TO_SETTING: Record<string, string> = {
   select_model_embedding: "model_embedding",
 };
 
-export { isAdmin } from "../lib/permissions.js";
+export { hasRole } from "../lib/permissions.js";
