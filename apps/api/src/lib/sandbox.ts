@@ -134,7 +134,7 @@ async function setupSandboxFilesystem(
     if (gcsfuseCheck.exitCode !== 0) {
       const distro = "bookworm";
       const installResult = await sandbox.commands.run(
-        `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse`,
+        `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse && { grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | sudo tee -a /etc/fuse.conf > /dev/null; }`,
         { timeoutMs: 60_000, envs },
       );
       if (installResult.exitCode !== 0) {
@@ -147,7 +147,7 @@ async function setupSandboxFilesystem(
     }
 
     const mountResult = await sandbox.commands.run(
-      `touch /tmp/gcs-sa-key.json && chmod 600 /tmp/gcs-sa-key.json && echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs --uid=1000 --gid=1000 aura-files /mnt/aura-files; EXIT=$?; rm -f /tmp/gcs-sa-key.json; exit $EXIT`,
+      `touch /tmp/gcs-sa-key.json && chmod 600 /tmp/gcs-sa-key.json && echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs --uid=1000 --gid=1000 -o allow_other aura-files /mnt/aura-files; EXIT=$?; rm -f /tmp/gcs-sa-key.json; exit $EXIT`,
       { timeoutMs: 30_000, envs },
     );
     if (mountResult.exitCode !== 0) {
