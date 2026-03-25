@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -10,31 +10,47 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Dialog, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   updateCredentialValue,
   grantCredentialAccess,
   revokeCredentialAccess,
   deleteCredential,
 } from "../actions";
-import { ArrowLeft, Trash2, UserPlus } from "lucide-react";
-import { formatDate } from "@/lib/utils";
+import { ArrowLeft, Trash2, UserPlus, Check, ChevronsUpDown } from "lucide-react";
+import { cn, formatDate } from "@/lib/utils";
 import type { Credential, CredentialGrant, CredentialAuditEntry } from "@schema";
+
+interface GrantWithName extends CredentialGrant {
+  granteeName: string | null;
+}
 
 interface CredentialData extends Credential {
   maskedValue: string;
   ownerName: string;
-  grants: CredentialGrant[];
-  granteeNames: Record<string, string>;
+  grants: GrantWithName[];
   auditLog: CredentialAuditEntry[];
 }
 
-export function CredentialDetail({ data }: { data: CredentialData }) {
+export interface WorkspaceUser {
+  slackUserId: string;
+  displayName: string | null;
+}
+
+export function CredentialDetail({ data, users }: { data: CredentialData; users: WorkspaceUser[] }) {
   const router = useRouter();
   const [showUpdateValue, setShowUpdateValue] = useState(false);
   const [newValue, setNewValue] = useState("");
   const [showGrant, setShowGrant] = useState(false);
   const [granteeId, setGranteeId] = useState("");
   const [permission, setPermission] = useState("read");
+  const [userPickerOpen, setUserPickerOpen] = useState(false);
+
+  const selectedUser = useMemo(
+    () => users.find((u) => u.slackUserId === granteeId),
+    [users, granteeId],
+  );
 
   async function handleUpdateValue() {
     if (!newValue) return;
@@ -126,7 +142,7 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
               <TableBody>
                 {data.grants.map((g) => (
                   <TableRow key={g.id}>
-                    <TableCell className="font-medium">{data.granteeNames[g.granteeId] || g.granteeId}</TableCell>
+                    <TableCell className="font-medium">{g.granteeName || g.granteeId}</TableCell>
                     <TableCell><Badge variant="outline">{g.permission}</Badge></TableCell>
                     <TableCell className="text-sm">{g.grantedBy}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{formatDate(g.grantedAt)}</TableCell>
@@ -203,7 +219,50 @@ export function CredentialDetail({ data }: { data: CredentialData }) {
           <DialogTitle>Grant Access</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <Input placeholder="Grantee Slack User ID" value={granteeId} onChange={(e) => setGranteeId(e.target.value)} />
+          <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                role="combobox"
+                aria-expanded={userPickerOpen}
+                className="w-full justify-between font-normal"
+              >
+                {selectedUser
+                  ? selectedUser.displayName || selectedUser.slackUserId
+                  : "Select a user…"}
+                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+              <Command>
+                <CommandInput placeholder="Search users…" />
+                <CommandList>
+                  <CommandEmpty>No users found.</CommandEmpty>
+                  <CommandGroup>
+                    {users.map((user) => (
+                      <CommandItem
+                        key={user.slackUserId}
+                        value={`${user.displayName ?? ""} ${user.slackUserId}`}
+                        onSelect={() => {
+                          setGranteeId(user.slackUserId);
+                          setUserPickerOpen(false);
+                        }}
+                      >
+                        <Check
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            granteeId === user.slackUserId ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        <span>{user.displayName || user.slackUserId}</span>
+                        <span className="ml-auto text-xs text-muted-foreground">{user.slackUserId}</span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
           <select
             value={permission}
             onChange={(e) => setPermission(e.target.value)}

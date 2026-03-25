@@ -1,28 +1,44 @@
 /**
- * Build the Aura e2b sandbox template.
+ * Build the Aura E2B sandbox template.
  *
  * Usage:
- *   E2B_API_KEY=e2b_xxx npx tsx sandbox/build.ts [--prod]
+ *   pnpm --filter aura-sandbox build          # dev
+ *   pnpm --filter aura-sandbox build:prod     # production
  *
- * After a successful build, set E2B_TEMPLATE_ID in Vercel env vars.
+ * Reads e2b.Dockerfile as the single source of truth via fromDockerfile().
+ * Requires E2B_API_KEY in .env or environment.
  */
-import "dotenv/config";
+import { config } from "dotenv";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+
+config({ path: resolve(__dirname, "..", ".env") });
+
 import { Template, defaultBuildLogger } from "e2b";
-import { auraTemplate } from "./template.js";
 
 const isProd = process.argv.includes("--prod");
 const tag = isProd ? "aura-sandbox" : "aura-sandbox-dev";
 
-console.log(`Building e2b template: ${tag} (${isProd ? "prod" : "dev"})`);
+const dockerfile = readFileSync(resolve(__dirname, "e2b.Dockerfile"), "utf-8");
+const template = Template().fromDockerfile(dockerfile);
 
-const result = await Template.build(auraTemplate, tag, {
-  cpuCount: 2,
-  memoryMB: 2048,
-  onBuildLogs: defaultBuildLogger(),
+async function main() {
+  console.log(`Building e2b template: ${tag} (${isProd ? "prod" : "dev"})`);
+  console.log("This will take 5-10 minutes...\n");
+
+  const result = await Template.build(template, tag, {
+    cpuCount: 4,
+    memoryMB: 4096,
+    onBuildLogs: defaultBuildLogger(),
+  });
+
+  console.log(`\nBuild complete!`);
+  console.log(`Template ID: ${result.templateId}`);
+  console.log(`Tag: ${tag}`);
+  console.log(`\nSet in Vercel:\n  E2B_TEMPLATE_ID=${result.templateId}`);
+}
+
+main().catch((err) => {
+  console.error("Build failed:", err);
+  process.exit(1);
 });
-
-console.log(`\nBuild complete!`);
-console.log(`Template ID: ${result.templateId}`);
-console.log(`Tag: ${tag}`);
-console.log(`\nNext step: add this to Vercel env vars:`);
-console.log(`  E2B_TEMPLATE_ID=${result.templateId}`);

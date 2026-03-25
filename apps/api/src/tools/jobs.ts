@@ -7,7 +7,7 @@ import { db } from "../db/client.js";
 import { jobs, jobExecutions } from "@aura/db/schema";
 import type { FrequencyConfig, ScheduleContext } from "@aura/db/schema";
 import { waitUntil } from "@vercel/functions";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
@@ -179,7 +179,7 @@ export function createJobTools(
 
           // Per-user job limit for non-admins (also exempt "aura" identity used by heartbeat)
           const MAX_JOBS_PER_USER = 5;
-          if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          if (!(await hasRole(context?.userId, "admin"))) {
             const activeCount = await db
               .select({ count: sql<number>`count(*)::int` })
               .from(jobs)
@@ -615,7 +615,7 @@ export function createJobTools(
         name,
         playbook,
       }) => {
-        if (!isAdmin(context?.userId)) {
+        if (!(await hasRole(context?.userId, "admin"))) {
           return {
             ok: false,
             error: "Only admins can dispatch headless executions.",
@@ -768,7 +768,16 @@ export function createJobTools(
                 : {
                     stepCount: Array.isArray(e.steps)
                       ? (e.steps as unknown[]).length
-                      : null,
+                      : e.steps &&
+                          typeof e.steps === "object" &&
+                          Array.isArray(
+                            (e.steps as Record<string, unknown>).steps,
+                          )
+                        ? (
+                            (e.steps as Record<string, unknown>)
+                              .steps as unknown[]
+                          ).length
+                        : null,
                   }),
             })),
           };

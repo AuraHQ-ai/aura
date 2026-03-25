@@ -99,6 +99,37 @@ dashboardUsersApp.get("/:slackUserId", async (c) => {
   }
 });
 
+const VALID_ROLES = ["owner", "admin", "power_user", "member"] as const;
+
+dashboardUsersApp.patch("/:slackUserId/role", async (c) => {
+  try {
+    const slackUserId = c.req.param("slackUserId");
+    const body = await c.req.json<{ role: string }>();
+
+    if (!VALID_ROLES.includes(body.role as (typeof VALID_ROLES)[number])) {
+      return c.json(
+        { error: `Invalid role. Must be one of: ${VALID_ROLES.join(", ")}` },
+        400,
+      );
+    }
+
+    const result = await db
+      .update(userProfiles)
+      .set({ role: body.role, updatedAt: new Date() })
+      .where(eq(userProfiles.slackUserId, slackUserId))
+      .returning();
+
+    if (result.length === 0) {
+      return c.json({ error: "User not found" }, 404);
+    }
+
+    return c.json(result[0]);
+  } catch (error) {
+    logger.error("Failed to update user role", { error: String(error) });
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
 dashboardUsersApp.patch("/person/:personId", async (c) => {
   try {
     const personId = c.req.param("personId");

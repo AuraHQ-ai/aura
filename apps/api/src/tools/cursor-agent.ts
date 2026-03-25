@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 
 const DEFAULT_REPO = process.env.DEFAULT_GITHUB_REPO ?? "AuraHQ-ai/aura";
@@ -54,10 +54,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           ),
       }),
       execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {
-        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can dispatch Cursor agents.",
+            error: "Only power users and above can dispatch Cursor agents.",
           };
         }
 
@@ -202,10 +202,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe("The agent ID returned by dispatch_cursor_agent"),
       }),
       execute: async ({ agent_id }) => {
-        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can check Cursor agent status.",
+            error: "Only power users and above can check Cursor agent status.",
           };
         }
 
@@ -268,10 +268,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe("Follow-up instructions for the agent"),
       }),
       execute: async ({ agent_id, prompt }) => {
-        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can follow up on Cursor agents.",
+            error: "Only power users and above can follow up on Cursor agents.",
           };
         }
 
@@ -357,10 +357,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         agent_id: z.string().describe("The agent ID"),
       }),
       execute: async ({ agent_id }) => {
-        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can view Cursor agent conversations.",
+            error: "Only power users and above can view Cursor agent conversations.",
           };
         }
 
@@ -404,10 +404,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         agent_id: z.string().describe("The agent ID to stop"),
       }),
       execute: async ({ agent_id }) => {
-        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can stop Cursor agents.",
+            error: "Only power users and above can stop Cursor agents.",
           };
         }
 
@@ -460,10 +460,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe("Filter by PR URL"),
       }),
       execute: async ({ pr_url }) => {
-        if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can list Cursor agents.",
+            error: "Only power users and above can list Cursor agents.",
           };
         }
 

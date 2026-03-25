@@ -4,7 +4,7 @@ import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { voiceCalls } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import type { WebClient } from "@slack/web-api";
 import { resolveSlackDestination } from "./slack.js";
@@ -195,8 +195,8 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         "Results are cached for 10 minutes. Admin-only.",
       inputSchema: z.object({}),
       execute: async () => {
-        if (!isAdmin(context?.userId)) {
-          return { ok: false, error: "Only admins can list voice agents." };
+        if (!(await hasRole(context?.userId, "power_user"))) {
+          return { ok: false, error: "Only power users and above can list voice agents." };
         }
 
         try {
@@ -315,10 +315,10 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         context: callContext,
         language,
       }) => {
-        if (!isAdmin(context?.userId)) {
+        if (!(await hasRole(context?.userId, "power_user"))) {
           return {
             ok: false,
-            error: "Only admins can initiate phone calls.",
+            error: "Only power users and above can initiate phone calls.",
           };
         }
 
@@ -521,10 +521,10 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         .describe("The SMS message body to send."),
     }),
     execute: async ({ phone_number, message }) => {
-      if (!isAdmin(context?.userId)) {
+      if (!(await hasRole(context?.userId, "power_user"))) {
         return {
           ok: false,
-          error: "Only admins can send SMS messages.",
+          error: "Only power users and above can send SMS messages.",
         };
       }
 
@@ -672,8 +672,8 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           .describe("Thread timestamp to attach the voice note to a specific thread."),
       }),
       execute: async ({ text, voice_id, language, channel, thread_ts }) => {
-        if (!isAdmin(context?.userId)) {
-          return { ok: false, error: "Only admins can send voice notes." };
+        if (!(await hasRole(context?.userId, "power_user"))) {
+          return { ok: false, error: "Only power users and above can send voice notes." };
         }
 
         const recentNotes = await db

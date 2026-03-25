@@ -17,6 +17,7 @@ import {
   buildConversationSteps,
 } from "./persist-conversation.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
+import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
@@ -105,6 +106,7 @@ export async function executeJob(
   // used by error handler if generate throws.
   let conversationOrderIndex = 0;
   let conversationId: string | undefined;
+  const invocationId = crypto.randomUUID();
 
   try {
     const planTopic = parseContinuationTag(job.description);
@@ -185,6 +187,7 @@ export async function executeJob(
         threadTs: job.threadTs || undefined,
       },
       systemPrompt,
+      invocationId,
     });
 
     // Create a conversation trace for this job execution
@@ -206,6 +209,7 @@ export async function executeJob(
       {
         triggeredBy: job.requestedBy,
         triggerType: "scheduled_job",
+        callingUserId: job.requestedBy,
         jobId: job.id,
       },
       () => agent.generate({ prompt }),
@@ -243,13 +247,24 @@ export async function executeJob(
     // Update trace with token usage + cost
     await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);
 
-    // Update execution trace with results
+    // Persist scratchpad contents for debugging
+    const scratchpadContents = getScratchpadContents(invocationId);
+    if (scratchpadContents) {
+      logger.info("Job scratchpad contents", {
+        executionId,
+        sections: Object.keys(scratchpadContents),
+      });
+    }
+
+    // Update execution trace with results (include scratchpad in the steps jsonb)
     await db
       .update(jobExecutions)
       .set({
         status: "completed",
         finishedAt: new Date(),
-        steps: serializedSteps,
+        steps: scratchpadContents
+          ? { steps: serializedSteps, scratchpad: scratchpadContents }
+          : serializedSteps,
         tokenUsage,
         summary: (text || "").substring(0, 500) || null,
       })
@@ -407,5 +422,7 @@ export async function executeJob(
     }
 
     throw error;
+  } finally {
+    cleanupScratchpad(invocationId);
   }
 }

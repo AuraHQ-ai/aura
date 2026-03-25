@@ -287,6 +287,7 @@ app.post("/api/slack/events", async (c) => {
       {
         triggeredBy: userId,
         triggerType: "user_message",
+        callingUserId: event.user || undefined,
         channelId: event.channel || undefined,
         threadTs: event.thread_ts || event.ts || undefined,
       },

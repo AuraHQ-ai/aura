@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { dashboardAuthApp } from "./auth.js";
 import { dashboardChatApp } from "./chat.js";
 import { dashboardStatsApp } from "./stats.js";
 import { dashboardNotesApp } from "./notes.js";
@@ -24,6 +25,7 @@ dashboardApp.use("*", async (c, next) => {
   await next();
 });
 
+dashboardApp.route("/auth", dashboardAuthApp);
 dashboardApp.route("/chat", dashboardChatApp);
 dashboardApp.route("/stats", dashboardStatsApp);
 dashboardApp.route("/notes", dashboardNotesApp);

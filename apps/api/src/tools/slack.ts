@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { defineTool, binaryToModelOutput, registerToolNames } from "../lib/tool.js";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { createCoreTools } from "./core.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
@@ -10,6 +10,7 @@ import { createTableTools } from "./table.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createEmailSyncTools } from "./email-sync.js";
+import { createScratchpadTools } from "./scratchpad.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -485,7 +486,7 @@ export async function resolveChannelById(
  * Create Slack tools for the AI SDK.
  * Each tool receives the WebClient via closure.
  */
-export async function createSlackTools(client: WebClient, context?: ScheduleContext, modelId?: string) {
+export async function createSlackTools(client: WebClient, context?: ScheduleContext, modelId?: string, invocationId?: string) {
   // Resolve thread coordinates for Slack List items.
   // List channels use the list ID with a C prefix (F088... → C088...).
   // Each root message in the channel has a slack_list.list_record_id field
@@ -1591,7 +1592,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
       execute: async ({ limit, cursor: inputCursor }) => {
         try {
           // Authorization: only admins can list all DM conversations
-          if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+          if (!(await hasRole(context?.userId, "admin"))) {
             return {
               ok: false,
               error:
@@ -1973,7 +1974,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
     edit_canvas: defineTool({
       description:
-        "Edit an existing Slack Canvas. Supports inserting content at start/end or before/after a section, replacing or deleting a section, or renaming the canvas.",
+        "Edit an existing Slack Canvas. Supports: insert at start/end, insert before/after a section, replace a section (with section_id) or the entire canvas (without section_id), delete a section, or rename.",
       inputSchema: z.object({
         canvas_id: z.string().describe("The ID of the Canvas to edit"),
         operation: z
@@ -1997,7 +1998,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
           .string()
           .optional()
           .describe(
-            "Section ID (required for replace, delete, insert_before, insert_after). Use read_canvas to find section IDs.",
+            "Section ID (required for delete, insert_before, insert_after; optional for replace — omit to replace entire canvas). Use read_canvas to find section IDs.",
           ),
       }),
       execute: async ({ canvas_id, operation, content, section_id }) => {
@@ -2022,8 +2023,19 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
               };
             }
             changes = [{ operation: "delete", section_id }];
+          } else if (operation === "replace") {
+            if (!content) {
+              return { ok: false, error: "Content is required for replace operations." };
+            }
+            // section_id is optional for replace: with it, replaces a section; without, replaces entire canvas
+            changes = [
+              {
+                operation: "replace",
+                ...(section_id ? { section_id } : {}),
+                document_content: { type: "markdown", markdown: content },
+              },
+            ];
           } else if (
-            operation === "replace" ||
             operation === "insert_before" ||
             operation === "insert_after"
           ) {
@@ -2331,7 +2343,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
           let fileBuffer: Buffer;
           if (file_path) {
-            if (!isAdmin(context?.userId) && context?.userId !== "aura") {
+            if (!(await hasRole(context?.userId, "admin"))) {
               return {
                 ok: false,
                 error: "Only admins can access sandbox files.",
@@ -2943,6 +2955,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     ...createTableTools(client, context),
     ...createSubagentTools(client, context),
     ...createVoiceTools(client, context),
+    ...createScratchpadTools(invocationId ?? crypto.randomUUID()),
   };
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────

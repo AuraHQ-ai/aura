@@ -4,7 +4,7 @@ import { eq, and, desc, sql, inArray, isNotNull } from "drizzle-orm";
 import { formatDistanceToNow } from "date-fns";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { isAdmin } from "../lib/permissions.js";
+import { hasRole } from "../lib/permissions.js";
 import { db } from "../db/client.js";
 import { emailsRaw } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
@@ -72,7 +72,7 @@ export function createEmailSyncTools(
         classify,
         max_messages,
       }) => {
-        if (!isAdmin(context?.userId)) {
+        if (!(await hasRole(context?.userId, "admin"))) {
           return {
             ok: false,
             error: "This tool is restricted to admin users only.",
@@ -177,7 +177,7 @@ export function createEmailSyncTools(
           .describe("Include FYI-level threads (default false)"),
       }),
       execute: async ({ user_name, include_fyi }) => {
-        if (!isAdmin(context?.userId)) {
+        if (!(await hasRole(context?.userId, "admin"))) {
           return {
             ok: false,
             error: "This tool is restricted to admin users only.",
@@ -359,7 +359,7 @@ export function createEmailSyncTools(
             };
           }
 
-          if (user.id !== context?.userId && !isAdmin(context?.userId)) {
+          if (user.id !== context?.userId && !(await hasRole(context?.userId, "admin"))) {
             return {
               ok: false as const,
               error:
@@ -466,7 +466,7 @@ export function createEmailSyncTools(
           .describe("Array of thread updates to apply"),
       }),
       execute: async ({ user_name, updates }) => {
-        if (!isAdmin(context?.userId)) {
+        if (!(await hasRole(context?.userId, "admin"))) {
           return {
             ok: false as const,
             error: "This tool is restricted to admin users only.",
@@ -599,7 +599,7 @@ export function createEmailSyncTools(
           .describe("Max results to return (default 10, max 20)"),
       }),
       execute: async ({ user_name, query, mode, thread_state, limit }) => {
-        if (!isAdmin(context?.userId)) {
+        if (!(await hasRole(context?.userId, "admin"))) {
           return {
             ok: false as const,
             error: "This tool is restricted to admin users only.",

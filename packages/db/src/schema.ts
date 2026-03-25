@@ -176,6 +176,7 @@ export const userProfiles = pgTable(
         preferredFormat: "mixed",
       }),
     knownFacts: jsonb("known_facts").$type<KnownFacts>().default({}),
+    role: text("role").notNull().default("member"),
     interactionCount: integer("interaction_count").notNull().default(0),
     lastInteractionAt: timestamptz("last_interaction_at"),
     lastProfileConsolidation: timestamptz("last_profile_consolidation"),
@@ -288,6 +289,8 @@ export const notes = pgTable(
     summary: text("summary"),
     injectInContext: boolean("inject_in_context").notNull().default(false),
     importance: smallint("importance").notNull().default(50),
+    ownerId: text("owner_id"),
+    visibility: text("visibility").notNull().default("shared"),
     embedding: vector("embedding", { dimensions: 1536 }),
     expiresAt: timestamptz("expires_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
@@ -804,6 +807,62 @@ export const approvalPolicies = pgTable(
   ],
 );
 
+// ── Tool Definitions (permission metadata per tool) ─────────────────────────
+
+export const toolDefinitions = pgTable(
+  "tool_definitions",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    toolName: text("tool_name").notNull(),
+    minRole: text("min_role").notNull().default("admin"),
+    description: text("description"),
+    category: text("category"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("tool_definitions_workspace_tool_name_idx").on(table.workspaceId, table.toolName),
+  ],
+);
+
+// ── Tool Credential Slots ───────────────────────────────────────────────────
+
+export const toolCredentialSlots = pgTable("tool_credential_slots", {
+  id: uuid("id")
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  workspaceId: workspaceId().references(() => workspaces.id),
+  toolDefinitionId: uuid("tool_definition_id")
+    .notNull()
+    .references(() => toolDefinitions.id),
+  credentialType: text("credential_type").notNull(),
+  required: boolean("required").notNull().default(true),
+  scope: text("scope").notNull().default("shared"),
+  minRole: text("min_role"),
+  createdAt: timestamptz("created_at").notNull().defaultNow(),
+});
+
+// ── Rate Limits ─────────────────────────────────────────────────────────────
+
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    role: text("role").notNull(),
+    resource: text("resource").notNull(),
+    maxValue: integer("max_value").notNull(),
+  },
+  (table) => [
+    unique("rate_limits_workspace_role_resource_unique").on(table.workspaceId, table.role, table.resource),
+  ],
+);
+
 // ── Type exports ───────────────────────────────────────────────────────────
 
 export type Workspace = typeof workspaces.$inferSelect;
@@ -844,6 +903,12 @@ export type ActionLog = typeof actionLog.$inferSelect;
 export type NewActionLog = typeof actionLog.$inferInsert;
 export type ApprovalPolicy = typeof approvalPolicies.$inferSelect;
 export type NewApprovalPolicy = typeof approvalPolicies.$inferInsert;
+export type ToolDefinition = typeof toolDefinitions.$inferSelect;
+export type NewToolDefinition = typeof toolDefinitions.$inferInsert;
+export type ToolCredentialSlot = typeof toolCredentialSlots.$inferSelect;
+export type NewToolCredentialSlot = typeof toolCredentialSlots.$inferInsert;
+export type RateLimit = typeof rateLimits.$inferSelect;
+export type NewRateLimit = typeof rateLimits.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {

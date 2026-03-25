@@ -60,8 +60,8 @@ When a Slack message arrives:
 1. **Event deduplication** — Slack sometimes sends duplicate events. The `event_locks` table prevents double-processing.
 2. **Context loading** — Recent conversation history, relevant memories, user profile, notes index, and channel context are loaded in parallel.
 3. **Memory retrieval** — Hybrid search (vector + full-text) finds relevant memories from past conversations.
-4. **Prompt assembly** — System prompt is built from personality, self-directive, notes index, memories, user profile, and usage stats (7-day activity metrics with week-over-week trends).
-5. **LLM reasoning** — The configured model (Claude, Grok, etc.) processes the message with full context and available tools. Extended thinking captures the reasoning trace (Claude models).
+4. **Prompt assembly** — System prompt is built in two layers: a stable prefix (personality, self-directive, notes index, memories, user profile) and a dynamic context (current time, active model, channel, and usage stats with 7-day activity metrics and week-over-week trends).
+5. **LLM reasoning** — The selected model (Claude, Grok, etc.) processes the message with full context and available tools. Extended thinking captures the reasoning trace (Claude models).
 6. **Response streaming** — The response streams back to Slack in real-time via the Vercel AI SDK.
 7. **Conversation persistence** — The full conversation trace (messages, tool calls, reasoning, token usage) is stored with cost tracking.
 8. **Memory extraction** — Facts, decisions, and sentiments are extracted from the conversation and stored as new memories.
@@ -80,7 +80,7 @@ The [Dashboard](/dashboard) provides a UI for browsing conversation traces, filt
 
 ## Tool System
 
-Tools are defined using the Vercel AI SDK `tool()` function with Zod schemas. Aura has **23 tool modules** organized by domain:
+Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `tool()` that adds audit logging and approval policies. Aura has **23 tool modules** organized by domain:
 
 | Category | Tools | Description |
 |----------|-------|-------------|

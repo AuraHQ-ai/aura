@@ -15,6 +15,11 @@ export async function getUser(slackUserId: string) {
   return apiGetOrNull<any>(`/users/${slackUserId}`);
 }
 
+export async function updateUserRole(slackUserId: string, role: string) {
+  await apiPatch(`/users/${slackUserId}/role`, { role });
+  revalidatePath("/users");
+}
+
 export async function updatePerson(
   personId: string,
   data: { jobTitle?: string; preferredLanguage?: string; gender?: string; notes?: string },

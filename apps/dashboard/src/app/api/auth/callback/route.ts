@@ -7,7 +7,7 @@ import {
   getSafeReturnTo,
   OAUTH_RETURN_TO_COOKIE,
 } from "@/lib/auth-redirect";
-import { isAdmin } from "@/lib/permissions";
+import { checkRole } from "@/lib/auth-check";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -52,15 +52,20 @@ export async function GET(request: NextRequest) {
   }
 
   const slackUserId = userInfo["https://slack.com/user_id"] || userInfo.sub;
-  if (!isAdmin(slackUserId)) {
+  const name = userInfo.name || "Admin";
+  const picture = userInfo.picture || "";
+
+  let roleResult;
+  try {
+    roleResult = await checkRole({ slackUserId, name, picture });
+  } catch {
+    return NextResponse.redirect(`${appUrl}/unauthorized?reason=check_failed`);
+  }
+  if (!roleResult.allowed) {
     return NextResponse.redirect(`${appUrl}/unauthorized?reason=not_admin`);
   }
 
-  const jwt = await createSession({
-    slackUserId,
-    name: userInfo.name || "Admin",
-    picture: userInfo.picture || "",
-  });
+  const jwt = await createSession({ slackUserId, name, picture });
 
   cookieStore.set(getSessionCookieName(), jwt, {
     httpOnly: true,
