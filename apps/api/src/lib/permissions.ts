@@ -171,9 +171,9 @@ export async function resolveUserCredentials(
     if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
       result.add("twilio_credentials");
     }
-  }
-  if (process.env.GOOGLE_BQ_CREDENTIALS || process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
-    result.add("google_bq_credentials");
+    if (process.env.GOOGLE_BQ_CREDENTIALS || process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+      result.add("google_bq_credentials");
+    }
   }
 
   // Admin-only synthetic: only admins get these "virtual" credentials

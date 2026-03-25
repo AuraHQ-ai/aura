@@ -83,7 +83,7 @@ export function createSubagentTools(
 ) {
   return {
     run_subagent: defineTool({
-      requiredCredentials: [],
+      requiredCredentials: ["e2b_api_key"],
       description:
         "Launch a subagent for parallel fan-out. Call this tool MULTIPLE TIMES in the same tool-call block to run tasks concurrently — e.g. sweep 4 market channels simultaneously, or triage emails while analyzing data. Each subagent runs in its own isolated context with scoped tools, preventing context pollution. Returns a compressed summary. The primary value is parallelism and performance — use when you can split work into independent pieces that don't depend on each other's results.",
       inputSchema: z.object({

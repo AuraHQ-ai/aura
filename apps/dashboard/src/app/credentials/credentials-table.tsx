@@ -146,7 +146,7 @@ export function CredentialsTable({ credentials, total, page, pageSize, users, cu
             ))}
             {credentials.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                   No credentials found
                 </TableCell>
               </TableRow>
