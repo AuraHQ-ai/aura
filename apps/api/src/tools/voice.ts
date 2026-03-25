@@ -498,7 +498,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
   }
 
   tools.send_sms = defineTool({
-    requiredCredentials: ["elevenlabs_api_key"],
+    requiredCredentials: ["twilio_credentials"],
     description:
       "Send an SMS text message via Twilio. Use for quick notifications or when someone isn't responding to Slack.",
     inputSchema: z.object({

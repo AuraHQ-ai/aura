@@ -161,11 +161,17 @@ export async function resolveUserCredentials(
   const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
 
   // Synthetic credentials from env vars (not yet stored in DB)
-  if (process.env.E2B_API_KEY) result.add("e2b_api_key");
-  if (process.env.BROWSERBASE_API_KEY) result.add("browserbase_api_key");
-  if (process.env.CURSOR_API_KEY) result.add("cursor_api_key");
-  if (process.env.ELEVENLABS_API_KEY) result.add("elevenlabs_api_key");
-  if (process.env.TAVILY_API_KEY) result.add("tavily_api_key");
+  // Power-user+ tools: sandbox, browser, cursor agent, voice, web search
+  if (userLevel >= ROLE_HIERARCHY.power_user) {
+    if (process.env.E2B_API_KEY) result.add("e2b_api_key");
+    if (process.env.BROWSERBASE_API_KEY) result.add("browserbase_api_key");
+    if (process.env.CURSOR_API_KEY) result.add("cursor_api_key");
+    if (process.env.ELEVENLABS_API_KEY) result.add("elevenlabs_api_key");
+    if (process.env.TAVILY_API_KEY) result.add("tavily_api_key");
+    if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+      result.add("twilio_credentials");
+    }
+  }
   if (process.env.GOOGLE_BQ_CREDENTIALS || process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
     result.add("google_bq_credentials");
   }
