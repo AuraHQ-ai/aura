@@ -23,6 +23,7 @@ dashboardUsersApp.get("/", async (c) => {
           id: userProfiles.id,
           slackUserId: userProfiles.slackUserId,
           displayName: userProfiles.displayName,
+          role: userProfiles.role,
           interactionCount: userProfiles.interactionCount,
           lastInteractionAt: userProfiles.lastInteractionAt,
           createdAt: userProfiles.createdAt,
@@ -43,7 +44,7 @@ dashboardUsersApp.get("/", async (c) => {
 
     return c.json({ items, total: countResult[0]?.count ?? 0 });
   } catch (error) {
-    logger.error("Failed to list users", { error: String(error) });
+    logger.error("Failed to list users", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -94,7 +95,7 @@ dashboardUsersApp.get("/:slackUserId", async (c) => {
 
     return c.json({ profile, person, memories: userMemories });
   } catch (error) {
-    logger.error("Failed to get user detail", { error: String(error) });
+    logger.error("Failed to get user detail", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -104,9 +105,15 @@ const VALID_ROLES = ["owner", "admin", "power_user", "member"] as const;
 dashboardUsersApp.patch("/:slackUserId/role", async (c) => {
   try {
     const slackUserId = c.req.param("slackUserId");
-    const body = await c.req.json<{ role: string }>();
 
-    if (!VALID_ROLES.includes(body.role as (typeof VALID_ROLES)[number])) {
+    let body: { role: string };
+    try {
+      body = await c.req.json<{ role: string }>();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+
+    if (!body.role || !VALID_ROLES.includes(body.role as (typeof VALID_ROLES)[number])) {
       return c.json(
         { error: `Invalid role. Must be one of: ${VALID_ROLES.join(", ")}` },
         400,
@@ -125,7 +132,10 @@ dashboardUsersApp.patch("/:slackUserId/role", async (c) => {
 
     return c.json(result[0]);
   } catch (error) {
-    logger.error("Failed to update user role", { error: String(error) });
+    logger.error("Failed to update user role", {
+      error: error instanceof Error ? error.stack : String(error),
+      slackUserId: c.req.param("slackUserId"),
+    });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -158,7 +168,7 @@ dashboardUsersApp.patch("/person/:personId", async (c) => {
 
     return c.json(result[0]);
   } catch (error) {
-    logger.error("Failed to update person", { error: String(error) });
+    logger.error("Failed to update person", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });

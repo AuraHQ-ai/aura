@@ -36,6 +36,7 @@ export function UserDetail({ data }: { data: UserData }) {
   const [role, setRole] = useState(profile.role || "member");
   const [saving, setSaving] = useState(false);
   const [savingRole, setSavingRole] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const roleOptions = [
     { value: "owner", label: "Owner" },
@@ -46,16 +47,26 @@ export function UserDetail({ data }: { data: UserData }) {
 
   async function handleSaveRole() {
     setSavingRole(true);
-    await updateUserRole(profile.slackUserId, role);
+    setError(null);
+    const result = await updateUserRole(profile.slackUserId, role);
     setSavingRole(false);
+    if (!result.ok) {
+      setError(result.error ?? "Failed to update role");
+      return;
+    }
     router.refresh();
   }
 
   async function handleSave() {
     if (!person?.id) return;
     setSaving(true);
-    await updatePerson(person.id, { jobTitle, preferredLanguage, gender, notes });
+    setError(null);
+    const result = await updatePerson(person.id, { jobTitle, preferredLanguage, gender, notes });
     setSaving(false);
+    if (!result.ok) {
+      setError(result.error ?? "Failed to update person");
+      return;
+    }
     router.refresh();
   }
 
@@ -101,6 +112,14 @@ export function UserDetail({ data }: { data: UserData }) {
           </CardContent>
         </Card>
       </div>
+
+      {error && (
+        <Card className="border-destructive bg-destructive/10">
+          <CardContent className="py-3">
+            <p className="text-sm text-destructive">{error}</p>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="profile">
         <TabsList>

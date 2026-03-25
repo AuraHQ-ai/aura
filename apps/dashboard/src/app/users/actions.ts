@@ -15,15 +15,32 @@ export async function getUser(slackUserId: string) {
   return apiGetOrNull<any>(`/users/${slackUserId}`);
 }
 
-export async function updateUserRole(slackUserId: string, role: string) {
-  await apiPatch(`/users/${slackUserId}/role`, { role });
-  revalidatePath("/users");
+export async function updateUserRole(
+  slackUserId: string,
+  role: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await apiPatch(`/users/${slackUserId}/role`, { role });
+    revalidatePath("/users");
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("updateUserRole failed:", message);
+    return { ok: false, error: message };
+  }
 }
 
 export async function updatePerson(
   personId: string,
   data: { jobTitle?: string; preferredLanguage?: string; gender?: string; notes?: string },
-) {
-  await apiPatch(`/users/person/${personId}`, data);
-  revalidatePath("/users");
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await apiPatch(`/users/person/${personId}`, data);
+    revalidatePath("/users");
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("updatePerson failed:", message);
+    return { ok: false, error: message };
+  }
 }
