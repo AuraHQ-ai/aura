@@ -1213,7 +1213,6 @@ export function createGmailEATools(context?: ScheduleContext) {
     }),
 
     generate_gmail_auth_url: defineTool({
-      requiredCredentials: ["google_oauth"],
       description:
         "Generate a Google OAuth consent URL for a user to connect their Gmail account to Aura. DM the resulting URL to the user — they click it, authorize in Google, and their Gmail is connected for reading and drafting.",
       inputSchema: z.object({

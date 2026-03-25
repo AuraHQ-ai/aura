@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { userProfiles, credentials, credentialGrants, oauthTokens } from "@aura/db/schema";
 import { executionContext } from "./tool.js";
@@ -125,6 +125,15 @@ async function getUserRole(userId: string): Promise<Role> {
   } catch {
     // fall through
   }
+
+  const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (adminIds.includes(userId)) {
+    return "admin";
+  }
+
   return "member";
 }
 
@@ -193,7 +202,10 @@ export async function resolveUserCredentials(
       .from(credentialGrants)
       .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
       .where(
-        eq(credentialGrants.granteeId, effectiveUserId),
+        and(
+          eq(credentialGrants.granteeId, effectiveUserId),
+          isNull(credentialGrants.revokedAt),
+        ),
       );
 
     for (const grant of grants) {

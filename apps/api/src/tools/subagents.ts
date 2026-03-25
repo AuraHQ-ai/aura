@@ -1,9 +1,10 @@
-import { defineTool } from "../lib/tool.js";
+import { defineTool, filterToolsByCredentials } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { runSubagent } from "../lib/subagent.js";
 import { getFastModel, getMainModel } from "../lib/ai.js";
+import { resolveUserCredentials } from "../lib/permissions.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
 import { createNoteTools } from "./notes.js";
@@ -27,35 +28,47 @@ async function buildToolScope(
   modelId?: string,
 ) {
   switch (scope) {
-    case "email":
-      return {
+    case "email": {
+      const tools = {
         ...createEmailTools(context),
         ...createGmailEATools(context),
         ...createEmailSyncTools(client, context),
         ...createNoteTools(context),
       };
-    case "data":
-      return {
+      const userCreds = await resolveUserCredentials(context?.userId);
+      return filterToolsByCredentials(tools, userCreds);
+    }
+    case "data": {
+      const tools = {
         ...createBigQueryTools(context),
         ...createSheetsTools(context),
         ...createNoteTools(context),
       };
-    case "web":
-      return {
+      const userCreds = await resolveUserCredentials(context?.userId);
+      return filterToolsByCredentials(tools, userCreds);
+    }
+    case "web": {
+      const tools = {
         ...createWebTools(),
         ...createResourceTools(context),
         ...createSandboxTools(context),
       };
+      const userCreds = await resolveUserCredentials(context?.userId);
+      return filterToolsByCredentials(tools, userCreds);
+    }
     case "slack": {
       const { createSlackTools } = await import("./slack.js");
       return { ...(await createSlackTools(client, context, modelId)) };
     }
-    case "notes":
-      return {
+    case "notes": {
+      const tools = {
         ...createNoteTools(context),
         ...createResourceTools(context),
         ...createConversationSearchTools(context),
       };
+      const userCreds = await resolveUserCredentials(context?.userId);
+      return filterToolsByCredentials(tools, userCreds);
+    }
     case "all":
     default: {
       const { createSlackTools } = await import("./slack.js");
