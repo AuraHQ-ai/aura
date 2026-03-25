@@ -134,7 +134,7 @@ async function setupToolsRepo(
 
     if (existsCheck.stdout?.trim() === "exists") {
       const pullResult = await sandbox.commands.run(
-        "cd /opt/aura-tools && git pull --ff-only origin main 2>/dev/null || true",
+        "cd /opt/aura-tools && git pull --ff-only origin main",
         { timeoutMs: 15_000, envs },
       );
       if (pullResult.exitCode === 0) {
@@ -146,9 +146,8 @@ async function setupToolsRepo(
         });
       }
     } else {
-      const cloneUrl = `https://x-access-token:${envs.GH_TOKEN}@github.com/${toolsRepo}.git`;
       const cloneResult = await sandbox.commands.run(
-        `git clone ${cloneUrl} /opt/aura-tools`,
+        `git clone https://x-access-token:$GH_TOKEN@github.com/${toolsRepo}.git /opt/aura-tools`,
         { timeoutMs: 30_000, envs },
       );
       if (cloneResult.exitCode === 0) {
@@ -156,7 +155,6 @@ async function setupToolsRepo(
       } else {
         logger.warn("aura-tools clone failed", {
           exitCode: cloneResult.exitCode,
-          stderr: cloneResult.stderr,
           repo: toolsRepo,
         });
       }
