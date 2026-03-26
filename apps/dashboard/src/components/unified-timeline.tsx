@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { MarkdownContent } from "@/components/ui/markdown";
+import { CodeBlockContent } from "@/components/ai-elements/code-block";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
@@ -162,11 +163,20 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
 const SYSTEM_PREVIEW_LENGTH = 200;
 const LONG_TEXT_THRESHOLD = 1000;
 
+type SystemViewMode = "xml" | "markdown" | "raw";
+
 function SystemMessageBlock({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
-  const [viewMode, setViewMode] = useState<"markdown" | "raw">("markdown");
+  const hasXml = text.includes("<");
+  const [viewMode, setViewMode] = useState<SystemViewMode>(hasXml ? "xml" : "markdown");
   const isLong = text.length > SYSTEM_PREVIEW_LENGTH;
-  const preview = isLong ? text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..." : text;
+  const displayText = expanded ? text : isLong ? text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..." : text;
+
+  const modes: { key: SystemViewMode; label: string }[] = [
+    { key: "xml", label: "XML" },
+    { key: "markdown", label: "Markdown" },
+    { key: "raw", label: "Raw" },
+  ];
 
   return (
     <div className="border rounded-md bg-muted/20">
@@ -178,34 +188,35 @@ function SystemMessageBlock({ text }: { text: string }) {
           {text.length.toLocaleString()} chars
         </span>
         <div className="flex items-center gap-1 ml-auto">
-          <button
-            className={`text-xs px-2 py-0.5 rounded cursor-pointer ${viewMode === "raw" ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setViewMode("raw")}
-          >
-            Raw
-          </button>
-          <button
-            className={`text-xs px-2 py-0.5 rounded cursor-pointer ${viewMode === "markdown" ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setViewMode("markdown")}
-          >
-            Markdown
-          </button>
+          {modes.map((m) => (
+            <button
+              key={m.key}
+              className={`text-xs px-2 py-0.5 rounded cursor-pointer ${viewMode === m.key ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => setViewMode(m.key)}
+            >
+              {m.label}
+            </button>
+          ))}
         </div>
       </div>
-      <div className="border-t px-3 py-2">
-        {viewMode === "raw" ? (
+      <div className={`border-t ${viewMode === "xml" ? "" : "px-3 py-2"}`}>
+        {viewMode === "xml" ? (
+          <div className="overflow-auto max-h-[600px] text-xs">
+            <CodeBlockContent code={displayText} language="xml" />
+          </div>
+        ) : viewMode === "raw" ? (
           <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto max-h-[600px]">
-            {expanded ? text : preview}
+            {displayText}
           </pre>
         ) : (
           <MarkdownContent
-            content={expanded ? text : preview}
+            content={displayText}
             className="max-w-none overflow-auto max-h-[600px] text-xs"
           />
         )}
         {isLong && (
           <button
-            className="mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+            className={`text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer ${viewMode === "xml" ? "px-3 pb-2" : "mt-1"}`}
             onClick={() => setExpanded(!expanded)}
           >
             {expanded ? "Collapse" : "Expand full prompt"}
