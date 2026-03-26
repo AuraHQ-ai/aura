@@ -56,10 +56,9 @@ const SCOPE_LABELS: Record<string, string> = {
   power_user: "Power User+",
   admin: "Admin+",
   owner: "Owner Only",
-  per_user: "Per User (owner only)",
 };
 
-const VALID_SCOPES = ["member", "power_user", "admin", "owner", "per_user"] as const;
+const VALID_SCOPES = ["member", "power_user", "admin", "owner"] as const;
 
 function CredentialDetailPage() {
   const { id } = Route.useParams();

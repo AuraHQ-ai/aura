@@ -48,7 +48,6 @@ const SCOPE_LABELS: Record<
   power_user: { label: "Power User+", variant: "outline" },
   admin: { label: "Admin+", variant: "outline" },
   owner: { label: "Owner Only", variant: "destructive" },
-  per_user: { label: "Per User", variant: "default" },
 };
 
 interface CredentialRow {
@@ -325,7 +324,6 @@ function CredentialsPage() {
                 <option value="power_user">Power User+</option>
                 <option value="admin">Admin+</option>
                 <option value="owner">Owner Only</option>
-                <option value="per_user">Per User (owner only)</option>
               </select>
               <p className="text-xs text-muted-foreground">
                 Minimum role required to access this credential
