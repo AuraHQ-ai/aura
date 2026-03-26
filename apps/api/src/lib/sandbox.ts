@@ -40,7 +40,12 @@ async function loadE2B() {
  * Build the env vars map for sandbox commands from the credentials DB.
  *
  * Resolves which credentials the user can access, decrypts them, and
- * returns a flat NAME → value map (credential name uppercased).
+ * returns a flat NAME → value map. Uses `sandboxEnvName` when set on the
+ * credential row, otherwise falls back to uppercasing the credential name.
+ *
+ * Owner-aware: for `per_user` scoped credentials, only the calling user's
+ * row is injected. This prevents collisions when multiple users store a
+ * credential with the same name (e.g. `github_token`).
  *
  * Must be passed to every `commands.run({ envs })` call — E2B does NOT
  * persist envs across pause/resume (see e2b-dev/E2B#884).
@@ -67,13 +72,23 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
       .select({
         name: credentials.name,
         value: credentials.value,
+        ownerId: credentials.ownerId,
+        scope: credentials.scope,
+        sandboxEnvName: credentials.sandboxEnvName,
       })
       .from(credentials);
 
     for (const row of rows) {
+      // Gate 1: user must have access to this credential name
       if (userCredNames && !userCredNames.has(row.name)) continue;
 
-      const envName = row.name.toUpperCase();
+      // Gate 2: for per_user credentials, only inject the calling user's row.
+      // Without this, two users with the same credential name (e.g.
+      // `github_token`) would collide and the last row wins silently.
+      if (row.scope === "per_user" && userId && row.ownerId !== userId) continue;
+
+      // Use the explicit sandboxEnvName if set, otherwise uppercase the name
+      const envName = row.sandboxEnvName || row.name.toUpperCase();
       try {
         envs[envName] = decryptCredential(row.value);
       } catch (e: any) {
