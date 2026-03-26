@@ -151,15 +151,23 @@ dashboardAuthApp.openapi(checkRoleRoute, async (c) => {
   }
 });
 
-// ── Slack OIDC Login (direct, no proxy) ──────────────────────────────────────
+// ── Slack OIDC Login ─────────────────────────────────────────────────────────
+//
+// Slack only accepts pre-registered redirect URIs, so the full OAuth
+// round-trip (login → Slack → callback) MUST run on the production origin.
+// Non-production callers (localhost, PR previews) get redirected to
+// production's /login first; after the Slack round-trip, the callback
+// redirects back to the caller's origin with the JWT.
 
-function getBaseUrl(c: { req: { url: string; header: (name: string) => string | undefined } }): string {
+const PRODUCTION_ORIGIN = process.env.DASHBOARD_URL || "https://app.aurahq.ai";
+
+function getRequestOrigin(c: { req: { url: string; header: (name: string) => string | undefined } }): string {
   const proto = c.req.header("x-forwarded-proto") || "https";
   const host = c.req.header("x-forwarded-host") || c.req.header("host") || new URL(c.req.url).host;
   return `${proto}://${host}`;
 }
 
-const TRUSTED_DOMAIN_SUFFIXES = [".aurahq.ai"];
+const TRUSTED_DOMAIN_SUFFIXES = [".aurahq.ai", ".vercel.app"];
 
 function parseTrustedOrigins(): string[] {
   const raw = process.env.TRUSTED_ORIGINS;
@@ -167,7 +175,6 @@ function parseTrustedOrigins(): string[] {
   return raw.split(",").map((o) => o.trim()).filter(Boolean);
 }
 
-/** Allow origins on trusted domains (HTTPS), explicitly configured origins, and localhost. */
 function isAllowedOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
@@ -192,11 +199,22 @@ function getSafeReturnTo(returnTo: string | null | undefined): string {
   return returnTo;
 }
 
+function isProduction(c: { req: { url: string; header: (name: string) => string | undefined } }): boolean {
+  return getRequestOrigin(c) === PRODUCTION_ORIGIN;
+}
+
 dashboardAuthApp.get("/login", async (c) => {
   const returnTo = c.req.query("returnTo") || "/";
   const rawOrigin = c.req.query("origin");
-  const baseUrl = getBaseUrl(c);
-  const origin = rawOrigin && isAllowedOrigin(rawOrigin) ? rawOrigin : baseUrl;
+  const requestOrigin = getRequestOrigin(c);
+  const origin = rawOrigin && isAllowedOrigin(rawOrigin) ? rawOrigin : requestOrigin;
+
+  if (!isProduction(c)) {
+    const prodLogin = new URL(`${PRODUCTION_ORIGIN}/api/dashboard/auth/login`);
+    prodLogin.searchParams.set("origin", origin);
+    prodLogin.searchParams.set("returnTo", returnTo);
+    return c.redirect(prodLogin.toString());
+  }
 
   const clientId = process.env.SLACK_CLIENT_ID;
   if (!clientId) {
@@ -222,7 +240,7 @@ dashboardAuthApp.get("/login", async (c) => {
     response_type: "code",
     client_id: clientId,
     scope: "openid profile email",
-    redirect_uri: `${baseUrl}/api/dashboard/auth/callback`,
+    redirect_uri: `${PRODUCTION_ORIGIN}/api/dashboard/auth/callback`,
     state,
     nonce: crypto.randomBytes(16).toString("hex"),
   });
@@ -230,12 +248,11 @@ dashboardAuthApp.get("/login", async (c) => {
   return c.redirect(`https://slack.com/openid/connect/authorize?${params.toString()}`);
 });
 
-// ── Slack OIDC Callback ──────────────────────────────────────────────────────
+// ── Slack OIDC Callback (always runs on production) ──────────────────────────
 
 dashboardAuthApp.get("/callback", async (c) => {
   const code = c.req.query("code");
   const stateParam = c.req.query("state");
-  const baseUrl = getBaseUrl(c);
 
   const savedNonce = getCookie(c, "oauth_state");
   deleteCookie(c, "oauth_state", { path: "/" });
@@ -252,10 +269,10 @@ dashboardAuthApp.get("/callback", async (c) => {
     origin = decoded.origin;
     returnTo = getSafeReturnTo(decoded.returnTo);
   } catch {
-    return c.redirect(`${baseUrl}/unauthorized?reason=invalid_state`);
+    return c.redirect(`${PRODUCTION_ORIGIN}/unauthorized?reason=invalid_state`);
   }
 
-  const redirectBase = origin || baseUrl;
+  const redirectBase = (origin && isAllowedOrigin(origin)) ? origin : PRODUCTION_ORIGIN;
 
   if (!code || !nonce || nonce !== savedNonce) {
     return c.redirect(`${redirectBase}/unauthorized?reason=invalid_state`);
@@ -275,7 +292,7 @@ dashboardAuthApp.get("/callback", async (c) => {
       client_id: clientId,
       client_secret: clientSecret,
       code,
-      redirect_uri: `${baseUrl}/api/dashboard/auth/callback`,
+      redirect_uri: `${PRODUCTION_ORIGIN}/api/dashboard/auth/callback`,
     }),
   });
 
