@@ -17,7 +17,7 @@ import { jwtVerify } from "jose";
 
 export const dashboardApp = createDashboardApp();
 
-const PUBLIC_AUTH_PATHS = ["/auth/login", "/auth/callback", "/auth/token-receive"];
+const PUBLIC_AUTH_PATHS = ["/auth/login", "/auth/callback"];
 
 dashboardApp.use("*", async (c, next) => {
   const path = new URL(c.req.url).pathname.replace("/api/dashboard", "");
@@ -25,14 +25,8 @@ dashboardApp.use("*", async (c, next) => {
     return next();
   }
 
-  // Try Bearer token from header (dashboard-v2 SPA)
   const authHeader = c.req.header("authorization") || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-  // Try session cookie (dashboard v1 / Next.js)
-  const cookieToken = token || c.req.header("cookie")?.match(/aura_session=([^;]+)/)?.[1] || "";
-
-  const candidate = token || cookieToken;
+  const candidate = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!candidate) return c.json({ error: "Unauthorized" }, 401);
 
   // Accept static DASHBOARD_API_SECRET (Next.js dashboard server-side calls)
