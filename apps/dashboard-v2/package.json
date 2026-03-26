@@ -7,6 +7,7 @@
     "dev": "vp dev",
     "build": "tsc && vp build",
     "preview": "vp preview",
+    "typecheck": "tsc --noEmit",
     "check": "vp check",
     "generate:api": "openapi-typescript http://localhost:3001/api/dashboard/openapi.json -o src/lib/api-types.ts"
   },

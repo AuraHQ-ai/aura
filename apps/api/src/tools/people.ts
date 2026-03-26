@@ -34,6 +34,7 @@ interface RawPersonRow {
 function mapRawPerson(row: RawPersonRow): typeof people.$inferSelect {
   return {
     id: row.id,
+    workspaceId: (row as any).workspace_id ?? "",
     displayName: row.display_name,
     slackUserId: row.slack_user_id,
     jobTitle: row.job_title,

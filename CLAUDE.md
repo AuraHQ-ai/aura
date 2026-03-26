@@ -51,6 +51,11 @@ pnpm db:studio      # open Drizzle Studio
 - The system prompt contains only **cross-cutting behavioral rules** (e.g. DM privacy, channel access), NOT per-tool documentation
 - When adding a new tool, put all usage guidance in the tool's `description` field, not the system prompt
 
+## Pre-push checks
+- A husky pre-push hook runs `pnpm typecheck` automatically (type-checks both `apps/api` and `apps/dashboard-v2`).
+- Always run `pnpm typecheck` at the monorepo root before committing. Never commit code that breaks `tsc --noEmit`.
+- The Vercel build will reject type errors, so catching them locally saves a deploy cycle.
+
 ## Common pitfalls
 - Slack's `chat.update` has a 40K character limit — messages get truncated
 - pgvector columns must all use the same dimensions (1536)
