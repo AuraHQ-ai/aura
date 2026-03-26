@@ -558,6 +558,23 @@ export async function buildSystemPrompt(
   };
 }
 
+export interface AccessibleCredential {
+  name: string;
+  type: string;
+  ownerName: string | null;
+  isOwn: boolean;
+}
+
+export function formatAvailableCredentials(creds: AccessibleCredential[]): string {
+  if (creds.length === 0) return "";
+
+  const lines = creds.map((c) => {
+    const source = c.isOwn ? "yours" : `via ${c.ownerName ?? "unknown"}`;
+    return `- ${c.name} (${source}, ${c.type})`;
+  });
+  return `## Available credentials\n${lines.join("\n")}`;
+}
+
 /**
  * Build the dynamic context block (current time, model, channel, thread).
  * Separated from the stable system prompt so it can be passed as an uncached
@@ -569,11 +586,15 @@ export function buildDynamicContext(context: {
   channelId?: string;
   threadTs?: string;
   usageStats?: string;
+  availableCredentials?: AccessibleCredential[];
 }): string {
   let s = `## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
   if (context.modelId) s += `\nActive model: \`${context.modelId}\``;
   if (context.channelId) s += `\nCurrent channel: ${context.channelId}`;
   if (context.threadTs) s += `\nCurrent thread_ts: ${context.threadTs}`;
   if (context.usageStats) s += `\n\n${context.usageStats}`;
+  if (context.availableCredentials && context.availableCredentials.length > 0) {
+    s += `\n\n${formatAvailableCredentials(context.availableCredentials)}`;
+  }
   return s;
 }
