@@ -72,7 +72,7 @@ function NotesPage() {
   const total = data?.total ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Notes</h1>
         <span className="text-sm text-muted-foreground">
@@ -95,14 +95,14 @@ function NotesPage() {
         </Button>
       </div>
 
-      <div className={cn("rounded-xl border overflow-hidden transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table>
+      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+        <Table className="min-w-[600px]">
           <TableHeader>
             <TableRow>
               <TableHead>Topic</TableHead>
               <TableHead className="w-[100px]">Category</TableHead>
-              <TableHead className="w-[140px]">Updated</TableHead>
-              <TableHead className="w-[140px]">Expires</TableHead>
+              <TableHead className="w-[160px]">Updated</TableHead>
+              <TableHead className="w-[160px]">Expires</TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>

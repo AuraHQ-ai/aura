@@ -140,7 +140,7 @@ function CredentialsPage() {
   const total = data?.total ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Credentials</h1>
         <span className="text-sm text-muted-foreground">
@@ -166,15 +166,15 @@ function CredentialsPage() {
         </Button>
       </div>
 
-      <div className={cn("rounded-xl border overflow-x-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table className="min-w-[550px]">
+      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+        <Table className="min-w-[650px]">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead className="w-[80px]">Type</TableHead>
               <TableHead className="w-[120px]">Scope</TableHead>
               <TableHead className="w-[160px]">Owner</TableHead>
-              <TableHead className="w-[140px]">Expires</TableHead>
+              <TableHead className="w-[160px]">Expires</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

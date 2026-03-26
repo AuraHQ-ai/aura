@@ -58,7 +58,7 @@ function MemoriesPage() {
   const total = data?.total ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Memories</h1>
         <span className="text-sm text-muted-foreground">
@@ -88,15 +88,15 @@ function MemoriesPage() {
         </select>
       </div>
 
-      <div className={cn("rounded-xl border overflow-hidden transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table>
+      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+        <Table className="min-w-[600px]">
           <TableHeader>
             <TableRow>
               <TableHead>Content</TableHead>
               <TableHead className="w-[90px]">Type</TableHead>
               <TableHead className="w-[80px]">Relevance</TableHead>
               <TableHead className="w-[80px]">Shareable</TableHead>
-              <TableHead className="w-[140px]">Created</TableHead>
+              <TableHead className="w-[160px]">Created</TableHead>
               <TableHead className="w-10" />
             </TableRow>
           </TableHeader>

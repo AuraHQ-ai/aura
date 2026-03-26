@@ -80,11 +80,11 @@ function InvocationsTable({
   isLoading?: boolean;
 }) {
   return (
-    <div className="rounded-xl border overflow-x-auto">
-      <Table className="min-w-[800px]">
+    <div className="flex-1 min-h-0 rounded-xl border overflow-auto">
+      <Table className="min-w-[850px]">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[140px]">Timestamp</TableHead>
+            <TableHead className="w-[160px]">Timestamp</TableHead>
             <TableHead className="w-[80px]">Source</TableHead>
             <TableHead>Preview</TableHead>
             <TableHead className="w-[160px]">Model</TableHead>
@@ -157,12 +157,12 @@ function InvocationsTable({
 
 function ThreadsTable({ threads, isLoading }: { threads: ThreadRow[]; isLoading?: boolean }) {
   return (
-    <div className="rounded-xl border overflow-x-auto">
-      <Table className="min-w-[800px]">
+    <div className="flex-1 min-h-0 rounded-xl border overflow-auto">
+      <Table className="min-w-[860px]">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[140px]">Started</TableHead>
-            <TableHead className="w-[140px]">Last Active</TableHead>
+            <TableHead className="w-[160px]">Started</TableHead>
+            <TableHead className="w-[160px]">Last Active</TableHead>
             <TableHead className="w-[80px]">Source</TableHead>
             <TableHead>Preview</TableHead>
             <TableHead className="w-[80px]">Messages</TableHead>
@@ -267,7 +267,7 @@ function ConversationsPage() {
   const total = data?.total ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Conversations</h1>
         <span className="text-sm text-muted-foreground">
@@ -312,7 +312,7 @@ function ConversationsPage() {
         </div>
       </Tabs>
 
-      <div className={cn("transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div className={cn("flex-1 min-h-0 flex flex-col transition-opacity", isFetching && !isLoading && "opacity-50")}>
         {view === "threads" ? (
           <ThreadsTable threads={items as ThreadRow[]} isLoading={isLoading} />
         ) : (

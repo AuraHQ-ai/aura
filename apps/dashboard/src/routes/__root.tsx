@@ -105,8 +105,8 @@ function RootLayout() {
         <Panel id="content" minSize="50%">
           <div className="flex h-full flex-col overflow-hidden">
             <Header session={session} chatOpen={chatOpen} toggleChat={toggleChat} />
-            <main className="flex-1 overflow-y-auto">
-              <div className="px-4 py-3 md:px-5 md:py-4">
+            <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 flex flex-col min-h-0 overflow-y-auto px-4 py-3 md:px-5 md:py-4">
                 <Outlet />
               </div>
             </main>
