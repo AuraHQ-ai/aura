@@ -391,6 +391,46 @@ export async function resolveUserByName(
     };
   }
 
+  // Fuzzy match fallback via fast model (for voice/STT contexts)
+  try {
+    const { generateText } = await import("ai");
+    const { getFastModel } = await import("../lib/ai.js");
+
+    const model = await getFastModel();
+    const userListStr = users
+      .map((u) => `${u.id}: ${u.displayName || u.realName} (@${u.username})`)
+      .join("\n");
+
+    const { text } = await generateText({
+      model,
+      system:
+        "Given a list of team members and a possibly misspelled or speech-transcribed name, return ONLY the user ID (e.g. U066V1AN6) of the best match. If no reasonable match exists, return 'NONE'. Do not explain.",
+      prompt: `Team members:\n${userListStr}\n\nFind: "${cleaned}"`,
+      maxOutputTokens: 50,
+    });
+
+    const matchedId = text.trim();
+    if (matchedId !== "NONE" && /^U[A-Z0-9]+$/.test(matchedId)) {
+      const matchedUser = users.find((u) => u.id === matchedId);
+      if (matchedUser) {
+        logger.info("resolveUserByName: fuzzy match via fast model", {
+          input: cleaned,
+          matchedId: matchedUser.id,
+          matchedName: matchedUser.displayName || matchedUser.realName,
+        });
+        return {
+          id: matchedUser.id,
+          name:
+            matchedUser.displayName ||
+            matchedUser.realName ||
+            matchedUser.username,
+        };
+      }
+    }
+  } catch {
+    // Fuzzy match failed, fall through to return null
+  }
+
   return null;
 }
 
