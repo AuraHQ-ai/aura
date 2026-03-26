@@ -135,6 +135,69 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
 }
 
 /**
+ * Clone or update the aura-tools repo at /opt/aura-tools.
+ * Repo is resolved from TOOLS_REPO env var (e.g. "realadvisor/aura-tools").
+ * Non-fatal -- sandbox works fine without the tools repo.
+ */
+async function setupToolsRepo(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<void> {
+  try {
+    const toolsRepo = process.env.TOOLS_REPO;
+    if (!toolsRepo) {
+      logger.info("Skipping aura-tools clone — TOOLS_REPO not configured");
+      return;
+    }
+    if (!envs.GH_TOKEN) {
+      logger.info("Skipping aura-tools clone — GH_TOKEN not available");
+      return;
+    }
+
+    const cmdEnvs = { ...envs, TOOLS_REPO: toolsRepo };
+
+    const existsCheck = await sandbox.commands.run(
+      "test -d /opt/aura-tools/.git && echo exists || echo missing",
+      { timeoutMs: 5_000, envs: cmdEnvs },
+    );
+
+    if (existsCheck.stdout?.trim() === "exists") {
+      await sandbox.commands.run(
+        `cd /opt/aura-tools && git remote set-url origin https://x-access-token:$GH_TOKEN@github.com/$TOOLS_REPO.git`,
+        { timeoutMs: 5_000, envs: cmdEnvs },
+      );
+      const pullResult = await sandbox.commands.run(
+        "cd /opt/aura-tools && git pull --ff-only origin main",
+        { timeoutMs: 15_000, envs: cmdEnvs },
+      );
+      if (pullResult.exitCode === 0) {
+        logger.info("aura-tools repo updated via pull");
+      } else {
+        logger.warn("aura-tools pull had non-zero exit", {
+          exitCode: pullResult.exitCode,
+          stderr: pullResult.stderr,
+        });
+      }
+    } else {
+      const cloneResult = await sandbox.commands.run(
+        `git clone https://x-access-token:$GH_TOKEN@github.com/$TOOLS_REPO.git /opt/aura-tools`,
+        { timeoutMs: 30_000, envs: cmdEnvs },
+      );
+      if (cloneResult.exitCode === 0) {
+        logger.info("aura-tools repo cloned to /opt/aura-tools", { repo: toolsRepo });
+      } else {
+        logger.warn("aura-tools clone failed", {
+          exitCode: cloneResult.exitCode,
+          repo: toolsRepo,
+        });
+      }
+    }
+  } catch (error: any) {
+    logger.warn("Failed to set up aura-tools repo", { error: error.message });
+  }
+}
+
+/**
  * Mount the GCS bucket `gs://aura-files` at `/mnt/aura-files`.
  * Installs gcsfuse if needed and uses the base64-encoded SA key from envs.
  * Non-fatal -- sandbox works fine without the mount.
@@ -307,6 +370,7 @@ export async function getOrCreateSandbox(): Promise<any> {
 
     if (cachedSandbox) {
       await setupSandboxFilesystem(cachedSandbox, envs);
+      await setupToolsRepo(cachedSandbox, envs);
       return cachedSandbox;
     }
   }
@@ -364,6 +428,7 @@ export async function getOrCreateSandbox(): Promise<any> {
   }
 
   await setupSandboxFilesystem(sandbox, envs);
+  await setupToolsRepo(sandbox, envs);
 
   return sandbox;
 }
