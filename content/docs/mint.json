@@ -34,7 +34,7 @@
     {
       "name": "GitHub",
       "icon": "github",
-      "url": "https://github.com/realadvisor/aura"
+      "url": "https://github.com/AuraHQ-ai/aura"
     },
     {
       "name": "Blog",
@@ -45,11 +45,18 @@
   "navigation": [
     {
       "group": "Getting Started",
-      "pages": ["getting-started", "architecture"]
+      "pages": [
+        "getting-started",
+        "architecture"
+      ]
     },
     {
       "group": "Core Systems",
-      "pages": ["memory-system", "self-improvement"]
+      "pages": [
+        "memory-system",
+        "self-improvement",
+        "permissions"
+      ]
     },
     {
       "group": "Tools",
@@ -57,7 +64,8 @@
         "tools/slack",
         "tools/email",
         "tools/bigquery",
-        "tools/sandbox"
+        "tools/sandbox",
+        "tools/credentials"
       ]
     },
     {
@@ -70,12 +78,16 @@
     },
     {
       "group": "API Reference",
-      "pages": ["api-reference/overview"]
+      "pages": [
+        "api-reference/overview"
+      ]
     }
   ],
   "footerSocials": {
     "x": "https://x.com/aurahq_ai",
-    "github": "https://github.com/realadvisor/aura"
+    "github": "https://github.com/AuraHQ-ai/aura"
   },
-  "openapi": ["/openapi.yaml"]
+  "openapi": [
+    "https://aura-aurahq.vercel.app/api/dashboard/openapi.json"
+  ]
 }
