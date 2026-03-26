@@ -19,6 +19,7 @@ const E164_RE = /^\+[1-9]\d{1,14}$/;
 
 interface RawPersonRow {
   id: string;
+  workspace_id: string;
   display_name: string | null;
   slack_user_id: string | null;
   job_title: string | null;
@@ -34,7 +35,7 @@ interface RawPersonRow {
 function mapRawPerson(row: RawPersonRow): typeof people.$inferSelect {
   return {
     id: row.id,
-    workspaceId: (row as any).workspace_id ?? "",
+    workspaceId: row.workspace_id,
     displayName: row.display_name,
     slackUserId: row.slack_user_id,
     jobTitle: row.job_title,
