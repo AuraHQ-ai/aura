@@ -519,8 +519,8 @@ export async function buildSystemPrompt(
   let conversationBlock = "";
   if (context.threadContext) {
     conversationBlock = context.isChannelHistory
-      ? `\n\n<conversation>\n${context.threadContext}\n</conversation>`
-      : `\n\n<conversation>\n${context.threadContext}\n</conversation>`;
+      ? `\n\n<conversation type="channel">\n${context.threadContext}\n</conversation>`
+      : `\n\n<conversation type="thread">\n${context.threadContext}\n</conversation>`;
   }
 
   return {

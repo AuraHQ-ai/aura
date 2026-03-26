@@ -291,6 +291,10 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
   return `\n[Tools: ${parts.join(" | ")}]`;
 }
 
+function escapeXmlAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** Build a compact tool summary for the `tools` attribute on `<msg>` tags. */
 function compactToolSummary(m: SlackThreadMessage): string {
   if (m.toolIO?.length) {
@@ -298,14 +302,14 @@ function compactToolSummary(m: SlackThreadMessage): string {
     const label = names.length <= 3
       ? names.join(", ")
       : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
-    return ` tools="${label}"`;
+    return ` tools="${escapeXmlAttr(label)}"`;
   }
   if (m.toolCalls?.length) {
     const names = [...new Set(m.toolCalls.map((tc) => tc.title.replace(/\.\.\.$/, "")))];
     const label = names.length <= 3
       ? names.join(", ")
       : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
-    return ` tools="${label}"`;
+    return ` tools="${escapeXmlAttr(label)}"`;
   }
   return "";
 }
@@ -322,7 +326,7 @@ function formatMessage(m: SlackThreadMessage, timezone?: string, isOld = false):
     else if (m.toolCalls?.length) body += formatToolCalls(m.toolCalls);
   }
 
-  return `<msg from="${m.displayName}" at="${time}" role="${role}"${toolsAttr}>\n${body}\n</msg>`;
+  return `<msg from="${escapeXmlAttr(m.displayName)}" at="${time}" role="${role}"${toolsAttr}>\n${body}\n</msg>`;
 }
 
 /**
