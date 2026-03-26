@@ -149,7 +149,8 @@ Channel connectors (Slack, Dashboard, etc.) handle **delivery only** — they MU
 
 ## TypeScript
 
-- Always run `npx tsc --noEmit` before committing (in the relevant app directory).
+- **Before committing**, run `pnpm typecheck` at the monorepo root. This runs `tsc --noEmit` on both `apps/api` and `apps/dashboard-v2`. A husky pre-push hook enforces this automatically, but always run it yourself first to avoid surprises.
 - Use `.js` extensions in imports (ESM with `"type": "module"`).
 - AI SDK v6 uses `inputSchema` (not `parameters`) and `stopWhen: stepCountIs(N)` (not `maxSteps`).
 - Remember: `tsc` catches type errors but NOT runtime issues (ESM/CJS, missing env vars, API incompatibilities). Be extra careful with new dependencies.
+- **Never commit code that breaks `tsc --noEmit`** in any app. The Vercel build will reject it.
