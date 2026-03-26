@@ -110,6 +110,11 @@
       }
     ]
   },
+  "api": {
+    "openapi": [
+      "https://aura-aurahq.vercel.app/api/dashboard/openapi.json"
+    ]
+  },
   "footer": {
     "socials": {
       "x": "https://x.com/aurahq_ai",
