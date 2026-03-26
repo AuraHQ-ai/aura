@@ -159,13 +159,18 @@ function getBaseUrl(c: { req: { url: string; header: (name: string) => string | 
   return `${proto}://${host}`;
 }
 
-/** Allow HTTPS origins and localhost (HTTP or HTTPS). */
+const TRUSTED_DOMAIN_SUFFIXES = [".aurahq.ai", ".vercel.app"];
+
+/** Allow origins on trusted domains (HTTPS) and localhost (HTTP or HTTPS). */
 function isAllowedOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
     if (url.hostname === "localhost")
       return url.protocol === "http:" || url.protocol === "https:";
-    return url.protocol === "https:";
+    if (url.protocol !== "https:") return false;
+    return TRUSTED_DOMAIN_SUFFIXES.some(
+      (suffix) => url.hostname === suffix.slice(1) || url.hostname.endsWith(suffix),
+    );
   } catch {
     return false;
   }

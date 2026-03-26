@@ -13,13 +13,18 @@ export function getAppUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 }
 
-/** Allow HTTPS origins and localhost (HTTP or HTTPS). */
+const TRUSTED_DOMAIN_SUFFIXES = [".aurahq.ai", ".vercel.app"];
+
+/** Allow origins on trusted domains (HTTPS) and localhost (HTTP or HTTPS). */
 export function isAllowedOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
     if (url.hostname === "localhost")
       return url.protocol === "http:" || url.protocol === "https:";
-    return url.protocol === "https:";
+    if (url.protocol !== "https:") return false;
+    return TRUSTED_DOMAIN_SUFFIXES.some(
+      (suffix) => url.hostname === suffix.slice(1) || url.hostname.endsWith(suffix),
+    );
   } catch {
     return false;
   }
