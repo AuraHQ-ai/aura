@@ -384,6 +384,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
         userId,
         onFinish: ({ steps, totalUsage, text }) => {
           logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
+          const fullSystemPrompt = [prompt.stablePrefix, prompt.conversationContext, prompt.dynamicContext].filter(Boolean).join("\n\n");
           waitUntil(
             persistDashboardConversation({
               userId,
@@ -392,7 +393,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
               threadId,
               userMessage: messageText,
               assistantText: text,
-              systemPrompt: prompt.stablePrefix,
+              systemPrompt: fullSystemPrompt,
               steps,
               totalUsage,
             }).catch((err) => {
