@@ -178,28 +178,45 @@ export function buildConversationSteps(rawSteps: any[]): Step[] {
 // ── Phase 1: Persist inputs BEFORE generate ──────────────────────────────────
 // Saves system + user messages immediately so they survive crashes.
 // Returns the next orderIndex for assistant messages.
+//
+// Optional `conversationHistory` captures prior user/assistant turns that were
+// sent to the model as `messages` (dashboard path). For Slack, thread context
+// is already inside the system prompt as <conversation>, so this is typically
+// only used by the dashboard.
 
 export async function persistConversationInputs(
   conversationId: string,
   systemPrompt: string,
   userPrompt: string,
+  conversationHistory?: Array<{ role: string; content: string }>,
 ): Promise<number> {
   try {
-    await insertMessage(conversationId, "system", 0, [
+    let orderIndex = 0;
+
+    await insertMessage(conversationId, "system", orderIndex++, [
       { type: "text", orderIndex: 0, textValue: systemPrompt },
     ], systemPrompt);
-    await insertMessage(conversationId, "user", 1, [
+
+    if (conversationHistory && conversationHistory.length > 0) {
+      for (const msg of conversationHistory) {
+        await insertMessage(conversationId, msg.role, orderIndex++, [
+          { type: "text", orderIndex: 0, textValue: msg.content },
+        ], msg.content);
+      }
+    }
+
+    await insertMessage(conversationId, "user", orderIndex++, [
       { type: "text", orderIndex: 0, textValue: userPrompt },
     ], userPrompt);
 
-    logger.info("persistConversationInputs: saved", { conversationId });
-    return 2;
+    logger.info("persistConversationInputs: saved", { conversationId, historyMessages: conversationHistory?.length ?? 0 });
+    return orderIndex;
   } catch (err: any) {
     logger.error("persistConversationInputs: failed (non-fatal)", {
       conversationId,
       error: err.message,
     });
-    return 2;
+    return conversationHistory ? conversationHistory.length + 2 : 2;
   }
 }
 
