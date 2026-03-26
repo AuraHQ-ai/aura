@@ -66,7 +66,7 @@ function JobsPage() {
   const total = data?.total ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Jobs</h1>
         <span className="text-sm text-muted-foreground">
@@ -87,8 +87,8 @@ function JobsPage() {
         />
       </div>
 
-      <div className={cn("rounded-xl border overflow-x-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table className="min-w-[960px]">
+      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+        <Table className="min-w-[1020px]">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
@@ -97,8 +97,8 @@ function JobsPage() {
               <TableHead className="w-[120px]">Schedule</TableHead>
               <TableHead className="w-[70px]">Enabled</TableHead>
               <TableHead className="w-[90px]">Executions</TableHead>
-              <TableHead className="w-[140px]">Last Run</TableHead>
-              <TableHead className="w-[140px]">Created</TableHead>
+              <TableHead className="w-[160px]">Last Run</TableHead>
+              <TableHead className="w-[160px]">Created</TableHead>
               <TableHead className="w-[80px]">Priority</TableHead>
             </TableRow>
           </TableHeader>

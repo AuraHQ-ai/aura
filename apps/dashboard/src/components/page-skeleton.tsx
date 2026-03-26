@@ -1,7 +1,7 @@
 import { TableRow, TableCell } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
-export function TableRowsSkeleton({ columns, rows = 5 }: { columns: number; rows?: number }) {
+export function TableRowsSkeleton({ columns, rows = 25 }: { columns: number; rows?: number }) {
   return (
     <>
       {Array.from({ length: rows }).map((_, i) => (

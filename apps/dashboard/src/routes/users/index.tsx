@@ -56,7 +56,7 @@ function UsersPage() {
   const total = data?.total ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Users</h1>
         <span className="text-sm text-muted-foreground">
@@ -77,16 +77,16 @@ function UsersPage() {
         />
       </div>
 
-      <div className={cn("rounded-xl border overflow-x-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table className="min-w-[700px]">
+      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+        <Table className="min-w-[850px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[160px]">Name</TableHead>
               <TableHead className="w-[120px]">Slack ID</TableHead>
               <TableHead>Job Title</TableHead>
               <TableHead className="w-[100px]">Interactions</TableHead>
-              <TableHead className="w-[140px]">Last Active</TableHead>
-              <TableHead className="w-[140px]">Joined</TableHead>
+              <TableHead className="w-[160px]">Last Active</TableHead>
+              <TableHead className="w-[160px]">Joined</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

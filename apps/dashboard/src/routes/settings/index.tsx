@@ -169,7 +169,7 @@ function SettingsPage() {
             <TableRow>
               <TableHead className="w-[200px]">Key</TableHead>
               <TableHead>Value</TableHead>
-              <TableHead className="w-[140px]">Updated</TableHead>
+              <TableHead className="w-[160px]">Updated</TableHead>
               <TableHead className="w-[120px]">By</TableHead>
               <TableHead className="w-10" />
             </TableRow>

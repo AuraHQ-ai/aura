@@ -10,14 +10,13 @@ interface PaginationProps {
 
 export function Pagination({ total, pageSize, page, onPageChange }: PaginationProps) {
   const totalPages = Math.ceil(total / pageSize);
-
-  if (totalPages <= 1) return null;
+  const hasPages = totalPages > 1;
 
   const start = (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, total);
 
   return (
-    <div className="flex items-center justify-between pt-2">
+    <div className="flex items-center justify-between pt-2" style={{ visibility: hasPages ? "visible" : "hidden" }}>
       <span className="text-[13px] text-muted-foreground">
         {start}–{end} of {total.toLocaleString()}
       </span>

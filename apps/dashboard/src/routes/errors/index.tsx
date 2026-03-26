@@ -84,7 +84,7 @@ function ErrorsPage() {
   const total = data?.total ?? 0;
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Errors</h1>
         <span className="text-sm text-muted-foreground">
@@ -132,8 +132,8 @@ function ErrorsPage() {
         )}
       </div>
 
-      <div className={cn("rounded-xl border overflow-hidden transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table>
+      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+        <Table className="min-w-[700px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-10" />
@@ -141,7 +141,7 @@ function ErrorsPage() {
               <TableHead className="w-[80px]">Code</TableHead>
               <TableHead>Message</TableHead>
               <TableHead className="w-[80px]">Status</TableHead>
-              <TableHead className="w-[140px]">Time</TableHead>
+              <TableHead className="w-[160px]">Time</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
