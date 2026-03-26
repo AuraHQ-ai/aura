@@ -4,21 +4,14 @@ import { userProfiles } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
-import { SignJWT, jwtVerify } from "jose";
+import { SignJWT } from "jose";
+import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import crypto from "node:crypto";
-
-const PRODUCTION_URL = "https://app.aurahq.ai";
 
 function getSessionSecret(): Uint8Array {
   const secret = process.env.DASHBOARD_SESSION_SECRET;
   if (!secret) throw new Error("DASHBOARD_SESSION_SECRET not configured");
   return new TextEncoder().encode(secret);
-}
-
-function signOrigin(origin: string): string {
-  const secret = process.env.DASHBOARD_SESSION_SECRET;
-  if (!secret) throw new Error("DASHBOARD_SESSION_SECRET not configured");
-  return crypto.createHmac("sha256", Buffer.from(secret, "utf-8")).update(origin).digest("hex");
 }
 
 export async function createSessionJwt(payload: { slackUserId: string; name: string; picture: string }): Promise<string> {
@@ -29,19 +22,69 @@ export async function createSessionJwt(payload: { slackUserId: string; name: str
     .sign(getSessionSecret());
 }
 
-export async function verifyTransferToken(token: string): Promise<{ slackUserId: string; name: string; picture: string }> {
-  const { payload } = await jwtVerify(token, getSessionSecret());
-  if (payload.purpose !== "transfer") throw new Error("Invalid token purpose");
-  return {
-    slackUserId: payload.slackUserId as string,
-    name: payload.name as string,
-    picture: payload.picture as string,
-  };
-}
-
 export const dashboardAuthApp = createDashboardApp();
 
 const ALLOWED_ROLES = ["owner", "admin", "power_user"];
+
+/**
+ * Check if a Slack user is allowed to access the dashboard.
+ * If no owner exists yet, bootstraps the first user as owner.
+ */
+export async function checkUserRole(
+  slackUserId: string,
+  name?: string,
+): Promise<{ allowed: boolean; role?: string; reason?: string; bootstrapped?: boolean }> {
+  const existing = await db
+    .select({ role: userProfiles.role })
+    .from(userProfiles)
+    .where(eq(userProfiles.slackUserId, slackUserId))
+    .limit(1);
+
+  if (existing.length > 0) {
+    const role = existing[0].role;
+    if (ALLOWED_ROLES.includes(role)) {
+      return { allowed: true, role };
+    }
+    return { allowed: false, reason: "insufficient_role", role };
+  }
+
+  const bootstrapResult = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(42)`);
+
+    const ownerCount = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(userProfiles)
+      .where(eq(userProfiles.role, "owner"));
+
+    if ((ownerCount[0]?.count ?? 0) > 0) {
+      return null;
+    }
+
+    const inserted = await tx
+      .insert(userProfiles)
+      .values({
+        slackUserId,
+        displayName: name || "Owner",
+        role: "owner",
+      })
+      .onConflictDoUpdate({
+        target: [userProfiles.workspaceId, userProfiles.slackUserId],
+        set: { role: "owner", updatedAt: new Date() },
+      })
+      .returning({ role: userProfiles.role });
+
+    return inserted[0]?.role ?? "owner";
+  });
+
+  if (bootstrapResult) {
+    logger.info("Auto-seeded first user as owner", { slackUserId });
+    return { allowed: true, role: bootstrapResult, bootstrapped: true };
+  }
+
+  return { allowed: false, reason: "no_profile" };
+}
+
+// ── POST /check-role ─────────────────────────────────────────────────────────
 
 const checkRoleRoute = createRoute({
   method: "post",
@@ -95,85 +138,196 @@ dashboardAuthApp.openapi(checkRoleRoute, async (c) => {
       picture?: string;
     }>();
 
-    const { slackUserId, name, picture } = body;
+    const { slackUserId, name } = body;
     if (!slackUserId) {
       return c.json({ error: "slackUserId is required" }, 400);
     }
 
-    const existing = await db
-      .select({ role: userProfiles.role })
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, slackUserId))
-      .limit(1);
-
-    if (existing.length > 0) {
-      const role = existing[0].role;
-      if (ALLOWED_ROLES.includes(role)) {
-        return c.json({ allowed: true, role } as any, 200);
-      }
-    }
-
-    if (existing.length > 0) {
-      return c.json({ allowed: false, reason: "insufficient_role", role: existing[0].role } as any, 200);
-    }
-
-    const bootstrapResult = await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(42)`);
-
-      const ownerCount = await tx
-        .select({ count: sql<number>`count(*)::int` })
-        .from(userProfiles)
-        .where(eq(userProfiles.role, "owner"));
-
-      if ((ownerCount[0]?.count ?? 0) > 0) {
-        return null;
-      }
-
-      const inserted = await tx
-        .insert(userProfiles)
-        .values({
-          slackUserId,
-          displayName: name || "Owner",
-          role: "owner",
-        })
-        .onConflictDoUpdate({
-          target: [userProfiles.workspaceId, userProfiles.slackUserId],
-          set: { role: "owner", updatedAt: new Date() },
-        })
-        .returning({ role: userProfiles.role });
-
-      return inserted[0]?.role ?? "owner";
-    });
-
-    if (bootstrapResult) {
-      logger.info("Auto-seeded first user as owner", { slackUserId });
-      return c.json(
-        {
-          allowed: true,
-          role: bootstrapResult,
-          bootstrapped: true,
-        } as any,
-        200,
-      );
-    }
-
-    return c.json({ allowed: false, reason: "no_profile" } as any, 200);
+    const result = await checkUserRole(slackUserId, name);
+    return c.json(result as any, 200);
   } catch (error) {
     logger.error("Failed to check role", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
 
-// ── Slack OIDC Login (delegates to production proxy for non-prod) ────────────
+// ── Slack OIDC Login ─────────────────────────────────────────────────────────
+//
+// Slack only accepts pre-registered redirect URIs, so the full OAuth
+// round-trip (login → Slack → callback) MUST run on the production origin.
+// Non-production callers (localhost, PR previews) get redirected to
+// production's /login first; after the Slack round-trip, the callback
+// redirects back to the caller's origin with the JWT.
+
+const PRODUCTION_ORIGIN = process.env.DASHBOARD_URL || "https://app.aurahq.ai";
+
+function getRequestOrigin(c: { req: { url: string; header: (name: string) => string | undefined } }): string {
+  const proto = c.req.header("x-forwarded-proto") || "https";
+  const host = c.req.header("x-forwarded-host") || c.req.header("host") || new URL(c.req.url).host;
+  return `${proto}://${host}`;
+}
+
+const TRUSTED_DOMAIN_SUFFIXES = [".aurahq.ai", ".vercel.app"];
+
+function parseTrustedOrigins(): string[] {
+  const raw = process.env.TRUSTED_ORIGINS;
+  if (!raw) return [];
+  return raw.split(",").map((o) => o.trim()).filter(Boolean);
+}
+
+function isAllowedOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    if (url.hostname === "localhost")
+      return url.protocol === "http:" || url.protocol === "https:";
+    if (url.protocol !== "https:") return false;
+    if (TRUSTED_DOMAIN_SUFFIXES.some(
+      (suffix) => url.hostname === suffix.slice(1) || url.hostname.endsWith(suffix),
+    )) {
+      return true;
+    }
+    return parseTrustedOrigins().includes(url.origin);
+  } catch {
+    return false;
+  }
+}
+
+function getSafeReturnTo(returnTo: string | null | undefined): string {
+  if (!returnTo || !returnTo.startsWith("/") || returnTo.startsWith("//") || returnTo.startsWith("/api/auth")) {
+    return "/";
+  }
+  return returnTo;
+}
+
+function isProduction(c: { req: { url: string; header: (name: string) => string | undefined } }): boolean {
+  return getRequestOrigin(c) === PRODUCTION_ORIGIN;
+}
 
 dashboardAuthApp.get("/login", async (c) => {
   const returnTo = c.req.query("returnTo") || "/";
-  const origin = c.req.query("origin") || c.req.header("x-forwarded-origin") || new URL(c.req.url).origin;
+  const rawOrigin = c.req.query("origin");
+  const requestOrigin = getRequestOrigin(c);
+  const origin = rawOrigin && isAllowedOrigin(rawOrigin) ? rawOrigin : requestOrigin;
 
-  const proxyUrl = new URL(`${PRODUCTION_URL}/api/auth/proxy-login`);
-  proxyUrl.searchParams.set("origin", origin);
-  proxyUrl.searchParams.set("sig", signOrigin(origin));
-  proxyUrl.searchParams.set("returnTo", returnTo);
+  if (!isProduction(c)) {
+    const prodLogin = new URL(`${PRODUCTION_ORIGIN}/api/dashboard/auth/login`);
+    prodLogin.searchParams.set("origin", origin);
+    prodLogin.searchParams.set("returnTo", returnTo);
+    return c.redirect(prodLogin.toString());
+  }
 
-  return c.redirect(proxyUrl.toString());
+  const clientId = process.env.SLACK_CLIENT_ID;
+  if (!clientId) {
+    logger.error("SLACK_CLIENT_ID not configured");
+    return c.redirect(`${origin}/unauthorized?reason=config_error`);
+  }
+
+  const nonce = crypto.randomBytes(16).toString("hex");
+
+  setCookie(c, "oauth_state", nonce, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    maxAge: 300,
+    path: "/",
+  });
+
+  const state = Buffer.from(
+    JSON.stringify({ nonce, origin, returnTo }),
+  ).toString("base64url");
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    scope: "openid profile email",
+    redirect_uri: `${PRODUCTION_ORIGIN}/api/dashboard/auth/callback`,
+    state,
+    nonce: crypto.randomBytes(16).toString("hex"),
+  });
+
+  return c.redirect(`https://slack.com/openid/connect/authorize?${params.toString()}`);
+});
+
+// ── Slack OIDC Callback (always runs on production) ──────────────────────────
+
+dashboardAuthApp.get("/callback", async (c) => {
+  const code = c.req.query("code");
+  const stateParam = c.req.query("state");
+
+  const savedNonce = getCookie(c, "oauth_state");
+  deleteCookie(c, "oauth_state", { path: "/" });
+
+  let nonce: string | undefined;
+  let origin: string | undefined;
+  let returnTo: string | undefined;
+
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(stateParam || "", "base64url").toString(),
+    );
+    nonce = decoded.nonce;
+    origin = decoded.origin;
+    returnTo = getSafeReturnTo(decoded.returnTo);
+  } catch {
+    return c.redirect(`${PRODUCTION_ORIGIN}/unauthorized?reason=invalid_state`);
+  }
+
+  const redirectBase = (origin && isAllowedOrigin(origin)) ? origin : PRODUCTION_ORIGIN;
+
+  if (!code || !nonce || nonce !== savedNonce) {
+    return c.redirect(`${redirectBase}/unauthorized?reason=invalid_state`);
+  }
+
+  const clientId = process.env.SLACK_CLIENT_ID;
+  const clientSecret = process.env.SLACK_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    logger.error("Slack OAuth credentials not configured");
+    return c.redirect(`${redirectBase}/unauthorized?reason=config_error`);
+  }
+
+  const tokenRes = await fetch("https://slack.com/api/openid.connect.token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: `${PRODUCTION_ORIGIN}/api/dashboard/auth/callback`,
+    }),
+  });
+
+  const tokenData = await tokenRes.json() as { ok: boolean; access_token?: string };
+  if (!tokenData.ok || !tokenData.access_token) {
+    logger.warn("Slack token exchange failed", { tokenData });
+    return c.redirect(`${redirectBase}/unauthorized?reason=token_error`);
+  }
+
+  const userInfoRes = await fetch("https://slack.com/api/openid.connect.userInfo", {
+    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+  });
+  const userInfo = await userInfoRes.json() as Record<string, unknown>;
+  if (!userInfo.ok) {
+    logger.warn("Slack userInfo failed", { userInfo });
+    return c.redirect(`${redirectBase}/unauthorized?reason=userinfo_error`);
+  }
+
+  const slackUserId = (userInfo["https://slack.com/user_id"] || userInfo.sub) as string;
+  const name = (userInfo.name as string) || "Admin";
+  const picture = (userInfo.picture as string) || "";
+
+  try {
+    const roleResult = await checkUserRole(slackUserId, name);
+    if (!roleResult.allowed) {
+      return c.redirect(`${redirectBase}/unauthorized?reason=not_admin`);
+    }
+  } catch (err) {
+    logger.error("Role check failed during OAuth callback", { error: String(err) });
+    return c.redirect(`${redirectBase}/unauthorized?reason=check_failed`);
+  }
+
+  const jwt = await createSessionJwt({ slackUserId, name, picture });
+
+  const safeReturnTo = getSafeReturnTo(returnTo);
+  const separator = safeReturnTo.includes("?") ? "&" : "?";
+  return c.redirect(`${redirectBase}${safeReturnTo}${separator}token=${jwt}`);
 });
