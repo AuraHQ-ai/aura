@@ -106,7 +106,9 @@ export function MobileNav() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <NavContent onClose={() => setOpen(false)} />
+            <div className="pt-8">
+              <NavContent onClose={() => setOpen(false)} />
+            </div>
           </div>
         </div>
       )}
