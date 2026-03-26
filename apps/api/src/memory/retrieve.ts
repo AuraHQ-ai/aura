@@ -76,7 +76,11 @@ export async function retrieveMemories(
     ]);
 
     const CANDIDATE_POOL_SIZE = Math.max(25, limit);
-    const embeddingLiteral = JSON.stringify(queryEmbedding);
+    // Embed vector as a raw SQL literal instead of a parameterized value.
+    // This avoids Drizzle/Neon driver issues with large string params that
+    // look like arrays. Safe because validateEmbedding() guarantees all
+    // values are finite numbers.
+    const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
     const privacyFilter = adminMode
       ? sql`TRUE`
@@ -139,17 +143,17 @@ export async function retrieveMemories(
 
     const hybridQuery = sql`
       WITH vector_search AS (
-        SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${embeddingLiteral}::vector) AS rank
+        SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${vectorSql}) AS rank
         FROM memories
         WHERE ${baseFilter} AND ${privacyFilter}
-        ORDER BY embedding <=> ${embeddingLiteral}::vector
+        ORDER BY embedding <=> ${vectorSql}
         LIMIT ${CANDIDATE_POOL_SIZE}
       ),
       ${fulltextSearchCte}
       SELECT
         m.*,
         COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
-        (1 - (m.embedding <=> ${embeddingLiteral}::vector)) AS similarity
+        (1 - (m.embedding <=> ${vectorSql})) AS similarity
       FROM (
         SELECT COALESCE(v.id, f.id) AS id, v.rank AS vector_rank, f.rank AS fulltext_rank
         FROM vector_search v
@@ -260,9 +264,11 @@ export async function retrieveMemories(
     }
 
     return topMemories;
-  } catch (error) {
+  } catch (error: any) {
     logger.error("Memory retrieval failed", {
-      error: String(error),
+      error: error?.message ?? String(error),
+      code: error?.code,
+      cause: error?.cause ? String(error.cause) : undefined,
       query: query.substring(0, 100),
     });
     return [];
@@ -327,17 +333,17 @@ export async function retrieveConversations(
 
   try {
     const queryEmbedding = precomputed ?? await embedText(query);
-    const embeddingLiteral = JSON.stringify(queryEmbedding);
+    const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
     // Find the most similar messages
     const matchedMessages = await db
       .select({
         message: messages,
-        similarity: sql<number>`1 - (${messages.embedding} <=> ${embeddingLiteral}::vector)`.as("similarity"),
+        similarity: sql<number>`1 - (${messages.embedding} <=> ${vectorSql})`.as("similarity"),
       })
       .from(messages)
       .where(sql`${messages.embedding} IS NOT NULL`)
-      .orderBy(sql`${messages.embedding} <=> ${embeddingLiteral}::vector`)
+      .orderBy(sql`${messages.embedding} <=> ${vectorSql}`)
       .limit(matchLimit);
 
     // Filter by minimum similarity
@@ -395,11 +401,12 @@ export async function retrieveConversations(
     // Fetch only the first user message per thread for a compact summary
     // DISTINCT ON returns exactly one row per thread, prioritising user messages
     const threadKeys = sortedThreads.map(([key]) => key);
+    const threadKeysList = sql.join(threadKeys.map(k => sql`${k}`), sql`, `);
     const summaryResult = await db.execute(sql`
       SELECT DISTINCT ON (COALESCE(slack_thread_ts, slack_ts))
         slack_ts, slack_thread_ts, content, role, created_at
       FROM messages
-      WHERE slack_thread_ts = ANY(${threadKeys}) OR slack_ts = ANY(${threadKeys})
+      WHERE slack_thread_ts IN (${threadKeysList}) OR slack_ts IN (${threadKeysList})
       ORDER BY COALESCE(slack_thread_ts, slack_ts),
                (CASE WHEN role = 'user' THEN 0 ELSE 1 END),
                created_at
@@ -435,9 +442,11 @@ export async function retrieveConversations(
     );
 
     return conversationThreads;
-  } catch (error) {
+  } catch (error: any) {
     logger.error("Conversation retrieval failed", {
-      error: String(error),
+      error: error?.message ?? String(error),
+      code: error?.code,
+      cause: error?.cause ? String(error.cause) : undefined,
       query: query.substring(0, 100),
     });
     return [];

@@ -554,7 +554,7 @@ export function createResourceTools(context?: ScheduleContext) {
 
           if (mode === "semantic") {
             const queryEmbedding = await embedText(trimmed);
-            const embeddingLiteral = JSON.stringify(queryEmbedding);
+            const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
             const conditions = [
               eq(resources.status, "ready"),
@@ -565,10 +565,10 @@ export function createResourceTools(context?: ScheduleContext) {
             const where = and(...conditions);
             const results = await db.execute(sql`
               SELECT url, title, source, summary, crawled_at,
-                     1 - (embedding <=> ${embeddingLiteral}::vector) as similarity
+                     1 - (embedding <=> ${vectorSql}) as similarity
               FROM resources
               WHERE ${where}
-              ORDER BY embedding <=> ${embeddingLiteral}::vector
+              ORDER BY embedding <=> ${vectorSql}
               LIMIT ${limit}
             `);
             const rows = ((results as any).rows ?? results) as ResourceSearchRow[];

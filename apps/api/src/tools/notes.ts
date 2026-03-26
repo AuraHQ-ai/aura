@@ -587,7 +587,7 @@ export function createNoteTools(context?: ScheduleContext) {
 
           if (mode === "semantic") {
             const queryEmbedding = await embedText(trimmed);
-            const embeddingLiteral = JSON.stringify(queryEmbedding);
+            const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
             const searchConditions = [
               sql`${notes.embedding} IS NOT NULL`,
@@ -610,11 +610,11 @@ export function createNoteTools(context?: ScheduleContext) {
                 category: notes.category,
                 content: notes.content,
                 updatedAt: notes.updatedAt,
-                similarity: sql<number>`1 - (${notes.embedding} <=> ${embeddingLiteral}::vector)`.as("similarity"),
+                similarity: sql<number>`1 - (${notes.embedding} <=> ${vectorSql})`.as("similarity"),
               })
               .from(notes)
               .where(and(...searchConditions))
-              .orderBy(sql`${notes.embedding} <=> ${embeddingLiteral}::vector`)
+              .orderBy(sql`${notes.embedding} <=> ${vectorSql}`)
               .limit(limit);
 
             logger.info("search_notes tool called (semantic)", {
