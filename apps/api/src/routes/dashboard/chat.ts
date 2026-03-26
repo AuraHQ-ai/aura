@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   convertToModelMessages,
   type UIMessage,
+  type ModelMessage,
   type StepResult,
   type LanguageModelUsage,
 } from "ai";
@@ -367,6 +368,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
     }
 
     const modelMessages = await convertToModelMessages(messages);
+    const priorMessages = serializeConversationHistory(modelMessages);
 
     const result = executionContext.run(
       { triggeredBy: userId, triggerType: "user_message", callingUserId: userId, channelId: "dashboard" },
@@ -394,6 +396,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
               userMessage: messageText,
               assistantText: text,
               systemPrompt: fullSystemPrompt,
+              conversationHistory: priorMessages,
               steps,
               totalUsage,
             }).catch((err) => {
@@ -422,10 +425,11 @@ async function persistDashboardConversation(params: {
   userMessage: string;
   assistantText: string;
   systemPrompt: string;
+  conversationHistory?: Array<{ role: string; content: string }>;
   steps: StepResult<any>[];
   totalUsage: LanguageModelUsage;
 }): Promise<void> {
-  const { userId, messageId, modelId, threadId, userMessage, assistantText, systemPrompt, steps, totalUsage } = params;
+  const { userId, messageId, modelId, threadId, userMessage, assistantText, systemPrompt, conversationHistory, steps, totalUsage } = params;
 
   try {
     logger.info("persistDashboardConversation started", { threadId, messageId });
@@ -476,7 +480,7 @@ async function persistDashboardConversation(params: {
     });
 
     if (traceId) {
-      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage);
+      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage, conversationHistory);
 
       const conversationSteps = buildConversationSteps(steps);
       await persistConversationSteps(traceId, conversationSteps, orderIndex);
@@ -496,4 +500,45 @@ async function persistDashboardConversation(params: {
       threadId,
     });
   }
+}
+
+/**
+ * Extract a flat {role, content} array from ModelMessage[] for trace persistence.
+ * Strips the last user message (persisted separately by persistConversationInputs)
+ * and skips system messages (already in the system prompt).
+ */
+function serializeConversationHistory(
+  modelMessages: ModelMessage[],
+): Array<{ role: string; content: string }> {
+  const result: Array<{ role: string; content: string }> = [];
+
+  for (const msg of modelMessages) {
+    if (msg.role === "system") continue;
+
+    let content: string;
+    if (typeof msg.content === "string") {
+      content = msg.content;
+    } else if (Array.isArray(msg.content)) {
+      content = msg.content
+        .map((part: any) => {
+          if (part.type === "text") return part.text;
+          if (part.type === "tool-call") return `[tool_call: ${part.toolName}(${JSON.stringify(part.args).slice(0, 200)})]`;
+          if (part.type === "tool-result") return `[tool_result: ${part.toolName} → ${JSON.stringify(part.result).slice(0, 500)}]`;
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    } else {
+      content = String(msg.content ?? "");
+    }
+
+    if (content) result.push({ role: msg.role, content });
+  }
+
+  // Drop the last user message — it's saved separately as the "current" user prompt
+  if (result.length > 0 && result[result.length - 1].role === "user") {
+    result.pop();
+  }
+
+  return result;
 }
