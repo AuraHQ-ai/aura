@@ -58,8 +58,10 @@ Monitor scheduled and recurring jobs:
 
 Manage the encrypted credential store:
 
-- View stored credentials per user (names only -- values are never displayed)
+- View stored credentials per user (names only — values are never displayed)
+- Set scope (owner, admin, power_user, member) to control minimum access level
 - See credential types (token, OAuth client)
+- Manage grants — add or remove user access via a user picker dropdown
 - Monitor usage and last-accessed timestamps
 
 ### Errors
@@ -95,7 +97,7 @@ Configure instance behavior:
 
 ## Access & Authentication
 
-The dashboard uses Slack OAuth for login. Access requires an `admin` or `owner` role (see [Permissions](/permissions)). The `AURA_ADMIN_USER_IDS` env var serves as a fallback for users without a database role.
+The dashboard uses Slack OAuth for login. Access requires the `admin` role (see [Permissions](/permissions)). The `AURA_ADMIN_USER_IDS` env var serves as a fallback for users without a database role.
 
 ### Auth Proxy
 

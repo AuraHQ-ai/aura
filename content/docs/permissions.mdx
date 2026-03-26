@@ -5,7 +5,7 @@ description: "Role-based access control: user roles, tool permissions, note scop
 
 # Permissions
 
-Aura uses a four-tier role system to control access to tools, notes, and resources. Roles are stored in the database (`user_profiles.role`) with an env var fallback for backwards compatibility.
+Aura uses a three-tier role system to control access to tools, notes, and resources. Roles are stored in the database (`user_profiles.role`) with an env var fallback for backwards compatibility.
 
 ## Roles
 
@@ -13,10 +13,13 @@ Aura uses a four-tier role system to control access to tools, notes, and resourc
 |------|-------|-------------|
 | `member` | 0 | Default role. Can chat with Aura, use basic tools, see shared notes. |
 | `power_user` | 1 | Extended access: sandbox, browser, voice, Cursor agents, subagents. |
-| `admin` | 2 | Full access: cross-user email/Slack, system note editing, job management. |
-| `owner` | 3 | Everything. Reserved for workspace owners. |
+| `admin` | 2 | Full access: cross-user email/Slack, system note editing, job management. Maximum role. |
 
 Roles are hierarchical — a user with `admin` automatically has all `power_user` and `member` permissions.
+
+<Note>
+The `owner` role was removed in the RBAC simplification (migration 0048). Existing `owner` users were migrated to `admin`. The word "owner" now only refers to credential ownership — see [Credentials](/tools/credentials).
+</Note>
 
 ## How Roles Are Checked
 
@@ -25,7 +28,7 @@ The `hasRole(userId, minimumRole)` function in `apps/api/src/lib/permissions.ts`
 1. Look up `user_profiles.role` in the database
 2. If a DB role exists, compare it against the minimum required role and return the result
 3. If no DB profile exists (or query fails), fall back to `AURA_ADMIN_USER_IDS` env var — users listed there get `admin`-level access
-4. The system user `aura` always passes all role checks
+4. The system user `aura` always resolves to `admin` and passes all role checks
 
 <Warning>
 If a user has an explicit role in the database, the env var is **not** consulted. A user demoted to `member` in the DB won't regain admin via the env var. This is intentional — the DB is authoritative once set.
@@ -48,7 +51,7 @@ Each tool category requires a minimum role:
 | Job limit bypass | `admin` |
 | System note editing | `admin` |
 
-Members can still use Slack messaging, notes (their own + shared), web search, and basic tools.
+Members have access to Slack messaging, web search, and basic tools.
 
 ## Note Scoping
 
@@ -72,18 +75,23 @@ Default rate limits are seeded per role:
 | Cursor agents/day | 0 | 3 | 10 |
 | Subagent calls/day | 0 | 10 | 50 |
 
-Rate limits are stored in the `rate_limits` table and are workspace-scoped, so different workspaces can have different limits.
-
-<Note>
-Owners have no seeded rate limits — they're unlimited by default.
-</Note>
+Rate limits are stored in the `rate_limits` table and are workspace-scoped, so different workspaces can have different limits. Admins have no hard ceiling by default.
 
 ## Managing Roles
 
 Roles can be set in two ways:
 
-1. **Dashboard** — Navigate to Users → select a user → Profile tab → Role dropdown. Requires admin access.
+1. **Dashboard** — Navigate to Users → select a user → Profile tab → Role dropdown. Valid options: `admin`, `power_user`, `member`. Requires admin access.
 2. **Database** — Update `user_profiles.role` directly.
+
+## User Bootstrapping
+
+Users are created in `user_profiles` when they first log into the dashboard via Slack OAuth:
+
+- **First user** is automatically assigned the `admin` role (the bootstrapping user is assumed to be the workspace admin)
+- **Subsequent users** get the `member` role by default
+
+Users who interact with Aura in Slack but never log into the dashboard won't have a `user_profiles` row. This is fine — the message pipeline identifies users by raw Slack user ID and doesn't require a profile. The pipeline and dashboard are independent systems.
 
 ## Migration from `AURA_ADMIN_USER_IDS`
 
@@ -91,7 +99,7 @@ The env var still works as a fallback for users without a DB profile. For new de
 
 ## Database Schema
 
-The permission system adds these tables:
+The permission system uses these tables:
 
 - **`user_profiles.role`** — `text NOT NULL DEFAULT 'member'` on the existing user profiles table
 - **`tool_definitions`** — Per-tool minimum role configuration (workspace-scoped)
