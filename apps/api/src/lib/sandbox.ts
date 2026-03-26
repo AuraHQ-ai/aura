@@ -1,9 +1,8 @@
 import * as nodePath from "node:path";
 import { getSetting, setSetting } from "./settings.js";
-import { getCredential, decryptCredential } from "./credentials.js";
+import { decryptCredential } from "./credentials.js";
 import { db } from "../db/client.js";
 import { credentials } from "@aura/db/schema";
-import { isNotNull } from "drizzle-orm";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
@@ -56,40 +55,20 @@ async function loadE2B() {
 export async function getSandboxEnvs(userId?: string): Promise<Record<string, string>> {
   const envs: Record<string, string> = {};
 
-  // Infra-level env vars always included (needed for sandbox operation)
-  const ghToken = await getCredential("github_token");
-  if (ghToken) {
-    envs.GITHUB_TOKEN = ghToken;
-    envs.GH_TOKEN = ghToken;
-  }
-  if (process.env.ANTHROPIC_API_KEY) {
-    envs.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  }
-  // DATABASE_URL and VERCEL_TOKEN: admin-only (scoped via resolveUserCredentials)
-  // These are injected below only if the user has admin_access credential
-  if (process.env.OPENAI_API_KEY) {
-    envs.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-  }
-  const saKeyB64 =
-    process.env.GOOGLE_SA_KEY_B64 ||
-    (process.env.GOOGLE_SERVICE_ACCOUNT_KEY
-      ? Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_KEY).toString("base64")
-      : undefined);
-  if (saKeyB64) {
-    envs.GOOGLE_SA_KEY_B64 = saKeyB64;
-  }
-
-  // Resolve user's accessible credential names for filtering
+  // All credentials live in the DB. Resolve which ones the user can access,
+  // then inject each as NAME → UPPER_CASE env var (e.g. github_token → GITHUB_TOKEN).
+  // Fail-closed: if credential resolution fails, no DB credentials are injected.
   let userCredNames: Set<string> | null = null;
   if (userId) {
     try {
       const { resolveUserCredentials } = await import("./permissions.js");
       userCredNames = await resolveUserCredentials(userId);
     } catch (e: any) {
-      logger.warn("getSandboxEnvs: credential resolution failed, injecting all DB credentials", {
+      logger.warn("getSandboxEnvs: credential resolution failed, injecting no credentials", {
         userId,
         error: e.message,
       });
+      return envs;
     }
   }
 
@@ -97,38 +76,31 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
     const rows = await db
       .select({
         name: credentials.name,
-        sandboxEnvName: credentials.sandboxEnvName,
         value: credentials.value,
       })
-      .from(credentials)
-      .where(isNotNull(credentials.sandboxEnvName));
+      .from(credentials);
     for (const row of rows) {
-      if (row.sandboxEnvName) {
-        if (userCredNames && !userCredNames.has(row.name)) {
-          continue;
-        }
-        try {
-          envs[row.sandboxEnvName] = decryptCredential(row.value);
-        } catch (e: any) {
-          logger.warn("Failed to decrypt credential for sandbox injection", {
-            envName: row.sandboxEnvName,
-            error: e.message,
-          });
-        }
+      if (userCredNames && !userCredNames.has(row.name)) {
+        continue;
+      }
+      const envName = row.name.toUpperCase();
+      try {
+        envs[envName] = decryptCredential(row.value);
+      } catch (e: any) {
+        logger.warn("Failed to decrypt credential for sandbox injection", {
+          name: row.name,
+          envName,
+          error: e.message,
+        });
       }
     }
   } catch (e: any) {
     logger.warn("Failed to query credentials for sandbox injection", { error: e.message });
   }
 
-  // Admin-only env vars: only injected if user has admin_access
-  if (userCredNames?.has("admin_access")) {
-    if (process.env.DATABASE_URL) {
-      envs.DATABASE_URL = process.env.DATABASE_URL;
-    }
-    if (process.env.VERCEL_TOKEN) {
-      envs.VERCEL_TOKEN = process.env.VERCEL_TOKEN;
-    }
+  // Alias GH_TOKEN for tools that expect it (gh CLI, git)
+  if (envs.GITHUB_TOKEN && !envs.GH_TOKEN) {
+    envs.GH_TOKEN = envs.GITHUB_TOKEN;
   }
 
   return envs;
@@ -276,7 +248,7 @@ export async function getOrCreateSandbox(): Promise<any> {
   }
 
   const Sandbox = await loadE2B();
-  const envs = await getSandboxEnvs();
+  const envs = await getSandboxEnvs("aura");
 
   // Try to resume a previously paused sandbox
   const savedId = await getSetting(SANDBOX_NOTE_KEY);

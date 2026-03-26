@@ -529,16 +529,17 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     return result;
   }
 
-  // Resolve credentials once and reuse for core + slack tool filtering
-  let userCreds: Set<string> | undefined;
+  // Resolve credentials once and reuse for core + slack tool filtering.
+  // On failure: empty set = fail-closed (only ungated tools survive).
+  let userCreds: Set<string>;
   try {
     userCreds = await resolveUserCredentials(context?.userId);
   } catch (e: any) {
-    logger.warn("createSlackTools: credential resolution failed, skipping filtering", {
+    logger.warn("createSlackTools: credential resolution failed, returning ungated tools only", {
       userId: context?.userId,
       error: e.message,
     });
-    userCreds = undefined;
+    userCreds = new Set();
   }
 
   const tools: Record<string, any> = {
@@ -2347,7 +2348,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
           let fileBuffer: Buffer;
           if (file_path) {
-            if (!process.env.E2B_API_KEY || !userCreds?.has("e2b_api_key")) {
+            if (!process.env.E2B_API_KEY || !userCreds.has("e2b_api_key")) {
               return {
                 ok: false,
                 error: "Sandbox file access requires sandbox credentials. You don't have permission to read sandbox files.",
@@ -2963,11 +2964,9 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
   };
 
   // ── Credential-driven tool gating (reuses pre-resolved userCreds) ──
-  if (userCreds) {
-    const filteredTools = filterToolsByCredentials(tools, userCreds);
-    for (const k of Object.keys(tools)) {
-      if (!(k in filteredTools)) delete tools[k];
-    }
+  const filteredTools = filterToolsByCredentials(tools, userCreds);
+  for (const k of Object.keys(tools)) {
+    if (!(k in filteredTools)) delete tools[k];
   }
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────

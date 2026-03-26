@@ -98,18 +98,6 @@ export function isAdmin(userId: string | undefined): boolean {
 }
 
 /**
- * Resolve which credential names a user has access to.
- * Returns a Set<string> of credential names based on:
- * - scope='shared' → all users
- * - scope='admin_only' → only admin+ users
- * - scope='per_user' → only the credential owner
- * - credential_grants → explicit grants (non-revoked)
- *
- * Also includes synthetic credential names for well-known env vars:
- * "admin_access" for admin users, and env-based credentials that
- * aren't in the DB (e2b_api_key, browserbase_api_key, etc.).
- */
-/**
  * Look up a user's role from the DB. Returns 'member' if not found.
  */
 async function getUserRole(userId: string): Promise<Role> {

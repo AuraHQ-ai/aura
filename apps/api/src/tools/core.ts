@@ -50,10 +50,10 @@ export async function createCoreTools(context?: ScheduleContext, preResolvedCred
     const userCreds = preResolvedCreds ?? await resolveUserCredentials(context?.userId);
     return filterToolsByCredentials(allTools, userCreds);
   } catch (e: any) {
-    logger.warn("createCoreTools: credential resolution failed, returning all tools", {
+    logger.warn("createCoreTools: credential resolution failed, returning ungated tools only", {
       userId: context?.userId,
       error: e.message,
     });
-    return allTools;
+    return filterToolsByCredentials(allTools, new Set());
   }
 }
