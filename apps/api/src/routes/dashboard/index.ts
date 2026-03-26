@@ -17,11 +17,15 @@ import { jwtVerify } from "jose";
 
 export const dashboardApp = createDashboardApp();
 
-const PUBLIC_AUTH_PATHS = ["/auth/login", "/auth/callback", "/openapi.json"];
+const PUBLIC_PREFIX_PATHS = ["/auth/login", "/auth/callback"];
+const PUBLIC_EXACT_PATHS = ["/openapi.json"];
 
 dashboardApp.use("*", async (c, next) => {
   const path = new URL(c.req.url).pathname.replace("/api/dashboard", "");
-  if (PUBLIC_AUTH_PATHS.some((p) => path.startsWith(p))) {
+  if (
+    PUBLIC_PREFIX_PATHS.some((p) => path.startsWith(p)) ||
+    PUBLIC_EXACT_PATHS.some((p) => path === p)
+  ) {
     return next();
   }
 
