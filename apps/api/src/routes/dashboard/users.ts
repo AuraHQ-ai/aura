@@ -154,7 +154,7 @@ dashboardUsersApp.openapi(getUserRoute, async (c) => {
   }
 });
 
-const VALID_ROLES = ["owner", "admin", "power_user", "member"] as const;
+const VALID_ROLES = ["admin", "power_user", "member"] as const;
 
 const updateUserRoleRoute = createRoute({
   method: "patch",

@@ -8,7 +8,6 @@ const ROLE_HIERARCHY = {
   member: 0,
   power_user: 1,
   admin: 2,
-  owner: 3,
 } as const;
 
 type Role = keyof typeof ROLE_HIERARCHY;
@@ -101,7 +100,7 @@ export function isAdmin(userId: string | undefined): boolean {
  * Look up a user's role from the DB. Returns 'member' if not found.
  */
 async function getUserRole(userId: string): Promise<Role> {
-  if (userId === "aura") return "owner";
+  if (userId === "aura") return "admin";
 
   try {
     const profile = await db
@@ -132,10 +131,9 @@ async function getUserRole(userId: string): Promise<Role> {
  *
  * Credential scope uses the role hierarchy directly:
  * - 'member' -> everyone can access
- * - 'power_user' -> power_user, admin, owner
- * - 'admin' -> admin, owner
- * - 'owner' -> owner only
- * - 'per_user' -> only the credential owner
+ * - 'power_user' -> power_user, admin
+ * - 'admin' -> admin only
+ * - 'owner' -> only the credential owner (owner_id must match)
  *
  * Plus explicit grants and synthetic env-var-based credentials.
  */
@@ -156,14 +154,12 @@ export async function resolveUserCredentials(
       .from(credentials);
 
     for (const cred of allCreds) {
-      const scope = (cred.scope || "member") as Role | "per_user";
-      if (scope === "per_user") {
-        // Only the credential owner gets it
+      const scope = (cred.scope || "member") as Role | "owner";
+      if (scope === "owner") {
         if (cred.ownerId === effectiveUserId) {
           result.add(cred.name);
         }
       } else {
-        // Role-based scope: user needs at least this role
         const requiredLevel = ROLE_HIERARCHY[scope as Role] ?? 0;
         if (userLevel >= requiredLevel) {
           result.add(cred.name);
