@@ -48,7 +48,7 @@ function NavContent({ onClose, showLabels }: { onClose?: () => void; showLabels?
 
   return (
     <TooltipProvider delayDuration={150}>
-      <nav className={cn("flex h-full flex-col py-3 gap-1", showLabels ? "px-2" : "items-center")}>
+      <nav className={cn("flex h-full flex-col py-2 gap-0.5", showLabels ? "px-2" : "items-center")}>
         {navItems.map((item) => {
           const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           const link = (
@@ -59,13 +59,13 @@ function NavContent({ onClose, showLabels }: { onClose?: () => void; showLabels?
                 "flex items-center rounded-lg transition-colors",
                 showLabels
                   ? "gap-2 px-2 py-1.5 text-[13px]"
-                  : "justify-center w-9 h-9",
+                  : "justify-center w-10 h-10",
                 isActive
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  ? "bg-foreground/15 text-foreground"
+                  : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
               )}
             >
-              <item.icon className="h-[18px] w-[18px] shrink-0" />
+              <item.icon className="h-[20px] w-[20px] shrink-0" />
               {showLabels && item.label}
             </Link>
           );
