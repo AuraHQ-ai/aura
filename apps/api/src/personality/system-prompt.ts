@@ -266,7 +266,7 @@ function formatMemories(memories: Memory[]): string {
     })
     .join("\n");
 
-  return `\n## Relevant memories from past conversations\n\nThese are things you've learned from previous interactions. Use them naturally if relevant — don't force them in. Don't tell the user you're "checking your memories."\n\n${formatted}`;
+  return `These are things you've learned from previous interactions. Use them naturally if relevant -- don't force them in. Don't tell the user you're "checking your memories."\n\n${formatted}`;
 }
 
 /**
@@ -277,7 +277,7 @@ function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): 
   const facts = profile.knownFacts;
   const parts: string[] = [];
 
-  parts.push(`\n## About the person you're talking to`);
+  parts.push(`About the person you're talking to:`);
   parts.push(`Display name: ${profile.displayName}`);
 
   // Enrich with people DB fields (gender, pronouns, language, role, notes)
@@ -341,53 +341,27 @@ function formatMentionedPeople(people: PersonProfile[]): string {
     if (p.notes) parts.push(p.notes);
     return `- ${parts.join(' | ')}`;
   });
-  return `\n## Mentioned people\n${lines.join('\n')}`;
+  return lines.join('\n');
 }
 
 
 /**
- * Format retrieved conversation threads for injection into the prompt.
+ * Format retrieved conversation threads as compact XML pointers.
  */
 function formatConversations(conversations: ConversationThread[]): string {
   if (conversations.length === 0) return "";
 
-  const MAX_THREAD_MESSAGES = 20;
-  const MAX_TOTAL_CHARS = 12_000;
-
-  let totalChars = 0;
-
-  const formatted = conversations
-    .map((thread) => {
-      const humanMsgs = thread.messages.filter((m) => m.role !== "tool");
-      const capped =
-        humanMsgs.length <= MAX_THREAD_MESSAGES
-          ? humanMsgs
-          : [humanMsgs[0], ...humanMsgs.slice(-MAX_THREAD_MESSAGES + 1)];
-      const msgs = capped
-        .map((m) => {
-          const timeAgo = relativeTime(new Date(m.createdAt));
-          const speaker = m.role === "assistant" ? "Aura" : m.userId;
-          const content = m.content.length > 500 ? m.content.substring(0, 500) + "…" : m.content;
-          return `  ${speaker} (${timeAgo}): ${content}`;
-        })
-        .join("\n");
-      const threadBlock = `Thread in ${thread.channelId} (similarity: ${thread.bestSimilarity.toFixed(2)}):\n${msgs}`;
-
-      if (totalChars + threadBlock.length > MAX_TOTAL_CHARS) {
-        if (totalChars === 0) {
-          const truncated = threadBlock.substring(0, MAX_TOTAL_CHARS);
-          totalChars += truncated.length;
-          return truncated + "\n  [truncated]";
-        }
-        return null;
-      }
-      totalChars += threadBlock.length;
-      return threadBlock;
+  const threads = conversations
+    .map((t) => {
+      const escapedSummary = t.summary
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      return `  <thread channel="${t.channelId}" ts="${t.threadTs}" date="${t.date}" similarity="${t.bestSimilarity.toFixed(2)}">\n    ${escapedSummary}\n  </thread>`;
     })
-    .filter(Boolean)
-    .join("\n\n");
+    .join("\n");
 
-  return `\n## Relevant past conversations\n\nThese are past conversation threads retrieved from your message history. Use them for context if relevant — reference specific things people said.\n\n${formatted}`;
+  return `<related_threads>\n${threads}\n</related_threads>`;
 }
 
 export interface SystemPromptLayers {
@@ -406,7 +380,7 @@ export interface SystemPromptLayers {
 export async function buildStablePrefix(): Promise<string> {
   const parts: string[] = [];
 
-  parts.push(PERSONALITY);
+  parts.push(`<personality>\n${PERSONALITY}\n</personality>`);
 
   const SELF_DIRECTIVE_MAX_CHARS = 8000;
   try {
@@ -427,7 +401,7 @@ export async function buildStablePrefix(): Promise<string> {
         });
       }
       parts.push(
-        `\n## Self-directive\n\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}`,
+        `<self_directive>\nYou wrote and maintain this yourself. It persists across all invocations.\n\n${content}\n</self_directive>`,
       );
     }
   } catch (error) {
@@ -463,7 +437,7 @@ export async function buildStablePrefix(): Promise<string> {
         plan: "Plans (work-in-progress)",
       };
 
-      let index = "\n## Your notes\n";
+      let index = "";
       for (const cat of categoryOrder) {
         const items = grouped.get(cat);
         if (items && items.length > 0) {
@@ -489,7 +463,7 @@ export async function buildStablePrefix(): Promise<string> {
         });
       }
 
-      parts.push(index);
+      parts.push(`<notes_index>${index}\n</notes_index>`);
     }
   } catch (error) {
     logger.warn("Failed to build notes index", { error });
@@ -507,54 +481,51 @@ export async function buildStablePrefix(): Promise<string> {
 export async function buildSystemPrompt(
   context: SystemPromptContext,
 ): Promise<SystemPromptLayers> {
-  const conversationParts: string[] = [];
-
   // ── Layer 1: Stable prefix ──────────────────────────────────────────
   const stablePrefix = await buildStablePrefix();
 
   // ── Layer 2: Conversation context ───────────────────────────────────
+  const contextParts: string[] = [];
 
-  // Channel context
-  if (context.channelType === "dm") {
-    conversationParts.push(`You're in a private DM. Be conversational and personal.`);
-  } else {
-    conversationParts.push(
-      `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`,
-    );
-  }
+  // Setting (channel/DM + current time)
+  const settingText = context.channelType === "dm"
+    ? `You're in a private DM. Be conversational and personal.`
+    : `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`;
+  contextParts.push(`  <setting>\n${settingText}\n  </setting>`);
 
-  // User profile (if available)
+  // User profile
   if (context.userProfile) {
-    conversationParts.push(formatUserProfile(context.userProfile, context.interlocutor));
+    contextParts.push(`  <person>\n${formatUserProfile(context.userProfile, context.interlocutor)}\n  </person>`);
   }
 
-
-  // Mentioned people context (from people DB)
+  // Mentioned people
   if (context.mentionedPeople?.length) {
-    conversationParts.push(formatMentionedPeople(context.mentionedPeople));
+    contextParts.push(`  <mentioned_people>\n${formatMentionedPeople(context.mentionedPeople)}\n  </mentioned_people>`);
   }
 
   // Retrieved memories
   if (context.memories.length > 0) {
-    conversationParts.push(formatMemories(context.memories));
+    contextParts.push(`  <memories>\n${formatMemories(context.memories)}\n  </memories>`);
   }
 
-  // Retrieved conversation threads
+  // Retrieved conversation threads (compact pointers)
   if (context.conversations && context.conversations.length > 0) {
-    conversationParts.push(formatConversations(context.conversations));
+    contextParts.push(`  ${formatConversations(context.conversations)}`);
   }
 
-  // Conversation context (thread or recent channel messages)
+  const contextBlock = `<context>\n${contextParts.join("\n\n")}\n</context>`;
+
+  // Conversation (thread or recent channel messages)
+  let conversationBlock = "";
   if (context.threadContext) {
-    const heading = context.isChannelHistory
-      ? `\n## Recent channel context\n\nHere are the recent messages in this channel for context:\n\n${context.threadContext}`
-      : `\n## Recent thread context\n\nHere are the recent messages in this thread for context:\n\n${context.threadContext}`;
-    conversationParts.push(heading);
+    conversationBlock = context.isChannelHistory
+      ? `\n\n<conversation>\n${context.threadContext}\n</conversation>`
+      : `\n\n<conversation>\n${context.threadContext}\n</conversation>`;
   }
 
   return {
     stablePrefix,
-    conversationContext: conversationParts.join("\n\n"),
+    conversationContext: contextBlock + conversationBlock,
   };
 }
 

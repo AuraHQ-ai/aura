@@ -1,7 +1,7 @@
 import { sql, or, inArray } from "drizzle-orm";
 import { rerank } from "ai";
 import { db } from "../db/client.js";
-import { memories, messages, type Memory, type Message } from "@aura/db/schema";
+import { memories, messages, type Memory } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getRerankingModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
@@ -276,10 +276,12 @@ export interface ConversationThread {
   threadTs: string;
   /** Channel where the conversation happened */
   channelId: string;
-  /** All messages in this thread, ordered chronologically */
-  messages: Message[];
   /** Best similarity score among matched messages in this thread */
   bestSimilarity: number;
+  /** ISO date (YYYY-MM-DD) of the thread */
+  date: string;
+  /** First user message text, truncated to ~100 chars */
+  summary: string;
 }
 
 interface ConversationRetrievalOptions {
@@ -298,14 +300,17 @@ interface ConversationRetrievalOptions {
 }
 
 /**
- * Retrieve full conversation threads via semantic search on message embeddings.
+ * Retrieve compact conversation thread pointers via semantic search on message embeddings.
+ *
+ * Returns thread metadata + a short summary (first user message) instead of
+ * full message dumps, keeping the system prompt compact.
  *
  * Flow:
  * 1. Embed the query
  * 2. Find the most similar messages via pgvector
  * 3. Group matched messages by thread (slack_thread_ts)
- * 4. Fetch all messages belonging to each matched thread
- * 5. Return full threads sorted by best match score
+ * 4. Fetch the first user message per thread for a summary
+ * 5. Return compact thread pointers sorted by best match score
  */
 export async function retrieveConversations(
   options: ConversationRetrievalOptions,
@@ -387,10 +392,16 @@ export async function retrieveConversations(
 
     if (sortedThreads.length === 0) return [];
 
-    // Fetch all messages for each thread
+    // Fetch only the first user message per thread for a compact summary
     const threadKeys = sortedThreads.map(([key]) => key);
-    const threadMessages = await db
-      .select()
+    const firstUserMessages = await db
+      .select({
+        slackTs: messages.slackTs,
+        slackThreadTs: messages.slackThreadTs,
+        content: messages.content,
+        role: messages.role,
+        createdAt: messages.createdAt,
+      })
       .from(messages)
       .where(
         or(
@@ -400,17 +411,27 @@ export async function retrieveConversations(
       )
       .orderBy(messages.createdAt);
 
-    // Build thread objects
+    // Group by thread and pick the first user message (or first message as fallback)
+    const threadSummaryMap = new Map<string, { content: string; date: string; isUser: boolean }>();
+    for (const m of firstUserMessages) {
+      const key = m.slackThreadTs || m.slackTs;
+      if (!key) continue;
+      const existing = threadSummaryMap.get(key);
+      if (existing && (existing.isUser || m.role !== "user")) continue;
+      const content = m.content.length > 100 ? m.content.substring(0, 100) + "…" : m.content;
+      const date = new Date(m.createdAt).toISOString().split("T")[0];
+      threadSummaryMap.set(key, { content, date, isUser: m.role === "user" });
+    }
+
     const conversationThreads: ConversationThread[] = sortedThreads.map(
       ([threadTs, meta]) => {
-        const threadMsgs = threadMessages.filter(
-          (m) => m.slackThreadTs === threadTs || m.slackTs === threadTs,
-        );
+        const summaryData = threadSummaryMap.get(threadTs);
         return {
           threadTs,
           channelId: meta.channelId,
-          messages: threadMsgs,
           bestSimilarity: meta.bestSimilarity,
+          date: summaryData?.date ?? new Date(meta.mostRecentMessageAt).toISOString().split("T")[0],
+          summary: summaryData?.content ?? "",
         };
       },
     );

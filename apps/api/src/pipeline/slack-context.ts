@@ -291,13 +291,38 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
   return `\n[Tools: ${parts.join(" | ")}]`;
 }
 
-/** Format a single message, preferring rich tool I/O over task_card summaries. */
+/** Build a compact tool summary for the `tools` attribute on `<msg>` tags. */
+function compactToolSummary(m: SlackThreadMessage): string {
+  if (m.toolIO?.length) {
+    const names = [...new Set(m.toolIO.map((r) => r.name))];
+    const label = names.length <= 3
+      ? names.join(", ")
+      : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
+    return ` tools="${label}"`;
+  }
+  if (m.toolCalls?.length) {
+    const names = [...new Set(m.toolCalls.map((tc) => tc.title.replace(/\.\.\.$/, "")))];
+    const label = names.length <= 3
+      ? names.join(", ")
+      : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
+    return ` tools="${label}"`;
+  }
+  return "";
+}
+
+/** Format a single message as an XML `<msg>` tag. */
 function formatMessage(m: SlackThreadMessage, timezone?: string, isOld = false): string {
   const time = formatTimestamp(m.ts, timezone);
-  const base = `[${time}] ${m.displayName}: ${m.text}`;
-  if (m.toolIO?.length) return base + formatToolIO(m.toolIO, isOld);
-  if (m.toolCalls?.length) return base + formatToolCalls(m.toolCalls);
-  return base;
+  const role = m.isBot ? "assistant" : "user";
+  const toolsAttr = m.isBot ? compactToolSummary(m) : "";
+
+  let body = m.text;
+  if (m.isBot) {
+    if (m.toolIO?.length) body += formatToolIO(m.toolIO, isOld);
+    else if (m.toolCalls?.length) body += formatToolCalls(m.toolCalls);
+  }
+
+  return `<msg from="${m.displayName}" at="${time}" role="${role}"${toolsAttr}>\n${body}\n</msg>`;
 }
 
 /**
@@ -384,9 +409,9 @@ export async function formatConversationContext(
         .map((m) => formatMessage(m, timezone, true))
         .join("\n\n");
       return (
-        "Channel messages near the thread (for context):\n\n" +
+        "<!-- Channel messages near the thread (for context) -->\n" +
         channelFormatted +
-        "\n\nRecent thread context:\n\n" +
+        "\n\n<!-- Thread messages -->\n" +
         threadFormatted
       );
     }
