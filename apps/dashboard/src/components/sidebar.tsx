@@ -1,7 +1,4 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -32,15 +29,16 @@ const navItems = [
   { href: "/consumption", label: "Consumption", icon: BarChart3 },
   { href: "/credentials", label: "Credentials", icon: KeyRound },
   { href: "/settings", label: "Settings", icon: Settings },
-];
+] as const;
 
 function NavContent({ onClose }: { onClose?: () => void }) {
-  const pathname = usePathname();
+  const routerState = useRouterState();
+  const pathname = routerState.location.pathname;
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-12 items-center border-b px-3">
-        <Link href="/" className="flex items-center gap-2 font-semibold text-sm" onClick={onClose}>
+        <Link to="/" className="flex items-center gap-2 font-semibold text-sm" onClick={onClose}>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="14" viewBox="0 0 102 90" fill="none">
             <path fill="currentColor" d="m58 0 44 77-8 13H7L0 77 43 0h15ZM6 77l3 5 36-64 9 16 17 30h6L45 8 6 77Zm79-8H34l-3 5h64L55 5h-6l36 64Zm-48-5h28L51 39 37 64Z" />
           </svg>
@@ -53,7 +51,7 @@ function NavContent({ onClose }: { onClose?: () => void }) {
           return (
             <Link
               key={item.href}
-              href={item.href}
+              to={item.href}
               onClick={onClose}
               className={cn(
                 "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition-colors",

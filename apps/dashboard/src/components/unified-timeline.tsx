@@ -1,13 +1,44 @@
-"use client";
-
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { MarkdownContent } from "@/components/ui/markdown";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { formatDate } from "@/lib/utils";
-import type { ConversationMessage as ConversationMessageRow, ConversationPart } from "@schema";
-import { MarkdownContent } from "@/components/ui/markdown";
 
-export type ConversationMessageWithParts = ConversationMessageRow & { parts: ConversationPart[] };
+export interface ConversationPart {
+  id: string;
+  messageId: string;
+  type: string;
+  orderIndex: number;
+  textValue: string | null;
+  toolCallId: string | null;
+  toolName: string | null;
+  toolInput: unknown;
+  toolOutput: unknown;
+  toolState: string | null;
+}
+
+export interface ConversationMessageWithParts {
+  id: string;
+  conversationId: string;
+  role: string;
+  content: string | null;
+  orderIndex: number;
+  modelId: string | null;
+  tokenUsage: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    inputTokenDetails?: {
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+    };
+    outputTokenDetails?: {
+      reasoningTokens?: number;
+    };
+  } | null;
+  createdAt: string;
+  parts: ConversationPart[];
+}
 
 function Collapsible({
   title,
@@ -140,19 +171,21 @@ function SystemMessageBlock({ text }: { text: string }) {
   return (
     <div className="border rounded-md bg-muted/20">
       <div className="flex items-center gap-2 px-3 py-2">
-        <Badge variant="secondary" className="text-[10px]">system</Badge>
+        <Badge variant="secondary" className="text-[10px]">
+          system
+        </Badge>
         <span className="text-xs text-muted-foreground">
           {text.length.toLocaleString()} chars
         </span>
         <div className="flex items-center gap-1 ml-auto">
           <button
-            className={`text-xs px-2 py-0.5 rounded ${viewMode === "raw" ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
+            className={`text-xs px-2 py-0.5 rounded cursor-pointer ${viewMode === "raw" ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
             onClick={() => setViewMode("raw")}
           >
             Raw
           </button>
           <button
-            className={`text-xs px-2 py-0.5 rounded ${viewMode === "markdown" ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
+            className={`text-xs px-2 py-0.5 rounded cursor-pointer ${viewMode === "markdown" ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
             onClick={() => setViewMode("markdown")}
           >
             Markdown
@@ -190,7 +223,9 @@ function UserMessageBlock({ text }: { text: string }) {
   return (
     <div className="border rounded-md bg-blue-50/50 dark:bg-blue-950/20">
       <div className="flex items-center gap-2 px-3 py-2">
-        <Badge variant="default" className="text-[10px]">user</Badge>
+        <Badge variant="default" className="text-[10px]">
+          user
+        </Badge>
         <span className="text-xs text-muted-foreground">
           {text.length.toLocaleString()} chars
         </span>
@@ -218,14 +253,14 @@ function UserMessageBlock({ text }: { text: string }) {
   );
 }
 
-function AssistantStepBlock({ msg, stepIndex }: { msg: ConversationMessageWithParts; stepIndex: number }) {
-  const stepTokenUsage = msg.tokenUsage as {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-    inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
-    outputTokenDetails?: { reasoningTokens?: number };
-  } | null;
+function AssistantStepBlock({
+  msg,
+  stepIndex,
+}: {
+  msg: ConversationMessageWithParts;
+  stepIndex: number;
+}) {
+  const stepTokenUsage = msg.tokenUsage;
 
   return (
     <div className="border rounded-md">
@@ -233,7 +268,9 @@ function AssistantStepBlock({ msg, stepIndex }: { msg: ConversationMessageWithPa
         <Badge variant="secondary" className="text-[10px]">
           Step {stepIndex}
         </Badge>
-        <Badge variant="outline" className="text-[10px]">assistant</Badge>
+        <Badge variant="outline" className="text-[10px]">
+          assistant
+        </Badge>
         {msg.modelId && (
           <span className="text-[10px] text-muted-foreground font-mono">
             {msg.modelId}
@@ -242,7 +279,8 @@ function AssistantStepBlock({ msg, stepIndex }: { msg: ConversationMessageWithPa
         <span className="text-xs text-muted-foreground ml-auto flex items-center gap-2">
           {stepTokenUsage && (
             <span className="font-mono text-[10px]">
-              {(stepTokenUsage.inputTokens ?? 0).toLocaleString()} in / {(stepTokenUsage.outputTokens ?? 0).toLocaleString()} out
+              {(stepTokenUsage.inputTokens ?? 0).toLocaleString()} in /{" "}
+              {(stepTokenUsage.outputTokens ?? 0).toLocaleString()} out
               {stepTokenUsage.outputTokenDetails?.reasoningTokens
                 ? ` (${stepTokenUsage.outputTokenDetails.reasoningTokens.toLocaleString()} reasoning)`
                 : ""}
@@ -317,14 +355,12 @@ function AssistantStepBlock({ msg, stepIndex }: { msg: ConversationMessageWithPa
 
 export function UnifiedTimeline({
   conversation,
-  rawJson,
 }: {
   conversation: ConversationMessageWithParts[];
-  rawJson?: unknown;
 }) {
-  const [showRaw, setShowRaw] = useState(false);
-
-  const sorted = [...conversation].sort((a, b) => a.orderIndex - b.orderIndex);
+  const sorted = [...conversation].sort(
+    (a, b) => a.orderIndex - b.orderIndex,
+  );
 
   let assistantStep = 0;
 
@@ -361,22 +397,6 @@ export function UnifiedTimeline({
         <p className="text-sm text-muted-foreground py-4 text-center">
           No conversation data recorded.
         </p>
-      )}
-
-      {rawJson !== undefined && (
-        <div className="border-t pt-3">
-          <button
-            className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-            onClick={() => setShowRaw(!showRaw)}
-          >
-            {showRaw ? "Hide" : "Show"} Raw JSON
-          </button>
-          {showRaw && (
-            <pre className="mt-2 whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[600px]">
-              {rawJson ? JSON.stringify(rawJson, null, 2) : "No legacy step data."}
-            </pre>
-          )}
-        </div>
       )}
     </div>
   );
