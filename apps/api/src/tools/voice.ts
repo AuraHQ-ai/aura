@@ -7,6 +7,8 @@ import type { ScheduleContext } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import type { WebClient } from "@slack/web-api";
 import { resolveSlackDestination } from "./slack.js";
+import { resolveCredentialValue } from "../lib/credentials.js";
+import { getConfig } from "../lib/settings.js";
 
 // ── Language Config ──────────────────────────────────────────────────────────
 
@@ -64,13 +66,12 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 5_000;
 
 async function getElevenLabsData(): Promise<ElevenLabsCacheData> {
-  // Return fresh cache if available
   if (elevenLabsCache && Date.now() - elevenLabsCache.ts < CACHE_TTL_MS) {
     return elevenLabsCache;
   }
 
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey) throw new Error("ELEVENLABS_API_KEY not set");
+  const apiKey = await resolveCredentialValue("elevenlabs_api_key");
+  if (!apiKey) throw new Error("elevenlabs_api_key credential not configured");
 
   const headers = { "xi-api-key": apiKey };
 
@@ -156,7 +157,7 @@ async function resolvePhoneNumberIdFromCache(
   // Second try: search phone numbers embedded in each agent config via /convai/agents
   // This endpoint is more reliable than /convai/phone-numbers
   try {
-    const apiKey = process.env.ELEVENLABS_API_KEY;
+    const apiKey = await resolveCredentialValue("elevenlabs_api_key");
     if (!apiKey) return null;
     const res = await fetch(
       `${ELEVENLABS_API_BASE}/convai/agents?page_size=50`,
@@ -181,11 +182,10 @@ async function resolvePhoneNumberIdFromCache(
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
-export function createVoiceTools(client: WebClient, context?: ScheduleContext): Record<string, any> {
+export function createVoiceTools(client?: WebClient, context?: ScheduleContext): Record<string, any> {
   const tools: Record<string, any> = {};
 
-  if (process.env.ELEVENLABS_API_KEY) {
-    // ── list_voice_agents ───────────────────────────────────────────
+  {
     tools.list_voice_agents = defineTool({
       requiredCredentials: ["elevenlabs_api_key"],
       description:
@@ -234,10 +234,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
       slack: { status: "Listing voice agents...", output: (r) => r.ok === false ? r.error : `${r.agents?.length ?? 0} agents` },
     });
 
-    // ── place_call ───────────────────────────────────────────────────
-    const DEFAULT_AGENT_ID = process.env.ELEVENLABS_AGENT_ID;
-    const DEFAULT_FROM_NUMBER = process.env.ELEVENLABS_FROM_NUMBER;
-    const DEFAULT_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
+    // These are resolved at execution time via getConfig()
 
     tools.place_call = defineTool({
       requiredCredentials: ["elevenlabs_api_key"],
@@ -312,21 +309,22 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         context: callContext,
         language,
       }) => {
-        const apiKey = process.env.ELEVENLABS_API_KEY;
+        const apiKey = await resolveCredentialValue("elevenlabs_api_key");
         if (!apiKey) {
-          return { ok: false, error: "ELEVENLABS_API_KEY not configured." };
+          return { ok: false, error: "elevenlabs_api_key credential not configured." };
         }
 
-        const resolvedAgentId = agentIdParam || DEFAULT_AGENT_ID;
+        const resolvedAgentId = agentIdParam || await getConfig("elevenlabs_agent_id");
         if (!resolvedAgentId) {
           return { ok: false, error: "No agent_id provided and ELEVENLABS_AGENT_ID env var not set." };
         }
 
-        const resolvedVoiceId = voiceId ?? DEFAULT_VOICE_ID;
+        const resolvedVoiceId = voiceId || await getConfig("elevenlabs_voice_id");
 
-        const defaultFromNumber = fromNumber || DEFAULT_FROM_NUMBER;
-        if (!defaultFromNumber && !phoneNumberIdParam && !process.env.ELEVENLABS_PHONE_NUMBER_ID) {
-          return { ok: false, error: "No from_number provided and ELEVENLABS_FROM_NUMBER env var not set." };
+        const defaultFromNumber = fromNumber || await getConfig("elevenlabs_from_number");
+        const defaultPhoneNumberId = await getConfig("elevenlabs_phone_number_id");
+        if (!defaultFromNumber && !phoneNumberIdParam && !defaultPhoneNumberId) {
+          return { ok: false, error: "No from_number provided and elevenlabs_from_number setting not configured." };
         }
 
         const e164Regex = /^\+[1-9]\d{6,14}$/;
@@ -353,7 +351,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           };
         }
 
-        let phoneNumberId = phoneNumberIdParam || process.env.ELEVENLABS_PHONE_NUMBER_ID || null;
+        let phoneNumberId = phoneNumberIdParam || defaultPhoneNumberId || null;
 
         if (!phoneNumberId) {
           phoneNumberId = await resolvePhoneNumberIdFromCache(defaultFromNumber);
@@ -528,23 +526,21 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
         };
       }
 
-      const accountSid = process.env.TWILIO_ACCOUNT_SID;
-      const authToken = process.env.TWILIO_AUTH_TOKEN;
-      const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+      const accountSid = await resolveCredentialValue("twilio_account_sid");
+      const authToken = await resolveCredentialValue("twilio_auth_token");
+      const fromNumber = await getConfig("twilio_phone_number");
 
       if (!fromNumber) {
         return {
           ok: false,
-          error:
-            "TWILIO_PHONE_NUMBER env var not set. Cannot send SMS without a configured phone number.",
+          error: "twilio_phone_number setting not configured.",
         };
       }
 
       if (!accountSid || !authToken) {
         return {
           ok: false,
-          error:
-            "Twilio config is incomplete. Required env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN.",
+          error: "Twilio credentials (twilio_account_sid, twilio_auth_token) not configured.",
         };
       }
 
@@ -625,8 +621,7 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
       slack: { status: "Sending SMS...", detail: (i) => i.phone_number, output: (r) => r.ok === false ? r.error : 'SMS sent' },
   });
 
-  // ── send_voice_note ─────────────────────────────────────────────
-  if (process.env.ELEVENLABS_API_KEY) {
+  if (client) {
     tools.send_voice_note = defineTool({
       requiredCredentials: ["elevenlabs_api_key"],
       description:
@@ -673,8 +668,11 @@ export function createVoiceTools(client: WebClient, context?: ScheduleContext): 
           };
         }
 
-        const apiKey = process.env.ELEVENLABS_API_KEY!;
-        const resolvedVoiceId = voice_id || process.env.ELEVENLABS_VOICE_ID;
+        const apiKey = await resolveCredentialValue("elevenlabs_api_key");
+        if (!apiKey) {
+          return { ok: false, error: "elevenlabs_api_key credential not configured." };
+        }
+        const resolvedVoiceId = voice_id || await getConfig("elevenlabs_voice_id");
         if (!resolvedVoiceId) {
           return {
             ok: false,

@@ -138,17 +138,6 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           };
         }
 
-        if (
-          !process.env.BROWSERBASE_API_KEY ||
-          !process.env.BROWSERBASE_PROJECT_ID
-        ) {
-          return {
-            ok: false,
-            error:
-              "Browser automation is not available. BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID must be configured.",
-          };
-        }
-
         let browser: any = null;
         let currentSessionId = session_id || "";
         const ownSession = !session_id;

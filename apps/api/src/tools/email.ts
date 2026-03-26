@@ -4,8 +4,7 @@ import { logger } from "../lib/logger.js";
 import { hasRole } from "../lib/permissions.js";
 import { resolveSlackUserId, resolveEffectiveUserId } from "../lib/resolve-user.js";
 import type { ScheduleContext } from "@aura/db/schema";
-
-const AURA_BOT_USER_ID = "U0AFEC1C69F";
+import { getConfig } from "../lib/settings.js";
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -62,7 +61,7 @@ export function createEmailTools(context?: ScheduleContext) {
         attachments,
       }) => {
         try {
-          let resolvedUserId: string = process.env.AURA_BOT_USER_ID || AURA_BOT_USER_ID;
+          let resolvedUserId: string = await getConfig("aura_bot_user_id", "aura");
 
           if (user_name) {
             const userId = await resolveSlackUserId(user_name);
@@ -143,7 +142,7 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ message_id, thread_id, body, user_name }) => {
         try {
-          let resolvedUserId: string = process.env.AURA_BOT_USER_ID || AURA_BOT_USER_ID;
+          let resolvedUserId: string = await getConfig("aura_bot_user_id", "aura");
 
           if (user_name) {
             const userId = await resolveSlackUserId(user_name);
@@ -688,7 +687,7 @@ export function createEmailTools(context?: ScheduleContext) {
  * Caller identity enforcement: non-admin callers can only access their own email.
  */
 export function createGmailEATools(context?: ScheduleContext) {
-  const callerDefault = context?.userId || process.env.AURA_BOT_USER_ID || AURA_BOT_USER_ID;
+  const callerDefault = context?.userId || "aura";
 
   return {
     create_gmail_draft: defineTool({

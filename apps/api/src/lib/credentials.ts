@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
+import { eq } from "drizzle-orm";
 import { getSetting, setSetting } from "./settings.js";
 import { logger } from "./logger.js";
+import { db } from "../db/client.js";
+import { credentials } from "@aura/db/schema";
 
 const ALGORITHM = "aes-256-gcm";
 const KEY_ENV = "CREDENTIALS_KEY";
@@ -85,6 +88,25 @@ export async function setCredential(
   const encrypted = encryptCredential(value);
   await setSetting(`${DB_PREFIX}${key}`, encrypted, updatedBy);
   logger.info("Credential stored", { key, updatedBy });
+}
+
+/**
+ * Resolve a credential value by name from the credentials table.
+ * Returns null if not found or decryption fails.
+ */
+export async function resolveCredentialValue(name: string): Promise<string | null> {
+  try {
+    const [row] = await db
+      .select({ value: credentials.value })
+      .from(credentials)
+      .where(eq(credentials.name, name))
+      .limit(1);
+    if (!row) return null;
+    return decryptCredential(row.value);
+  } catch (e: any) {
+    logger.warn("resolveCredentialValue failed", { name, error: e.message });
+    return null;
+  }
 }
 
 export function maskCredential(value: string): string {

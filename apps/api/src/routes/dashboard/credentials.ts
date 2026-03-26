@@ -141,11 +141,12 @@ dashboardCredentialsApp.openapi(createCredentialRoute, async (c) => {
     }>();
 
     const encrypted = encryptCredential(body.value);
+    const normalizedName = body.name.toLowerCase().replace(/[^a-z0-9_]/g, "_");
 
     const [created] = await db
       .insert(credentials)
       .values({
-        name: body.name,
+        name: normalizedName,
         type: body.type,
         ownerId: body.ownerId,
         value: encrypted,

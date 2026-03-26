@@ -1,16 +1,17 @@
 import { logger } from "./logger.js";
+import { resolveCredentialValue } from "./credentials.js";
 
 const CURSOR_API_BASE = "https://api.cursor.com/v0";
 
-function getApiKey(): string {
-  const key = process.env.CURSOR_API_KEY;
-  if (!key) throw new Error("CURSOR_API_KEY is not configured");
+async function getApiKey(): Promise<string> {
+  const key = await resolveCredentialValue("cursor_api_key");
+  if (!key) throw new Error("cursor_api_key credential is not configured");
   return key;
 }
 
-function headers(): Record<string, string> {
+async function headers(): Promise<Record<string, string>> {
   return {
-    Authorization: `Bearer ${getApiKey()}`,
+    Authorization: `Bearer ${await getApiKey()}`,
     "Content-Type": "application/json",
   };
 }
@@ -75,7 +76,7 @@ export async function launchCursorAgent(
 
   const res = await fetch(`${CURSOR_API_BASE}/agents`, {
     method: "POST",
-    headers: headers(),
+    headers: await headers(),
     body: JSON.stringify(body),
   });
 
@@ -94,7 +95,7 @@ export async function getCursorAgentStatus(
 ): Promise<CursorAgentStatus> {
   const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}`, {
     method: "GET",
-    headers: headers(),
+    headers: await headers(),
   });
 
   if (!res.ok) {
@@ -113,7 +114,7 @@ export async function followupCursorAgent(
 ): Promise<CursorAgentResponse> {
   const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/follow-up`, {
     method: "POST",
-    headers: headers(),
+    headers: await headers(),
     body: JSON.stringify({ prompt: { text: prompt } }),
   });
   if (!res.ok) {
@@ -130,7 +131,7 @@ export async function getCursorConversation(agentId: string): Promise<any> {
     `${CURSOR_API_BASE}/agents/${agentId}/conversation`,
     {
       method: "GET",
-      headers: headers(),
+      headers: await headers(),
     },
   );
   if (!res.ok) {
@@ -145,7 +146,7 @@ export async function getCursorConversation(agentId: string): Promise<any> {
 export async function stopCursorAgent(agentId: string): Promise<any> {
   const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/stop`, {
     method: "POST",
-    headers: headers(),
+    headers: await headers(),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -161,7 +162,7 @@ export async function listCursorAgents(prUrl?: string): Promise<any> {
   if (prUrl) url.searchParams.set("prUrl", prUrl);
   const res = await fetch(url.toString(), {
     method: "GET",
-    headers: headers(),
+    headers: await headers(),
   });
   if (!res.ok) {
     const text = await res.text();

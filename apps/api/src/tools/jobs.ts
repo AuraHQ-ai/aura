@@ -21,7 +21,7 @@ import { executeJob } from "../cron/execute-job.js";
  * and continuations all live in the same table and are processed by the heartbeat.
  */
 export function createJobTools(
-  client: WebClient,
+  client?: WebClient,
   context?: ScheduleContext,
 ) {
   return {
@@ -105,6 +105,9 @@ export function createJobTools(
           let channelId: string | null = null;
           let channelLabel = "DM-routed";
           if (channel_name) {
+            if (!client) {
+              return { ok: false, error: "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly." };
+            }
             const channel = await resolveChannelByName(client, channel_name);
             if (!channel) {
               return { ok: false, error: `Could not find channel "${channel_name}".` };
@@ -492,6 +495,9 @@ export function createJobTools(
 
           // Resolve channel name to ID
           if (updates.channel_name !== undefined) {
+            if (!client) {
+              return { ok: false as const, error: "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly." };
+            }
             const channel = await resolveChannelByName(client, updates.channel_name);
             if (!channel) {
               return { ok: false as const, error: `Could not find channel "${updates.channel_name}".` };

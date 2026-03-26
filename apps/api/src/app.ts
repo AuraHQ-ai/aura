@@ -28,7 +28,7 @@ import {
 import { resolveConfirmation } from "./lib/confirmation.js";
 import { handleApprovalReaction } from "./lib/approval.js";
 import { executionContext } from "./lib/tool.js";
-import { setSetting } from "./lib/settings.js";
+import { setSetting, getConfig } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { recordError } from "./lib/metrics.js";
 import { safePostMessage } from "./lib/slack-messaging.js";
@@ -41,7 +41,7 @@ import { notes, feedback } from "@aura/db/schema";
 
 const signingSecret = process.env.SLACK_SIGNING_SECRET || "";
 const botToken = process.env.SLACK_BOT_TOKEN || "";
-const botUserId = process.env.AURA_BOT_USER_ID || "";
+let botUserId = ""; // resolved lazily from settings
 
 if (!signingSecret || !botToken) {
   logger.warn(
@@ -291,11 +291,11 @@ app.post("/api/slack/events", async (c) => {
         channelId: event.channel || undefined,
         threadTs: event.thread_ts || event.ts || undefined,
       },
-      () =>
+      async () =>
         runPipeline({
           event,
           client: slackClient,
-          botUserId,
+          botUserId: botUserId || await getConfig("aura_bot_user_id"),
           teamId: body.team_id,
         }),
     ).catch((err) => {
@@ -777,7 +777,7 @@ app.get("/api/oauth/google/auth-url", async (c) => {
     }
   }
 
-  const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
+  const resolvedUserId = userId || await getConfig("aura_bot_user_id", "aura");
   const url = generateAuthUrlForUser(resolvedUserId);
   if (!url) return c.json({ error: "Gmail OAuth not configured" }, 500);
 
@@ -808,7 +808,7 @@ app.get("/api/oauth/google/callback", async (c) => {
 
   // Fallback for legacy auth URLs without state
   if (!userId) {
-    userId = process.env.AURA_BOT_USER_ID || "aura";
+    userId = await getConfig("aura_bot_user_id", "aura");
   }
 
   const { exchangeCodeForTokens, saveUserRefreshToken } = await import("./lib/gmail.js");

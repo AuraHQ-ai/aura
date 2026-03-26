@@ -37,34 +37,24 @@ async function loadE2B() {
 }
 
 /**
- * Build the env vars map from the current Vercel process environment.
- * Callers should pass this to every `commands.run({ envs })` call so
- * env vars are always fresh — regardless of whether the sandbox was
- * just created or resumed from a paused state.
+ * Build the env vars map for sandbox commands from the credentials DB.
  *
- * E2B's `Sandbox.connect()` does NOT restore the `envs` that were
- * passed at creation time, and persistence across pause/resume is
- * unreliable (see e2b-dev/E2B#884). Per-command `envs` is the only
- * mechanism that works consistently.
+ * Resolves which credentials the user can access, decrypts them, and
+ * returns a flat NAME → value map (credential name uppercased).
  *
- * GOVERNANCE: Only compute-infrastructure keys belong here. External
- * service API keys (Close, Stripe, PostHog, Claap, etc.) must be
- * accessed via the credentials table through the governed http_request
- * tool. This prevents run_command from bypassing the governance layer.
+ * Must be passed to every `commands.run({ envs })` call — E2B does NOT
+ * persist envs across pause/resume (see e2b-dev/E2B#884).
  */
 export async function getSandboxEnvs(userId?: string): Promise<Record<string, string>> {
   const envs: Record<string, string> = {};
 
-  // All credentials live in the DB. Resolve which ones the user can access,
-  // then inject each as NAME → UPPER_CASE env var (e.g. github_token → GITHUB_TOKEN).
-  // Fail-closed: if credential resolution fails, no DB credentials are injected.
   let userCredNames: Set<string> | null = null;
   if (userId) {
     try {
       const { resolveUserCredentials } = await import("./permissions.js");
       userCredNames = await resolveUserCredentials(userId);
     } catch (e: any) {
-      logger.warn("getSandboxEnvs: credential resolution failed, injecting no credentials", {
+      logger.warn("getSandboxEnvs: credential resolution failed", {
         userId,
         error: e.message,
       });
@@ -79,10 +69,10 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
         value: credentials.value,
       })
       .from(credentials);
+
     for (const row of rows) {
-      if (userCredNames && !userCredNames.has(row.name)) {
-        continue;
-      }
+      if (userCredNames && !userCredNames.has(row.name)) continue;
+
       const envName = row.name.toUpperCase();
       try {
         envs[envName] = decryptCredential(row.value);
@@ -98,7 +88,6 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
     logger.warn("Failed to query credentials for sandbox injection", { error: e.message });
   }
 
-  // Alias GH_TOKEN for tools that expect it (gh CLI, git)
   if (envs.GITHUB_TOKEN && !envs.GH_TOKEN) {
     envs.GH_TOKEN = envs.GITHUB_TOKEN;
   }
@@ -240,15 +229,15 @@ export async function getOrCreateSandbox(): Promise<any> {
     }
   }
 
-  const apiKey = process.env.E2B_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "E2B_API_KEY is not configured. Sandbox execution is not available.",
-    );
-  }
-
   const Sandbox = await loadE2B();
   const envs = await getSandboxEnvs("aura");
+
+  const apiKey = envs.E2B_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "E2B_API_KEY is not configured. Add it as a credential in the dashboard.",
+    );
+  }
 
   // Try to resume a previously paused sandbox
   const savedId = await getSetting(SANDBOX_NOTE_KEY);
@@ -256,6 +245,7 @@ export async function getOrCreateSandbox(): Promise<any> {
     try {
       logger.info("Resuming E2B sandbox", { sandboxId: savedId });
       const sandbox = await Sandbox.connect(savedId, {
+        apiKey,
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
 
@@ -282,11 +272,11 @@ export async function getOrCreateSandbox(): Promise<any> {
     }
   }
 
-  // Create a new sandbox (pass envs as a convenience for manual processes)
-  const templateId = process.env.E2B_TEMPLATE_ID || undefined;
+  // Create a new sandbox
+  const templateId = envs.E2B_TEMPLATE_ID || process.env.E2B_TEMPLATE_ID || undefined;
   logger.info("Creating new E2B sandbox", { templateId: templateId || "default" });
 
-  const createOptions: any = { timeoutMs: DEFAULT_TIMEOUT_MS, envs };
+  const createOptions: any = { apiKey, timeoutMs: DEFAULT_TIMEOUT_MS, envs };
   const sandbox = templateId
     ? await Sandbox.create(templateId, createOptions)
     : await Sandbox.create(createOptions);

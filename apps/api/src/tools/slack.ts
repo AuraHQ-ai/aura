@@ -2348,7 +2348,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
           let fileBuffer: Buffer;
           if (file_path) {
-            if (!process.env.E2B_API_KEY || !userCreds.has("e2b_api_key")) {
+            if (!userCreds.has("e2b_api_key")) {
               return {
                 ok: false,
                 error: "Sandbox file access requires sandbox credentials. You don't have permission to read sandbox files.",

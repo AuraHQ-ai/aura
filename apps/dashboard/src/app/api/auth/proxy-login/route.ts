@@ -1,18 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { cookies } from "next/headers";
-import {
-  getAppUrl,
-  getSafeReturnTo,
-  isAllowedOrigin,
-  verifyOriginSignature,
-  OAUTH_PROXY_ORIGIN_COOKIE,
-  OAUTH_RETURN_TO_COOKIE,
-} from "@/lib/auth-redirect";
+import { getAppUrl, getSafeReturnTo, isAllowedOrigin } from "@/lib/auth-redirect";
 
 export async function GET(request: NextRequest) {
   const origin = request.nextUrl.searchParams.get("origin");
-  const sig = request.nextUrl.searchParams.get("sig");
   const returnTo = getSafeReturnTo(
     request.nextUrl.searchParams.get("returnTo"),
   );
@@ -21,14 +13,11 @@ export async function GET(request: NextRequest) {
     return new NextResponse("Invalid origin", { status: 400 });
   }
 
-  if (!sig || !verifyOriginSignature(origin, sig)) {
-    return new NextResponse("Invalid origin signature", { status: 403 });
-  }
-
   const appUrl = getAppUrl();
+  const nonce = crypto.randomBytes(16).toString("hex");
+
   const cookieStore = await cookies();
-
-  cookieStore.set(OAUTH_PROXY_ORIGIN_COOKIE, origin, {
+  cookieStore.set("oauth_state", nonce, {
     httpOnly: true,
     secure: true,
     sameSite: "lax",
@@ -36,26 +25,12 @@ export async function GET(request: NextRequest) {
     path: "/",
   });
 
-  if (returnTo) {
-    cookieStore.set(OAUTH_RETURN_TO_COOKIE, returnTo, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      maxAge: 300,
-      path: "/",
-    });
-  } else {
-    cookieStore.delete(OAUTH_RETURN_TO_COOKIE);
-  }
-
-  const state = crypto.randomBytes(16).toString("hex");
-  cookieStore.set("oauth_state", state, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    maxAge: 300,
-    path: "/",
-  });
+  // Encode origin + returnTo + CSRF nonce in the state parameter so they
+  // survive the round-trip through Slack without needing cross-deployment
+  // cookies or a shared HMAC secret.
+  const state = Buffer.from(
+    JSON.stringify({ nonce, origin, returnTo }),
+  ).toString("base64url");
 
   const params = new URLSearchParams({
     response_type: "code",

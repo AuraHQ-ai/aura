@@ -5,8 +5,7 @@ import { db } from "../db/client.js";
 import { notes } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
-
-const DEFAULT_REPO = process.env.DEFAULT_GITHUB_REPO ?? "AuraHQ-ai/aura";
+import { getConfig } from "../lib/settings.js";
 
 /**
  * Create Cursor Cloud Agent tools for the AI SDK.
@@ -54,20 +53,13 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           ),
       }),
       execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {
-        if (!process.env.CURSOR_API_KEY) {
-          return {
-            ok: false,
-            error:
-              "Cursor agent dispatch is not available. CURSOR_API_KEY is not configured.",
-          };
-        }
-
         try {
           const { launchCursorAgent } = await import(
             "../lib/cursor-agent.js"
           );
 
-          const repo = repository || DEFAULT_REPO;
+          const defaultRepo = await getConfig("default_github_repo", "AuraHQ-ai/aura");
+          const repo = repository || defaultRepo;
           const repoUrl = `https://github.com/${repo}`;
 
           const slug = issue_description
@@ -82,7 +74,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
               ? `\n\nKey files to focus on:\n${key_files.map((f) => `- ${f}`).join("\n")}`
               : "";
 
-          const isAuraRepo = repo === DEFAULT_REPO;
+          const isAuraRepo = repo === defaultRepo;
           const repoDescription = isAuraRepo
             ? `This is the Aura project (github.com/${repo}) — a Slack AI assistant built with TypeScript, Hono, Vercel serverless, AI SDK v6, and PostgreSQL.`
             : `Repository: github.com/${repo}`;
@@ -196,15 +188,6 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe("The agent ID returned by dispatch_cursor_agent"),
       }),
       execute: async ({ agent_id }) => {
-
-        if (!process.env.CURSOR_API_KEY) {
-          return {
-            ok: false,
-            error:
-              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
-          };
-        }
-
         try {
           const { getCursorAgentStatus } = await import(
             "../lib/cursor-agent.js"
@@ -257,15 +240,6 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe("Follow-up instructions for the agent"),
       }),
       execute: async ({ agent_id, prompt }) => {
-
-        if (!process.env.CURSOR_API_KEY) {
-          return {
-            ok: false,
-            error:
-              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
-          };
-        }
-
         try {
           const { followupCursorAgent } = await import(
             "../lib/cursor-agent.js"
@@ -341,14 +315,6 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         agent_id: z.string().describe("The agent ID"),
       }),
       execute: async ({ agent_id }) => {
-        if (!process.env.CURSOR_API_KEY) {
-          return {
-            ok: false,
-            error:
-              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
-          };
-        }
-
         try {
           const { getCursorConversation } = await import(
             "../lib/cursor-agent.js"
@@ -382,14 +348,6 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         agent_id: z.string().describe("The agent ID to stop"),
       }),
       execute: async ({ agent_id }) => {
-        if (!process.env.CURSOR_API_KEY) {
-          return {
-            ok: false,
-            error:
-              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
-          };
-        }
-
         try {
           const { stopCursorAgent } = await import(
             "../lib/cursor-agent.js"
@@ -432,14 +390,6 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe("Filter by PR URL"),
       }),
       execute: async ({ pr_url }) => {
-        if (!process.env.CURSOR_API_KEY) {
-          return {
-            ok: false,
-            error:
-              "Cursor agent is not available. CURSOR_API_KEY is not configured.",
-          };
-        }
-
         try {
           const { listCursorAgents } = await import(
             "../lib/cursor-agent.js"

@@ -44,14 +44,6 @@ export function createSandboxTools(context?: ScheduleContext) {
           ),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
-        if (!process.env.E2B_API_KEY) {
-          return {
-            ok: false,
-            error:
-              "Sandbox execution is not available. E2B_API_KEY is not configured.",
-          };
-        }
-
         try {
           const sandbox = await getOrCreateSandbox();
           const userId = context?.userId || "aura";

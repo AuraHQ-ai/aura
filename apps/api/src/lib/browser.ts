@@ -1,6 +1,7 @@
 import { logger } from "./logger.js";
+import { resolveCredentialValue } from "./credentials.js";
+import { getConfig } from "./settings.js";
 
-/** Environment variables required for Browserbase integration */
 export interface BrowserbaseConfig {
   apiKey: string;
   projectId: string;
@@ -37,23 +38,15 @@ export interface BrowserbaseError {
   message: string;
 }
 
-/**
- * Get Browserbase configuration from environment variables
- */
-function getBrowserbaseConfig(): BrowserbaseConfig {
-  const apiKey = process.env.BROWSERBASE_API_KEY;
-  const projectId = process.env.BROWSERBASE_PROJECT_ID;
+async function getBrowserbaseConfig(): Promise<BrowserbaseConfig> {
+  const apiKey = await resolveCredentialValue("browserbase_api_key");
+  const projectId = await getConfig("browserbase_project_id");
 
   if (!apiKey) {
-    throw new Error(
-      "BROWSERBASE_API_KEY is not configured. Browser automation is not available.",
-    );
+    throw new Error("browserbase_api_key credential is not configured.");
   }
-
   if (!projectId) {
-    throw new Error(
-      "BROWSERBASE_PROJECT_ID is not configured. Browser automation is not available.",
-    );
+    throw new Error("browserbase_project_id setting is not configured.");
   }
 
   return { apiKey, projectId };
@@ -65,7 +58,7 @@ function getBrowserbaseConfig(): BrowserbaseConfig {
 export async function createSession(
   options: CreateSessionOptions = {},
 ): Promise<BrowserSession> {
-  const config = getBrowserbaseConfig();
+  const config = await getBrowserbaseConfig();
 
   const requestBody = {
     projectId: config.projectId,
@@ -119,7 +112,7 @@ export async function createSession(
  * Connect to an existing browser session via Chrome DevTools Protocol
  */
 export async function connectSession(sessionId: string): Promise<any> {
-  const config = getBrowserbaseConfig();
+  const config = await getBrowserbaseConfig();
 
   logger.info("Connecting to Browserbase session", { sessionId });
 
@@ -147,7 +140,7 @@ export async function connectSession(sessionId: string): Promise<any> {
  * Release a browser session, freeing up resources
  */
 export async function releaseSession(sessionId: string): Promise<void> {
-  const config = getBrowserbaseConfig();
+  const config = await getBrowserbaseConfig();
 
   logger.info("Releasing Browserbase session", { sessionId });
 

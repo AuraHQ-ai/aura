@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
+import { getConfig } from "./settings.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -71,13 +72,20 @@ const SCOPES = [
 
 // ── Email Signature ─────────────────────────────────────────────────────────
 
-const EMAIL_SIGNATURE_HTML = `
-<div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e0e0e0; font-family: Arial, sans-serif; font-size: 13px; color: #666;">
+async function getEmailSignatureHtml(): Promise<string> {
+  const websiteUrl = await getConfig("aura_website_url");
+  const companyName = await getConfig("company_name", "Aura");
+  return `<div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e0e0e0; font-family: Arial, sans-serif; font-size: 13px; color: #666;">
   <strong style="color: #333;">Aura</strong> &middot; AI Team Member<br/>
-  <a href="${process.env.AURA_WEBSITE_URL || ''}" style="color: #0066cc; text-decoration: none;">${process.env.COMPANY_NAME || 'Aura'}</a>
+  <a href="${websiteUrl}" style="color: #0066cc; text-decoration: none;">${companyName}</a>
 </div>`.trim();
+}
 
-const EMAIL_SIGNATURE_TEXT = `\n--\nAura · AI Team Member\n${process.env.COMPANY_NAME || ''} · ${process.env.AURA_WEBSITE_URL || ''}`.trimEnd();
+async function getEmailSignatureText(): Promise<string> {
+  const companyName = await getConfig("company_name");
+  const websiteUrl = await getConfig("aura_website_url");
+  return `\n--\nAura · AI Team Member\n${companyName} · ${websiteUrl}`.trimEnd();
+}
 
 function textToHtml(text: string): string {
   return text
@@ -115,7 +123,8 @@ async function createBaseOAuth2Client() {
  * For callers that prefer null, use getOAuth2ClientSafe().
  */
 export async function getOAuth2Client(userId?: string) {
-  const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
+  const botUserId = await getConfig("aura_bot_user_id", "aura");
+  const resolvedUserId = userId || botUserId;
   const tokenRow = await getUserRefreshToken(resolvedUserId);
   if (!tokenRow) return null;
 
@@ -130,7 +139,8 @@ export async function getOAuth2ClientOrError(userId?: string): Promise<
   { client: Awaited<ReturnType<typeof getOAuth2Client>> & {}; error?: never } |
   { client?: never; error: string }
 > {
-  const resolvedUserId = userId || process.env.AURA_BOT_USER_ID || "aura";
+  const botUserId = await getConfig("aura_bot_user_id", "aura");
+  const resolvedUserId = userId || botUserId;
   const tokenRow = await getUserRefreshToken(resolvedUserId);
   if (!tokenRow) {
     return { error: `No Google OAuth token found for user '${resolvedUserId}'. They need to authorize via OAuth first (ask Aura to generate an auth link in Slack).` };
@@ -214,7 +224,7 @@ function splitBase64Lines(b64: string): string {
   return lines.join("\r\n");
 }
 
-function buildMimeMessage(
+async function buildMimeMessage(
   to: string,
   subject: string,
   body: string,
@@ -223,16 +233,17 @@ function buildMimeMessage(
   explicitReferences?: string,
   overrides?: { from?: string; includeSignature?: boolean },
   attachments?: Attachment[],
-): string {
-  const auraEmail =
-    process.env.AURA_EMAIL_ADDRESS || "";
+): Promise<string> {
+  const auraEmail = await getConfig("aura_email_address");
   const fromHeader = overrides?.from || `Aura <${auraEmail}>`;
   const includeSignature = overrides?.includeSignature !== false;
   const altBoundary = `boundary_alt_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const sigHtml = includeSignature ? await getEmailSignatureHtml() : "";
+  const sigText = includeSignature ? await getEmailSignatureText() : "";
   const htmlBody = includeSignature
-    ? `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>\n${EMAIL_SIGNATURE_HTML}`
+    ? `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>\n${sigHtml}`
     : `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #333; line-height: 1.6;">${textToHtml(body)}</div>`;
-  const textBody = includeSignature ? `${body}${EMAIL_SIGNATURE_TEXT}` : body;
+  const textBody = includeSignature ? `${body}${sigText}` : body;
 
   const hasAttachments = attachments && attachments.length > 0;
   const mixedBoundary = hasAttachments
@@ -460,7 +471,7 @@ export async function sendEmail(
   }
 
   const raw = base64UrlEncode(
-    buildMimeMessage(to, subject, body, options, undefined, undefined,
+    await buildMimeMessage(to, subject, body, options, undefined, undefined,
       fromEmail ? { from: fromEmail, includeSignature: false } : undefined,
       options?.attachments),
   );
@@ -641,7 +652,7 @@ export async function replyToEmail(
     : `Re: ${originalSubject}`;
 
   const raw = base64UrlEncode(
-    buildMimeMessage(originalFrom, replySubject, body, {
+    await buildMimeMessage(originalFrom, replySubject, body, {
       replyToMessageId: originalMessageId,
       threadId,
     }, undefined, undefined,
@@ -915,7 +926,7 @@ export async function createDraft(
   }
 
   const raw = base64UrlEncode(
-    buildMimeMessage(
+    await buildMimeMessage(
       options.to,
       options.subject,
       bodyText,

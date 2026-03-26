@@ -12,13 +12,11 @@ import { db } from "../db/client.js";
 import { voiceCalls, notes } from "@aura/db/schema";
 import { getUserList, resolveUserByName } from "../tools/slack.js";
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
+import { getConfig } from "../lib/settings.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
-const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET || "";
-
-const VOICE_TESTING_CHANNEL = process.env.ELEVENLABS_VOICE_CHANNEL || "";
 
 const slackClient = new WebClient(botToken);
 const elevenlabs = new ElevenLabsClient();
@@ -166,6 +164,7 @@ export const elevenlabsWebhookApp = new Hono();
 elevenlabsWebhookApp.post("/tool/:toolName", async (c) => {
   const headerSecret = c.req.header("x-webhook-secret") || "";
 
+  const webhookSecret = await getConfig("elevenlabs_webhook_secret");
   if (!webhookSecret || headerSecret !== webhookSecret) {
     logger.warn("Invalid or missing x-webhook-secret on /tool/:toolName", {
       hasSecret: !!headerSecret,
@@ -229,7 +228,8 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
     };
   };
   try {
-    body = await elevenlabs.webhooks.constructEvent(rawBody, signature, webhookSecret);
+    const whs = await getConfig("elevenlabs_webhook_secret");
+    body = await elevenlabs.webhooks.constructEvent(rawBody, signature, whs);
   } catch (err) {
     logger.warn("Invalid ElevenLabs webhook signature on /post-call", {
       error: err instanceof Error ? err.message : String(err),
@@ -338,9 +338,10 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           : "");
 
       try {
-        if (VOICE_TESTING_CHANNEL) {
+        const voiceChannel = await getConfig("elevenlabs_voice_channel");
+        if (voiceChannel) {
           await safePostMessage(slackClient, {
-            channel: VOICE_TESTING_CHANNEL,
+            channel: voiceChannel,
             text: slackMessage,
           });
           logger.info("Post-call summary sent to voice channel", { conversationId });

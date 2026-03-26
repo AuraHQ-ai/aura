@@ -3,11 +3,12 @@ import { tavily } from "@tavily/core";
 import { logger } from "../lib/logger.js";
 import { BROWSER_UA, isPrivateUrl } from "../lib/ssrf.js";
 import { defineTool } from "../lib/tool.js";
+import { resolveCredentialValue } from "../lib/credentials.js";
 
 // ── Tavily Client ────────────────────────────────────────────────────────────
 
-function getTavilyClient() {
-  const apiKey = process.env.TAVILY_API_KEY;
+async function getTavilyClient() {
+  const apiKey = await resolveCredentialValue("tavily_api_key");
   if (!apiKey) return null;
   return tavily({ apiKey });
 }
@@ -53,11 +54,11 @@ export function createWebTools() {
           .describe("Number of results to return (max 10)"),
       }),
       execute: async ({ query, max_results }) => {
-        const tvly = getTavilyClient();
+        const tvly = await getTavilyClient();
         if (!tvly) {
           return {
             ok: false as const,
-            error: "Web search is not available. TAVILY_API_KEY is not configured.",
+            error: "Web search is not available. tavily_api_key credential is not configured.",
           };
         }
 
@@ -134,7 +135,7 @@ export function createWebTools() {
           }
 
           // Try Tavily extract first (cleaner extraction)
-          const tvly = getTavilyClient();
+          const tvly = await getTavilyClient();
           if (tvly) {
             try {
               const response = await tvly.extract([url]);

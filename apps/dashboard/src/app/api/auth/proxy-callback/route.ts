@@ -1,29 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createTransferToken } from "@/lib/auth";
-import {
-  getAppUrl,
-  getSafeReturnTo,
-  isAllowedOrigin,
-  OAUTH_PROXY_ORIGIN_COOKIE,
-  OAUTH_RETURN_TO_COOKIE,
-} from "@/lib/auth-redirect";
+import { getAppUrl, getSafeReturnTo, isAllowedOrigin } from "@/lib/auth-redirect";
 import { checkRole } from "@/lib/auth-check";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const code = searchParams.get("code");
-  const state = searchParams.get("state");
+  const stateParam = searchParams.get("state");
   const appUrl = getAppUrl();
 
   const cookieStore = await cookies();
-  const savedState = cookieStore.get("oauth_state")?.value;
-  const origin = cookieStore.get(OAUTH_PROXY_ORIGIN_COOKIE)?.value;
-  const returnTo = getSafeReturnTo(
-    cookieStore.get(OAUTH_RETURN_TO_COOKIE)?.value,
-  );
+  const savedNonce = cookieStore.get("oauth_state")?.value;
 
-  if (!code || !state || state !== savedState) {
+  let nonce: string | undefined;
+  let origin: string | undefined;
+  let returnTo: string | null = null;
+
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(stateParam || "", "base64url").toString(),
+    );
+    nonce = decoded.nonce;
+    origin = decoded.origin;
+    returnTo = getSafeReturnTo(decoded.returnTo);
+  } catch {
+    return NextResponse.redirect(
+      `${appUrl}/unauthorized?reason=invalid_state`,
+    );
+  }
+
+  if (!code || !nonce || nonce !== savedNonce) {
     return NextResponse.redirect(
       `${appUrl}/unauthorized?reason=invalid_state`,
     );
@@ -36,8 +43,6 @@ export async function GET(request: NextRequest) {
   }
 
   cookieStore.delete("oauth_state");
-  cookieStore.delete(OAUTH_PROXY_ORIGIN_COOKIE);
-  cookieStore.delete(OAUTH_RETURN_TO_COOKIE);
 
   const tokenRes = await fetch("https://slack.com/api/openid.connect.token", {
     method: "POST",

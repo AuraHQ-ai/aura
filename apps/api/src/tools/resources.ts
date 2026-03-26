@@ -13,9 +13,10 @@ import { tavily } from "@tavily/core";
 import { BROWSER_UA, isPrivateUrl } from "../lib/ssrf.js";
 import { defineTool } from "../lib/tool.js";
 import { formatTimestamp } from "../lib/temporal.js";
+import { resolveCredentialValue } from "../lib/credentials.js";
 
-function getTavilyClient() {
-  const apiKey = process.env.TAVILY_API_KEY;
+async function getTavilyClient() {
+  const apiKey = await resolveCredentialValue("tavily_api_key");
   if (!apiKey) return null;
   return tavily({ apiKey });
 }
@@ -379,7 +380,7 @@ export function createResourceTools(context?: ScheduleContext) {
 
             let tavilySucceeded = false;
             if (use_tavily) {
-              const tvly = getTavilyClient();
+              const tvly = await getTavilyClient();
               if (tvly) {
                 try {
                   const response = await tvly.extract([normalizedUrl]);

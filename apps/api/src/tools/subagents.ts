@@ -23,7 +23,7 @@ import { createResourceTools } from "./resources.js";
  */
 async function buildToolScope(
   scope: string,
-  client: WebClient,
+  client?: WebClient,
   context?: ScheduleContext,
   modelId?: string,
 ) {
@@ -31,12 +31,12 @@ async function buildToolScope(
 
   switch (scope) {
     case "email": {
-      const tools = {
+      const tools: Record<string, unknown> = {
         ...createEmailTools(context),
         ...createGmailEATools(context),
-        ...createEmailSyncTools(client, context),
         ...createNoteTools(context),
       };
+      if (client) Object.assign(tools, createEmailSyncTools(client, context));
       return filterToolsByCredentials(tools, userCreds);
     }
     case "data": {
@@ -56,6 +56,10 @@ async function buildToolScope(
       return filterToolsByCredentials(tools, userCreds);
     }
     case "slack": {
+      if (!client) {
+        const { createCoreTools } = await import("./core.js");
+        return await createCoreTools(context, userCreds);
+      }
       const { createSlackTools } = await import("./slack.js");
       return { ...(await createSlackTools(client, context, modelId)) };
     }
@@ -69,6 +73,10 @@ async function buildToolScope(
     }
     case "all":
     default: {
+      if (!client) {
+        const { createCoreTools } = await import("./core.js");
+        return await createCoreTools(context, userCreds);
+      }
       const { createSlackTools } = await import("./slack.js");
       return await createSlackTools(client, context, modelId);
     }
@@ -76,7 +84,7 @@ async function buildToolScope(
 }
 
 export function createSubagentTools(
-  client: WebClient,
+  client?: WebClient,
   context?: ScheduleContext,
 ) {
   return {
