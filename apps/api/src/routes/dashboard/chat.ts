@@ -480,7 +480,7 @@ async function persistDashboardConversation(params: {
     });
 
     if (traceId) {
-      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage, conversationHistory);
+      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage);
 
       const conversationSteps = buildConversationSteps(steps);
       await persistConversationSteps(traceId, conversationSteps, orderIndex);
@@ -513,7 +513,7 @@ function serializeConversationHistory(
   const result: Array<{ role: string; content: string }> = [];
 
   for (const msg of modelMessages) {
-    if (msg.role === "system") continue;
+    if (msg.role === "system" || msg.role === "tool") continue;
 
     let content: string;
     if (typeof msg.content === "string") {
