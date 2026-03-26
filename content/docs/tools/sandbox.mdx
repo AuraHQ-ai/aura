@@ -34,7 +34,7 @@ The sandbox template includes:
 | `node`, `npm` | JavaScript/TypeScript execution |
 | `python3`, `pip` | Python scripting |
 | `git` | Version control |
-| `gh` | GitHub CLI (authenticated via `GH_TOKEN`) |
+| `gh` | GitHub CLI (authenticated via user-specific `GH_TOKEN`) |
 | `gcloud` | Google Cloud SDK |
 | `vercel` | Vercel CLI (install first: `sudo npm install -g vercel`) |
 | `rg` (ripgrep) | Fast code search |
@@ -46,13 +46,26 @@ Install additional packages with `apt-get install` or `pip install`.
 
 ---
 
+## Credential injection
+
+When `run_command` executes, Aura injects environment variables based on the calling user's identity. The function `getSandboxEnvs(userId)` resolves which credentials each user can access:
+
+- **Owner-scoped credentials** (scope = `owner`) are only injected for the credential's owner
+- **Role-scoped credentials** (scope = `admin`, `power_user`, or `member`) are injected for any user meeting the minimum role
+- **Granted credentials** — users with explicit grants receive credentials regardless of scope
+
+This means when Joan runs a `gh` command, she gets her GitHub token. When Callan runs the same command, she gets hers. No cross-contamination.
+
+See [Credentials](/tools/credentials) for full access control details.
+
+---
+
 ## File system
 
 The sandbox persists between messages **within a session** — files and state are preserved across tool calls in the same conversation. The sandbox may auto-pause between sessions; check `/home/user/` to verify state is intact before assuming files exist.
 
 Common paths:
 - `/home/user/` — working directory
-- `/home/user/aura/` — Aura's own codebase (cloned at startup)
 - `/home/user/downloads/` — files saved to disk via `download_slack_file` or `download_email_attachment`
 
 ---
@@ -76,12 +89,16 @@ Common persistent paths:
 
 ## Isolation model
 
-The sandbox is isolated from the Vercel runtime. It **cannot** access:
-- The production PostgreSQL database (use `psql "$DATABASE_URL"` after extracting the URL via `skill-vercel-env-extraction`)
-- Slack tokens (unless extracted and passed explicitly)
-- Other production env vars (must be fetched from Vercel API using the `skill-vercel-env-extraction` playbook)
+The sandbox is isolated from the Vercel runtime. It **cannot** directly access:
+- The production PostgreSQL database (credentials are injected per-user via `DATABASE_URL` if the user has access)
+- Slack tokens (unless injected via the credential system)
+- Other production env vars (must be fetched from Vercel API)
 
 This isolation is intentional — Aura can run untrusted code without risk to the production system.
+
+<Warning>
+The sandbox is currently a single shared instance across all users and threads. While credential injection is user-specific per command, the filesystem and running processes are shared. Per-user sandbox isolation is planned.
+</Warning>
 
 ---
 
