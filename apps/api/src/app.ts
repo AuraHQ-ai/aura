@@ -84,7 +84,12 @@ app.route("/api/dashboard", dashboardApp);
 
 app.get("/api/auth/token-receive", async (c) => {
   const token = c.req.query("token");
-  const returnTo = c.req.query("returnTo") || "/";
+  const rawReturnTo = c.req.query("returnTo") || "/";
+
+  const returnTo =
+    rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//")
+      ? rawReturnTo
+      : "/";
 
   if (!token) return c.redirect("/unauthorized?reason=missing_token");
 

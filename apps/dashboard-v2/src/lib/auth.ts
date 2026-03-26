@@ -1,5 +1,4 @@
 import { createContext, useContext } from "react";
-import { jwtVerify } from "jose";
 
 export interface Session {
   slackUserId: string;
@@ -41,19 +40,6 @@ export function clearToken() {
 
 export async function decodeToken(token: string): Promise<Session | null> {
   try {
-    const secret = import.meta.env.VITE_SESSION_SECRET;
-    if (secret) {
-      const { payload } = await jwtVerify(
-        token,
-        new TextEncoder().encode(secret),
-      );
-      if (payload.purpose) return null;
-      return {
-        slackUserId: payload.slackUserId as string,
-        name: payload.name as string,
-        picture: payload.picture as string,
-      };
-    }
     const parts = token.split(".");
     if (parts.length !== 3) return null;
     const payload = JSON.parse(atob(parts[1]!));
