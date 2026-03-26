@@ -1,6 +1,6 @@
 ---
 title: "Jobs & Scheduling Tools"
-description: "One-shot reminders, recurring cron jobs, headless execution, and background tasks — 6 tools."
+description: "One-shot reminders, recurring cron jobs, script execution, headless dispatch, and background tasks — 6 tools."
 ---
 
 # Jobs & Scheduling Tools
@@ -30,6 +30,21 @@ Create a one-shot task, recurring job, or follow-up.
 | `priority` | enum | no | `high`, `normal` (default), or `low` |
 | `max_per_day` | number | no | Max executions per day (recurring jobs) |
 | `min_interval_hours` | number | no | Minimum hours between executions |
+| `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
+
+---
+
+## Execution modes
+
+Jobs support three execution modes depending on which fields are set:
+
+| Mode | Fields | Behavior | LLM cost |
+|------|--------|----------|----------|
+| **Playbook-only** | `playbook` set, no `script` | LLM executes the playbook with full tool access | Normal |
+| **Script-only** | `script` set, no `playbook` | Script runs in E2B sandbox, output posted directly | Zero |
+| **Hybrid** | Both `script` and `playbook` | Script runs first, output injected as context into a smaller LLM prompt | Reduced |
+
+Script-only mode is ideal for jobs that just need to run a command and post the result (e.g. `git log`, database queries, health checks). Hybrid mode lets a script gather data cheaply, then uses the LLM only for summarization or decision-making.
 
 ---
 
@@ -73,6 +88,7 @@ Update an existing job's configuration without recreating it. Preserves job ID a
 | `updates.enabled` | boolean | no | Re-enable a disabled job by setting to `true` |
 | `updates.max_per_day` | number | no | New max executions per day |
 | `updates.min_interval_hours` | number | no | New minimum hours between executions |
+| `updates.script` | string/null | no | New shell command. Set to `null` to remove an existing script. |
 
 When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time.
 

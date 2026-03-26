@@ -67,3 +67,13 @@ The admin dashboard (`apps/dashboard`) has its own API routes for authentication
 - `GET /api/auth/login` — Initiate OAuth login
 - `GET /api/auth/callback` — OAuth callback handler
 - `POST /api/auth/logout` — End session
+
+All dashboard data routes are served by an OpenAPIHono app with full Zod schema validation. The API spec is available at:
+
+### `GET /api/dashboard/openapi.json`
+
+Returns the full OpenAPI 3.1 specification for all dashboard API routes. Useful for generating client SDKs, testing with tools like Swagger UI, or validating request/response shapes.
+
+**Auth:** Dashboard session cookie.
+
+The spec covers 14 route groups: auth, chat, stats, notes, memories, users, conversations, errors, jobs, credentials, resources, consumption, settings, and models.
