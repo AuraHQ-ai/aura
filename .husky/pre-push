@@ -1,7 +1,7 @@
 echo "🔍 Type-checking apps/api..."
 pnpm --filter aura-api typecheck || exit 1
 
-echo "🔍 Type-checking apps/dashboard-v2..."
-pnpm --filter aura-dashboard-v2 typecheck || exit 1
+echo "🔍 Type-checking apps/dashboard..."
+pnpm --filter aura-dashboard typecheck || exit 1
 
 echo "✅ All type checks passed."

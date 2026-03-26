@@ -8,13 +8,13 @@ This is a pnpm workspace monorepo. Run `pnpm install` at the root.
 
 - `packages/db/` — shared database package (`@aura/db`): Drizzle schema, migrations, migration runner
 - `apps/api/` — Hono API deployed on Vercel (Slack bot, cron jobs, tools)
-- `apps/dashboard/` — Next.js admin dashboard
+- `apps/dashboard/` — Vite + TanStack Router admin dashboard
 - `apps/web/` — marketing site / blog
 - `content/` — blog posts and Mintlify documentation
 
 ## Tech stack
 - **Runtime:** Vercel serverless functions (Node.js, TypeScript)
-- **Framework:** Hono for HTTP routing (API), Next.js (dashboard)
+- **Framework:** Hono for HTTP routing (API), Vite + TanStack Router (dashboard)
 - **AI:** Vercel AI SDK with Anthropic Claude models (via AI Gateway)
 - **Database:** PostgreSQL with Drizzle ORM + pgvector for embeddings
 - **Integrations:** Slack API (Bot + User tokens), GitHub, BigQuery, Google Workspace (Gmail, Calendar, Directory), SendGrid
@@ -52,7 +52,7 @@ pnpm db:studio      # open Drizzle Studio
 - When adding a new tool, put all usage guidance in the tool's `description` field, not the system prompt
 
 ## Pre-push checks
-- A husky pre-push hook runs `pnpm typecheck` automatically (type-checks both `apps/api` and `apps/dashboard-v2`).
+- A husky pre-push hook runs `pnpm typecheck` automatically (type-checks both `apps/api` and `apps/dashboard`).
 - Always run `pnpm typecheck` at the monorepo root before committing. Never commit code that breaks `tsc --noEmit`.
 - The Vercel build will reject type errors, so catching them locally saves a deploy cycle.
 

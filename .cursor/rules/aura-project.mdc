@@ -11,7 +11,7 @@ This is a **pnpm workspace monorepo**. Always use `pnpm` (not npm/yarn).
 
 - `packages/db/` — shared `@aura/db` package (Drizzle schema, migrations, config)
 - `apps/api/` — Hono API on Vercel (Slack bot, cron jobs, AI tools)
-- `apps/dashboard/` — Next.js admin dashboard
+- `apps/dashboard/` — Vite + TanStack Router admin dashboard
 - `apps/web/` — marketing site / blog
 - `content/` — blog posts and Mintlify docs
 
@@ -149,7 +149,7 @@ Channel connectors (Slack, Dashboard, etc.) handle **delivery only** — they MU
 
 ## TypeScript
 
-- **Before committing**, run `pnpm typecheck` at the monorepo root. This runs `tsc --noEmit` on both `apps/api` and `apps/dashboard-v2`. A husky pre-push hook enforces this automatically, but always run it yourself first to avoid surprises.
+- **Before committing**, run `pnpm typecheck` at the monorepo root. This runs `tsc --noEmit` on both `apps/api` and `apps/dashboard`. A husky pre-push hook enforces this automatically, but always run it yourself first to avoid surprises.
 - Use `.js` extensions in imports (ESM with `"type": "module"`).
 - AI SDK v6 uses `inputSchema` (not `parameters`) and `stopWhen: stepCountIs(N)` (not `maxSteps`).
 - Remember: `tsc` catches type errors but NOT runtime issues (ESM/CJS, missing env vars, API incompatibilities). Be extra careful with new dependencies.

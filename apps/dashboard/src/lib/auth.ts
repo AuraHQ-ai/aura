@@ -1,7 +1,4 @@
-import { cookies } from "next/headers";
-import { SignJWT, jwtVerify } from "jose";
-
-const COOKIE_NAME = "aura_session";
+import { createContext, useContext } from "react";
 
 export interface Session {
   slackUserId: string;
@@ -9,61 +6,50 @@ export interface Session {
   picture: string;
 }
 
-function getSecret() {
-  const secret = process.env.DASHBOARD_SESSION_SECRET;
-  if (!secret) throw new Error("DASHBOARD_SESSION_SECRET is not configured");
-  return new TextEncoder().encode(secret);
+export interface AuthContextValue {
+  session: Session | null;
+  loading: boolean;
+  login: (token: string) => void;
+  logout: () => void;
 }
 
-export async function createSession(payload: Session): Promise<string> {
-  return new SignJWT(payload as unknown as Record<string, unknown>)
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("7d")
-    .sign(getSecret());
+export const AuthContext = createContext<AuthContextValue>({
+  session: null,
+  loading: true,
+  login: () => {},
+  logout: () => {},
+});
+
+export function useAuth() {
+  return useContext(AuthContext);
 }
 
-export async function getSession(): Promise<Session | null> {
+const SESSION_KEY = "aura_session";
+
+export function getStoredToken(): string | null {
+  return localStorage.getItem(SESSION_KEY);
+}
+
+export function storeToken(token: string) {
+  localStorage.setItem(SESSION_KEY, token);
+}
+
+export function clearToken() {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+export async function decodeToken(token: string): Promise<Session | null> {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(COOKIE_NAME)?.value;
-    if (!token) return null;
-
-    const { payload } = await jwtVerify(token, getSecret());
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1]!));
     if (payload.purpose) return null;
     return {
       slackUserId: payload.slackUserId as string,
-      name: payload.name as string,
-      picture: payload.picture as string,
+      name: (payload.name as string) || "User",
+      picture: (payload.picture as string) || "",
     };
   } catch {
     return null;
   }
-}
-
-export async function createTransferToken(payload: Session): Promise<string> {
-  return new SignJWT({
-    ...(payload as unknown as Record<string, unknown>),
-    purpose: "transfer",
-  })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("60s")
-    .sign(getSecret());
-}
-
-export async function verifyTransferToken(token: string): Promise<Session> {
-  const { payload } = await jwtVerify(token, getSecret());
-  if (payload.purpose !== "transfer") {
-    throw new Error("Invalid token purpose");
-  }
-  return {
-    slackUserId: payload.slackUserId as string,
-    name: payload.name as string,
-    picture: payload.picture as string,
-  };
-}
-
-export function getSessionCookieName() {
-  return COOKIE_NAME;
 }

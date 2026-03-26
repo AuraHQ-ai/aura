@@ -1,5 +1,3 @@
-"use client";
-
 import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
@@ -68,8 +66,6 @@ import {
 import { usePromptInputAttachments } from "@/components/ai-elements/prompt-input";
 import { Spinner } from "@/components/ui/spinner";
 
-// ── Model catalog ────────────────────────────────────────────────────────────
-
 interface ModelOption {
   value: string;
   label: string;
@@ -114,8 +110,6 @@ function getModelLabel(groups: ModelGroup[], value: string): string {
   return value;
 }
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
 interface ChatThread {
   threadId: string;
   preview: string | null;
@@ -128,7 +122,11 @@ interface ChatPanelProps {
   userId?: string;
 }
 
-// ── Main Component ──────────────────────────────────────────────────────────
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem("aura_session");
+  if (token) return { Authorization: `Bearer ${token}` };
+  return {};
+}
 
 export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const [currentThreadId, setCurrentThreadId] = useState<string>(() => crypto.randomUUID());
@@ -145,7 +143,8 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
-        api: "/api/chat",
+        api: "/api/dashboard/chat",
+        headers: () => getAuthHeaders(),
         body: () => ({ threadId: threadIdRef.current, userId, modelId: selectedModelRef.current }),
       }),
     [userId],
@@ -158,9 +157,8 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const isStreaming = status === "streaming";
   const isEmpty = messages.length === 0 && !loadingThread;
 
-  // Fetch model catalog on mount
   useEffect(() => {
-    fetch("/api/chat/models")
+    fetch("/api/dashboard/chat/models", { headers: getAuthHeaders() })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) setModelGroups(buildModelGroups(data.main ?? [], data.fast ?? []));
@@ -168,10 +166,9 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
       .catch(() => {});
   }, []);
 
-  // Fetch thread list on mount and after each completed response
   const fetchThreads = useCallback(async () => {
     try {
-      const res = await fetch("/api/chat/threads");
+      const res = await fetch("/api/dashboard/chat/threads", { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         setThreads(data.threads ?? []);
@@ -220,7 +217,10 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
       setMessages([]);
 
       try {
-        const res = await fetch(`/api/chat/threads/${encodeURIComponent(threadId)}/messages`);
+        const res = await fetch(
+          `/api/dashboard/chat/threads/${encodeURIComponent(threadId)}/messages`,
+          { headers: getAuthHeaders() },
+        );
         if (res.ok) {
           const data = await res.json();
           setMessages(data.messages ?? []);
@@ -236,7 +236,6 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
 
   return (
     <div className="flex h-full flex-col border-l bg-background">
-      {/* Header */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b px-3">
         <span className="text-[13px] font-medium">Chat with Aura</span>
         <div className="flex items-center gap-1">
@@ -279,7 +278,6 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
         <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelGroups={modelGroups} />
       ) : (
         <>
-          {/* Messages */}
           <Conversation className="flex-1">
             <ConversationContent className="gap-4 px-3 py-3">
               {loadingThread && (
@@ -313,15 +311,12 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
             <ConversationScrollButton />
           </Conversation>
 
-          {/* Input */}
           <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelGroups={modelGroups} />
         </>
       )}
     </div>
   );
 }
-
-// ── Empty State (centered input) ────────────────────────────────────────────
 
 function EmptyState({
   onSubmit,
@@ -351,8 +346,6 @@ function EmptyState({
     </div>
   );
 }
-
-// ── Chat Input ──────────────────────────────────────────────────────────────
 
 function ChatInput({
   onSubmit,
@@ -438,7 +431,6 @@ function SubmitButton({
 
 function AttachmentStrip() {
   try {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
     const { files, remove } = usePromptInputAttachments();
     if (files.length === 0) return null;
 
@@ -462,8 +454,6 @@ function AttachmentStrip() {
     return null;
   }
 }
-
-// ── Thread List ─────────────────────────────────────────────────────────────
 
 function ThreadList({
   threads,
@@ -514,8 +504,6 @@ function ThreadList({
     </div>
   );
 }
-
-// ── Message Item ────────────────────────────────────────────────────────────
 
 function MessageItem({
   message,
@@ -610,8 +598,6 @@ function MessageItem({
   );
 }
 
-// ── Model Selector ──────────────────────────────────────────────────────────
-
 function ModelSelector({
   value,
   onChange,
@@ -642,8 +628,6 @@ function ModelSelector({
     </Select>
   );
 }
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatToolName(name: string): string {
   return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
