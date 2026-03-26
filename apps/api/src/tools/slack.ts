@@ -2347,10 +2347,10 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
           let fileBuffer: Buffer;
           if (file_path) {
-            if (!process.env.E2B_API_KEY) {
+            if (!process.env.E2B_API_KEY || !userCreds.has("e2b_api_key")) {
               return {
                 ok: false,
-                error: "Sandbox access requires E2B_API_KEY to be configured.",
+                error: "Sandbox file access requires sandbox credentials. You don't have permission to read sandbox files.",
               };
             }
             const { getOrCreateSandbox } = await import("../lib/sandbox.js");
@@ -2963,11 +2963,9 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
   };
 
   // ── Credential-driven tool gating (reuses pre-resolved userCreds) ──
-  if (userCreds.size > 0) {
-    const filteredTools = filterToolsByCredentials(tools, userCreds);
-    for (const k of Object.keys(tools)) {
-      if (!(k in filteredTools)) delete tools[k];
-    }
+  const filteredTools = filterToolsByCredentials(tools, userCreds);
+  for (const k of Object.keys(tools)) {
+    if (!(k in filteredTools)) delete tools[k];
   }
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
