@@ -148,7 +148,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
           if (mode === "semantic") {
             const trimmed = query!.trim();
             const queryEmbedding = await embedText(trimmed);
-            const embeddingLiteral = JSON.stringify(queryEmbedding);
+            const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
             const embeddingNotNull = sql`${messages.embedding} IS NOT NULL`;
             const allConditions =
@@ -159,10 +159,10 @@ export function createConversationSearchTools(context?: ScheduleContext) {
             const results = await db.execute(sql`
               SELECT id, slack_ts, slack_thread_ts, channel_id, channel_type,
                      user_id, role, content, created_at,
-                     1 - (embedding <=> ${embeddingLiteral}::vector) as similarity
+                     1 - (embedding <=> ${vectorSql}) as similarity
               FROM messages
               WHERE ${allConditions}
-              ORDER BY embedding <=> ${embeddingLiteral}::vector
+              ORDER BY embedding <=> ${vectorSql}
               LIMIT ${limit}
               OFFSET ${offset}
             `);
