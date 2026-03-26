@@ -159,6 +159,18 @@ function getBaseUrl(c: { req: { url: string; header: (name: string) => string | 
   return `${proto}://${host}`;
 }
 
+/** Allow HTTPS origins and localhost (HTTP or HTTPS). */
+function isAllowedOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    if (url.hostname === "localhost")
+      return url.protocol === "http:" || url.protocol === "https:";
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function getSafeReturnTo(returnTo: string | null | undefined): string {
   if (!returnTo || !returnTo.startsWith("/") || returnTo.startsWith("//") || returnTo.startsWith("/api/auth")) {
     return "/";
@@ -168,8 +180,9 @@ function getSafeReturnTo(returnTo: string | null | undefined): string {
 
 dashboardAuthApp.get("/login", async (c) => {
   const returnTo = c.req.query("returnTo") || "/";
-  const origin = c.req.query("origin") || getBaseUrl(c);
+  const rawOrigin = c.req.query("origin");
   const baseUrl = getBaseUrl(c);
+  const origin = rawOrigin && isAllowedOrigin(rawOrigin) ? rawOrigin : baseUrl;
 
   const clientId = process.env.SLACK_CLIENT_ID;
   if (!clientId) {
