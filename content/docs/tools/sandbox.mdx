@@ -57,6 +57,23 @@ Common paths:
 
 ---
 
+## Persistent storage
+
+Each user gets a persistent home directory backed by Google Cloud Storage (GCS) via gcsfuse. Files written to `/mnt/aura-files/<user_id>/` survive across sandbox sessions — unlike `/home/user/`, which resets when the sandbox pauses.
+
+Use persistent storage for:
+- Long-running work that spans multiple conversations (large datasets, intermediate results)
+- SQLite databases for complex analysis
+- Downloaded files you need to reference later
+
+The mount is set up automatically when `run_command` executes. If the mount isn't available (e.g. GCS credentials not configured), Aura falls back to `/home/user/` with a warning.
+
+Common persistent paths:
+- `/mnt/aura-files/<user_id>/` — per-user persistent root
+- `/mnt/aura-files/<user_id>/downloads/` — persistent downloads
+
+---
+
 ## Isolation model
 
 The sandbox is isolated from the Vercel runtime. It **cannot** access:
