@@ -2,19 +2,24 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DetailSkeleton } from "@/components/page-skeleton";
-import { formatDate } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DetailSkeleton } from "@/components/page-skeleton";
+import { MarkdownContent } from "@/components/ui/markdown";
+import { formatDate } from "@/lib/utils";
 import { ArrowLeft } from "lucide-react";
 
 interface ResourceDetail {
   id: string;
-  name: string;
-  type: string;
-  url: string | null;
+  title: string | null;
+  url: string;
+  source: string;
+  status: string;
+  summary: string | null;
   content: string | null;
-  createdAt: string;
+  errorMessage: string | null;
+  metadata: Record<string, unknown> | null;
+  crawledAt: string | null;
   updatedAt: string;
 }
 
@@ -31,49 +36,79 @@ function ResourceDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/resources">
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
+          <Link to="/resources"><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
-        <h1 className="text-lg font-semibold tracking-tight">{resource.name}</h1>
+        <div>
+          <h1 className="text-base font-semibold">{resource.title || "Untitled"}</h1>
+          <a href={resource.url} target="_blank" rel="noopener noreferrer" className="text-sm text-muted-foreground hover:underline">
+            {resource.url}
+          </a>
+        </div>
+        <div className="ml-auto">
+          <Badge variant={
+            resource.status === "ready" ? "success" :
+            resource.status === "error" ? "destructive" :
+            "warning"
+          }>
+            {resource.status}
+          </Badge>
+        </div>
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Resource Details</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div>
-            <span className="text-sm text-muted-foreground">Type</span>
-            <div><Badge variant="secondary">{resource.type}</Badge></div>
-          </div>
-          {resource.url && (
-            <div>
-              <span className="text-sm text-muted-foreground">URL</span>
-              <div>
-                <a href={resource.url} target="_blank" rel="noopener noreferrer" className="text-sm hover:underline text-primary">
-                  {resource.url}
-                </a>
-              </div>
-            </div>
-          )}
-          <div>
-            <span className="text-sm text-muted-foreground">Created</span>
-            <div>{formatDate(resource.createdAt)}</div>
-          </div>
-          <div>
-            <span className="text-sm text-muted-foreground">Updated</span>
-            <div>{formatDate(resource.updatedAt)}</div>
-          </div>
-          {resource.content && (
-            <div>
-              <span className="text-sm text-muted-foreground">Content</span>
-              <div className="mt-1 whitespace-pre-wrap text-sm bg-muted rounded-md p-3">{resource.content}</div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Source</CardTitle></CardHeader>
+          <CardContent><Badge variant="outline">{resource.source}</Badge></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Crawled</CardTitle></CardHeader>
+          <CardContent><span className="text-sm">{formatDate(resource.crawledAt)}</span></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Updated</CardTitle></CardHeader>
+          <CardContent><span className="text-sm">{formatDate(resource.updatedAt)}</span></CardContent>
+        </Card>
+      </div>
+
+      {resource.summary && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Summary</CardTitle></CardHeader>
+          <CardContent><p className="text-sm">{resource.summary}</p></CardContent>
+        </Card>
+      )}
+
+      {resource.content && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Content</CardTitle></CardHeader>
+          <CardContent>
+            <MarkdownContent content={resource.content} className="max-w-3xl" />
+          </CardContent>
+        </Card>
+      )}
+
+      {resource.errorMessage && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Error</CardTitle></CardHeader>
+          <CardContent>
+            <pre className="whitespace-pre-wrap text-xs font-mono text-destructive bg-muted rounded-md p-3">
+              {resource.errorMessage}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
+      {resource.metadata && Object.keys(resource.metadata).length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Metadata</CardTitle></CardHeader>
+          <CardContent>
+            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[300px]">
+              {JSON.stringify(resource.metadata, null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -1,4 +1,21 @@
+import { TableRow, TableCell } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+
+export function TableRowsSkeleton({ columns, rows = 5 }: { columns: number; rows?: number }) {
+  return (
+    <>
+      {Array.from({ length: rows }).map((_, i) => (
+        <TableRow key={i}>
+          {Array.from({ length: columns }).map((_, j) => (
+            <TableCell key={j}>
+              <div className={cn("h-4 animate-pulse rounded bg-muted", j % 2 === 0 ? "w-3/4" : "w-1/2")} />
+            </TableCell>
+          ))}
+        </TableRow>
+      ))}
+    </>
+  );
+}
 
 export function PageSkeleton({ rows = 5 }: { rows?: number }) {
   return (

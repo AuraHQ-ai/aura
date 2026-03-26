@@ -53,9 +53,30 @@
   --sidebar-border: #262626;
 }
 
+@layer base {
+  * {
+    border-color: var(--col-border);
+  }
+
+  a,
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="switch"],
+  [role="option"],
+  [role="menuitem"],
+  [role="combobox"],
+  select,
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+}
+
 * {
   box-sizing: border-box;
-  border-color: var(--col-border);
 }
 
 html {

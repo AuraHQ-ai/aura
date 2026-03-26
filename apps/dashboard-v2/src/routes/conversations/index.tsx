@@ -1,70 +1,326 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { TableSkeleton } from "@/components/page-skeleton";
-import { formatDate, truncate } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { TableRowsSkeleton } from "@/components/page-skeleton";
+import { Pagination } from "@/components/pagination";
+import { cn, formatDate, truncate } from "@/lib/utils";
+import { useState } from "react";
+import { Search, MessageSquare, Zap } from "lucide-react";
 
-interface Conversation {
+interface ConversationRow {
   id: string;
-  channelId: string;
-  channelName: string | null;
-  threadTs: string | null;
-  userName: string | null;
-  lastMessageAt: string;
+  sourceType: string;
+  sourceLabel: string;
+  modelId: string | null;
+  tokenUsage: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  } | null;
+  costUsd: string | null;
   messageCount: number;
+  createdAt: string;
+  channelId: string | null;
+  userId: string | null;
+  resolvedName: string | null;
+  messagePreview: string | null;
+}
+
+interface ThreadRow {
+  channelId: string;
+  threadTs: string;
+  traceCount: number;
+  totalCostUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  firstTraceAt: string;
+  lastTraceAt: string;
+  userId: string | null;
+  resolvedName: string | null;
+  messagePreview: string | null;
+  firstTraceId: string;
+  sourceType: string;
+}
+
+type ViewMode = "threads" | "invocations";
+
+const PAGE_SIZE = 25;
+
+function formatPreview(name: string | null, preview: string | null): string {
+  const displayName = name ?? "Unknown";
+  if (!preview) return displayName;
+  const truncated = truncate(preview, 50);
+  return `${displayName} · "${truncated}"`;
+}
+
+function InvocationsTable({
+  conversations,
+  isLoading,
+}: {
+  conversations: ConversationRow[];
+  isLoading?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border overflow-x-auto">
+      <Table className="min-w-[800px]">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[140px]">Timestamp</TableHead>
+            <TableHead className="w-[80px]">Source</TableHead>
+            <TableHead>Preview</TableHead>
+            <TableHead className="w-[160px]">Model</TableHead>
+            <TableHead className="w-[90px]">Cost</TableHead>
+            <TableHead className="w-[140px]">Tokens</TableHead>
+            <TableHead className="w-[60px]">Steps</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading ? (
+            <TableRowsSkeleton columns={7} />
+          ) : conversations.map((conv) => (
+            <TableRow key={conv.id}>
+              <TableCell className="text-sm text-muted-foreground">
+                <Link
+                  to="/conversations/$id"
+                  params={{ id: conv.id }}
+                  className="hover:underline"
+                >
+                  {formatDate(conv.createdAt)}
+                </Link>
+              </TableCell>
+              <TableCell>
+                <Badge
+                  variant={
+                    conv.sourceType === "interactive" ? "default" : "secondary"
+                  }
+                >
+                  {conv.sourceType === "job_execution" ? "job" : "interactive"}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {conv.sourceType === "job_execution"
+                  ? conv.sourceLabel
+                  : formatPreview(conv.resolvedName, conv.messagePreview)}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground font-mono">
+                {conv.modelId ?? "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground font-mono">
+                {conv.costUsd
+                  ? `$${parseFloat(conv.costUsd).toFixed(4)}`
+                  : "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {conv.tokenUsage
+                  ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
+                  : "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {conv.messageCount}
+              </TableCell>
+            </TableRow>
+          ))}
+          {!isLoading && conversations.length === 0 && (
+            <TableRow>
+              <TableCell
+                colSpan={7}
+                className="text-center text-muted-foreground py-8"
+              >
+                No conversations found
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function ThreadsTable({ threads, isLoading }: { threads: ThreadRow[]; isLoading?: boolean }) {
+  return (
+    <div className="rounded-xl border overflow-x-auto">
+      <Table className="min-w-[800px]">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[140px]">Started</TableHead>
+            <TableHead className="w-[140px]">Last Active</TableHead>
+            <TableHead className="w-[80px]">Source</TableHead>
+            <TableHead>Preview</TableHead>
+            <TableHead className="w-[80px]">Messages</TableHead>
+            <TableHead className="w-[90px]">Cost</TableHead>
+            <TableHead className="w-[140px]">Tokens</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading ? (
+            <TableRowsSkeleton columns={7} />
+          ) : threads.map((thread) => (
+            <TableRow key={`${thread.channelId}::${thread.threadTs}`}>
+              <TableCell className="text-sm text-muted-foreground">
+                <Link
+                  to="/conversations/threads/$channelId/$threadTs"
+                  params={{
+                    channelId: thread.channelId,
+                    threadTs: thread.threadTs,
+                  }}
+                  className="hover:underline"
+                >
+                  {formatDate(thread.firstTraceAt)}
+                </Link>
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {formatDate(thread.lastTraceAt)}
+              </TableCell>
+              <TableCell>
+                <Badge
+                  variant={
+                    thread.sourceType === "interactive" ? "default" : "secondary"
+                  }
+                >
+                  {thread.sourceType === "job_execution" ? "job" : "interactive"}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {formatPreview(thread.resolvedName, thread.messagePreview)}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {thread.traceCount}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground font-mono">
+                {thread.totalCostUsd > 0
+                  ? `$${thread.totalCostUsd.toFixed(4)}`
+                  : "—"}
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">
+                {thread.totalTokens > 0
+                  ? `${thread.inputTokens.toLocaleString()} / ${thread.outputTokens.toLocaleString()}`
+                  : "—"}
+              </TableCell>
+            </TableRow>
+          ))}
+          {!isLoading && threads.length === 0 && (
+            <TableRow>
+              <TableCell
+                colSpan={7}
+                className="text-center text-muted-foreground py-8"
+              >
+                No threads found
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
 }
 
 function ConversationsPage() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["conversations"],
-    queryFn: () => apiGet<{ items: Conversation[]; total: number }>("/conversations"),
+  const [view, setView] = useState<ViewMode>("threads");
+  const [search, setSearch] = useState("");
+  const [sourceType, setSourceType] = useState("all");
+  const [page, setPage] = useState(1);
+
+  const { data, isLoading, isFetching, error } = useQuery({
+    queryKey: ["conversations", view, search, sourceType, page],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (sourceType !== "all") params.set("sourceType", sourceType);
+      if (search) params.set("search", search);
+      params.set("page", String(page));
+      params.set("limit", String(PAGE_SIZE));
+      const endpoint =
+        view === "threads"
+          ? `/conversations/threads?${params}`
+          : `/conversations?${params}`;
+      return apiGet<{ items: any[]; total: number }>(endpoint);
+    },
+    placeholderData: keepPreviousData,
   });
 
-  if (isLoading) return <TableSkeleton columns={5} />;
-  if (error) return <div className="text-destructive text-sm">Failed to load conversations: {error.message}</div>;
+  if (error && !data)
+    return (
+      <div className="text-destructive text-sm">
+        Failed to load conversations: {error.message}
+      </div>
+    );
 
-  const conversations = data?.items ?? [];
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Conversations</h1>
-        <span className="text-sm text-muted-foreground">{data?.total ?? 0} total</span>
+        <span className="text-sm text-muted-foreground">
+          {isLoading ? "…" : `${total} total`}
+        </span>
       </div>
-      <div className="rounded-xl border overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Channel</TableHead>
-              <TableHead>User</TableHead>
-              <TableHead>Messages</TableHead>
-              <TableHead>Last Message</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {conversations.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">No conversations found</TableCell>
-              </TableRow>
-            ) : (
-              conversations.map((conv) => (
-                <TableRow key={conv.id}>
-                  <TableCell>
-                    <Link to="/conversations/$id" params={{ id: conv.id }} className="font-medium hover:underline">
-                      {conv.channelName ? truncate(conv.channelName, 30) : conv.channelId}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{conv.userName ?? "—"}</TableCell>
-                  <TableCell><Badge variant="secondary">{conv.messageCount}</Badge></TableCell>
-                  <TableCell className="text-muted-foreground">{formatDate(conv.lastMessageAt)}</TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+
+      <Tabs value={view} onValueChange={(v) => { setView(v as ViewMode); setPage(1); }}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <TabsList>
+            <TabsTrigger value="threads"><MessageSquare /> Threads</TabsTrigger>
+            <TabsTrigger value="invocations"><Zap /> Invocations</TabsTrigger>
+          </TabsList>
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by channel or user..."
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              className="pl-9"
+            />
+          </div>
+          <Select
+            value={sourceType}
+            onValueChange={(v) => {
+              setSourceType(v);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-[160px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sources</SelectItem>
+              <SelectItem value="interactive">Interactive</SelectItem>
+              <SelectItem value="job_execution">Job execution</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </Tabs>
+
+      <div className={cn("transition-opacity", isFetching && !isLoading && "opacity-50")}>
+        {view === "threads" ? (
+          <ThreadsTable threads={items as ThreadRow[]} isLoading={isLoading} />
+        ) : (
+          <InvocationsTable conversations={items as ConversationRow[]} isLoading={isLoading} />
+        )}
       </div>
+
+      <Pagination total={total} pageSize={PAGE_SIZE} page={page} onPageChange={setPage} />
     </div>
   );
 }
