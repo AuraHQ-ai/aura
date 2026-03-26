@@ -4,6 +4,40 @@ import { userProfiles } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
+import { SignJWT, jwtVerify } from "jose";
+import crypto from "node:crypto";
+
+const PRODUCTION_URL = "https://app.aurahq.ai";
+
+function getSessionSecret(): Uint8Array {
+  const secret = process.env.DASHBOARD_SESSION_SECRET;
+  if (!secret) throw new Error("DASHBOARD_SESSION_SECRET not configured");
+  return new TextEncoder().encode(secret);
+}
+
+function signOrigin(origin: string): string {
+  const secret = process.env.DASHBOARD_SESSION_SECRET;
+  if (!secret) throw new Error("DASHBOARD_SESSION_SECRET not configured");
+  return crypto.createHmac("sha256", Buffer.from(secret, "utf-8")).update(origin).digest("hex");
+}
+
+export async function createSessionJwt(payload: { slackUserId: string; name: string; picture: string }): Promise<string> {
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(getSessionSecret());
+}
+
+export async function verifyTransferToken(token: string): Promise<{ slackUserId: string; name: string; picture: string }> {
+  const { payload } = await jwtVerify(token, getSessionSecret());
+  if (payload.purpose !== "transfer") throw new Error("Invalid token purpose");
+  return {
+    slackUserId: payload.slackUserId as string,
+    name: payload.name as string,
+    picture: payload.picture as string,
+  };
+}
 
 export const dashboardAuthApp = createDashboardApp();
 
@@ -128,4 +162,18 @@ dashboardAuthApp.openapi(checkRoleRoute, async (c) => {
     logger.error("Failed to check role", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
+});
+
+// ── Slack OIDC Login (delegates to production proxy for non-prod) ────────────
+
+dashboardAuthApp.get("/login", async (c) => {
+  const returnTo = c.req.query("returnTo") || "/";
+  const origin = c.req.query("origin") || c.req.header("x-forwarded-origin") || new URL(c.req.url).origin;
+
+  const proxyUrl = new URL(`${PRODUCTION_URL}/api/auth/proxy-login`);
+  proxyUrl.searchParams.set("origin", origin);
+  proxyUrl.searchParams.set("sig", signOrigin(origin));
+  proxyUrl.searchParams.set("returnTo", returnTo);
+
+  return c.redirect(proxyUrl.toString());
 });
