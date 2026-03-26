@@ -42,30 +42,42 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
-function NavContent({ onClose }: { onClose?: () => void }) {
+function NavContent({ onClose, showLabels }: { onClose?: () => void; showLabels?: boolean }) {
   const routerState = useRouterState();
   const pathname = routerState.location.pathname;
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="flex h-full flex-col items-center py-3 gap-1">
+      <nav className={cn("flex h-full flex-col py-3 gap-1", showLabels ? "px-2" : "items-center")}>
         {navItems.map((item) => {
           const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+          const link = (
+            <Link
+              to={item.href}
+              onClick={onClose}
+              className={cn(
+                "flex items-center rounded-lg transition-colors",
+                showLabels
+                  ? "gap-2 px-2 py-1.5 text-[13px]"
+                  : "justify-center w-9 h-9",
+                isActive
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              <item.icon className="h-[18px] w-[18px] shrink-0" />
+              {showLabels && item.label}
+            </Link>
+          );
+
+          if (showLabels) {
+            return <div key={item.href}>{link}</div>;
+          }
+
           return (
             <Tooltip key={item.href}>
               <TooltipTrigger asChild>
-                <Link
-                  to={item.href}
-                  onClick={onClose}
-                  className={cn(
-                    "flex items-center justify-center w-9 h-9 rounded-lg transition-colors",
-                    isActive
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <item.icon className="h-[18px] w-[18px] shrink-0" />
-                </Link>
+                {link}
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={6}>
                 {item.label}
@@ -73,7 +85,7 @@ function NavContent({ onClose }: { onClose?: () => void }) {
             </Tooltip>
           );
         })}
-      </div>
+      </nav>
     </TooltipProvider>
   );
 }
@@ -100,14 +112,14 @@ export function MobileNav() {
       {open && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="fixed inset-0 bg-black/50" onClick={() => setOpen(false)} />
-          <div className="fixed inset-y-0 left-0 w-[52px] border-r bg-background shadow-lg">
-            <div className="absolute right-1 top-2">
+          <div className="fixed inset-y-0 left-0 w-[200px] border-r bg-background shadow-lg">
+            <div className="absolute right-2 top-3">
               <button className="p-1 hover:bg-muted rounded-md" onClick={() => setOpen(false)}>
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="pt-8">
-              <NavContent onClose={() => setOpen(false)} />
+              <NavContent onClose={() => setOpen(false)} showLabels />
             </div>
           </div>
         </div>
