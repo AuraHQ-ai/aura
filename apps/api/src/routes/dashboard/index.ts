@@ -17,7 +17,7 @@ import { jwtVerify } from "jose";
 
 export const dashboardApp = createDashboardApp();
 
-const PUBLIC_AUTH_PATHS = ["/auth/login", "/auth/callback"];
+const PUBLIC_AUTH_PATHS = ["/auth/login", "/auth/callback", "/openapi.json"];
 
 dashboardApp.use("*", async (c, next) => {
   const path = new URL(c.req.url).pathname.replace("/api/dashboard", "");
