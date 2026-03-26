@@ -104,12 +104,12 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
       // row OR rows they've been explicitly granted access to.
       // Without this, two users with the same credential name (e.g.
       // `github_token`) would collide and the last row wins silently.
-      if (
-        row.scope === "per_user" &&
-        userId &&
-        row.ownerId !== userId &&
-        !grantedCredentialIds.has(row.id)
-      ) continue;
+      // When userId is omitted, skip ALL per_user credentials to prevent
+      // leaking every user's secrets into an anonymous sandbox.
+      if (row.scope === "per_user") {
+        if (!userId) continue;
+        if (row.ownerId !== userId && !grantedCredentialIds.has(row.id)) continue;
+      }
 
       // Use the explicit sandboxEnvName if set, otherwise uppercase the name
       const envName = row.sandboxEnvName || row.name.toUpperCase();
