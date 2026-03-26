@@ -7,8 +7,8 @@ import { db } from "../db/client.js";
 import { jobs, jobExecutions } from "@aura/db/schema";
 import type { FrequencyConfig, ScheduleContext } from "@aura/db/schema";
 import { waitUntil } from "@vercel/functions";
-import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
+import { hasRole } from "../lib/permissions.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
 import { executeJob } from "../cron/execute-job.js";
@@ -21,7 +21,7 @@ import { executeJob } from "../cron/execute-job.js";
  * and continuations all live in the same table and are processed by the heartbeat.
  */
 export function createJobTools(
-  client: WebClient,
+  client?: WebClient,
   context?: ScheduleContext,
 ) {
   return {
@@ -105,6 +105,9 @@ export function createJobTools(
           let channelId: string | null = null;
           let channelLabel = "DM-routed";
           if (channel_name) {
+            if (!client) {
+              return { ok: false, error: "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly." };
+            }
             const channel = await resolveChannelByName(client, channel_name);
             if (!channel) {
               return { ok: false, error: `Could not find channel "${channel_name}".` };
@@ -184,9 +187,9 @@ export function createJobTools(
           const jobName = name || `job-${Date.now().toString(36)}`;
           const requestedBy = context?.userId || "aura";
 
-          // Per-user job limit for non-admins (also exempt "aura" identity used by heartbeat)
+          // Per-user job limit (exempt admins and "aura" bot identity)
           const MAX_JOBS_PER_USER = 5;
-          if (!(await hasRole(context?.userId, "admin"))) {
+          if (requestedBy !== "aura" && !(await hasRole(context?.userId, "admin"))) {
             const activeCount = await db
               .select({ count: sql<number>`count(*)::int` })
               .from(jobs)
@@ -201,7 +204,7 @@ export function createJobTools(
             if ((activeCount[0]?.count ?? 0) >= MAX_JOBS_PER_USER) {
               return {
                 ok: false,
-                error: `You have ${MAX_JOBS_PER_USER} active jobs already. Cancel some before creating new ones, or ask an admin.`,
+                error: `You have ${MAX_JOBS_PER_USER} active jobs already. Cancel some before creating new ones.`,
               };
             }
           }
@@ -492,6 +495,9 @@ export function createJobTools(
 
           // Resolve channel name to ID
           if (updates.channel_name !== undefined) {
+            if (!client) {
+              return { ok: false as const, error: "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly." };
+            }
             const channel = await resolveChannelByName(client, updates.channel_name);
             if (!channel) {
               return { ok: false as const, error: `Could not find channel "${updates.channel_name}".` };
@@ -594,6 +600,7 @@ export function createJobTools(
     }),
 
     dispatch_headless: defineTool({
+      requiredCredentials: ["admin_access"],
       description:
         "Dispatch a task for immediate headless execution (no Slack streaming overhead). Creates a job and triggers it NOW — no waiting for the 30-min heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. The task runs as full Aura with all tools. Results are posted to the callback channel/thread when done. Admin-only.",
       inputSchema: z.object({
@@ -630,12 +637,6 @@ export function createJobTools(
         name,
         playbook,
       }) => {
-        if (!(await hasRole(context?.userId, "admin"))) {
-          return {
-            ok: false,
-            error: "Only admins can dispatch headless executions.",
-          };
-        }
 
         try {
           const cbChannel = callback_channel || context?.channelId;

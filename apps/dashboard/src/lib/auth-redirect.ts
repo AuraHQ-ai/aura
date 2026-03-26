@@ -1,7 +1,4 @@
-import crypto from "node:crypto";
-
 export const OAUTH_RETURN_TO_COOKIE = "oauth_return_to";
-export const OAUTH_PROXY_ORIGIN_COOKIE = "oauth_proxy_origin";
 
 export const PRODUCTION_URL = "https://app.aurahq.ai";
 
@@ -16,28 +13,7 @@ export function getAppUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 }
 
-function getProxySecret(): Buffer {
-  const secret = process.env.DASHBOARD_SESSION_SECRET;
-  if (!secret) throw new Error("DASHBOARD_SESSION_SECRET is not configured");
-  return Buffer.from(secret, "utf-8");
-}
-
-export function signOrigin(origin: string): string {
-  return crypto
-    .createHmac("sha256", getProxySecret())
-    .update(origin)
-    .digest("hex");
-}
-
-export function verifyOriginSignature(origin: string, sig: string): boolean {
-  const expected = signOrigin(origin);
-  const expectedBuf = Buffer.from(expected);
-  const sigBuf = Buffer.from(sig);
-  if (expectedBuf.length !== sigBuf.length) return false;
-  return crypto.timingSafeEqual(expectedBuf, sigBuf);
-}
-
-/** Basic sanity check — real trust comes from the HMAC signature. */
+/** Allow HTTPS origins and localhost (HTTP or HTTPS). */
 export function isAllowedOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);

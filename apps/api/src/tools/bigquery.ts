@@ -108,6 +108,7 @@ async function resolveDatasetLocation(
 export function createBigQueryTools(context?: ScheduleContext) {
   return {
     list_datasets: defineTool({
+      requiredCredentials: ["google_bq_credentials"],
       description:
         "List all datasets in the BigQuery data warehouse. Use this to discover what data is available. After exploring, save findings to a 'data-warehouse-map' knowledge note for future reference.",
       inputSchema: z.object({}),
@@ -140,6 +141,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
     }),
 
     list_tables: defineTool({
+      requiredCredentials: ["google_bq_credentials"],
       description:
         "List all tables in a BigQuery dataset, including type, row count, and description.",
       inputSchema: z.object({
@@ -178,6 +180,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
     }),
 
     inspect_table: defineTool({
+      requiredCredentials: ["google_bq_credentials"],
       description:
         "Get a table's full schema, metadata, and sample rows. Always use this before querying an unfamiliar table — the sample rows show actual data values, formats, and sparsity, which is much more useful than schema alone. After exploring, update the 'data-warehouse-map' knowledge note with what you learn about datasets, key tables, useful columns, common joins, and data quirks.",
       inputSchema: z.object({
@@ -312,6 +315,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
     }),
 
     execute_query: defineTool({
+      requiredCredentials: ["google_bq_credentials"],
       description:
         "Run a read-only SQL query against BigQuery. Only SELECT/WITH queries are allowed — DML/DDL is blocked. Uses standard SQL (not legacy). Has a 1 GB scan limit to prevent runaway costs. Use LIMIT for large result sets to keep responses manageable. Read the 'data-warehouse-map' note before re-exploring from scratch.",
       inputSchema: z.object({

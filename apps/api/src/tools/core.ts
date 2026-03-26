@@ -14,15 +14,27 @@ import { createCredentialTools } from "./credentials.js";
 import { createEmailTools, createGmailEATools } from "./email.js";
 import { createSheetsTools } from "./sheets.js";
 import { createDriveTools } from "./drive.js";
+import { createVoiceTools } from "./voice.js";
+import { createJobTools } from "./jobs.js";
+import { createSubagentTools } from "./subagents.js";
+import { createScratchpadTools } from "./scratchpad.js";
+import { filterToolsByCredentials } from "../lib/tool.js";
+import { resolveUserCredentials } from "../lib/permissions.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Channel-agnostic tools available to every connector (Slack, Dashboard, etc.).
  *
- * Tools that require a Slack WebClient (jobs, lists, tables, subagents, voice,
- * email-sync) are NOT included here -- they live in the Slack connector only.
+ * Tools that strictly require a Slack WebClient (lists, tables, email-sync,
+ * send_voice_note, inline Slack channel/message ops) live in the Slack connector only.
+ *
+ * Tools like jobs, subagents, and voice are included here without a WebClient;
+ * the Slack connector overwrites them with client-aware versions via spread.
+ *
+ * Filters tools based on the calling user's credential access.
  */
-export function createCoreTools(context?: ScheduleContext) {
-  return {
+export async function createCoreTools(context?: ScheduleContext, preResolvedCreds?: Set<string>) {
+  const allTools = {
     ...createDateTimeTools(),
     ...createNoteTools(context),
     ...createWebTools(),
@@ -39,5 +51,20 @@ export function createCoreTools(context?: ScheduleContext) {
     ...createGmailEATools(context),
     ...createSheetsTools(context),
     ...createDriveTools(context),
+    ...createVoiceTools(undefined, context),
+    ...createJobTools(undefined, context),
+    ...createSubagentTools(undefined, context),
+    ...createScratchpadTools(crypto.randomUUID()),
   };
+
+  try {
+    const userCreds = preResolvedCreds ?? await resolveUserCredentials(context?.userId);
+    return filterToolsByCredentials(allTools, userCreds);
+  } catch (e: any) {
+    logger.warn("createCoreTools: credential resolution failed, returning ungated tools only", {
+      userId: context?.userId,
+      error: e.message,
+    });
+    return filterToolsByCredentials(allTools, new Set());
+  }
 }

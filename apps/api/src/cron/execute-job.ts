@@ -186,7 +186,7 @@ export async function executeJob(
       try {
         const { getOrCreateSandbox, truncateOutput, getSandboxEnvs } = await import("../lib/sandbox.js");
         const sandbox = await getOrCreateSandbox();
-        const envs = await getSandboxEnvs();
+        const envs = await getSandboxEnvs(job.requestedBy);
 
         const scriptResult = await sandbox.commands.run(job.script, {
           timeoutMs: 120_000,

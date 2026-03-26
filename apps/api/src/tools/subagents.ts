@@ -1,10 +1,10 @@
-import { defineTool } from "../lib/tool.js";
+import { defineTool, filterToolsByCredentials } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
-import { hasRole } from "../lib/permissions.js";
 import { runSubagent } from "../lib/subagent.js";
 import { getFastModel, getMainModel } from "../lib/ai.js";
+import { resolveUserCredentials } from "../lib/permissions.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
 import { createNoteTools } from "./notes.js";
@@ -23,42 +23,60 @@ import { createResourceTools } from "./resources.js";
  */
 async function buildToolScope(
   scope: string,
-  client: WebClient,
+  client?: WebClient,
   context?: ScheduleContext,
   modelId?: string,
 ) {
+  const userCreds = await resolveUserCredentials(context?.userId);
+
   switch (scope) {
-    case "email":
-      return {
+    case "email": {
+      const tools: Record<string, unknown> = {
         ...createEmailTools(context),
         ...createGmailEATools(context),
-        ...createEmailSyncTools(client, context),
         ...createNoteTools(context),
       };
-    case "data":
-      return {
+      if (client) Object.assign(tools, createEmailSyncTools(client, context));
+      return filterToolsByCredentials(tools, userCreds);
+    }
+    case "data": {
+      const tools = {
         ...createBigQueryTools(context),
         ...createSheetsTools(context),
         ...createNoteTools(context),
       };
-    case "web":
-      return {
+      return filterToolsByCredentials(tools, userCreds);
+    }
+    case "web": {
+      const tools = {
         ...createWebTools(),
         ...createResourceTools(context),
         ...createSandboxTools(context),
       };
+      return filterToolsByCredentials(tools, userCreds);
+    }
     case "slack": {
+      if (!client) {
+        const { createCoreTools } = await import("./core.js");
+        return await createCoreTools(context, userCreds);
+      }
       const { createSlackTools } = await import("./slack.js");
       return { ...(await createSlackTools(client, context, modelId)) };
     }
-    case "notes":
-      return {
+    case "notes": {
+      const tools = {
         ...createNoteTools(context),
         ...createResourceTools(context),
         ...createConversationSearchTools(context),
       };
+      return filterToolsByCredentials(tools, userCreds);
+    }
     case "all":
     default: {
+      if (!client) {
+        const { createCoreTools } = await import("./core.js");
+        return await createCoreTools(context, userCreds);
+      }
       const { createSlackTools } = await import("./slack.js");
       return await createSlackTools(client, context, modelId);
     }
@@ -66,13 +84,14 @@ async function buildToolScope(
 }
 
 export function createSubagentTools(
-  client: WebClient,
+  client?: WebClient,
   context?: ScheduleContext,
 ) {
   return {
     run_subagent: defineTool({
+      requiredCredentials: ["e2b_api_key"],
       description:
-        "Launch a subagent for parallel fan-out. Call this tool MULTIPLE TIMES in the same tool-call block to run tasks concurrently — e.g. sweep 4 market channels simultaneously, or triage emails while analyzing data. Each subagent runs in its own isolated context with scoped tools, preventing context pollution. Returns a compressed summary. The primary value is parallelism and performance — use when you can split work into independent pieces that don't depend on each other's results. Admin-only.",
+        "Launch a subagent for parallel fan-out. Call this tool MULTIPLE TIMES in the same tool-call block to run tasks concurrently — e.g. sweep 4 market channels simultaneously, or triage emails while analyzing data. Each subagent runs in its own isolated context with scoped tools, preventing context pollution. Returns a compressed summary. The primary value is parallelism and performance — use when you can split work into independent pieces that don't depend on each other's results.",
       inputSchema: z.object({
         task: z
           .string()
@@ -111,10 +130,6 @@ export function createSubagentTools(
         model_preference,
         max_steps,
       }) => {
-        if (context?.userId && !(await hasRole(context.userId, "power_user"))) {
-          return { ok: false as const, error: "Power user or above required" };
-        }
-
         const { modelId, model } =
           model_preference === "main"
             ? await getMainModel()
@@ -148,7 +163,7 @@ export function createSubagentTools(
       slack: {
         status: "Running subagent...",
         detail: (i) => i.task?.slice(0, 60),
-        output: (r) => r.ok === false ? r.error : `${r.stepCount ?? 0} steps, ${r.toolCallCount ?? 0} tool calls`,
+        output: (r) => `${r.stepCount ?? 0} steps, ${r.toolCallCount ?? 0} tool calls`,
       },
     }),
   };

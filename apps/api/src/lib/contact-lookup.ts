@@ -1,4 +1,5 @@
 import { logger } from "./logger.js";
+import { getConfig } from "./settings.js";
 
 export interface Contact {
   name: string;
@@ -21,7 +22,7 @@ export async function lookupContact(query: string): Promise<Contact[]> {
   const { BigQuery } = await import("@google-cloud/bigquery");
 
   const bq = new BigQuery({
-    projectId: process.env.GCP_PROJECT_ID || "",
+    projectId: await getConfig("gcp_project_id"),
   });
 
   const searchTerm = query.trim().toLowerCase();

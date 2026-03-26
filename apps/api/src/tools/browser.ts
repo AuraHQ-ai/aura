@@ -6,7 +6,6 @@ import {
   releaseSession,
   bufferToBase64,
 } from "../lib/browser.js";
-import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
@@ -58,7 +57,8 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
     return {
       browse: defineTool({
       description:
-        "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors. Admin-only.",
+        "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors.",
+      requiredCredentials: ["browserbase_api_key"],
       inputSchema: z.object({
         url: z
           .string()
@@ -122,14 +122,6 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
         stealth,
         timeout_seconds,
       }) => {
-        // Admin-only check
-        if (!(await hasRole(context?.userId, "power_user"))) {
-          return {
-            ok: false,
-            error: "Only power users and above can use the browse tool.",
-          };
-        }
-
         // Validate input
         if (!url && !code) {
           return {
@@ -143,17 +135,6 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
             ok: false,
             error:
               "Provide either 'url' or 'code', not both.",
-          };
-        }
-
-        if (
-          !process.env.BROWSERBASE_API_KEY ||
-          !process.env.BROWSERBASE_PROJECT_ID
-        ) {
-          return {
-            ok: false,
-            error:
-              "Browser automation is not available. BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID must be configured.",
           };
         }
 

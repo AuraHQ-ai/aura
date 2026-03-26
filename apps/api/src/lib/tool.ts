@@ -60,6 +60,40 @@ export function getSlackMeta(t: unknown): SlackToolMetadata | undefined {
 }
 
 /**
+ * Retrieve the requiredCredentials metadata from a tool, if it was created
+ * with defineTool(). Returns undefined for tools without this metadata.
+ */
+export function getRequiredCredentials(t: unknown): string[] | undefined {
+  if (t && typeof t === "object" && "__requiredCredentials" in t) {
+    return (t as { __requiredCredentials: string[] }).__requiredCredentials;
+  }
+  return undefined;
+}
+
+/**
+ * Filter a tools record to only include tools whose requiredCredentials
+ * are satisfied by the user's accessible credential set.
+ * Tools without requiredCredentials metadata are always included (fail open).
+ */
+export function filterToolsByCredentials<T extends Record<string, unknown>>(
+  tools: T,
+  userCredentials: Set<string>,
+): T {
+  const filtered: Record<string, unknown> = {};
+  for (const [name, t] of Object.entries(tools)) {
+    const required = getRequiredCredentials(t);
+    if (!required || required.length === 0) {
+      filtered[name] = t;
+      continue;
+    }
+    if (required.every((cred) => userCredentials.has(cred))) {
+      filtered[name] = t;
+    }
+  }
+  return filtered as T;
+}
+
+/**
  * Mutable name ref stored in a closure so registerToolNames() can fill it
  * in after the tools map is built.
  */
@@ -92,8 +126,9 @@ export function defineTool<TInput, TOutput>(config: {
   execute: (input: TInput) => PromiseLike<TOutput>;
   slack?: SlackToolMetadata<TInput, TOutput>;
   toModelOutput?: Tool<TInput, TOutput>["toModelOutput"];
+  requiredCredentials?: string[];
 }) {
-  const { slack, ...rest } = config;
+  const { slack, requiredCredentials, ...rest } = config;
   const originalExecute = rest.execute;
 
   const toolRef: ToolNameRef = {};
@@ -219,6 +254,9 @@ export function defineTool<TInput, TOutput>(config: {
     (t as any).slack = slack;
   }
   (t as any).__toolRef = toolRef;
+  if (requiredCredentials) {
+    (t as any).__requiredCredentials = requiredCredentials;
+  }
 
   return t as Tool<TInput, TOutput> & {
     slack?: SlackToolMetadata<TInput, TOutput>;

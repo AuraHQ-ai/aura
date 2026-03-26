@@ -1,12 +1,5 @@
 import { logger } from "./logger.js";
-
-/**
- * Lazy-initialized BigQuery client.
- * Uses dynamic import() per project convention to avoid cold-start overhead
- * on requests that don't use BigQuery.
- *
- * Reads GOOGLE_BQ_CREDENTIALS env var (base64-encoded service account JSON).
- */
+import { resolveCredentialValue } from "./credentials.js";
 
 let clientPromise: Promise<InstanceType<
   typeof import("@google-cloud/bigquery").BigQuery
@@ -16,11 +9,9 @@ export async function getBigQueryClient() {
   if (clientPromise) return clientPromise;
 
   clientPromise = (async () => {
-    const encoded = process.env.GOOGLE_BQ_CREDENTIALS;
+    const encoded = await resolveCredentialValue("google_bq_credentials");
     if (!encoded) {
-      logger.warn(
-        "GOOGLE_BQ_CREDENTIALS not set — BigQuery tools will be unavailable",
-      );
+      logger.warn("google_bq_credentials not found — BigQuery tools unavailable");
       clientPromise = null;
       return null;
     }

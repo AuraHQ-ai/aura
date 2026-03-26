@@ -6,7 +6,6 @@ import {
   clearCachedSandbox,
   ensureUserHome,
 } from "../lib/sandbox.js";
-import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { defineTool } from "../lib/tool.js";
 import type { ScheduleContext } from "@aura/db/schema";
@@ -22,6 +21,7 @@ export function createSandboxTools(context?: ScheduleContext) {
     run_command: defineTool({
       description:
         "Execute a shell command in a sandboxed Linux VM. This is the universal primitive for computation: file ops, git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (claude). Pre-installed: git, node, python, gh, gcloud, vercel CLI, ripgrep, curl, jq, claude. Install more with apt-get or pip. The sandbox persists between conversations — files and state are preserved across messages. Output is truncated; use head, tail, grep to filter. Break complex tasks into smaller commands. For complex workflows, check your skill notes first. Use higher timeouts (up to 750s) for long-running agent commands like Claude Code — the 750s ceiling leaves a 50s buffer before the Vercel function timeout at 800s.",
+      requiredCredentials: ["e2b_api_key"],
       inputSchema: z.object({
         command: z
           .string()
@@ -44,26 +44,10 @@ export function createSandboxTools(context?: ScheduleContext) {
           ),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
-        if (!(await hasRole(context?.userId, "power_user"))) {
-          return {
-            ok: false,
-            error: "Only power users and above can run sandbox commands.",
-          };
-        }
-
-        if (!process.env.E2B_API_KEY) {
-          return {
-            ok: false,
-            error:
-              "Sandbox execution is not available. E2B_API_KEY is not configured.",
-          };
-        }
-
         try {
           const sandbox = await getOrCreateSandbox();
-          const envs = await getSandboxEnvs();
-
           const userId = context?.userId || "aura";
+          const envs = await getSandboxEnvs(userId);
           const userHome = await ensureUserHome(sandbox, userId, envs);
 
           logger.info("run_command tool: executing", {

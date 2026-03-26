@@ -841,7 +841,7 @@ export const toolCredentialSlots = pgTable("tool_credential_slots", {
     .references(() => toolDefinitions.id),
   credentialType: text("credential_type").notNull(),
   required: boolean("required").notNull().default(true),
-  scope: text("scope").notNull().default("shared"),
+  scope: text("scope").notNull().default("member"),
   minRole: text("min_role"),
   createdAt: timestamptz("created_at").notNull().defaultNow(),
 });
@@ -957,6 +957,7 @@ export const credentials = pgTable(
     value: text("value").notNull(),
     keyVersion: integer("key_version").notNull().default(1),
     sandboxEnvName: text("sandbox_env_name"),
+    scope: text("scope").notNull().default("member"),
     expiresAt: timestamptz("expires_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
@@ -970,6 +971,10 @@ export const credentials = pgTable(
     check(
       "credentials_type_check",
       sql`${table.type} IN ('token', 'oauth_client')`,
+    ),
+    check(
+      "credentials_scope_check",
+      sql`${table.scope} IN ('member', 'power_user', 'admin', 'owner', 'per_user')`,
     ),
   ],
 );

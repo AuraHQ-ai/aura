@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { userProfiles } from "@aura/db/schema";
+import { userProfiles, credentials, credentialGrants, oauthTokens } from "@aura/db/schema";
 import { executionContext } from "./tool.js";
 import { logger } from "./logger.js";
 
@@ -95,4 +95,121 @@ export function isAdmin(userId: string | undefined): boolean {
     .map((id) => id.trim())
     .filter(Boolean);
   return adminIds.includes(userId);
+}
+
+/**
+ * Look up a user's role from the DB. Returns 'member' if not found.
+ */
+async function getUserRole(userId: string): Promise<Role> {
+  if (userId === "aura") return "owner";
+
+  try {
+    const profile = await db
+      .select({ role: userProfiles.role })
+      .from(userProfiles)
+      .where(eq(userProfiles.slackUserId, userId))
+      .limit(1);
+    if (profile.length > 0 && profile[0].role) {
+      return profile[0].role as Role;
+    }
+  } catch {
+    // fall through
+  }
+
+  const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (adminIds.includes(userId)) {
+    return "admin";
+  }
+
+  return "member";
+}
+
+/**
+ * Resolve the set of credential *names* a user can access.
+ *
+ * Credential scope uses the role hierarchy directly:
+ * - 'member' -> everyone can access
+ * - 'power_user' -> power_user, admin, owner
+ * - 'admin' -> admin, owner
+ * - 'owner' -> owner only
+ * - 'per_user' -> only the credential owner
+ *
+ * Plus explicit grants and synthetic env-var-based credentials.
+ */
+export async function resolveUserCredentials(
+  userId?: string,
+): Promise<Set<string>> {
+  const effectiveUserId = resolveCallingUserId(userId);
+  const result = new Set<string>();
+
+  if (!effectiveUserId) return result;
+
+  const userRole = await getUserRole(effectiveUserId);
+  const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
+
+  try {
+    const allCreds = await db
+      .select({ name: credentials.name, scope: credentials.scope, ownerId: credentials.ownerId })
+      .from(credentials);
+
+    for (const cred of allCreds) {
+      const scope = (cred.scope || "member") as Role | "per_user";
+      if (scope === "per_user") {
+        // Only the credential owner gets it
+        if (cred.ownerId === effectiveUserId) {
+          result.add(cred.name);
+        }
+      } else {
+        // Role-based scope: user needs at least this role
+        const requiredLevel = ROLE_HIERARCHY[scope as Role] ?? 0;
+        if (userLevel >= requiredLevel) {
+          result.add(cred.name);
+        }
+      }
+    }
+
+    // Explicit grants always work regardless of scope
+    const grants = await db
+      .select({ credentialName: credentials.name })
+      .from(credentialGrants)
+      .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
+      .where(
+        and(
+          eq(credentialGrants.granteeId, effectiveUserId),
+          isNull(credentialGrants.revokedAt),
+        ),
+      );
+
+    for (const grant of grants) {
+      result.add(grant.credentialName);
+    }
+  } catch (e: any) {
+    logger.warn("resolveUserCredentials: DB query failed, returning env-based credentials only", {
+      userId: effectiveUserId,
+      error: e.message,
+    });
+  }
+
+  // google_oauth: check if user has OAuth tokens (synthetic per-user credential)
+  try {
+    const tokens = await db
+      .select({ id: oauthTokens.id })
+      .from(oauthTokens)
+      .where(eq(oauthTokens.userId, effectiveUserId))
+      .limit(1);
+    if (tokens.length > 0) {
+      result.add("google_oauth");
+    }
+    // Admins can manage all users' email
+    if (userLevel >= ROLE_HIERARCHY.admin) {
+      result.add("google_oauth");
+    }
+  } catch {
+    // oauthTokens table may not exist yet; skip
+  }
+
+  return result;
 }

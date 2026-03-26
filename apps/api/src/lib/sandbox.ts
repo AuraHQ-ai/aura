@@ -1,9 +1,8 @@
 import * as nodePath from "node:path";
 import { getSetting, setSetting } from "./settings.js";
-import { getCredential, decryptCredential } from "./credentials.js";
+import { decryptCredential } from "./credentials.js";
 import { db } from "../db/client.js";
 import { credentials } from "@aura/db/schema";
-import { isNotNull } from "drizzle-orm";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
@@ -38,70 +37,59 @@ async function loadE2B() {
 }
 
 /**
- * Build the env vars map from the current Vercel process environment.
- * Callers should pass this to every `commands.run({ envs })` call so
- * env vars are always fresh — regardless of whether the sandbox was
- * just created or resumed from a paused state.
+ * Build the env vars map for sandbox commands from the credentials DB.
  *
- * E2B's `Sandbox.connect()` does NOT restore the `envs` that were
- * passed at creation time, and persistence across pause/resume is
- * unreliable (see e2b-dev/E2B#884). Per-command `envs` is the only
- * mechanism that works consistently.
+ * Resolves which credentials the user can access, decrypts them, and
+ * returns a flat NAME → value map (credential name uppercased).
  *
- * GOVERNANCE: Only compute-infrastructure keys belong here. External
- * service API keys (Close, Stripe, PostHog, Claap, etc.) must be
- * accessed via the credentials table through the governed http_request
- * tool. This prevents run_command from bypassing the governance layer.
+ * Must be passed to every `commands.run({ envs })` call — E2B does NOT
+ * persist envs across pause/resume (see e2b-dev/E2B#884).
  */
-export async function getSandboxEnvs(): Promise<Record<string, string>> {
+export async function getSandboxEnvs(userId?: string): Promise<Record<string, string>> {
   const envs: Record<string, string> = {};
-  const ghToken = await getCredential("github_token");
-  if (ghToken) {
-    envs.GITHUB_TOKEN = ghToken;
-    envs.GH_TOKEN = ghToken;
-  }
-  if (process.env.ANTHROPIC_API_KEY) {
-    envs.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  }
-  if (process.env.DATABASE_URL) {
-    envs.DATABASE_URL = process.env.DATABASE_URL;
-  }
-  if (process.env.VERCEL_TOKEN) {
-    envs.VERCEL_TOKEN = process.env.VERCEL_TOKEN;
-  }
-  if (process.env.OPENAI_API_KEY) {
-    envs.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-  }
-  // POSTHOG_API_KEY and CLAAP_API_KEY removed — external service
-  // credentials should flow through the governed http_request tool.
-  const saKeyB64 =
-    process.env.GOOGLE_SA_KEY_B64 ||
-    (process.env.GOOGLE_SERVICE_ACCOUNT_KEY
-      ? Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_KEY).toString("base64")
-      : undefined);
-  if (saKeyB64) {
-    envs.GOOGLE_SA_KEY_B64 = saKeyB64;
+
+  let userCredNames: Set<string> | null = null;
+  if (userId) {
+    try {
+      const { resolveUserCredentials } = await import("./permissions.js");
+      userCredNames = await resolveUserCredentials(userId);
+    } catch (e: any) {
+      logger.warn("getSandboxEnvs: credential resolution failed", {
+        userId,
+        error: e.message,
+      });
+      return envs;
+    }
   }
 
   try {
     const rows = await db
-      .select({ sandboxEnvName: credentials.sandboxEnvName, value: credentials.value })
-      .from(credentials)
-      .where(isNotNull(credentials.sandboxEnvName));
+      .select({
+        name: credentials.name,
+        value: credentials.value,
+      })
+      .from(credentials);
+
     for (const row of rows) {
-      if (row.sandboxEnvName) {
-        try {
-          envs[row.sandboxEnvName] = decryptCredential(row.value);
-        } catch (e: any) {
-          logger.warn("Failed to decrypt credential for sandbox injection", {
-            envName: row.sandboxEnvName,
-            error: e.message,
-          });
-        }
+      if (userCredNames && !userCredNames.has(row.name)) continue;
+
+      const envName = row.name.toUpperCase();
+      try {
+        envs[envName] = decryptCredential(row.value);
+      } catch (e: any) {
+        logger.warn("Failed to decrypt credential for sandbox injection", {
+          name: row.name,
+          envName,
+          error: e.message,
+        });
       }
     }
   } catch (e: any) {
     logger.warn("Failed to query credentials for sandbox injection", { error: e.message });
+  }
+
+  if (envs.GITHUB_TOKEN && !envs.GH_TOKEN) {
+    envs.GH_TOKEN = envs.GITHUB_TOKEN;
   }
 
   return envs;
@@ -241,15 +229,15 @@ export async function getOrCreateSandbox(): Promise<any> {
     }
   }
 
-  const apiKey = process.env.E2B_API_KEY;
+  const Sandbox = await loadE2B();
+  const envs = await getSandboxEnvs("aura");
+
+  const apiKey = envs.E2B_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "E2B_API_KEY is not configured. Sandbox execution is not available.",
+      "E2B_API_KEY is not configured. Add it as a credential in the dashboard.",
     );
   }
-
-  const Sandbox = await loadE2B();
-  const envs = await getSandboxEnvs();
 
   // Try to resume a previously paused sandbox
   const savedId = await getSetting(SANDBOX_NOTE_KEY);
@@ -257,6 +245,7 @@ export async function getOrCreateSandbox(): Promise<any> {
     try {
       logger.info("Resuming E2B sandbox", { sandboxId: savedId });
       const sandbox = await Sandbox.connect(savedId, {
+        apiKey,
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
 
@@ -283,11 +272,11 @@ export async function getOrCreateSandbox(): Promise<any> {
     }
   }
 
-  // Create a new sandbox (pass envs as a convenience for manual processes)
-  const templateId = process.env.E2B_TEMPLATE_ID || undefined;
+  // Create a new sandbox
+  const templateId = envs.E2B_TEMPLATE_ID || process.env.E2B_TEMPLATE_ID || undefined;
   logger.info("Creating new E2B sandbox", { templateId: templateId || "default" });
 
-  const createOptions: any = { timeoutMs: DEFAULT_TIMEOUT_MS, envs };
+  const createOptions: any = { apiKey, timeoutMs: DEFAULT_TIMEOUT_MS, envs };
   const sandbox = templateId
     ? await Sandbox.create(templateId, createOptions)
     : await Sandbox.create(createOptions);
@@ -377,7 +366,7 @@ export async function writeToSandbox(
 
   let base = "/home/user";
   if (userId) {
-    const envs = await getSandboxEnvs();
+    const envs = await getSandboxEnvs(userId);
     base = await ensureUserHome(sandbox, userId, envs);
   }
 

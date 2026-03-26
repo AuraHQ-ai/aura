@@ -357,7 +357,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
       modelIdOverride: modelId,
     });
 
-    const tools = createCoreTools({ userId, channelId: "dashboard" });
+    const tools = await createCoreTools({ userId, channelId: "dashboard" });
 
     for (const msg of messages) {
       const partTypes = msg.parts?.map((p: any) => p.type) ?? [];

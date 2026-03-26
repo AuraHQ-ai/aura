@@ -62,6 +62,25 @@ export async function getAllSettings(): Promise<Record<string, string>> {
   }
 }
 
+// ── Config helper (settings table → cached) ─────────────────────────────────
+
+const configCache = new Map<string, { value: string | null; expiresAt: number }>();
+const CONFIG_CACHE_TTL_MS = 60_000;
+
+/**
+ * Read a workspace config value from the settings table.
+ * Cached for 60s. Returns `fallback` if key is unset.
+ */
+export async function getConfig(key: string, fallback: string = ""): Promise<string> {
+  const now = Date.now();
+  const cached = configCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.value ?? fallback;
+
+  const value = await getSetting(key);
+  configCache.set(key, { value, expiresAt: now + CONFIG_CACHE_TTL_MS });
+  return value ?? fallback;
+}
+
 // ── JSON settings (with short TTL cache) ────────────────────────────────────
 
 const jsonSettingsCache = new Map<string, { value: unknown; expiresAt: number }>();
