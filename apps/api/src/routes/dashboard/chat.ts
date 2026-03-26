@@ -480,7 +480,7 @@ async function persistDashboardConversation(params: {
     });
 
     if (traceId) {
-      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage);
+      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage, conversationHistory);
 
       const conversationSteps = buildConversationSteps(steps);
       await persistConversationSteps(traceId, conversationSteps, orderIndex);
