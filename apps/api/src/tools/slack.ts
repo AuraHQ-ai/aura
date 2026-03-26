@@ -530,7 +530,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
   }
 
   // Resolve credentials once and reuse for core + slack tool filtering
-  let userCreds: Set<string>;
+  let userCreds: Set<string> | undefined;
   try {
     userCreds = await resolveUserCredentials(context?.userId);
   } catch (e: any) {
@@ -538,7 +538,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
       userId: context?.userId,
       error: e.message,
     });
-    userCreds = new Set<string>();
+    userCreds = undefined;
   }
 
   const tools: Record<string, any> = {
@@ -2347,7 +2347,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
           let fileBuffer: Buffer;
           if (file_path) {
-            if (!process.env.E2B_API_KEY || !userCreds.has("e2b_api_key")) {
+            if (!process.env.E2B_API_KEY || !userCreds?.has("e2b_api_key")) {
               return {
                 ok: false,
                 error: "Sandbox file access requires sandbox credentials. You don't have permission to read sandbox files.",
@@ -2963,9 +2963,11 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
   };
 
   // ── Credential-driven tool gating (reuses pre-resolved userCreds) ──
-  const filteredTools = filterToolsByCredentials(tools, userCreds);
-  for (const k of Object.keys(tools)) {
-    if (!(k in filteredTools)) delete tools[k];
+  if (userCreds) {
+    const filteredTools = filterToolsByCredentials(tools, userCreds);
+    for (const k of Object.keys(tools)) {
+      if (!(k in filteredTools)) delete tools[k];
+    }
   }
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
