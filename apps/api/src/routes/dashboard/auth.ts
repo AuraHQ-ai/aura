@@ -24,7 +24,7 @@ export async function createSessionJwt(payload: { slackUserId: string; name: str
 
 export const dashboardAuthApp = createDashboardApp();
 
-const ALLOWED_ROLES = ["owner", "admin", "power_user"];
+const ALLOWED_ROLES = ["admin", "power_user"];
 
 /**
  * Check if a Slack user is allowed to access the dashboard.
@@ -51,12 +51,12 @@ export async function checkUserRole(
   const bootstrapResult = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(42)`);
 
-    const ownerCount = await tx
+    const adminCount = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(userProfiles)
-      .where(eq(userProfiles.role, "owner"));
+      .where(eq(userProfiles.role, "admin"));
 
-    if ((ownerCount[0]?.count ?? 0) > 0) {
+    if ((adminCount[0]?.count ?? 0) > 0) {
       return null;
     }
 
@@ -64,20 +64,20 @@ export async function checkUserRole(
       .insert(userProfiles)
       .values({
         slackUserId,
-        displayName: name || "Owner",
-        role: "owner",
+        displayName: name || "Admin",
+        role: "admin",
       })
       .onConflictDoUpdate({
         target: [userProfiles.workspaceId, userProfiles.slackUserId],
-        set: { role: "owner", updatedAt: new Date() },
+        set: { role: "admin", updatedAt: new Date() },
       })
       .returning({ role: userProfiles.role });
 
-    return inserted[0]?.role ?? "owner";
+    return inserted[0]?.role ?? "admin";
   });
 
   if (bootstrapResult) {
-    logger.info("Auto-seeded first user as owner", { slackUserId });
+    logger.info("Auto-seeded first user as admin", { slackUserId });
     return { allowed: true, role: bootstrapResult, bootstrapped: true };
   }
 

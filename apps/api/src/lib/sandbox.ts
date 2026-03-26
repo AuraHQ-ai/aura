@@ -43,7 +43,7 @@ async function loadE2B() {
  * returns a flat NAME → value map. Uses `sandboxEnvName` when set on the
  * credential row, otherwise falls back to uppercasing the credential name.
  *
- * Owner-aware: for `per_user` scoped credentials, only the calling user's
+ * Owner-aware: for `owner` scoped credentials, only the calling user's
  * row is injected. This prevents collisions when multiple users store a
  * credential with the same name (e.g. `github_token`).
  *
@@ -68,7 +68,7 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
   }
 
   try {
-    // Resolve explicit credential grants so Gate 2 can allow per_user
+    // Resolve explicit credential grants so Gate 2 can allow owner-scoped
     // credentials the caller doesn't own but was explicitly granted.
     const grantedCredentialIds = new Set<string>();
     if (userId) {
@@ -100,13 +100,13 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
       // Gate 1: user must have access to this credential name
       if (userCredNames && !userCredNames.has(row.name)) continue;
 
-      // Gate 2: for per_user credentials, only inject the calling user's own
-      // row OR rows they've been explicitly granted access to.
+      // Gate 2: for owner-scoped credentials, only inject the calling user's
+      // own row OR rows they've been explicitly granted access to.
       // Without this, two users with the same credential name (e.g.
       // `github_token`) would collide and the last row wins silently.
-      // When userId is omitted, skip ALL per_user credentials to prevent
+      // When userId is omitted, skip ALL owner-scoped credentials to prevent
       // leaking every user's secrets into an anonymous sandbox.
-      if (row.scope === "per_user") {
+      if (row.scope === "owner") {
         if (!userId) continue;
         if (row.ownerId !== userId && !grantedCredentialIds.has(row.id)) continue;
       }
