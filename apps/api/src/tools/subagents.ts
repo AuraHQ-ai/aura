@@ -27,6 +27,8 @@ async function buildToolScope(
   context?: ScheduleContext,
   modelId?: string,
 ) {
+  const userCreds = await resolveUserCredentials(context?.userId);
+
   switch (scope) {
     case "email": {
       const tools = {
@@ -35,7 +37,6 @@ async function buildToolScope(
         ...createEmailSyncTools(client, context),
         ...createNoteTools(context),
       };
-      const userCreds = await resolveUserCredentials(context?.userId);
       return filterToolsByCredentials(tools, userCreds);
     }
     case "data": {
@@ -44,7 +45,6 @@ async function buildToolScope(
         ...createSheetsTools(context),
         ...createNoteTools(context),
       };
-      const userCreds = await resolveUserCredentials(context?.userId);
       return filterToolsByCredentials(tools, userCreds);
     }
     case "web": {
@@ -53,7 +53,6 @@ async function buildToolScope(
         ...createResourceTools(context),
         ...createSandboxTools(context),
       };
-      const userCreds = await resolveUserCredentials(context?.userId);
       return filterToolsByCredentials(tools, userCreds);
     }
     case "slack": {
@@ -66,7 +65,6 @@ async function buildToolScope(
         ...createResourceTools(context),
         ...createConversationSearchTools(context),
       };
-      const userCreds = await resolveUserCredentials(context?.userId);
       return filterToolsByCredentials(tools, userCreds);
     }
     case "all":

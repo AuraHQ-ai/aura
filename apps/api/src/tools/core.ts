@@ -26,7 +26,7 @@ import { logger } from "../lib/logger.js";
  *
  * Filters tools based on the calling user's credential access.
  */
-export async function createCoreTools(context?: ScheduleContext) {
+export async function createCoreTools(context?: ScheduleContext, preResolvedCreds?: Set<string>) {
   const allTools = {
     ...createDateTimeTools(),
     ...createNoteTools(context),
@@ -47,7 +47,7 @@ export async function createCoreTools(context?: ScheduleContext) {
   };
 
   try {
-    const userCreds = await resolveUserCredentials(context?.userId);
+    const userCreds = preResolvedCreds ?? await resolveUserCredentials(context?.userId);
     return filterToolsByCredentials(allTools, userCreds);
   } catch (e: any) {
     logger.warn("createCoreTools: credential resolution failed, returning all tools", {

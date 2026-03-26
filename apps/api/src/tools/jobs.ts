@@ -8,6 +8,7 @@ import { jobs, jobExecutions } from "@aura/db/schema";
 import type { FrequencyConfig, ScheduleContext } from "@aura/db/schema";
 import { waitUntil } from "@vercel/functions";
 import { logger } from "../lib/logger.js";
+import { hasRole } from "../lib/permissions.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
 import { executeJob } from "../cron/execute-job.js";
@@ -183,9 +184,9 @@ export function createJobTools(
           const jobName = name || `job-${Date.now().toString(36)}`;
           const requestedBy = context?.userId || "aura";
 
-          // Per-user job limit (exempt "aura" identity used by heartbeat)
+          // Per-user job limit (exempt admins and "aura" bot identity)
           const MAX_JOBS_PER_USER = 5;
-          if (requestedBy !== "aura") {
+          if (requestedBy !== "aura" && !(await hasRole(context?.userId, "admin"))) {
             const activeCount = await db
               .select({ count: sql<number>`count(*)::int` })
               .from(jobs)

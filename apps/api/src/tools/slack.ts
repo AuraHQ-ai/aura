@@ -529,9 +529,21 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     return result;
   }
 
+  // Resolve credentials once and reuse for core + slack tool filtering
+  let userCreds: Set<string>;
+  try {
+    userCreds = await resolveUserCredentials(context?.userId);
+  } catch (e: any) {
+    logger.warn("createSlackTools: credential resolution failed, skipping filtering", {
+      userId: context?.userId,
+      error: e.message,
+    });
+    userCreds = new Set<string>();
+  }
+
   const tools: Record<string, any> = {
     // ── Core Tools (channel-agnostic, shared with Dashboard etc.) ────────
-    ...(await createCoreTools(context)),
+    ...(await createCoreTools(context, userCreds)),
 
     list_channels: defineTool({
       description:
@@ -2950,18 +2962,12 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     ...createScratchpadTools(invocationId ?? crypto.randomUUID()),
   };
 
-  // ── Credential-driven tool gating ──────────────────────────────────
-  try {
-    const userCreds = await resolveUserCredentials(context?.userId);
+  // ── Credential-driven tool gating (reuses pre-resolved userCreds) ──
+  if (userCreds.size > 0) {
     const filteredTools = filterToolsByCredentials(tools, userCreds);
     for (const k of Object.keys(tools)) {
       if (!(k in filteredTools)) delete tools[k];
     }
-  } catch (e: any) {
-    logger.warn("createSlackTools: credential filtering failed, keeping all tools", {
-      userId: context?.userId,
-      error: e.message,
-    });
   }
 
   // ── Anthropic Tool Discovery ──────────────────────────────────────
