@@ -1,6 +1,6 @@
 {
   "framework": null,
-  "buildCommand": "pnpm --filter @aura/db build && pnpm --filter @aura/db db:migrate && mkdir -p public && echo '{}' > public/.keep",
+  "buildCommand": "pnpm --filter @aura/db build && pnpm --filter @aura/db db:migrate && pnpm --filter aura-dashboard-v2 build && rm -rf public && cp -r ../dashboard-v2/dist public",
   "regions": [
     "fra1"
   ],
@@ -19,8 +19,12 @@
       "destination": "/api/index"
     },
     {
-      "source": "/(.*)",
+      "source": "/api/(.*)",
       "destination": "/api/index"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
   "crons": [
