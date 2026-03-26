@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { eq, desc, count, inArray } from "drizzle-orm";
+import { eq, desc, count, inArray, sql } from "drizzle-orm";
 import { memories, userProfiles } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
