@@ -2,7 +2,7 @@ import * as nodePath from "node:path";
 import { getSetting, setSetting } from "./settings.js";
 import { decryptCredential } from "./credentials.js";
 import { db } from "../db/client.js";
-import { credentials } from "@aura/db/schema";
+import { credentials, credentialGrants } from "@aura/db/schema";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
@@ -68,8 +68,26 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
   }
 
   try {
+    // Resolve explicit credential grants so Gate 2 can allow per_user
+    // credentials the caller doesn't own but was explicitly granted.
+    const grantedCredentialIds = new Set<string>();
+    if (userId) {
+      const { eq, and, isNull } = await import("drizzle-orm");
+      const grants = await db
+        .select({ credentialId: credentialGrants.credentialId })
+        .from(credentialGrants)
+        .where(
+          and(
+            eq(credentialGrants.granteeId, userId),
+            isNull(credentialGrants.revokedAt),
+          ),
+        );
+      for (const g of grants) grantedCredentialIds.add(g.credentialId);
+    }
+
     const rows = await db
       .select({
+        id: credentials.id,
         name: credentials.name,
         value: credentials.value,
         ownerId: credentials.ownerId,
@@ -82,10 +100,16 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
       // Gate 1: user must have access to this credential name
       if (userCredNames && !userCredNames.has(row.name)) continue;
 
-      // Gate 2: for per_user credentials, only inject the calling user's row.
+      // Gate 2: for per_user credentials, only inject the calling user's own
+      // row OR rows they've been explicitly granted access to.
       // Without this, two users with the same credential name (e.g.
       // `github_token`) would collide and the last row wins silently.
-      if (row.scope === "per_user" && userId && row.ownerId !== userId) continue;
+      if (
+        row.scope === "per_user" &&
+        userId &&
+        row.ownerId !== userId &&
+        !grantedCredentialIds.has(row.id)
+      ) continue;
 
       // Use the explicit sandboxEnvName if set, otherwise uppercase the name
       const envName = row.sandboxEnvName || row.name.toUpperCase();
