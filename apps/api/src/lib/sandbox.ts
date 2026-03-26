@@ -315,7 +315,7 @@ export async function getOrCreateSandbox(): Promise<any> {
   const templateId = envs.E2B_TEMPLATE_ID || process.env.E2B_TEMPLATE_ID || undefined;
   logger.info("Creating new E2B sandbox", { templateId: templateId || "default" });
 
-  const createOptions: any = { apiKey, timeoutMs: DEFAULT_TIMEOUT_MS, envs };
+  const createOptions: any = { apiKey, timeoutMs: DEFAULT_TIMEOUT_MS };
   const sandbox = templateId
     ? await Sandbox.create(templateId, createOptions)
     : await Sandbox.create(createOptions);
