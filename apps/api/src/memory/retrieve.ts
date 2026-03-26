@@ -393,34 +393,27 @@ export async function retrieveConversations(
     if (sortedThreads.length === 0) return [];
 
     // Fetch only the first user message per thread for a compact summary
+    // DISTINCT ON returns exactly one row per thread, prioritising user messages
     const threadKeys = sortedThreads.map(([key]) => key);
-    const firstUserMessages = await db
-      .select({
-        slackTs: messages.slackTs,
-        slackThreadTs: messages.slackThreadTs,
-        content: messages.content,
-        role: messages.role,
-        createdAt: messages.createdAt,
-      })
-      .from(messages)
-      .where(
-        or(
-          inArray(messages.slackThreadTs, threadKeys),
-          inArray(messages.slackTs, threadKeys),
-        )!,
-      )
-      .orderBy(messages.createdAt);
+    const summaryResult = await db.execute(sql`
+      SELECT DISTINCT ON (COALESCE(slack_thread_ts, slack_ts))
+        slack_ts, slack_thread_ts, content, role, created_at
+      FROM messages
+      WHERE slack_thread_ts = ANY(${threadKeys}) OR slack_ts = ANY(${threadKeys})
+      ORDER BY COALESCE(slack_thread_ts, slack_ts),
+               (CASE WHEN role = 'user' THEN 0 ELSE 1 END),
+               created_at
+    `);
+    const summaryRows = ((summaryResult as any).rows ?? summaryResult) as Array<Record<string, any>>;
 
-    // Group by thread and pick the first user message (or first message as fallback)
-    const threadSummaryMap = new Map<string, { content: string; date: string; isUser: boolean }>();
-    for (const m of firstUserMessages) {
-      const key = m.slackThreadTs || m.slackTs;
+    const threadSummaryMap = new Map<string, { content: string; date: string }>();
+    for (const m of summaryRows) {
+      const key = (m.slack_thread_ts || m.slack_ts) as string;
       if (!key) continue;
-      const existing = threadSummaryMap.get(key);
-      if (existing && (existing.isUser || m.role !== "user")) continue;
-      const content = m.content.length > 100 ? m.content.substring(0, 100) + "…" : m.content;
-      const date = new Date(m.createdAt).toISOString().split("T")[0];
-      threadSummaryMap.set(key, { content, date, isUser: m.role === "user" });
+      const rawContent = m.content as string;
+      const content = rawContent.length > 100 ? rawContent.substring(0, 100) + "…" : rawContent;
+      const date = new Date(m.created_at).toISOString().split("T")[0];
+      threadSummaryMap.set(key, { content, date });
     }
 
     const conversationThreads: ConversationThread[] = sortedThreads.map(
