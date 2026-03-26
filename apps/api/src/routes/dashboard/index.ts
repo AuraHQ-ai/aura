@@ -13,16 +13,52 @@ import { dashboardConsumptionApp } from "./consumption.js";
 import { dashboardSettingsApp } from "./settings.js";
 import { dashboardModelsApp } from "./models.js";
 import { createDashboardApp } from "./schemas.js";
+import { jwtVerify } from "jose";
 
 export const dashboardApp = createDashboardApp();
 
+const PUBLIC_AUTH_PATHS = ["/auth/login", "/auth/callback", "/auth/token-receive"];
+
 dashboardApp.use("*", async (c, next) => {
-  const secret = process.env.DASHBOARD_API_SECRET;
-  if (!secret) return c.json({ error: "DASHBOARD_API_SECRET not configured" }, 503);
-  if (c.req.header("authorization") !== `Bearer ${secret}`) {
-    return c.json({ error: "Unauthorized" }, 401);
+  const path = new URL(c.req.url).pathname.replace("/api/dashboard", "");
+  if (PUBLIC_AUTH_PATHS.some((p) => path.startsWith(p))) {
+    return next();
   }
-  await next();
+
+  // Try Bearer token from header (dashboard-v2 SPA)
+  const authHeader = c.req.header("authorization") || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+
+  // Try session cookie (dashboard v1 / Next.js)
+  const cookieToken = token || c.req.header("cookie")?.match(/aura_session=([^;]+)/)?.[1] || "";
+
+  const candidate = token || cookieToken;
+  if (!candidate) return c.json({ error: "Unauthorized" }, 401);
+
+  // Accept static DASHBOARD_API_SECRET (Next.js dashboard server-side calls)
+  const apiSecret = process.env.DASHBOARD_API_SECRET;
+  if (apiSecret && candidate === apiSecret) {
+    return next();
+  }
+
+  // Accept JWT signed with DASHBOARD_SESSION_SECRET (user sessions)
+  const sessionSecret = process.env.DASHBOARD_SESSION_SECRET;
+  if (sessionSecret) {
+    try {
+      const { payload } = await jwtVerify(
+        candidate,
+        new TextEncoder().encode(sessionSecret),
+      );
+      if (payload.purpose) throw new Error("Invalid token type");
+      c.set("userId" as never, payload.slackUserId as never);
+      c.set("userName" as never, payload.name as never);
+      return next();
+    } catch {
+      // JWT verification failed — fall through to 401
+    }
+  }
+
+  return c.json({ error: "Unauthorized" }, 401);
 });
 
 dashboardApp.route("/auth", dashboardAuthApp);

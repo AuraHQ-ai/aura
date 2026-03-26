@@ -1,12 +1,34 @@
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useRouterState } from "@tanstack/react-router";
 import { Sidebar } from "@/components/sidebar";
 import { MobileNav } from "@/components/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/lib/auth";
 import { LogOut } from "lucide-react";
 
+const PUBLIC_ROUTES = ["/login", "/unauthorized"];
+
 function RootLayout() {
-  const { session, logout } = useAuth();
+  const { session, loading, logout } = useAuth();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  const isPublicRoute = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  if (!session && !isPublicRoute) {
+    window.location.href = `/api/dashboard/auth/login?returnTo=${encodeURIComponent(pathname)}&origin=${encodeURIComponent(window.location.origin)}`;
+    return null;
+  }
+
+  if (isPublicRoute) {
+    return <Outlet />;
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">

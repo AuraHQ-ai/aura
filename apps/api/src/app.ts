@@ -80,6 +80,27 @@ app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);
 // Mount dashboard API (all /api/dashboard/* routes with shared auth middleware)
 app.route("/api/dashboard", dashboardApp);
 
+// ── Dashboard OAuth: token-receive (production proxy redirects here) ────────
+
+app.get("/api/auth/token-receive", async (c) => {
+  const token = c.req.query("token");
+  const returnTo = c.req.query("returnTo") || "/";
+
+  if (!token) return c.redirect("/unauthorized?reason=missing_token");
+
+  try {
+    const { verifyTransferToken, createSessionJwt } = await import("./routes/dashboard/auth.js");
+    const session = await verifyTransferToken(token);
+    const jwt = await createSessionJwt(session);
+
+    const separator = returnTo.includes("?") ? "&" : "?";
+    return c.redirect(`${returnTo}${separator}token=${jwt}`);
+  } catch (err) {
+    logger.warn("token-receive: invalid transfer token", { error: String(err) });
+    return c.redirect("/unauthorized?reason=invalid_token");
+  }
+});
+
 // ── Slack Signature Verification ────────────────────────────────────────────
 
 function verifySlackSignature(

@@ -30,6 +30,11 @@ function ConsumptionPage() {
   if (error) return <div className="text-destructive text-sm">Failed to load consumption data: {error.message}</div>;
   if (!data) return null;
 
+  const totalTokens = data.totalTokens ?? 0;
+  const totalCost = data.totalCost ?? 0;
+  const byModel = data.byModel ?? [];
+  const byDay = data.byDay ?? [];
+
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold tracking-tight">Consumption</h1>
@@ -40,7 +45,7 @@ function ConsumptionPage() {
             <CardTitle className="text-sm font-medium">Total Tokens</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold">{data.totalTokens.toLocaleString()}</div>
+            <div className="text-xl font-bold">{totalTokens.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card>
@@ -48,7 +53,7 @@ function ConsumptionPage() {
             <CardTitle className="text-sm font-medium">Total Cost</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-xl font-bold">${data.totalCost.toFixed(2)}</div>
+            <div className="text-xl font-bold">${totalCost.toFixed(2)}</div>
           </CardContent>
         </Card>
       </div>
@@ -58,16 +63,16 @@ function ConsumptionPage() {
           <CardTitle className="text-base">Usage by Model</CardTitle>
         </CardHeader>
         <CardContent>
-          {data.byModel.length === 0 ? (
+          {byModel.length === 0 ? (
             <p className="text-sm text-muted-foreground">No usage data</p>
           ) : (
             <div className="space-y-3">
-              {data.byModel.map((entry) => (
+              {byModel.map((entry) => (
                 <div key={entry.model} className="flex items-center justify-between text-sm">
                   <span className="font-medium">{entry.model}</span>
                   <div className="flex items-center gap-4 text-muted-foreground">
-                    <span>{(entry.inputTokens + entry.outputTokens).toLocaleString()} tokens</span>
-                    <span>${entry.cost.toFixed(4)}</span>
+                    <span>{((entry.inputTokens ?? 0) + (entry.outputTokens ?? 0)).toLocaleString()} tokens</span>
+                    <span>${(entry.cost ?? 0).toFixed(4)}</span>
                   </div>
                 </div>
               ))}
@@ -84,14 +89,14 @@ function ConsumptionPage() {
           <div className="h-48 flex items-center justify-center text-muted-foreground text-sm border border-dashed rounded-md">
             Chart visualization — connect to a running API to see real data
           </div>
-          {data.byDay.length > 0 && (
+          {byDay.length > 0 && (
             <div className="mt-4 space-y-2">
-              {data.byDay.slice(0, 7).map((day) => (
+              {byDay.slice(0, 7).map((day) => (
                 <div key={day.date} className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">{day.date}</span>
                   <div className="flex items-center gap-4">
-                    <span>{day.tokens.toLocaleString()} tokens</span>
-                    <span className="text-muted-foreground">${day.cost.toFixed(4)}</span>
+                    <span>{(day.tokens ?? 0).toLocaleString()} tokens</span>
+                    <span className="text-muted-foreground">${(day.cost ?? 0).toFixed(4)}</span>
                   </div>
                 </div>
               ))}
