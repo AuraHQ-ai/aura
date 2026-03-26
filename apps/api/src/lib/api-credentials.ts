@@ -1,4 +1,4 @@
-import { eq, and, or, isNull, inArray, sql } from "drizzle-orm";
+import { eq, and, or, isNull, inArray, gt, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   credentials,
@@ -343,6 +343,48 @@ export async function getCredentialById(
     .where(eq(credentials.id, credentialId))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export async function listAccessibleCredentials(
+  userId: string,
+): Promise<
+  Array<{ name: string; type: string; ownerName: string | null; isOwn: boolean }>
+> {
+  const [owned, granted] = await Promise.all([
+    db
+      .select({
+        name: credentials.name,
+        type: credentials.type,
+      })
+      .from(credentials)
+      .where(
+        and(
+          eq(credentials.ownerId, userId),
+          or(isNull(credentials.expiresAt), gt(credentials.expiresAt, new Date())),
+        ),
+      ),
+    db
+      .select({
+        name: credentials.name,
+        type: credentials.type,
+        ownerName: userProfiles.displayName,
+      })
+      .from(credentialGrants)
+      .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
+      .leftJoin(userProfiles, eq(credentials.ownerId, userProfiles.slackUserId))
+      .where(
+        and(
+          eq(credentialGrants.granteeId, userId),
+          isNull(credentialGrants.revokedAt),
+          or(isNull(credentials.expiresAt), gt(credentials.expiresAt, new Date())),
+        ),
+      ),
+  ]);
+
+  return [
+    ...owned.map((r) => ({ name: r.name, type: r.type, ownerName: null, isOwn: true })),
+    ...granted.map((r) => ({ name: r.name, type: r.type, ownerName: r.ownerName, isOwn: false })),
+  ];
 }
 
 export async function listApiCredentials(

@@ -11,6 +11,7 @@ import {
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
+import { listAccessibleCredentials } from "../lib/api-credentials.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { people } from "@aura/db/schema";
 import { db } from "../db/client.js";
@@ -160,7 +161,7 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
-  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats] =
+  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, accessibleCreds] =
     await Promise.all([
       queryEmbedding
         ? retrieveMemories({
@@ -186,6 +187,10 @@ export async function buildCorePrompt(
       lookupMentionedPeople(participantIds),
       lookupPerson(session.userId),
       getUsageStats(),
+      listAccessibleCredentials(session.userId).catch((error) => {
+        logger.error("Failed to list accessible credentials", { error: String(error) });
+        return [] as Array<{ name: string; type: string; ownerName: string | null; isOwn: boolean }>;
+      }),
     ]);
 
   const channelContext = session.channel === "dashboard"
@@ -216,6 +221,7 @@ export async function buildCorePrompt(
     channelId: session.conversationId,
     threadTs: session.threadId,
     usageStats,
+    availableCredentials: accessibleCreds,
   });
 
   if (session.channel === "dashboard") {
