@@ -823,6 +823,8 @@ export type Memory = typeof memories.$inferSelect;
 export type NewMemory = typeof memories.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+/** @deprecated Use `users` instead */
+export const userProfiles = users;
 /** @deprecated Use `User` instead */
 export type UserProfile = User;
 /** @deprecated Use `NewUser` instead */

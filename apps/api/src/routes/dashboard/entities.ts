@@ -46,7 +46,8 @@ dashboardEntitiesApp.openapi(listEntitiesRoute, async (c) => {
 
     const conditions: SQL[] = [];
     if (search) {
-      conditions.push(ilike(entities.canonicalName, `%${search}%`));
+      const escaped = search.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+      conditions.push(ilike(entities.canonicalName, `%${escaped}%`));
     }
     if (type) {
       conditions.push(eq(entities.type, type));
