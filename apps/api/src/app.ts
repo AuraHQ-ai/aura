@@ -26,7 +26,6 @@ import {
   hasPermission,
 } from "./lib/api-credentials.js";
 import { resolveConfirmation } from "./lib/confirmation.js";
-import { handleApprovalReaction } from "./lib/approval.js";
 import { executionContext } from "./lib/tool.js";
 import { setSetting, getConfig } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
@@ -167,39 +166,10 @@ app.post("/api/slack/events", async (c) => {
   if (body.event) {
     const event = body.event;
 
-    // Handle reaction events -- store as memory + governance approval
+    // Handle reaction events -- store as memory
     if (event.type === "reaction_added" && event.user && event.item) {
       const reactionPromise = (async () => {
         try {
-          // ── Governance: check if this is an approval/rejection reaction ──
-          if (
-            event.item?.type === "message" &&
-            ["white_check_mark", "x"].includes(event.reaction)
-          ) {
-            try {
-              const msgResult = await slackClient.conversations.history({
-                channel: event.item.channel,
-                latest: event.item.ts,
-                limit: 1,
-                inclusive: true,
-              });
-              const msg = msgResult.messages?.[0];
-              const actionLogId = (msg?.metadata as any)?.event_payload?.action_log_id;
-
-              if (actionLogId) {
-                await handleApprovalReaction({
-                  actionLogId,
-                  reaction: event.reaction,
-                  reactorUserId: event.user,
-                  slackClient,
-                });
-                return;
-              }
-            } catch (approvalErr) {
-              logger.warn("Failed to process approval reaction", { error: approvalErr });
-            }
-          }
-
           // ── Store as a lightweight memory via the store module ──
           let userName = event.user;
           try {
@@ -279,7 +249,7 @@ app.post("/api/slack/events", async (c) => {
       channel: event.channel,
     });
 
-    // Run pipeline asynchronously inside governance execution context.
+    // Run pipeline asynchronously inside execution context.
     // On Vercel, we must acknowledge within 3 seconds, so we process
     // in the background using waitUntil where available.
     const userId = event.user || "unknown";
@@ -587,62 +557,6 @@ app.post("/api/slack/interactions", async (c) => {
         waitUntil(denyPromise);
       }
 
-      // ── Governance approval buttons ─────────────────────────────────
-      if (action.action_id?.startsWith("governance_approve_")) {
-        const actionLogId = action.action_id.replace("governance_approve_", "");
-        const approvePromise = (async () => {
-          try {
-            const { handleApprovalReaction } = await import("./lib/approval.js");
-            await handleApprovalReaction({
-              actionLogId,
-              reaction: "white_check_mark",
-              reactorUserId: userId,
-              slackClient,
-            });
-            const gaChanId = payload.channel?.id;
-            const gaTs = payload.message?.ts;
-            if (gaChanId && gaTs) {
-              await slackClient.chat.update({
-                channel: gaChanId,
-                ts: gaTs,
-                text: `✅ Approved by <@${userId}>`,
-                blocks: [{ type: "section" as const, text: { type: "mrkdwn" as const, text: `✅ *Approved* by <@${userId}>` } }],
-              });
-            }
-          } catch (err) {
-            recordError("interactions.governance_approve", err, { userId, actionLogId });
-          }
-        })();
-        waitUntil(approvePromise);
-      }
-
-      if (action.action_id?.startsWith("governance_reject_")) {
-        const actionLogId = action.action_id.replace("governance_reject_", "");
-        const rejectPromise = (async () => {
-          try {
-            const { handleApprovalReaction } = await import("./lib/approval.js");
-            await handleApprovalReaction({
-              actionLogId,
-              reaction: "x",
-              reactorUserId: userId,
-              slackClient,
-            });
-            const grChanId = payload.channel?.id;
-            const grTs = payload.message?.ts;
-            if (grChanId && grTs) {
-              await slackClient.chat.update({
-                channel: grChanId,
-                ts: grTs,
-                text: `❌ Rejected by <@${userId}>`,
-                blocks: [{ type: "section" as const, text: { type: "mrkdwn" as const, text: `❌ *Rejected* by <@${userId}>` } }],
-              });
-            }
-          } catch (err) {
-            recordError("interactions.governance_reject", err, { userId, actionLogId });
-          }
-        })();
-        waitUntil(rejectPromise);
-      }
     }
   }
 

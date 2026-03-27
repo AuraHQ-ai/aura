@@ -5,7 +5,7 @@ import { jobs, notes, jobExecutions } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
-import { executionContext, PendingApprovalError } from "../lib/tool.js";
+import { executionContext } from "../lib/tool.js";
 import { getCurrentTimeContext } from "../lib/temporal.js";
 import { buildStablePrefix } from "../personality/system-prompt.js";
 import {
@@ -403,37 +403,6 @@ export async function executeJob(
     // Persist the error in conversation history regardless of error type
     if (conversationId) {
       await persistConversationError(conversationId, error, conversationOrderIndex);
-    }
-
-    // Governance: if a tool requires approval, suspend the job
-    if (error instanceof PendingApprovalError) {
-      try {
-        await db
-          .update(jobExecutions)
-          .set({
-            status: "failed",
-            finishedAt: new Date(),
-            error: `Awaiting approval: ${error.actionLogId}`,
-          })
-          .where(eq(jobExecutions.id, executionId));
-      } catch { /* non-critical */ }
-
-      await db
-        .update(jobs)
-        .set({
-          status: "pending",
-          approvalStatus: "awaiting_approval",
-          pendingActionLogId: error.actionLogId,
-          updatedAt: new Date(),
-        })
-        .where(eq(jobs.id, jobId));
-
-      logger.info("executeJob: job suspended awaiting approval", {
-        jobId,
-        jobName: job.name,
-        actionLogId: error.actionLogId,
-      });
-      return true;
     }
 
     // Update execution trace with failure (protected so it can't break retry logic)

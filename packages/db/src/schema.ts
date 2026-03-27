@@ -118,9 +118,7 @@ export const memories = pgTable(
     embedding: vector("embedding", { dimensions: 1536 }),
     relevanceScore: real("relevance_score").notNull().default(1.0),
     shareable: integer("shareable").notNull().default(0),
-    searchVector: text("search_vector").generatedAlwaysAs(
-      sql`to_tsvector('english', coalesce(content, ''))`,
-    ),
+    searchVector: text("search_vector"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -134,7 +132,7 @@ export const memories = pgTable(
     index("memories_created_at_idx").on(table.createdAt),
     index("memories_search_vector_idx").using(
       "gin",
-      sql`to_tsvector('english', coalesce(${table.content}, ''))`,
+      sql`${table.searchVector}`,
     ),
   ],
 );
@@ -390,8 +388,6 @@ export const jobs = pgTable(
     lastExecutionDate: text("last_execution_date"),
     enabled: integer("enabled").notNull().default(1),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
-    approvalStatus: text("approval_status"),
-    pendingActionLogId: uuid("pending_action_log_id"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -399,10 +395,6 @@ export const jobs = pgTable(
     uniqueIndex("jobs_workspace_name_idx").on(table.workspaceId, table.name),
     index("jobs_enabled_idx").on(table.enabled),
     index("jobs_status_execute_idx").on(table.status, table.executeAt),
-    check(
-      "jobs_approval_status_check",
-      sql`${table.approvalStatus} IS NULL OR ${table.approvalStatus} IN ('pending_approval','awaiting_approval','approved','rejected')`,
-    ),
   ],
 );
 
@@ -737,7 +729,7 @@ export const voiceCalls = pgTable(
   ],
 );
 
-// ── Action Log (governance audit trail) ──────────────────────────────────────
+// ── Action Log (tool call audit trail) ────────────────────────────────────────
 
 export const actionLog = pgTable(
   "action_log",
@@ -752,22 +744,15 @@ export const actionLog = pgTable(
     triggeredBy: text("triggered_by").notNull(),
     jobId: uuid("job_id").references(() => jobs.id),
     credentialName: text("credential_name"),
-    riskTier: text("risk_tier").notNull(),
     status: text("status").notNull(),
     result: jsonb("result"),
-    approvedBy: text("approved_by"),
-    approvedAt: timestamptz("approved_at"),
     idempotencyKey: text("idempotency_key"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
     check(
       "action_log_status_check",
-      sql`${table.status} IN ('executed','pending_approval','approved','rejected','failed')`,
-    ),
-    check(
-      "action_log_risk_tier_check",
-      sql`${table.riskTier} IN ('read','write','destructive')`,
+      sql`${table.status} IN ('executed','failed')`,
     ),
     check(
       "action_log_trigger_type_check",
@@ -778,89 +763,6 @@ export const actionLog = pgTable(
     index("action_log_triggered_by_idx").on(table.triggeredBy),
     index("action_log_status_idx").on(table.status),
     index("action_log_created_at_idx").on(table.createdAt),
-  ],
-);
-
-// ── Approval Policies (runtime governance config) ────────────────────────────
-
-export const approvalPolicies = pgTable(
-  "approval_policies",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workspaceId: workspaceId().references(() => workspaces.id),
-    toolPattern: text("tool_pattern"),
-    urlPattern: text("url_pattern"),
-    httpMethods: text("http_methods").array(),
-    credentialName: text("credential_name"),
-    riskTier: text("risk_tier").notNull(),
-    approverIds: text("approver_ids").array(),
-    approvalChannel: text("approval_channel"),
-    createdBy: text("created_by").notNull(),
-    createdAt: timestamptz("created_at").notNull().defaultNow(),
-  },
-  (table) => [
-    check(
-      "approval_policies_risk_tier_check",
-      sql`${table.riskTier} IN ('read','write','destructive')`,
-    ),
-  ],
-);
-
-// ── Tool Definitions (permission metadata per tool) ─────────────────────────
-
-export const toolDefinitions = pgTable(
-  "tool_definitions",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workspaceId: workspaceId().references(() => workspaces.id),
-    toolName: text("tool_name").notNull(),
-    minRole: text("min_role").notNull().default("admin"),
-    description: text("description"),
-    category: text("category"),
-    createdAt: timestamptz("created_at").notNull().defaultNow(),
-    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("tool_definitions_workspace_tool_name_idx").on(table.workspaceId, table.toolName),
-  ],
-);
-
-// ── Tool Credential Slots ───────────────────────────────────────────────────
-
-export const toolCredentialSlots = pgTable("tool_credential_slots", {
-  id: uuid("id")
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  workspaceId: workspaceId().references(() => workspaces.id),
-  toolDefinitionId: uuid("tool_definition_id")
-    .notNull()
-    .references(() => toolDefinitions.id),
-  credentialType: text("credential_type").notNull(),
-  required: boolean("required").notNull().default(true),
-  scope: text("scope").notNull().default("member"),
-  minRole: text("min_role"),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-});
-
-// ── Rate Limits ─────────────────────────────────────────────────────────────
-
-export const rateLimits = pgTable(
-  "rate_limits",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workspaceId: workspaceId().references(() => workspaces.id),
-    role: text("role").notNull(),
-    resource: text("resource").notNull(),
-    maxValue: integer("max_value").notNull(),
-  },
-  (table) => [
-    unique("rate_limits_workspace_role_resource_unique").on(table.workspaceId, table.role, table.resource),
   ],
 );
 
@@ -902,14 +804,6 @@ export type VoiceCall = typeof voiceCalls.$inferSelect;
 export type NewVoiceCall = typeof voiceCalls.$inferInsert;
 export type ActionLog = typeof actionLog.$inferSelect;
 export type NewActionLog = typeof actionLog.$inferInsert;
-export type ApprovalPolicy = typeof approvalPolicies.$inferSelect;
-export type NewApprovalPolicy = typeof approvalPolicies.$inferInsert;
-export type ToolDefinition = typeof toolDefinitions.$inferSelect;
-export type NewToolDefinition = typeof toolDefinitions.$inferInsert;
-export type ToolCredentialSlot = typeof toolCredentialSlots.$inferSelect;
-export type NewToolCredentialSlot = typeof toolCredentialSlots.$inferInsert;
-export type RateLimit = typeof rateLimits.$inferSelect;
-export type NewRateLimit = typeof rateLimits.$inferInsert;
 
 /** Context for tools that need to know the current conversation's routing. */
 export interface ScheduleContext {
