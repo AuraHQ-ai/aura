@@ -248,10 +248,14 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       embeddings = memoryTexts.map(() => null);
     }
 
+    // Resolve workspace consistently for both memories and entities
+    const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
+
     // Prepare memories for storage
     const newMemories: NewMemory[] = normalizedMemories.map((m, i) => ({
       content: m.content,
       type: m.type,
+      workspaceId,
       sourceMessageId: context.sourceMessageId || undefined,
       sourceChannelType: toDbChannelType(context.channelType),
       relatedUserIds: m.relatedUserIds.length > 0 ? m.relatedUserIds : [context.userId],
@@ -264,7 +268,6 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     const memoryIds = await storeMemories(newMemories);
 
     // Resolve entities and link them to memories (best-effort, don't block)
-    const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
     for (let i = 0; i < normalizedMemories.length; i++) {
       const extractedEntities = normalizedMemories[i].entities;
       if (extractedEntities && extractedEntities.length > 0 && memoryIds[i]) {
