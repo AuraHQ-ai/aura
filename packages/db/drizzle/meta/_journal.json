@@ -344,6 +344,13 @@
       "when": 1774608000000,
       "tag": "0048_remove_owner_role",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1774694400000,
+      "tag": "0049_remove_governance_tables",
+      "breakpoints": true
     }
   ]
 }
