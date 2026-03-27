@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   users,
@@ -63,12 +63,42 @@ export async function createPersonWithAddress(
     if (insertedAddress.length === 0) {
       await db.delete(users).where(eq(users.id, user.id));
       const existing = await resolvePersonByAddress(channel, value);
-      if (!existing) {
-        throw new Error(
-          `Address conflict but could not resolve user for ${channel}:${value}`,
-        );
+      if (existing) return existing;
+
+      // Address exists but has no linked user (orphaned from migration).
+      // Adopt it by linking it to a fresh user.
+      const orphaned = await db
+        .select({ id: addresses.id })
+        .from(addresses)
+        .where(
+          and(
+            eq(addresses.channel, channel),
+            eq(addresses.value, normalised),
+            isNull(addresses.userId),
+          ),
+        )
+        .limit(1);
+
+      if (orphaned.length > 0) {
+        const [adoptedUser] = await db
+          .insert(users)
+          .values(userValues as typeof users.$inferInsert)
+          .returning();
+        try {
+          await db
+            .update(addresses)
+            .set({ userId: adoptedUser.id })
+            .where(eq(addresses.id, orphaned[0].id));
+        } catch (linkError) {
+          await db.delete(users).where(eq(users.id, adoptedUser.id)).catch(() => {});
+          throw linkError;
+        }
+        return adoptedUser;
       }
-      return existing;
+
+      throw new Error(
+        `Address conflict but could not resolve user for ${channel}:${value}`,
+      );
     }
   } catch (error) {
     await db.delete(users).where(eq(users.id, user.id)).catch(() => {});
