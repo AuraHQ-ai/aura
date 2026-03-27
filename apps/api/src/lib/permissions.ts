@@ -1,6 +1,7 @@
 import { eq, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { userProfiles, credentials, credentialGrants, oauthTokens } from "@aura/db/schema";
+import { users, credentials, credentialGrants, oauthTokens } from "@aura/db/schema";
+const userProfiles = users;
 import { executionContext } from "./tool.js";
 import { logger } from "./logger.js";
 

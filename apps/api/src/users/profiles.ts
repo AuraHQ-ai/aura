@@ -3,14 +3,14 @@ import { generateObject, generateText, Output } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
-  userProfiles,
+  users,
   type UserProfile,
   type CommunicationStyle,
   type KnownFacts,
 } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
-import { ensurePersonLinked } from "../lib/person-resolution.js";
+const userProfiles = users;
 
 /**
  * Get or create a user profile.
@@ -36,17 +36,6 @@ export async function getOrCreateProfile(
         .where(eq(userProfiles.slackUserId, slackUserId));
       Object.assign(profile, { timezone });
     }
-    if (!profile.personId) {
-      try {
-        const personId = await ensurePersonLinked(profile);
-        return { ...profile, personId };
-      } catch (error) {
-        logger.error("Failed to link existing profile to person", {
-          profileId: profile.id,
-          error: String(error),
-        });
-      }
-    }
     return profile;
   }
 
@@ -64,15 +53,6 @@ export async function getOrCreateProfile(
   if (result.length > 0) {
     const profile = result[0];
     logger.info("Created new user profile", { slackUserId, displayName });
-    try {
-      const personId = await ensurePersonLinked(profile);
-      return { ...profile, personId };
-    } catch (error) {
-      logger.error("Failed to link profile to person", {
-        profileId: profile.id,
-        error: String(error),
-      });
-    }
     return profile;
   }
 

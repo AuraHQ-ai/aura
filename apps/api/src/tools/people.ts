@@ -4,24 +4,22 @@ import { defineTool } from "../lib/tool.js";
 import { logger } from "../lib/logger.js";
 import { db } from "../db/client.js";
 import {
-  people,
+  users,
   addresses,
-  userProfiles,
   messages,
   type ScheduleContext,
 } from "@aura/db/schema";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SLACK_ID_RE = /^U[A-Z0-9]+$/;
 const E164_RE = /^\+[1-9]\d{1,14}$/;
 
-interface RawPersonRow {
+interface RawUserRow {
   id: string;
   workspace_id: string;
-  display_name: string | null;
-  slack_user_id: string | null;
+  display_name: string;
+  slack_user_id: string;
   job_title: string | null;
   gender: string | null;
   preferred_language: string | null;
@@ -32,7 +30,7 @@ interface RawPersonRow {
   updated_at: string;
 }
 
-function mapRawPerson(row: RawPersonRow): typeof people.$inferSelect {
+function mapRawUser(row: RawUserRow): typeof users.$inferSelect {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -46,13 +44,13 @@ function mapRawPerson(row: RawPersonRow): typeof people.$inferSelect {
     notes: row.notes,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
-  };
+  } as typeof users.$inferSelect;
 }
 
 interface PersonResult {
   id: string;
-  display_name: string | null;
-  slack_user_id: string | null;
+  display_name: string;
+  slack_user_id: string;
   job_title: string | null;
   gender: string | null;
   preferred_language: string | null;
@@ -70,7 +68,7 @@ interface PersonResult {
   };
 }
 
-async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonResult> {
+async function enrichPerson(user: typeof users.$inferSelect): Promise<PersonResult> {
   const addrs = await db
     .select({
       id: addresses.id,
@@ -79,14 +77,14 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
       isPrimary: addresses.isPrimary,
     })
     .from(addresses)
-    .where(eq(addresses.personId, person.id));
+    .where(eq(addresses.userId, user.id));
 
   let managerName: string | null = null;
-  if (person.managerId) {
+  if (user.managerId) {
     const [mgr] = await db
-      .select({ displayName: people.displayName })
-      .from(people)
-      .where(eq(people.id, person.managerId))
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.slackUserId, user.managerId))
       .limit(1);
     managerName = mgr?.displayName ?? null;
   }
@@ -95,49 +93,36 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
   let auraDmMessages = 0;
   let lastActivity: string | null = null;
   let lastAuraDm: string | null = null;
-  let profileCreated: string | null = null;
+  const profileCreated = user.createdAt.toISOString();
 
-  if (person.slackUserId) {
-    const [profile] = await db
+  if (user.slackUserId) {
+    const [msgStats] = await db
       .select({
-        createdAt: userProfiles.createdAt,
-        slackUserId: userProfiles.slackUserId,
+        lastTs: sql<string>`max(${messages.createdAt})`,
+        workspaceMessages: sql<number>`count(*) filter (where ${messages.channelType} != 'dm')`,
+        auraDmMessages: sql<number>`count(*) filter (where ${messages.channelType} = 'dm')`,
+        lastAuraDm: sql<string>`max(${messages.createdAt}) filter (where ${messages.channelType} = 'dm')`,
       })
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, person.slackUserId))
-      .limit(1);
+      .from(messages)
+      .where(eq(messages.userId, user.slackUserId));
 
-    if (profile) {
-      profileCreated = profile.createdAt.toISOString();
-
-      const [msgStats] = await db
-        .select({
-          lastTs: sql<string>`max(${messages.createdAt})`,
-          workspaceMessages: sql<number>`count(*) filter (where ${messages.channelType} != 'dm')`,
-          auraDmMessages: sql<number>`count(*) filter (where ${messages.channelType} = 'dm')`,
-          lastAuraDm: sql<string>`max(${messages.createdAt}) filter (where ${messages.channelType} = 'dm')`,
-        })
-        .from(messages)
-        .where(eq(messages.userId, profile.slackUserId));
-
-      workspaceMessages = Number(msgStats?.workspaceMessages ?? 0);
-      auraDmMessages = Number(msgStats?.auraDmMessages ?? 0);
-      lastActivity = msgStats?.lastTs ?? null;
-      lastAuraDm = msgStats?.lastAuraDm ?? null;
-    }
+    workspaceMessages = Number(msgStats?.workspaceMessages ?? 0);
+    auraDmMessages = Number(msgStats?.auraDmMessages ?? 0);
+    lastActivity = msgStats?.lastTs ?? null;
+    lastAuraDm = msgStats?.lastAuraDm ?? null;
   }
 
   return {
-    id: person.id,
-    display_name: person.displayName,
-    slack_user_id: person.slackUserId,
-    job_title: person.jobTitle,
-    gender: person.gender,
-    preferred_language: person.preferredLanguage,
-    birthdate: person.birthdate ? person.birthdate.toISOString().split("T")[0] : null,
-    manager_id: person.managerId,
+    id: user.id,
+    display_name: user.displayName,
+    slack_user_id: user.slackUserId,
+    job_title: user.jobTitle ?? null,
+    gender: user.gender ?? null,
+    preferred_language: user.preferredLanguage ?? null,
+    birthdate: user.birthdate ? user.birthdate.toISOString().split("T")[0] : null,
+    manager_id: user.managerId ?? null,
     manager_name: managerName,
-    notes: person.notes,
+    notes: user.notes ?? null,
     addresses: addrs.map((a) => ({
       id: a.id,
       channel: a.channel,
@@ -154,35 +139,35 @@ async function enrichPerson(person: typeof people.$inferSelect): Promise<PersonR
   };
 }
 
-async function findPeople(query: string): Promise<(typeof people.$inferSelect)[]> {
+async function findPeople(query: string): Promise<(typeof users.$inferSelect)[]> {
   if (SLACK_ID_RE.test(query)) {
     return db
       .select()
-      .from(people)
-      .where(eq(people.slackUserId, query))
+      .from(users)
+      .where(eq(users.slackUserId, query))
       .limit(1);
   }
 
   if (query.includes("@")) {
     const rows = await db
-      .select({ person: people })
+      .select({ user: users })
       .from(addresses)
-      .innerJoin(people, eq(addresses.personId, people.id))
+      .innerJoin(users, eq(addresses.userId, users.id))
       .where(and(eq(addresses.channel, "email"), eq(addresses.value, query.toLowerCase())))
       .limit(1);
-    return rows.map((r) => r.person);
+    return rows.map((r) => r.user);
   }
 
   const rows = await db.execute(sql`
-    SELECT p.*
-    FROM people p
-    WHERE similarity(p.display_name, ${query}) > 0.3
-    ORDER BY similarity(p.display_name, ${query}) DESC
+    SELECT u.*
+    FROM users u
+    WHERE similarity(u.display_name, ${query}) > 0.3
+    ORDER BY similarity(u.display_name, ${query}) DESC
     LIMIT 3
   `);
 
-  const rawRows = ((rows as any).rows ?? rows) as RawPersonRow[];
-  return rawRows.map(mapRawPerson);
+  const rawRows = ((rows as any).rows ?? rows) as RawUserRow[];
+  return rawRows.map(mapRawUser);
 }
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
@@ -191,7 +176,7 @@ export function createPeopleTools(context?: ScheduleContext) {
   return {
     get_person: defineTool({
       description:
-        "Look up a person in the people database by name, Slack user ID (e.g. 'U0678NQJ2'), or email address. " +
+        "Look up a person in the users database by name, Slack user ID (e.g. 'U0678NQJ2'), or email address. " +
         "Returns structured profile data including job title, gender, preferred language, birthdate, manager, notes/context, " +
         "all known addresses (email, phone, slack), and Slack activity stats (workspace_messages, aura_dm_messages, last_activity, last_aura_dm). " +
         "Use this before update_person to confirm identity. For ambiguous name searches, returns up to 3 fuzzy matches.",
@@ -235,7 +220,7 @@ export function createPeopleTools(context?: ScheduleContext) {
 
     update_person: defineTool({
       description:
-        "Update a person's profile in the people database. Identify the person by person_id (UUID) or query (fuzzy name/Slack ID/email lookup — must resolve to exactly 1 person). " +
+        "Update a person's profile in the users database. Identify the person by person_id (UUID) or query (fuzzy name/Slack ID/email lookup — must resolve to exactly 1 person). " +
         "Can update fields (display_name, job_title, gender, preferred_language, birthdate, manager_id, notes), " +
         "add or remove addresses, and use phone/email shorthands to upsert primary contact info. " +
         "Always use get_person first to verify identity before updating.",
@@ -244,7 +229,7 @@ export function createPeopleTools(context?: ScheduleContext) {
           .string()
           .uuid()
           .optional()
-          .describe("UUID of the person to update"),
+          .describe("UUID of the user to update"),
         query: z
           .string()
           .optional()
@@ -264,7 +249,7 @@ export function createPeopleTools(context?: ScheduleContext) {
             manager_id: z
               .string()
               .optional()
-              .describe("UUID or name to fuzzy-resolve"),
+              .describe("Slack user ID or name of the manager"),
             notes: z
               .string()
               .optional()
@@ -281,7 +266,7 @@ export function createPeopleTools(context?: ScheduleContext) {
               .describe("Upsert primary email address"),
           })
           .optional()
-          .describe("Fields to update on the person record"),
+          .describe("Fields to update on the user record"),
         add_address: z
           .object({
             channel: z.string(),
@@ -308,9 +293,9 @@ export function createPeopleTools(context?: ScheduleContext) {
 
           if (person_id) {
             const [exists] = await db
-              .select({ id: people.id })
-              .from(people)
-              .where(eq(people.id, person_id))
+              .select({ id: users.id })
+              .from(users)
+              .where(eq(users.id, person_id))
               .limit(1);
             if (!exists) {
               return { ok: false as const, error: `Person ${person_id} not found` };
@@ -341,7 +326,7 @@ export function createPeopleTools(context?: ScheduleContext) {
             if (fields.birthdate !== undefined) updateSet.birthdate = new Date(fields.birthdate);
 
             if (fields.manager_id !== undefined) {
-              if (UUID_RE.test(fields.manager_id)) {
+              if (SLACK_ID_RE.test(fields.manager_id)) {
                 updateSet.managerId = fields.manager_id;
               } else {
                 const mgrMatches = await findPeople(fields.manager_id);
@@ -352,10 +337,10 @@ export function createPeopleTools(context?: ScheduleContext) {
                   const names = mgrMatches.map((p: any) => p.displayName || p.id).join(", ");
                   return {
                     ok: false as const,
-                    error: `Ambiguous manager match: found ${mgrMatches.length} people (${names}). Use a UUID instead.`,
+                    error: `Ambiguous manager match: found ${mgrMatches.length} people (${names}). Use a Slack user ID instead.`,
                   };
                 }
-                updateSet.managerId = (mgrMatches[0] as any).id;
+                updateSet.managerId = (mgrMatches[0] as any).slackUserId;
               }
             }
 
@@ -386,7 +371,7 @@ export function createPeopleTools(context?: ScheduleContext) {
               )
               .limit(1);
 
-            if (existingAddr.length > 0 && existingAddr[0].personId !== resolvedId) {
+            if (existingAddr.length > 0 && existingAddr[0].userId !== resolvedId) {
               throw new Error(
                 `Address ${normalizedValue} is already assigned to another person`,
               );
@@ -394,7 +379,7 @@ export function createPeopleTools(context?: ScheduleContext) {
 
             if (existingAddr.length === 0) {
               await db.insert(addresses).values({
-                personId: resolvedId,
+                userId: resolvedId,
                 channel: add_address.channel,
                 value: normalizedValue,
                 isPrimary: add_address.is_primary ?? false,
@@ -417,7 +402,7 @@ export function createPeopleTools(context?: ScheduleContext) {
               .delete(addresses)
               .where(
                 and(
-                  eq(addresses.personId, resolvedId),
+                  eq(addresses.userId, resolvedId),
                   eq(addresses.channel, remove_address.channel),
                   eq(addresses.value, normalizedRemoveValue),
                 ),
@@ -425,14 +410,14 @@ export function createPeopleTools(context?: ScheduleContext) {
           }
 
           await db
-            .update(people)
+            .update(users)
             .set(updateSet)
-            .where(eq(people.id, resolvedId));
+            .where(eq(users.id, resolvedId));
 
           const [updated] = await db
             .select()
-            .from(people)
-            .where(eq(people.id, resolvedId))
+            .from(users)
+            .where(eq(users.id, resolvedId))
             .limit(1);
 
           if (!updated) {
@@ -471,7 +456,7 @@ export function createPeopleTools(context?: ScheduleContext) {
 }
 
 async function upsertPrimaryAddress(
-  personId: string,
+  userId: string,
   channel: string,
   value: string,
 ): Promise<void> {
@@ -480,7 +465,7 @@ async function upsertPrimaryAddress(
     .from(addresses)
     .where(
       and(
-        eq(addresses.personId, personId),
+        eq(addresses.userId, userId),
         eq(addresses.channel, channel),
         eq(addresses.isPrimary, true),
       ),
@@ -497,7 +482,7 @@ async function upsertPrimaryAddress(
       .limit(1);
 
     if (conflict.length > 0) {
-      if (conflict[0].personId !== personId) {
+      if (conflict[0].userId !== userId) {
         throw new Error(`Address ${value} is already assigned to another person`);
       }
       await db.delete(addresses).where(eq(addresses.id, existing[0].id));
@@ -519,7 +504,7 @@ async function upsertPrimaryAddress(
       .limit(1);
 
     if (byChannelValue.length > 0) {
-      if (byChannelValue[0].personId === personId) {
+      if (byChannelValue[0].userId === userId) {
         await db
           .update(addresses)
           .set({ isPrimary: true })
@@ -530,7 +515,7 @@ async function upsertPrimaryAddress(
     } else {
       await db
         .insert(addresses)
-        .values({ personId, channel, value, isPrimary: true });
+        .values({ userId, channel, value, isPrimary: true });
     }
   }
 }

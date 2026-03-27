@@ -4,8 +4,9 @@ import {
   credentials,
   credentialGrants,
   credentialAuditLog,
-  userProfiles,
+  users,
 } from "@aura/db/schema";
+const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import {

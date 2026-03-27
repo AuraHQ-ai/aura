@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, sql, ilike, desc } from "drizzle-orm";
-import { userProfiles, people, memories } from "@aura/db/schema";
+import { users, memories } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, paginationQuerySchema, createDashboardApp } from "./schemas.js";
@@ -42,31 +42,29 @@ dashboardUsersApp.openapi(listUsersRoute, async (c) => {
     const offset = (page - 1) * limit;
 
     const where = search
-      ? ilike(userProfiles.displayName, `%${search}%`)
+      ? ilike(users.displayName, `%${search}%`)
       : undefined;
 
     const [items, countResult] = await Promise.all([
       db
         .select({
-          id: userProfiles.id,
-          slackUserId: userProfiles.slackUserId,
-          displayName: userProfiles.displayName,
-          role: userProfiles.role,
-          interactionCount: userProfiles.interactionCount,
-          lastInteractionAt: userProfiles.lastInteractionAt,
-          createdAt: userProfiles.createdAt,
-          personId: userProfiles.personId,
-          jobTitle: people.jobTitle,
+          id: users.id,
+          slackUserId: users.slackUserId,
+          displayName: users.displayName,
+          role: users.role,
+          interactionCount: users.interactionCount,
+          lastInteractionAt: users.lastInteractionAt,
+          createdAt: users.createdAt,
+          jobTitle: users.jobTitle,
         })
-        .from(userProfiles)
-        .leftJoin(people, eq(userProfiles.personId, people.id))
+        .from(users)
         .where(where)
-        .orderBy(sql`${userProfiles.lastInteractionAt} desc nulls last`)
+        .orderBy(sql`${users.lastInteractionAt} desc nulls last`)
         .limit(limit)
         .offset(offset),
       db
         .select({ count: sql<number>`count(*)::int` })
-        .from(userProfiles)
+        .from(users)
         .where(where),
     ]);
 
@@ -109,8 +107,8 @@ dashboardUsersApp.openapi(getUserRoute, async (c) => {
 
     const profileRows = await db
       .select()
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, slackUserId))
+      .from(users)
+      .where(eq(users.slackUserId, slackUserId))
       .limit(1);
 
     if (profileRows.length === 0) {
@@ -118,16 +116,6 @@ dashboardUsersApp.openapi(getUserRoute, async (c) => {
     }
 
     const profile = profileRows[0];
-
-    let person = null;
-    if (profile.personId) {
-      const personRows = await db
-        .select()
-        .from(people)
-        .where(eq(people.id, profile.personId))
-        .limit(1);
-      person = personRows[0] ?? null;
-    }
 
     const userMemories = await db
       .select({
@@ -147,7 +135,7 @@ dashboardUsersApp.openapi(getUserRoute, async (c) => {
       .orderBy(desc(memories.createdAt))
       .limit(20);
 
-    return c.json({ profile, person, memories: userMemories } as any, 200);
+    return c.json({ profile, person: null, memories: userMemories } as any, 200);
   } catch (error) {
     logger.error("Failed to get user detail", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -215,9 +203,9 @@ dashboardUsersApp.openapi(updateUserRoleRoute, async (c) => {
     }
 
     const result = await db
-      .update(userProfiles)
+      .update(users)
       .set({ role: body.role, updatedAt: new Date() })
-      .where(eq(userProfiles.slackUserId, slackUserId))
+      .where(eq(users.slackUserId, slackUserId))
       .returning();
 
     if (result.length === 0) {
@@ -290,9 +278,9 @@ dashboardUsersApp.openapi(updatePersonRoute, async (c) => {
     if (body.notes !== undefined) updates.notes = body.notes;
 
     const result = await db
-      .update(people)
+      .update(users)
       .set(updates)
-      .where(eq(people.id, personId))
+      .where(eq(users.id, personId))
       .returning();
 
     if (result.length === 0) {
