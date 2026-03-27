@@ -75,7 +75,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
         COALESCE(SUM(ct.cost_usd), 0) AS interactive_cost,
         COUNT(*)::int AS conversations
       FROM conversation_traces ct
-      LEFT JOIN user_profiles up ON up.slack_user_id = ct.user_id
+      LEFT JOIN users up ON up.slack_user_id = ct.user_id
       WHERE ct.cost_usd IS NOT NULL
         AND ct.created_at >= ${thirtyDaysAgo}
         AND ct.source_type = 'interactive'
@@ -91,7 +91,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
       FROM conversation_traces ct
       JOIN job_executions je ON je.id = ct.job_execution_id
       JOIN jobs j ON j.id = je.job_id
-      LEFT JOIN user_profiles up ON up.slack_user_id = j.requested_by
+      LEFT JOIN users up ON up.slack_user_id = j.requested_by
       WHERE ct.cost_usd IS NOT NULL
         AND ct.created_at >= ${thirtyDaysAgo}
         AND ct.source_type = 'job_execution'
@@ -165,7 +165,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
       FROM conversation_traces ct
       JOIN job_executions je ON je.id = ct.job_execution_id
       JOIN jobs j ON j.id = je.job_id
-      LEFT JOIN user_profiles up ON up.slack_user_id = j.requested_by
+      LEFT JOIN users up ON up.slack_user_id = j.requested_by
       WHERE ct.cost_usd IS NOT NULL
         AND ct.created_at >= ${thirtyDaysAgo}
         AND ct.source_type = 'job_execution'

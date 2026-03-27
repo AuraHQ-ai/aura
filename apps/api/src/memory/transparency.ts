@@ -1,7 +1,6 @@
 import { eq, sql, and, like, or, arrayContains } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { memories, users, type Memory } from "@aura/db/schema";
-const userProfiles = users;
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
 
@@ -33,8 +32,8 @@ export async function getKnowledgeAboutUser(
   // Get profile
   const [profile] = await db
     .select()
-    .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .from(users)
+    .where(eq(users.slackUserId, slackUserId))
     .limit(1);
 
   // Get all memories related to this user

@@ -1,7 +1,6 @@
 import { eq, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { users, credentials, credentialGrants, oauthTokens } from "@aura/db/schema";
-const userProfiles = users;
 import { executionContext } from "./tool.js";
 import { logger } from "./logger.js";
 
@@ -56,9 +55,9 @@ export async function hasRole(
 
   try {
     const profile = await db
-      .select({ role: userProfiles.role })
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, effectiveUserId))
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.slackUserId, effectiveUserId))
       .limit(1);
 
     if (profile.length > 0 && profile[0].role) {
@@ -105,9 +104,9 @@ async function getUserRole(userId: string): Promise<Role> {
 
   try {
     const profile = await db
-      .select({ role: userProfiles.role })
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, userId))
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.slackUserId, userId))
       .limit(1);
     if (profile.length > 0 && profile[0].role) {
       return profile[0].role as Role;

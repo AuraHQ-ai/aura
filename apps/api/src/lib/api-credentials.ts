@@ -7,7 +7,6 @@ import {
   users,
   type Credential,
 } from "@aura/db/schema";
-const userProfiles = users;
 import { encryptCredential, decryptCredential } from "./credentials.js";
 import { logger } from "./logger.js";
 
@@ -410,12 +409,12 @@ export async function listGrantsForCredentials(
       credentialId: credentialGrants.credentialId,
       granteeId: credentialGrants.granteeId,
       permission: credentialGrants.permission,
-      displayName: userProfiles.displayName,
+      displayName: users.displayName,
     })
     .from(credentialGrants)
     .leftJoin(
-      userProfiles,
-      eq(credentialGrants.granteeId, userProfiles.slackUserId),
+      users,
+      eq(credentialGrants.granteeId, users.slackUserId),
     )
     .where(
       and(

@@ -10,7 +10,6 @@ import {
 } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
-const userProfiles = users;
 
 /**
  * Get or create a user profile.
@@ -23,17 +22,17 @@ export async function getOrCreateProfile(
   // Try to find existing
   const existing = await db
     .select()
-    .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .from(users)
+    .where(eq(users.slackUserId, slackUserId))
     .limit(1);
 
   if (existing.length > 0) {
     const profile = existing[0];
     if (timezone && !profile.timezone) {
       await db
-        .update(userProfiles)
+        .update(users)
         .set({ timezone, updatedAt: new Date() })
-        .where(eq(userProfiles.slackUserId, slackUserId));
+        .where(eq(users.slackUserId, slackUserId));
       Object.assign(profile, { timezone });
     }
     return profile;
@@ -41,13 +40,13 @@ export async function getOrCreateProfile(
 
   // Create new profile (upsert to handle concurrent inserts)
   const result = await db
-    .insert(userProfiles)
+    .insert(users)
     .values({
       slackUserId,
       displayName,
       timezone,
     })
-    .onConflictDoNothing({ target: [userProfiles.workspaceId, userProfiles.slackUserId] })
+    .onConflictDoNothing({ target: [users.workspaceId, users.slackUserId] })
     .returning();
 
   if (result.length > 0) {
@@ -59,8 +58,8 @@ export async function getOrCreateProfile(
   // Another concurrent request inserted first — fetch the existing row
   const [concurrentlyCreated] = await db
     .select()
-    .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .from(users)
+    .where(eq(users.slackUserId, slackUserId))
     .limit(1);
 
   return concurrentlyCreated;
@@ -72,13 +71,13 @@ export async function getOrCreateProfile(
  */
 export async function recordInteraction(slackUserId: string): Promise<void> {
   await db
-    .update(userProfiles)
+    .update(users)
     .set({
-      interactionCount: sql`${userProfiles.interactionCount} + 1`,
+      interactionCount: sql`${users.interactionCount} + 1`,
       lastInteractionAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(userProfiles.slackUserId, slackUserId));
+    .where(eq(users.slackUserId, slackUserId));
 }
 
 /**
@@ -115,8 +114,8 @@ export async function updateProfileFromConversation(
     // Get current profile
     const [profile] = await db
       .select()
-      .from(userProfiles)
-      .where(eq(userProfiles.slackUserId, slackUserId))
+      .from(users)
+      .where(eq(users.slackUserId, slackUserId))
       .limit(1);
 
     if (!profile) return;
@@ -179,13 +178,13 @@ Only include new facts that are clearly stated or strongly implied. Don't specul
     };
 
     await db
-      .update(userProfiles)
+      .update(users)
       .set({
         communicationStyle: object.communicationStyle,
         knownFacts: mergedFacts,
         updatedAt: new Date(),
       })
-      .where(eq(userProfiles.slackUserId, slackUserId));
+      .where(eq(users.slackUserId, slackUserId));
 
     logger.info("Updated user profile", {
       slackUserId,
@@ -208,8 +207,8 @@ export async function getProfile(
 ): Promise<UserProfile | null> {
   const results = await db
     .select()
-    .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .from(users)
+    .where(eq(users.slackUserId, slackUserId))
     .limit(1);
 
   return results[0] || null;
@@ -254,12 +253,12 @@ export async function consolidateProfiles(): Promise<{
 }> {
   const profiles = await db
     .select()
-    .from(userProfiles)
+    .from(users)
     .where(
       sql`(
-        jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'interests', '[]'::jsonb)) > ${CAPS.interests}
-        OR jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'preferences', '[]'::jsonb)) > ${CAPS.preferences}
-        OR jsonb_array_length(COALESCE(${userProfiles.knownFacts}->'personalDetails', '[]'::jsonb)) > ${CAPS.personalDetails}
+        jsonb_array_length(COALESCE(${users.knownFacts}->'interests', '[]'::jsonb)) > ${CAPS.interests}
+        OR jsonb_array_length(COALESCE(${users.knownFacts}->'preferences', '[]'::jsonb)) > ${CAPS.preferences}
+        OR jsonb_array_length(COALESCE(${users.knownFacts}->'personalDetails', '[]'::jsonb)) > ${CAPS.personalDetails}
       )`,
     );
 
@@ -323,13 +322,13 @@ export async function consolidateProfiles(): Promise<{
       totalAfter += afterCount;
 
       await db
-        .update(userProfiles)
+        .update(users)
         .set({
           knownFacts: consolidated,
           lastProfileConsolidation: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(userProfiles.id, profile.id));
+        .where(eq(users.id, profile.id));
 
       logger.info("Consolidated user profile", {
         slackUserId: profile.slackUserId,

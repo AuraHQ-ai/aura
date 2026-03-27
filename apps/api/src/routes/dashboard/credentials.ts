@@ -6,7 +6,6 @@ import {
   credentialAuditLog,
   users,
 } from "@aura/db/schema";
-const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import {
@@ -72,8 +71,8 @@ dashboardCredentialsApp.openapi(listCredentialsRoute, async (c) => {
               AND credential_grants.revoked_at IS NULL
           )`,
           ownerName: sql<string | null>`(
-            SELECT display_name FROM user_profiles
-            WHERE user_profiles.slack_user_id = ${credentials.ownerId}
+            SELECT display_name FROM users
+            WHERE users.slack_user_id = ${credentials.ownerId}
             LIMIT 1
           )`,
         })
@@ -225,8 +224,8 @@ dashboardCredentialsApp.openapi(getCredentialRoute, async (c) => {
           grantedAt: credentialGrants.grantedAt,
           revokedAt: credentialGrants.revokedAt,
           granteeName: sql<string | null>`(
-            SELECT display_name FROM user_profiles
-            WHERE user_profiles.slack_user_id = ${credentialGrants.granteeId}
+            SELECT display_name FROM users
+            WHERE users.slack_user_id = ${credentialGrants.granteeId}
             LIMIT 1
           )`,
         })
@@ -239,9 +238,9 @@ dashboardCredentialsApp.openapi(getCredentialRoute, async (c) => {
         .orderBy(desc(credentialAuditLog.timestamp))
         .limit(50),
       db
-        .select({ displayName: userProfiles.displayName })
-        .from(userProfiles)
-        .where(eq(userProfiles.slackUserId, cred.ownerId))
+        .select({ displayName: users.displayName })
+        .from(users)
+        .where(eq(users.slackUserId, cred.ownerId))
         .limit(1),
     ]);
 

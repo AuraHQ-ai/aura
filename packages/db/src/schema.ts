@@ -259,8 +259,6 @@ export const users = pgTable(
   ],
 );
 
-/** @deprecated Use `users` instead. Alias kept for backward compatibility during migration. */
-export const userProfiles = users;
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
