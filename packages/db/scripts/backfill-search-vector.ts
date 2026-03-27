@@ -27,8 +27,8 @@ async function run() {
     console.log(`Rows with NULL search_vector: ${nulls}`);
     if (nulls === 0) {
       console.log("Nothing to do — column exists and is fully populated.");
+      return;
     }
-    return;
   }
 
   // Step 1: Add column as a regular tsvector (NOT generated)

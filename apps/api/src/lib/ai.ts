@@ -288,10 +288,10 @@ export function buildCachedSystemMessages(
  */
 export async function getRerankingModel() {
   if (!process.env.COHERE_API_KEY) {
-    logger.info("Cohere reranking disabled (no COHERE_API_KEY)");
+    logger.debug("Cohere reranking disabled (no COHERE_API_KEY)");
     return null;
   }
-  logger.info("Cohere reranking enabled (rerank-v3.5)");
+  logger.debug("Cohere reranking enabled (rerank-v3.5)");
   const { createCohere } = await import("@ai-sdk/cohere");
   const cohere = createCohere({ apiKey: process.env.COHERE_API_KEY });
   return cohere.reranking("rerank-v3.5");
