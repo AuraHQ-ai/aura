@@ -102,7 +102,7 @@ async function enrichPerson(user: typeof users.$inferSelect): Promise<PersonResu
     const [mgr] = await db
       .select({ displayName: users.displayName })
       .from(users)
-      .where(eq(users.slackUserId, user.managerId))
+      .where(and(eq(users.slackUserId, user.managerId), eq(users.workspaceId, user.workspaceId)))
       .limit(1);
     managerName = mgr?.displayName ?? null;
   }
