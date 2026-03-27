@@ -157,7 +157,7 @@ export const entities = pgTable(
   (table) => [
     uniqueIndex("entities_type_canonical_idx").on(table.workspaceId, table.type, sql`lower(${table.canonicalName})`),
     uniqueIndex("entities_slack_user_idx")
-      .on(table.slackUserId)
+      .on(table.workspaceId, table.slackUserId)
       .where(sql`slack_user_id IS NOT NULL`),
   ],
 );

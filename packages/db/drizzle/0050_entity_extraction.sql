@@ -14,7 +14,7 @@ CREATE TABLE "entities" (
   "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now()
 );--> statement-breakpoint
 CREATE UNIQUE INDEX "entities_type_canonical_idx" ON "entities" ("workspace_id", "type", lower("canonical_name"));--> statement-breakpoint
-CREATE UNIQUE INDEX "entities_slack_user_idx" ON "entities" ("slack_user_id") WHERE "slack_user_id" IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "entities_slack_user_idx" ON "entities" ("workspace_id", "slack_user_id") WHERE "slack_user_id" IS NOT NULL;--> statement-breakpoint
 
 -- Create entity_aliases table
 CREATE TABLE "entity_aliases" (

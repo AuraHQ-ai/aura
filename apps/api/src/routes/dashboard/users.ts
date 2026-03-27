@@ -135,7 +135,15 @@ dashboardUsersApp.openapi(getUserRoute, async (c) => {
       .orderBy(desc(memories.createdAt))
       .limit(20);
 
-    return c.json({ profile, person: null, memories: userMemories } as any, 200);
+    const person = {
+      id: profile.id,
+      jobTitle: profile.jobTitle ?? null,
+      preferredLanguage: profile.preferredLanguage ?? null,
+      gender: profile.gender ?? null,
+      notes: profile.notes ?? null,
+    };
+
+    return c.json({ profile, person, memories: userMemories } as any, 200);
   } catch (error) {
     logger.error("Failed to get user detail", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -224,12 +232,12 @@ dashboardUsersApp.openapi(updateUserRoleRoute, async (c) => {
 
 const updatePersonRoute = createRoute({
   method: "patch",
-  path: "/person/{personId}",
+  path: "/person/{userId}",
   tags: ["Users"],
-  summary: "Update person details",
+  summary: "Update person details (now stored on users table)",
   request: {
     params: z.object({
-      personId: z.string().openapi({ param: { name: "personId", in: "path" } }),
+      userId: z.string().openapi({ param: { name: "userId", in: "path" } }),
     }),
     body: {
       content: {
@@ -263,7 +271,7 @@ const updatePersonRoute = createRoute({
 
 dashboardUsersApp.openapi(updatePersonRoute, async (c) => {
   try {
-    const personId = c.req.param("personId");
+    const userId = c.req.param("userId");
     const body = await c.req.json<{
       jobTitle?: string;
       preferredLanguage?: string;
@@ -280,16 +288,16 @@ dashboardUsersApp.openapi(updatePersonRoute, async (c) => {
     const result = await db
       .update(users)
       .set(updates)
-      .where(eq(users.id, personId))
+      .where(eq(users.id, userId))
       .returning();
 
     if (result.length === 0) {
-      return c.json({ error: "Person not found" }, 404);
+      return c.json({ error: "User not found" }, 404);
     }
 
     return c.json(result[0] as any, 200);
   } catch (error) {
-    logger.error("Failed to update person", { error: error instanceof Error ? error.stack : String(error) });
+    logger.error("Failed to update user person fields", { error: error instanceof Error ? error.stack : String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
