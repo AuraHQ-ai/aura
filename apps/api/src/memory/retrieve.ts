@@ -73,10 +73,14 @@ async function fetchEntityMatchedMemories(
       if (w.length >= 3 && /^[A-Z]/.test(w)) candidates.push(w);
     }
     for (let i = 0; i < words.length - 1; i++) {
-      candidates.push(`${words[i]} ${words[i + 1]}`);
+      if (/^[A-Z]/.test(words[i]) || /^[A-Z]/.test(words[i + 1])) {
+        candidates.push(`${words[i]} ${words[i + 1]}`);
+      }
     }
     for (let i = 0; i < words.length - 2; i++) {
-      candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+      if (/^[A-Z]/.test(words[i]) || /^[A-Z]/.test(words[i + 1]) || /^[A-Z]/.test(words[i + 2])) {
+        candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+      }
     }
     if (query.trim().length > 2) candidates.push(query.trim());
 

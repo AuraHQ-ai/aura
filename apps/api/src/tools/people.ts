@@ -19,7 +19,7 @@ interface RawUserRow {
   id: string;
   workspace_id: string;
   display_name: string;
-  slack_user_id: string;
+  slack_user_id: string | null;
   job_title: string | null;
   gender: string | null;
   preferred_language: string | null;
@@ -340,7 +340,11 @@ export function createPeopleTools(context?: ScheduleContext) {
                     error: `Ambiguous manager match: found ${mgrMatches.length} people (${names}). Use a Slack user ID instead.`,
                   };
                 }
-                updateSet.managerId = (mgrMatches[0] as any).slackUserId;
+                const resolvedSlackId = (mgrMatches[0] as any).slackUserId;
+                if (!resolvedSlackId) {
+                  return { ok: false as const, error: `Resolved manager '${fields.manager_id}' has no Slack user ID. Use their Slack user ID directly.` };
+                }
+                updateSet.managerId = resolvedSlackId;
               }
             }
 
