@@ -286,6 +286,7 @@ export async function retrieveMemories(
     const hybridResults = rawResults.map((row) => ({
       memory: {
         id: row.id,
+        workspaceId: row.workspace_id,
         content: row.content,
         type: row.type,
         sourceMessageId: row.source_message_id ?? null,
