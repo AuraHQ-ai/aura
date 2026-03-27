@@ -221,11 +221,8 @@ export async function retrieveMemories(
       scored.sort((a, b) => b.score - a.score);
       topMemories = scored.slice(0, limit).map((s) => s.memory);
 
-      const reranking = scored.slice(0, limit).map((s, newRank) =>
-        `${s.originalIndex + 1} → ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`
-      ).join(", ");
       logger.info(
-        `Reranked ${results.length} memories → top ${topMemories.length} in ${Date.now() - start}ms: ${reranking}`,
+        `Reranked ${results.length} memories → top ${topMemories.length} in ${Date.now() - start}ms`,
         {
           query: query.substring(0, 100),
           totalCandidates: results.length,
@@ -233,6 +230,10 @@ export async function retrieveMemories(
           method: "hybrid-rrf+cohere-rerank",
         },
       );
+      const reranking = scored.slice(0, limit).map((s, newRank) =>
+        `${s.originalIndex + 1} → ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`
+      ).join(", ");
+      logger.debug(`Reranking details: ${reranking}`);
     } else {
       const RRF_K = 60;
       const maxRrfScore = 2 / (1 + RRF_K);
