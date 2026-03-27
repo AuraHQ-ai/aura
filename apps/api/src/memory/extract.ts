@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getFastModel } from "../lib/ai.js";
 import { embedTexts } from "../lib/embeddings.js";
 import { storeMemories, toDbChannelType } from "./store.js";
+import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
 import type { NewMemory } from "@aura/db/schema";
@@ -152,6 +153,18 @@ const extractedMemoriesSchema = z.object({
           "True only if the user explicitly asked Aura to share this info with someone specific",
         )
         .default(false),
+      entities: z
+        .array(
+          z.object({
+            name: z.string().describe("The entity name (full name for people, official name for companies)"),
+            type: z
+              .enum(["person", "company", "project", "product", "channel", "technology"])
+              .describe("The entity type"),
+          }),
+        )
+        .optional()
+        .default([])
+        .describe("Entities (people, companies, projects, etc.) mentioned in this memory"),
     }),
   ),
 });
@@ -176,7 +189,9 @@ Rules:
 - Include the person's name or Slack user ID when relevant.
 - Don't extract things Aura already knows (if they're in the context).
 - If the user explicitly asks Aura to tell someone something, mark that memory as shareable.
-- Return an empty array if there's nothing worth remembering.`;
+- Return an empty array if there's nothing worth remembering.
+
+For each memory, also identify the entities (people, companies, projects, products, channels, technologies) mentioned. Return them in the entities array with their name and type. Use the most specific name you can identify (full name for people, official name for companies).`;
 
 interface ExtractionContext {
   userMessage: string;
@@ -246,7 +261,24 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     }));
 
     const hasEmbeddings = newMemories.some((m) => m.embedding !== null);
-    await storeMemories(newMemories);
+    const memoryIds = await storeMemories(newMemories);
+
+    // Resolve entities and link them to memories (best-effort, don't block)
+    const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
+    for (let i = 0; i < normalizedMemories.length; i++) {
+      const extractedEntities = normalizedMemories[i].entities;
+      if (extractedEntities && extractedEntities.length > 0 && memoryIds[i]) {
+        try {
+          const resolved = await resolveEntities(extractedEntities, workspaceId);
+          await linkMemoryEntities(memoryIds[i], resolved);
+        } catch (entityError) {
+          logger.warn("Entity resolution failed for memory, skipping", {
+            memoryId: memoryIds[i],
+            error: String(entityError),
+          });
+        }
+      }
+    }
 
     logger.info(`Extracted ${newMemories.length} memories in ${Date.now() - start}ms`, {
       types: newMemories.map((m) => m.type),
