@@ -19,6 +19,8 @@ interface RetrievalOptions {
   minRelevanceScore?: number;
   /** Skip privacy filter (for admin dashboard) */
   adminMode?: boolean;
+  /** Workspace ID for tenant isolation in entity queries */
+  workspaceId?: string;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -60,13 +62,12 @@ async function fetchEntityMatchedMemories(
   query: string,
   minRelevanceScore: number,
   currentUserId?: string,
+  workspaceId?: string,
 ): Promise<Memory[]> {
   try {
-    // Extract potential entity names: split on common delimiters, try each token and multi-word combo
     const words = query.split(/[\s,;]+/).filter((w) => w.length > 1);
     if (words.length === 0) return [];
 
-    // Build candidate names: individual words + 2-grams + 3-grams
     const candidates: string[] = [];
     for (const w of words) {
       if (w.length >= 3 && /^[A-Z]/.test(w)) candidates.push(w);
@@ -77,32 +78,34 @@ async function fetchEntityMatchedMemories(
     for (let i = 0; i < words.length - 2; i++) {
       candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
     }
-    // Also try the full query itself
     if (query.trim().length > 2) candidates.push(query.trim());
 
     if (candidates.length === 0) return [];
 
-    // Try to match any candidate against entity aliases
-    const entityIds: string[] = [];
-    for (const candidate of candidates.slice(0, 10)) {
-      const lowerCandidate = candidate.toLowerCase();
-      const matchResult = await db.execute(sql`
-        SELECT DISTINCT e.id
-        FROM entities e
-        JOIN entity_aliases ea ON e.id = ea.entity_id
-        WHERE ea.alias_lower = ${lowerCandidate}
-           OR (ea.alias_lower % ${lowerCandidate} AND similarity(ea.alias_lower, ${lowerCandidate}) > 0.5)
-        LIMIT 3
-      `);
-      const matchRows = ((matchResult as any).rows ?? matchResult) as Array<{ id: string }>;
-      for (const row of matchRows) {
-        if (!entityIds.includes(row.id)) entityIds.push(row.id);
-      }
-    }
+    const lowerCandidates = candidates.slice(0, 10).map((c) => c.toLowerCase());
+    const workspaceFilter = workspaceId ? sql`AND e.workspace_id = ${workspaceId}` : sql``;
+
+    const matchResult = await db.execute(sql`
+      SELECT DISTINCT e.id
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE (
+        ea.alias_lower = ANY(${lowerCandidates})
+        OR (
+          ea.alias_lower % ANY(${lowerCandidates})
+          AND EXISTS (
+            SELECT 1 FROM unnest(${lowerCandidates}::text[]) AS c(val)
+            WHERE similarity(ea.alias_lower, c.val) > 0.5
+          )
+        )
+      )
+      ${workspaceFilter}
+    `);
+    const matchRows = ((matchResult as any).rows ?? matchResult) as Array<{ id: string }>;
+    const entityIds = matchRows.map((row) => row.id);
 
     if (entityIds.length === 0) return [];
 
-    // Fetch linked memories
     const privacyFilter = currentUserId
       ? sql`AND (
           m.source_channel_type != 'dm'
@@ -111,6 +114,8 @@ async function fetchEntityMatchedMemories(
         )`
       : sql``;
 
+    const workspaceMemoryFilter = workspaceId ? sql`AND m.workspace_id = ${workspaceId}` : sql``;
+
     const memoryResult = await db.execute(sql`
       SELECT DISTINCT m.*
       FROM memories m
@@ -118,6 +123,7 @@ async function fetchEntityMatchedMemories(
       WHERE me.entity_id = ANY(${entityIds})
         AND m.relevance_score >= ${minRelevanceScore}
         ${privacyFilter}
+        ${workspaceMemoryFilter}
       ORDER BY m.relevance_score DESC, m.created_at DESC
       LIMIT 50
     `);
@@ -163,14 +169,14 @@ async function fetchEntityMatchedMemories(
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false } = options;
+  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId } = options;
   const start = Date.now();
 
   try {
     const [queryEmbedding, lexemes, entityMemories] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
       extractLexemes(query),
-      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId),
+      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId),
     ]);
 
     const CANDIDATE_POOL_SIZE = Math.max(25, limit);

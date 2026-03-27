@@ -147,7 +147,7 @@ dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
 
     if (!memory) return c.json({ error: "Memory not found" }, 404);
 
-    let relatedUsers: { id: string; slackUserId: string; displayName: string }[] = [];
+    let relatedUsers: { id: string; slackUserId: string | null; displayName: string }[] = [];
     if (memory.relatedUserIds.length > 0) {
       relatedUsers = await db
         .select({
