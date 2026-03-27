@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { apiGet, apiDelete } from "@/lib/api";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate, truncate } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Search, Trash2 } from "lucide-react";
 
 interface Memory {
@@ -24,20 +24,30 @@ interface Memory {
 const PAGE_SIZE = 100;
 const MEMORY_TYPES = ["fact", "decision", "personal", "relationship", "sentiment", "open_thread"] as const;
 
+type MemoriesSearch = { search?: string; type?: string; page?: number };
+
 function MemoriesPage() {
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [page, setPage] = useState(1);
+  const navigate = useNavigate({ from: Route.fullPath });
+  const { search, type, page } = Route.useSearch();
+  const [searchInput, setSearchInput] = useState(search ?? "");
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
+  useEffect(() => {
+    setSearchInput(search ?? "");
+  }, [search]);
+
+  const setParams = (updates: Partial<MemoriesSearch>) => {
+    navigate({ search: (prev) => ({ ...prev, ...updates }) });
+  };
+
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ["memories", search, typeFilter, page],
+    queryKey: ["memories", search, type, page],
     queryFn: () => {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
-      if (typeFilter) params.set("type", typeFilter);
-      params.set("page", String(page));
+      if (type) params.set("type", type);
+      params.set("page", String(page ?? 1));
       params.set("limit", String(PAGE_SIZE));
       return apiGet<{ items: Memory[]; total: number }>(`/memories?${params}`);
     },
@@ -67,18 +77,18 @@ function MemoriesPage() {
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <form onSubmit={(e) => { e.preventDefault(); setPage(1); }} className="relative flex-1 max-w-sm">
+        <form onSubmit={(e) => { e.preventDefault(); setParams({ search: searchInput || undefined, page: undefined }); }} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Full-text search (press Enter)..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search memories (press Enter)..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             className="pl-9"
           />
         </form>
         <select
-          value={typeFilter}
-          onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
+          value={type ?? ""}
+          onChange={(e) => setParams({ type: e.target.value || undefined, page: undefined })}
           className="h-8 rounded-md border border-input bg-transparent px-2.5 text-[13px]"
         >
           <option value="">All types</option>
@@ -131,7 +141,7 @@ function MemoriesPage() {
         </Table>
       </div>
 
-      <Pagination total={total} pageSize={PAGE_SIZE} page={page} onPageChange={setPage} />
+      <Pagination total={total} pageSize={PAGE_SIZE} page={page ?? 1} onPageChange={(p) => setParams({ page: p > 1 ? p : undefined })} />
 
       <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <DialogContent>
@@ -157,4 +167,9 @@ function MemoriesPage() {
 
 export const Route = createFileRoute("/memories/")({
   component: MemoriesPage,
+  validateSearch: (raw: Record<string, unknown>) => ({
+    search: typeof raw.search === "string" ? raw.search : undefined,
+    type: typeof raw.type === "string" ? raw.type : undefined,
+    page: typeof raw.page === "number" ? raw.page : typeof raw.page === "string" ? Number(raw.page) || undefined : undefined,
+  }),
 });

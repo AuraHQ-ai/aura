@@ -168,7 +168,7 @@ export async function buildCorePrompt(
             queryEmbedding,
             currentUserId: session.userId,
             limit: 15,
-          })
+          }).catch(() => [] as Memory[])
         : Promise.resolve([] as Memory[]),
       queryEmbedding
         ? retrieveConversations({

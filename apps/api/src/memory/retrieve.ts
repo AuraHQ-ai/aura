@@ -215,14 +215,14 @@ export async function retrieveMemories(
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
         const score = item.score * 0.8 + recencyBoost * 0.2;
-        return { memory, score };
+        return { memory, score, originalIndex: item.originalIndex, cohereScore: item.score };
       });
 
       scored.sort((a, b) => b.score - a.score);
       topMemories = scored.slice(0, limit).map((s) => s.memory);
 
       logger.info(
-        `Retrieved ${topMemories.length} memories (hybrid+reranked) in ${Date.now() - start}ms`,
+        `Reranked ${results.length} memories → top ${topMemories.length} in ${Date.now() - start}ms`,
         {
           query: query.substring(0, 100),
           totalCandidates: results.length,
@@ -230,6 +230,10 @@ export async function retrieveMemories(
           method: "hybrid-rrf+cohere-rerank",
         },
       );
+      const reranking = scored.slice(0, limit).map((s, newRank) =>
+        `${s.originalIndex + 1} → ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`
+      ).join(", ");
+      logger.debug(`Reranking details: ${reranking}`);
     } else {
       const RRF_K = 60;
       const maxRrfScore = 2 / (1 + RRF_K);
@@ -271,7 +275,7 @@ export async function retrieveMemories(
       cause: error?.cause ? String(error.cause) : undefined,
       query: query.substring(0, 100),
     });
-    return [];
+    throw error;
   }
 }
 

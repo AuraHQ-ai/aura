@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, lt, lte, sql, isNull, or, inArray, ne } from "drizzle-orm";
+import { eq, and, lt, lte, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "@aura/db/schema";
@@ -101,8 +101,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
         and(
           eq(jobs.status, "pending"),
           eq(jobs.enabled, 1),
-          // Skip jobs awaiting governance approval
-          or(isNull(jobs.approvalStatus), ne(jobs.approvalStatus, "awaiting_approval")),
           or(
             // One-shot/continuation: due when executeAt <= now
             lte(jobs.executeAt, now),

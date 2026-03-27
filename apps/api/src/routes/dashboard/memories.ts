@@ -70,11 +70,13 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
           adminMode: true,
         });
 
-        let items = results.map(({ embedding, ...rest }) => rest);
+        let items = results.map(({ embedding, searchVector, workspaceId, ...rest }) => rest);
         if (type) items = items.filter((m) => m.type === type);
         return c.json({ items, total: items.length } as any, 200);
-      } catch {
-        logger.warn("Hybrid memory search failed, falling back to full-text");
+      } catch (e) {
+        logger.warn("Hybrid memory search failed, falling back to full-text", {
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     }
 
