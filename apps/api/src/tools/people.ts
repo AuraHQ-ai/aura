@@ -20,12 +20,21 @@ interface RawUserRow {
   workspace_id: string;
   display_name: string;
   slack_user_id: string | null;
+  timezone: string | null;
+  person_id: string | null;
   job_title: string | null;
   gender: string | null;
   preferred_language: string | null;
   birthdate: string | null;
   manager_id: string | null;
   notes: string | null;
+  entity_id: string | null;
+  communication_style: Record<string, unknown> | null;
+  known_facts: Record<string, unknown> | null;
+  role: string;
+  interaction_count: number;
+  last_interaction_at: string | null;
+  last_profile_consolidation: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -36,12 +45,21 @@ function mapRawUser(row: RawUserRow): typeof users.$inferSelect {
     workspaceId: row.workspace_id,
     displayName: row.display_name,
     slackUserId: row.slack_user_id,
+    timezone: row.timezone,
+    personId: row.person_id,
     jobTitle: row.job_title,
     gender: row.gender,
     preferredLanguage: row.preferred_language,
     birthdate: row.birthdate ? new Date(row.birthdate) : null,
     managerId: row.manager_id,
     notes: row.notes,
+    entityId: row.entity_id,
+    communicationStyle: row.communication_style,
+    knownFacts: row.known_facts,
+    role: row.role,
+    interactionCount: row.interaction_count,
+    lastInteractionAt: row.last_interaction_at ? new Date(row.last_interaction_at) : null,
+    lastProfileConsolidation: row.last_profile_consolidation ? new Date(row.last_profile_consolidation) : null,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   } as typeof users.$inferSelect;

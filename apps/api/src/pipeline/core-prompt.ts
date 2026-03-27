@@ -14,7 +14,7 @@ import { getMainModelId } from "../lib/ai.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { users } from "@aura/db/schema";
 import { db } from "../db/client.js";
-import { inArray, eq, sql } from "drizzle-orm";
+import { inArray, eq, and, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { logger } from "../lib/logger.js";
 
@@ -258,7 +258,7 @@ export async function lookupPerson(
         notes: users.notes,
       })
       .from(users)
-      .leftJoin(manager, eq(users.managerId, manager.slackUserId))
+      .leftJoin(manager, and(eq(users.managerId, manager.slackUserId), eq(users.workspaceId, manager.workspaceId)))
       .where(eq(users.slackUserId, slackUserId))
       .limit(1);
 
@@ -300,7 +300,7 @@ export async function lookupMentionedPeople(
         notes: users.notes,
       })
       .from(users)
-      .leftJoin(manager, eq(users.managerId, manager.slackUserId))
+      .leftJoin(manager, and(eq(users.managerId, manager.slackUserId), eq(users.workspaceId, manager.workspaceId)))
       .where(inArray(users.slackUserId, slackUserIds));
 
     return rows
