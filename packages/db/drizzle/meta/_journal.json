@@ -351,6 +351,13 @@
       "when": 1774694400000,
       "tag": "0049_remove_governance_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1774780800000,
+      "tag": "0050_entity_extraction",
+      "breakpoints": true
     }
   ]
 }
