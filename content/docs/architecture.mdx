@@ -19,8 +19,8 @@ aura/
 │   │       ├── memory/      # Extract, store, retrieve, consolidate
 │   │       ├── cron/        # Heartbeat, memory consolidation, email sync
 │   │       └── routes/      # API routes (Slack events, dashboard, chat)
-│   ├── dashboard/      # Admin UI (Next.js)
-│   │   └── src/app/
+│   ├── dashboard/      # Admin UI (Vite + React + TanStack Router)
+│   │   └── src/routes/
 │   │       ├── conversations/   # Conversation traces & threads
 │   │       ├── consumption/     # Token usage & cost tracking
 │   │       ├── memories/        # Memory browser
@@ -50,7 +50,7 @@ Slack Event → Vercel Function → Hono Router → Message Pipeline → LLM (Ve
                                                       ↕
                                               Tools (23 modules)
                                                       ↕
-                                              Admin Dashboard (Next.js)
+                                              Admin Dashboard (Vite + React)
 ```
 
 ## Message Pipeline

@@ -5,7 +5,7 @@ description: "Monitor and manage your Aura instance through the admin dashboard.
 
 # Dashboard
 
-The admin dashboard is a Next.js application that provides full visibility into Aura's operation. It's deployed alongside the API and accessible to workspace admins.
+The admin dashboard is a Vite + React application (with TanStack Router and TanStack Query) that provides full visibility into Aura's operation. It's deployed alongside the API as a single Vercel project and accessible to workspace admins.
 
 ## Pages
 
@@ -97,13 +97,13 @@ Configure instance behavior:
 
 ## Access & Authentication
 
-The dashboard uses Slack OAuth for login. Access requires the `admin` role (see [Permissions](/permissions)). The `AURA_ADMIN_USER_IDS` env var serves as a fallback for users without a database role.
+The dashboard uses Slack OAuth for login. Access requires at least the `power_user` role (see [Permissions](/permissions)). The `AURA_ADMIN_USER_IDS` env var serves as a fallback for users without a database role.
 
-### Auth Proxy
+### Slack OIDC
 
-Preview and branch deployments authenticate via an auth proxy flow. The production instance acts as the OAuth provider, and preview deployments redirect through it to obtain session tokens. This avoids needing to register separate OAuth redirect URLs for every preview deploy.
+Authentication is handled directly by the Hono API via Slack's OpenID Connect flow. The API exposes `/login` and `/callback` routes that handle the full OAuth cycle -- no proxy or intermediate redirects needed.
 
-The flow uses HMAC-SHA256 origin verification (via `DASHBOARD_SESSION_SECRET`) to ensure only legitimate deployments can request authentication. Short-lived transfer tokens (60s expiry) are used to pass credentials between origins, with strict validation to prevent token reuse as session tokens.
+The callback issues a session JWT (HS256, 30-day expiry) stored as an HTTP-only cookie. For preview and branch deployments, an origin allowlist (restricted to trusted domain suffixes like `.aurahq.ai` and `localhost`) prevents token theft via crafted redirect URLs.
 
 **Required env vars:** `DASHBOARD_SESSION_SECRET`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`.
 
