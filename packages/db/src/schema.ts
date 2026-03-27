@@ -137,7 +137,73 @@ export const memories = pgTable(
   ],
 );
 
-// ── User Profiles ──────────────────────────────────────────────────────────
+// ── Entities ───────────────────────────────────────────────────────────────
+
+export const entities = pgTable(
+  "entities",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    type: text("type").notNull(),
+    canonicalName: text("canonical_name").notNull(),
+    description: text("description"),
+    slackUserId: text("slack_user_id"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("entities_type_canonical_idx").on(table.workspaceId, table.type, sql`lower(${table.canonicalName})`),
+    uniqueIndex("entities_slack_user_idx")
+      .on(table.slackUserId)
+      .where(sql`slack_user_id IS NOT NULL`),
+  ],
+);
+
+// ── Entity Aliases ─────────────────────────────────────────────────────────
+
+export const entityAliases = pgTable(
+  "entity_aliases",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    alias: text("alias").notNull(),
+    aliasLower: text("alias_lower"),
+    source: text("source").default("extracted"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("entity_aliases_lower_entity_idx").on(table.aliasLower, table.entityId),
+    index("entity_aliases_trgm_idx").using("gin", sql`${table.aliasLower} gin_trgm_ops`),
+  ],
+);
+
+// ── Memory Entities (junction table) ───────────────────────────────────────
+
+export const memoryEntities = pgTable(
+  "memory_entities",
+  {
+    memoryId: uuid("memory_id")
+      .notNull()
+      .references(() => memories.id, { onDelete: "cascade" }),
+    entityId: uuid("entity_id")
+      .notNull()
+      .references(() => entities.id, { onDelete: "cascade" }),
+    role: text("role").default("mentioned"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.memoryId, table.entityId] }),
+    index("memory_entities_entity_idx").on(table.entityId),
+  ],
+);
+
+// ── Users (formerly user_profiles, merged with people) ─────────────────────
 
 export interface CommunicationStyle {
   verbosity: "terse" | "moderate" | "verbose";
@@ -154,8 +220,8 @@ export interface KnownFacts {
   preferences?: string[];
 }
 
-export const userProfiles = pgTable(
-  "user_profiles",
+export const users = pgTable(
+  "users",
   {
     id: uuid("id")
       .primaryKey()
@@ -164,7 +230,14 @@ export const userProfiles = pgTable(
     slackUserId: text("slack_user_id").notNull(),
     displayName: text("display_name").notNull(),
     timezone: text("timezone"),
-    personId: uuid("person_id").references(() => people.id),
+    personId: uuid("person_id"),
+    jobTitle: text("job_title"),
+    gender: text("gender"),
+    preferredLanguage: text("preferred_language").default("en"),
+    birthdate: date("birthdate", { mode: "date" }),
+    managerId: text("manager_id"),
+    notes: text("notes"),
+    entityId: uuid("entity_id").references(() => entities.id),
     communicationStyle: jsonb("communication_style")
       .$type<CommunicationStyle>()
       .default({
@@ -186,32 +259,8 @@ export const userProfiles = pgTable(
   ],
 );
 
-// ── People ─────────────────────────────────────────────────────────────────
-
-export const people = pgTable(
-  "people",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workspaceId: workspaceId().references(() => workspaces.id),
-    displayName: text("display_name"),
-    slackUserId: text("slack_user_id"),
-    jobTitle: text("job_title"),
-    gender: text("gender"),
-    preferredLanguage: text("preferred_language"),
-    birthdate: date("birthdate", { mode: "date" }),
-    managerId: uuid("manager_id").references((): any => people.id),
-    notes: text("notes"),
-    createdAt: timestamptz("created_at").notNull().defaultNow(),
-    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("people_workspace_slack_user_id_idx")
-      .on(table.workspaceId, table.slackUserId)
-      .where(sql`slack_user_id IS NOT NULL`),
-  ],
-);
+/** @deprecated Use `users` instead. Alias kept for backward compatibility during migration. */
+export const userProfiles = users;
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
@@ -222,9 +271,8 @@ export const addresses = pgTable(
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
-    personId: uuid("person_id")
-      .notNull()
-      .references(() => people.id),
+    personId: uuid("person_id"),
+    userId: uuid("user_id").references(() => users.id),
     channel: text("channel").notNull(),
     value: text("value").notNull(),
     isPrimary: boolean("is_primary").notNull().default(false),
@@ -774,8 +822,18 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Memory = typeof memories.$inferSelect;
 export type NewMemory = typeof memories.$inferInsert;
-export type UserProfile = typeof userProfiles.$inferSelect;
-export type NewUserProfile = typeof userProfiles.$inferInsert;
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+/** @deprecated Use `User` instead */
+export type UserProfile = User;
+/** @deprecated Use `NewUser` instead */
+export type NewUserProfile = NewUser;
+export type Entity = typeof entities.$inferSelect;
+export type NewEntity = typeof entities.$inferInsert;
+export type EntityAlias = typeof entityAliases.$inferSelect;
+export type NewEntityAlias = typeof entityAliases.$inferInsert;
+export type MemoryEntity = typeof memoryEntities.$inferSelect;
+export type NewMemoryEntity = typeof memoryEntities.$inferInsert;
 export type Channel = typeof channels.$inferSelect;
 export type NewChannel = typeof channels.$inferInsert;
 export type Setting = typeof settings.$inferSelect;
@@ -796,8 +854,6 @@ export type OAuthToken = typeof oauthTokens.$inferSelect;
 export type NewOAuthToken = typeof oauthTokens.$inferInsert;
 export type EmailRaw = typeof emailsRaw.$inferSelect;
 export type NewEmailRaw = typeof emailsRaw.$inferInsert;
-export type Person = typeof people.$inferSelect;
-export type NewPerson = typeof people.$inferInsert;
 export type Address = typeof addresses.$inferSelect;
 export type NewAddress = typeof addresses.$inferInsert;
 export type VoiceCall = typeof voiceCalls.$inferSelect;
