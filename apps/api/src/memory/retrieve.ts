@@ -65,7 +65,7 @@ async function fetchEntityMatchedMemories(
   workspaceId?: string,
 ): Promise<Memory[]> {
   try {
-    const words = query.split(/[\s,;]+/).filter((w) => w.length > 1);
+    const words = query.split(/[\s,;]+/).map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "")).filter((w) => w.length > 1);
     if (words.length === 0) return [];
 
     const candidates: string[] = [];
