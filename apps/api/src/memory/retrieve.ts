@@ -371,7 +371,7 @@ export async function retrieveMemories(
       logger.debug(`Reranking details: ${reranking}`);
     } else {
       const RRF_K = 60;
-      const maxRrfScore = 2 / (1 + RRF_K);
+      const maxRrfScore = 2 / (1 + RRF_K) + ENTITY_RRF_BOOST;
 
       const scored = results.map(({ memory, similarity, rrfScore }) => {
         const ageMs = now - new Date(memory.createdAt).getTime();
