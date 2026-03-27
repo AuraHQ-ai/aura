@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate, truncate } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Search, Trash2 } from "lucide-react";
 
 interface Memory {
@@ -32,6 +32,10 @@ function MemoriesPage() {
   const { search, type, page } = Route.useSearch();
   const [searchInput, setSearchInput] = useState(search ?? "");
   const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSearchInput(search ?? "");
+  }, [search]);
 
   const setParams = (updates: Partial<MemoriesSearch>) => {
     navigate({ search: (prev) => ({ ...prev, ...updates }) });

@@ -18,4 +18,6 @@ ALTER TABLE "action_log" DROP COLUMN IF EXISTS "approved_at";--> statement-break
 -- Update action_log status check to only allow executed/failed
 ALTER TABLE "action_log" DROP CONSTRAINT IF EXISTS "action_log_risk_tier_check";--> statement-breakpoint
 ALTER TABLE "action_log" DROP CONSTRAINT IF EXISTS "action_log_status_check";--> statement-breakpoint
+UPDATE "action_log" SET "status" = 'executed' WHERE "status" = 'approved';--> statement-breakpoint
+UPDATE "action_log" SET "status" = 'failed' WHERE "status" NOT IN ('executed', 'failed');--> statement-breakpoint
 ALTER TABLE "action_log" ADD CONSTRAINT "action_log_status_check" CHECK ("status" IN ('executed','failed'));
