@@ -68,25 +68,41 @@ async function fetchEntityMatchedMemories(
     const words = query.split(/[\s,;]+/).map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "")).filter((w) => w.length > 1);
     if (words.length === 0) return [];
 
+    const STOP_WORDS = new Set([
+      "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+      "tell", "show", "find", "get", "give", "let", "make", "can", "could",
+      "would", "should", "will", "does", "did", "has", "have", "had", "are",
+      "is", "was", "were", "been", "being", "the", "this", "that", "these",
+      "those", "there", "here", "not", "but", "and", "for", "with", "about",
+      "from", "into", "any", "all", "also", "just", "than", "then", "now",
+      "very", "its", "his", "her", "our", "your", "their", "some", "each",
+      "every", "both", "few", "more", "most", "other", "many", "much", "own",
+      "same", "such", "only", "new", "old", "well", "also", "back", "even",
+      "still", "after", "before", "between", "under", "over", "again",
+      "further", "once", "during", "while", "please", "thanks", "thank",
+      "know", "think", "want", "need", "like", "look", "use", "say", "said",
+    ]);
+    const isProperNoun = (w: string, idx: number) =>
+      /^[A-Z]/.test(w) && !STOP_WORDS.has(w.toLowerCase()) && (idx > 0 || /^[A-Z]{2,}/.test(w) || words.length === 1);
+
     const candidates: string[] = [];
-    for (const w of words) {
-      if (w.length >= 3 && /^[A-Z]/.test(w)) candidates.push(w);
+    for (let i = 0; i < words.length; i++) {
+      if (words[i].length >= 3 && isProperNoun(words[i], i)) candidates.push(words[i]);
     }
     for (let i = 0; i < words.length - 1; i++) {
-      if (/^[A-Z]/.test(words[i]) && /^[A-Z]/.test(words[i + 1])) {
+      if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1)) {
         candidates.push(`${words[i]} ${words[i + 1]}`);
       }
     }
     for (let i = 0; i < words.length - 2; i++) {
-      if (/^[A-Z]/.test(words[i]) && /^[A-Z]/.test(words[i + 1]) && /^[A-Z]/.test(words[i + 2])) {
+      if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1) && isProperNoun(words[i + 2], i + 2)) {
         candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
       }
     }
-    if (query.trim().length > 2) candidates.push(query.trim());
 
     if (candidates.length === 0) return [];
 
-    const lowerCandidates = candidates.slice(0, 10).map((c) => c.toLowerCase());
+    const lowerCandidates = [...new Set(candidates.slice(0, 10).map((c) => c.toLowerCase()))];
     const workspaceFilter = workspaceId ? sql`AND e.workspace_id = ${workspaceId}` : sql``;
 
     const matchResult = await db.execute(sql`
