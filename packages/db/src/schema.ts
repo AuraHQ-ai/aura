@@ -227,7 +227,7 @@ export const users = pgTable(
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
-    slackUserId: text("slack_user_id").notNull(),
+    slackUserId: text("slack_user_id"),
     displayName: text("display_name").notNull(),
     timezone: text("timezone"),
     personId: uuid("person_id"),

@@ -358,6 +358,13 @@
       "when": 1774780800000,
       "tag": "0050_entity_extraction",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1774867200000,
+      "tag": "0051_make_slack_user_id_nullable",
+      "breakpoints": true
     }
   ]
 }

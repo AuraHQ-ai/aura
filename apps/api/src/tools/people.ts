@@ -50,7 +50,7 @@ function mapRawUser(row: RawUserRow): typeof users.$inferSelect {
 interface PersonResult {
   id: string;
   display_name: string;
-  slack_user_id: string;
+  slack_user_id: string | null;
   job_title: string | null;
   gender: string | null;
   preferred_language: string | null;
