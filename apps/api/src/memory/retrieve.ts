@@ -1,7 +1,7 @@
 import { sql, or, inArray } from "drizzle-orm";
 import { rerank } from "ai";
 import { db } from "../db/client.js";
-import { memories, messages, type Memory } from "@aura/db/schema";
+import { memories, messages, entities, entityAliases, memoryEntities, type Memory } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getRerankingModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
@@ -53,15 +53,112 @@ async function extractLexemes(
 }
 
 /**
+ * Entity-first retrieval: resolve entity names from the query via alias matching,
+ * then fetch their linked memories.
+ */
+async function fetchEntityMatchedMemories(
+  query: string,
+  minRelevanceScore: number,
+  currentUserId?: string,
+): Promise<Memory[]> {
+  try {
+    // Extract potential entity names: split on common delimiters, try each token and multi-word combo
+    const words = query.split(/[\s,;]+/).filter((w) => w.length > 1);
+    if (words.length === 0) return [];
+
+    // Build candidate names: individual words + 2-grams + 3-grams
+    const candidates: string[] = [];
+    for (const w of words) {
+      if (w.length >= 3 && /^[A-Z]/.test(w)) candidates.push(w);
+    }
+    for (let i = 0; i < words.length - 1; i++) {
+      candidates.push(`${words[i]} ${words[i + 1]}`);
+    }
+    for (let i = 0; i < words.length - 2; i++) {
+      candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+    }
+    // Also try the full query itself
+    if (query.trim().length > 2) candidates.push(query.trim());
+
+    if (candidates.length === 0) return [];
+
+    // Try to match any candidate against entity aliases
+    const entityIds: string[] = [];
+    for (const candidate of candidates.slice(0, 10)) {
+      const lowerCandidate = candidate.toLowerCase();
+      const matchResult = await db.execute(sql`
+        SELECT DISTINCT e.id
+        FROM entities e
+        JOIN entity_aliases ea ON e.id = ea.entity_id
+        WHERE ea.alias_lower = ${lowerCandidate}
+           OR (ea.alias_lower % ${lowerCandidate} AND similarity(ea.alias_lower, ${lowerCandidate}) > 0.5)
+        LIMIT 3
+      `);
+      const matchRows = ((matchResult as any).rows ?? matchResult) as Array<{ id: string }>;
+      for (const row of matchRows) {
+        if (!entityIds.includes(row.id)) entityIds.push(row.id);
+      }
+    }
+
+    if (entityIds.length === 0) return [];
+
+    // Fetch linked memories
+    const privacyFilter = currentUserId
+      ? sql`AND (
+          m.source_channel_type != 'dm'
+          OR m.shareable = 1
+          OR m.related_user_ids @> ARRAY[${currentUserId}]::text[]
+        )`
+      : sql``;
+
+    const memoryResult = await db.execute(sql`
+      SELECT DISTINCT m.*
+      FROM memories m
+      JOIN memory_entities me ON m.id = me.memory_id
+      WHERE me.entity_id = ANY(${entityIds})
+        AND m.relevance_score >= ${minRelevanceScore}
+        ${privacyFilter}
+      ORDER BY m.relevance_score DESC, m.created_at DESC
+      LIMIT 50
+    `);
+
+    const rows = ((memoryResult as any).rows ?? memoryResult) as Array<Record<string, any>>;
+    return rows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      content: row.content,
+      type: row.type,
+      sourceMessageId: row.source_message_id ?? null,
+      sourceChannelType: row.source_channel_type,
+      relatedUserIds: row.related_user_ids ?? [],
+      embedding: row.embedding,
+      relevanceScore: row.relevance_score ?? 1,
+      shareable: row.shareable ?? 0,
+      searchVector: row.search_vector ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })) as Memory[];
+  } catch (error) {
+    logger.warn("Entity-first retrieval failed, falling back to hybrid search only", {
+      error: String(error),
+      query: query.substring(0, 100),
+    });
+    return [];
+  }
+}
+
+/**
  * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
  *
  * Flow:
+ * 0. Entity-first retrieval: resolve entity names from the query via aliases, fetch linked memories
  * 1. Embed the user's message
  * 2. Extract up to 8 positional lexemes from Postgres full-text parsing
  * 3. Run hybrid SQL: pgvector + per-term full-text lanes merged by best rank
  * 4. Fuse results via Reciprocal Rank Fusion (RRF) with FULL OUTER JOIN
- * 5. Rerank top candidates with Cohere (or fall back to legacy scoring)
- * 6. Return top-K memories
+ * 5. Merge entity-matched + hybrid results, apply entity boost
+ * 6. Rerank top candidates with Cohere (or fall back to legacy scoring)
+ * 7. Return top-K memories
  */
 export async function retrieveMemories(
   options: RetrievalOptions,
@@ -70,9 +167,10 @@ export async function retrieveMemories(
   const start = Date.now();
 
   try {
-    const [queryEmbedding, lexemes] = await Promise.all([
+    const [queryEmbedding, lexemes, entityMemories] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
       extractLexemes(query),
+      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId),
     ]);
 
     const CANDIDATE_POOL_SIZE = Math.max(25, limit);
@@ -168,14 +266,14 @@ export async function retrieveMemories(
     const executeResult = await db.execute(hybridQuery);
     const rawResults = ((executeResult as any).rows ?? executeResult) as Array<Record<string, any>>;
 
-    if (rawResults.length === 0) {
+    if (rawResults.length === 0 && entityMemories.length === 0) {
       logger.info(`No memory candidates found in ${Date.now() - start}ms`);
       return [];
     }
 
     // NOTE: manual mapping required because hybrid SQL CTEs bypass Drizzle's auto-mapping.
     // If the memories schema changes, update this mapping to match.
-    const results = rawResults.map((row) => ({
+    const hybridResults = rawResults.map((row) => ({
       memory: {
         id: row.id,
         content: row.content,
@@ -193,6 +291,33 @@ export async function retrieveMemories(
       similarity: Number(row.similarity ?? 0),
       rrfScore: Number(row.rrf_score ?? 0),
     }));
+
+    // Merge entity-matched memories with high base RRF score so they rank above embedding-only matches
+    const ENTITY_RRF_BOOST = 0.05;
+    const hybridIds = new Set(hybridResults.map((r) => r.memory.id));
+    const entityOnlyMemories = entityMemories
+      .filter((m) => !hybridIds.has(m.id))
+      .map((m) => ({
+        memory: m,
+        similarity: 0,
+        rrfScore: ENTITY_RRF_BOOST,
+      }));
+
+    // Boost hybrid results that also have entity matches
+    const entityMatchedIds = new Set(entityMemories.map((m) => m.id));
+    for (const r of hybridResults) {
+      if (entityMatchedIds.has(r.memory.id)) {
+        r.rrfScore += ENTITY_RRF_BOOST;
+      }
+    }
+
+    const results = [...hybridResults, ...entityOnlyMemories];
+
+    if (entityMemories.length > 0) {
+      logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
+        query: query.substring(0, 100),
+      });
+    }
 
     const rerankingModel = await getRerankingModel();
     const now = Date.now();
