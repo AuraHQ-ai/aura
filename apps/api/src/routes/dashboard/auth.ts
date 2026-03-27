@@ -1,6 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, sql } from "drizzle-orm";
-import { userProfiles } from "@aura/db/schema";
+import { users } from "@aura/db/schema";
+const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";

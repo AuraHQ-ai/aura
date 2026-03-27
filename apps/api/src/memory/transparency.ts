@@ -1,6 +1,7 @@
 import { eq, sql, and, like, or, arrayContains } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { memories, userProfiles, type Memory } from "@aura/db/schema";
+import { memories, users, type Memory } from "@aura/db/schema";
+const userProfiles = users;
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
 

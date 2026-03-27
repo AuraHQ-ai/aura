@@ -4,9 +4,10 @@ import {
   credentials,
   credentialGrants,
   credentialAuditLog,
-  userProfiles,
+  users,
   type Credential,
 } from "@aura/db/schema";
+const userProfiles = users;
 import { encryptCredential, decryptCredential } from "./credentials.js";
 import { logger } from "./logger.js";
 

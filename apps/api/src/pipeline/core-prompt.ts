@@ -12,7 +12,7 @@ import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
-import { people } from "@aura/db/schema";
+import { users } from "@aura/db/schema";
 import { db } from "../db/client.js";
 import { inArray, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -246,20 +246,20 @@ export async function lookupPerson(
   slackUserId: string,
 ): Promise<PersonProfile | null> {
   try {
-    const manager = alias(people, "manager");
+    const manager = alias(users, "manager");
     const rows = await db
       .select({
-        slackUserId: people.slackUserId,
-        displayName: people.displayName,
-        gender: people.gender,
-        preferredLanguage: people.preferredLanguage,
-        jobTitle: people.jobTitle,
+        slackUserId: users.slackUserId,
+        displayName: users.displayName,
+        gender: users.gender,
+        preferredLanguage: users.preferredLanguage,
+        jobTitle: users.jobTitle,
         managerName: manager.displayName,
-        notes: people.notes,
+        notes: users.notes,
       })
-      .from(people)
-      .leftJoin(manager, eq(people.managerId, manager.id))
-      .where(eq(people.slackUserId, slackUserId))
+      .from(users)
+      .leftJoin(manager, eq(users.managerId, manager.slackUserId))
+      .where(eq(users.slackUserId, slackUserId))
       .limit(1);
 
     const r = rows[0];
@@ -288,20 +288,20 @@ export async function lookupMentionedPeople(
   if (slackUserIds.length === 0) return [];
 
   try {
-    const manager = alias(people, "manager");
+    const manager = alias(users, "manager");
     const rows = await db
       .select({
-        slackUserId: people.slackUserId,
-        displayName: people.displayName,
-        gender: people.gender,
-        preferredLanguage: people.preferredLanguage,
-        jobTitle: people.jobTitle,
+        slackUserId: users.slackUserId,
+        displayName: users.displayName,
+        gender: users.gender,
+        preferredLanguage: users.preferredLanguage,
+        jobTitle: users.jobTitle,
         managerName: manager.displayName,
-        notes: people.notes,
+        notes: users.notes,
       })
-      .from(people)
-      .leftJoin(manager, eq(people.managerId, manager.id))
-      .where(inArray(people.slackUserId, slackUserIds));
+      .from(users)
+      .leftJoin(manager, eq(users.managerId, manager.slackUserId))
+      .where(inArray(users.slackUserId, slackUserIds));
 
     return rows
       .filter(

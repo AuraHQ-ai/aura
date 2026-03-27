@@ -3,11 +3,12 @@ import { count, desc, eq, gte } from "drizzle-orm";
 import {
   notes,
   memories,
-  userProfiles,
+  users,
   jobs,
   errorEvents,
   jobExecutions,
 } from "@aura/db/schema";
+const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";

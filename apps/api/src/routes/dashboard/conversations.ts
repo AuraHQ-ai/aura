@@ -6,8 +6,9 @@ import {
   conversationParts,
   jobs,
   jobExecutions,
-  userProfiles,
+  users,
 } from "@aura/db/schema";
+const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
