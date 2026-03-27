@@ -8,7 +8,6 @@ import {
   jobExecutions,
   users,
 } from "@aura/db/schema";
-const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
@@ -126,9 +125,9 @@ dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
     let userNames: Record<string, string> = {};
     if (userIds.length > 0) {
       const profileRows = await db
-        .select({ slackUserId: userProfiles.slackUserId, displayName: userProfiles.displayName })
-        .from(userProfiles)
-        .where(sql`${userProfiles.slackUserId} IN ${userIds}`);
+        .select({ slackUserId: users.slackUserId, displayName: users.displayName })
+        .from(users)
+        .where(sql`${users.slackUserId} IN ${userIds}`);
       userNames = Object.fromEntries(profileRows.map((r) => [r.slackUserId, r.displayName]));
     }
 
@@ -296,9 +295,9 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
     let userNames: Record<string, string> = {};
     if (userIds.length > 0) {
       const profileRows = await db
-        .select({ slackUserId: userProfiles.slackUserId, displayName: userProfiles.displayName })
-        .from(userProfiles)
-        .where(sql`${userProfiles.slackUserId} IN ${userIds}`);
+        .select({ slackUserId: users.slackUserId, displayName: users.displayName })
+        .from(users)
+        .where(sql`${users.slackUserId} IN ${userIds}`);
       userNames = Object.fromEntries(profileRows.map((r) => [r.slackUserId, r.displayName]));
     }
 
@@ -470,9 +469,9 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
     let participantNames: Record<string, string> = {};
     if (participants.length > 0) {
       const profileRows = await db
-        .select({ slackUserId: userProfiles.slackUserId, displayName: userProfiles.displayName })
-        .from(userProfiles)
-        .where(sql`${userProfiles.slackUserId} IN ${participants}`);
+        .select({ slackUserId: users.slackUserId, displayName: users.displayName })
+        .from(users)
+        .where(sql`${users.slackUserId} IN ${participants}`);
       participantNames = Object.fromEntries(profileRows.map((r) => [r.slackUserId, r.displayName]));
     }
 

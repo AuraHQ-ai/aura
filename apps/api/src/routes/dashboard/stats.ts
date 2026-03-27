@@ -8,7 +8,6 @@ import {
   errorEvents,
   jobExecutions,
 } from "@aura/db/schema";
-const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
@@ -59,7 +58,7 @@ dashboardStatsApp.openapi(getStatsRoute, async (c) => {
     ] = await Promise.all([
       db.select({ value: count() }).from(notes),
       db.select({ value: count() }).from(memories),
-      db.select({ value: count() }).from(userProfiles),
+      db.select({ value: count() }).from(users),
       db.select({ value: count() }).from(jobs).where(eq(jobs.enabled, 1)),
       db
         .select({ value: count() })

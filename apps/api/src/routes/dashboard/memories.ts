@@ -1,7 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, count, inArray, sql } from "drizzle-orm";
 import { memories, users } from "@aura/db/schema";
-const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, idParamSchema, createDashboardApp } from "./schemas.js";
@@ -151,12 +150,12 @@ dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
     if (memory.relatedUserIds.length > 0) {
       relatedUsers = await db
         .select({
-          id: userProfiles.id,
-          slackUserId: userProfiles.slackUserId,
-          displayName: userProfiles.displayName,
+          id: users.id,
+          slackUserId: users.slackUserId,
+          displayName: users.displayName,
         })
-        .from(userProfiles)
-        .where(inArray(userProfiles.slackUserId, memory.relatedUserIds));
+        .from(users)
+        .where(inArray(users.slackUserId, memory.relatedUserIds));
     }
 
     return c.json({ ...memory, relatedUsers } as any, 200);

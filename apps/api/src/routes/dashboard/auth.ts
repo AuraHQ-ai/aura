@@ -1,7 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, sql } from "drizzle-orm";
 import { users } from "@aura/db/schema";
-const userProfiles = users;
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
@@ -36,9 +35,9 @@ export async function checkUserRole(
   name?: string,
 ): Promise<{ allowed: boolean; role?: string; reason?: string; bootstrapped?: boolean }> {
   const existing = await db
-    .select({ role: userProfiles.role })
-    .from(userProfiles)
-    .where(eq(userProfiles.slackUserId, slackUserId))
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.slackUserId, slackUserId))
     .limit(1);
 
   if (existing.length > 0) {
@@ -54,25 +53,25 @@ export async function checkUserRole(
 
     const adminCount = await tx
       .select({ count: sql<number>`count(*)::int` })
-      .from(userProfiles)
-      .where(eq(userProfiles.role, "admin"));
+      .from(users)
+      .where(eq(users.role, "admin"));
 
     if ((adminCount[0]?.count ?? 0) > 0) {
       return null;
     }
 
     const inserted = await tx
-      .insert(userProfiles)
+      .insert(users)
       .values({
         slackUserId,
         displayName: name || "Admin",
         role: "admin",
       })
       .onConflictDoUpdate({
-        target: [userProfiles.workspaceId, userProfiles.slackUserId],
+        target: [users.workspaceId, users.slackUserId],
         set: { role: "admin", updatedAt: new Date() },
       })
-      .returning({ role: userProfiles.role });
+      .returning({ role: users.role });
 
     return inserted[0]?.role ?? "admin";
   });
