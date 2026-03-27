@@ -25,10 +25,12 @@ import { Route as ConsumptionIndexRouteImport } from "./routes/consumption/index
 import { Route as UsersSlackUserIdRouteImport } from "./routes/users/$slackUserId"
 import { Route as ResourcesIdRouteImport } from "./routes/resources/$id"
 import { Route as NotesIdRouteImport } from "./routes/notes/$id"
+import { Route as MemoriesEntitiesRouteImport } from "./routes/memories/entities"
 import { Route as MemoriesIdRouteImport } from "./routes/memories/$id"
 import { Route as JobsIdRouteImport } from "./routes/jobs/$id"
 import { Route as ErrorsIdRouteImport } from "./routes/errors/$id"
 import { Route as CredentialsIdRouteImport } from "./routes/credentials/$id"
+import { Route as ConversationsInvocationsRouteImport } from "./routes/conversations/invocations"
 import { Route as ConversationsIdRouteImport } from "./routes/conversations/$id"
 import { Route as ConversationsThreadsChannelIdThreadTsRouteImport } from "./routes/conversations/threads.$channelId.$threadTs"
 
@@ -112,6 +114,11 @@ const NotesIdRoute = NotesIdRouteImport.update({
   path: "/notes/$id",
   getParentRoute: () => rootRouteImport,
 } as any)
+const MemoriesEntitiesRoute = MemoriesEntitiesRouteImport.update({
+  id: "/memories/entities",
+  path: "/memories/entities",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MemoriesIdRoute = MemoriesIdRouteImport.update({
   id: "/memories/$id",
   path: "/memories/$id",
@@ -132,6 +139,12 @@ const CredentialsIdRoute = CredentialsIdRouteImport.update({
   path: "/credentials/$id",
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConversationsInvocationsRoute =
+  ConversationsInvocationsRouteImport.update({
+    id: "/conversations/invocations",
+    path: "/conversations/invocations",
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ConversationsIdRoute = ConversationsIdRouteImport.update({
   id: "/conversations/$id",
   path: "/conversations/$id",
@@ -149,10 +162,12 @@ export interface FileRoutesByFullPath {
   "/login": typeof LoginRoute
   "/unauthorized": typeof UnauthorizedRoute
   "/conversations/$id": typeof ConversationsIdRoute
+  "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
+  "/memories/entities": typeof MemoriesEntitiesRoute
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
@@ -173,10 +188,12 @@ export interface FileRoutesByTo {
   "/login": typeof LoginRoute
   "/unauthorized": typeof UnauthorizedRoute
   "/conversations/$id": typeof ConversationsIdRoute
+  "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
+  "/memories/entities": typeof MemoriesEntitiesRoute
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
@@ -198,10 +215,12 @@ export interface FileRoutesById {
   "/login": typeof LoginRoute
   "/unauthorized": typeof UnauthorizedRoute
   "/conversations/$id": typeof ConversationsIdRoute
+  "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
+  "/memories/entities": typeof MemoriesEntitiesRoute
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
@@ -224,10 +243,12 @@ export interface FileRouteTypes {
     | "/login"
     | "/unauthorized"
     | "/conversations/$id"
+    | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
     | "/jobs/$id"
     | "/memories/$id"
+    | "/memories/entities"
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
@@ -248,10 +269,12 @@ export interface FileRouteTypes {
     | "/login"
     | "/unauthorized"
     | "/conversations/$id"
+    | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
     | "/jobs/$id"
     | "/memories/$id"
+    | "/memories/entities"
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
@@ -272,10 +295,12 @@ export interface FileRouteTypes {
     | "/login"
     | "/unauthorized"
     | "/conversations/$id"
+    | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
     | "/jobs/$id"
     | "/memories/$id"
+    | "/memories/entities"
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
@@ -297,10 +322,12 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   UnauthorizedRoute: typeof UnauthorizedRoute
   ConversationsIdRoute: typeof ConversationsIdRoute
+  ConversationsInvocationsRoute: typeof ConversationsInvocationsRoute
   CredentialsIdRoute: typeof CredentialsIdRoute
   ErrorsIdRoute: typeof ErrorsIdRoute
   JobsIdRoute: typeof JobsIdRoute
   MemoriesIdRoute: typeof MemoriesIdRoute
+  MemoriesEntitiesRoute: typeof MemoriesEntitiesRoute
   NotesIdRoute: typeof NotesIdRoute
   ResourcesIdRoute: typeof ResourcesIdRoute
   UsersSlackUserIdRoute: typeof UsersSlackUserIdRoute
@@ -431,6 +458,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof NotesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/memories/entities": {
+      id: "/memories/entities"
+      path: "/memories/entities"
+      fullPath: "/memories/entities"
+      preLoaderRoute: typeof MemoriesEntitiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/memories/$id": {
       id: "/memories/$id"
       path: "/memories/$id"
@@ -459,6 +493,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof CredentialsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/conversations/invocations": {
+      id: "/conversations/invocations"
+      path: "/conversations/invocations"
+      fullPath: "/conversations/invocations"
+      preLoaderRoute: typeof ConversationsInvocationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/conversations/$id": {
       id: "/conversations/$id"
       path: "/conversations/$id"
@@ -481,10 +522,12 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   UnauthorizedRoute: UnauthorizedRoute,
   ConversationsIdRoute: ConversationsIdRoute,
+  ConversationsInvocationsRoute: ConversationsInvocationsRoute,
   CredentialsIdRoute: CredentialsIdRoute,
   ErrorsIdRoute: ErrorsIdRoute,
   JobsIdRoute: JobsIdRoute,
   MemoriesIdRoute: MemoriesIdRoute,
+  MemoriesEntitiesRoute: MemoriesEntitiesRoute,
   NotesIdRoute: NotesIdRoute,
   ResourcesIdRoute: ResourcesIdRoute,
   UsersSlackUserIdRoute: UsersSlackUserIdRoute,

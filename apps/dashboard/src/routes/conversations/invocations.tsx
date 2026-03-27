@@ -25,21 +25,23 @@ import { cn, formatDate, truncate } from "@/lib/utils";
 import { useState } from "react";
 import { Search, MessageSquare, Zap } from "lucide-react";
 
-interface ThreadRow {
-  channelId: string;
-  threadTs: string;
-  traceCount: number;
-  totalCostUsd: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  firstTraceAt: string;
-  lastTraceAt: string;
+interface ConversationRow {
+  id: string;
+  sourceType: string;
+  sourceLabel: string;
+  modelId: string | null;
+  tokenUsage: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  } | null;
+  costUsd: string | null;
+  messageCount: number;
+  createdAt: string;
+  channelId: string | null;
   userId: string | null;
   resolvedName: string | null;
   messagePreview: string | null;
-  firstTraceId: string;
-  sourceType: string;
 }
 
 const PAGE_SIZE = 25;
@@ -51,20 +53,20 @@ function formatPreview(name: string | null, preview: string | null): string {
   return `${displayName} · "${truncated}"`;
 }
 
-function ConversationsPage() {
+function InvocationsPage() {
   const [search, setSearch] = useState("");
   const [sourceType, setSourceType] = useState("all");
   const [page, setPage] = useState(1);
 
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ["conversations", "threads", search, sourceType, page],
+    queryKey: ["conversations", "invocations", search, sourceType, page],
     queryFn: () => {
       const params = new URLSearchParams();
       if (sourceType !== "all") params.set("sourceType", sourceType);
       if (search) params.set("search", search);
       params.set("page", String(page));
       params.set("limit", String(PAGE_SIZE));
-      return apiGet<{ items: ThreadRow[]; total: number }>(`/conversations/threads?${params}`);
+      return apiGet<{ items: ConversationRow[]; total: number }>(`/conversations?${params}`);
     },
     placeholderData: keepPreviousData,
   });
@@ -76,7 +78,7 @@ function ConversationsPage() {
       </div>
     );
 
-  const threads = data?.items ?? [];
+  const conversations = data?.items ?? [];
   const total = data?.total ?? 0;
 
   return (
@@ -127,72 +129,71 @@ function ConversationsPage() {
 
       <div className={cn("flex-1 min-h-0 flex flex-col transition-opacity", isFetching && !isLoading && "opacity-50")}>
         <div className="flex-1 min-h-0 rounded-xl border overflow-auto">
-          <Table className="min-w-[860px]">
+          <Table className="min-w-[850px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[160px]">Started</TableHead>
-                <TableHead className="w-[160px]">Last Active</TableHead>
+                <TableHead className="w-[160px]">Timestamp</TableHead>
                 <TableHead className="w-[80px]">Source</TableHead>
                 <TableHead>Preview</TableHead>
-                <TableHead className="w-[80px]">Messages</TableHead>
+                <TableHead className="w-[160px]">Model</TableHead>
                 <TableHead className="w-[90px]">Cost</TableHead>
                 <TableHead className="w-[140px]">Tokens</TableHead>
+                <TableHead className="w-[60px]">Steps</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRowsSkeleton columns={7} />
-              ) : threads.map((thread) => (
-                <TableRow key={`${thread.channelId}::${thread.threadTs}`}>
+              ) : conversations.map((conv) => (
+                <TableRow key={conv.id}>
                   <TableCell className="text-sm text-muted-foreground">
                     <Link
-                      to="/conversations/threads/$channelId/$threadTs"
-                      params={{
-                        channelId: thread.channelId,
-                        threadTs: thread.threadTs,
-                      }}
+                      to="/conversations/$id"
+                      params={{ id: conv.id }}
                       className="hover:underline"
                     >
-                      {formatDate(thread.firstTraceAt)}
+                      {formatDate(conv.createdAt)}
                     </Link>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {formatDate(thread.lastTraceAt)}
                   </TableCell>
                   <TableCell>
                     <Badge
                       variant={
-                        thread.sourceType === "interactive" ? "default" : "secondary"
+                        conv.sourceType === "interactive" ? "default" : "secondary"
                       }
                     >
-                      {thread.sourceType === "job_execution" ? "job" : "interactive"}
+                      {conv.sourceType === "job_execution" ? "job" : "interactive"}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {formatPreview(thread.resolvedName, thread.messagePreview)}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {thread.traceCount}
+                    {conv.sourceType === "job_execution"
+                      ? conv.sourceLabel
+                      : formatPreview(conv.resolvedName, conv.messagePreview)}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground font-mono">
-                    {thread.totalCostUsd > 0
-                      ? `$${thread.totalCostUsd.toFixed(4)}`
+                    {conv.modelId ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground font-mono">
+                    {conv.costUsd
+                      ? `$${parseFloat(conv.costUsd).toFixed(4)}`
                       : "—"}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {thread.totalTokens > 0
-                      ? `${thread.inputTokens.toLocaleString()} / ${thread.outputTokens.toLocaleString()}`
+                    {conv.tokenUsage
+                      ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
                       : "—"}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {conv.messageCount}
                   </TableCell>
                 </TableRow>
               ))}
-              {!isLoading && threads.length === 0 && (
+              {!isLoading && conversations.length === 0 && (
                 <TableRow>
                   <TableCell
                     colSpan={7}
                     className="text-center text-muted-foreground py-8"
                   >
-                    No threads found
+                    No conversations found
                   </TableCell>
                 </TableRow>
               )}
@@ -206,6 +207,6 @@ function ConversationsPage() {
   );
 }
 
-export const Route = createFileRoute("/conversations/")({
-  component: ConversationsPage,
+export const Route = createFileRoute("/conversations/invocations")({
+  component: InvocationsPage,
 });

@@ -65,7 +65,7 @@ function NavContent({ onClose, showLabels }: { onClose?: () => void; showLabels?
                   : "text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
               )}
             >
-              <item.icon className="h-[20px] w-[20px] shrink-0" />
+              <item.icon className="h-[20px] w-[20px] shrink-0" strokeWidth="1.75" />
               {showLabels && item.label}
             </Link>
           );

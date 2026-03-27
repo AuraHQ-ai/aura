@@ -12,6 +12,7 @@ import { dashboardResourcesApp } from "./resources.js";
 import { dashboardConsumptionApp } from "./consumption.js";
 import { dashboardSettingsApp } from "./settings.js";
 import { dashboardModelsApp } from "./models.js";
+import { dashboardEntitiesApp } from "./entities.js";
 import { createDashboardApp } from "./schemas.js";
 import { jwtVerify } from "jose";
 
@@ -73,6 +74,7 @@ dashboardApp.route("/resources", dashboardResourcesApp);
 dashboardApp.route("/consumption", dashboardConsumptionApp);
 dashboardApp.route("/settings", dashboardSettingsApp);
 dashboardApp.route("/models", dashboardModelsApp);
+dashboardApp.route("/entities", dashboardEntitiesApp);
 
 dashboardApp.doc31("/openapi.json", {
   openapi: "3.1.0",

@@ -1,71 +1,62 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { apiGet, apiDelete } from "@/lib/api";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import { apiGet } from "@/lib/api";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { RouteTabs } from "@/components/route-tabs";
 import { cn, formatDate, truncate } from "@/lib/utils";
 import { useEffect, useState } from "react";
-import { Search, Trash2, Brain, Network } from "lucide-react";
+import { Search, Brain, Network } from "lucide-react";
 
-interface Memory {
+interface Entity {
   id: string;
-  content: string;
   type: string;
-  relevanceScore: number;
-  shareable: number;
+  canonicalName: string;
+  description: string | null;
+  slackUserId: string | null;
+  memoryCount: number;
+  aliasCount: number;
   createdAt: string;
+  updatedAt: string;
 }
 
 const PAGE_SIZE = 100;
-const MEMORY_TYPES = ["fact", "decision", "personal", "relationship", "sentiment", "open_thread"] as const;
+const ENTITY_TYPES = ["person", "project", "team", "tool", "concept", "company", "place"] as const;
 
-type MemoriesSearch = { search?: string; type?: string; page?: number };
+type EntitiesSearch = { search?: string; type?: string; page?: number };
 
-function MemoriesPage() {
-  const queryClient = useQueryClient();
+function EntitiesPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const { search, type, page } = Route.useSearch();
   const [searchInput, setSearchInput] = useState(search ?? "");
-  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     setSearchInput(search ?? "");
   }, [search]);
 
-  const setParams = (updates: Partial<MemoriesSearch>) => {
+  const setParams = (updates: Partial<EntitiesSearch>) => {
     navigate({ search: (prev) => ({ ...prev, ...updates }) });
   };
 
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ["memories", search, type, page],
+    queryKey: ["entities", search, type, page],
     queryFn: () => {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
       if (type) params.set("type", type);
       params.set("page", String(page ?? 1));
       params.set("limit", String(PAGE_SIZE));
-      return apiGet<{ items: Memory[]; total: number }>(`/memories?${params}`);
+      return apiGet<{ items: Entity[]; total: number }>(`/entities?${params}`);
     },
     placeholderData: keepPreviousData,
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiDelete(`/memories/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["memories"] });
-      setDeleteId(null);
-    },
-  });
+  if (error && !data) return <div className="text-destructive text-sm">Failed to load entities: {error.message}</div>;
 
-  if (error && !data) return <div className="text-destructive text-sm">Failed to load memories: {error.message}</div>;
-
-  const memories = data?.items ?? [];
+  const entities = data?.items ?? [];
   const total = data?.total ?? 0;
 
   return (
@@ -87,7 +78,7 @@ function MemoriesPage() {
         <form onSubmit={(e) => { e.preventDefault(); setParams({ search: searchInput || undefined, page: undefined }); }} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search memories (press Enter)..."
+            placeholder="Search entities..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             className="pl-9"
@@ -99,48 +90,47 @@ function MemoriesPage() {
           className="h-8 rounded-md border border-input bg-transparent px-2.5 text-[13px]"
         >
           <option value="">All types</option>
-          {MEMORY_TYPES.map((t) => (
+          {ENTITY_TYPES.map((t) => (
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
       </div>
 
       <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table className="min-w-[600px]">
+        <Table className="min-w-[700px]">
           <TableHeader>
             <TableRow>
-              <TableHead>Content</TableHead>
+              <TableHead>Name</TableHead>
               <TableHead className="w-[90px]">Type</TableHead>
-              <TableHead className="w-[80px]">Relevance</TableHead>
-              <TableHead className="w-[80px]">Shareable</TableHead>
-              <TableHead className="w-[160px]">Created</TableHead>
-              <TableHead className="w-10" />
+              <TableHead>Description</TableHead>
+              <TableHead className="w-[90px]">Memories</TableHead>
+              <TableHead className="w-[80px]">Aliases</TableHead>
+              <TableHead className="w-[160px]">Updated</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRowsSkeleton columns={6} />
-            ) : memories.length === 0 ? (
+            ) : entities.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No memories found</TableCell>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No entities found</TableCell>
               </TableRow>
             ) : (
-              memories.map((memory) => (
-                <TableRow key={memory.id}>
-                  <TableCell>
-                    <Link to="/memories/$id" params={{ id: memory.id }} className="hover:underline">
-                      {truncate(memory.content, 80)}
-                    </Link>
+              entities.map((entity) => (
+                <TableRow key={entity.id}>
+                  <TableCell className="font-medium">
+                    {entity.canonicalName}
+                    {entity.slackUserId && (
+                      <span className="ml-1.5 text-xs text-muted-foreground font-mono">{entity.slackUserId}</span>
+                    )}
                   </TableCell>
-                  <TableCell><Badge variant="secondary">{memory.type}</Badge></TableCell>
-                  <TableCell>{memory.relevanceScore?.toFixed(2) ?? "—"}</TableCell>
-                  <TableCell>{memory.shareable ? "Yes" : "No"}</TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{formatDate(memory.createdAt)}</TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="icon-sm" onClick={() => setDeleteId(memory.id)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
+                  <TableCell><Badge variant="secondary">{entity.type}</Badge></TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {entity.description ? truncate(entity.description, 60) : "—"}
                   </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{entity.memoryCount}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{entity.aliasCount}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm">{formatDate(entity.updatedAt)}</TableCell>
                 </TableRow>
               ))
             )}
@@ -149,31 +139,12 @@ function MemoriesPage() {
       </div>
 
       <Pagination total={total} pageSize={PAGE_SIZE} page={page ?? 1} onPageChange={(p) => setParams({ page: p > 1 ? p : undefined })} />
-
-      <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Memory</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">This action cannot be undone.</p>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
-            <Button
-              variant="destructive"
-              onClick={() => deleteId && deleteMutation.mutate(deleteId)}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
 
-export const Route = createFileRoute("/memories/")({
-  component: MemoriesPage,
+export const Route = createFileRoute("/memories/entities")({
+  component: EntitiesPage,
   validateSearch: (raw: Record<string, unknown>) => ({
     search: typeof raw.search === "string" ? raw.search : undefined,
     type: typeof raw.type === "string" ? raw.type : undefined,
