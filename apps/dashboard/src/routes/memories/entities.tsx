@@ -24,7 +24,7 @@ interface Entity {
 }
 
 const PAGE_SIZE = 100;
-const ENTITY_TYPES = ["person", "project", "team", "tool", "concept", "company", "place"] as const;
+const ENTITY_TYPES = ["person", "company", "project", "product", "channel", "technology"] as const;
 
 type EntitiesSearch = { search?: string; type?: string; page?: number };
 
