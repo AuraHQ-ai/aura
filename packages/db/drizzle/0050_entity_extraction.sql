@@ -85,12 +85,12 @@ ON CONFLICT ("workspace_id", "type", lower("canonical_name")) DO NOTHING;--> sta
 
 -- Link users to their entities
 UPDATE "users" u SET "entity_id" = e."id"
-FROM "entities" e WHERE e."slack_user_id" = u."slack_user_id";--> statement-breakpoint
+FROM "entities" e WHERE e."slack_user_id" = u."slack_user_id" AND e."workspace_id" = u."workspace_id";--> statement-breakpoint
 
 -- Seed initial aliases from display names
 INSERT INTO "entity_aliases" ("entity_id", "alias", "source")
 SELECT e."id", u."display_name", 'slack_profile'
-FROM "users" u JOIN "entities" e ON e."slack_user_id" = u."slack_user_id"
+FROM "users" u JOIN "entities" e ON e."slack_user_id" = u."slack_user_id" AND e."workspace_id" = u."workspace_id"
 WHERE u."display_name" IS NOT NULL;--> statement-breakpoint
 
 -- Drop people table (addresses FK is now via user_id)

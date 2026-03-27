@@ -1,7 +1,7 @@
-import { sql, or, inArray } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { rerank } from "ai";
 import { db } from "../db/client.js";
-import { memories, messages, entities, entityAliases, memoryEntities, type Memory } from "@aura/db/schema";
+import { memories, messages, type Memory } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getRerankingModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
