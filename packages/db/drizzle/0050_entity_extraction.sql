@@ -60,6 +60,7 @@ WHERE p."slack_user_id" = up."slack_user_id";--> statement-breakpoint
 
 -- Add user_id column to addresses (new FK to user_profiles)
 ALTER TABLE "addresses" ADD COLUMN "user_id" UUID REFERENCES "user_profiles"("id");--> statement-breakpoint
+CREATE INDEX "addresses_user_id_idx" ON "addresses" ("user_id");--> statement-breakpoint
 
 -- Populate addresses.user_id from the existing people→user_profiles link
 UPDATE "addresses" a SET "user_id" = up."id"
@@ -73,11 +74,14 @@ ALTER TABLE "addresses" ALTER COLUMN "person_id" DROP NOT NULL;--> statement-bre
 -- Rename user_profiles to users
 ALTER TABLE "user_profiles" RENAME TO "users";--> statement-breakpoint
 
--- Seed entities from existing users
+-- Seed entities from existing users (skip duplicates from same-name users in a workspace)
 INSERT INTO "entities" ("workspace_id", "type", "canonical_name", "slack_user_id")
-SELECT "workspace_id", 'person', "display_name", "slack_user_id"
+SELECT DISTINCT ON ("workspace_id", lower("display_name"))
+  "workspace_id", 'person', "display_name", "slack_user_id"
 FROM "users"
-WHERE "slack_user_id" IS NOT NULL;--> statement-breakpoint
+WHERE "slack_user_id" IS NOT NULL
+ORDER BY "workspace_id", lower("display_name"), "interaction_count" DESC NULLS LAST
+ON CONFLICT ("workspace_id", "type", lower("canonical_name")) DO NOTHING;--> statement-breakpoint
 
 -- Link users to their entities
 UPDATE "users" u SET "entity_id" = e."id"

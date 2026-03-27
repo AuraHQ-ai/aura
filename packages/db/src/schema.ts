@@ -281,6 +281,7 @@ export const addresses = pgTable(
   (table) => [
     uniqueIndex("addresses_workspace_channel_value_idx").on(table.workspaceId, table.channel, table.value),
     index("addresses_person_id_idx").on(table.personId),
+    index("addresses_user_id_idx").on(table.userId),
   ],
 );
 

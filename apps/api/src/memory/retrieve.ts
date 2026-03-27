@@ -378,7 +378,7 @@ export async function retrieveMemories(
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
-        const normalizedRrf = maxRrfScore > 0 ? rrfScore / maxRrfScore : 0;
+        const normalizedRrf = maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
         const score =
           normalizedRrf * 0.5 +
           similarity * 0.2 +
