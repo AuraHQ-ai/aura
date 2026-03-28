@@ -227,6 +227,8 @@ interface ExtractionContext {
   userId: string;
   channelType: ChannelType | DbChannelType;
   sourceMessageId?: string;
+  sourceThreadTs?: string;
+  sourceChannelId?: string;
   displayName?: string;
 }
 
@@ -322,6 +324,8 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       category: normalizedMemories[i].category,
       workspaceId,
       sourceMessageId: context.sourceMessageId || undefined,
+      sourceThreadTs: context.sourceThreadTs || undefined,
+      sourceChannelId: context.sourceChannelId || undefined,
       sourceChannelType: toDbChannelType(context.channelType),
       relatedUserIds: normalizedMemories[i].relatedUserIds.length > 0
         ? normalizedMemories[i].relatedUserIds

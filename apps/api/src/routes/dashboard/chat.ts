@@ -468,6 +468,7 @@ async function persistDashboardConversation(params: {
       assistantResponse: assistantText,
       userId,
       channelType: "dashboard",
+      sourceChannelId: "dashboard",
     });
 
     const traceId = await createConversationTrace({

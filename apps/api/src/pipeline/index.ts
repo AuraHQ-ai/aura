@@ -845,6 +845,8 @@ async function runBackgroundTasks(params: {
       userId: context.userId,
       channelType: context.channelType,
       sourceMessageId: userMessageId || undefined,
+      sourceThreadTs: context.threadTs || context.messageTs,
+      sourceChannelId: context.channelId,
       displayName,
     });
 

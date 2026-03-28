@@ -114,6 +114,8 @@ export const memories = pgTable(
     type: memoryTypeEnum("type").notNull(),
     category: text("category").notNull().default("semantic"),
     sourceMessageId: uuid("source_message_id").references(() => messages.id),
+    sourceThreadTs: text("source_thread_ts"),
+    sourceChannelId: text("source_channel_id"),
     sourceChannelType: channelTypeEnum("source_channel_type").notNull(),
     relatedUserIds: text("related_user_ids")
       .array()
@@ -134,6 +136,7 @@ export const memories = pgTable(
     index("memories_related_users_idx").using("gin", table.relatedUserIds),
     index("memories_type_idx").on(table.type),
     index("memories_created_at_idx").on(table.createdAt),
+    index("memories_source_channel_id_idx").on(table.sourceChannelId),
     index("memories_search_vector_idx").using(
       "gin",
       sql`${table.searchVector}`,
