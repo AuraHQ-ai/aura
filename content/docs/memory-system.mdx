@@ -76,9 +76,23 @@ In addition to discrete memory facts, Aura retrieves full conversation threads f
 After every conversation turn, Aura extracts new memories:
 
 1. The recent messages are sent to Claude with a structured extraction prompt
-2. Claude identifies facts, decisions, sentiments, and open threads
+2. Claude identifies facts, decisions, sentiments, open threads, and entity mentions
 3. Each extraction is checked for duplicates against existing memories
 4. New memories are embedded and stored
+5. Extracted entities are resolved and linked to their memories (see below)
+
+## Entity Extraction & Resolution
+
+Alongside memory extraction, Aura identifies **entities** -- people, companies, projects, products, channels, and technologies -- mentioned in conversations. Each entity is resolved to a canonical record using a four-step cascade:
+
+1. **Exact canonical match** -- direct match against known entity names
+2. **Alias match** -- match against registered aliases (e.g. "Joan" → "Joan Rodriguez")
+3. **Fuzzy match** -- trigram similarity (>0.4 threshold) catches misspellings and variations
+4. **Create new** -- if no match is found, a new entity record is created
+
+Entities are linked to the memories that mention them via the `memory_entities` join table. This enables **entity-first retrieval**: when a query mentions a known entity, Aura finds all memories linked to that entity and merges them into the hybrid search results with an RRF boost, ensuring relevant context surfaces even when the exact wording differs.
+
+Entity types: `person`, `company`, `project`, `product`, `channel`, `technology`.
 
 ## Consolidation
 
