@@ -167,23 +167,24 @@ async function fetchEntityMatchedMemories(
     if (!workspaceId) return emptyResult;
 
     // Step 3: Resolve each extracted entity to an entity ID (read-only, no creation)
-    const resolvedByEntity: Array<{ entityId: string; name: string }> = [];
-    for (const entity of extractedEntities) {
-      const resolved = await resolveEntityReadOnly(entity.name, entity.type, workspaceId);
-      if (resolved) {
-        resolvedByEntity.push({ entityId: resolved.entityId, name: entity.name });
-      }
-    }
+    const resolutions = await Promise.all(
+      extractedEntities.map(async (entity) => {
+        const resolved = await resolveEntityReadOnly(entity.name, entity.type, workspaceId);
+        return resolved ? { entityId: resolved.entityId, name: entity.name } : null;
+      }),
+    );
+    const resolvedByEntity = resolutions.filter((r): r is NonNullable<typeof r> => r !== null);
 
     // If LLM entities resolved nothing, try heuristic as a second chance
     if (resolvedByEntity.length === 0 && !usedHeuristic) {
       const heuristicNames = extractEntitiesHeuristic(query);
-      for (const name of heuristicNames) {
-        const resolved = await resolveEntityReadOnly(name, "company", workspaceId);
-        if (resolved) {
-          resolvedByEntity.push({ entityId: resolved.entityId, name });
-        }
-      }
+      const heuristicResolutions = await Promise.all(
+        heuristicNames.map(async (name) => {
+          const resolved = await resolveEntityReadOnly(name, "company", workspaceId);
+          return resolved ? { entityId: resolved.entityId, name } : null;
+        }),
+      );
+      resolvedByEntity.push(...heuristicResolutions.filter((r): r is NonNullable<typeof r> => r !== null));
     }
 
     if (resolvedByEntity.length === 0) return emptyResult;
@@ -208,53 +209,57 @@ async function fetchEntityMatchedMemories(
 
     const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
 
-    const memoryResult = await db.execute(sql`
-      SELECT m.*, me.entity_id
-      FROM memories m
-      JOIN memory_entities me ON m.id = me.memory_id
-      WHERE me.entity_id = ANY(${entityIds})
-        AND m.relevance_score >= ${minRelevanceScore}
-        ${privacyFilter}
-        ${workspaceMemoryFilter}
-      ORDER BY m.relevance_score DESC, m.created_at DESC
-      LIMIT 100
-    `);
+    // Two queries: one to get distinct memories (guaranteed 50 unique), one to build entity map
+    const [memoryResult, entityMapResult] = await Promise.all([
+      db.execute(sql`
+        SELECT DISTINCT m.*
+        FROM memories m
+        JOIN memory_entities me ON m.id = me.memory_id
+        WHERE me.entity_id = ANY(${entityIds})
+          AND m.relevance_score >= ${minRelevanceScore}
+          ${privacyFilter}
+          ${workspaceMemoryFilter}
+        ORDER BY m.relevance_score DESC, m.created_at DESC
+        LIMIT 50
+      `),
+      db.execute(sql`
+        SELECT me.memory_id, me.entity_id
+        FROM memory_entities me
+        WHERE me.entity_id = ANY(${entityIds})
+      `),
+    ]);
 
     const rows = ((memoryResult as any).rows ?? memoryResult) as Array<Record<string, any>>;
+    const entityMapRows = ((entityMapResult as any).rows ?? entityMapResult) as Array<Record<string, any>>;
 
-    const memoryMap = new Map<string, Memory>();
     const memoryEntityMap = new Map<string, Set<string>>();
-
-    for (const row of rows) {
-      const memoryId = row.id as string;
+    for (const row of entityMapRows) {
+      const memoryId = row.memory_id as string;
       const entityId = row.entity_id as string;
-
-      if (!memoryMap.has(memoryId)) {
-        memoryMap.set(memoryId, {
-          id: row.id,
-          workspaceId: row.workspace_id,
-          content: row.content,
-          type: row.type,
-          sourceMessageId: row.source_message_id ?? null,
-          sourceChannelType: row.source_channel_type,
-          relatedUserIds: row.related_user_ids ?? [],
-          embedding: row.embedding,
-          relevanceScore: row.relevance_score ?? 1,
-          shareable: row.shareable ?? 0,
-          searchVector: row.search_vector ?? null,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        } as Memory);
-      }
-
       if (!memoryEntityMap.has(memoryId)) {
         memoryEntityMap.set(memoryId, new Set());
       }
       memoryEntityMap.get(memoryId)!.add(entityId);
     }
 
+    const memoriesList: Memory[] = rows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      content: row.content,
+      type: row.type,
+      sourceMessageId: row.source_message_id ?? null,
+      sourceChannelType: row.source_channel_type,
+      relatedUserIds: row.related_user_ids ?? [],
+      embedding: row.embedding,
+      relevanceScore: row.relevance_score ?? 1,
+      shareable: row.shareable ?? 0,
+      searchVector: row.search_vector ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    } as Memory));
+
     return {
-      memories: [...memoryMap.values()].slice(0, 50),
+      memories: memoriesList,
       memoryEntityMap,
       resolvedEntityCount: entityIds.length,
     };
@@ -414,15 +419,16 @@ export async function retrieveMemories(
       rrfScore: Number(row.rrf_score ?? 0),
     }));
 
-    // Merge entity-matched memories with high base RRF score so they rank above embedding-only matches
+    // Merge entity-matched memories; track entity boost as a separate signal
+    // so it isn't lost to RRF normalization clamping or ignored in the reranker path.
     const ENTITY_RRF_BOOST = 0.05;
     const hybridIds = new Set(hybridResults.map((r) => r.memory.id));
 
-    const multiEntityBoost = (memoryId: string): number => {
-      if (resolvedEntityCount <= 1) return 1;
+    const entityBoostScore = (memoryId: string): number => {
       const linkedEntities = memoryEntityMap.get(memoryId);
-      if (!linkedEntities || linkedEntities.size <= 1) return 1;
-      return linkedEntities.size;
+      if (!linkedEntities) return 0;
+      if (resolvedEntityCount <= 1) return 1;
+      return Math.min(linkedEntities.size / resolvedEntityCount, 1);
     };
 
     const entityOnlyMemories = entityMemories
@@ -430,18 +436,16 @@ export async function retrieveMemories(
       .map((m) => ({
         memory: m,
         similarity: 0,
-        rrfScore: ENTITY_RRF_BOOST * multiEntityBoost(m.id),
+        rrfScore: ENTITY_RRF_BOOST,
+        entityBoost: entityBoostScore(m.id),
       }));
 
-    // Boost hybrid results that also have entity matches
     const entityMatchedIds = new Set(entityMemories.map((m) => m.id));
-    for (const r of hybridResults) {
-      if (entityMatchedIds.has(r.memory.id)) {
-        r.rrfScore += ENTITY_RRF_BOOST * multiEntityBoost(r.memory.id);
-      }
-    }
-
-    const results = [...hybridResults, ...entityOnlyMemories];
+    const results = hybridResults.map((r) => ({
+      ...r,
+      entityBoost: entityMatchedIds.has(r.memory.id) ? entityBoostScore(r.memory.id) : 0,
+    }));
+    results.push(...entityOnlyMemories);
 
     if (entityMemories.length > 0) {
       logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
@@ -464,13 +468,15 @@ export async function retrieveMemories(
         topN: results.length,
       });
 
+      const ENTITY_WEIGHT = 0.1;
       const scored = ranking.map((item) => {
-        const memory = results[item.originalIndex].memory;
+        const result = results[item.originalIndex];
+        const memory = result.memory;
         const ageMs = now - new Date(memory.createdAt).getTime();
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
-        const score = item.score * 0.8 + recencyBoost * 0.2;
+        const score = item.score * (0.8 - ENTITY_WEIGHT / 2) + recencyBoost * (0.2 - ENTITY_WEIGHT / 2) + result.entityBoost * ENTITY_WEIGHT;
         return { memory, score, originalIndex: item.originalIndex, cohereScore: item.score };
       });
 
@@ -494,17 +500,18 @@ export async function retrieveMemories(
       const RRF_K = 60;
       const maxRrfScore = 2 / (1 + RRF_K);
 
-      const scored = results.map(({ memory, similarity, rrfScore }) => {
+      const scored = results.map(({ memory, similarity, rrfScore, entityBoost }) => {
         const ageMs = now - new Date(memory.createdAt).getTime();
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
         const normalizedRrf = maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
         const score =
-          normalizedRrf * 0.5 +
+          normalizedRrf * 0.4 +
           similarity * 0.2 +
-          memory.relevanceScore * 0.15 +
-          recencyBoost * 0.15;
+          memory.relevanceScore * 0.1 +
+          recencyBoost * 0.1 +
+          entityBoost * 0.2;
 
         return { memory, score };
       });
