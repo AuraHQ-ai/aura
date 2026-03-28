@@ -469,6 +469,7 @@ async function persistDashboardConversation(params: {
       userId,
       channelType: "dashboard",
       sourceChannelId: "dashboard",
+      sourceThreadTs: threadId ?? undefined,
     });
 
     const traceId = await createConversationTrace({
