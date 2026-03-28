@@ -191,8 +191,12 @@ const extractedMemoriesSchema = z.object({
           z.object({
             name: z.string().describe("The entity name (full name for people, official name for companies)"),
             type: z
-              .enum(["person", "company", "project", "product", "channel", "technology"])
+              .enum(["person", "company", "project", "product", "channel", "technology", "concept", "location"])
               .describe("The entity type"),
+            role: z
+              .enum(["subject", "object", "mentioned"])
+              .describe("subject: who/what the memory is primarily about. object: secondary entity acted upon. mentioned: just referenced.")
+              .default("mentioned"),
           }),
         )
         .optional()
@@ -244,7 +248,11 @@ Rules:
 - If the user explicitly asks Aura to tell someone something, mark that memory as shareable.
 - Return an empty array if there's nothing worth remembering.
 
-For each memory, also identify the entities (people, companies, projects, products, channels, technologies) mentioned. Return them in the entities array with their name and type. Use the most specific name you can identify (full name for people, official name for companies).`;
+For each memory, also identify the entities (people, companies, projects, products, channels, technologies, concepts, locations) mentioned. Return them in the entities array with their name, type, and role:
+- **subject**: the entity the memory is primarily about
+- **object**: a secondary entity acted upon or referenced in relation to the subject
+- **mentioned**: just referenced in passing
+Use the most specific name you can identify (full name for people, official name for companies).`;
 
 interface ExtractionContext {
   userMessage: string;

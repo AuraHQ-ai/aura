@@ -1,6 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, count, sql, ilike, and, type SQL } from "drizzle-orm";
 import { entities, entityAliases, memoryEntities, memories } from "@aura/db/schema";
+import type { EntityType } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, paginationQuerySchema, createDashboardApp } from "./schemas.js";
@@ -50,7 +51,7 @@ dashboardEntitiesApp.openapi(listEntitiesRoute, async (c) => {
       conditions.push(ilike(entities.canonicalName, `%${escaped}%`));
     }
     if (type) {
-      conditions.push(eq(entities.type, type));
+      conditions.push(eq(entities.type, type as EntityType));
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 

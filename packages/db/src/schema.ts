@@ -62,6 +62,23 @@ export const memoryStatusEnum = pgEnum("memory_status", [
   "deleted",
 ]);
 
+export const entityTypeEnum = pgEnum("entity_type", [
+  "person",
+  "company",
+  "project",
+  "product",
+  "channel",
+  "technology",
+  "concept",
+  "location",
+]);
+
+export const memoryEntityRoleEnum = pgEnum("memory_entity_role", [
+  "subject",
+  "object",
+  "mentioned",
+]);
+
 // Helper for timestamptz columns
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
@@ -177,7 +194,7 @@ export const entities = pgTable(
       .primaryKey()
       .default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
-    type: text("type").notNull(),
+    type: entityTypeEnum("type").notNull(),
     canonicalName: text("canonical_name").notNull(),
     description: text("description"),
     slackUserId: text("slack_user_id"),
@@ -228,7 +245,7 @@ export const memoryEntities = pgTable(
     entityId: uuid("entity_id")
       .notNull()
       .references(() => entities.id, { onDelete: "cascade" }),
-    role: text("role").default("mentioned"),
+    role: memoryEntityRoleEnum("role").default("mentioned"),
   },
   (table) => [
     primaryKey({ columns: [table.memoryId, table.entityId] }),
@@ -864,6 +881,8 @@ export type UserProfile = User;
 export type NewUserProfile = NewUser;
 export type Entity = typeof entities.$inferSelect;
 export type NewEntity = typeof entities.$inferInsert;
+export type EntityType = (typeof entityTypeEnum.enumValues)[number];
+export type MemoryEntityRole = (typeof memoryEntityRoleEnum.enumValues)[number];
 export type EntityAlias = typeof entityAliases.$inferSelect;
 export type NewEntityAlias = typeof entityAliases.$inferInsert;
 export type MemoryEntity = typeof memoryEntities.$inferSelect;

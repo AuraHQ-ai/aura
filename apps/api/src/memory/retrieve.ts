@@ -3,6 +3,7 @@ import { generateObject, rerank } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { memories, messages, type Memory } from "@aura/db/schema";
+import type { EntityType } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
 import { resolveEntityReadOnly } from "./entity-resolution.js";
@@ -61,11 +62,11 @@ async function extractLexemes(
 const queryEntitySchema = z.object({
   entities: z.array(z.object({
     name: z.string().describe("The entity name as mentioned or implied"),
-    type: z.enum(["person", "company", "project", "product", "channel", "technology"]),
+    type: z.enum(["person", "company", "project", "product", "channel", "technology", "concept", "location"]),
   })),
 });
 
-async function extractQueryEntities(query: string): Promise<Array<{ name: string; type: string }>> {
+async function extractQueryEntities(query: string): Promise<Array<{ name: string; type: EntityType }>> {
   try {
     const model = await getFastModel();
     const { object } = await generateObject({
@@ -73,7 +74,7 @@ async function extractQueryEntities(query: string): Promise<Array<{ name: string
       schema: queryEntitySchema,
       prompt: `Extract entity mentions from this message. Include explicitly named entities and strongly implied ones. Be conservative — only extract entities you're confident about.
 
-Entity types: person, company, project, product, channel, technology
+Entity types: person, company, project, product, channel, technology, concept, location
 
 Message: "${query}"`,
       temperature: 0,
@@ -160,7 +161,7 @@ async function fetchEntityMatchedMemories(
     if (extractedEntities.length === 0) {
       const heuristicNames = extractEntitiesHeuristic(query);
       if (heuristicNames.length === 0) return emptyResult;
-      extractedEntities = heuristicNames.map((name) => ({ name, type: "company" }));
+      extractedEntities = heuristicNames.map((name) => ({ name, type: "company" as EntityType }));
       usedHeuristic = true;
     }
 
@@ -180,7 +181,7 @@ async function fetchEntityMatchedMemories(
       const heuristicNames = extractEntitiesHeuristic(query);
       const heuristicResolutions = await Promise.all(
         heuristicNames.map(async (name) => {
-          const resolved = await resolveEntityReadOnly(name, "company", workspaceId);
+          const resolved = await resolveEntityReadOnly(name, "company" as EntityType, workspaceId);
           return resolved ? { entityId: resolved.entityId, name } : null;
         }),
       );
