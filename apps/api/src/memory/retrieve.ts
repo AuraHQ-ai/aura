@@ -209,27 +209,30 @@ async function fetchEntityMatchedMemories(
 
     const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
 
-    // Two queries: one to get distinct memories (guaranteed 50 unique), one to build entity map
-    const [memoryResult, entityMapResult] = await Promise.all([
-      db.execute(sql`
-        SELECT DISTINCT m.*
-        FROM memories m
-        JOIN memory_entities me ON m.id = me.memory_id
-        WHERE me.entity_id = ANY(${entityIds})
-          AND m.relevance_score >= ${minRelevanceScore}
-          ${privacyFilter}
-          ${workspaceMemoryFilter}
-        ORDER BY m.relevance_score DESC, m.created_at DESC
-        LIMIT 50
-      `),
-      db.execute(sql`
-        SELECT me.memory_id, me.entity_id
-        FROM memory_entities me
-        WHERE me.entity_id = ANY(${entityIds})
-      `),
-    ]);
+    const memoryResult = await db.execute(sql`
+      SELECT DISTINCT m.*
+      FROM memories m
+      JOIN memory_entities me ON m.id = me.memory_id
+      WHERE me.entity_id = ANY(${entityIds})
+        AND m.relevance_score >= ${minRelevanceScore}
+        ${privacyFilter}
+        ${workspaceMemoryFilter}
+      ORDER BY m.relevance_score DESC, m.created_at DESC
+      LIMIT 50
+    `);
 
     const rows = ((memoryResult as any).rows ?? memoryResult) as Array<Record<string, any>>;
+    const memoryIds = rows.map((r) => r.id as string);
+
+    // Restrict entity map to only the candidate memory IDs to avoid unbounded result sets
+    const entityMapResult = memoryIds.length > 0
+      ? await db.execute(sql`
+          SELECT me.memory_id, me.entity_id
+          FROM memory_entities me
+          WHERE me.entity_id = ANY(${entityIds})
+            AND me.memory_id = ANY(${memoryIds})
+        `)
+      : [];
     const entityMapRows = ((entityMapResult as any).rows ?? entityMapResult) as Array<Record<string, any>>;
 
     const memoryEntityMap = new Map<string, Set<string>>();
