@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { generateText, Output } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
-import { entities, entityAliases, memoryEntities } from "@aura/db/schema";
+import { memoryEntities } from "@aura/db/schema";
 
 // Load env before importing db client (which reads DATABASE_URL at import time).
 // Pass --prod to use .env.production instead of .env.local.
@@ -63,6 +63,8 @@ Roles: subject (who/what the memory is primarily about), object (secondary entit
 
 // ── Entity Resolution with In-Memory Cache ──────────────────────────────────
 
+const { resolveEntity } = await import("../memory/entity-resolution.js");
+
 const entityCache = new Map<string, string>();
 
 function cacheKey(type: string, name: string): string {
@@ -83,100 +85,13 @@ async function resolveEntityCached(
   const cached = entityCache.get(key);
   if (cached) return { entityId: cached, isNew: false };
 
-  const lowerName = name.toLowerCase().trim();
-  if (!lowerName) throw new Error("Entity name cannot be empty");
+  const resolved = await resolveEntity(name, type, WORKSPACE_ID, {
+    source: "backfill",
+  });
 
-  // 1. Exact canonical match
-  const exactRows = extractRows(
-    await db.execute(sql`
-      SELECT id FROM entities
-      WHERE workspace_id = ${WORKSPACE_ID}
-        AND type = ${type}
-        AND lower(canonical_name) = ${lowerName}
-      LIMIT 1
-    `),
-  );
-  if (exactRows.length > 0) {
-    entityCache.set(key, exactRows[0].id);
-    return { entityId: exactRows[0].id, isNew: false };
-  }
-
-  // 2. Alias match
-  const aliasRows = extractRows(
-    await db.execute(sql`
-      SELECT e.id FROM entities e
-      JOIN entity_aliases ea ON e.id = ea.entity_id
-      WHERE ea.alias_lower = ${lowerName}
-        AND e.type = ${type}
-        AND e.workspace_id = ${WORKSPACE_ID}
-      LIMIT 1
-    `),
-  );
-  if (aliasRows.length > 0) {
-    entityCache.set(key, aliasRows[0].id);
-    return { entityId: aliasRows[0].id, isNew: false };
-  }
-
-  // 3. Trigram fuzzy match (>0.4 similarity)
-  const fuzzyRows = extractRows(
-    await db.execute(sql`
-      SELECT e.id FROM entities e
-      JOIN entity_aliases ea ON e.id = ea.entity_id
-      WHERE ea.alias_lower % ${lowerName}
-        AND e.type = ${type}
-        AND e.workspace_id = ${WORKSPACE_ID}
-        AND similarity(ea.alias_lower, ${lowerName}) > 0.4
-      ORDER BY similarity(ea.alias_lower, ${lowerName}) DESC
-      LIMIT 1
-    `),
-  );
-  if (fuzzyRows.length > 0) {
-    entityCache.set(key, fuzzyRows[0].id);
-    return { entityId: fuzzyRows[0].id, isNew: false };
-  }
-
-  // 4. Create new entity + alias
-  const [newEntity] = await db
-    .insert(entities)
-    .values({
-      workspaceId: WORKSPACE_ID,
-      type,
-      canonicalName: name,
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  if (newEntity) {
-    // alias_lower is GENERATED ALWAYS — only provide alias
-    await db
-      .insert(entityAliases)
-      .values({
-        entityId: newEntity.id,
-        alias: name,
-        source: "backfill",
-      })
-      .onConflictDoNothing();
-
-    entityCache.set(key, newEntity.id);
-    return { entityId: newEntity.id, isNew: true };
-  }
-
-  // Conflict on insert — another row exists, retry exact match
-  const retryRows = extractRows(
-    await db.execute(sql`
-      SELECT id FROM entities
-      WHERE workspace_id = ${WORKSPACE_ID}
-        AND type = ${type}
-        AND lower(canonical_name) = ${lowerName}
-      LIMIT 1
-    `),
-  );
-  if (retryRows.length > 0) {
-    entityCache.set(key, retryRows[0].id);
-    return { entityId: retryRows[0].id, isNew: false };
-  }
-
-  throw new Error(`Failed to create or find entity: ${name} (${type})`);
+  const isNew = resolved.confidence === "new";
+  entityCache.set(key, resolved.entityId);
+  return { entityId: resolved.entityId, isNew };
 }
 
 // ── Concurrency Pool ─────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ export async function resolveEntity(
   name: string,
   type: string,
   workspaceId: string,
+  { source = "extracted" }: { source?: string } = {},
 ): Promise<ResolvedEntity> {
   const lowerName = name.toLowerCase().trim();
   if (!lowerName) {
@@ -106,7 +107,7 @@ export async function resolveEntity(
         .values({
           entityId: newEntity.id,
           alias: name,
-          source: "extracted",
+          source,
         })
         .onConflictDoNothing();
 
