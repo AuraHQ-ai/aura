@@ -1,9 +1,11 @@
 import { sql } from "drizzle-orm";
-import { rerank } from "ai";
+import { generateObject, rerank } from "ai";
+import { z } from "zod";
 import { db } from "../db/client.js";
 import { memories, messages, type Memory } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
-import { getRerankingModel } from "../lib/ai.js";
+import { getFastModel, getRerankingModel } from "../lib/ai.js";
+import { resolveEntityReadOnly } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 
 interface RetrievalOptions {
@@ -54,78 +56,148 @@ async function extractLexemes(
   }
 }
 
+// ── LLM-based entity extraction ─────────────────────────────────────────────
+
+const queryEntitySchema = z.object({
+  entities: z.array(z.object({
+    name: z.string().describe("The entity name as mentioned or implied"),
+    type: z.enum(["person", "company", "project", "product", "channel", "technology"]),
+  })),
+});
+
+async function extractQueryEntities(query: string): Promise<Array<{ name: string; type: string }>> {
+  try {
+    const model = await getFastModel();
+    const { object } = await generateObject({
+      model,
+      schema: queryEntitySchema,
+      prompt: `Extract entity mentions from this message. Include explicitly named entities and strongly implied ones. Be conservative — only extract entities you're confident about.
+
+Entity types: person, company, project, product, channel, technology
+
+Message: "${query}"`,
+      temperature: 0,
+    });
+    return object.entities;
+  } catch (error) {
+    logger.warn("Query entity extraction failed, falling back to heuristic", {
+      error: String(error),
+      query: query.substring(0, 100),
+    });
+    return [];
+  }
+}
+
+// ── Heuristic proper noun extraction (fallback) ─────────────────────────────
+
+function extractEntitiesHeuristic(query: string): string[] {
+  const words = query.split(/[\s,;]+/).map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "")).filter((w) => w.length > 1);
+  if (words.length === 0) return [];
+
+  const STOP_WORDS = new Set([
+    "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+    "tell", "show", "find", "get", "give", "let", "make", "can", "could",
+    "would", "should", "will", "does", "did", "has", "have", "had", "are",
+    "is", "was", "were", "been", "being", "the", "this", "that", "these",
+    "those", "there", "here", "not", "but", "and", "for", "with", "about",
+    "from", "into", "any", "all", "also", "just", "than", "then", "now",
+    "very", "its", "his", "her", "our", "your", "their", "some", "each",
+    "every", "both", "few", "more", "most", "other", "many", "much", "own",
+    "same", "such", "only", "new", "old", "well", "also", "back", "even",
+    "still", "after", "before", "between", "under", "over", "again",
+    "further", "once", "during", "while", "please", "thanks", "thank",
+    "know", "think", "want", "need", "like", "look", "use", "say", "said",
+  ]);
+  const isProperNoun = (w: string, idx: number) =>
+    /^[A-Z]/.test(w) && !STOP_WORDS.has(w.toLowerCase()) && (idx > 0 || /^[A-Z]{2,}/.test(w) || words.length === 1);
+
+  const candidates: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    if (words[i].length >= 3 && isProperNoun(words[i], i)) candidates.push(words[i]);
+  }
+  for (let i = 0; i < words.length - 1; i++) {
+    if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1)) {
+      candidates.push(`${words[i]} ${words[i + 1]}`);
+    }
+  }
+  for (let i = 0; i < words.length - 2; i++) {
+    if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1) && isProperNoun(words[i + 2], i + 2)) {
+      candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+    }
+  }
+
+  return [...new Set(candidates.slice(0, 10))];
+}
+
+// ── Entity-first memory retrieval result with per-entity tracking ───────────
+
+interface EntityMemoryResult {
+  memories: Memory[];
+  /** Maps memory ID → set of resolved entity IDs it was found through */
+  memoryEntityMap: Map<string, Set<string>>;
+  /** Total number of distinct entities resolved */
+  resolvedEntityCount: number;
+}
+
 /**
- * Entity-first retrieval: resolve entity names from the query via alias matching,
- * then fetch their linked memories.
+ * Entity-first retrieval: extract entity names from query via LLM (with heuristic fallback),
+ * resolve to entity IDs, then fetch their linked memories.
  */
 async function fetchEntityMatchedMemories(
   query: string,
   minRelevanceScore: number,
   currentUserId?: string,
   workspaceId?: string,
-): Promise<Memory[]> {
+): Promise<EntityMemoryResult> {
+  const emptyResult: EntityMemoryResult = { memories: [], memoryEntityMap: new Map(), resolvedEntityCount: 0 };
+
   try {
-    const words = query.split(/[\s,;]+/).map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "")).filter((w) => w.length > 1);
-    if (words.length === 0) return [];
+    // Step 1: Extract entities via LLM
+    let extractedEntities = await extractQueryEntities(query);
 
-    const STOP_WORDS = new Set([
-      "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
-      "tell", "show", "find", "get", "give", "let", "make", "can", "could",
-      "would", "should", "will", "does", "did", "has", "have", "had", "are",
-      "is", "was", "were", "been", "being", "the", "this", "that", "these",
-      "those", "there", "here", "not", "but", "and", "for", "with", "about",
-      "from", "into", "any", "all", "also", "just", "than", "then", "now",
-      "very", "its", "his", "her", "our", "your", "their", "some", "each",
-      "every", "both", "few", "more", "most", "other", "many", "much", "own",
-      "same", "such", "only", "new", "old", "well", "also", "back", "even",
-      "still", "after", "before", "between", "under", "over", "again",
-      "further", "once", "during", "while", "please", "thanks", "thank",
-      "know", "think", "want", "need", "like", "look", "use", "say", "said",
-    ]);
-    const isProperNoun = (w: string, idx: number) =>
-      /^[A-Z]/.test(w) && !STOP_WORDS.has(w.toLowerCase()) && (idx > 0 || /^[A-Z]{2,}/.test(w) || words.length === 1);
+    // Step 2: Fall back to heuristic if LLM returns empty
+    let usedHeuristic = false;
+    if (extractedEntities.length === 0) {
+      const heuristicNames = extractEntitiesHeuristic(query);
+      if (heuristicNames.length === 0) return emptyResult;
+      extractedEntities = heuristicNames.map((name) => ({ name, type: "company" }));
+      usedHeuristic = true;
+    }
 
-    const candidates: string[] = [];
-    for (let i = 0; i < words.length; i++) {
-      if (words[i].length >= 3 && isProperNoun(words[i], i)) candidates.push(words[i]);
-    }
-    for (let i = 0; i < words.length - 1; i++) {
-      if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1)) {
-        candidates.push(`${words[i]} ${words[i + 1]}`);
-      }
-    }
-    for (let i = 0; i < words.length - 2; i++) {
-      if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1) && isProperNoun(words[i + 2], i + 2)) {
-        candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+    if (!workspaceId) return emptyResult;
+
+    // Step 3: Resolve each extracted entity to an entity ID (read-only, no creation)
+    const resolvedByEntity: Array<{ entityId: string; name: string }> = [];
+    for (const entity of extractedEntities) {
+      const resolved = await resolveEntityReadOnly(entity.name, entity.type, workspaceId);
+      if (resolved) {
+        resolvedByEntity.push({ entityId: resolved.entityId, name: entity.name });
       }
     }
 
-    if (candidates.length === 0) return [];
+    // If LLM entities resolved nothing, try heuristic as a second chance
+    if (resolvedByEntity.length === 0 && !usedHeuristic) {
+      const heuristicNames = extractEntitiesHeuristic(query);
+      for (const name of heuristicNames) {
+        const resolved = await resolveEntityReadOnly(name, "company", workspaceId);
+        if (resolved) {
+          resolvedByEntity.push({ entityId: resolved.entityId, name });
+        }
+      }
+    }
 
-    const lowerCandidates = [...new Set(candidates.slice(0, 10).map((c) => c.toLowerCase()))];
-    const workspaceFilter = workspaceId ? sql`AND e.workspace_id = ${workspaceId}` : sql``;
+    if (resolvedByEntity.length === 0) return emptyResult;
 
-    const matchResult = await db.execute(sql`
-      SELECT DISTINCT e.id
-      FROM entities e
-      JOIN entity_aliases ea ON e.id = ea.entity_id
-      WHERE (
-        ea.alias_lower = ANY(${lowerCandidates})
-        OR (
-          ea.alias_lower % ANY(${lowerCandidates})
-          AND EXISTS (
-            SELECT 1 FROM unnest(${lowerCandidates}::text[]) AS c(val)
-            WHERE similarity(ea.alias_lower, c.val) > 0.5
-          )
-        )
-      )
-      ${workspaceFilter}
-    `);
-    const matchRows = ((matchResult as any).rows ?? matchResult) as Array<{ id: string }>;
-    const entityIds = matchRows.map((row) => row.id);
+    const entityIds = [...new Set(resolvedByEntity.map((r) => r.entityId))];
 
-    if (entityIds.length === 0) return [];
+    logger.debug("Entity resolution for retrieval", {
+      extracted: extractedEntities.length,
+      resolved: entityIds.length,
+      usedHeuristic,
+      query: query.substring(0, 100),
+    });
 
+    // Step 4: Fetch memories linked to resolved entities, tracking which entity each memory came from
     const privacyFilter = currentUserId
       ? sql`AND (
           m.source_channel_type != 'dm'
@@ -134,10 +206,10 @@ async function fetchEntityMatchedMemories(
         )`
       : sql``;
 
-    const workspaceMemoryFilter = workspaceId ? sql`AND m.workspace_id = ${workspaceId}` : sql``;
+    const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
 
     const memoryResult = await db.execute(sql`
-      SELECT DISTINCT m.*
+      SELECT m.*, me.entity_id
       FROM memories m
       JOIN memory_entities me ON m.id = me.memory_id
       WHERE me.entity_id = ANY(${entityIds})
@@ -145,31 +217,53 @@ async function fetchEntityMatchedMemories(
         ${privacyFilter}
         ${workspaceMemoryFilter}
       ORDER BY m.relevance_score DESC, m.created_at DESC
-      LIMIT 50
+      LIMIT 100
     `);
 
     const rows = ((memoryResult as any).rows ?? memoryResult) as Array<Record<string, any>>;
-    return rows.map((row) => ({
-      id: row.id,
-      workspaceId: row.workspace_id,
-      content: row.content,
-      type: row.type,
-      sourceMessageId: row.source_message_id ?? null,
-      sourceChannelType: row.source_channel_type,
-      relatedUserIds: row.related_user_ids ?? [],
-      embedding: row.embedding,
-      relevanceScore: row.relevance_score ?? 1,
-      shareable: row.shareable ?? 0,
-      searchVector: row.search_vector ?? null,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    })) as Memory[];
+
+    const memoryMap = new Map<string, Memory>();
+    const memoryEntityMap = new Map<string, Set<string>>();
+
+    for (const row of rows) {
+      const memoryId = row.id as string;
+      const entityId = row.entity_id as string;
+
+      if (!memoryMap.has(memoryId)) {
+        memoryMap.set(memoryId, {
+          id: row.id,
+          workspaceId: row.workspace_id,
+          content: row.content,
+          type: row.type,
+          sourceMessageId: row.source_message_id ?? null,
+          sourceChannelType: row.source_channel_type,
+          relatedUserIds: row.related_user_ids ?? [],
+          embedding: row.embedding,
+          relevanceScore: row.relevance_score ?? 1,
+          shareable: row.shareable ?? 0,
+          searchVector: row.search_vector ?? null,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        } as Memory);
+      }
+
+      if (!memoryEntityMap.has(memoryId)) {
+        memoryEntityMap.set(memoryId, new Set());
+      }
+      memoryEntityMap.get(memoryId)!.add(entityId);
+    }
+
+    return {
+      memories: [...memoryMap.values()].slice(0, 50),
+      memoryEntityMap,
+      resolvedEntityCount: entityIds.length,
+    };
   } catch (error) {
     logger.warn("Entity-first retrieval failed, falling back to hybrid search only", {
       error: String(error),
       query: query.substring(0, 100),
     });
-    return [];
+    return emptyResult;
   }
 }
 
@@ -193,11 +287,12 @@ export async function retrieveMemories(
   const start = Date.now();
 
   try {
-    const [queryEmbedding, lexemes, entityMemories] = await Promise.all([
+    const [queryEmbedding, lexemes, entityResult] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
       extractLexemes(query),
       fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId),
     ]);
+    const { memories: entityMemories, memoryEntityMap, resolvedEntityCount } = entityResult;
 
     const CANDIDATE_POOL_SIZE = Math.max(25, limit);
     // Embed vector as a raw SQL literal instead of a parameterized value.
@@ -322,19 +417,27 @@ export async function retrieveMemories(
     // Merge entity-matched memories with high base RRF score so they rank above embedding-only matches
     const ENTITY_RRF_BOOST = 0.05;
     const hybridIds = new Set(hybridResults.map((r) => r.memory.id));
+
+    const multiEntityBoost = (memoryId: string): number => {
+      if (resolvedEntityCount <= 1) return 1;
+      const linkedEntities = memoryEntityMap.get(memoryId);
+      if (!linkedEntities || linkedEntities.size <= 1) return 1;
+      return linkedEntities.size;
+    };
+
     const entityOnlyMemories = entityMemories
       .filter((m) => !hybridIds.has(m.id))
       .map((m) => ({
         memory: m,
         similarity: 0,
-        rrfScore: ENTITY_RRF_BOOST,
+        rrfScore: ENTITY_RRF_BOOST * multiEntityBoost(m.id),
       }));
 
     // Boost hybrid results that also have entity matches
     const entityMatchedIds = new Set(entityMemories.map((m) => m.id));
     for (const r of hybridResults) {
       if (entityMatchedIds.has(r.memory.id)) {
-        r.rrfScore += ENTITY_RRF_BOOST;
+        r.rrfScore += ENTITY_RRF_BOOST * multiEntityBoost(r.memory.id);
       }
     }
 
@@ -342,6 +445,7 @@ export async function retrieveMemories(
 
     if (entityMemories.length > 0) {
       logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
+        resolvedEntities: resolvedEntityCount,
         query: query.substring(0, 100),
       });
     }
