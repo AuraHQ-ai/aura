@@ -87,7 +87,7 @@ export async function regenerateStaleSummaries(
 ): Promise<{ updated: number; skipped: number }> {
   const forceAll = opts?.forceAll ?? false;
 
-  type StaleRow = { id: string; canonicalName: string; type: string };
+  type StaleRow = { id: string; canonical_name: string; type: string };
 
   let staleEntities: StaleRow[];
 
@@ -133,7 +133,7 @@ export async function regenerateStaleSummaries(
         if (summary) {
           const wordCount = summary.split(/\s+/).length;
           logger.info(
-            `[entity ${updated + skipped + 1}/${total}] Generated summary for "${entity.canonicalName}" (${entity.type}) — ${wordCount} words`,
+            `[entity ${updated + skipped + 1}/${total}] Generated summary for "${entity.canonical_name}" (${entity.type}) — ${wordCount} words`,
           );
           updated++;
         } else {
@@ -141,7 +141,7 @@ export async function regenerateStaleSummaries(
         }
       } catch (error) {
         logger.error(
-          `[entity ${updated + skipped + 1}/${total}] Failed to generate summary for "${entity.canonicalName}"`,
+          `[entity ${updated + skipped + 1}/${total}] Failed to generate summary for "${entity.canonical_name}"`,
           { error: String(error) },
         );
         skipped++;
