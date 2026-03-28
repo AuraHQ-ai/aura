@@ -40,9 +40,12 @@ export const memoryTypeEnum = pgEnum("memory_type", [
   "fact",
   "decision",
   "personal",
+  "preference",
   "relationship",
   "sentiment",
+  "event",
   "open_thread",
+  "insight",
 ]);
 
 // Helper for timestamptz columns
@@ -109,6 +112,7 @@ export const memories = pgTable(
     workspaceId: workspaceId().references(() => workspaces.id),
     content: text("content").notNull(),
     type: memoryTypeEnum("type").notNull(),
+    category: text("category").notNull().default("semantic"),
     sourceMessageId: uuid("source_message_id").references(() => messages.id),
     sourceChannelType: channelTypeEnum("source_channel_type").notNull(),
     relatedUserIds: text("related_user_ids")

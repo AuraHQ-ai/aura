@@ -223,6 +223,100 @@ export async function backfillNoteEmbeddings(batchSize = 50): Promise<number> {
 }
 
 /**
+ * Deduplication result for a single candidate memory.
+ * - `dominated`: true if the candidate should be skipped entirely (similarity > 0.90)
+ * - `supersedesId`: if similarity is 0.85–0.90, the ID of the old memory to soft-supersede
+ */
+export interface DedupResult {
+  dominated: boolean;
+  supersedesId?: string;
+}
+
+/**
+ * Check candidate memories against existing memories using cosine similarity.
+ * Returns a DedupResult per candidate:
+ * - similarity > 0.90 → dominated (skip this candidate)
+ * - similarity 0.85–0.90 → keep new, soft-supersede old (set relevance_score = 0.001)
+ * - similarity < 0.85 → no match, insert normally
+ */
+export async function checkDuplicates(
+  candidates: { content: string; embedding: number[] | null }[],
+  workspaceId: string,
+): Promise<DedupResult[]> {
+  const results: DedupResult[] = [];
+
+  for (const candidate of candidates) {
+    if (!candidate.embedding) {
+      results.push({ dominated: false });
+      continue;
+    }
+
+    try {
+      const vectorSql = sql.raw(`'[${candidate.embedding.join(",")}]'::vector`);
+      const neighbors = await db.execute(sql`
+        SELECT id, 1 - (embedding <=> ${vectorSql}) AS similarity
+        FROM memories
+        WHERE workspace_id = ${workspaceId}
+          AND embedding IS NOT NULL
+          AND relevance_score > 0.01
+        ORDER BY embedding <=> ${vectorSql}
+        LIMIT 3
+      `);
+
+      const rows = ((neighbors as any).rows ?? neighbors) as Array<Record<string, any>>;
+
+      let dominated = false;
+      let supersedesId: string | undefined;
+
+      for (const row of rows) {
+        const sim = parseFloat(row.similarity);
+        if (sim > 0.90) {
+          dominated = true;
+          break;
+        }
+        if (sim >= 0.85 && !supersedesId) {
+          supersedesId = row.id;
+        }
+      }
+
+      if (dominated) {
+        results.push({ dominated: true });
+      } else if (supersedesId) {
+        results.push({ dominated: false, supersedesId });
+      } else {
+        results.push({ dominated: false });
+      }
+    } catch (error) {
+      logger.warn("Dedup check failed for candidate — allowing through", {
+        error: String(error),
+        contentPreview: candidate.content.substring(0, 80),
+      });
+      results.push({ dominated: false });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Soft-supersede old memories by setting their relevance_score to 0.001.
+ * Call this AFTER successfully storing the replacement memories.
+ */
+export async function softSupersedeMemories(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  for (const id of ids) {
+    try {
+      await db.execute(sql`
+        UPDATE memories SET relevance_score = 0.001, updated_at = now()
+        WHERE id = ${id}::uuid
+      `);
+    } catch (error) {
+      logger.warn("Failed to soft-supersede memory", { id, error: String(error) });
+    }
+  }
+}
+
+/**
  * Batch store multiple memories.
  */
 export async function storeMemories(newMemories: NewMemory[]): Promise<string[]> {
