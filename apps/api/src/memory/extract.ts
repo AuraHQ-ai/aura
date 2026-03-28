@@ -10,6 +10,31 @@ import type { NewMemory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
 
+// ── Injected Context Stripping ───────────────────────────────────────────────
+
+const INJECTED_BLOCK_TAGS = [
+  "memories",
+  "related_threads",
+  "notes_index",
+  "context",
+  "self_directive",
+];
+
+const INJECTED_BLOCK_RE = new RegExp(
+  INJECTED_BLOCK_TAGS.map((tag) => `<${tag}>[\\s\\S]*?</${tag}>`).join("|"),
+  "g",
+);
+
+/**
+ * Strip XML blocks injected by the pipeline (memories, context, etc.)
+ * from assistant messages before extraction to prevent echo loops.
+ */
+function stripInjectedContext(text: string): string {
+  return text.replace(INJECTED_BLOCK_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+const MIN_STRIPPED_LENGTH = 50;
+
 // ── User ID Normalization ───────────────────────────────────────────────────
 
 const SLACK_USER_ID_RE = /^[UW][A-Z0-9]+$/;
@@ -228,6 +253,8 @@ interface ExtractionContext {
   channelType: ChannelType | DbChannelType;
   sourceMessageId?: string;
   displayName?: string;
+  /** Role of the message that triggered extraction */
+  triggerRole?: "user" | "assistant" | "tool";
 }
 
 /**
@@ -238,7 +265,14 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
   const start = Date.now();
 
   try {
-    const conversationText = `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${context.assistantResponse}`;
+    const strippedAssistant = stripInjectedContext(context.assistantResponse);
+    const includeAssistant = strippedAssistant.length >= MIN_STRIPPED_LENGTH;
+
+    const conversationText = includeAssistant
+      ? `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${strippedAssistant}`
+      : `User (${context.displayName || context.userId}): ${context.userMessage}`;
+
+    const extractionSourceRole = context.triggerRole ?? "user";
 
     const model = await getFastModel();
 
@@ -329,6 +363,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       embedding: embeddings[i] ?? null,
       shareable: normalizedMemories[i].shareable ? 1 : 0,
       relevanceScore: 1.0,
+      extractionSourceRole,
     }));
 
     const hasEmbeddings = newMemories.some((m) => m.embedding !== null);
