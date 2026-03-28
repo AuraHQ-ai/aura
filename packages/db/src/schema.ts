@@ -154,6 +154,8 @@ export const entities = pgTable(
     canonicalName: text("canonical_name").notNull(),
     description: text("description"),
     slackUserId: text("slack_user_id"),
+    summary: text("summary"),
+    summaryUpdatedAt: timestamptz("summary_updated_at"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),

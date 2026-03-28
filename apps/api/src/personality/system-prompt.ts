@@ -17,6 +17,12 @@ export interface PersonProfile {
   notes: string | null;
 }
 
+export interface EntitySummary {
+  name: string;
+  type: string;
+  summary: string;
+}
+
 interface SystemPromptContext {
   /** Retrieved memories relevant to this conversation */
   memories: Memory[];
@@ -36,6 +42,8 @@ interface SystemPromptContext {
   mentionedPeople?: PersonProfile[];
   /** The person sending the message, looked up from the people DB */
   interlocutor?: PersonProfile;
+  /** Compiled entity summaries (dossiers) to inject as high-signal context */
+  entitySummaries?: EntitySummary[];
 }
 
 /**
@@ -346,6 +354,19 @@ function formatMentionedPeople(people: PersonProfile[]): string {
 
 
 /**
+ * Format entity summaries as a structured knowledge block.
+ */
+function formatEntitySummaries(summaries: EntitySummary[]): string {
+  if (summaries.length === 0) return "";
+
+  const entries = summaries
+    .map((s) => `**${s.name}** (${s.type}):\n${s.summary}`)
+    .join("\n\n");
+
+  return `These are compiled profiles of key entities. Use them as primary context -- they're synthesized from hundreds of individual memories.\n\n${entries}`;
+}
+
+/**
  * Format retrieved conversation threads as compact XML pointers.
  */
 function formatConversations(conversations: ConversationThread[]): string {
@@ -501,6 +522,11 @@ export async function buildSystemPrompt(
   // Mentioned people
   if (context.mentionedPeople?.length) {
     contextParts.push(`  <mentioned_people>\n${formatMentionedPeople(context.mentionedPeople)}\n  </mentioned_people>`);
+  }
+
+  // Entity summaries (higher-signal than individual memories, placed first)
+  if (context.entitySummaries && context.entitySummaries.length > 0) {
+    contextParts.push(`  <entity_summaries>\n${formatEntitySummaries(context.entitySummaries)}\n  </entity_summaries>`);
   }
 
   // Retrieved memories
