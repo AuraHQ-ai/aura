@@ -252,14 +252,14 @@ export async function checkDuplicates(
     }
 
     try {
-      const vectorStr = `[${candidate.embedding.join(",")}]`;
+      const vectorSql = sql.raw(`'[${candidate.embedding.join(",")}]'::vector`);
       const neighbors = await db.execute(sql`
-        SELECT id, 1 - (embedding <=> ${vectorStr}::vector) AS similarity
+        SELECT id, 1 - (embedding <=> ${vectorSql}) AS similarity
         FROM memories
         WHERE workspace_id = ${workspaceId}
           AND embedding IS NOT NULL
           AND relevance_score > 0.01
-        ORDER BY embedding <=> ${vectorStr}::vector
+        ORDER BY embedding <=> ${vectorSql}
         LIMIT 3
       `);
 
