@@ -4,11 +4,20 @@ import { apiGet, apiPatch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DetailSkeleton } from "@/components/page-skeleton";
-import { formatDate } from "@/lib/utils";
+import { formatDate, truncate } from "@/lib/utils";
 import { useState } from "react";
 import { MarkdownContent } from "@/components/ui/markdown";
 import { ArrowLeft, Save, Pencil, X } from "lucide-react";
+
+interface LinkedEntity {
+  entityId: string;
+  role: string | null;
+  canonicalName: string;
+  type: string;
+  description: string | null;
+}
 
 interface MemoryDetail {
   id: string;
@@ -20,6 +29,7 @@ interface MemoryDetail {
   sourceId: string | null;
   createdAt: string;
   relatedUsers: { slackUserId: string; displayName: string }[];
+  linkedEntities: LinkedEntity[];
 }
 
 function MemoryDetailPage() {
@@ -181,6 +191,42 @@ function MemoryDetailPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {(memory.linkedEntities ?? []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Linked Entities ({memory.linkedEntities.length})</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead className="w-[90px]">Type</TableHead>
+                  <TableHead className="w-[80px]">Role</TableHead>
+                  <TableHead>Description</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {memory.linkedEntities.map((e) => (
+                  <TableRow key={e.entityId}>
+                    <TableCell className="font-medium">
+                      <Link to="/memories/entities/$id" params={{ id: e.entityId }} className="hover:underline">
+                        {e.canonicalName}
+                      </Link>
+                    </TableCell>
+                    <TableCell><Badge variant="secondary">{e.type}</Badge></TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{e.role ?? "—"}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {e.description ? truncate(e.description, 60) : "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

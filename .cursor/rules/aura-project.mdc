@@ -66,6 +66,25 @@ Every new table MUST include a `workspace_id` column for multi-workspace tenant 
 
 ## Environment Variables
 
+### Local env convention
+
+All environment variables live in **two files at the repo root** (both gitignored):
+
+- **`.env.local`** — local development (default for everything)
+- **`.env.production`** — production credentials (opt-in via `--prod` flag)
+
+No per-app `.env` files. No plain `.env` file. `.env.example` is the committed template.
+
+**All `pnpm` scripts** use `./scripts/env.sh` which loads `.env.local` by default. Pass `--prod` to any script to use `.env.production` instead:
+```bash
+pnpm db:migrate            # uses .env.local
+pnpm db:migrate --prod     # uses .env.production
+```
+
+Standalone scripts (backfills, sandbox builds) also support `--prod` via their own `dotenv` loading.
+
+### Vercel env vars (production)
+
 - **Add env vars via CLI**: `printf '%s' 'value' | npx --yes vercel@50.13.2 env add VAR_NAME production --scope realadvisor`
 - **Always use `printf '%s'`** to pipe values -- never `echo` (it adds trailing newlines that break Vercel).
 - **After adding env vars**, trigger a redeploy: either push a commit or run `npx --yes vercel@50.13.2 --prod --scope realadvisor`.

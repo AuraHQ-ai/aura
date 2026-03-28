@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -119,7 +119,9 @@ function EntitiesPage() {
               entities.map((entity) => (
                 <TableRow key={entity.id}>
                   <TableCell className="font-medium">
-                    {entity.canonicalName}
+                    <Link to="/memories/entities/$id" params={{ id: entity.id }} className="hover:underline">
+                      {entity.canonicalName}
+                    </Link>
                     {entity.slackUserId && (
                       <span className="ml-1.5 text-xs text-muted-foreground font-mono">{entity.slackUserId}</span>
                     )}

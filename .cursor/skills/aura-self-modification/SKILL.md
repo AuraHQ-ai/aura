@@ -69,7 +69,7 @@ run_command("cat /home/user/aura/src/tools/slack.ts")
 When tools return unexpected results, call the API directly with curl:
 
 ```bash
-source .env && curl -s -X POST 'https://slack.com/api/conversations.history' \
+source .env.local && curl -s -X POST 'https://slack.com/api/conversations.history' \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"channel":"C088REN54FM","limit":5}' | python3 -m json.tool

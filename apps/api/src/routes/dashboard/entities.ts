@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, count, sql, ilike, and, type SQL } from "drizzle-orm";
-import { entities, entityAliases, memoryEntities } from "@aura/db/schema";
+import { entities, entityAliases, memoryEntities, memories } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, paginationQuerySchema, createDashboardApp } from "./schemas.js";
@@ -134,9 +134,15 @@ dashboardEntitiesApp.openapi(getEntityRoute, async (c) => {
       .select({
         memoryId: memoryEntities.memoryId,
         role: memoryEntities.role,
+        content: memories.content,
+        type: memories.type,
+        relevanceScore: memories.relevanceScore,
+        createdAt: memories.createdAt,
       })
       .from(memoryEntities)
-      .where(eq(memoryEntities.entityId, id));
+      .innerJoin(memories, eq(memories.id, memoryEntities.memoryId))
+      .where(eq(memoryEntities.entityId, id))
+      .orderBy(desc(memories.createdAt));
 
     return c.json({ ...entity, aliases, linkedMemories } as any, 200);
   } catch (error) {
