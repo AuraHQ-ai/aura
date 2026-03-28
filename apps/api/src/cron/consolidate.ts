@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { runConsolidation } from "../memory/consolidate.js";
 import { consolidateProfiles } from "../users/profiles.js";
+import { regenerateStaleSummaries } from "../memory/entity-summaries.js";
 import { logger } from "../lib/logger.js";
 
 export const cronApp = new Hono();
@@ -36,10 +37,20 @@ cronApp.get("/api/cron/consolidate", async (c) => {
       });
     }
 
+    let entitySummaryResult = null;
+    try {
+      entitySummaryResult = await regenerateStaleSummaries();
+    } catch (error) {
+      logger.error("Cron: Entity summary regeneration failed (non-fatal)", {
+        error: String(error),
+      });
+    }
+
     const duration = Date.now() - start;
     logger.info(`Cron: Consolidation completed in ${duration}ms`, {
       ...result,
       profileResult,
+      entitySummaryResult,
     });
 
     return c.json({
@@ -47,6 +58,7 @@ cronApp.get("/api/cron/consolidate", async (c) => {
       duration,
       ...result,
       profileConsolidation: profileResult,
+      entitySummaries: entitySummaryResult,
     });
   } catch (error) {
     logger.error("Cron: Consolidation failed", { error: String(error) });

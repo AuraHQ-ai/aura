@@ -2,6 +2,7 @@ import {
   buildSystemPrompt,
   buildDynamicContext,
   type PersonProfile,
+  type EntitySummary,
 } from "../personality/system-prompt.js";
 import {
   retrieveMemories,
@@ -12,9 +13,9 @@ import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
-import { users } from "@aura/db/schema";
+import { users, entities } from "@aura/db/schema";
 import { db } from "../db/client.js";
-import { inArray, eq, and, sql } from "drizzle-orm";
+import { inArray, eq, and, sql, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { logger } from "../lib/logger.js";
 
@@ -123,6 +124,116 @@ export async function getUsageStats(): Promise<string> {
   }
 }
 
+// ── Entity Summary Lookup ────────────────────────────────────────────────────
+
+interface InterlocutorEntity {
+  id: string;
+  canonicalName: string;
+  type: string;
+  summary: string | null;
+}
+
+/**
+ * Fetch the interlocutor's entity summary by Slack user ID.
+ * Has no dependency on retrieved memories — safe to run in parallel.
+ */
+async function fetchInterlocutorEntity(
+  userId: string,
+): Promise<InterlocutorEntity | null> {
+  try {
+    const rows = await db
+      .select({
+        id: entities.id,
+        canonicalName: entities.canonicalName,
+        type: entities.type,
+        summary: entities.summary,
+      })
+      .from(entities)
+      .where(
+        and(
+          eq(entities.slackUserId, userId),
+          isNotNull(entities.summary),
+        ),
+      )
+      .limit(1);
+
+    return rows[0] ?? null;
+  } catch (error) {
+    logger.error("Failed to fetch interlocutor entity", {
+      error: String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Build entity summaries from the pre-fetched interlocutor entity and
+ * entities mentioned in retrieved memories.
+ * Returns up to ~4 summaries: the interlocutor + top 3 related entities.
+ */
+async function buildEntitySummaries(
+  userId: string,
+  interlocutor: InterlocutorEntity | null,
+  retrievedMemories: Memory[],
+): Promise<EntitySummary[]> {
+  try {
+    const summaries: EntitySummary[] = [];
+    const seenIds = new Set<string>();
+
+    if (interlocutor?.summary) {
+      summaries.push({
+        name: interlocutor.canonicalName,
+        type: interlocutor.type,
+        summary: interlocutor.summary,
+      });
+      seenIds.add(interlocutor.id);
+    }
+
+    const relatedSlackIds = new Set<string>();
+    for (const mem of retrievedMemories) {
+      for (const uid of mem.relatedUserIds) {
+        if (uid !== userId) relatedSlackIds.add(uid);
+      }
+    }
+
+    if (relatedSlackIds.size > 0) {
+      const relatedEntities = await db
+        .select({
+          id: entities.id,
+          canonicalName: entities.canonicalName,
+          type: entities.type,
+          summary: entities.summary,
+        })
+        .from(entities)
+        .where(
+          and(
+            inArray(entities.slackUserId, [...relatedSlackIds]),
+            isNotNull(entities.summary),
+          ),
+        )
+        .limit(10);
+
+      for (const e of relatedEntities) {
+        if (seenIds.has(e.id) || !e.summary) continue;
+        if (summaries.length >= 4) break;
+        summaries.push({
+          name: e.canonicalName,
+          type: e.type,
+          summary: e.summary,
+        });
+        seenIds.add(e.id);
+      }
+    }
+
+    return summaries;
+  } catch (error) {
+    logger.error("Failed to fetch entity summaries", {
+      error: String(error),
+    });
+    return [];
+  }
+}
+
 // ── Core Prompt ──────────────────────────────────────────────────────────────
 
 export interface CorePrompt {
@@ -160,7 +271,7 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
-  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats] =
+  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity] =
     await Promise.all([
       queryEmbedding
         ? retrieveMemories({
@@ -186,7 +297,11 @@ export async function buildCorePrompt(
       lookupMentionedPeople(participantIds),
       lookupPerson(session.userId),
       getUsageStats(),
+      fetchInterlocutorEntity(session.userId),
     ]);
+
+  // Build entity summaries (related-entities lookup depends on retrieved memories)
+  const entitySummaries = await buildEntitySummaries(session.userId, interlocutorEntity, memories);
 
   const channelContext = session.channel === "dashboard"
     ? "Dashboard chat"
@@ -206,6 +321,7 @@ export async function buildCorePrompt(
     isChannelHistory: session.isChannelHistory ?? false,
     mentionedPeople,
     interlocutor: interlocutor ?? undefined,
+    entitySummaries,
   });
 
   const modelId = session.modelIdOverride ?? await getMainModelId();
