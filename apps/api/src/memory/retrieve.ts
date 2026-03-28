@@ -440,10 +440,9 @@ export async function retrieveMemories(
         entityBoost: entityBoostScore(m.id),
       }));
 
-    const entityMatchedIds = new Set(entityMemories.map((m) => m.id));
     const results = hybridResults.map((r) => ({
       ...r,
-      entityBoost: entityMatchedIds.has(r.memory.id) ? entityBoostScore(r.memory.id) : 0,
+      entityBoost: entityBoostScore(r.memory.id),
     }));
     results.push(...entityOnlyMemories);
 
