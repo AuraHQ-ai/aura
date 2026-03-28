@@ -7,7 +7,6 @@ import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 const MAX_MEMORIES_PER_ENTITY = 200;
-const BATCH_SIZE = 10;
 const DELAY_BETWEEN_CALLS_MS = 200;
 
 function sleep(ms: number): Promise<void> {
@@ -124,32 +123,29 @@ export async function regenerateStaleSummaries(
   let updated = 0;
   let skipped = 0;
 
-  for (let i = 0; i < total; i += BATCH_SIZE) {
-    const batch = staleEntities.slice(i, i + BATCH_SIZE);
-
-    for (const entity of batch) {
-      try {
-        const summary = await generateEntitySummary(entity.id);
-        if (summary) {
-          const wordCount = summary.split(/\s+/).length;
-          logger.info(
-            `[entity ${updated + skipped + 1}/${total}] Generated summary for "${entity.canonical_name}" (${entity.type}) — ${wordCount} words`,
-          );
-          updated++;
-        } else {
-          skipped++;
-        }
-      } catch (error) {
-        logger.error(
-          `[entity ${updated + skipped + 1}/${total}] Failed to generate summary for "${entity.canonical_name}"`,
-          { error: String(error) },
+  for (let i = 0; i < total; i++) {
+    const entity = staleEntities[i];
+    try {
+      const summary = await generateEntitySummary(entity.id);
+      if (summary) {
+        const wordCount = summary.split(/\s+/).length;
+        logger.info(
+          `[entity ${i + 1}/${total}] Generated summary for "${entity.canonical_name}" (${entity.type}) — ${wordCount} words`,
         );
+        updated++;
+      } else {
         skipped++;
       }
+    } catch (error) {
+      logger.error(
+        `[entity ${i + 1}/${total}] Failed to generate summary for "${entity.canonical_name}"`,
+        { error: String(error) },
+      );
+      skipped++;
+    }
 
-      if (i + batch.indexOf(entity) < total - 1) {
-        await sleep(DELAY_BETWEEN_CALLS_MS);
-      }
+    if (i < total - 1) {
+      await sleep(DELAY_BETWEEN_CALLS_MS);
     }
   }
 
