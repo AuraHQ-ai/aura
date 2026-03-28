@@ -282,10 +282,6 @@ export async function checkDuplicates(
       if (dominated) {
         results.push({ dominated: true });
       } else if (supersedesId) {
-        await db.execute(sql`
-          UPDATE memories SET relevance_score = 0.001, updated_at = now()
-          WHERE id = ${supersedesId}::uuid
-        `);
         results.push({ dominated: false, supersedesId });
       } else {
         results.push({ dominated: false });
@@ -300,6 +296,24 @@ export async function checkDuplicates(
   }
 
   return results;
+}
+
+/**
+ * Soft-supersede old memories by setting their relevance_score to 0.001.
+ * Call this AFTER successfully storing the replacement memories.
+ */
+export async function softSupersedeMemories(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  for (const id of ids) {
+    try {
+      await db.execute(sql`
+        UPDATE memories SET relevance_score = 0.001, updated_at = now()
+        WHERE id = ${id}::uuid
+      `);
+    } catch (error) {
+      logger.warn("Failed to soft-supersede memory", { id, error: String(error) });
+    }
+  }
 }
 
 /**
