@@ -47,7 +47,7 @@ export async function resolveEntity(
       };
     }
 
-    // 2. Exact alias match
+    // 2. Exact alias match (same type)
     const exactAlias = await db.execute(sql`
       SELECT e.id, e.canonical_name, e.type
       FROM entities e
@@ -67,13 +67,49 @@ export async function resolveEntity(
       };
     }
 
-    // 3. Trigram fuzzy match (>0.4 similarity)
+    // 2.5 Cross-type exact match (prevents "SMG" as technology creating a new entity when "SMG" as company exists)
+    const crossTypeMatch = await db.execute(sql`
+      SELECT id, canonical_name, type
+      FROM entities
+      WHERE workspace_id = ${workspaceId}
+        AND lower(canonical_name) = ${lowerName}
+      LIMIT 1
+    `);
+    const crossTypeRows = ((crossTypeMatch as any).rows ?? crossTypeMatch) as Array<Record<string, any>>;
+    if (crossTypeRows.length > 0) {
+      return {
+        entityId: crossTypeRows[0].id,
+        canonicalName: crossTypeRows[0].canonical_name,
+        type: crossTypeRows[0].type,
+        confidence: "exact",
+      };
+    }
+
+    // 2.6 Cross-type alias match
+    const crossTypeAlias = await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower = ${lowerName}
+        AND e.workspace_id = ${workspaceId}
+      LIMIT 1
+    `);
+    const crossTypeAliasRows = ((crossTypeAlias as any).rows ?? crossTypeAlias) as Array<Record<string, any>>;
+    if (crossTypeAliasRows.length > 0) {
+      return {
+        entityId: crossTypeAliasRows[0].id,
+        canonicalName: crossTypeAliasRows[0].canonical_name,
+        type: crossTypeAliasRows[0].type,
+        confidence: "alias",
+      };
+    }
+
+    // 3. Trigram fuzzy match across all types (>0.4 similarity)
     const fuzzyMatch = await db.execute(sql`
       SELECT e.id, e.canonical_name, e.type, similarity(ea.alias_lower, ${lowerName}) AS sim
       FROM entities e
       JOIN entity_aliases ea ON e.id = ea.entity_id
       WHERE ea.alias_lower % ${lowerName}
-        AND e.type = ${type}
         AND e.workspace_id = ${workspaceId}
         AND similarity(ea.alias_lower, ${lowerName}) > 0.4
       ORDER BY sim DESC
@@ -89,7 +125,7 @@ export async function resolveEntity(
       };
     }
 
-    // 4. Create new entity + alias
+    // 4. Create new entity + aliases
     const [newEntity] = await db
       .insert(entities)
       .values({
@@ -101,6 +137,7 @@ export async function resolveEntity(
       .returning();
 
     if (newEntity) {
+      // Create primary alias
       await db
         .insert(entityAliases)
         .values({
@@ -109,6 +146,33 @@ export async function resolveEntity(
           source: "extracted",
         })
         .onConflictDoNothing();
+
+      // Auto-generate additional aliases for person entities
+      if (type === "person") {
+        const parts = name.split(/\s+/).filter((p) => p.length > 1);
+        const additionalAliases = new Set<string>();
+        additionalAliases.add(name.toLowerCase());
+        for (const part of parts) {
+          additionalAliases.add(part.toLowerCase());
+        }
+        // Remove the primary alias (already inserted above via trigger/default)
+        const primaryLower = name.toLowerCase();
+        for (const alias of additionalAliases) {
+          if (alias === primaryLower && parts.length <= 1) continue;
+          try {
+            await db
+              .insert(entityAliases)
+              .values({
+                entityId: newEntity.id,
+                alias,
+                source: "auto_generated",
+              })
+              .onConflictDoNothing();
+          } catch {
+            // ignore duplicate alias conflicts
+          }
+        }
+      }
 
       return {
         entityId: newEntity.id,

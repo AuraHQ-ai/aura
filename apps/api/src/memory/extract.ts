@@ -2,7 +2,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getFastModel } from "../lib/ai.js";
 import { embedTexts } from "../lib/embeddings.js";
-import { storeMemories, toDbChannelType } from "./store.js";
+import { storeMemories, toDbChannelType, checkDuplicates } from "./store.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
@@ -142,8 +142,16 @@ const extractedMemoriesSchema = z.object({
         .string()
         .describe("A concise statement of the memory, e.g. 'Joan prefers bullet points'"),
       type: z
-        .enum(["fact", "decision", "personal", "relationship", "sentiment", "open_thread"])
+        .enum(["fact", "decision", "personal", "preference", "relationship", "sentiment", "event", "open_thread", "insight"])
         .describe("The type of memory"),
+      category: z
+        .enum(["semantic", "episodic", "procedural"])
+        .describe("semantic: durable facts/preferences/relationships. episodic: time-bound events/conversations/incidents. procedural: how-to knowledge/workflows.")
+        .default("semantic"),
+      utility: z
+        .enum(["high", "medium", "low"])
+        .describe("high: decisions, personal facts, business intelligence. medium: useful context. low: operational noise, status checks, agent actions — DISCARD these.")
+        .default("medium"),
       relatedUserIds: z
         .array(z.string())
         .describe("Slack user IDs this memory is about"),
@@ -180,9 +188,29 @@ Types of memories to extract:
 - **fact**: Concrete facts about work, projects, tools, or processes. E.g., "The Q3 launch date is March 15."
 - **decision**: Decisions made by the team. E.g., "We decided to use Postgres instead of MongoDB."
 - **personal**: Personal details about team members. E.g., "Tom has a dog named Biscuit."
+- **preference**: User preferences and working style. E.g., "Joan prefers bullet points over prose."
 - **relationship**: How people relate to each other. E.g., "Joan and Maria work closely on the mobile app."
 - **sentiment**: Emotional context or opinions. E.g., "Joan seemed frustrated about the deploy process."
+- **event**: Time-bound events or incidents. E.g., "Production went down on March 10 due to a migration bug."
 - **open_thread**: Questions or tasks that were raised but not resolved. E.g., "Joan asked about the API docs but never got an answer."
+- **insight**: Business intelligence or strategic observations. E.g., "Churn rate increased 15% after the pricing change."
+
+Memory categories:
+- **semantic**: Durable facts, preferences, relationships that remain true over time.
+- **episodic**: Time-bound events, conversations, incidents tied to a specific moment.
+- **procedural**: How-to knowledge, workflows, processes.
+
+Utility assessment (IMPORTANT — be strict):
+- **high**: Decisions, personal facts, business intelligence, preferences, relationship info.
+- **medium**: Useful context that may be relevant later.
+- **low**: Operational noise, status checks, agent actions, acknowledgments — these will be DISCARDED.
+
+DO NOT extract memories about:
+- Aura's own actions ("Aura checked the deploy", "Aura ran a query")
+- Acknowledgments and pleasantries ("thanks", "got it", "sounds good")
+- Scheduling logistics ("let's meet at 3pm") unless it's a decision
+- Information that just restates what was already retrieved from memory in this conversation
+- Meta-conversation about the memory system itself
 
 Rules:
 - Be concise — each memory should be one clear sentence.
@@ -226,9 +254,20 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       return;
     }
 
+    // Filter out low-utility memories before embedding
+    const filteredByUtility = object.memories.filter((m) => m.utility !== "low");
+    const discardedLowUtility = object.memories.length - filteredByUtility.length;
+    if (discardedLowUtility > 0) {
+      logger.info(`Filtered out ${discardedLowUtility} low-utility memories`);
+    }
+    if (filteredByUtility.length === 0) {
+      logger.debug("All extracted memories were low utility — nothing to store");
+      return;
+    }
+
     // Normalize user references to canonical Slack user IDs
     const normalizedMemories = await Promise.all(
-      object.memories.map(async (m) => ({
+      filteredByUtility.map(async (m) => ({
         ...m,
         relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
       })),
@@ -251,16 +290,44 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     // Resolve workspace consistently for both memories and entities
     const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
 
+    // Dedup check: skip memories that are near-duplicates of existing ones
+    const dedupResults = await checkDuplicates(
+      normalizedMemories.map((m, i) => ({ content: m.content, embedding: embeddings[i] ?? null })),
+      workspaceId,
+    );
+
+    const dedupSkipped = dedupResults.filter((r) => r.dominated).length;
+    const dedupSuperseded = dedupResults.filter((r) => r.supersedesId).length;
+    if (dedupSkipped > 0 || dedupSuperseded > 0) {
+      logger.info("Memory dedup results", {
+        memories_skipped_dedup: dedupSkipped,
+        memories_superseded: dedupSuperseded,
+      });
+    }
+
+    // Build final list excluding dominated duplicates
+    const survivingIndices = dedupResults
+      .map((r, i) => (r.dominated ? -1 : i))
+      .filter((i) => i >= 0);
+
+    if (survivingIndices.length === 0) {
+      logger.debug("All extracted memories were duplicates — nothing to store");
+      return;
+    }
+
     // Prepare memories for storage
-    const newMemories: NewMemory[] = normalizedMemories.map((m, i) => ({
-      content: m.content,
-      type: m.type,
+    const newMemories: NewMemory[] = survivingIndices.map((i) => ({
+      content: normalizedMemories[i].content,
+      type: normalizedMemories[i].type,
+      category: normalizedMemories[i].category,
       workspaceId,
       sourceMessageId: context.sourceMessageId || undefined,
       sourceChannelType: toDbChannelType(context.channelType),
-      relatedUserIds: m.relatedUserIds.length > 0 ? m.relatedUserIds : [context.userId],
+      relatedUserIds: normalizedMemories[i].relatedUserIds.length > 0
+        ? normalizedMemories[i].relatedUserIds
+        : [context.userId],
       embedding: embeddings[i] ?? null,
-      shareable: m.shareable ? 1 : 0,
+      shareable: normalizedMemories[i].shareable ? 1 : 0,
       relevanceScore: 1.0,
     }));
 
@@ -268,15 +335,16 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     const memoryIds = await storeMemories(newMemories);
 
     // Resolve entities and link them to memories (best-effort, don't block)
-    for (let i = 0; i < normalizedMemories.length; i++) {
+    for (let j = 0; j < survivingIndices.length; j++) {
+      const i = survivingIndices[j];
       const extractedEntities = normalizedMemories[i].entities;
-      if (extractedEntities && extractedEntities.length > 0 && memoryIds[i]) {
+      if (extractedEntities && extractedEntities.length > 0 && memoryIds[j]) {
         try {
           const resolved = await resolveEntities(extractedEntities, workspaceId);
-          await linkMemoryEntities(memoryIds[i], resolved);
+          await linkMemoryEntities(memoryIds[j], resolved);
         } catch (entityError) {
           logger.warn("Entity resolution failed for memory, skipping", {
-            memoryId: memoryIds[i],
+            memoryId: memoryIds[j],
             error: String(entityError),
           });
         }
@@ -286,6 +354,8 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     logger.info(`Extracted ${newMemories.length} memories in ${Date.now() - start}ms`, {
       types: newMemories.map((m) => m.type),
       hasEmbeddings,
+      discardedLowUtility,
+      dedupSkipped,
     });
   } catch (error) {
     logger.error("Memory extraction failed", {
