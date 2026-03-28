@@ -2,7 +2,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getFastModel } from "../lib/ai.js";
 import { embedTexts } from "../lib/embeddings.js";
-import { storeMemories, softSupersedeMemories, toDbChannelType, checkDuplicates } from "./store.js";
+import { storeMemories, supersedeMemory, toDbChannelType, checkDuplicates } from "./store.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
@@ -369,11 +369,16 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     const hasEmbeddings = newMemories.some((m) => m.embedding !== null);
     const memoryIds = await storeMemories(newMemories);
 
-    // Soft-supersede old memories only after new ones are successfully stored
-    const supersededIds = dedupResults
-      .filter((r) => r.supersedesId)
-      .map((r) => r.supersedesId!);
-    await softSupersedeMemories(supersededIds);
+    // Properly supersede old memories with lifecycle transitions
+    // Map surviving indices back to their dedup results to pair old→new memory IDs
+    for (let j = 0; j < survivingIndices.length; j++) {
+      const i = survivingIndices[j];
+      const oldId = dedupResults[i].supersedesId;
+      const newId = memoryIds[j];
+      if (oldId && newId) {
+        await supersedeMemory(oldId, newId);
+      }
+    }
 
     // Resolve entities and link them to memories (best-effort, don't block)
     for (let j = 0; j < survivingIndices.length; j++) {

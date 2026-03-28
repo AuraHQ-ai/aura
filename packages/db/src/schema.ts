@@ -54,6 +54,14 @@ export const extractionSourceRoleEnum = pgEnum("extraction_source_role", [
   "tool",
 ]);
 
+export const memoryStatusEnum = pgEnum("memory_status", [
+  "current",
+  "superseded",
+  "disputed",
+  "archived",
+  "deleted",
+]);
+
 // Helper for timestamptz columns
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
@@ -130,6 +138,13 @@ export const memories = pgTable(
     shareable: integer("shareable").notNull().default(0),
     extractionSourceRole: extractionSourceRoleEnum("extraction_source_role"),
     searchVector: text("search_vector"),
+    status: memoryStatusEnum("status").notNull().default("current"),
+    confidence: real("confidence").default(0.8),
+    validFrom: timestamptz("valid_from"),
+    validUntil: timestamptz("valid_until"),
+    supersedesMemoryId: uuid("supersedes_memory_id"),
+    supersededAt: timestamptz("superseded_at"),
+    supersededByMemoryId: uuid("superseded_by_memory_id"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -145,6 +160,11 @@ export const memories = pgTable(
       "gin",
       sql`${table.searchVector}`,
     ),
+    index("memories_status_idx").on(table.status),
+    index("memories_valid_from_idx").on(table.validFrom),
+    index("memories_supersedes_idx")
+      .on(table.supersedesMemoryId)
+      .where(sql`supersedes_memory_id IS NOT NULL`),
   ],
 );
 
