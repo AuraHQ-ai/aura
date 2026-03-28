@@ -258,6 +258,7 @@ export async function checkDuplicates(
         FROM memories
         WHERE workspace_id = ${workspaceId}
           AND embedding IS NOT NULL
+          AND relevance_score > 0.01
         ORDER BY embedding <=> ${vectorStr}::vector
         LIMIT 3
       `);
