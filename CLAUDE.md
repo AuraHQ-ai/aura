@@ -32,18 +32,27 @@ This is a pnpm workspace monorepo. Run `pnpm install` at the root.
 
 ## Database workflow
 ```bash
-pnpm db:generate    # generate migrations from schema changes
-pnpm db:migrate     # apply pending migrations
-pnpm db:push        # push schema directly (dev only)
-pnpm db:studio      # open Drizzle Studio
+pnpm db:generate            # generate migrations from schema changes
+pnpm db:migrate             # apply pending migrations (uses .env.local)
+pnpm db:migrate --prod      # apply pending migrations against production DB
+pnpm db:push                # push schema directly (dev only)
+pnpm db:studio              # open Drizzle Studio
 ```
+
+All `db:*` scripts use `./scripts/env.sh` which loads `.env.local` by default. Pass `--prod` to use `.env.production`.
+
+## Environment variables
+- **`.env.local`** at repo root — all local development env vars (gitignored)
+- **`.env.production`** at repo root — production credentials, opt-in via `--prod` (gitignored)
+- **`.env.example`** — committed template documenting all variables
+- No per-app `.env` files. No plain `.env` file.
+- Production env vars managed via Vercel CLI, some injected into sandbox at runtime
 
 ## Conventions
 - TypeScript strict mode
 - All tool functions return `{ ok: true, ... }` or `{ ok: false, error: "..." }`
 - Slack message formatting uses mrkdwn (not markdown)
 - ISO 8601 timestamps in user's timezone throughout
-- Environment variables configured in Vercel, some injected into sandbox at runtime
 - Import schema types via `import { ... } from "@aura/db/schema"`
 
 ## Tool documentation convention

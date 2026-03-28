@@ -18,7 +18,7 @@ import { MODEL_DEFAULTS } from "./models.js";
  * change models from the Slack App Home without redeploying.
  *
  * When deployed on Vercel, auth is handled automatically via OIDC.
- * For local development, set VERCEL_AI_GATEWAY_API_KEY in .env.
+ * For local development, set VERCEL_AI_GATEWAY_API_KEY in .env.local.
  *
  * All model functions automatically include Anthropic fallback middleware:
  * if the gateway returns a GatewayAuthenticationError (credits depleted,

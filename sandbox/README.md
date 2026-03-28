@@ -33,7 +33,7 @@ pnpm --filter aura-sandbox build
 pnpm --filter aura-sandbox build:prod
 ```
 
-Requires `E2B_API_KEY` in the root `.env` file or as an environment variable.
+Requires `E2B_API_KEY` in the root `.env.local` file or as an environment variable.
 
 After the build, copy the `Template ID` from the output and set:
 ```

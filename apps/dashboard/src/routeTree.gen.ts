@@ -32,6 +32,7 @@ import { Route as ErrorsIdRouteImport } from "./routes/errors/$id"
 import { Route as CredentialsIdRouteImport } from "./routes/credentials/$id"
 import { Route as ConversationsInvocationsRouteImport } from "./routes/conversations/invocations"
 import { Route as ConversationsIdRouteImport } from "./routes/conversations/$id"
+import { Route as MemoriesEntitiesIdRouteImport } from "./routes/memories/entities_.$id"
 import { Route as ConversationsThreadsChannelIdThreadTsRouteImport } from "./routes/conversations/threads.$channelId.$threadTs"
 
 const UnauthorizedRoute = UnauthorizedRouteImport.update({
@@ -150,6 +151,11 @@ const ConversationsIdRoute = ConversationsIdRouteImport.update({
   path: "/conversations/$id",
   getParentRoute: () => rootRouteImport,
 } as any)
+const MemoriesEntitiesIdRoute = MemoriesEntitiesIdRouteImport.update({
+  id: "/memories/entities_/$id",
+  path: "/memories/entities/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConversationsThreadsChannelIdThreadTsRoute =
   ConversationsThreadsChannelIdThreadTsRouteImport.update({
     id: "/conversations/threads/$channelId/$threadTs",
@@ -181,6 +187,7 @@ export interface FileRoutesByFullPath {
   "/resources/": typeof ResourcesIndexRoute
   "/settings/": typeof SettingsIndexRoute
   "/users/": typeof UsersIndexRoute
+  "/memories/entities/$id": typeof MemoriesEntitiesIdRoute
   "/conversations/threads/$channelId/$threadTs": typeof ConversationsThreadsChannelIdThreadTsRoute
 }
 export interface FileRoutesByTo {
@@ -207,6 +214,7 @@ export interface FileRoutesByTo {
   "/resources": typeof ResourcesIndexRoute
   "/settings": typeof SettingsIndexRoute
   "/users": typeof UsersIndexRoute
+  "/memories/entities/$id": typeof MemoriesEntitiesIdRoute
   "/conversations/threads/$channelId/$threadTs": typeof ConversationsThreadsChannelIdThreadTsRoute
 }
 export interface FileRoutesById {
@@ -234,6 +242,7 @@ export interface FileRoutesById {
   "/resources/": typeof ResourcesIndexRoute
   "/settings/": typeof SettingsIndexRoute
   "/users/": typeof UsersIndexRoute
+  "/memories/entities_/$id": typeof MemoriesEntitiesIdRoute
   "/conversations/threads/$channelId/$threadTs": typeof ConversationsThreadsChannelIdThreadTsRoute
 }
 export interface FileRouteTypes {
@@ -262,6 +271,7 @@ export interface FileRouteTypes {
     | "/resources/"
     | "/settings/"
     | "/users/"
+    | "/memories/entities/$id"
     | "/conversations/threads/$channelId/$threadTs"
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -288,6 +298,7 @@ export interface FileRouteTypes {
     | "/resources"
     | "/settings"
     | "/users"
+    | "/memories/entities/$id"
     | "/conversations/threads/$channelId/$threadTs"
   id:
     | "__root__"
@@ -314,6 +325,7 @@ export interface FileRouteTypes {
     | "/resources/"
     | "/settings/"
     | "/users/"
+    | "/memories/entities_/$id"
     | "/conversations/threads/$channelId/$threadTs"
   fileRoutesById: FileRoutesById
 }
@@ -341,6 +353,7 @@ export interface RootRouteChildren {
   ResourcesIndexRoute: typeof ResourcesIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
   UsersIndexRoute: typeof UsersIndexRoute
+  MemoriesEntitiesIdRoute: typeof MemoriesEntitiesIdRoute
   ConversationsThreadsChannelIdThreadTsRoute: typeof ConversationsThreadsChannelIdThreadTsRoute
 }
 
@@ -507,6 +520,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ConversationsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/memories/entities_/$id": {
+      id: "/memories/entities_/$id"
+      path: "/memories/entities/$id"
+      fullPath: "/memories/entities/$id"
+      preLoaderRoute: typeof MemoriesEntitiesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/conversations/threads/$channelId/$threadTs": {
       id: "/conversations/threads/$channelId/$threadTs"
       path: "/conversations/threads/$channelId/$threadTs"
@@ -541,6 +561,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResourcesIndexRoute: ResourcesIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,
   UsersIndexRoute: UsersIndexRoute,
+  MemoriesEntitiesIdRoute: MemoriesEntitiesIdRoute,
   ConversationsThreadsChannelIdThreadTsRoute:
     ConversationsThreadsChannelIdThreadTsRoute,
 }

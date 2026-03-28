@@ -6,13 +6,13 @@
  *   pnpm --filter aura-sandbox build:prod     # production
  *
  * Reads e2b.Dockerfile as the single source of truth via fromDockerfile().
- * Requires E2B_API_KEY in .env or environment.
+ * Requires E2B_API_KEY in .env.local or environment.
  */
 import { config } from "dotenv";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-config({ path: resolve(__dirname, "..", ".env") });
+config({ path: resolve(__dirname, "..", ".env.local") });
 
 import { Template, defaultBuildLogger } from "e2b";
 

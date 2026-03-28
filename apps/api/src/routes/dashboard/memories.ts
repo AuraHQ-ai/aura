@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, count, inArray, sql } from "drizzle-orm";
-import { memories, users } from "@aura/db/schema";
+import { memories, users, memoryEntities, entities } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, idParamSchema, createDashboardApp } from "./schemas.js";
@@ -158,7 +158,19 @@ dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
         .where(inArray(users.slackUserId, memory.relatedUserIds));
     }
 
-    return c.json({ ...memory, relatedUsers } as any, 200);
+    const linkedEntities = await db
+      .select({
+        entityId: memoryEntities.entityId,
+        role: memoryEntities.role,
+        canonicalName: entities.canonicalName,
+        type: entities.type,
+        description: entities.description,
+      })
+      .from(memoryEntities)
+      .innerJoin(entities, eq(entities.id, memoryEntities.entityId))
+      .where(eq(memoryEntities.memoryId, id));
+
+    return c.json({ ...memory, relatedUsers, linkedEntities } as any, 200);
   } catch (error) {
     logger.error("Failed to get memory", { error });
     return c.json({ error: "Failed to get memory" }, 500);
