@@ -130,7 +130,8 @@ export async function enrichEntityAliases(workspaceId: string): Promise<number> 
  * Repoints all memory_entities and aliases, then deletes the losers.
  */
 export async function mergeEntities(winnerId: string, loserIds: string[]): Promise<void> {
-  if (loserIds.length === 0) return;
+  const safeLoserIds = loserIds.filter((id) => id !== winnerId);
+  if (safeLoserIds.length === 0) return;
 
   await db.transaction(async (tx) => {
     // 1. Repoint memory_entities from losers → winner (insert-then-delete
@@ -139,36 +140,37 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
       INSERT INTO memory_entities (memory_id, entity_id, role)
       SELECT DISTINCT ON (memory_id) memory_id, ${winnerId}, role
       FROM memory_entities
-      WHERE entity_id = ANY(${loserIds})
+      WHERE entity_id = ANY(${safeLoserIds})
       ON CONFLICT DO NOTHING
     `);
     await tx.execute(sql`
       DELETE FROM memory_entities
-      WHERE entity_id = ANY(${loserIds})
+      WHERE entity_id = ANY(${safeLoserIds})
     `);
 
     // 2. Move aliases from losers → winner (insert-then-delete
-    //    to avoid unique-index violation when losers share an alias_lower)
+    //    to avoid unique-index violation when losers share an alias_lower;
+    //    alias_lower is a generated column so we only insert alias)
     await tx.execute(sql`
-      INSERT INTO entity_aliases (entity_id, alias, alias_lower, source)
-      SELECT DISTINCT ON (alias_lower) ${winnerId}, alias, alias_lower, source
+      INSERT INTO entity_aliases (entity_id, alias, source)
+      SELECT DISTINCT ON (alias_lower) ${winnerId}, alias, source
       FROM entity_aliases
-      WHERE entity_id = ANY(${loserIds})
+      WHERE entity_id = ANY(${safeLoserIds})
       ON CONFLICT DO NOTHING
     `);
     await tx.execute(sql`
       DELETE FROM entity_aliases
-      WHERE entity_id = ANY(${loserIds})
+      WHERE entity_id = ANY(${safeLoserIds})
     `);
 
     // 3. Delete loser entities
     await tx.execute(sql`
       DELETE FROM entities
-      WHERE id = ANY(${loserIds})
+      WHERE id = ANY(${safeLoserIds})
     `);
   });
 
-  logger.info(`Merged ${loserIds.length} entities into ${winnerId}`);
+  logger.info(`Merged ${safeLoserIds.length} entities into ${winnerId}`);
 }
 
 // ── Duplicate Detection ─────────────────────────────────────────────────────
