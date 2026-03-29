@@ -121,24 +121,27 @@ export async function mergeDuplicateMemories(): Promise<number> {
         );
         const now = new Date();
 
-        await db
-          .update(memories)
-          .set({
-            relevanceScore: boostedScore,
-            updatedAt: now,
-          })
-          .where(sql`${memories.id} = ${keepId}`);
+        await db.transaction(async (tx) => {
+          await tx
+            .update(memories)
+            .set({
+              relevanceScore: boostedScore,
+              supersedesMemoryId: loserId,
+              updatedAt: now,
+            })
+            .where(sql`${memories.id} = ${keepId}`);
 
-        await db
-          .update(memories)
-          .set({
-            status: "superseded",
-            supersededAt: now,
-            supersededByMemoryId: keepId,
-            validUntil: now,
-            updatedAt: now,
-          })
-          .where(sql`${memories.id} = ${loserId}`);
+          await tx
+            .update(memories)
+            .set({
+              status: "superseded",
+              supersededAt: now,
+              supersededByMemoryId: keepId,
+              validUntil: now,
+              updatedAt: now,
+            })
+            .where(sql`${memories.id} = ${loserId}`);
+        });
 
         supersededIds.add(loserId);
         mergedCount++;
