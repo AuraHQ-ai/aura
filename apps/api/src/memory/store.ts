@@ -300,25 +300,6 @@ export async function checkDuplicates(
 }
 
 /**
- * Soft-supersede old memories by setting their relevance_score to 0.001.
- * @deprecated Use `supersedeMemory()` for proper lifecycle transitions.
- * Call this AFTER successfully storing the replacement memories.
- */
-export async function softSupersedeMemories(ids: string[]): Promise<void> {
-  if (ids.length === 0) return;
-  for (const id of ids) {
-    try {
-      await db.execute(sql`
-        UPDATE memories SET relevance_score = 0.001, updated_at = now()
-        WHERE id = ${id}::uuid
-      `);
-    } catch (error) {
-      logger.warn("Failed to soft-supersede memory", { id, error: String(error) });
-    }
-  }
-}
-
-/**
  * Properly supersede an old memory with a new one using lifecycle transitions.
  * Sets old memory: status='superseded', superseded_at=now(), superseded_by_memory_id=newMemoryId, valid_until=now()
  * Sets new memory: status='current', valid_from=now(), supersedes_memory_id=oldMemoryId
@@ -336,6 +317,7 @@ export async function supersedeMemory(oldMemoryId: string, newMemoryId: string):
             valid_until = ${now},
             updated_at = ${now}
         WHERE id = ${oldMemoryId}::uuid
+          AND status = 'current'
       `);
 
       await tx.execute(sql`

@@ -63,6 +63,7 @@ export async function mergeDuplicateMemories(): Promise<number> {
 
     let mergedCount = 0;
     const supersededIds = new Set<string>();
+    const keeperHasForwardLink = new Set<string>();
 
     for (const mem of allMemories.rows as any[]) {
       if (supersededIds.has(mem.id)) continue;
@@ -121,12 +122,14 @@ export async function mergeDuplicateMemories(): Promise<number> {
         );
         const now = new Date();
 
+        const isFirstLoser = !keeperHasForwardLink.has(keepId);
+
         await db.transaction(async (tx) => {
           await tx
             .update(memories)
             .set({
               relevanceScore: boostedScore,
-              supersedesMemoryId: loserId,
+              ...(isFirstLoser ? { supersedesMemoryId: loserId } : {}),
               updatedAt: now,
             })
             .where(sql`${memories.id} = ${keepId}`);
@@ -143,6 +146,7 @@ export async function mergeDuplicateMemories(): Promise<number> {
             .where(sql`${memories.id} = ${loserId}`);
         });
 
+        keeperHasForwardLink.add(keepId);
         supersededIds.add(loserId);
         mergedCount++;
       }
