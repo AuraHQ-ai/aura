@@ -132,45 +132,47 @@ export async function enrichEntityAliases(workspaceId: string): Promise<number> 
 export async function mergeEntities(winnerId: string, loserIds: string[]): Promise<void> {
   if (loserIds.length === 0) return;
 
-  // 1. Repoint memory_entities from losers → winner
-  await db.execute(sql`
-    UPDATE memory_entities
-    SET entity_id = ${winnerId}
-    WHERE entity_id = ANY(${loserIds})
-      AND NOT EXISTS (
-        SELECT 1 FROM memory_entities me2
-        WHERE me2.memory_id = memory_entities.memory_id
-          AND me2.entity_id = ${winnerId}
-      )
-  `);
-  // Delete any remaining rows that would conflict (dupes)
-  await db.execute(sql`
-    DELETE FROM memory_entities
-    WHERE entity_id = ANY(${loserIds})
-  `);
+  await db.transaction(async (tx) => {
+    // 1. Repoint memory_entities from losers → winner
+    await tx.execute(sql`
+      UPDATE memory_entities
+      SET entity_id = ${winnerId}
+      WHERE entity_id = ANY(${loserIds})
+        AND NOT EXISTS (
+          SELECT 1 FROM memory_entities me2
+          WHERE me2.memory_id = memory_entities.memory_id
+            AND me2.entity_id = ${winnerId}
+        )
+    `);
+    // Delete any remaining rows that would conflict (dupes)
+    await tx.execute(sql`
+      DELETE FROM memory_entities
+      WHERE entity_id = ANY(${loserIds})
+    `);
 
-  // 2. Move aliases from losers → winner
-  await db.execute(sql`
-    UPDATE entity_aliases
-    SET entity_id = ${winnerId}
-    WHERE entity_id = ANY(${loserIds})
-      AND NOT EXISTS (
-        SELECT 1 FROM entity_aliases ea2
-        WHERE ea2.entity_id = ${winnerId}
-          AND ea2.alias_lower = entity_aliases.alias_lower
-      )
-  `);
-  // Delete remaining conflicting aliases
-  await db.execute(sql`
-    DELETE FROM entity_aliases
-    WHERE entity_id = ANY(${loserIds})
-  `);
+    // 2. Move aliases from losers → winner
+    await tx.execute(sql`
+      UPDATE entity_aliases
+      SET entity_id = ${winnerId}
+      WHERE entity_id = ANY(${loserIds})
+        AND NOT EXISTS (
+          SELECT 1 FROM entity_aliases ea2
+          WHERE ea2.entity_id = ${winnerId}
+            AND ea2.alias_lower = entity_aliases.alias_lower
+        )
+    `);
+    // Delete remaining conflicting aliases
+    await tx.execute(sql`
+      DELETE FROM entity_aliases
+      WHERE entity_id = ANY(${loserIds})
+    `);
 
-  // 3. Delete loser entities
-  await db.execute(sql`
-    DELETE FROM entities
-    WHERE id = ANY(${loserIds})
-  `);
+    // 3. Delete loser entities
+    await tx.execute(sql`
+      DELETE FROM entities
+      WHERE id = ANY(${loserIds})
+    `);
+  });
 
   logger.info(`Merged ${loserIds.length} entities into ${winnerId}`);
 }
