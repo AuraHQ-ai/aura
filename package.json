@@ -4,7 +4,7 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "prepare": "husky",
-    "dev": "pnpm --filter aura-api --filter aura-dashboard --parallel dev",
+    "dev": "pnpm --filter @aura/db build && pnpm --filter aura-api --filter aura-dashboard --parallel dev",
     "typecheck": "pnpm --filter aura-api typecheck && pnpm --filter aura-dashboard typecheck",
     "db:generate": "./scripts/env.sh pnpm --filter @aura/db db:generate",
     "db:migrate": "./scripts/env.sh pnpm --filter @aura/db db:migrate",
