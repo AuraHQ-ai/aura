@@ -215,6 +215,7 @@ async function fetchEntityMatchedMemories(
       JOIN memory_entities me ON m.id = me.memory_id
       WHERE me.entity_id = ANY(${entityIds})
         AND m.relevance_score >= ${minRelevanceScore}
+        AND m.status IN ('current', 'disputed')
         ${privacyFilter}
         ${workspaceMemoryFilter}
       ORDER BY m.relevance_score DESC, m.created_at DESC
@@ -257,6 +258,13 @@ async function fetchEntityMatchedMemories(
       relevanceScore: row.relevance_score ?? 1,
       shareable: row.shareable ?? 0,
       searchVector: row.search_vector ?? null,
+      status: row.status ?? "current",
+      confidence: row.confidence ?? 0.8,
+      validFrom: row.valid_from ?? null,
+      validUntil: row.valid_until ?? null,
+      supersedesMemoryId: row.supersedes_memory_id ?? null,
+      supersededAt: row.superseded_at ?? null,
+      supersededByMemoryId: row.superseded_by_memory_id ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     } as Memory));
@@ -317,7 +325,8 @@ export async function retrieveMemories(
         OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
       )`;
 
-    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore}`;
+    const statusFilter = sql`${memories.status} IN ('current', 'disputed')`;
+    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter}`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
@@ -415,6 +424,13 @@ export async function retrieveMemories(
         relevanceScore: row.relevance_score ?? 1,
         shareable: row.shareable ?? 0,
         searchVector: row.search_vector ?? null,
+        status: row.status ?? "current",
+        confidence: row.confidence ?? 0.8,
+        validFrom: row.valid_from ?? null,
+        validUntil: row.valid_until ?? null,
+        supersedesMemoryId: row.supersedes_memory_id ?? null,
+        supersededAt: row.superseded_at ?? null,
+        supersededByMemoryId: row.superseded_by_memory_id ?? null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       } as Memory,

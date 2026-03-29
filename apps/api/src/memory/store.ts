@@ -259,6 +259,7 @@ export async function checkDuplicates(
         WHERE workspace_id = ${workspaceId}
           AND embedding IS NOT NULL
           AND relevance_score > 0.01
+          AND status IN ('current', 'disputed')
         ORDER BY embedding <=> ${vectorSql}
         LIMIT 3
       `);
@@ -299,33 +300,62 @@ export async function checkDuplicates(
 }
 
 /**
- * Soft-supersede old memories by setting their relevance_score to 0.001.
- * Call this AFTER successfully storing the replacement memories.
+ * Properly supersede an old memory with a new one using lifecycle transitions.
+ * Sets old memory: status='superseded', superseded_at=now(), superseded_by_memory_id=newMemoryId, valid_until=now()
+ * Sets new memory: status='current', valid_from=now(), supersedes_memory_id=oldMemoryId
+ * Leaves relevance_score untouched — it's purely a recency/decay signal.
  */
-export async function softSupersedeMemories(ids: string[]): Promise<void> {
-  if (ids.length === 0) return;
-  for (const id of ids) {
-    try {
-      await db.execute(sql`
-        UPDATE memories SET relevance_score = 0.001, updated_at = now()
-        WHERE id = ${id}::uuid
+export async function supersedeMemory(oldMemoryId: string, newMemoryId: string): Promise<void> {
+  const now = new Date();
+  try {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        UPDATE memories
+        SET status = 'superseded',
+            superseded_at = ${now},
+            superseded_by_memory_id = ${newMemoryId}::uuid,
+            valid_until = ${now},
+            updated_at = ${now}
+        WHERE id = ${oldMemoryId}::uuid
+          AND status IN ('current', 'disputed')
       `);
-    } catch (error) {
-      logger.warn("Failed to soft-supersede memory", { id, error: String(error) });
-    }
+
+      await tx.execute(sql`
+        UPDATE memories
+        SET status = 'current',
+            valid_from = ${now},
+            supersedes_memory_id = ${oldMemoryId}::uuid,
+            updated_at = ${now}
+        WHERE id = ${newMemoryId}::uuid
+      `);
+    });
+  } catch (error) {
+    logger.warn("Failed to supersede memory", {
+      oldMemoryId,
+      newMemoryId,
+      error: String(error),
+    });
   }
 }
 
 /**
  * Batch store multiple memories.
+ * Automatically sets status='current' and validFrom=now() on all new memories.
  */
 export async function storeMemories(newMemories: NewMemory[]): Promise<string[]> {
   if (newMemories.length === 0) return [];
 
+  const now = new Date();
+  const memoriesWithDefaults = newMemories.map((m) => ({
+    ...m,
+    status: m.status ?? ("current" as const),
+    validFrom: m.validFrom ?? now,
+  }));
+
   try {
     const inserted = await db
       .insert(memories)
-      .values(newMemories)
+      .values(memoriesWithDefaults)
       .returning({ id: memories.id });
 
     logger.info(`Stored ${inserted.length} memories`);
