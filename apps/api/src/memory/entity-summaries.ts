@@ -1,6 +1,6 @@
 import { generateObject } from "ai";
 import { z } from "zod";
-import { sql, eq, isNull, and } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { entities, memories, memoryEntities } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
@@ -9,8 +9,69 @@ import { logger } from "../lib/logger.js";
 const MAX_MEMORIES_PER_ENTITY = 200;
 const DELAY_BETWEEN_CALLS_MS = 200;
 
+/** Priority order: high-value entity types first, then by memory count */
+const TYPE_PRIORITY: Record<string, number> = {
+  person: 0,
+  company: 1,
+  channel: 2,
+  technology: 3,
+  product: 4,
+  project: 5,
+};
+
+function getTypePriority(type: string): number {
+  return TYPE_PRIORITY[type] ?? 99;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getSystemPrompt(entityName: string, entityType: string): string {
+  const base = `You are summarizing what Aura (an AI team member) knows about "${entityName}" (${entityType}).`;
+
+  const rules = `
+Rules:
+- 2-3 sentences MAX. Be brutally concise.
+- Present tense for current state. Past tense only for important context.
+- No filler phrases ("This entity is...", "Based on memories...").
+- Start directly with the most important fact.
+- Include specifics: names, numbers, dates when available.
+- If information conflicts, state the most recent version.`;
+
+  const typeGuidance: Record<string, string> = {
+    person: `${base}
+Focus on: role/title, what they work on, key relationships, communication style, notable preferences or decisions.
+Skip: routine interactions, trivial scheduling details.
+${rules}`,
+
+    company: `${base}
+Focus on: what the company does, relationship to RealAdvisor, key products/services, any active deals or partnerships.
+Skip: generic industry descriptions.
+${rules}`,
+
+    channel: `${base}
+Focus on: what this channel is used for, key metrics or business context discussed there, active themes.
+Skip: individual message-level details.
+${rules}`,
+
+    technology: `${base}
+Focus on: what it is, how it's used in the stack, any recent migrations or decisions about it.
+Skip: generic descriptions of the technology.
+${rules}`,
+
+    product: `${base}
+Focus on: what it does, who uses it, current status, key recent changes or decisions.
+Skip: feature-level minutiae.
+${rules}`,
+
+    project: `${base}
+If the project/issue is closed/completed/merged: respond with ONE sentence stating what it was and that it's done. Nothing more.
+If active: focus on current status, blockers, owners, key decisions.
+${rules}`,
+  };
+
+  return typeGuidance[entityType] || `${base}\nSummarize what's known. ${rules}`;
 }
 
 /**
@@ -60,7 +121,7 @@ export async function generateEntitySummary(
   const { object } = await generateObject({
     model,
     schema: z.object({ summary: z.string() }),
-    system: `Synthesize a concise profile from these memories about ${entity.canonicalName} (${entity.type}). Focus on: what matters now, key decisions, relationships, current work. Discard trivial/operational noise. Max 200 words.`,
+    system: getSystemPrompt(entity.canonicalName, entity.type ?? "unknown"),
     prompt: memoriesText,
   });
 
@@ -76,49 +137,56 @@ export async function generateEntitySummary(
 /**
  * Regenerate summaries for entities that are stale or have never been summarized.
  *
- * If forceAll is true, regenerates ALL entities with at least 1 linked memory.
- * Otherwise, finds entities where:
- *   (a) summary_updated_at IS NULL and they have linked memories, or
- *   (b) they have memories created after summary_updated_at
+ * Ordering: person > company > channel > technology > product > project,
+ * then by memory count DESC within each type (most-referenced entities first).
  */
 export async function regenerateStaleSummaries(
   opts?: { forceAll?: boolean },
 ): Promise<{ updated: number; skipped: number }> {
   const forceAll = opts?.forceAll ?? false;
 
-  type StaleRow = { id: string; canonical_name: string; type: string };
+  type StaleRow = {
+    id: string;
+    canonical_name: string;
+    type: string;
+    memory_count: number;
+  };
 
-  let staleEntities: StaleRow[];
+  const whereClause = forceAll
+    ? sql`TRUE`
+    : sql`(e.summary_updated_at IS NULL
+        OR e.summary_updated_at < (
+          SELECT MAX(m.created_at)
+          FROM memories m
+          JOIN memory_entities me2 ON me2.memory_id = m.id
+          WHERE me2.entity_id = e.id
+        ))`;
 
-  if (forceAll) {
-    staleEntities = (
-      await db.execute(sql`
-        SELECT DISTINCT e.id, e.canonical_name, e.type
-        FROM entities e
-        JOIN memory_entities me ON me.entity_id = e.id
-        ORDER BY e.canonical_name
-      `)
-    ).rows as StaleRow[];
-  } else {
-    staleEntities = (
-      await db.execute(sql`
-        SELECT DISTINCT e.id, e.canonical_name, e.type
-        FROM entities e
-        JOIN memory_entities me ON me.entity_id = e.id
-        WHERE e.summary_updated_at IS NULL
-           OR e.summary_updated_at < (
-             SELECT MAX(m.created_at)
-             FROM memories m
-             JOIN memory_entities me2 ON me2.memory_id = m.id
-             WHERE me2.entity_id = e.id
-           )
-        ORDER BY e.canonical_name
-      `)
-    ).rows as StaleRow[];
-  }
+  const staleEntities = (
+    await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type, COUNT(me.memory_id)::int as memory_count
+      FROM entities e
+      JOIN memory_entities me ON me.entity_id = e.id
+      WHERE ${whereClause}
+      GROUP BY e.id, e.canonical_name, e.type
+      ORDER BY
+        CASE e.type
+          WHEN 'person' THEN 0
+          WHEN 'company' THEN 1
+          WHEN 'channel' THEN 2
+          WHEN 'technology' THEN 3
+          WHEN 'product' THEN 4
+          WHEN 'project' THEN 5
+          ELSE 99
+        END,
+        COUNT(me.memory_id) DESC
+    `)
+  ).rows as StaleRow[];
 
   const total = staleEntities.length;
-  logger.info(`Entity summaries: found ${total} entities to ${forceAll ? "regenerate" : "update"}`);
+  logger.info(
+    `Entity summaries: found ${total} entities to ${forceAll ? "regenerate" : "update"}`,
+  );
 
   let updated = 0;
   let skipped = 0;
@@ -130,7 +198,7 @@ export async function regenerateStaleSummaries(
       if (summary) {
         const wordCount = summary.split(/\s+/).length;
         logger.info(
-          `[entity ${i + 1}/${total}] Generated summary for "${entity.canonical_name}" (${entity.type}) — ${wordCount} words`,
+          `[entity ${i + 1}/${total}] Generated summary for "${entity.canonical_name}" (${entity.type}, ${entity.memory_count} memories) — ${wordCount} words`,
         );
         updated++;
       } else {
@@ -149,6 +217,8 @@ export async function regenerateStaleSummaries(
     }
   }
 
-  logger.info(`Entity summaries complete: ${updated} updated, ${skipped} skipped`);
+  logger.info(
+    `Entity summaries complete: ${updated} updated, ${skipped} skipped`,
+  );
   return { updated, skipped };
 }
