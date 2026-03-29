@@ -135,6 +135,7 @@ export async function mergeDuplicateMemories(): Promise<number> {
             status: "superseded",
             supersededAt: now,
             supersededByMemoryId: keepId,
+            validUntil: now,
             updatedAt: now,
           })
           .where(sql`${memories.id} = ${loserId}`);

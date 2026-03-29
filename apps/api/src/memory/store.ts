@@ -327,24 +327,26 @@ export async function softSupersedeMemories(ids: string[]): Promise<void> {
 export async function supersedeMemory(oldMemoryId: string, newMemoryId: string): Promise<void> {
   const now = new Date();
   try {
-    await db.execute(sql`
-      UPDATE memories
-      SET status = 'superseded',
-          superseded_at = ${now},
-          superseded_by_memory_id = ${newMemoryId}::uuid,
-          valid_until = ${now},
-          updated_at = ${now}
-      WHERE id = ${oldMemoryId}::uuid
-    `);
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        UPDATE memories
+        SET status = 'superseded',
+            superseded_at = ${now},
+            superseded_by_memory_id = ${newMemoryId}::uuid,
+            valid_until = ${now},
+            updated_at = ${now}
+        WHERE id = ${oldMemoryId}::uuid
+      `);
 
-    await db.execute(sql`
-      UPDATE memories
-      SET status = 'current',
-          valid_from = ${now},
-          supersedes_memory_id = ${oldMemoryId}::uuid,
-          updated_at = ${now}
-      WHERE id = ${newMemoryId}::uuid
-    `);
+      await tx.execute(sql`
+        UPDATE memories
+        SET status = 'current',
+            valid_from = ${now},
+            supersedes_memory_id = ${oldMemoryId}::uuid,
+            updated_at = ${now}
+        WHERE id = ${newMemoryId}::uuid
+      `);
+    });
   } catch (error) {
     logger.warn("Failed to supersede memory", {
       oldMemoryId,
