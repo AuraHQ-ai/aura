@@ -379,6 +379,13 @@
       "when": 1775040000000,
       "tag": "0053_entity_summaries",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1775126400000,
+      "tag": "0054_echo_loop_prevention",
+      "breakpoints": true
     }
   ]
 }

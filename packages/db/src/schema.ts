@@ -48,6 +48,12 @@ export const memoryTypeEnum = pgEnum("memory_type", [
   "insight",
 ]);
 
+export const extractionSourceRoleEnum = pgEnum("extraction_source_role", [
+  "user",
+  "assistant",
+  "tool",
+]);
+
 // Helper for timestamptz columns
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
@@ -122,6 +128,7 @@ export const memories = pgTable(
     embedding: vector("embedding", { dimensions: 1536 }),
     relevanceScore: real("relevance_score").notNull().default(1.0),
     shareable: integer("shareable").notNull().default(0),
+    extractionSourceRole: extractionSourceRoleEnum("extraction_source_role"),
     searchVector: text("search_vector"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
