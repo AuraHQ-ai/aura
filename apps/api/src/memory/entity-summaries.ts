@@ -9,20 +9,6 @@ import { logger } from "../lib/logger.js";
 const MAX_MEMORIES_PER_ENTITY = 200;
 const DELAY_BETWEEN_CALLS_MS = 200;
 
-/** Priority order: high-value entity types first, then by memory count */
-const TYPE_PRIORITY: Record<string, number> = {
-  person: 0,
-  company: 1,
-  channel: 2,
-  technology: 3,
-  product: 4,
-  project: 5,
-};
-
-function getTypePriority(type: string): number {
-  return TYPE_PRIORITY[type] ?? 99;
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
