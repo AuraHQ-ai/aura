@@ -133,35 +133,29 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
   if (loserIds.length === 0) return;
 
   await db.transaction(async (tx) => {
-    // 1. Repoint memory_entities from losers → winner
+    // 1. Repoint memory_entities from losers → winner (insert-then-delete
+    //    to avoid duplicate PK when multiple losers share a memory_id)
     await tx.execute(sql`
-      UPDATE memory_entities
-      SET entity_id = ${winnerId}
+      INSERT INTO memory_entities (memory_id, entity_id, role)
+      SELECT DISTINCT ON (memory_id) memory_id, ${winnerId}, role
+      FROM memory_entities
       WHERE entity_id = ANY(${loserIds})
-        AND NOT EXISTS (
-          SELECT 1 FROM memory_entities me2
-          WHERE me2.memory_id = memory_entities.memory_id
-            AND me2.entity_id = ${winnerId}
-        )
+      ON CONFLICT DO NOTHING
     `);
-    // Delete any remaining rows that would conflict (dupes)
     await tx.execute(sql`
       DELETE FROM memory_entities
       WHERE entity_id = ANY(${loserIds})
     `);
 
-    // 2. Move aliases from losers → winner
+    // 2. Move aliases from losers → winner (insert-then-delete
+    //    to avoid unique-index violation when losers share an alias_lower)
     await tx.execute(sql`
-      UPDATE entity_aliases
-      SET entity_id = ${winnerId}
+      INSERT INTO entity_aliases (entity_id, alias, alias_lower, source)
+      SELECT DISTINCT ON (alias_lower) ${winnerId}, alias, alias_lower, source
+      FROM entity_aliases
       WHERE entity_id = ANY(${loserIds})
-        AND NOT EXISTS (
-          SELECT 1 FROM entity_aliases ea2
-          WHERE ea2.entity_id = ${winnerId}
-            AND ea2.alias_lower = entity_aliases.alias_lower
-        )
+      ON CONFLICT DO NOTHING
     `);
-    // Delete remaining conflicting aliases
     await tx.execute(sql`
       DELETE FROM entity_aliases
       WHERE entity_id = ANY(${loserIds})
