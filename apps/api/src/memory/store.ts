@@ -317,7 +317,7 @@ export async function supersedeMemory(oldMemoryId: string, newMemoryId: string):
             valid_until = ${now},
             updated_at = ${now}
         WHERE id = ${oldMemoryId}::uuid
-          AND status = 'current'
+          AND status IN ('current', 'disputed')
       `);
 
       await tx.execute(sql`

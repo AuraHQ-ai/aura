@@ -124,6 +124,8 @@ export async function mergeDuplicateMemories(): Promise<number> {
 
         const isFirstLoser = !keeperHasForwardLink.has(keepId);
 
+        // Inline supersession (not using supersedeMemory()) because consolidation
+        // needs atomic boost + multi-loser forward-link handling in one transaction.
         await db.transaction(async (tx) => {
           await tx
             .update(memories)
@@ -143,7 +145,7 @@ export async function mergeDuplicateMemories(): Promise<number> {
               validUntil: now,
               updatedAt: now,
             })
-            .where(sql`${memories.id} = ${loserId}`);
+            .where(sql`${memories.id} = ${loserId} AND ${memories.status} = 'current'`);
         });
 
         keeperHasForwardLink.add(keepId);
