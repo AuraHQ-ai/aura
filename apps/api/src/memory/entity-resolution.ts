@@ -378,16 +378,28 @@ export async function resolveEntities(
  * Link a memory to its resolved entities via the memory_entities junction table.
  * Accepts resolved entities with optional per-entity role; defaults to "mentioned".
  */
+const ROLE_PRIORITY: Record<string, number> = { subject: 0, object: 1, mentioned: 2 };
+
 export async function linkMemoryEntities(
   memoryId: string,
   resolvedEntities: Array<ResolvedEntity & { role?: MemoryEntityRole }>,
 ): Promise<void> {
   if (resolvedEntities.length === 0) return;
 
-  const values = resolvedEntities.map((e) => ({
+  // Deduplicate by entityId, keeping the most important role
+  const best = new Map<string, { entityId: string; role: MemoryEntityRole }>();
+  for (const e of resolvedEntities) {
+    const role = e.role ?? ("mentioned" as MemoryEntityRole);
+    const existing = best.get(e.entityId);
+    if (!existing || (ROLE_PRIORITY[role] ?? 2) < (ROLE_PRIORITY[existing.role] ?? 2)) {
+      best.set(e.entityId, { entityId: e.entityId, role });
+    }
+  }
+
+  const values = [...best.values()].map((v) => ({
     memoryId,
-    entityId: e.entityId,
-    role: e.role ?? "mentioned" as MemoryEntityRole,
+    entityId: v.entityId,
+    role: v.role,
   }));
 
   try {
@@ -398,7 +410,7 @@ export async function linkMemoryEntities(
   } catch (error) {
     logger.error("Failed to link memory entities", {
       memoryId,
-      entityCount: resolvedEntities.length,
+      entityCount: values.length,
       error: String(error),
     });
   }

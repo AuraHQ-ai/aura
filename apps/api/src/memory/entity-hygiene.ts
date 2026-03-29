@@ -135,12 +135,18 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
 
   await db.transaction(async (tx) => {
     // 1. Repoint memory_entities from losers → winner (insert-then-delete
-    //    to avoid duplicate PK when multiple losers share a memory_id)
+    //    to avoid duplicate PK when multiple losers share a memory_id;
+    //    ORDER BY role priority so "subject" > "object" > "mentioned")
     await tx.execute(sql`
       INSERT INTO memory_entities (memory_id, entity_id, role)
       SELECT DISTINCT ON (memory_id) memory_id, ${winnerId}, role
       FROM memory_entities
       WHERE entity_id = ANY(${safeLoserIds})
+      ORDER BY memory_id, CASE role
+        WHEN 'subject' THEN 0
+        WHEN 'object' THEN 1
+        ELSE 2
+      END
       ON CONFLICT DO NOTHING
     `);
     await tx.execute(sql`
@@ -163,7 +169,14 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
       WHERE entity_id = ANY(${safeLoserIds})
     `);
 
-    // 3. Delete loser entities
+    // 3. Repoint users.entity_id from losers → winner (no CASCADE on this FK)
+    await tx.execute(sql`
+      UPDATE users
+      SET entity_id = ${winnerId}
+      WHERE entity_id = ANY(${safeLoserIds})
+    `);
+
+    // 4. Delete loser entities
     await tx.execute(sql`
       DELETE FROM entities
       WHERE id = ANY(${safeLoserIds})
