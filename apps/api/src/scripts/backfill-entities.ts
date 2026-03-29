@@ -61,7 +61,7 @@ const extractionSchema = z.object({
 
 const SYSTEM_PROMPT = `Extract entity mentions from these memories. For each memory, return the entities mentioned with their type and role.
 
-Entity types: person, company, project, product, channel, technology
+Entity types: person, company, project, product, channel, technology, concept, location
 Roles: subject (who/what the memory is primarily about), object (secondary entity), mentioned (just referenced)`;
 
 // ── Entity Resolution with In-Memory Cache ──────────────────────────────────
