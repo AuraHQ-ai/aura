@@ -147,7 +147,17 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
         WHEN 'object' THEN 1
         ELSE 2
       END
-      ON CONFLICT DO NOTHING
+      ON CONFLICT (memory_id, entity_id) DO UPDATE
+        SET role = EXCLUDED.role
+        WHERE CASE EXCLUDED.role
+          WHEN 'subject' THEN 0
+          WHEN 'object' THEN 1
+          ELSE 2
+        END < CASE memory_entities.role
+          WHEN 'subject' THEN 0
+          WHEN 'object' THEN 1
+          ELSE 2
+        END
     `);
     await tx.execute(sql`
       DELETE FROM memory_entities

@@ -342,8 +342,11 @@ export async function resolveEntityReadOnly(
   }
 }
 
+const ROLE_PRIORITY: Record<string, number> = { subject: 0, object: 1, mentioned: 2 };
+
 /**
  * Resolve multiple entities from extraction output.
+ * Deduplicates by extracted name, keeping the highest-priority role per name.
  */
 export async function resolveEntities(
   extracted: Array<{ name: string; type: EntityType; role?: MemoryEntityRole }>,
@@ -351,14 +354,18 @@ export async function resolveEntities(
 ): Promise<Array<ResolvedEntity & { role?: MemoryEntityRole }>> {
   if (extracted.length === 0) return [];
 
-  const results: Array<ResolvedEntity & { role?: MemoryEntityRole }> = [];
-  const seen = new Set<string>();
-
+  // Deduplicate by type:name, keeping the highest-priority role
+  const bestByKey = new Map<string, { name: string; type: EntityType; role?: MemoryEntityRole }>();
   for (const item of extracted) {
     const key = `${item.type}:${item.name.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const existing = bestByKey.get(key);
+    if (!existing || (ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) < (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)) {
+      bestByKey.set(key, item);
+    }
+  }
 
+  const results: Array<ResolvedEntity & { role?: MemoryEntityRole }> = [];
+  for (const item of bestByKey.values()) {
     try {
       const resolved = await resolveEntity(item.name, item.type, workspaceId);
       results.push({ ...resolved, role: item.role });
@@ -378,8 +385,6 @@ export async function resolveEntities(
  * Link a memory to its resolved entities via the memory_entities junction table.
  * Accepts resolved entities with optional per-entity role; defaults to "mentioned".
  */
-const ROLE_PRIORITY: Record<string, number> = { subject: 0, object: 1, mentioned: 2 };
-
 export async function linkMemoryEntities(
   memoryId: string,
   resolvedEntities: Array<ResolvedEntity & { role?: MemoryEntityRole }>,
