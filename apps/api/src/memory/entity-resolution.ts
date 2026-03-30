@@ -207,15 +207,18 @@ export async function resolveEntity(
     // 3. Trigram fuzzy match — get top 5 candidates
     const fuzzyRows = extractRows(
       await db.execute(sql`
-        SELECT DISTINCT ON (e.id)
-          e.id, e.canonical_name, e.type,
-          similarity(ea.alias_lower, ${lowerName}) AS sim
-        FROM entities e
-        JOIN entity_aliases ea ON e.id = ea.entity_id
-        WHERE ea.alias_lower % ${lowerName}
-          AND e.workspace_id = ${workspaceId}
-          AND similarity(ea.alias_lower, ${lowerName}) > 0.4
-        ORDER BY e.id, sim DESC
+        SELECT * FROM (
+          SELECT DISTINCT ON (e.id)
+            e.id, e.canonical_name, e.type,
+            similarity(ea.alias_lower, ${lowerName}) AS sim
+          FROM entities e
+          JOIN entity_aliases ea ON e.id = ea.entity_id
+          WHERE ea.alias_lower % ${lowerName}
+            AND e.workspace_id = ${workspaceId}
+            AND similarity(ea.alias_lower, ${lowerName}) > 0.4
+          ORDER BY e.id, sim DESC
+        ) sub
+        ORDER BY sim DESC
         LIMIT 50
       `),
     );
