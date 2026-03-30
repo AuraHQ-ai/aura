@@ -55,16 +55,29 @@ ${ENTITY_EXTRACTION_RULES}`;
 
 // ── Entity Resolution with In-Memory Cache ──────────────────────────────────
 
+// Typed cache: "type:name_lower" -> entityId (same-type fast path)
 const entityCache = new Map<string, string>();
+// Cross-type cache: "name_lower" -> entityId (prevents dupes across types)
+const entityByName = new Map<string, string>();
 
 function cacheKey(type: string, name: string): string {
   return `${type}:${name.toLowerCase().trim()}`;
+}
+
+function nameKey(name: string): string {
+  return name.toLowerCase().trim();
 }
 
 type ResultRow = Record<string, any>;
 
 function extractRows(result: unknown): ResultRow[] {
   return ((result as any).rows ?? result) as ResultRow[];
+}
+
+function setCache(entityId: string, type: EntityType, name: string): void {
+  entityCache.set(cacheKey(type, name), entityId);
+  const nk = nameKey(name);
+  if (!entityByName.has(nk)) entityByName.set(nk, entityId);
 }
 
 async function insertAliases(
@@ -91,11 +104,7 @@ async function insertAliases(
       // ignore duplicate alias conflicts
     }
 
-    // Populate cache for every alias so within-run dedup works
-    const key = cacheKey(type, alias);
-    if (!entityCache.has(key)) {
-      entityCache.set(key, entityId);
-    }
+    setCache(entityId, type, alias);
   }
 }
 
@@ -105,27 +114,43 @@ async function resolveEntityCached(
   aliases: string[],
 ): Promise<{ entityId: string; isNew: boolean }> {
   const key = cacheKey(type, name);
+  const lowerName = nameKey(name);
+  if (!lowerName) throw new Error("Entity name cannot be empty");
+
+  // 1a. Same-type cache hit
   const cached = entityCache.get(key);
   if (cached) {
     await insertAliases(cached, type, name, aliases);
     return { entityId: cached, isNew: false };
   }
 
-  // Check if any of the provided aliases already map to a cached entity
+  // 1b. Same-type alias cache hit
   for (const alias of aliases) {
-    const aliasKey = cacheKey(type, alias);
-    const aliasHit = entityCache.get(aliasKey);
+    const aliasHit = entityCache.get(cacheKey(type, alias));
     if (aliasHit) {
-      entityCache.set(key, aliasHit);
+      setCache(aliasHit, type, name);
       await insertAliases(aliasHit, type, name, aliases);
       return { entityId: aliasHit, isNew: false };
     }
   }
 
-  const lowerName = name.toLowerCase().trim();
-  if (!lowerName) throw new Error("Entity name cannot be empty");
+  // 1c. Cross-type cache hit (name or aliases)
+  const crossHit = entityByName.get(lowerName);
+  if (crossHit) {
+    setCache(crossHit, type, name);
+    await insertAliases(crossHit, type, name, aliases);
+    return { entityId: crossHit, isNew: false };
+  }
+  for (const alias of aliases) {
+    const crossAliasHit = entityByName.get(nameKey(alias));
+    if (crossAliasHit) {
+      setCache(crossAliasHit, type, name);
+      await insertAliases(crossAliasHit, type, name, aliases);
+      return { entityId: crossAliasHit, isNew: false };
+    }
+  }
 
-  // 1. Exact canonical match
+  // 2. DB same-type exact canonical match
   const exactRows = extractRows(
     await db.execute(sql`
       SELECT id FROM entities
@@ -136,12 +161,12 @@ async function resolveEntityCached(
     `),
   );
   if (exactRows.length > 0) {
-    entityCache.set(key, exactRows[0].id);
+    setCache(exactRows[0].id, type, name);
     await insertAliases(exactRows[0].id, type, name, aliases);
     return { entityId: exactRows[0].id, isNew: false };
   }
 
-  // 2. Alias match
+  // 3. DB same-type alias match
   const aliasRows = extractRows(
     await db.execute(sql`
       SELECT e.id FROM entities e
@@ -153,12 +178,43 @@ async function resolveEntityCached(
     `),
   );
   if (aliasRows.length > 0) {
-    entityCache.set(key, aliasRows[0].id);
+    setCache(aliasRows[0].id, type, name);
     await insertAliases(aliasRows[0].id, type, name, aliases);
     return { entityId: aliasRows[0].id, isNew: false };
   }
 
-  // 3. Trigram fuzzy match — get candidates, then LLM disambiguates
+  // 4. DB cross-type exact canonical match
+  const crossExactRows = extractRows(
+    await db.execute(sql`
+      SELECT id FROM entities
+      WHERE workspace_id = ${WORKSPACE_ID}
+        AND lower(canonical_name) = ${lowerName}
+      LIMIT 1
+    `),
+  );
+  if (crossExactRows.length > 0) {
+    setCache(crossExactRows[0].id, type, name);
+    await insertAliases(crossExactRows[0].id, type, name, aliases);
+    return { entityId: crossExactRows[0].id, isNew: false };
+  }
+
+  // 5. DB cross-type alias match
+  const crossAliasRows = extractRows(
+    await db.execute(sql`
+      SELECT e.id FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower = ${lowerName}
+        AND e.workspace_id = ${WORKSPACE_ID}
+      LIMIT 1
+    `),
+  );
+  if (crossAliasRows.length > 0) {
+    setCache(crossAliasRows[0].id, type, name);
+    await insertAliases(crossAliasRows[0].id, type, name, aliases);
+    return { entityId: crossAliasRows[0].id, isNew: false };
+  }
+
+  // 6. Trigram fuzzy match — cross-type, LLM disambiguates
   const fuzzyRows = extractRows(
     await db.execute(sql`
       SELECT DISTINCT ON (e.id)
@@ -167,7 +223,6 @@ async function resolveEntityCached(
       FROM entities e
       JOIN entity_aliases ea ON e.id = ea.entity_id
       WHERE ea.alias_lower % ${lowerName}
-        AND e.type = ${type}
         AND e.workspace_id = ${WORKSPACE_ID}
         AND similarity(ea.alias_lower, ${lowerName}) > 0.4
       ORDER BY e.id, sim DESC
@@ -187,14 +242,13 @@ async function resolveEntityCached(
 
     const match = await disambiguateFuzzyMatches(name, type, candidates, model);
     if (match) {
-      entityCache.set(key, match.entityId);
+      setCache(match.entityId, type, name);
       await insertAliases(match.entityId, type, name, aliases);
       return { entityId: match.entityId, isNew: false };
     }
-    // LLM said no match — fall through to create new entity
   }
 
-  // 4. Create new entity + aliases
+  // 7. Create new entity + aliases
   const [newEntity] = await db
     .insert(entities)
     .values({
@@ -207,7 +261,7 @@ async function resolveEntityCached(
 
   if (newEntity) {
     await insertAliases(newEntity.id, type, name, aliases);
-    entityCache.set(key, newEntity.id);
+    setCache(newEntity.id, type, name);
     return { entityId: newEntity.id, isNew: true };
   }
 
@@ -216,13 +270,12 @@ async function resolveEntityCached(
     await db.execute(sql`
       SELECT id FROM entities
       WHERE workspace_id = ${WORKSPACE_ID}
-        AND type = ${type}
         AND lower(canonical_name) = ${lowerName}
       LIMIT 1
     `),
   );
   if (retryRows.length > 0) {
-    entityCache.set(key, retryRows[0].id);
+    setCache(retryRows[0].id, type, name);
     await insertAliases(retryRows[0].id, type, name, aliases);
     return { entityId: retryRows[0].id, isNew: false };
   }
@@ -385,7 +438,7 @@ async function main() {
   console.log(`Memories processed: ${unlinked.length}`);
   console.log(`New entities created: ${totalNewEntities}`);
   console.log(`Memory-entity links created: ${totalLinked}`);
-  console.log(`Entity cache size: ${entityCache.size}`);
+  console.log(`Entity cache size: ${entityCache.size} (typed), ${entityByName.size} (cross-type)`);
   console.log(`Batches with errors: ${totalErrors}`);
 }
 
