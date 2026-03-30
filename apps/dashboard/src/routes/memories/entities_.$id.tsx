@@ -30,6 +30,8 @@ interface EntityDetail {
   canonicalName: string;
   description: string | null;
   slackUserId: string | null;
+  summary: string | null;
+  summaryUpdatedAt: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -86,6 +88,24 @@ function EntityDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm">Summary</CardTitle>
+            {entity.summaryUpdatedAt && (
+              <span className="text-xs text-muted-foreground">
+                Updated {formatDate(entity.summaryUpdatedAt)}
+              </span>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
+            {entity.summary || "No summary generated yet"}
+          </p>
+        </CardContent>
+      </Card>
 
       {entity.aliases.length > 0 && (
         <Card>
