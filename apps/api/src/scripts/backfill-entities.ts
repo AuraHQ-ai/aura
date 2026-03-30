@@ -171,6 +171,7 @@ async function resolveEntityCached(
         AND e.workspace_id = ${WORKSPACE_ID}
         AND similarity(ea.alias_lower, ${lowerName}) > 0.4
       ORDER BY e.id, sim DESC
+      LIMIT 50
     `),
   );
   if (fuzzyRows.length > 0) {

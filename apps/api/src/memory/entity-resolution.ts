@@ -216,6 +216,7 @@ export async function resolveEntity(
           AND e.workspace_id = ${workspaceId}
           AND similarity(ea.alias_lower, ${lowerName}) > 0.4
         ORDER BY e.id, sim DESC
+        LIMIT 50
       `),
     );
 
