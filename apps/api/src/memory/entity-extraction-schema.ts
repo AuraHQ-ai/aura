@@ -40,7 +40,7 @@ export const extractedEntitySchema = z.object({
     .optional()
     .default([])
     .describe(
-      'Common alternative names for this entity. E.g. "Joan Rodriguez" → ["Joan", "@joan", "joanrodriguez"]. Include first names, usernames, abbreviations, and common short forms.',
+      'Alternative names for THE SAME entity (not related or similar entities). E.g. "Joan Rodriguez" → ["Joan", "@joan", "joanrodriguez"]. PR #200 and PR #201 are DIFFERENT entities, not aliases. Only include nicknames, abbreviations, and short forms that refer to the exact same thing.',
     ),
 });
 
@@ -53,11 +53,12 @@ export type ExtractedEntity = z.infer<typeof extractedEntitySchema>;
 export const ENTITY_EXTRACTION_RULES = `
 Entity types: person, company, project, product, channel, technology, concept, location
 
-For each entity, also return aliases — common alternative names people might use:
+For each entity, also return aliases — alternative names for THE EXACT SAME entity:
+- Aliases must refer to the same thing. "PR #200" and "PR #201" are DIFFERENT entities — never list one as an alias of the other.
 - For people: first name, username, @-mention handle, name without spaces. E.g. "Joan Rodriguez" → ["Joan", "@joan", "joanrodriguez"]
 - For companies: abbreviations, stock tickers, common short forms. E.g. "RealAdvisor" → ["RA"]
 - For technologies: common abbreviations. E.g. "PostgreSQL" → ["Postgres", "PG"]
-- For others: any short form or alternative reference used in conversation.
+- For others: any short form or alternative reference used in conversation that means the same thing.
 
 Typing rules:
 - Slack channel names (e.g. #bugs, #general) are type "channel"
