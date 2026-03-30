@@ -222,6 +222,7 @@ export async function resolveEntity(
     `);
     const retryRows = ((retryResult as any).rows ?? retryResult) as Array<Record<string, any>>;
     if (retryRows.length > 0) {
+      await persistLlmAliases(retryRows[0].id, llmAliases);
       return {
         entityId: retryRows[0].id,
         canonicalName: retryRows[0].canonical_name,

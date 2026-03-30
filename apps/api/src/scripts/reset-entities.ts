@@ -47,15 +47,17 @@ async function main() {
   await db.execute(sql`UPDATE users SET entity_id = NULL WHERE entity_id IS NOT NULL`);
   console.log("✓ Set users.entity_id = NULL");
 
-  // Truncate in FK order (CASCADE handles memory_entities & entity_aliases)
+  // Truncate dependent tables first, then delete entities.
+  // Using DELETE instead of TRUNCATE CASCADE to avoid cascading to the users table
+  // (users.entity_id FK would cause TRUNCATE CASCADE to wipe all user records).
   await db.execute(sql`TRUNCATE memory_entities`);
   console.log("✓ Truncated memory_entities");
 
   await db.execute(sql`TRUNCATE entity_aliases`);
   console.log("✓ Truncated entity_aliases");
 
-  await db.execute(sql`TRUNCATE entities CASCADE`);
-  console.log("✓ Truncated entities (CASCADE)");
+  await db.execute(sql`DELETE FROM entities`);
+  console.log("✓ Deleted all entities");
 
   // Count after
   const [meAfter] = extractRows(
