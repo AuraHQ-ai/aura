@@ -66,6 +66,7 @@ function extractRows(result: unknown): ResultRow[] {
 
 async function insertAliases(
   entityId: string,
+  type: EntityType,
   canonicalName: string,
   llmAliases: string[],
 ): Promise<void> {
@@ -88,7 +89,7 @@ async function insertAliases(
     }
 
     // Populate cache for every alias so within-run dedup works
-    const key = cacheKey("*", alias);
+    const key = cacheKey(type, alias);
     if (!entityCache.has(key)) {
       entityCache.set(key, entityId);
     }
@@ -129,7 +130,7 @@ async function resolveEntityCached(
   );
   if (exactRows.length > 0) {
     entityCache.set(key, exactRows[0].id);
-    await insertAliases(exactRows[0].id, name, aliases);
+    await insertAliases(exactRows[0].id, type, name, aliases);
     return { entityId: exactRows[0].id, isNew: false };
   }
 
@@ -146,7 +147,7 @@ async function resolveEntityCached(
   );
   if (aliasRows.length > 0) {
     entityCache.set(key, aliasRows[0].id);
-    await insertAliases(aliasRows[0].id, name, aliases);
+    await insertAliases(aliasRows[0].id, type, name, aliases);
     return { entityId: aliasRows[0].id, isNew: false };
   }
 
@@ -165,7 +166,7 @@ async function resolveEntityCached(
   );
   if (fuzzyRows.length > 0) {
     entityCache.set(key, fuzzyRows[0].id);
-    await insertAliases(fuzzyRows[0].id, name, aliases);
+    await insertAliases(fuzzyRows[0].id, type, name, aliases);
     return { entityId: fuzzyRows[0].id, isNew: false };
   }
 
@@ -181,7 +182,7 @@ async function resolveEntityCached(
     .returning();
 
   if (newEntity) {
-    await insertAliases(newEntity.id, name, aliases);
+    await insertAliases(newEntity.id, type, name, aliases);
     entityCache.set(key, newEntity.id);
     return { entityId: newEntity.id, isNew: true };
   }
@@ -198,7 +199,7 @@ async function resolveEntityCached(
   );
   if (retryRows.length > 0) {
     entityCache.set(key, retryRows[0].id);
-    await insertAliases(retryRows[0].id, name, aliases);
+    await insertAliases(retryRows[0].id, type, name, aliases);
     return { entityId: retryRows[0].id, isNew: false };
   }
 

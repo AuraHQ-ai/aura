@@ -11,6 +11,26 @@ export interface ResolvedEntity {
   confidence: "exact" | "alias" | "fuzzy" | "new";
 }
 
+async function persistLlmAliases(entityId: string, llmAliases?: string[]): Promise<void> {
+  if (!llmAliases || llmAliases.length === 0) return;
+  for (const raw of llmAliases) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    try {
+      await db
+        .insert(entityAliases)
+        .values({
+          entityId,
+          alias: trimmed,
+          source: "llm_extracted",
+        })
+        .onConflictDoNothing();
+    } catch {
+      // ignore duplicate alias conflicts
+    }
+  }
+}
+
 /**
  * Resolve a name to an entity using the cascade:
  * 1. Exact canonical match
@@ -41,6 +61,7 @@ export async function resolveEntity(
     `);
     const exactRows = ((exactCanonical as any).rows ?? exactCanonical) as Array<Record<string, any>>;
     if (exactRows.length > 0) {
+      await persistLlmAliases(exactRows[0].id, llmAliases);
       return {
         entityId: exactRows[0].id,
         canonicalName: exactRows[0].canonical_name,
@@ -61,6 +82,7 @@ export async function resolveEntity(
     `);
     const aliasRows = ((exactAlias as any).rows ?? exactAlias) as Array<Record<string, any>>;
     if (aliasRows.length > 0) {
+      await persistLlmAliases(aliasRows[0].id, llmAliases);
       return {
         entityId: aliasRows[0].id,
         canonicalName: aliasRows[0].canonical_name,
@@ -79,6 +101,7 @@ export async function resolveEntity(
     `);
     const crossTypeRows = ((crossTypeMatch as any).rows ?? crossTypeMatch) as Array<Record<string, any>>;
     if (crossTypeRows.length > 0) {
+      await persistLlmAliases(crossTypeRows[0].id, llmAliases);
       return {
         entityId: crossTypeRows[0].id,
         canonicalName: crossTypeRows[0].canonical_name,
@@ -98,6 +121,7 @@ export async function resolveEntity(
     `);
     const crossTypeAliasRows = ((crossTypeAlias as any).rows ?? crossTypeAlias) as Array<Record<string, any>>;
     if (crossTypeAliasRows.length > 0) {
+      await persistLlmAliases(crossTypeAliasRows[0].id, llmAliases);
       return {
         entityId: crossTypeAliasRows[0].id,
         canonicalName: crossTypeAliasRows[0].canonical_name,
@@ -119,6 +143,7 @@ export async function resolveEntity(
     `);
     const fuzzyRows = ((fuzzyMatch as any).rows ?? fuzzyMatch) as Array<Record<string, any>>;
     if (fuzzyRows.length > 0) {
+      await persistLlmAliases(fuzzyRows[0].id, llmAliases);
       return {
         entityId: fuzzyRows[0].id,
         canonicalName: fuzzyRows[0].canonical_name,
@@ -380,12 +405,18 @@ export async function resolveEntities(
   for (const item of extracted) {
     const key = `${item.type}:${item.name.toLowerCase()}`;
     const existing = bestByKey.get(key);
-    if (!existing || (ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) < (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)) {
+    if (!existing) {
+      bestByKey.set(key, { ...item });
+    } else {
       const mergedAliases = [
-        ...(existing?.aliases ?? []),
+        ...(existing.aliases ?? []),
         ...(item.aliases ?? []),
       ];
-      bestByKey.set(key, { ...item, aliases: mergedAliases });
+      if ((ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) < (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)) {
+        bestByKey.set(key, { ...item, aliases: mergedAliases });
+      } else {
+        existing.aliases = mergedAliases;
+      }
     }
   }
 
