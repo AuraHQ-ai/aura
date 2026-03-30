@@ -445,8 +445,10 @@ async function main() {
   console.log(`Entity cache size: ${entityCache.size} (typed), ${entityByName.size} (cross-type)`);
   console.log(`Batches with errors: ${totalErrors}`);
 
-  // Re-link users to their entities by matching display_name to entity aliases
-  console.log(`\n=== Linking Users → Entities ===`);
+  // Re-link users ↔ entities by matching display_name to entity aliases
+  console.log(`\n=== Linking Users ↔ Entities ===`);
+
+  // 1. Set users.entity_id from matching person entity
   const linkResult = await db.execute(sql`
     UPDATE users u
     SET entity_id = sub.entity_id
@@ -461,7 +463,19 @@ async function main() {
     WHERE u.id = sub.user_id
   `);
   const linkedCount = (linkResult as any).rowCount ?? 0;
-  console.log(`✓ Linked ${linkedCount} users to person entities`);
+  console.log(`✓ Linked ${linkedCount} users → person entities`);
+
+  // 2. Backfill entities.slack_user_id from linked users
+  const slackResult = await db.execute(sql`
+    UPDATE entities e
+    SET slack_user_id = u.slack_user_id
+    FROM users u
+    WHERE u.entity_id = e.id
+      AND u.slack_user_id IS NOT NULL
+      AND e.slack_user_id IS NULL
+  `);
+  const slackCount = (slackResult as any).rowCount ?? 0;
+  console.log(`✓ Set slack_user_id on ${slackCount} entities from linked users`);
 }
 
 main().catch((err) => {
