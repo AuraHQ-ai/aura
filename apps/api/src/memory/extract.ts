@@ -6,6 +6,11 @@ import { storeMemories, supersedeMemory, toDbChannelType, checkDuplicates } from
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
+import {
+  extractedEntitySchema,
+  ENTITY_EXTRACTION_RULES,
+} from "./entity-extraction-schema.js";
+import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importance.js";
 import type { NewMemory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
@@ -173,10 +178,13 @@ const extractedMemoriesSchema = z.object({
         .enum(["semantic", "episodic", "procedural"])
         .describe("semantic: durable facts/preferences/relationships. episodic: time-bound events/conversations/incidents. procedural: how-to knowledge/workflows.")
         .default("semantic"),
-      utility: z
-        .enum(["high", "medium", "low"])
-        .describe("high: decisions, personal facts, business intelligence. medium: useful context. low: operational noise, status checks, agent actions — DISCARD these.")
-        .default("medium"),
+      importance: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .describe("How important is this memory to recall months from now? 1-100. 90-100: business decisions, org changes, key relationships. 70-89: product discussions, bugs with impact, personal facts. 40-69: status updates with substance, meeting notes. 20-39: routine coordination, minor updates. 1-19: operational noise, 'ok thanks', agent self-actions.")
+        .default(50),
       relatedUserIds: z
         .array(z.string())
         .describe("Slack user IDs this memory is about"),
@@ -187,18 +195,7 @@ const extractedMemoriesSchema = z.object({
         )
         .default(false),
       entities: z
-        .array(
-          z.object({
-            name: z.string().describe("The entity name (full name for people, official name for companies)"),
-            type: z
-              .enum(["person", "company", "project", "product", "channel", "technology", "concept", "location"])
-              .describe("The entity type"),
-            role: z
-              .enum(["subject", "object", "mentioned"])
-              .describe("subject: who/what the memory is primarily about. object: secondary entity acted upon. mentioned: just referenced.")
-              .default("mentioned"),
-          }),
-        )
+        .array(extractedEntitySchema)
         .optional()
         .default([])
         .describe("Entities (people, companies, projects, etc.) mentioned in this memory"),
@@ -229,10 +226,12 @@ Memory categories:
 - **episodic**: Time-bound events, conversations, incidents tied to a specific moment.
 - **procedural**: How-to knowledge, workflows, processes.
 
-Utility assessment (IMPORTANT — be strict):
-- **high**: Decisions, personal facts, business intelligence, preferences, relationship info.
-- **medium**: Useful context that may be relevant later.
-- **low**: Operational noise, status checks, agent actions, acknowledgments — these will be DISCARDED.
+Importance scoring (IMPORTANT — be strict, use the 1-100 scale):
+- **90-100**: Business decisions, org changes, key relationships.
+- **70-89**: Product discussions, bugs with impact, personal facts.
+- **40-69**: Status updates with substance, meeting notes.
+- **20-39**: Routine coordination, minor updates.
+- **1-19**: Operational noise, status checks, agent actions, acknowledgments — these will be DISCARDED.
 
 DO NOT extract memories about:
 - Aura's own actions ("Aura checked the deploy", "Aura ran a query")
@@ -248,11 +247,10 @@ Rules:
 - If the user explicitly asks Aura to tell someone something, mark that memory as shareable.
 - Return an empty array if there's nothing worth remembering.
 
-For each memory, also identify the entities (people, companies, projects, products, channels, technologies, concepts, locations) mentioned. Return them in the entities array with their name, type, and role:
-- **subject**: the entity the memory is primarily about
-- **object**: a secondary entity acted upon or referenced in relation to the subject
-- **mentioned**: just referenced in passing
-Use the most specific name you can identify (full name for people, official name for companies).`;
+For each memory, also identify the entities mentioned. Return them in the entities array with their name, type, role, and aliases.
+Use the most specific name you can identify (full name for people, official name for companies).
+
+${ENTITY_EXTRACTION_RULES}`;
 
 interface ExtractionContext {
   userMessage: string;
@@ -296,20 +294,20 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       return;
     }
 
-    // Filter out low-utility memories before embedding
-    const filteredByUtility = object.memories.filter((m) => m.utility !== "low");
-    const discardedLowUtility = object.memories.length - filteredByUtility.length;
-    if (discardedLowUtility > 0) {
-      logger.info(`Filtered out ${discardedLowUtility} low-utility memories`);
+    // Filter out low-importance memories before embedding
+    const filtered = object.memories.filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD);
+    const discardedCount = object.memories.length - filtered.length;
+    if (discardedCount > 0) {
+      logger.info(`Filtered out ${discardedCount} low-importance memories (below ${IMPORTANCE_DISCARD_THRESHOLD})`);
     }
-    if (filteredByUtility.length === 0) {
-      logger.debug("All extracted memories were low utility — nothing to store");
+    if (filtered.length === 0) {
+      logger.debug("All extracted memories were low importance — nothing to store");
       return;
     }
 
     // Normalize user references to canonical Slack user IDs
     const normalizedMemories = await Promise.all(
-      filteredByUtility.map(async (m) => ({
+      filtered.map(async (m) => ({
         ...m,
         relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
       })),
@@ -370,7 +368,8 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
         : [context.userId],
       embedding: embeddings[i] ?? null,
       shareable: normalizedMemories[i].shareable ? 1 : 0,
-      relevanceScore: 1.0,
+      importance: normalizedMemories[i].importance,
+      relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
       extractionSourceRole,
     }));
 
@@ -394,7 +393,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       const extractedEntities = normalizedMemories[i].entities;
       if (extractedEntities && extractedEntities.length > 0 && memoryIds[j]) {
         try {
-          const resolved = await resolveEntities(extractedEntities, workspaceId);
+          const resolved = await resolveEntities(extractedEntities, workspaceId, model);
           await linkMemoryEntities(memoryIds[j], resolved);
         } catch (entityError) {
           logger.warn("Entity resolution failed for memory, skipping", {
@@ -408,7 +407,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     logger.info(`Extracted ${newMemories.length} memories in ${Date.now() - start}ms`, {
       types: newMemories.map((m) => m.type),
       hasEmbeddings,
-      discardedLowUtility,
+      discardedLowImportance: discardedCount,
       dedupSkipped,
     });
   } catch (error) {
