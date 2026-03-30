@@ -175,24 +175,7 @@ export async function resolveEntity(
         .onConflictDoNothing();
 
       // Insert LLM-provided aliases
-      if (llmAliases && llmAliases.length > 0) {
-        for (const raw of llmAliases) {
-          const trimmed = raw.trim();
-          if (!trimmed) continue;
-          try {
-            await db
-              .insert(entityAliases)
-              .values({
-                entityId: newEntity.id,
-                alias: trimmed,
-                source: "llm_extracted",
-              })
-              .onConflictDoNothing();
-          } catch {
-            // ignore duplicate alias conflicts
-          }
-        }
-      }
+      await persistLlmAliases(newEntity.id, llmAliases);
 
       // Auto-generate additional aliases for person entities
       if (type === "person") {

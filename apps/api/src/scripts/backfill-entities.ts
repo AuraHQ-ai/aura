@@ -103,7 +103,10 @@ async function resolveEntityCached(
 ): Promise<{ entityId: string; isNew: boolean }> {
   const key = cacheKey(type, name);
   const cached = entityCache.get(key);
-  if (cached) return { entityId: cached, isNew: false };
+  if (cached) {
+    await insertAliases(cached, type, name, aliases);
+    return { entityId: cached, isNew: false };
+  }
 
   // Check if any of the provided aliases already map to a cached entity
   for (const alias of aliases) {
@@ -111,6 +114,7 @@ async function resolveEntityCached(
     const aliasHit = entityCache.get(aliasKey);
     if (aliasHit) {
       entityCache.set(key, aliasHit);
+      await insertAliases(aliasHit, type, name, aliases);
       return { entityId: aliasHit, isNew: false };
     }
   }
