@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { generateText, Output } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
-import { utilityToScore } from "../memory/utility.js";
+import { importanceToRelevance } from "../memory/importance.js";
 import { pool } from "../lib/pool.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -32,18 +32,22 @@ const classificationSchema = z.object({
   results: z.array(
     z.object({
       id: z.string(),
-      utility: z.enum(["high", "medium", "low"]),
+      importance: z.number().int().min(1).max(100),
     }),
   ),
 });
 
-const SYSTEM_PROMPT = `Classify each memory's utility level. Return the memory id and its utility.
+const SYSTEM_PROMPT = `Rate each memory's importance from 1 to 100. How valuable would it be to recall this memory months from now?
 
-- high: decisions, personal facts, business intelligence, key relationships, architecture decisions, product strategy, hiring/org changes, customer feedback, bugs with real impact
-- medium: useful context, status updates with substance, meeting notes, feature discussions, general work context
-- low: operational noise, routine status checks, trivial scheduling ("let me check", "sure, one sec"), agent self-actions, test messages, ephemeral coordination
+Score anchors:
+- 90-100: Business decisions, org changes, key relationships, architecture decisions, product strategy, hiring, customer-impacting incidents
+- 70-89: Product discussions, bug reports with real impact, personal facts about team members, strategy context, technical decisions
+- 40-69: Status updates with substance, meeting notes, feature discussions, general work context, process documentation
+- 20-39: Routine coordination, minor updates, ephemeral context, progress check-ins
+- 1-19: Operational noise ("ok thanks", "let me check"), agent self-actions, test messages, trivial scheduling
 
-Be generous with "high" — if a memory would be useful to recall 3 months from now, it's high.`;
+Be generous — if a memory would be useful to recall in 3 months, score it 70+.
+Return the memory id and its importance score.`;
 
 type ResultRow = Record<string, any>;
 function extractRows(result: unknown): ResultRow[] {
@@ -70,19 +74,19 @@ async function processBatch(
       return { classified: 0, errors: 1 };
     }
 
-    const classMap = new Map(result.results.map((r) => [r.id, r.utility]));
+    const scoreMap = new Map(result.results.map((r) => [r.id, r.importance]));
     let classified = 0;
 
     for (const mem of batch) {
-      const utility = classMap.get(mem.id) ?? "medium";
-      const baseScore = utilityToScore(utility);
+      const importance = scoreMap.get(mem.id) ?? 50;
+      const baseRelevance = importanceToRelevance(importance);
       const ageMs = Date.now() - new Date(mem.created_at).getTime();
       const ageDays = ageMs / (1000 * 60 * 60 * 24);
-      const decayedScore = baseScore * Math.pow(DECAY_FACTOR, ageDays);
+      const decayedScore = baseRelevance * Math.pow(DECAY_FACTOR, ageDays);
 
       await db.execute(sql`
         UPDATE memories
-        SET utility = ${utility},
+        SET importance = ${importance},
             relevance_score = ${Math.max(0.01, decayedScore)},
             updated_at = now()
         WHERE id = ${mem.id}
@@ -103,20 +107,20 @@ async function processBatch(
 }
 
 async function main() {
-  console.log("=== Utility Backfill Script ===\n");
+  console.log("=== Importance Backfill Script ===\n");
   console.log(`Concurrency: ${CONCURRENCY} parallel batches of ${BATCH_SIZE}\n`);
 
   const allMemories = extractRows(
     await db.execute(sql`
       SELECT id, content, created_at
       FROM memories
-      WHERE utility IS NULL
+      WHERE importance IS NULL
         AND status IN ('current', 'disputed')
       ORDER BY created_at DESC
     `),
   ) as Array<{ id: string; content: string; created_at: string }>;
 
-  console.log(`Found ${allMemories.length} memories without utility classification`);
+  console.log(`Found ${allMemories.length} memories without importance scores`);
   if (allMemories.length === 0) {
     console.log("Nothing to do.");
     return;
@@ -146,15 +150,23 @@ async function main() {
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-  // Summary stats
   const stats = extractRows(
     await db.execute(sql`
-      SELECT utility, count(*)::int AS c,
-        round(avg(relevance_score)::numeric, 3) AS avg_score
+      SELECT
+        CASE
+          WHEN importance >= 90 THEN '90-100'
+          WHEN importance >= 70 THEN '70-89'
+          WHEN importance >= 40 THEN '40-69'
+          WHEN importance >= 20 THEN '20-39'
+          ELSE '1-19'
+        END AS bucket,
+        count(*)::int AS c,
+        round(avg(importance)::numeric, 1) AS avg_importance,
+        round(avg(relevance_score)::numeric, 3) AS avg_relevance
       FROM memories
-      WHERE status IN ('current', 'disputed')
-      GROUP BY utility
-      ORDER BY utility
+      WHERE importance IS NOT NULL AND status IN ('current', 'disputed')
+      GROUP BY bucket
+      ORDER BY bucket DESC
     `),
   );
 
@@ -164,7 +176,7 @@ async function main() {
   console.log(`Batches with errors: ${totalErrors}`);
   console.log(`\nDistribution:`);
   for (const row of stats) {
-    console.log(`  ${row.utility ?? "null"}: ${row.c} memories (avg score: ${row.avg_score})`);
+    console.log(`  ${row.bucket}: ${row.c} memories (avg importance: ${row.avg_importance}, avg relevance: ${row.avg_relevance})`);
   }
 }
 

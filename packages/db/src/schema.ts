@@ -151,7 +151,7 @@ export const memories = pgTable(
       .notNull()
       .default(sql`'{}'::text[]`),
     embedding: vector("embedding", { dimensions: 1536 }),
-    utility: text("utility").$type<"high" | "medium" | "low">(),
+    importance: integer("importance"),
     relevanceScore: real("relevance_score").notNull().default(1.0),
     shareable: integer("shareable").notNull().default(0),
     extractionSourceRole: extractionSourceRoleEnum("extraction_source_role"),

@@ -1,1 +1,1 @@
-ALTER TABLE "memories" ADD COLUMN "utility" text;
+ALTER TABLE "memories" ADD COLUMN "importance" integer;

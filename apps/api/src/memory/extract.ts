@@ -10,7 +10,7 @@ import {
   extractedEntitySchema,
   ENTITY_EXTRACTION_RULES,
 } from "./entity-extraction-schema.js";
-import { utilityToScore } from "./utility.js";
+import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importance.js";
 import type { NewMemory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
@@ -178,10 +178,13 @@ const extractedMemoriesSchema = z.object({
         .enum(["semantic", "episodic", "procedural"])
         .describe("semantic: durable facts/preferences/relationships. episodic: time-bound events/conversations/incidents. procedural: how-to knowledge/workflows.")
         .default("semantic"),
-      utility: z
-        .enum(["high", "medium", "low"])
-        .describe("high: decisions, personal facts, business intelligence. medium: useful context. low: operational noise, status checks, agent actions — DISCARD these.")
-        .default("medium"),
+      importance: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .describe("How important is this memory to recall months from now? 1-100. 90-100: business decisions, org changes, key relationships. 70-89: product discussions, bugs with impact, personal facts. 40-69: status updates with substance, meeting notes. 20-39: routine coordination, minor updates. 1-19: operational noise, 'ok thanks', agent self-actions.")
+        .default(50),
       relatedUserIds: z
         .array(z.string())
         .describe("Slack user IDs this memory is about"),
@@ -289,20 +292,20 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       return;
     }
 
-    // Filter out low-utility memories before embedding
-    const filteredByUtility = object.memories.filter((m) => m.utility !== "low");
-    const discardedLowUtility = object.memories.length - filteredByUtility.length;
-    if (discardedLowUtility > 0) {
-      logger.info(`Filtered out ${discardedLowUtility} low-utility memories`);
+    // Filter out low-importance memories before embedding
+    const filtered = object.memories.filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD);
+    const discardedCount = object.memories.length - filtered.length;
+    if (discardedCount > 0) {
+      logger.info(`Filtered out ${discardedCount} low-importance memories (below ${IMPORTANCE_DISCARD_THRESHOLD})`);
     }
-    if (filteredByUtility.length === 0) {
-      logger.debug("All extracted memories were low utility — nothing to store");
+    if (filtered.length === 0) {
+      logger.debug("All extracted memories were low importance — nothing to store");
       return;
     }
 
     // Normalize user references to canonical Slack user IDs
     const normalizedMemories = await Promise.all(
-      filteredByUtility.map(async (m) => ({
+      filtered.map(async (m) => ({
         ...m,
         relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
       })),
@@ -363,8 +366,8 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
         : [context.userId],
       embedding: embeddings[i] ?? null,
       shareable: normalizedMemories[i].shareable ? 1 : 0,
-      utility: normalizedMemories[i].utility,
-      relevanceScore: utilityToScore(normalizedMemories[i].utility),
+      importance: normalizedMemories[i].importance,
+      relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
       extractionSourceRole,
     }));
 
@@ -402,7 +405,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     logger.info(`Extracted ${newMemories.length} memories in ${Date.now() - start}ms`, {
       types: newMemories.map((m) => m.type),
       hasEmbeddings,
-      discardedLowUtility,
+      discardedLowImportance: discardedCount,
       dedupSkipped,
     });
   } catch (error) {
