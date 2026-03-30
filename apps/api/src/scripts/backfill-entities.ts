@@ -11,6 +11,7 @@ import {
   extractedEntitySchema,
   ENTITY_EXTRACTION_RULES,
 } from "../memory/entity-extraction-schema.js";
+import { disambiguateFuzzyMatches } from "../memory/entity-resolution.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -155,23 +156,39 @@ async function resolveEntityCached(
     return { entityId: aliasRows[0].id, isNew: false };
   }
 
-  // 3. Trigram fuzzy match (>0.4 similarity)
+  // 3. Trigram fuzzy match — get candidates, then LLM disambiguates
   const fuzzyRows = extractRows(
     await db.execute(sql`
-      SELECT e.id FROM entities e
+      SELECT DISTINCT ON (e.id)
+        e.id, e.canonical_name, e.type,
+        similarity(ea.alias_lower, ${lowerName}) AS sim
+      FROM entities e
       JOIN entity_aliases ea ON e.id = ea.entity_id
       WHERE ea.alias_lower % ${lowerName}
         AND e.type = ${type}
         AND e.workspace_id = ${WORKSPACE_ID}
         AND similarity(ea.alias_lower, ${lowerName}) > 0.4
-      ORDER BY similarity(ea.alias_lower, ${lowerName}) DESC
-      LIMIT 1
+      ORDER BY e.id, sim DESC
     `),
   );
   if (fuzzyRows.length > 0) {
-    entityCache.set(key, fuzzyRows[0].id);
-    await insertAliases(fuzzyRows[0].id, type, name, aliases);
-    return { entityId: fuzzyRows[0].id, isNew: false };
+    const candidates = fuzzyRows
+      .sort((a, b) => Number(b.sim) - Number(a.sim))
+      .slice(0, 5)
+      .map((r) => ({
+        entityId: r.id as string,
+        canonicalName: r.canonical_name as string,
+        type: r.type as string,
+        similarity: Number(r.sim),
+      }));
+
+    const match = await disambiguateFuzzyMatches(name, type, candidates, model);
+    if (match) {
+      entityCache.set(key, match.entityId);
+      await insertAliases(match.entityId, type, name, aliases);
+      return { entityId: match.entityId, isNew: false };
+    }
+    // LLM said no match — fall through to create new entity
   }
 
   // 4. Create new entity + aliases

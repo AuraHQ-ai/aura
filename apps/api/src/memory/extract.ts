@@ -386,7 +386,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       const extractedEntities = normalizedMemories[i].entities;
       if (extractedEntities && extractedEntities.length > 0 && memoryIds[j]) {
         try {
-          const resolved = await resolveEntities(extractedEntities, workspaceId);
+          const resolved = await resolveEntities(extractedEntities, workspaceId, model);
           await linkMemoryEntities(memoryIds[j], resolved);
         } catch (entityError) {
           logger.warn("Entity resolution failed for memory, skipping", {
