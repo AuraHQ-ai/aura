@@ -72,7 +72,7 @@ dashboardEntitiesApp.openapi(listEntitiesRoute, async (c) => {
           )`,
           aliasCount: sql<number>`(
             SELECT count(*)::int FROM entity_aliases
-            WHERE entity_aliases.entity_id = "entities"."id"
+            WHERE entity_aliases.entity_id = ${entities.id}
           )`,
         })
         .from(entities)
