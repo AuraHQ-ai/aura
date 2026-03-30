@@ -458,7 +458,7 @@ async function main() {
       JOIN entity_aliases ea ON ea.alias_lower = lower(u2.display_name)
       JOIN entities e ON e.id = ea.entity_id AND e.type = 'person'
       WHERE u2.workspace_id = ${WORKSPACE_ID}
-      ORDER BY u2.id
+      ORDER BY u2.id, e.canonical_name
     ) sub
     WHERE u.id = sub.user_id
   `);
