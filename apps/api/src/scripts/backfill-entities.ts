@@ -6,6 +6,7 @@ import { generateText, Output } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { entities, entityAliases, memoryEntities } from "@aura/db/schema";
+import type { EntityType, MemoryEntityRole } from "@aura/db/schema";
 
 // Load env before importing db client (which reads DATABASE_URL at import time).
 // Pass --prod to use .env.production instead of .env.local.
@@ -48,6 +49,8 @@ const extractionSchema = z.object({
             "product",
             "channel",
             "technology",
+            "concept",
+            "location",
           ]),
           role: z.enum(["subject", "object", "mentioned"]),
         }),
@@ -58,7 +61,7 @@ const extractionSchema = z.object({
 
 const SYSTEM_PROMPT = `Extract entity mentions from these memories. For each memory, return the entities mentioned with their type and role.
 
-Entity types: person, company, project, product, channel, technology
+Entity types: person, company, project, product, channel, technology, concept, location
 Roles: subject (who/what the memory is primarily about), object (secondary entity), mentioned (just referenced)`;
 
 // ── Entity Resolution with In-Memory Cache ──────────────────────────────────
@@ -77,7 +80,7 @@ function extractRows(result: unknown): ResultRow[] {
 
 async function resolveEntityCached(
   name: string,
-  type: string,
+  type: EntityType,
 ): Promise<{ entityId: string; isNew: boolean }> {
   const key = cacheKey(type, name);
   const cached = entityCache.get(key);
@@ -233,7 +236,7 @@ async function processBatch(
     const allLinks: Array<{
       memoryId: string;
       entityId: string;
-      role: string;
+      role: MemoryEntityRole;
     }> = [];
 
     await Promise.all(

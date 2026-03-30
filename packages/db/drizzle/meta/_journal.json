@@ -393,6 +393,13 @@
       "when": 1775212800000,
       "tag": "0055_temporal_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1775299200000,
+      "tag": "0056_entity_hygiene",
+      "breakpoints": true
     }
   ]
 }

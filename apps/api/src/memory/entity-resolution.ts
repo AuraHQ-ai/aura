@@ -1,12 +1,13 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { entities, entityAliases, memoryEntities } from "@aura/db/schema";
+import type { EntityType, MemoryEntityRole } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 
 export interface ResolvedEntity {
   entityId: string;
   canonicalName: string;
-  type: string;
+  type: EntityType;
   confidence: "exact" | "alias" | "fuzzy" | "new";
 }
 
@@ -19,7 +20,7 @@ export interface ResolvedEntity {
  */
 export async function resolveEntity(
   name: string,
-  type: string,
+  type: EntityType,
   workspaceId: string,
 ): Promise<ResolvedEntity> {
   const lowerName = name.toLowerCase().trim();
@@ -42,7 +43,7 @@ export async function resolveEntity(
       return {
         entityId: exactRows[0].id,
         canonicalName: exactRows[0].canonical_name,
-        type: exactRows[0].type,
+        type: exactRows[0].type as EntityType,
         confidence: "exact",
       };
     }
@@ -62,7 +63,7 @@ export async function resolveEntity(
       return {
         entityId: aliasRows[0].id,
         canonicalName: aliasRows[0].canonical_name,
-        type: aliasRows[0].type,
+        type: aliasRows[0].type as EntityType,
         confidence: "alias",
       };
     }
@@ -80,7 +81,7 @@ export async function resolveEntity(
       return {
         entityId: crossTypeRows[0].id,
         canonicalName: crossTypeRows[0].canonical_name,
-        type: crossTypeRows[0].type,
+        type: crossTypeRows[0].type as EntityType,
         confidence: "exact",
       };
     }
@@ -99,7 +100,7 @@ export async function resolveEntity(
       return {
         entityId: crossTypeAliasRows[0].id,
         canonicalName: crossTypeAliasRows[0].canonical_name,
-        type: crossTypeAliasRows[0].type,
+        type: crossTypeAliasRows[0].type as EntityType,
         confidence: "alias",
       };
     }
@@ -120,7 +121,7 @@ export async function resolveEntity(
       return {
         entityId: fuzzyRows[0].id,
         canonicalName: fuzzyRows[0].canonical_name,
-        type: fuzzyRows[0].type,
+        type: fuzzyRows[0].type as EntityType,
         confidence: "fuzzy",
       };
     }
@@ -155,7 +156,6 @@ export async function resolveEntity(
         for (const part of parts) {
           additionalAliases.add(part.toLowerCase());
         }
-        // Remove the primary alias (already inserted above via trigger/default)
         const primaryLower = name.toLowerCase();
         for (const alias of additionalAliases) {
           if (alias === primaryLower && parts.length <= 1) continue;
@@ -177,7 +177,7 @@ export async function resolveEntity(
       return {
         entityId: newEntity.id,
         canonicalName: newEntity.canonicalName,
-        type: newEntity.type,
+        type: newEntity.type as EntityType,
         confidence: "new",
       };
     }
@@ -196,7 +196,7 @@ export async function resolveEntity(
       return {
         entityId: retryRows[0].id,
         canonicalName: retryRows[0].canonical_name,
-        type: retryRows[0].type,
+        type: retryRows[0].type as EntityType,
         confidence: "exact",
       };
     }
@@ -226,7 +226,7 @@ export async function resolveEntity(
  */
 export async function resolveEntityReadOnly(
   name: string,
-  type: string,
+  type: EntityType,
   workspaceId: string,
 ): Promise<ResolvedEntity | null> {
   const lowerName = name.toLowerCase().trim();
@@ -247,7 +247,7 @@ export async function resolveEntityReadOnly(
       return {
         entityId: exactRows[0].id,
         canonicalName: exactRows[0].canonical_name,
-        type: exactRows[0].type,
+        type: exactRows[0].type as EntityType,
         confidence: "exact",
       };
     }
@@ -267,7 +267,7 @@ export async function resolveEntityReadOnly(
       return {
         entityId: aliasRows[0].id,
         canonicalName: aliasRows[0].canonical_name,
-        type: aliasRows[0].type,
+        type: aliasRows[0].type as EntityType,
         confidence: "alias",
       };
     }
@@ -285,7 +285,7 @@ export async function resolveEntityReadOnly(
       return {
         entityId: crossCanonicalRows[0].id,
         canonicalName: crossCanonicalRows[0].canonical_name,
-        type: crossCanonicalRows[0].type,
+        type: crossCanonicalRows[0].type as EntityType,
         confidence: "exact",
       };
     }
@@ -304,7 +304,7 @@ export async function resolveEntityReadOnly(
       return {
         entityId: crossAliasRows[0].id,
         canonicalName: crossAliasRows[0].canonical_name,
-        type: crossAliasRows[0].type,
+        type: crossAliasRows[0].type as EntityType,
         confidence: "alias",
       };
     }
@@ -325,7 +325,7 @@ export async function resolveEntityReadOnly(
       return {
         entityId: fuzzyRows[0].id,
         canonicalName: fuzzyRows[0].canonical_name,
-        type: fuzzyRows[0].type,
+        type: fuzzyRows[0].type as EntityType,
         confidence: "fuzzy",
       };
     }
@@ -342,26 +342,33 @@ export async function resolveEntityReadOnly(
   }
 }
 
+const ROLE_PRIORITY: Record<string, number> = { subject: 0, object: 1, mentioned: 2 };
+
 /**
  * Resolve multiple entities from extraction output.
+ * Deduplicates by extracted name, keeping the highest-priority role per name.
  */
 export async function resolveEntities(
-  extracted: Array<{ name: string; type: string }>,
+  extracted: Array<{ name: string; type: EntityType; role?: MemoryEntityRole }>,
   workspaceId: string,
-): Promise<ResolvedEntity[]> {
+): Promise<Array<ResolvedEntity & { role?: MemoryEntityRole }>> {
   if (extracted.length === 0) return [];
 
-  const results: ResolvedEntity[] = [];
-  const seen = new Set<string>();
-
+  // Deduplicate by type:name, keeping the highest-priority role
+  const bestByKey = new Map<string, { name: string; type: EntityType; role?: MemoryEntityRole }>();
   for (const item of extracted) {
     const key = `${item.type}:${item.name.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const existing = bestByKey.get(key);
+    if (!existing || (ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) < (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)) {
+      bestByKey.set(key, item);
+    }
+  }
 
+  const results: Array<ResolvedEntity & { role?: MemoryEntityRole }> = [];
+  for (const item of bestByKey.values()) {
     try {
       const resolved = await resolveEntity(item.name, item.type, workspaceId);
-      results.push(resolved);
+      results.push({ ...resolved, role: item.role });
     } catch (error) {
       logger.warn("Skipping unresolvable entity", {
         name: item.name,
@@ -376,17 +383,28 @@ export async function resolveEntities(
 
 /**
  * Link a memory to its resolved entities via the memory_entities junction table.
+ * Accepts resolved entities with optional per-entity role; defaults to "mentioned".
  */
 export async function linkMemoryEntities(
   memoryId: string,
-  resolvedEntities: ResolvedEntity[],
+  resolvedEntities: Array<ResolvedEntity & { role?: MemoryEntityRole }>,
 ): Promise<void> {
   if (resolvedEntities.length === 0) return;
 
-  const values = resolvedEntities.map((e) => ({
+  // Deduplicate by entityId, keeping the most important role
+  const best = new Map<string, { entityId: string; role: MemoryEntityRole }>();
+  for (const e of resolvedEntities) {
+    const role = e.role ?? ("mentioned" as MemoryEntityRole);
+    const existing = best.get(e.entityId);
+    if (!existing || (ROLE_PRIORITY[role] ?? 2) < (ROLE_PRIORITY[existing.role] ?? 2)) {
+      best.set(e.entityId, { entityId: e.entityId, role });
+    }
+  }
+
+  const values = [...best.values()].map((v) => ({
     memoryId,
-    entityId: e.entityId,
-    role: "mentioned" as const,
+    entityId: v.entityId,
+    role: v.role,
   }));
 
   try {
@@ -397,7 +415,7 @@ export async function linkMemoryEntities(
   } catch (error) {
     logger.error("Failed to link memory entities", {
       memoryId,
-      entityCount: resolvedEntities.length,
+      entityCount: values.length,
       error: String(error),
     });
   }
