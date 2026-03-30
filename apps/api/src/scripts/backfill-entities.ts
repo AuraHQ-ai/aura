@@ -273,6 +273,7 @@ async function resolveEntityCached(
     await db.execute(sql`
       SELECT id FROM entities
       WHERE workspace_id = ${WORKSPACE_ID}
+        AND type = ${type}
         AND lower(canonical_name) = ${lowerName}
       LIMIT 1
     `),
