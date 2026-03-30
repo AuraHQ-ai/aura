@@ -226,10 +226,12 @@ Memory categories:
 - **episodic**: Time-bound events, conversations, incidents tied to a specific moment.
 - **procedural**: How-to knowledge, workflows, processes.
 
-Utility assessment (IMPORTANT — be strict):
-- **high**: Decisions, personal facts, business intelligence, preferences, relationship info.
-- **medium**: Useful context that may be relevant later.
-- **low**: Operational noise, status checks, agent actions, acknowledgments — these will be DISCARDED.
+Importance scoring (IMPORTANT — be strict, use the 1-100 scale):
+- **90-100**: Business decisions, org changes, key relationships.
+- **70-89**: Product discussions, bugs with impact, personal facts.
+- **40-69**: Status updates with substance, meeting notes.
+- **20-39**: Routine coordination, minor updates.
+- **1-19**: Operational noise, status checks, agent actions, acknowledgments — these will be DISCARDED.
 
 DO NOT extract memories about:
 - Aura's own actions ("Aura checked the deploy", "Aura ran a query")
