@@ -444,6 +444,24 @@ async function main() {
   console.log(`Memory-entity links created: ${totalLinked}`);
   console.log(`Entity cache size: ${entityCache.size} (typed), ${entityByName.size} (cross-type)`);
   console.log(`Batches with errors: ${totalErrors}`);
+
+  // Re-link users to their entities by matching display_name to entity aliases
+  console.log(`\n=== Linking Users → Entities ===`);
+  const linkResult = await db.execute(sql`
+    UPDATE users u
+    SET entity_id = sub.entity_id
+    FROM (
+      SELECT DISTINCT ON (u2.id) u2.id AS user_id, e.id AS entity_id
+      FROM users u2
+      JOIN entity_aliases ea ON ea.alias_lower = lower(u2.display_name)
+      JOIN entities e ON e.id = ea.entity_id AND e.type = 'person'
+      WHERE u2.workspace_id = ${WORKSPACE_ID}
+      ORDER BY u2.id
+    ) sub
+    WHERE u.id = sub.user_id
+  `);
+  const linkedCount = (linkResult as any).rowCount ?? 0;
+  console.log(`✓ Linked ${linkedCount} users to person entities`);
 }
 
 main().catch((err) => {

@@ -2,16 +2,12 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { sql, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { entities, memories, memoryEntities } from "@aura/db/schema";
+import { entities, memories, memoryEntities, users } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 const MAX_MEMORIES_PER_ENTITY = 50;
-const DELAY_BETWEEN_CALLS_MS = 200;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const SUMMARY_CONCURRENCY = 10;
 
 function getSystemPrompt(entityName: string, entityType: string): string {
   const base = `You are summarizing what Aura (an AI team member) knows about "${entityName}" (${entityType}).`;
@@ -103,13 +99,46 @@ export async function generateEntitySummary(
     .map((m) => `- [${m.type}] ${m.content}`)
     .join("\n");
 
+  // For person entities, include linked user profile data as context
+  let profileContext = "";
+  if (entity.type === "person") {
+    const linkedUsers = await db
+      .select({
+        displayName: users.displayName,
+        jobTitle: users.jobTitle,
+        knownFacts: users.knownFacts,
+        timezone: users.timezone,
+        slackUserId: users.slackUserId,
+      })
+      .from(users)
+      .where(eq(users.entityId, entityId))
+      .limit(1);
+
+    if (linkedUsers.length > 0) {
+      const u = linkedUsers[0];
+      const parts: string[] = [];
+      if (u.jobTitle) parts.push(`Title: ${u.jobTitle}`);
+      const facts = u.knownFacts as Record<string, unknown> | null;
+      if (facts?.role) parts.push(`Role: ${facts.role}`);
+      if (facts?.team) parts.push(`Team: ${facts.team}`);
+      if (facts?.interests && Array.isArray(facts.interests) && facts.interests.length > 0)
+        parts.push(`Interests: ${facts.interests.join(", ")}`);
+      if (facts?.personalDetails && Array.isArray(facts.personalDetails) && facts.personalDetails.length > 0)
+        parts.push(`Details: ${facts.personalDetails.join(", ")}`);
+      if (u.timezone) parts.push(`Timezone: ${u.timezone}`);
+      if (parts.length > 0) {
+        profileContext = `\n\nProfile data:\n${parts.map((p) => `- ${p}`).join("\n")}`;
+      }
+    }
+  }
+
   const model = await getFastModel();
 
   const { object } = await generateObject({
     model,
     schema: z.object({ summary: z.string() }),
     system: getSystemPrompt(entity.canonicalName, entity.type ?? "unknown"),
-    prompt: memoriesText,
+    prompt: `${profileContext ? `${profileContext}\n\n` : ""}Memories:\n${memoriesText}`,
   });
 
   const now = new Date();
@@ -128,7 +157,7 @@ export async function generateEntitySummary(
  * then by memory count DESC within each type (most-referenced entities first).
  */
 export async function regenerateStaleSummaries(
-  opts?: { forceAll?: boolean },
+  opts?: { forceAll?: boolean; concurrency?: number },
 ): Promise<{ updated: number; skipped: number }> {
   const forceAll = opts?.forceAll ?? false;
 
@@ -177,32 +206,37 @@ export async function regenerateStaleSummaries(
 
   let updated = 0;
   let skipped = 0;
+  let idx = 0;
 
-  for (let i = 0; i < total; i++) {
-    const entity = staleEntities[i];
-    try {
-      const summary = await generateEntitySummary(entity.id);
-      if (summary) {
-        const wordCount = summary.split(/\s+/).length;
-        logger.info(
-          `[entity ${i + 1}/${total}] Generated summary for "${entity.canonical_name}" (${entity.type}, ${entity.memory_count} memories) — ${wordCount} words`,
+  async function worker() {
+    while (idx < total) {
+      const i = idx++;
+      const entity = staleEntities[i];
+      try {
+        const summary = await generateEntitySummary(entity.id);
+        if (summary) {
+          const wordCount = summary.split(/\s+/).length;
+          logger.info(
+            `[entity ${i + 1}/${total}] Generated summary for "${entity.canonical_name}" (${entity.type}, ${entity.memory_count} memories) — ${wordCount} words`,
+          );
+          updated++;
+        } else {
+          skipped++;
+        }
+      } catch (error) {
+        logger.error(
+          `[entity ${i + 1}/${total}] Failed to generate summary for "${entity.canonical_name}"`,
+          { error: String(error) },
         );
-        updated++;
-      } else {
         skipped++;
       }
-    } catch (error) {
-      logger.error(
-        `[entity ${i + 1}/${total}] Failed to generate summary for "${entity.canonical_name}"`,
-        { error: String(error) },
-      );
-      skipped++;
-    }
-
-    if (i < total - 1) {
-      await sleep(DELAY_BETWEEN_CALLS_MS);
     }
   }
+
+  const concurrency = opts?.concurrency ?? SUMMARY_CONCURRENCY;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, total) }, () => worker()),
+  );
 
   logger.info(
     `Entity summaries complete: ${updated} updated, ${skipped} skipped`,
