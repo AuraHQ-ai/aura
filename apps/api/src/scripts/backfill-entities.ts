@@ -11,7 +11,8 @@ import {
   extractedEntitySchema,
   ENTITY_EXTRACTION_RULES,
 } from "../memory/entity-extraction-schema.js";
-import { disambiguateFuzzyMatches } from "../memory/entity-resolution.js";
+// Dynamically imported after dotenv loads (entity-resolution.ts statically imports db/client.js)
+let disambiguateFuzzyMatches: typeof import("../memory/entity-resolution.js")["disambiguateFuzzyMatches"];
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -21,6 +22,7 @@ config({ path: resolve(repoRoot, envFile) });
 if (isProd) console.log("Using .env.production (--prod)");
 
 const { db } = await import("../db/client.js");
+({ disambiguateFuzzyMatches } = await import("../memory/entity-resolution.js"));
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
