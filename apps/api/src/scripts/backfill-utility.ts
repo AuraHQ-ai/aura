@@ -6,6 +6,7 @@ import { generateText, Output } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { utilityToScore } from "../memory/utility.js";
+import { pool } from "../lib/pool.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -47,23 +48,6 @@ Be generous with "high" — if a memory would be useful to recall 3 months from 
 type ResultRow = Record<string, any>;
 function extractRows(result: unknown): ResultRow[] {
   return ((result as any).rows ?? result) as ResultRow[];
-}
-
-async function pool<T>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
-  let idx = 0;
-  async function worker() {
-    while (idx < items.length) {
-      const i = idx++;
-      await fn(items[i]);
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
-  );
 }
 
 async function processBatch(

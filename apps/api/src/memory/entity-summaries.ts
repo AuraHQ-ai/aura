@@ -8,7 +8,7 @@ import { logger } from "../lib/logger.js";
 
 const MAX_MEMORIES_PER_ENTITY = 50;
 const MIN_RELEVANCE_SCORE = 0.1;
-const SUMMARY_CONCURRENCY = 10;
+const SUMMARY_CONCURRENCY = 1;
 
 function getSystemPrompt(entityName: string, entityType: string): string {
   const base = `You are summarizing what Aura (an AI team member) knows about "${entityName}" (${entityType}).`;

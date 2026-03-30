@@ -11,6 +11,7 @@ import {
   extractedEntitySchema,
   ENTITY_EXTRACTION_RULES,
 } from "../memory/entity-extraction-schema.js";
+import { pool } from "../lib/pool.js";
 // Dynamically imported after dotenv loads (entity-resolution.ts statically imports db/client.js)
 let disambiguateFuzzyMatches: typeof import("../memory/entity-resolution.js")["disambiguateFuzzyMatches"];
 
@@ -312,23 +313,6 @@ async function resolveEntityCached(
   }
 
   throw new Error(`Failed to create or find entity: ${name} (${type})`);
-}
-
-// ── Concurrency Pool ─────────────────────────────────────────────────────────
-
-async function pool<T>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
-  let idx = 0;
-  async function worker() {
-    while (idx < items.length) {
-      const i = idx++;
-      await fn(items[i]);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
 }
 
 // ── Process a single batch ───────────────────────────────────────────────────
