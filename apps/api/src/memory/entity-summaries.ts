@@ -6,7 +6,7 @@ import { entities, memories, memoryEntities } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
-const MAX_MEMORIES_PER_ENTITY = 200;
+const MAX_MEMORIES_PER_ENTITY = 50;
 const DELAY_BETWEEN_CALLS_MS = 200;
 
 function sleep(ms: number): Promise<void> {
@@ -18,6 +18,7 @@ function getSystemPrompt(entityName: string, entityType: string): string {
 
   const rules = `
 Rules:
+- ONLY state facts present in the memories below. Do not infer, speculate, or add analysis beyond what the memories contain. If there's only one memory with a passing mention, the summary should reflect that — a single sentence is fine.
 - 2-3 sentences MAX. Be brutally concise.
 - Present tense for current state. Past tense only for important context.
 - No filler phrases ("This entity is...", "Based on memories...").

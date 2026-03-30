@@ -22,6 +22,7 @@ export async function resolveEntity(
   name: string,
   type: EntityType,
   workspaceId: string,
+  llmAliases?: string[],
 ): Promise<ResolvedEntity> {
   const lowerName = name.toLowerCase().trim();
   if (!lowerName) {
@@ -147,6 +148,26 @@ export async function resolveEntity(
           source: "extracted",
         })
         .onConflictDoNothing();
+
+      // Insert LLM-provided aliases
+      if (llmAliases && llmAliases.length > 0) {
+        for (const raw of llmAliases) {
+          const trimmed = raw.trim();
+          if (!trimmed) continue;
+          try {
+            await db
+              .insert(entityAliases)
+              .values({
+                entityId: newEntity.id,
+                alias: trimmed,
+                source: "llm_extracted",
+              })
+              .onConflictDoNothing();
+          } catch {
+            // ignore duplicate alias conflicts
+          }
+        }
+      }
 
       // Auto-generate additional aliases for person entities
       if (type === "person") {
@@ -349,25 +370,29 @@ const ROLE_PRIORITY: Record<string, number> = { subject: 0, object: 1, mentioned
  * Deduplicates by extracted name, keeping the highest-priority role per name.
  */
 export async function resolveEntities(
-  extracted: Array<{ name: string; type: EntityType; role?: MemoryEntityRole }>,
+  extracted: Array<{ name: string; type: EntityType; role?: MemoryEntityRole; aliases?: string[] }>,
   workspaceId: string,
 ): Promise<Array<ResolvedEntity & { role?: MemoryEntityRole }>> {
   if (extracted.length === 0) return [];
 
-  // Deduplicate by type:name, keeping the highest-priority role
-  const bestByKey = new Map<string, { name: string; type: EntityType; role?: MemoryEntityRole }>();
+  // Deduplicate by type:name, keeping the highest-priority role and merging aliases
+  const bestByKey = new Map<string, { name: string; type: EntityType; role?: MemoryEntityRole; aliases?: string[] }>();
   for (const item of extracted) {
     const key = `${item.type}:${item.name.toLowerCase()}`;
     const existing = bestByKey.get(key);
     if (!existing || (ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) < (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)) {
-      bestByKey.set(key, item);
+      const mergedAliases = [
+        ...(existing?.aliases ?? []),
+        ...(item.aliases ?? []),
+      ];
+      bestByKey.set(key, { ...item, aliases: mergedAliases });
     }
   }
 
   const results: Array<ResolvedEntity & { role?: MemoryEntityRole }> = [];
   for (const item of bestByKey.values()) {
     try {
-      const resolved = await resolveEntity(item.name, item.type, workspaceId);
+      const resolved = await resolveEntity(item.name, item.type, workspaceId, item.aliases);
       results.push({ ...resolved, role: item.role });
     } catch (error) {
       logger.warn("Skipping unresolvable entity", {

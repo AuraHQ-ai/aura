@@ -7,9 +7,11 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { entities, entityAliases, memoryEntities } from "@aura/db/schema";
 import type { EntityType, MemoryEntityRole } from "@aura/db/schema";
+import {
+  extractedEntitySchema,
+  ENTITY_EXTRACTION_RULES,
+} from "../memory/entity-extraction-schema.js";
 
-// Load env before importing db client (which reads DATABASE_URL at import time).
-// Pass --prod to use .env.production instead of .env.local.
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
 const isProd = process.argv.includes("--prod");
@@ -39,30 +41,14 @@ const extractionSchema = z.object({
   results: z.array(
     z.object({
       memory_id: z.string(),
-      entities: z.array(
-        z.object({
-          name: z.string(),
-          type: z.enum([
-            "person",
-            "company",
-            "project",
-            "product",
-            "channel",
-            "technology",
-            "concept",
-            "location",
-          ]),
-          role: z.enum(["subject", "object", "mentioned"]),
-        }),
-      ),
+      entities: z.array(extractedEntitySchema),
     }),
   ),
 });
 
-const SYSTEM_PROMPT = `Extract entity mentions from these memories. For each memory, return the entities mentioned with their type and role.
+const SYSTEM_PROMPT = `Extract entity mentions from these memories. For each memory, return the entities mentioned with their type, role, and aliases.
 
-Entity types: person, company, project, product, channel, technology, concept, location
-Roles: subject (who/what the memory is primarily about), object (secondary entity), mentioned (just referenced)`;
+${ENTITY_EXTRACTION_RULES}`;
 
 // ── Entity Resolution with In-Memory Cache ──────────────────────────────────
 
@@ -78,13 +64,55 @@ function extractRows(result: unknown): ResultRow[] {
   return ((result as any).rows ?? result) as ResultRow[];
 }
 
+async function insertAliases(
+  entityId: string,
+  canonicalName: string,
+  llmAliases: string[],
+): Promise<void> {
+  const aliasSet = new Set<string>();
+  aliasSet.add(canonicalName);
+
+  for (const a of llmAliases) {
+    const trimmed = a.trim();
+    if (trimmed) aliasSet.add(trimmed);
+  }
+
+  for (const alias of aliasSet) {
+    try {
+      await db
+        .insert(entityAliases)
+        .values({ entityId, alias, source: "backfill" })
+        .onConflictDoNothing();
+    } catch {
+      // ignore duplicate alias conflicts
+    }
+
+    // Populate cache for every alias so within-run dedup works
+    const key = cacheKey("*", alias);
+    if (!entityCache.has(key)) {
+      entityCache.set(key, entityId);
+    }
+  }
+}
+
 async function resolveEntityCached(
   name: string,
   type: EntityType,
+  aliases: string[],
 ): Promise<{ entityId: string; isNew: boolean }> {
   const key = cacheKey(type, name);
   const cached = entityCache.get(key);
   if (cached) return { entityId: cached, isNew: false };
+
+  // Check if any of the provided aliases already map to a cached entity
+  for (const alias of aliases) {
+    const aliasKey = cacheKey(type, alias);
+    const aliasHit = entityCache.get(aliasKey);
+    if (aliasHit) {
+      entityCache.set(key, aliasHit);
+      return { entityId: aliasHit, isNew: false };
+    }
+  }
 
   const lowerName = name.toLowerCase().trim();
   if (!lowerName) throw new Error("Entity name cannot be empty");
@@ -101,6 +129,7 @@ async function resolveEntityCached(
   );
   if (exactRows.length > 0) {
     entityCache.set(key, exactRows[0].id);
+    await insertAliases(exactRows[0].id, name, aliases);
     return { entityId: exactRows[0].id, isNew: false };
   }
 
@@ -117,6 +146,7 @@ async function resolveEntityCached(
   );
   if (aliasRows.length > 0) {
     entityCache.set(key, aliasRows[0].id);
+    await insertAliases(aliasRows[0].id, name, aliases);
     return { entityId: aliasRows[0].id, isNew: false };
   }
 
@@ -135,10 +165,11 @@ async function resolveEntityCached(
   );
   if (fuzzyRows.length > 0) {
     entityCache.set(key, fuzzyRows[0].id);
+    await insertAliases(fuzzyRows[0].id, name, aliases);
     return { entityId: fuzzyRows[0].id, isNew: false };
   }
 
-  // 4. Create new entity + alias
+  // 4. Create new entity + aliases
   const [newEntity] = await db
     .insert(entities)
     .values({
@@ -150,16 +181,7 @@ async function resolveEntityCached(
     .returning();
 
   if (newEntity) {
-    // alias_lower is GENERATED ALWAYS — only provide alias
-    await db
-      .insert(entityAliases)
-      .values({
-        entityId: newEntity.id,
-        alias: name,
-        source: "backfill",
-      })
-      .onConflictDoNothing();
-
+    await insertAliases(newEntity.id, name, aliases);
     entityCache.set(key, newEntity.id);
     return { entityId: newEntity.id, isNew: true };
   }
@@ -176,6 +198,7 @@ async function resolveEntityCached(
   );
   if (retryRows.length > 0) {
     entityCache.set(key, retryRows[0].id);
+    await insertAliases(retryRows[0].id, name, aliases);
     return { entityId: retryRows[0].id, isNew: false };
   }
 
@@ -247,6 +270,7 @@ async function processBatch(
               const { entityId, isNew } = await resolveEntityCached(
                 entity.name,
                 entity.type,
+                entity.aliases,
               );
               if (isNew) batchNewEntities++;
               return { memoryId: memResult.memory_id, entityId, role: entity.role };
@@ -263,7 +287,6 @@ async function processBatch(
     );
 
     if (allLinks.length > 0) {
-      // Insert in chunks of 500 to stay within Postgres parameter limits
       for (let i = 0; i < allLinks.length; i += 500) {
         await db
           .insert(memoryEntities)

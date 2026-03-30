@@ -6,6 +6,10 @@ import { storeMemories, supersedeMemory, toDbChannelType, checkDuplicates } from
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
+import {
+  extractedEntitySchema,
+  ENTITY_EXTRACTION_RULES,
+} from "./entity-extraction-schema.js";
 import type { NewMemory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
@@ -187,18 +191,7 @@ const extractedMemoriesSchema = z.object({
         )
         .default(false),
       entities: z
-        .array(
-          z.object({
-            name: z.string().describe("The entity name (full name for people, official name for companies)"),
-            type: z
-              .enum(["person", "company", "project", "product", "channel", "technology", "concept", "location"])
-              .describe("The entity type"),
-            role: z
-              .enum(["subject", "object", "mentioned"])
-              .describe("subject: who/what the memory is primarily about. object: secondary entity acted upon. mentioned: just referenced.")
-              .default("mentioned"),
-          }),
-        )
+        .array(extractedEntitySchema)
         .optional()
         .default([])
         .describe("Entities (people, companies, projects, etc.) mentioned in this memory"),
@@ -248,11 +241,10 @@ Rules:
 - If the user explicitly asks Aura to tell someone something, mark that memory as shareable.
 - Return an empty array if there's nothing worth remembering.
 
-For each memory, also identify the entities (people, companies, projects, products, channels, technologies, concepts, locations) mentioned. Return them in the entities array with their name, type, and role:
-- **subject**: the entity the memory is primarily about
-- **object**: a secondary entity acted upon or referenced in relation to the subject
-- **mentioned**: just referenced in passing
-Use the most specific name you can identify (full name for people, official name for companies).`;
+For each memory, also identify the entities mentioned. Return them in the entities array with their name, type, role, and aliases.
+Use the most specific name you can identify (full name for people, official name for companies).
+
+${ENTITY_EXTRACTION_RULES}`;
 
 interface ExtractionContext {
   userMessage: string;
