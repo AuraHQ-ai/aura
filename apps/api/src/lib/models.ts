@@ -15,6 +15,7 @@ export const MAIN_MODELS: ModelOption[] = [
   { value: "google/gemini-3-pro-preview", label: "Gemini 3 Pro" },
   { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
   { value: "xai/grok-4.20-reasoning-beta", label: "Grok 4.20 Beta" },
+  { value: "xai/grok-4.20-multi-agent-beta", label: "Grok 4.20 Multi-Agent" },
   { value: "xai/grok-4", label: "Grok 4" },
   { value: "xai/grok-4.1-fast-reasoning", label: "Grok 4.1 Fast" },
   { value: "xai/grok-4-fast-reasoning", label: "Grok 4 Fast" },
