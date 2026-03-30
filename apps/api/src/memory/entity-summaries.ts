@@ -7,6 +7,7 @@ import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
 
 const MAX_MEMORIES_PER_ENTITY = 50;
+const MIN_RELEVANCE_SCORE = 0.1;
 const SUMMARY_CONCURRENCY = 10;
 
 function getSystemPrompt(entityName: string, entityType: string): string {
@@ -77,18 +78,22 @@ export async function generateEntitySummary(
   const entity = entityRows[0];
   if (!entity) throw new Error(`Entity not found: ${entityId}`);
 
-  type MemoryRow = { content: string; type: string; createdAt: Date };
+  type MemoryRow = { content: string; type: string; relevanceScore: number };
 
   const linkedMemories: MemoryRow[] = await db
     .select({
       content: memories.content,
       type: memories.type,
-      createdAt: memories.createdAt,
+      relevanceScore: memories.relevanceScore,
     })
     .from(memoryEntities)
     .innerJoin(memories, eq(memoryEntities.memoryId, memories.id))
-    .where(eq(memoryEntities.entityId, entityId))
-    .orderBy(sql`${memories.createdAt} DESC`)
+    .where(
+      sql`${memoryEntities.entityId} = ${entityId}
+        AND ${memories.relevanceScore} > ${MIN_RELEVANCE_SCORE}
+        AND ${memories.status} IN ('current', 'disputed')`,
+    )
+    .orderBy(sql`${memories.relevanceScore} DESC`)
     .limit(MAX_MEMORIES_PER_ENTITY);
 
   if (linkedMemories.length === 0) {

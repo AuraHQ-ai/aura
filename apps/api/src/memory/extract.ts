@@ -10,6 +10,7 @@ import {
   extractedEntitySchema,
   ENTITY_EXTRACTION_RULES,
 } from "./entity-extraction-schema.js";
+import { utilityToScore } from "./utility.js";
 import type { NewMemory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
@@ -362,7 +363,8 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
         : [context.userId],
       embedding: embeddings[i] ?? null,
       shareable: normalizedMemories[i].shareable ? 1 : 0,
-      relevanceScore: 1.0,
+      utility: normalizedMemories[i].utility,
+      relevanceScore: utilityToScore(normalizedMemories[i].utility),
       extractionSourceRole,
     }));
 
