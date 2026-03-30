@@ -42,6 +42,14 @@ CREATE TABLE memories (
   search_vector tsvector GENERATED ALWAYS AS (
     to_tsvector('english', coalesce(content, ''))
   ) STORED,
+  -- Temporal lifecycle (added v0.55)
+  status memory_status NOT NULL DEFAULT 'current',
+  confidence REAL DEFAULT 0.8,
+  valid_from TIMESTAMPTZ,
+  valid_until TIMESTAMPTZ,
+  supersedes_memory_id UUID REFERENCES memories(id),
+  superseded_at TIMESTAMPTZ,
+  superseded_by_memory_id UUID,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -135,12 +143,42 @@ Each entity accumulates a **compiled summary** -- a dossier that distills everyt
 
 Entity summaries sit above individual memories in the prompt hierarchy because they represent consolidated knowledge rather than isolated facts.
 
+## Temporal Lifecycle
+
+Every memory has a lifecycle governed by its `status` field:
+
+| Status | Meaning |
+|--------|---------|
+| `current` | Active and used in retrieval |
+| `superseded` | Replaced by a newer memory (excluded from retrieval) |
+| `disputed` | Contradicted but not yet resolved (still surfaces in retrieval) |
+| `archived` | Manually archived, excluded from retrieval |
+| `deleted` | Soft-deleted, excluded from everything |
+
+### Confidence scores
+
+Each memory carries a `confidence` score (0.0 -- 1.0, default 0.8) representing how certain the extraction is. Future retrieval and consolidation logic can use this to rank conflicting memories.
+
+### Temporal validity
+
+Memories can have `valid_from` and `valid_until` timestamps to represent time-bounded facts. For example, "Joan is on vacation until March 15" gets a `valid_until` of March 15. By default, `valid_from` is set to the memory's creation time.
+
+### Supersession chains
+
+When a new memory replaces an old one (e.g., "the project deadline moved from April to May"), the old memory is marked `superseded` with:
+- `superseded_at` -- when it was superseded
+- `superseded_by_memory_id` -- which memory replaced it
+
+The new memory gets `supersedes_memory_id` pointing back to the old one. This creates a traceable chain of how facts evolved over time.
+
+Retrieval filters to `status IN ('current', 'disputed')` -- superseded and archived memories are automatically excluded.
+
 ## Consolidation
 
 A nightly consolidation job (4 AM UTC) maintains memory quality:
 
-- **Decay** — relevance scores decrease by 0.5% per day (~50% after 138 days)
-- **Merge** — memories with >95% cosine similarity are consolidated
+- **Decay** — relevance scores decrease by 0.5% per day (~50% after 138 days). Only applies to `current` memories.
+- **Merge** — memories with >95% cosine similarity are consolidated. The loser is marked `superseded` with a proper supersession chain linking to the winner.
 - **Strengthen** — frequently accessed memories get relevance boosts
 - **Expire** — `open_thread` memories are resolved or aged out
 - **Entity summaries** — regenerate summaries for entities with new linked memories since last run
