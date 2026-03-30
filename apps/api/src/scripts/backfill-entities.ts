@@ -264,6 +264,33 @@ async function resolveEntityCached(
 
   if (newEntity) {
     await insertAliases(newEntity.id, type, name, aliases);
+
+    if (type === "person") {
+      const parts = name.split(/\s+/).filter((p) => p.length > 1);
+      const additionalAliases = new Set<string>();
+      additionalAliases.add(name.toLowerCase());
+      for (const part of parts) {
+        additionalAliases.add(part.toLowerCase());
+      }
+      const primaryLower = name.toLowerCase();
+      for (const alias of additionalAliases) {
+        if (alias === primaryLower && parts.length <= 1) continue;
+        try {
+          await db
+            .insert(entityAliases)
+            .values({
+              entityId: newEntity.id,
+              alias,
+              source: "auto_generated",
+            })
+            .onConflictDoNothing();
+        } catch {
+          // ignore duplicate alias conflicts
+        }
+        setCache(newEntity.id, type, alias);
+      }
+    }
+
     setCache(newEntity.id, type, name);
     return { entityId: newEntity.id, isNew: true };
   }
