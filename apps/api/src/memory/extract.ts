@@ -172,8 +172,8 @@ const extractedMemoriesSchema = z.object({
         .string()
         .describe("A concise statement of the memory, e.g. 'Joan prefers bullet points'"),
       type: z
-        .enum(["fact", "decision", "personal", "preference", "relationship", "sentiment", "event", "open_thread", "insight"])
-        .describe("The type of memory"),
+        .enum(["fact", "decision", "preference", "event", "open_thread"])
+        .describe("fact: durable info about people/org/world (subsumes personal, relationships). decision: explicit choices with participants. preference: how someone wants things done. event: something that happened at a specific time. open_thread: unresolved work/pending questions."),
       category: z
         .enum(["semantic", "episodic", "procedural"])
         .describe("semantic: durable facts/preferences/relationships. episodic: time-bound events/conversations/incidents. procedural: how-to knowledge/workflows.")
@@ -210,38 +210,45 @@ const EXTRACTION_PROMPT = `You are a memory extraction system. Analyze the follo
 
 Extract ONLY things worth remembering long-term. Skip pleasantries, small talk, and things that aren't informative.
 
-Types of memories to extract:
-- **fact**: Concrete facts about work, projects, tools, or processes. E.g., "The Q3 launch date is March 15."
-- **decision**: Decisions made by the team. E.g., "We decided to use Postgres instead of MongoDB."
-- **personal**: Personal details about team members. E.g., "Tom has a dog named Biscuit."
-- **preference**: User preferences and working style. E.g., "Joan prefers bullet points over prose."
-- **relationship**: How people relate to each other. E.g., "Joan and Maria work closely on the mobile app."
-- **sentiment**: Emotional context or opinions. E.g., "Joan seemed frustrated about the deploy process."
-- **event**: Time-bound events or incidents. E.g., "Production went down on March 10 due to a migration bug."
-- **open_thread**: Questions or tasks that were raised but not resolved. E.g., "Joan asked about the API docs but never got an answer."
-- **insight**: Business intelligence or strategic observations. E.g., "Churn rate increased 15% after the pricing change."
+## Memory Types (5 types -- use these precisely)
 
-Memory categories:
+- **fact**: Durable information about people, the org, or the world. This includes personal details, relationships, roles, titles, team structure, and business context. E.g., "Joan manages the Aura codebase", "Tom has a dog named Biscuit", "Joan and Maria work closely on the mobile app", "Churn rate increased 15% after the pricing change."
+- **decision**: Explicit choices made, with who made them. E.g., "We decided to use Postgres instead of MongoDB."
+- **preference**: How someone wants things done. Communication style, tool choices, formatting preferences. E.g., "Joan prefers bullet points over prose."
+- **event**: Something that happened at a specific time. Incidents, launches, meetings with outcomes. E.g., "Production went down on March 10 due to a migration bug."
+- **open_thread**: Unresolved work, pending questions, things someone said they'd do. These should eventually be resolved. E.g., "Joan asked about the API docs but never got an answer."
+
+## Memory Categories (3 categories -- orthogonal to type)
+
 - **semantic**: Durable facts, preferences, relationships that remain true over time.
 - **episodic**: Time-bound events, conversations, incidents tied to a specific moment.
-- **procedural**: How-to knowledge, workflows, processes.
+- **procedural**: How-to knowledge, workflows, processes, patterns of behavior.
 
-Importance scoring (IMPORTANT — be strict, use the 1-100 scale):
-- **90-100**: Business decisions, org changes, key relationships.
-- **70-89**: Product discussions, bugs with impact, personal facts.
-- **40-69**: Status updates with substance, meeting notes.
-- **20-39**: Routine coordination, minor updates.
-- **1-19**: Operational noise, status checks, agent actions, acknowledgments — these will be DISCARDED.
+## Admission Rules
 
-DO NOT extract memories about:
+Save things that would be EXPENSIVE TO REDISCOVER. Unlike a coding agent that can grep the codebase instantly, this agent's retrieval relies on stored memories and whatever is in the conversation context. If finding this fact again would require searching Slack channels, reading email threads, querying databases, or exploring codebases -- store it now. The memory is a cache that saves future tool calls.
+
+DO NOT save:
+- Things already in the agent's persistent notes or self-directive (those are always in context)
+- Exact duplicates of things already stored as memories
+- Transient noise that won't matter in 48 hours
 - Aura's own actions ("Aura checked the deploy", "Aura ran a query")
 - Acknowledgments and pleasantries ("thanks", "got it", "sounds good")
 - Scheduling logistics ("let's meet at 3pm") unless it's a decision
 - Information that just restates what was already retrieved from memory in this conversation
 - Meta-conversation about the memory system itself
 
-Rules:
-- Be concise — each memory should be one clear sentence.
+## Importance Scoring (be strict, use the 1-100 scale)
+
+- **90-100**: Business decisions, org changes, key relationships, strategic context.
+- **70-89**: Product discussions, bugs with impact, personal facts, workflow preferences.
+- **40-69**: Status updates with substance, meeting outcomes.
+- **20-39**: Routine coordination, minor updates.
+- **1-19**: Operational noise, status checks, agent actions, acknowledgments -- these will be DISCARDED.
+
+## Rules
+
+- Be concise -- each memory should be one clear sentence.
 - Include the person's name or Slack user ID when relevant.
 - Don't extract things Aura already knows (if they're in the context).
 - If the user explicitly asks Aura to tell someone something, mark that memory as shareable.
