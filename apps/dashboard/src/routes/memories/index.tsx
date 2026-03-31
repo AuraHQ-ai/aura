@@ -123,7 +123,7 @@ function MemoriesPage() {
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRowsSkeleton columns={6} />
+              <TableRowsSkeleton columns={7} />
             ) : memories.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No memories found</TableCell>

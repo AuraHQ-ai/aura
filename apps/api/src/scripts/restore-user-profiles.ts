@@ -94,21 +94,22 @@ async function main() {
     if (!target) {
       console.log(`+ ${src.display_name} (${slackId}) — missing in prod`);
       if (apply) {
-        const esc = (v: unknown) => {
-          if (v === null || v === undefined) return "NULL";
-          if (typeof v === "object") return `'${JSON.stringify(v).replace(/'/g, "''")}'::jsonb`;
-          return `'${String(v).replace(/'/g, "''")}'`;
+        const sqlVal = (v: unknown) => {
+          if (v === null || v === undefined) return sql`NULL`;
+          if (typeof v === "object") return sql`${JSON.stringify(v)}::jsonb`;
+          return sql`${String(v)}`;
         };
-        await targetDb.execute(sql.raw(`
+        const vals = [
+          src.workspace_id, src.slack_user_id, src.display_name, src.timezone,
+          src.role, src.job_title, src.gender, src.preferred_language, src.birthdate,
+          src.manager_id, src.notes, src.communication_style, src.known_facts,
+        ].map(sqlVal);
+        await targetDb.execute(sql`
           INSERT INTO users (workspace_id, slack_user_id, display_name, timezone,
             role, job_title, gender, preferred_language, birthdate,
             manager_id, notes, communication_style, known_facts)
-          VALUES (
-            ${esc(src.workspace_id)}, ${esc(src.slack_user_id)}, ${esc(src.display_name)}, ${esc(src.timezone)},
-            ${esc(src.role)}, ${esc(src.job_title)}, ${esc(src.gender)}, ${esc(src.preferred_language)}, ${esc(src.birthdate)},
-            ${esc(src.manager_id)}, ${esc(src.notes)}, ${esc(src.communication_style)}, ${esc(src.known_facts)}
-          )
-        `));
+          VALUES (${sql.join(vals, sql.raw(", "))})
+        `);
       }
       created++;
       continue;
@@ -136,20 +137,18 @@ async function main() {
     }
 
     if (apply) {
-      const setClauses = Object.entries(changes)
-        .map(([field, value]) => {
-          if (value === null || value === undefined) {
-            return `${field} = NULL`;
-          }
-          if (typeof value === "object") {
-            return `${field} = '${JSON.stringify(value).replace(/'/g, "''")}'::jsonb`;
-          }
-          return `${field} = '${String(value).replace(/'/g, "''")}'`;
-        })
-        .join(", ");
+      const setClauses = Object.entries(changes).map(([field, value]) => {
+        if (value === null || value === undefined) {
+          return sql`${sql.raw(field)} = NULL`;
+        }
+        if (typeof value === "object") {
+          return sql`${sql.raw(field)} = ${JSON.stringify(value)}::jsonb`;
+        }
+        return sql`${sql.raw(field)} = ${String(value)}`;
+      });
 
       await targetDb.execute(
-        sql.raw(`UPDATE users SET ${setClauses}, updated_at = now() WHERE slack_user_id = '${slackId}'`),
+        sql`UPDATE users SET ${sql.join(setClauses, sql.raw(", "))}, updated_at = now() WHERE slack_user_id = ${slackId}`,
       );
     }
     updated++;
