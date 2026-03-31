@@ -39,13 +39,9 @@ export const messageRoleEnum = pgEnum("message_role", [
 export const memoryTypeEnum = pgEnum("memory_type", [
   "fact",
   "decision",
-  "personal",
   "preference",
-  "relationship",
-  "sentiment",
   "event",
   "open_thread",
-  "insight",
 ]);
 
 export const extractionSourceRoleEnum = pgEnum("extraction_source_role", [

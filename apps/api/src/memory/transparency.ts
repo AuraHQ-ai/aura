@@ -120,10 +120,14 @@ export function formatKnowledgeSummary(
     const typeLabels: Record<string, string> = {
       fact: "Facts",
       decision: "Decisions",
-      personal: "Personal",
-      relationship: "Relationships",
-      sentiment: "Impressions",
+      preference: "Preferences",
+      event: "Events",
       open_thread: "Open threads",
+      // Legacy types (still in DB, will appear until fully migrated)
+      personal: "Facts",
+      relationship: "Facts",
+      sentiment: "Facts",
+      insight: "Facts",
     };
 
     for (const [type, items] of Object.entries(grouped)) {
