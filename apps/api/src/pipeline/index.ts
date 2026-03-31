@@ -839,7 +839,6 @@ async function runBackgroundTasks(params: {
 
     // Extract memories — thread-scoped reconciliation when threadTs is available,
     // falls back to single-exchange extraction with tool context summary otherwise
-    const effectiveThreadTs = context.threadTs || context.messageTs;
     const toolContextSummary = buildToolContextForExtraction(toolCalls);
     await extractMemories({
       userMessage: context.text,
@@ -849,7 +848,7 @@ async function runBackgroundTasks(params: {
       sourceMessageId: userMessageId || undefined,
       displayName,
       channelId: context.channelId,
-      threadTs: effectiveThreadTs,
+      threadTs: context.threadTs,
     });
 
     // Record interaction and potentially update profile
