@@ -173,14 +173,14 @@ dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
       .innerJoin(entities, eq(entities.id, memoryEntities.entityId))
       .where(eq(memoryEntities.memoryId, id));
 
-    let sourceThread: { channelId: string; threadTs: string } | null = null;
+    let sourceThread: { channelId: string; threadTs: string; messageAt: string } | null = null;
     if (memory.sourceMessageId) {
       const [msg] = await db
-        .select({ channelId: messages.channelId, threadTs: messages.slackThreadTs })
+        .select({ channelId: messages.channelId, threadTs: messages.slackThreadTs, createdAt: messages.createdAt })
         .from(messages)
         .where(eq(messages.id, memory.sourceMessageId));
       if (msg?.threadTs) {
-        sourceThread = { channelId: msg.channelId, threadTs: msg.threadTs };
+        sourceThread = { channelId: msg.channelId, threadTs: msg.threadTs, messageAt: msg.createdAt.toISOString() };
       }
     }
 

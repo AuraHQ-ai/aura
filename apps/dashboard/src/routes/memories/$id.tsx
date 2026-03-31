@@ -30,7 +30,7 @@ interface MemoryDetail {
   shareable: number;
   sourceMessageId: string | null;
   sourceChannelType: string | null;
-  sourceThread: { channelId: string; threadTs: string } | null;
+  sourceThread: { channelId: string; threadTs: string; messageAt?: string } | null;
   createdAt: string;
   relatedUsers: { slackUserId: string; displayName: string }[];
   linkedEntities: LinkedEntity[];
@@ -208,6 +208,7 @@ function MemoryDetailPage() {
                   <Link
                     to="/conversations/threads/$channelId/$threadTs"
                     params={{ channelId: memory.sourceThread.channelId, threadTs: memory.sourceThread.threadTs }}
+                    search={{ highlight: memory.sourceThread.messageAt }}
                     className="text-sm text-primary hover:underline"
                   >
                     View conversation →

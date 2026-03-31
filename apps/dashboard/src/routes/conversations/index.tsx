@@ -151,6 +151,7 @@ function ConversationsPage() {
                         channelId: thread.channelId,
                         threadTs: thread.threadTs,
                       }}
+                      search={{ highlight: undefined }}
                       className="hover:underline"
                     >
                       {formatDate(thread.firstTraceAt)}
