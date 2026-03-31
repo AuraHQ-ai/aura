@@ -12,6 +12,9 @@ import { logger } from "../lib/logger.js";
  * 3. Flag contradictory memories
  */
 
+export const DECAY_FACTOR = 0.995;
+const MIN_SCORE = 0.01;
+
 /**
  * Decay relevance scores.
  * Multiplies all relevance_scores by a decay factor (0.995 per day).
@@ -19,8 +22,6 @@ import { logger } from "../lib/logger.js";
  * Memories with a score below the floor are not deleted, just deprioritized.
  */
 export async function decayRelevanceScores(): Promise<number> {
-  const DECAY_FACTOR = 0.995;
-  const MIN_SCORE = 0.01;
 
   try {
     const result = await db

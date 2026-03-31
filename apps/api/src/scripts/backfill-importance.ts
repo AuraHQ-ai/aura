@@ -3,9 +3,9 @@ import { resolve } from "path";
 import { fileURLToPath } from "url";
 import { sql } from "drizzle-orm";
 import { generateText, Output } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { importanceToRelevance } from "../memory/importance.js";
+import { DECAY_FACTOR } from "../memory/consolidate.js";
 import { pool } from "../lib/pool.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -15,18 +15,12 @@ config({ path: resolve(repoRoot, isProd ? ".env.production" : ".env.local") });
 if (isProd) console.log("Using .env.production (--prod)");
 
 const { db } = await import("../db/client.js");
+const { getFastModel } = await import("../lib/ai.js");
 
 const BATCH_SIZE = 50;
 const CONCURRENCY = 10;
-const DECAY_FACTOR = 0.995;
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error("ANTHROPIC_API_KEY is required");
-  process.exit(1);
-}
-
-const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const model = anthropic("claude-haiku-4-5-20251001");
+const model = await getFastModel();
 
 const classificationSchema = z.object({
   results: z.array(

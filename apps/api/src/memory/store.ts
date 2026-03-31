@@ -1,8 +1,9 @@
-import { eq, sql, isNull, and } from "drizzle-orm";
+import { eq, sql, isNull, and, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages, memories, notes, eventLocks, type NewMessage, type NewMemory } from "@aura/db/schema";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
+import { importanceToRelevance } from "./importance.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
 import type { ChannelType } from "../pipeline/context.js";
 
@@ -25,6 +26,52 @@ export async function claimEvent(eventTs: string, channelId: string): Promise<bo
     .onConflictDoNothing()
     .returning({ id: eventLocks.id });
   return result.length > 0;
+}
+
+export interface ThreadMessage {
+  role: string;
+  userId: string;
+  content: string;
+  createdAt: Date;
+}
+
+/**
+ * Fetch all persisted messages for a Slack thread, ordered chronologically.
+ * Used by memory extraction to build thread-scoped context.
+ */
+export async function fetchThreadMessages(params: {
+  channelId: string;
+  threadTs: string;
+  limit?: number;
+}): Promise<ThreadMessage[]> {
+  const { channelId, threadTs, limit = 30 } = params;
+  try {
+    const rows = await db
+      .select({
+        role: messages.role,
+        userId: messages.userId,
+        content: messages.content,
+        createdAt: messages.createdAt,
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          sql`(${messages.slackThreadTs} = ${threadTs} OR ${messages.slackTs} = ${threadTs})`,
+        ),
+      )
+      .orderBy(messages.createdAt)
+      .limit(limit);
+
+    return rows;
+  } catch (error) {
+    logger.warn("Failed to fetch thread messages for extraction", {
+      error: String(error),
+      channelId,
+      threadTs,
+    });
+    return [];
+  }
 }
 
 /**
@@ -502,6 +549,64 @@ export async function storeChannelReadMessage(
     logger.warn("Failed to store channel read message", {
       error: String(error),
       channel: channelName,
+    });
+  }
+}
+
+/**
+ * Update an existing memory's content and re-embed it.
+ * Used by thread-scoped reconciliation when the LLM refines an existing memory.
+ */
+export async function updateMemoryContent(
+  memoryId: string,
+  newContent: string,
+  newEmbedding: number[] | null,
+  newImportance?: number,
+): Promise<void> {
+  const now = new Date();
+  try {
+    const updates: Record<string, unknown> = {
+      content: newContent,
+      embedding: newEmbedding,
+      updatedAt: now,
+    };
+    if (newImportance != null) {
+      updates.importance = newImportance;
+      updates.relevanceScore = importanceToRelevance(newImportance);
+    }
+    await db
+      .update(memories)
+      .set(updates)
+      .where(eq(memories.id, memoryId));
+    logger.info("Updated memory content", { memoryId, contentLength: newContent.length });
+  } catch (error) {
+    logger.warn("Failed to update memory content", {
+      memoryId,
+      error: String(error),
+    });
+  }
+}
+
+/**
+ * Archive a memory (soft delete). Sets status='archived'.
+ * Used by thread-scoped reconciliation when the LLM determines a memory is outdated.
+ */
+export async function archiveMemory(
+  memoryId: string,
+  reason: string,
+): Promise<void> {
+  const now = new Date();
+  try {
+    await db
+      .update(memories)
+      .set({ status: "archived", updatedAt: now })
+      .where(eq(memories.id, memoryId));
+    logger.info("Archived memory", { memoryId, reason });
+  } catch (error) {
+    logger.warn("Failed to archive memory", {
+      memoryId,
+      reason,
+      error: String(error),
     });
   }
 }
