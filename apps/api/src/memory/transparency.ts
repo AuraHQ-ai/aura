@@ -110,28 +110,28 @@ export function formatKnowledgeSummary(
   if (knowledge.memories.length > 0) {
     parts.push(`\n*Things I remember* (${knowledge.totalMemories} total):\n`);
 
-    // Group by type
-    const grouped: Record<string, string[]> = {};
-    for (const m of knowledge.memories) {
-      if (!grouped[m.type]) grouped[m.type] = [];
-      grouped[m.type].push(m.content);
-    }
-
     const typeLabels: Record<string, string> = {
       fact: "Facts",
       decision: "Decisions",
       preference: "Preferences",
       event: "Events",
       open_thread: "Open threads",
-      // Legacy types (still in DB, will appear until fully migrated)
       personal: "Facts",
       relationship: "Facts",
       sentiment: "Facts",
       insight: "Facts",
     };
 
-    for (const [type, items] of Object.entries(grouped)) {
-      parts.push(`_${typeLabels[type] || type}_:`);
+    // Group by display label so legacy types merge with their canonical label
+    const grouped: Record<string, string[]> = {};
+    for (const m of knowledge.memories) {
+      const label = typeLabels[m.type] || m.type;
+      if (!grouped[label]) grouped[label] = [];
+      grouped[label].push(m.content);
+    }
+
+    for (const [label, items] of Object.entries(grouped)) {
+      parts.push(`_${label}_:`);
       for (const item of items.slice(0, 10)) {
         parts.push(`  - ${item}`);
       }

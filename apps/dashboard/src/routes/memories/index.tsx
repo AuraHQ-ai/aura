@@ -23,7 +23,7 @@ interface Memory {
 }
 
 const PAGE_SIZE = 100;
-const MEMORY_TYPES = ["fact", "decision", "personal", "relationship", "sentiment", "open_thread"] as const;
+const MEMORY_TYPES = ["fact", "decision", "preference", "event", "open_thread"] as const;
 
 type MemoriesSearch = { search?: string; type?: string; page?: number };
 
