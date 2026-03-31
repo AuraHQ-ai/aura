@@ -407,6 +407,13 @@
       "when": 1775385600000,
       "tag": "0057_memory_utility",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1775472000000,
+      "tag": "0058_memory_taxonomy_simplification",
+      "breakpoints": true
     }
   ]
 }
