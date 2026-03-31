@@ -552,9 +552,9 @@ export async function retrieveMemories(
     return topMemories;
   } catch (error: any) {
     logger.error("Memory retrieval failed", {
-      error: error?.message ?? String(error),
+      error: (error?.message ?? String(error)).slice(0, 200),
       code: error?.code,
-      cause: error?.cause ? String(error.cause) : undefined,
+      cause: error?.cause ? String(error.cause).slice(0, 200) : undefined,
       query: query.substring(0, 100),
     });
     throw error;

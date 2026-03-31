@@ -14,6 +14,7 @@ interface LinkedMemory {
   role: string | null;
   content: string;
   type: string;
+  importance: number | null;
   relevanceScore: number;
   createdAt: string;
 }
@@ -131,6 +132,7 @@ function EntityDetailPage() {
                 <TableHead>Content</TableHead>
                 <TableHead className="w-[90px]">Type</TableHead>
                 <TableHead className="w-[80px]">Role</TableHead>
+                <TableHead className="w-[100px]">Importance</TableHead>
                 <TableHead className="w-[80px]">Relevance</TableHead>
                 <TableHead className="w-[160px]">Created</TableHead>
               </TableRow>
@@ -138,7 +140,7 @@ function EntityDetailPage() {
             <TableBody>
               {entity.linkedMemories.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">No linked memories</TableCell>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No linked memories</TableCell>
                 </TableRow>
               ) : (
                 entity.linkedMemories.map((m) => (
@@ -150,6 +152,7 @@ function EntityDetailPage() {
                     </TableCell>
                     <TableCell><Badge variant="secondary">{m.type}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground">{m.role ?? "—"}</TableCell>
+                    <TableCell className="text-sm font-mono">{m.importance ?? "—"}</TableCell>
                     <TableCell className="text-sm">{m.relevanceScore?.toFixed(2) ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground text-sm">{formatDate(m.createdAt)}</TableCell>
                   </TableRow>

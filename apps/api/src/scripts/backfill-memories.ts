@@ -35,35 +35,39 @@ interface ThreadInfo {
   threadTs: string;
   channelType: string;
   lastUserMessage: string;
+  lastUserMessageId: string;
   lastUserId: string;
   messageCount: number;
+  firstMessageAt: Date;
 }
 
 async function discoverThreads(): Promise<ThreadInfo[]> {
   const rows = extractRows(
     await db.execute(sql`
-      WITH thread_keys AS (
-        SELECT
-          channel_id,
-          COALESCE(slack_thread_ts, slack_ts) AS thread_ts,
-          channel_type,
-          COUNT(*) AS msg_count
-        FROM messages
-        WHERE role IN ('user', 'assistant')
-        GROUP BY channel_id, COALESCE(slack_thread_ts, slack_ts), channel_type
-        HAVING COUNT(*) >= 2
-        ORDER BY MAX(created_at) DESC
-      )
       SELECT
         tk.channel_id,
         tk.thread_ts,
         tk.channel_type,
         tk.msg_count,
+        tk.first_msg_at,
+        last_msg.id AS last_user_message_id,
         last_msg.content AS last_user_message,
         last_msg.user_id AS last_user_id
-      FROM thread_keys tk
+      FROM (
+        SELECT
+          channel_id,
+          COALESCE(slack_thread_ts, slack_ts) AS thread_ts,
+          channel_type,
+          COUNT(*) AS msg_count,
+          MIN(created_at) AS first_msg_at
+        FROM messages
+        WHERE role IN ('user', 'assistant')
+        GROUP BY channel_id, COALESCE(slack_thread_ts, slack_ts), channel_type
+        HAVING COUNT(*) >= 2
+        ORDER BY MAX(created_at) DESC
+      ) tk
       CROSS JOIN LATERAL (
-        SELECT content, user_id
+        SELECT id, content, user_id
         FROM messages
         WHERE channel_id = tk.channel_id
           AND COALESCE(slack_thread_ts, slack_ts) = tk.thread_ts
@@ -79,8 +83,10 @@ async function discoverThreads(): Promise<ThreadInfo[]> {
     threadTs: r.thread_ts as string,
     channelType: r.channel_type as string,
     lastUserMessage: r.last_user_message as string,
+    lastUserMessageId: r.last_user_message_id as string,
     lastUserId: r.last_user_id as string,
     messageCount: Number(r.msg_count),
+    firstMessageAt: new Date(r.first_msg_at as string),
   }));
 }
 
@@ -111,6 +117,8 @@ async function processThread(
       channelType: thread.channelType as any,
       channelId: thread.channelId,
       threadTs: thread.threadTs,
+      sourceMessageId: thread.lastUserMessageId,
+      createdAt: thread.firstMessageAt,
     });
 
     processed++;
@@ -152,6 +160,27 @@ async function main() {
   await pool(indexed, CONCURRENCY, async ({ thread, idx }) => {
     await processThread(thread, idx, threads.length);
   });
+
+  // Fix entity timestamps: set created_at to earliest linked memory, updated_at to latest
+  console.log("\nFixing entity timestamps from linked memories...");
+  const fixResult = await db.execute(sql`
+    UPDATE entities e
+    SET
+      created_at = sub.first_memory_at,
+      updated_at = sub.last_memory_at
+    FROM (
+      SELECT
+        me.entity_id,
+        MIN(m.created_at) AS first_memory_at,
+        MAX(m.created_at) AS last_memory_at
+      FROM memory_entities me
+      JOIN memories m ON m.id = me.memory_id
+      GROUP BY me.entity_id
+    ) sub
+    WHERE e.id = sub.entity_id
+  `);
+  const fixedCount = (fixResult as any).rowCount ?? "?";
+  console.log(`Updated timestamps for ${fixedCount} entities`);
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\n=== Summary ===`);

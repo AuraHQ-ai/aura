@@ -15,6 +15,9 @@ import {
   ENTITY_EXTRACTION_RULES,
 } from "./entity-extraction-schema.js";
 import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importance.js";
+import { db } from "../db/client.js";
+import { users } from "@aura/db/schema";
+import { inArray } from "drizzle-orm";
 import type { NewMemory, Memory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
@@ -323,7 +326,7 @@ DO NOT save:
 ## Rules
 
 - Be concise -- each memory should be one clear sentence.
-- Include the person's name or Slack user ID when relevant.
+- ALWAYS use the person's real name in memory content (e.g. "Joan Rodriguez prefers..."), NEVER raw Slack user IDs. The context provides display names — use them.
 - Don't extract things Aura already knows (if they're in the context).
 - If the user explicitly asks Aura to tell someone something, mark that memory as shareable.
 - Return an empty array if there's nothing worth remembering.
@@ -407,7 +410,7 @@ Importance (be strict): 90-100: business decisions, org changes. 70-89: product 
 
 ## Rules
 - Be concise — one clear sentence per memory.
-- Include the person's name or Slack user ID when relevant.
+- ALWAYS use the person's real name in memory content (e.g. "Joan Rodriguez prefers..."), NEVER raw Slack user IDs (e.g. "U0678NQJ2 prefers..."). The thread context shows names — use them.
 - Only mark shareable=true if the user explicitly asked Aura to tell someone something.
 - For create operations, include entity extraction.
 
@@ -426,6 +429,8 @@ interface ExtractionContext {
   channelId?: string;
   /** Thread timestamp — enables thread-scoped extraction when paired with channelId */
   threadTs?: string;
+  /** Override createdAt on stored memories (for backfills) */
+  createdAt?: Date;
 }
 
 /**
@@ -454,8 +459,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     }
   } catch (error) {
     logger.error("Memory extraction failed", {
-      error: String(error),
-      stack: (error as Error).stack?.split("\n").slice(0, 5).join(" | "),
+      error: String(error).slice(0, 200),
       userId: context.userId,
     });
   }
@@ -469,7 +473,8 @@ async function extractWithReconciliation(
   extractionSourceRole: ExtractionSourceRole,
   start: number,
 ): Promise<void> {
-  const [threadMessages, existingMemories] = await Promise.all([
+  let existingMemories: Memory[] = [];
+  const [threadMessages] = await Promise.all([
     fetchThreadMessages({
       channelId: context.channelId!,
       threadTs: context.threadTs!,
@@ -481,6 +486,10 @@ async function extractWithReconciliation(
       limit: 20,
       workspaceId,
       adminMode: true,
+    }).then((mems) => { existingMemories = mems; }).catch((err) => {
+      logger.warn("Memory retrieval failed during reconciliation — proceeding with empty existing memories", {
+        error: String(err?.message ?? err).slice(0, 200),
+      });
     }),
   ]);
 
@@ -489,7 +498,21 @@ async function extractWithReconciliation(
     return extractSingleExchange(context, workspaceId, extractionSourceRole, start);
   }
 
+  const userIds = [...new Set(threadMessages.map((m) => m.userId).filter(Boolean))];
   const displayNames = new Map<string, string>();
+  if (userIds.length > 0) {
+    try {
+      const dbUsers = await db
+        .select({ slackUserId: users.slackUserId, displayName: users.displayName })
+        .from(users)
+        .where(inArray(users.slackUserId, userIds));
+      for (const u of dbUsers) {
+        if (u.slackUserId) displayNames.set(u.slackUserId, u.displayName);
+      }
+    } catch {
+      logger.warn("Failed to resolve user display names from DB");
+    }
+  }
   if (context.displayName) {
     displayNames.set(context.userId, context.displayName);
   }
@@ -617,6 +640,7 @@ async function processCreateOperations(
     importance: normalizedMemories[i].importance,
     relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
     extractionSourceRole,
+    ...(context.createdAt && { createdAt: context.createdAt, updatedAt: context.createdAt }),
   }));
 
   const memoryIds = await storeMemories(newMemories);

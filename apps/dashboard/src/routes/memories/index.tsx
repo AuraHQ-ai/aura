@@ -17,8 +17,11 @@ interface Memory {
   id: string;
   content: string;
   type: string;
+  category: string;
+  importance: number | null;
   relevanceScore: number;
   shareable: number;
+  status: string;
   createdAt: string;
 }
 
@@ -111,8 +114,9 @@ function MemoriesPage() {
             <TableRow>
               <TableHead>Content</TableHead>
               <TableHead className="w-[90px]">Type</TableHead>
+              <TableHead className="w-[90px]">Category</TableHead>
+              <TableHead className="w-[70px]">Imp.</TableHead>
               <TableHead className="w-[80px]">Relevance</TableHead>
-              <TableHead className="w-[80px]">Shareable</TableHead>
               <TableHead className="w-[160px]">Created</TableHead>
               <TableHead className="w-10" />
             </TableRow>
@@ -122,7 +126,7 @@ function MemoriesPage() {
               <TableRowsSkeleton columns={6} />
             ) : memories.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No memories found</TableCell>
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No memories found</TableCell>
               </TableRow>
             ) : (
               memories.map((memory) => (
@@ -133,8 +137,9 @@ function MemoriesPage() {
                     </Link>
                   </TableCell>
                   <TableCell><Badge variant="secondary">{memory.type}</Badge></TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{memory.category ?? "—"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{memory.importance ?? "—"}</TableCell>
                   <TableCell>{memory.relevanceScore?.toFixed(2) ?? "—"}</TableCell>
-                  <TableCell>{memory.shareable ? "Yes" : "No"}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">{formatDate(memory.createdAt)}</TableCell>
                   <TableCell>
                     <Button variant="ghost" size="icon-sm" onClick={() => setDeleteId(memory.id)}>

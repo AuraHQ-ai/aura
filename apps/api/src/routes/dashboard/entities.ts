@@ -69,11 +69,11 @@ dashboardEntitiesApp.openapi(listEntitiesRoute, async (c) => {
           memoryCount: sql<number>`(
             SELECT count(*)::int FROM memory_entities
             WHERE memory_entities.entity_id = ${entities.id}
-          )`,
+          )`.mapWith(Number),
           aliasCount: sql<number>`(
             SELECT count(*)::int FROM entity_aliases
             WHERE entity_aliases.entity_id = ${entities.id}
-          )`,
+          )`.mapWith(Number),
         })
         .from(entities)
         .where(where)
@@ -137,6 +137,7 @@ dashboardEntitiesApp.openapi(getEntityRoute, async (c) => {
         role: memoryEntities.role,
         content: memories.content,
         type: memories.type,
+        importance: memories.importance,
         relevanceScore: memories.relevanceScore,
         createdAt: memories.createdAt,
       })
