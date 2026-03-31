@@ -60,10 +60,10 @@ export async function fetchThreadMessages(params: {
           sql`(${messages.slackThreadTs} = ${threadTs} OR ${messages.slackTs} = ${threadTs})`,
         ),
       )
-      .orderBy(messages.createdAt)
+      .orderBy(desc(messages.createdAt))
       .limit(limit);
 
-    return rows;
+    return rows.reverse();
   } catch (error) {
     logger.warn("Failed to fetch thread messages for extraction", {
       error: String(error),
