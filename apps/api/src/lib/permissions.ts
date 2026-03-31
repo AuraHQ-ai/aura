@@ -28,7 +28,6 @@ function resolveCallingUserId(passedUserId: string | undefined): string | undefi
 
 /**
  * Check whether a user has at least the specified role.
- * Falls back to AURA_ADMIN_USER_IDS env var during migration period.
  *
  * The userId is resolved via resolveCallingUserId(): the execution
  * context's callingUserId takes priority over the passed parameter so
@@ -53,32 +52,10 @@ export async function hasRole(
     });
   }
 
-  try {
-    const profile = await db
-      .select({ role: users.role })
-      .from(users)
-      .where(eq(users.slackUserId, effectiveUserId))
-      .limit(1);
-
-    if (profile.length > 0 && profile[0].role) {
-      const userLevel = ROLE_HIERARCHY[profile[0].role as Role] ?? 0;
-      const requiredLevel = ROLE_HIERARCHY[minimumRole];
-      return userLevel >= requiredLevel;
-    }
-  } catch {
-    // DB query failed — fall through to env var fallback
-  }
-
-  const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-  if (adminIds.includes(effectiveUserId)) {
-    const requiredLevel = ROLE_HIERARCHY[minimumRole];
-    return ROLE_HIERARCHY.admin >= requiredLevel;
-  }
-
-  return false;
+  const role = await getUserRole(effectiveUserId);
+  const userLevel = ROLE_HIERARCHY[role] ?? 0;
+  const requiredLevel = ROLE_HIERARCHY[minimumRole];
+  return userLevel >= requiredLevel;
 }
 
 /**
@@ -97,10 +74,24 @@ export function isAdmin(userId: string | undefined): boolean {
 }
 
 /**
- * Look up a user's role from the DB. Returns 'member' if not found.
+ * Look up a user's role. Checks AURA_ADMIN_USER_IDS env var first (hard
+ * override), then falls back to the DB role column, then defaults to 'member'.
+ *
+ * The env var takes priority because migration 0045 set every existing user
+ * to role='member' and the DB was never back-filled. Without the override,
+ * getUserRole returns "member" for everyone and the env var fallback is dead
+ * code (the column is NOT NULL DEFAULT 'member', so it's always truthy).
  */
 async function getUserRole(userId: string): Promise<Role> {
   if (userId === "aura") return "admin";
+
+  const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (adminIds.includes(userId)) {
+    return "admin";
+  }
 
   try {
     const profile = await db
@@ -113,14 +104,6 @@ async function getUserRole(userId: string): Promise<Role> {
     }
   } catch {
     // fall through
-  }
-
-  const adminIds = (process.env.AURA_ADMIN_USER_IDS || "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-  if (adminIds.includes(userId)) {
-    return "admin";
   }
 
   return "member";
