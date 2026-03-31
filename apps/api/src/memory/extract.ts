@@ -493,7 +493,7 @@ async function extractWithReconciliation(
   const threadContext = buildThreadContext(threadMessages, displayNames);
   const { formatted: existingMemoriesText, refToId } = formatExistingMemories(existingMemories);
 
-  const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", existingMemoriesText);
+  const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", () => existingMemoriesText);
 
   const model = await getFastModel();
 
@@ -675,108 +675,15 @@ async function extractSingleExchange(
     return;
   }
 
-  const filtered = object.memories.filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD);
-  const discardedCount = object.memories.length - filtered.length;
+  const discardedCount = object.memories.length - object.memories.filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD).length;
   if (discardedCount > 0) {
     logger.info(`Filtered out ${discardedCount} low-importance memories (below ${IMPORTANCE_DISCARD_THRESHOLD})`);
   }
-  if (filtered.length === 0) {
-    logger.debug("All extracted memories were low importance — nothing to store");
-    return;
-  }
 
-  const normalizedMemories = await Promise.all(
-    filtered.map(async (m) => ({
-      ...m,
-      relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
-    })),
-  );
-
-  const memoryTexts = normalizedMemories.map((m) => m.content);
-  let embeddings: (number[] | null)[];
-  try {
-    embeddings = await embedTexts(memoryTexts);
-  } catch (embedError) {
-    logger.error("Memory embedding failed — storing memories WITHOUT embeddings", {
-      error: String(embedError),
-      memoryCount: memoryTexts.length,
-      userId: context.userId,
-    });
-    embeddings = memoryTexts.map(() => null);
-  }
-
-  const dedupResults = await checkDuplicates(
-    normalizedMemories.map((m, i) => ({ content: m.content, embedding: embeddings[i] ?? null })),
-    workspaceId,
-  );
-
-  const dedupSkipped = dedupResults.filter((r) => r.dominated).length;
-  const dedupSuperseded = dedupResults.filter((r) => r.supersedesId).length;
-  if (dedupSkipped > 0 || dedupSuperseded > 0) {
-    logger.info("Memory dedup results", {
-      memories_skipped_dedup: dedupSkipped,
-      memories_superseded: dedupSuperseded,
-    });
-  }
-
-  const survivingIndices = dedupResults
-    .map((r, i) => (r.dominated ? -1 : i))
-    .filter((i) => i >= 0);
-
-  if (survivingIndices.length === 0) {
-    logger.debug("All extracted memories were duplicates — nothing to store");
-    return;
-  }
-
-  const newMemories: NewMemory[] = survivingIndices.map((i) => ({
-    content: normalizedMemories[i].content,
-    type: normalizedMemories[i].type,
-    category: normalizedMemories[i].category,
-    workspaceId,
-    sourceMessageId: context.sourceMessageId || undefined,
-    sourceChannelType: toDbChannelType(context.channelType),
-    relatedUserIds: normalizedMemories[i].relatedUserIds.length > 0
-      ? normalizedMemories[i].relatedUserIds
-      : [context.userId],
-    embedding: embeddings[i] ?? null,
-    shareable: normalizedMemories[i].shareable ? 1 : 0,
-    importance: normalizedMemories[i].importance,
-    relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
-    extractionSourceRole,
+  const creates = object.memories.map((m) => ({
+    ...m,
+    action: "create" as const,
   }));
 
-  const hasEmbeddings = newMemories.some((m) => m.embedding !== null);
-  const memoryIds = await storeMemories(newMemories);
-
-  for (let j = 0; j < survivingIndices.length; j++) {
-    const i = survivingIndices[j];
-    const oldId = dedupResults[i].supersedesId;
-    const newId = memoryIds[j];
-    if (oldId && newId) {
-      await supersedeMemory(oldId, newId);
-    }
-  }
-
-  for (let j = 0; j < survivingIndices.length; j++) {
-    const i = survivingIndices[j];
-    const extractedEntities = normalizedMemories[i].entities;
-    if (extractedEntities && extractedEntities.length > 0 && memoryIds[j]) {
-      try {
-        const resolved = await resolveEntities(extractedEntities, workspaceId, model);
-        await linkMemoryEntities(memoryIds[j], resolved);
-      } catch (entityError) {
-        logger.warn("Entity resolution failed for memory, skipping", {
-          memoryId: memoryIds[j],
-          error: String(entityError),
-        });
-      }
-    }
-  }
-
-  logger.info(`Extracted ${newMemories.length} memories in ${Date.now() - start}ms`, {
-    types: newMemories.map((m) => m.type),
-    hasEmbeddings,
-    discardedLowImportance: discardedCount,
-    dedupSkipped,
-  });
+  await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start);
 }
