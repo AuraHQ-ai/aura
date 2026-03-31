@@ -74,7 +74,7 @@ function buildThreadContext(
     let line: string;
     if (msg.role === "tool") {
       const match = msg.content.match(TOOL_STATUS_RE);
-      line = match ? `[Tool: ${match[1]}] ${match[2]}` : "[Tool] OK";
+      line = match ? `[Tool: ${match[1]}] ${match[2]}` : "[Tool]";
     } else if (msg.role === "assistant") {
       const stripped = stripInjectedContext(msg.content);
       const truncated = stripped.length > MAX_MSG_CHARS

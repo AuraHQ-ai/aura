@@ -96,6 +96,7 @@ async function main() {
       if (apply) {
         const sqlVal = (v: unknown) => {
           if (v === null || v === undefined) return sql`NULL`;
+          if (v instanceof Date) return sql`${v.toISOString()}`;
           if (typeof v === "object") return sql`${JSON.stringify(v)}::jsonb`;
           return sql`${String(v)}`;
         };
@@ -140,6 +141,9 @@ async function main() {
       const setClauses = Object.entries(changes).map(([field, value]) => {
         if (value === null || value === undefined) {
           return sql`${sql.raw(field)} = NULL`;
+        }
+        if (value instanceof Date) {
+          return sql`${sql.raw(field)} = ${value.toISOString()}`;
         }
         if (typeof value === "object") {
           return sql`${sql.raw(field)} = ${JSON.stringify(value)}::jsonb`;
