@@ -64,7 +64,10 @@ function buildThreadContext(
   const lines: string[] = [];
   let totalLen = 0;
 
-  for (const msg of threadMessages) {
+  // Iterate newest-first so the most recent (and most relevant) messages are
+  // always included, then reverse to restore chronological order.
+  for (let i = threadMessages.length - 1; i >= 0; i--) {
+    const msg = threadMessages[i];
     let line: string;
     if (msg.role === "tool") {
       const match = msg.content.match(TOOL_STATUS_RE);
@@ -88,6 +91,7 @@ function buildThreadContext(
     totalLen += line.length + 1;
   }
 
+  lines.reverse();
   return lines.join("\n");
 }
 
@@ -549,7 +553,7 @@ async function extractWithReconciliation(
 
   // Process CREATE operations (same pipeline as single-exchange: importance filter, embed, dedup, store)
   if (creates.length > 0) {
-    await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start);
+    await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start, "reconciliation");
   }
 }
 
@@ -560,10 +564,11 @@ async function processCreateOperations(
   extractionSourceRole: ExtractionSourceRole,
   model: Awaited<ReturnType<typeof getFastModel>>,
   start: number,
+  source: "reconciliation" | "single-exchange" = "reconciliation",
 ): Promise<void> {
   const filtered = creates.filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD);
   if (filtered.length === 0) {
-    logger.debug("All new memories from reconciliation were low importance");
+    logger.debug(`All new memories from ${source} were low importance`);
     return;
   }
 
@@ -579,7 +584,7 @@ async function processCreateOperations(
   try {
     embeddings = await embedTexts(memoryTexts);
   } catch {
-    logger.error("Memory embedding failed during reconciliation — storing without embeddings");
+    logger.error(`Memory embedding failed during ${source} — storing without embeddings`);
     embeddings = memoryTexts.map(() => null);
   }
 
@@ -593,7 +598,7 @@ async function processCreateOperations(
     .filter((i) => i >= 0);
 
   if (survivingIndices.length === 0) {
-    logger.debug("All new memories from reconciliation were duplicates");
+    logger.debug(`All new memories from ${source} were duplicates`);
     return;
   }
 
@@ -641,7 +646,7 @@ async function processCreateOperations(
     }
   }
 
-  logger.info(`Reconciliation created ${newMemories.length} memories in ${Date.now() - start}ms`, {
+  logger.info(`${source === "reconciliation" ? "Reconciliation" : "Single-exchange extraction"} created ${newMemories.length} memories in ${Date.now() - start}ms`, {
     types: newMemories.map((m) => m.type),
   });
 }
@@ -675,15 +680,22 @@ async function extractSingleExchange(
     return;
   }
 
-  const discardedCount = object.memories.length - object.memories.filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD).length;
+  const creates = object.memories
+    .filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD)
+    .map((m) => ({
+      ...m,
+      action: "create" as const,
+    }));
+
+  const discardedCount = object.memories.length - creates.length;
   if (discardedCount > 0) {
     logger.info(`Filtered out ${discardedCount} low-importance memories (below ${IMPORTANCE_DISCARD_THRESHOLD})`);
   }
 
-  const creates = object.memories.map((m) => ({
-    ...m,
-    action: "create" as const,
-  }));
+  if (creates.length === 0) {
+    logger.debug("All extracted memories were low importance — nothing to store");
+    return;
+  }
 
-  await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start);
+  await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start, "single-exchange");
 }
