@@ -12,3 +12,5 @@ export function importanceToRelevance(importance: number | null | undefined): nu
  * Memories scoring below this are operational noise not worth storing.
  */
 export const IMPORTANCE_DISCARD_THRESHOLD = 20;
+
+export const DECAY_FACTOR = 0.995;

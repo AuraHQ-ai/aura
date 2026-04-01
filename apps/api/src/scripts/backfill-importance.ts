@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { sql } from "drizzle-orm";
 import { generateText, Output } from "ai";
 import { z } from "zod";
-import { importanceToRelevance } from "../memory/importance.js";
+import { importanceToRelevance, DECAY_FACTOR } from "../memory/importance.js";
 import { pool } from "../lib/pool.js";
 import { createProgress } from "../lib/progress.js";
 
@@ -17,7 +17,6 @@ if (isProd) console.log("Using .env.production (--prod)");
 const { db } = await import("../db/client.js");
 const { getFastModel } = await import("../lib/ai.js");
 
-const DECAY_FACTOR = 0.995;
 const BATCH_SIZE = 50;
 const CONCURRENCY = 10;
 
