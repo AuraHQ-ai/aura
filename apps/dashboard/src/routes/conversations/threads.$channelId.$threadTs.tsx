@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -35,8 +36,28 @@ interface ThreadData {
   meta: ThreadMeta;
 }
 
+function findClosestTraceIndex(
+  conversations: any[],
+  highlightTime: string,
+): number {
+  const target = new Date(highlightTime).getTime();
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < conversations.length; i++) {
+    const traceTime = new Date(conversations[i].trace.createdAt).getTime();
+    const dist = Math.abs(traceTime - target);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 function ThreadDetailPage() {
   const { channelId, threadTs } = Route.useParams();
+  const { highlight } = Route.useSearch();
+  const highlightRef = useRef<HTMLDivElement>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["conversations", "threads", channelId, threadTs],
     queryFn: () =>
@@ -44,6 +65,16 @@ function ThreadDetailPage() {
         `/conversations/threads/${encodeURIComponent(channelId)}/${encodeURIComponent(threadTs)}`,
       ),
   });
+
+  const highlightIdx = data && highlight
+    ? findClosestTraceIndex(data.conversations, highlight)
+    : -1;
+
+  useEffect(() => {
+    if (highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [data, highlight]);
 
   if (isLoading) return <DetailSkeleton />;
   if (error)
@@ -146,14 +177,21 @@ function ThreadDetailPage() {
       </div>
 
       <div className="space-y-8">
-        {conversations.map((conv: any, i: number) => (
-          <div key={conv.trace.id}>
-            {i > 0 && <div className="border-t border-border mb-8" />}
-            <div className="space-y-4">
-              <ConversationDetailView data={conv} embedded />
+        {conversations.map((conv: any, i: number) => {
+          const isHighlighted = i === highlightIdx;
+          return (
+            <div
+              key={conv.trace.id}
+              ref={isHighlighted ? highlightRef : undefined}
+              className={isHighlighted ? "ring-2 ring-primary/50 rounded-lg p-2 -m-2" : undefined}
+            >
+              {i > 0 && <div className="border-t border-border mb-8" />}
+              <div className="space-y-4">
+                <ConversationDetailView data={conv} embedded />
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -163,4 +201,7 @@ export const Route = createFileRoute(
   "/conversations/threads/$channelId/$threadTs",
 )({
   component: ThreadDetailPage,
+  validateSearch: (raw: Record<string, unknown>) => ({
+    highlight: typeof raw.highlight === "string" ? raw.highlight : undefined,
+  }),
 });

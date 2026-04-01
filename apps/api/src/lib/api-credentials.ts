@@ -312,7 +312,7 @@ export async function getJobApiCredential(
       and(
         eq(credentials.name, name),
         eq(credentials.ownerId, creatorId),
-        sql`${credentials.id} = ANY(${declaredCredentialIds})`,
+        inArray(credentials.id, declaredCredentialIds),
       ),
     )
     .limit(1);

@@ -3,10 +3,10 @@ import { resolve } from "path";
 import { fileURLToPath } from "url";
 import { sql } from "drizzle-orm";
 import { generateText, Output } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
-import { importanceToRelevance } from "../memory/importance.js";
+import { importanceToRelevance, DECAY_FACTOR } from "../memory/importance.js";
 import { pool } from "../lib/pool.js";
+import { createProgress } from "../lib/progress.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -15,18 +15,12 @@ config({ path: resolve(repoRoot, isProd ? ".env.production" : ".env.local") });
 if (isProd) console.log("Using .env.production (--prod)");
 
 const { db } = await import("../db/client.js");
+const { getFastModel } = await import("../lib/ai.js");
 
 const BATCH_SIZE = 50;
 const CONCURRENCY = 10;
-const DECAY_FACTOR = 0.995;
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error("ANTHROPIC_API_KEY is required");
-  process.exit(1);
-}
-
-const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const model = anthropic("claude-haiku-4-5-20251001");
+const model = await getFastModel();
 
 const classificationSchema = z.object({
   results: z.array(
@@ -40,13 +34,18 @@ const classificationSchema = z.object({
 const SYSTEM_PROMPT = `Rate each memory's importance from 1 to 100. How valuable would it be to recall this memory months from now?
 
 Score anchors:
-- 90-100: Business decisions, org changes, key relationships, architecture decisions, product strategy, hiring, customer-impacting incidents
-- 70-89: Product discussions, bug reports with real impact, personal facts about team members, strategy context, technical decisions
-- 40-69: Status updates with substance, meeting notes, feature discussions, general work context, process documentation
-- 20-39: Routine coordination, minor updates, ephemeral context, progress check-ins
+- 90-100: Company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents with lasting impact
+- 70-89: Important technical/product decisions, high-impact customer or org context, durable people/ownership facts, non-trivial constraints
+- 40-69: Useful but replaceable context (project updates, meeting outcomes, tactical plans, substantial status)
+- 20-39: Routine coordination, recurring operational updates, minor progress check-ins
 - 1-19: Operational noise ("ok thanks", "let me check"), agent self-actions, test messages, trivial scheduling
 
-Be generous — if a memory would be useful to recall in 3 months, score it 70+.
+Aggressive scoring rules:
+- Default conservative: if unsure, score LOWER.
+- Routine sales motion chatter (new offer, pricing discussion, pipeline activity, "need more sales", generic MRR/revenue commentary) should usually be 20-45 unless it contains an explicit strategic decision, policy, or durable commitment.
+- Generic quarter references ("Q1 was strong", "Q2 is hard") without a concrete decision or lasting constraint should be <=40.
+- Explicit OKRs, strategy choices, hard rules, governance decisions, and durable operating principles should be >=75, and often >=85 when they affect planning/execution across teams.
+
 Return the memory id and its importance score.`;
 
 type ResultRow = Record<string, any>;
@@ -56,8 +55,7 @@ function extractRows(result: unknown): ResultRow[] {
 
 async function processBatch(
   batch: Array<{ id: string; content: string; created_at: string }>,
-  batchIdx: number,
-  totalBatches: number,
+  progress: ReturnType<typeof createProgress>,
 ): Promise<{ classified: number; errors: number }> {
   try {
     const payload = batch.map((m) => ({ id: m.id, content: m.content }));
@@ -70,7 +68,7 @@ async function processBatch(
     });
 
     if (!result) {
-      console.warn(`[batch ${batchIdx + 1}/${totalBatches}] LLM returned no output`);
+      progress.tick(batch.length);
       return { classified: 0, errors: 1 };
     }
 
@@ -94,13 +92,12 @@ async function processBatch(
       classified++;
     }
 
-    console.log(
-      `[batch ${batchIdx + 1}/${totalBatches}] classified ${classified} memories`,
-    );
+    progress.tick(batch.length);
     return { classified, errors: 0 };
   } catch (err) {
+    progress.tick(batch.length);
     console.error(
-      `[batch ${batchIdx + 1}/${totalBatches}] ERROR: ${err instanceof Error ? err.message : String(err)}`,
+      `  ERROR: ${err instanceof Error ? err.message : String(err)}`,
     );
     return { classified: 0, errors: 1 };
   }
@@ -140,15 +137,14 @@ async function main() {
 
   let totalClassified = 0;
   let totalErrors = 0;
-  const startTime = Date.now();
+
+  const progress = createProgress(allMemories.length, { label: "memories", logEvery: BATCH_SIZE });
 
   await pool(batches, CONCURRENCY, async (batch) => {
-    const result = await processBatch(batch.items, batch.idx, totalBatches);
+    const result = await processBatch(batch.items, progress);
     totalClassified += result.classified;
     totalErrors += result.errors;
   });
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   const stats = extractRows(
     await db.execute(sql`
@@ -171,7 +167,7 @@ async function main() {
   );
 
   console.log(`\n=== Summary ===`);
-  console.log(`Elapsed: ${elapsed}s`);
+  progress.done();
   console.log(`Classified: ${totalClassified}`);
   console.log(`Batches with errors: ${totalErrors}`);
   console.log(`\nDistribution:`);

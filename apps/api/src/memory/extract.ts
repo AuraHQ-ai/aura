@@ -1,8 +1,12 @@
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getFastModel } from "../lib/ai.js";
-import { embedTexts } from "../lib/embeddings.js";
-import { storeMemories, supersedeMemory, toDbChannelType, checkDuplicates } from "./store.js";
+import { embedText, embedTexts } from "../lib/embeddings.js";
+import {
+  storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
+  fetchThreadMessages, updateMemoryContent, archiveMemory,
+} from "./store.js";
+import { retrieveMemories } from "./retrieve.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
@@ -11,9 +15,13 @@ import {
   ENTITY_EXTRACTION_RULES,
 } from "./entity-extraction-schema.js";
 import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importance.js";
-import type { NewMemory } from "@aura/db/schema";
+import { db } from "../db/client.js";
+import { users, memoryEntities } from "@aura/db/schema";
+import { inArray, eq } from "drizzle-orm";
+import type { NewMemory, Memory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
+import type { ThreadMessage } from "./store.js";
 
 // ── Injected Context Stripping ───────────────────────────────────────────────
 
@@ -39,6 +47,75 @@ function stripInjectedContext(text: string): string {
 }
 
 const MIN_STRIPPED_LENGTH = 50;
+
+// ── Thread Context Building ─────────────────────────────────────────────────
+
+const MAX_THREAD_CONTEXT_CHARS = 4000;
+const MAX_MSG_CHARS = 500;
+
+const TOOL_STATUS_RE = /^\[([^\]]+)\]\s*\((OK|ERROR)\)/;
+
+/**
+ * Build a compact thread representation with aggressive tool-message pruning.
+ * Tool messages are reduced to just "[Tool: name] OK/ERROR" (no I/O).
+ * User/assistant messages are truncated to MAX_MSG_CHARS.
+ */
+function buildThreadContext(
+  threadMessages: ThreadMessage[],
+  displayNames: Map<string, string>,
+): string {
+  const lines: string[] = [];
+  let totalLen = 0;
+
+  // Iterate newest-first so the most recent (and most relevant) messages are
+  // always included, then reverse to restore chronological order.
+  for (let i = threadMessages.length - 1; i >= 0; i--) {
+    const msg = threadMessages[i];
+    let line: string;
+    if (msg.role === "tool") {
+      const match = msg.content.match(TOOL_STATUS_RE);
+      line = match ? `[Tool: ${match[1]}] ${match[2]}` : "[Tool]";
+    } else if (msg.role === "assistant") {
+      const stripped = stripInjectedContext(msg.content);
+      const truncated = stripped.length > MAX_MSG_CHARS
+        ? stripped.slice(0, MAX_MSG_CHARS) + "..."
+        : stripped;
+      line = `[Aura]: ${truncated}`;
+    } else {
+      const name = displayNames.get(msg.userId) || msg.userId;
+      const truncated = msg.content.length > MAX_MSG_CHARS
+        ? msg.content.slice(0, MAX_MSG_CHARS) + "..."
+        : msg.content;
+      line = `[User (${name})]: ${truncated}`;
+    }
+
+    if (totalLen + line.length + 1 > MAX_THREAD_CONTEXT_CHARS) break;
+    lines.push(line);
+    totalLen += line.length + 1;
+  }
+
+  lines.reverse();
+  return lines.join("\n");
+}
+
+/**
+ * Format existing memories as a numbered reference list for the LLM.
+ * Returns the formatted string and a map of ref IDs (M1, M2...) to real DB IDs.
+ */
+function formatExistingMemories(
+  existingMemories: Memory[],
+): { formatted: string; refToId: Map<string, string> } {
+  const refToId = new Map<string, string>();
+  if (existingMemories.length === 0) {
+    return { formatted: "No existing memories found for this context.", refToId };
+  }
+  const lines = existingMemories.map((m, i) => {
+    const ref = `M${i + 1}`;
+    refToId.set(ref, m.id);
+    return `[${ref}] ${m.content} (type: ${m.type}, importance: ${m.importance ?? "?"})`;
+  });
+  return { formatted: lines.join("\n"), refToId };
+}
 
 // ── User ID Normalization ───────────────────────────────────────────────────
 
@@ -240,22 +317,120 @@ DO NOT save:
 
 ## Importance Scoring (be strict, use the 1-100 scale)
 
-- **90-100**: Business decisions, org changes, key relationships, strategic context.
-- **70-89**: Product discussions, bugs with impact, personal facts, workflow preferences.
-- **40-69**: Status updates with substance, meeting outcomes.
-- **20-39**: Routine coordination, minor updates.
+- **90-100**: Company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents with lasting impact.
+- **70-89**: Important technical/product decisions, high-impact customer or org context, durable people/ownership facts, non-trivial constraints.
+- **40-69**: Useful but replaceable context (project updates, meeting outcomes, tactical plans, substantial status).
+- **20-39**: Routine coordination, recurring operational updates, minor progress check-ins.
 - **1-19**: Operational noise, status checks, agent actions, acknowledgments -- these will be DISCARDED.
+
+Aggressive scoring guidance:
+- Default conservative: if unsure, score LOWER.
+- Routine sales motion chatter (new offer, pricing discussion, pipeline activity, "need more sales", generic MRR/revenue commentary) should usually be 20-45 unless it contains an explicit strategic decision, policy, or durable commitment.
+- Generic quarter references ("Q1 was strong", "Q2 is hard") without a concrete decision or lasting constraint should be <=40.
+- Explicit OKRs, strategy choices, hard rules, governance decisions, and durable operating principles should be >=75, and often >=85 when they affect planning/execution across teams.
 
 ## Rules
 
 - Be concise -- each memory should be one clear sentence.
-- Include the person's name or Slack user ID when relevant.
+- ALWAYS use the person's real name in memory content (e.g. "Joan Rodriguez prefers..."), NEVER raw Slack user IDs. The context provides display names — use them.
 - Don't extract things Aura already knows (if they're in the context).
 - If the user explicitly asks Aura to tell someone something, mark that memory as shareable.
 - Return an empty array if there's nothing worth remembering.
 
 For each memory, also identify the entities mentioned. Return them in the entities array with their name, type, role, and aliases.
 Use the most specific name you can identify (full name for people, official name for companies).
+
+${ENTITY_EXTRACTION_RULES}`;
+
+// ── Thread-Scoped Reconciliation ─────────────────────────────────────────────
+
+const memoryTypeValues = ["fact", "decision", "preference", "event", "open_thread"] as const;
+
+const createOperationSchema = z.object({
+  action: z.literal("create"),
+  content: z.string().describe("A concise statement of the memory"),
+  type: z.enum(memoryTypeValues).describe("The type of memory"),
+  category: z.enum(["semantic", "episodic", "procedural"]).default("semantic"),
+  importance: z.number().int().min(1).max(100).default(50),
+  relatedUserIds: z.array(z.string()).describe("Slack user IDs this memory is about"),
+  shareable: z.boolean().default(false),
+  entities: z.array(extractedEntitySchema).optional().default([]),
+});
+
+const updateOperationSchema = z.object({
+  action: z.literal("update"),
+  memoryRef: z.string().describe("Reference ID from existing memories, e.g. M1, M2"),
+  content: z.string().describe("Updated content for this memory"),
+  importance: z.number().int().min(1).max(100).optional(),
+  entities: z.array(extractedEntitySchema).optional().default([]),
+});
+
+const deleteOperationSchema = z.object({
+  action: z.literal("delete"),
+  memoryRef: z.string().describe("Reference ID from existing memories, e.g. M1, M2"),
+  reason: z.string().describe("Brief reason why this memory should be removed"),
+});
+
+const reconciliationSchema = z.object({
+  operations: z.array(z.discriminatedUnion("action", [
+    createOperationSchema,
+    updateOperationSchema,
+    deleteOperationSchema,
+  ])),
+});
+
+const RECONCILIATION_PROMPT = `You are a memory reconciliation system. You analyze conversation threads and existing memories to produce precise operations: create new, update existing, or delete outdated memories.
+
+## Existing Memories
+These are the relevant memories already stored. Reference them by their ID (M1, M2, etc.):
+
+{existingMemories}
+
+## Instructions
+
+Given the conversation thread below, decide what memory operations are needed:
+
+- **create**: Genuinely NEW information not captured in any existing memory above. Do NOT create a memory if an existing one already covers the same fact, even with different wording.
+- **update**: An existing memory whose content should be refined, corrected, or expanded based on new information in the thread. Prefer UPDATE over CREATE+DELETE when refining. Reference the memory by its ID (e.g. M1).
+- **delete**: An existing memory that is now known to be wrong, obsolete, or superseded by events in the thread. Reference by ID and provide a reason.
+- If nothing meaningful is new, return an empty operations array.
+
+## What to extract
+
+Types of memories:
+- **fact**: Durable information about people, the org, or the world. Includes personal details, relationships, roles, titles, team structure, and business context.
+- **decision**: Explicit choices made by the team with participants.
+- **preference**: How someone wants things done — working style, tool choices, communication preferences.
+- **event**: Time-bound events or incidents that happened at a specific time.
+- **open_thread**: Questions or tasks raised but not yet resolved.
+
+Categories: semantic (durable facts), episodic (time-bound events), procedural (how-to knowledge).
+
+Importance (be strict):
+- 90-100: company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents.
+- 70-89: important technical/product decisions, high-impact org/customer context, durable people facts.
+- 40-69: useful but replaceable tactical updates and meeting outcomes.
+- 20-39: routine operational updates and minor coordination.
+- 1-19: noise (will be DISCARDED).
+
+Aggressive scoring guidance:
+- Default conservative: if unsure, score LOWER.
+- Routine sales motion chatter (new offer, pricing discussion, pipeline activity, generic MRR/revenue commentary) should usually be 20-45 unless there is an explicit strategic decision or durable constraint.
+- Generic quarter references ("Q1 was strong", "Q2 is hard") without explicit decisions should be <=40.
+- OKRs, strategy, and important operating rules should score >=75 (often >=85 if broadly impactful).
+
+## What NOT to extract
+- Aura's own actions ("Aura ran a query", "Aura checked the deploy")
+- Pleasantries and acknowledgments ("thanks", "got it")
+- Information already captured in existing memories above (the whole point is to AVOID duplicates)
+- Meta-conversation about the memory system itself
+- Scheduling logistics unless they represent a decision
+
+## Rules
+- Be concise — one clear sentence per memory.
+- ALWAYS use the person's real name in memory content (e.g. "Joan Rodriguez prefers..."), NEVER raw Slack user IDs (e.g. "U0678NQJ2 prefers..."). The thread context shows names — use them.
+- Only mark shareable=true if the user explicitly asked Aura to tell someone something.
+- For create and update operations, include entity extraction that matches the final memory content.
 
 ${ENTITY_EXTRACTION_RULES}`;
 
@@ -268,161 +443,333 @@ interface ExtractionContext {
   displayName?: string;
   /** Role of the message that triggered extraction */
   triggerRole?: "user" | "assistant" | "tool";
+  /** Channel ID — enables thread-scoped extraction when paired with threadTs */
+  channelId?: string;
+  /** Thread timestamp — enables thread-scoped extraction when paired with channelId */
+  threadTs?: string;
+  /** Override createdAt on stored memories (for backfills) */
+  createdAt?: Date;
 }
 
 /**
  * Extract memories from a conversation exchange.
  * Runs asynchronously via waitUntil — does not block the response.
+ *
+ * When channelId + threadTs are provided, uses thread-scoped reconciliation:
+ * fetches full thread history and existing memories, then produces
+ * CREATE/UPDATE/DELETE operations. Falls back to single-exchange extraction
+ * when thread context is unavailable.
  */
+type ExtractionSourceRole = "user" | "assistant" | "tool";
+
 export async function extractMemories(context: ExtractionContext): Promise<void> {
   const start = Date.now();
+  const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
+  const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
 
   try {
-    const strippedAssistant = stripInjectedContext(context.assistantResponse);
-    const includeAssistant = strippedAssistant.length >= MIN_STRIPPED_LENGTH;
+    const useReconciliation = !!(context.channelId && context.threadTs);
 
-    const conversationText = includeAssistant
-      ? `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${strippedAssistant}`
-      : `User (${context.displayName || context.userId}): ${context.userMessage}`;
-
-    const extractionSourceRole = context.triggerRole ?? "user";
-
-    const model = await getFastModel();
-
-    const { output: object } = await generateText({
-      model,
-      output: Output.object({ schema: extractedMemoriesSchema }),
-      system: EXTRACTION_PROMPT,
-      prompt: conversationText,
-    });
-
-    if (!object || object.memories.length === 0) {
-      logger.debug("No memories extracted from exchange");
-      return;
+    if (useReconciliation) {
+      await extractWithReconciliation(context, workspaceId, extractionSourceRole, start);
+    } else {
+      await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
     }
-
-    // Filter out low-importance memories before embedding
-    const filtered = object.memories.filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD);
-    const discardedCount = object.memories.length - filtered.length;
-    if (discardedCount > 0) {
-      logger.info(`Filtered out ${discardedCount} low-importance memories (below ${IMPORTANCE_DISCARD_THRESHOLD})`);
-    }
-    if (filtered.length === 0) {
-      logger.debug("All extracted memories were low importance — nothing to store");
-      return;
-    }
-
-    // Normalize user references to canonical Slack user IDs
-    const normalizedMemories = await Promise.all(
-      filtered.map(async (m) => ({
-        ...m,
-        relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
-      })),
-    );
-
-    // Embed all extracted memories in a single batch
-    const memoryTexts = normalizedMemories.map((m) => m.content);
-    let embeddings: (number[] | null)[];
-    try {
-      embeddings = await embedTexts(memoryTexts);
-    } catch (embedError) {
-      logger.error("Memory embedding failed — storing memories WITHOUT embeddings", {
-        error: String(embedError),
-        memoryCount: memoryTexts.length,
-        userId: context.userId,
-      });
-      embeddings = memoryTexts.map(() => null);
-    }
-
-    // Resolve workspace consistently for both memories and entities
-    const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
-
-    // Dedup check: skip memories that are near-duplicates of existing ones
-    const dedupResults = await checkDuplicates(
-      normalizedMemories.map((m, i) => ({ content: m.content, embedding: embeddings[i] ?? null })),
-      workspaceId,
-    );
-
-    const dedupSkipped = dedupResults.filter((r) => r.dominated).length;
-    const dedupSuperseded = dedupResults.filter((r) => r.supersedesId).length;
-    if (dedupSkipped > 0 || dedupSuperseded > 0) {
-      logger.info("Memory dedup results", {
-        memories_skipped_dedup: dedupSkipped,
-        memories_superseded: dedupSuperseded,
-      });
-    }
-
-    // Build final list excluding dominated duplicates
-    const survivingIndices = dedupResults
-      .map((r, i) => (r.dominated ? -1 : i))
-      .filter((i) => i >= 0);
-
-    if (survivingIndices.length === 0) {
-      logger.debug("All extracted memories were duplicates — nothing to store");
-      return;
-    }
-
-    // Prepare memories for storage
-    const newMemories: NewMemory[] = survivingIndices.map((i) => ({
-      content: normalizedMemories[i].content,
-      type: normalizedMemories[i].type,
-      category: normalizedMemories[i].category,
-      workspaceId,
-      sourceMessageId: context.sourceMessageId || undefined,
-      sourceChannelType: toDbChannelType(context.channelType),
-      relatedUserIds: normalizedMemories[i].relatedUserIds.length > 0
-        ? normalizedMemories[i].relatedUserIds
-        : [context.userId],
-      embedding: embeddings[i] ?? null,
-      shareable: normalizedMemories[i].shareable ? 1 : 0,
-      importance: normalizedMemories[i].importance,
-      relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
-      extractionSourceRole,
-    }));
-
-    const hasEmbeddings = newMemories.some((m) => m.embedding !== null);
-    const memoryIds = await storeMemories(newMemories);
-
-    // Properly supersede old memories with lifecycle transitions
-    // Map surviving indices back to their dedup results to pair old→new memory IDs
-    for (let j = 0; j < survivingIndices.length; j++) {
-      const i = survivingIndices[j];
-      const oldId = dedupResults[i].supersedesId;
-      const newId = memoryIds[j];
-      if (oldId && newId) {
-        await supersedeMemory(oldId, newId);
-      }
-    }
-
-    // Resolve entities and link them to memories (best-effort, don't block)
-    for (let j = 0; j < survivingIndices.length; j++) {
-      const i = survivingIndices[j];
-      const extractedEntities = normalizedMemories[i].entities;
-      if (extractedEntities && extractedEntities.length > 0 && memoryIds[j]) {
-        try {
-          const resolved = await resolveEntities(extractedEntities, workspaceId, model);
-          await linkMemoryEntities(memoryIds[j], resolved);
-        } catch (entityError) {
-          logger.warn("Entity resolution failed for memory, skipping", {
-            memoryId: memoryIds[j],
-            error: String(entityError),
-          });
-        }
-      }
-    }
-
-    logger.info(`Extracted ${newMemories.length} memories in ${Date.now() - start}ms`, {
-      types: newMemories.map((m) => m.type),
-      hasEmbeddings,
-      discardedLowImportance: discardedCount,
-      dedupSkipped,
-    });
   } catch (error) {
     logger.error("Memory extraction failed", {
-      error: String(error),
-      stack: (error as Error).stack?.split("\n").slice(0, 5).join(" | "),
+      error: String(error).slice(0, 200),
       userId: context.userId,
     });
-    // Don't rethrow — extraction is best-effort and should not crash the pipeline
+    throw error;
   }
+}
+
+// ── Thread-Scoped Reconciliation Path ────────────────────────────────────────
+
+async function extractWithReconciliation(
+  context: ExtractionContext,
+  workspaceId: string,
+  extractionSourceRole: ExtractionSourceRole,
+  start: number,
+): Promise<void> {
+  let existingMemories: Memory[] = [];
+  const [threadMessages] = await Promise.all([
+    fetchThreadMessages({
+      channelId: context.channelId!,
+      threadTs: context.threadTs!,
+      limit: 30,
+    }),
+    retrieveMemories({
+      query: context.userMessage,
+      currentUserId: context.userId,
+      limit: 20,
+      workspaceId,
+      adminMode: true,
+    }).then((mems) => { existingMemories = mems; }).catch((err) => {
+      logger.warn("Memory retrieval failed during reconciliation — proceeding with empty existing memories", {
+        error: String(err?.message ?? err).slice(0, 200),
+      });
+    }),
+  ]);
+
+  if (threadMessages.length === 0) {
+    logger.debug("No thread messages found — falling back to single-exchange extraction");
+    return extractSingleExchange(context, workspaceId, extractionSourceRole, start);
+  }
+
+  const userIds = [...new Set(threadMessages.map((m) => m.userId).filter(Boolean))];
+  const displayNames = new Map<string, string>();
+  if (userIds.length > 0) {
+    try {
+      const dbUsers = await db
+        .select({ slackUserId: users.slackUserId, displayName: users.displayName })
+        .from(users)
+        .where(inArray(users.slackUserId, userIds));
+      for (const u of dbUsers) {
+        if (u.slackUserId) displayNames.set(u.slackUserId, u.displayName);
+      }
+    } catch {
+      logger.warn("Failed to resolve user display names from DB");
+    }
+  }
+  if (context.displayName) {
+    displayNames.set(context.userId, context.displayName);
+  }
+
+  const threadContext = buildThreadContext(threadMessages, displayNames);
+  const { formatted: existingMemoriesText, refToId } = formatExistingMemories(existingMemories);
+
+  const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", () => existingMemoriesText);
+
+  const model = await getFastModel();
+
+  const { output: result } = await generateText({
+    model,
+    output: Output.object({ schema: reconciliationSchema }),
+    system: systemPrompt,
+    prompt: threadContext,
+  });
+
+  if (!result || result.operations.length === 0) {
+    logger.debug("No memory operations from reconciliation");
+    return;
+  }
+
+  const creates = result.operations.filter((op): op is z.infer<typeof createOperationSchema> => op.action === "create");
+  const updates = result.operations.filter((op): op is z.infer<typeof updateOperationSchema> => op.action === "update");
+  const deletes = result.operations.filter((op): op is z.infer<typeof deleteOperationSchema> => op.action === "delete");
+
+  logger.info("Memory reconciliation operations", {
+    creates: creates.length,
+    updates: updates.length,
+    deletes: deletes.length,
+    threadMessages: threadMessages.length,
+    existingMemories: existingMemories.length,
+  });
+
+  // Process DELETE operations
+  for (const del of deletes) {
+    const memoryId = refToId.get(del.memoryRef);
+    if (memoryId) {
+      try {
+        await archiveMemory(memoryId, del.reason);
+      } catch {
+        logger.warn("Skipping delete because archive failed", {
+          memoryId,
+          ref: del.memoryRef,
+        });
+      }
+    } else {
+      logger.warn("Delete op referenced unknown memory", { ref: del.memoryRef });
+    }
+  }
+
+  // Process UPDATE operations
+  for (const upd of updates) {
+    const memoryId = refToId.get(upd.memoryRef);
+    if (!memoryId) {
+      logger.warn("Update op referenced unknown memory", { ref: upd.memoryRef });
+      continue;
+    }
+    let embedding: number[] | null = null;
+    try {
+      embedding = await embedText(upd.content);
+    } catch {
+      logger.warn("Failed to embed updated memory content", { ref: upd.memoryRef });
+    }
+    try {
+      await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined);
+    } catch {
+      logger.warn("Skipping entity link refresh because content update failed", {
+        memoryId,
+        ref: upd.memoryRef,
+      });
+      continue;
+    }
+
+    // Keep memory_entities in sync with updated memory text.
+    const extractedEntities = upd.entities ?? [];
+    try {
+      if (extractedEntities.length > 0) {
+        await db.delete(memoryEntities).where(eq(memoryEntities.memoryId, memoryId));
+        const resolved = await resolveEntities(extractedEntities, workspaceId, model);
+        await linkMemoryEntities(memoryId, resolved);
+      }
+    } catch (entityError) {
+      logger.warn("Failed to refresh entity links for updated memory", {
+        memoryId,
+        ref: upd.memoryRef,
+        error: String(entityError),
+      });
+    }
+  }
+
+  // Process CREATE operations (same pipeline as single-exchange: importance filter, embed, dedup, store)
+  if (creates.length > 0) {
+    await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start, "reconciliation");
+  }
+}
+
+async function processCreateOperations(
+  creates: z.infer<typeof createOperationSchema>[],
+  context: ExtractionContext,
+  workspaceId: string,
+  extractionSourceRole: ExtractionSourceRole,
+  model: Awaited<ReturnType<typeof getFastModel>>,
+  start: number,
+  source: "reconciliation" | "single-exchange" = "reconciliation",
+): Promise<void> {
+  const filtered = creates.filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD);
+  if (filtered.length === 0) {
+    logger.debug(`All new memories from ${source} were low importance`);
+    return;
+  }
+
+  const normalizedMemories = await Promise.all(
+    filtered.map(async (m) => ({
+      ...m,
+      relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
+    })),
+  );
+
+  const memoryTexts = normalizedMemories.map((m) => m.content);
+  let embeddings: (number[] | null)[];
+  try {
+    embeddings = await embedTexts(memoryTexts);
+  } catch {
+    logger.error(`Memory embedding failed during ${source} — storing without embeddings`);
+    embeddings = memoryTexts.map(() => null);
+  }
+
+  const dedupResults = await checkDuplicates(
+    normalizedMemories.map((m, i) => ({ content: m.content, embedding: embeddings[i] ?? null })),
+    workspaceId,
+  );
+
+  const survivingIndices = dedupResults
+    .map((r, i) => (r.dominated ? -1 : i))
+    .filter((i) => i >= 0);
+
+  if (survivingIndices.length === 0) {
+    logger.debug(`All new memories from ${source} were duplicates`);
+    return;
+  }
+
+  const newMemories: NewMemory[] = survivingIndices.map((i) => ({
+    content: normalizedMemories[i].content,
+    type: normalizedMemories[i].type,
+    category: normalizedMemories[i].category,
+    workspaceId,
+    sourceMessageId: context.sourceMessageId || undefined,
+    sourceChannelType: toDbChannelType(context.channelType),
+    relatedUserIds: normalizedMemories[i].relatedUserIds.length > 0
+      ? normalizedMemories[i].relatedUserIds
+      : [context.userId],
+    embedding: embeddings[i] ?? null,
+    shareable: normalizedMemories[i].shareable ? 1 : 0,
+    importance: normalizedMemories[i].importance,
+    relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
+    extractionSourceRole,
+    ...(context.createdAt && { createdAt: context.createdAt, updatedAt: context.createdAt }),
+  }));
+
+  const memoryIds = await storeMemories(newMemories);
+
+  for (let j = 0; j < survivingIndices.length; j++) {
+    const i = survivingIndices[j];
+    const oldId = dedupResults[i].supersedesId;
+    const newId = memoryIds[j];
+    if (oldId && newId) {
+      await supersedeMemory(oldId, newId);
+    }
+  }
+
+  for (let j = 0; j < survivingIndices.length; j++) {
+    const i = survivingIndices[j];
+    const extractedEntities = normalizedMemories[i].entities;
+    if (extractedEntities && extractedEntities.length > 0 && memoryIds[j]) {
+      try {
+        const resolved = await resolveEntities(extractedEntities, workspaceId, model);
+        await linkMemoryEntities(memoryIds[j], resolved);
+      } catch (entityError) {
+        logger.warn("Entity resolution failed for memory, skipping", {
+          memoryId: memoryIds[j],
+          error: String(entityError),
+        });
+      }
+    }
+  }
+
+  logger.info(`${source === "reconciliation" ? "Reconciliation" : "Single-exchange extraction"} created ${newMemories.length} memories in ${Date.now() - start}ms`, {
+    types: newMemories.map((m) => m.type),
+  });
+}
+
+// ── Single-Exchange Fallback Path ────────────────────────────────────────────
+
+async function extractSingleExchange(
+  context: ExtractionContext,
+  workspaceId: string,
+  extractionSourceRole: ExtractionSourceRole,
+  start: number,
+): Promise<void> {
+  const strippedAssistant = stripInjectedContext(context.assistantResponse);
+  const includeAssistant = strippedAssistant.length >= MIN_STRIPPED_LENGTH;
+
+  const conversationText = includeAssistant
+    ? `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${strippedAssistant}`
+    : `User (${context.displayName || context.userId}): ${context.userMessage}`;
+
+  const model = await getFastModel();
+
+  const { output: object } = await generateText({
+    model,
+    output: Output.object({ schema: extractedMemoriesSchema }),
+    system: EXTRACTION_PROMPT,
+    prompt: conversationText,
+  });
+
+  if (!object || object.memories.length === 0) {
+    logger.debug("No memories extracted from exchange");
+    return;
+  }
+
+  const creates = object.memories
+    .filter((m) => m.importance >= IMPORTANCE_DISCARD_THRESHOLD)
+    .map((m) => ({
+      ...m,
+      action: "create" as const,
+    }));
+
+  const discardedCount = object.memories.length - creates.length;
+  if (discardedCount > 0) {
+    logger.info(`Filtered out ${discardedCount} low-importance memories (below ${IMPORTANCE_DISCARD_THRESHOLD})`);
+  }
+
+  if (creates.length === 0) {
+    logger.debug("All extracted memories were low importance — nothing to store");
+    return;
+  }
+
+  await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start, "single-exchange");
 }

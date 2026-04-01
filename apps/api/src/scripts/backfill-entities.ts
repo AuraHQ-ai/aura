@@ -3,17 +3,14 @@ import { resolve } from "path";
 import { fileURLToPath } from "url";
 import { sql } from "drizzle-orm";
 import { generateText, Output } from "ai";
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
-import { entities, entityAliases, memoryEntities } from "@aura/db/schema";
-import type { EntityType, MemoryEntityRole } from "@aura/db/schema";
+import type { MemoryEntityRole } from "@aura/db/schema";
 import {
   extractedEntitySchema,
   ENTITY_EXTRACTION_RULES,
 } from "../memory/entity-extraction-schema.js";
 import { pool } from "../lib/pool.js";
-// Dynamically imported after dotenv loads (entity-resolution.ts statically imports db/client.js)
-let disambiguateFuzzyMatches: typeof import("../memory/entity-resolution.js")["disambiguateFuzzyMatches"];
+import { createProgress } from "../lib/progress.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -23,7 +20,10 @@ config({ path: resolve(repoRoot, envFile) });
 if (isProd) console.log("Using .env.production (--prod)");
 
 const { db } = await import("../db/client.js");
-({ disambiguateFuzzyMatches } = await import("../memory/entity-resolution.js"));
+const { resolveEntities, linkMemoryEntities } = await import(
+  "../memory/entity-resolution.js"
+);
+const { getFastModel } = await import("../lib/ai.js");
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -31,15 +31,7 @@ const BATCH_SIZE = 50;
 const CONCURRENCY = 10;
 const WORKSPACE_ID = process.env.DEFAULT_WORKSPACE_ID || "default";
 
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error("ANTHROPIC_API_KEY is required");
-  process.exit(1);
-}
-
-// ── LLM Setup ───────────────────────────────────────────────────────────────
-
-const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const model = anthropic("claude-haiku-4-5-20251001");
+const model = await getFastModel();
 
 const extractionSchema = z.object({
   results: z.array(
@@ -54,273 +46,16 @@ const SYSTEM_PROMPT = `Extract entity mentions from these memories. For each mem
 
 ${ENTITY_EXTRACTION_RULES}`;
 
-// ── Entity Resolution with In-Memory Cache ──────────────────────────────────
-
-// Typed cache: "type:name_lower" -> entityId (same-type fast path)
-const entityCache = new Map<string, string>();
-// Cross-type cache: "name_lower" -> entityId (prevents dupes across types)
-const entityByName = new Map<string, string>();
-
-function cacheKey(type: string, name: string): string {
-  return `${type}:${name.toLowerCase().trim()}`;
-}
-
-function nameKey(name: string): string {
-  return name.toLowerCase().trim();
-}
-
 type ResultRow = Record<string, any>;
-
 function extractRows(result: unknown): ResultRow[] {
   return ((result as any).rows ?? result) as ResultRow[];
-}
-
-function setCache(entityId: string, type: EntityType, name: string): void {
-  entityCache.set(cacheKey(type, name), entityId);
-  const nk = nameKey(name);
-  if (!entityByName.has(nk)) entityByName.set(nk, entityId);
-}
-
-async function insertAliases(
-  entityId: string,
-  type: EntityType,
-  canonicalName: string,
-  llmAliases: string[],
-): Promise<void> {
-  const aliasSet = new Set<string>();
-  aliasSet.add(canonicalName);
-
-  for (const a of llmAliases) {
-    const trimmed = a.trim();
-    if (trimmed) aliasSet.add(trimmed);
-  }
-
-  for (const alias of aliasSet) {
-    try {
-      await db
-        .insert(entityAliases)
-        .values({ entityId, alias, source: "backfill" })
-        .onConflictDoNothing();
-    } catch {
-      // ignore duplicate alias conflicts
-    }
-
-    setCache(entityId, type, alias);
-  }
-}
-
-async function resolveEntityCached(
-  name: string,
-  type: EntityType,
-  aliases: string[],
-): Promise<{ entityId: string; isNew: boolean }> {
-  const key = cacheKey(type, name);
-  const lowerName = nameKey(name);
-  if (!lowerName) throw new Error("Entity name cannot be empty");
-
-  // 1a. Same-type cache hit
-  const cached = entityCache.get(key);
-  if (cached) {
-    await insertAliases(cached, type, name, aliases);
-    return { entityId: cached, isNew: false };
-  }
-
-  // 1b. Same-type alias cache hit
-  for (const alias of aliases) {
-    const aliasHit = entityCache.get(cacheKey(type, alias));
-    if (aliasHit) {
-      setCache(aliasHit, type, name);
-      await insertAliases(aliasHit, type, name, aliases);
-      return { entityId: aliasHit, isNew: false };
-    }
-  }
-
-  // 1c. Cross-type cache hit (name or aliases)
-  const crossHit = entityByName.get(lowerName);
-  if (crossHit) {
-    setCache(crossHit, type, name);
-    await insertAliases(crossHit, type, name, aliases);
-    return { entityId: crossHit, isNew: false };
-  }
-  for (const alias of aliases) {
-    const crossAliasHit = entityByName.get(nameKey(alias));
-    if (crossAliasHit) {
-      setCache(crossAliasHit, type, name);
-      await insertAliases(crossAliasHit, type, name, aliases);
-      return { entityId: crossAliasHit, isNew: false };
-    }
-  }
-
-  // 2. DB same-type exact canonical match
-  const exactRows = extractRows(
-    await db.execute(sql`
-      SELECT id FROM entities
-      WHERE workspace_id = ${WORKSPACE_ID}
-        AND type = ${type}
-        AND lower(canonical_name) = ${lowerName}
-      LIMIT 1
-    `),
-  );
-  if (exactRows.length > 0) {
-    setCache(exactRows[0].id, type, name);
-    await insertAliases(exactRows[0].id, type, name, aliases);
-    return { entityId: exactRows[0].id, isNew: false };
-  }
-
-  // 3. DB same-type alias match
-  const aliasRows = extractRows(
-    await db.execute(sql`
-      SELECT e.id FROM entities e
-      JOIN entity_aliases ea ON e.id = ea.entity_id
-      WHERE ea.alias_lower = ${lowerName}
-        AND e.type = ${type}
-        AND e.workspace_id = ${WORKSPACE_ID}
-      LIMIT 1
-    `),
-  );
-  if (aliasRows.length > 0) {
-    setCache(aliasRows[0].id, type, name);
-    await insertAliases(aliasRows[0].id, type, name, aliases);
-    return { entityId: aliasRows[0].id, isNew: false };
-  }
-
-  // 4. DB cross-type exact canonical match
-  const crossExactRows = extractRows(
-    await db.execute(sql`
-      SELECT id FROM entities
-      WHERE workspace_id = ${WORKSPACE_ID}
-        AND lower(canonical_name) = ${lowerName}
-      LIMIT 1
-    `),
-  );
-  if (crossExactRows.length > 0) {
-    setCache(crossExactRows[0].id, type, name);
-    await insertAliases(crossExactRows[0].id, type, name, aliases);
-    return { entityId: crossExactRows[0].id, isNew: false };
-  }
-
-  // 5. DB cross-type alias match
-  const crossAliasRows = extractRows(
-    await db.execute(sql`
-      SELECT e.id FROM entities e
-      JOIN entity_aliases ea ON e.id = ea.entity_id
-      WHERE ea.alias_lower = ${lowerName}
-        AND e.workspace_id = ${WORKSPACE_ID}
-      LIMIT 1
-    `),
-  );
-  if (crossAliasRows.length > 0) {
-    setCache(crossAliasRows[0].id, type, name);
-    await insertAliases(crossAliasRows[0].id, type, name, aliases);
-    return { entityId: crossAliasRows[0].id, isNew: false };
-  }
-
-  // 6. Trigram fuzzy match — cross-type, LLM disambiguates
-  const fuzzyRows = extractRows(
-    await db.execute(sql`
-      SELECT * FROM (
-        SELECT DISTINCT ON (e.id)
-          e.id, e.canonical_name, e.type,
-          similarity(ea.alias_lower, ${lowerName}) AS sim
-        FROM entities e
-        JOIN entity_aliases ea ON e.id = ea.entity_id
-        WHERE ea.alias_lower % ${lowerName}
-          AND e.workspace_id = ${WORKSPACE_ID}
-          AND similarity(ea.alias_lower, ${lowerName}) > 0.4
-        ORDER BY e.id, sim DESC
-      ) sub
-      ORDER BY sim DESC
-      LIMIT 50
-    `),
-  );
-  if (fuzzyRows.length > 0) {
-    const candidates = fuzzyRows
-      .sort((a, b) => Number(b.sim) - Number(a.sim))
-      .slice(0, 5)
-      .map((r) => ({
-        entityId: r.id as string,
-        canonicalName: r.canonical_name as string,
-        type: r.type as string,
-        similarity: Number(r.sim),
-      }));
-
-    const match = await disambiguateFuzzyMatches(name, type, candidates, model);
-    if (match) {
-      setCache(match.entityId, type, name);
-      await insertAliases(match.entityId, type, name, aliases);
-      return { entityId: match.entityId, isNew: false };
-    }
-  }
-
-  // 7. Create new entity + aliases
-  const [newEntity] = await db
-    .insert(entities)
-    .values({
-      workspaceId: WORKSPACE_ID,
-      type,
-      canonicalName: name,
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  if (newEntity) {
-    await insertAliases(newEntity.id, type, name, aliases);
-
-    if (type === "person") {
-      const parts = name.split(/\s+/).filter((p) => p.length > 1);
-      const additionalAliases = new Set<string>();
-      additionalAliases.add(name.toLowerCase());
-      for (const part of parts) {
-        additionalAliases.add(part.toLowerCase());
-      }
-      const primaryLower = name.toLowerCase();
-      for (const alias of additionalAliases) {
-        if (alias === primaryLower && parts.length <= 1) continue;
-        try {
-          await db
-            .insert(entityAliases)
-            .values({
-              entityId: newEntity.id,
-              alias,
-              source: "auto_generated",
-            })
-            .onConflictDoNothing();
-        } catch {
-          // ignore duplicate alias conflicts
-        }
-        setCache(newEntity.id, type, alias);
-      }
-    }
-
-    setCache(newEntity.id, type, name);
-    return { entityId: newEntity.id, isNew: true };
-  }
-
-  // Conflict on insert — another row exists, retry exact match
-  const retryRows = extractRows(
-    await db.execute(sql`
-      SELECT id FROM entities
-      WHERE workspace_id = ${WORKSPACE_ID}
-        AND type = ${type}
-        AND lower(canonical_name) = ${lowerName}
-      LIMIT 1
-    `),
-  );
-  if (retryRows.length > 0) {
-    setCache(retryRows[0].id, type, name);
-    await insertAliases(retryRows[0].id, type, name, aliases);
-    return { entityId: retryRows[0].id, isNew: false };
-  }
-
-  throw new Error(`Failed to create or find entity: ${name} (${type})`);
 }
 
 // ── Process a single batch ───────────────────────────────────────────────────
 
 async function processBatch(
   batch: Array<{ id: string; content: string }>,
-  batchIdx: number,
-  totalBatches: number,
+  progress: ReturnType<typeof createProgress>,
 ): Promise<{ newEntities: number; linked: number; errors: number }> {
   try {
     const memoriesPayload = batch.map((m) => ({
@@ -336,68 +71,44 @@ async function processBatch(
     });
 
     if (!result) {
-      console.warn(
-        `[batch ${batchIdx + 1}/${totalBatches}] LLM returned no output, skipping`,
-      );
+      progress.tick(batch.length);
       return { newEntities: 0, linked: 0, errors: 1 };
     }
 
-    let batchNewEntities = 0;
     let batchLinked = 0;
 
     const memResults = result.results.filter(
       (r) => r.entities && r.entities.length > 0,
     );
 
-    const allLinks: Array<{
-      memoryId: string;
-      entityId: string;
-      role: MemoryEntityRole;
-    }> = [];
-
-    await Promise.all(
-      memResults.map(async (memResult) => {
-        const resolved = await Promise.all(
-          memResult.entities.map(async (entity) => {
-            try {
-              const { entityId, isNew } = await resolveEntityCached(
-                entity.name,
-                entity.type,
-                entity.aliases,
-              );
-              if (isNew) batchNewEntities++;
-              return { memoryId: memResult.memory_id, entityId, role: entity.role };
-            } catch {
-              return null;
-            }
-          }),
+    for (const memResult of memResults) {
+      try {
+        const resolved = await resolveEntities(
+          memResult.entities.map((e) => ({
+            name: e.name,
+            type: e.type,
+            role: e.role as MemoryEntityRole,
+            aliases: e.aliases,
+          })),
+          WORKSPACE_ID,
+          model,
         );
 
-        for (const link of resolved) {
-          if (link) allLinks.push(link);
+        if (resolved.length > 0) {
+          await linkMemoryEntities(memResult.memory_id, resolved);
+          batchLinked += resolved.length;
         }
-      }),
-    );
-
-    if (allLinks.length > 0) {
-      for (let i = 0; i < allLinks.length; i += 500) {
-        await db
-          .insert(memoryEntities)
-          .values(allLinks.slice(i, i + 500))
-          .onConflictDoNothing();
+      } catch {
+        // entity resolution failures are logged by the live function
       }
-      batchLinked = allLinks.length;
     }
 
-    console.log(
-      `[batch ${batchIdx + 1}/${totalBatches}] processed ${batch.length} memories, ` +
-        `created ${batchNewEntities} new entities, linked ${batchLinked} memory_entities`,
-    );
-
-    return { newEntities: batchNewEntities, linked: batchLinked, errors: 0 };
+    progress.tick(batch.length);
+    return { newEntities: 0, linked: batchLinked, errors: 0 };
   } catch (err) {
+    progress.tick(batch.length);
     console.error(
-      `[batch ${batchIdx + 1}/${totalBatches}] ERROR: ${err instanceof Error ? err.message : String(err)}`,
+      `  ERROR: ${err instanceof Error ? err.message : String(err)}`,
     );
     return { newEntities: 0, linked: 0, errors: 1 };
   }
@@ -435,31 +146,25 @@ async function main() {
     });
   }
 
-  let totalNewEntities = 0;
   let totalLinked = 0;
   let totalErrors = 0;
-  const startTime = Date.now();
+
+  const progress = createProgress(unlinked.length, { label: "memories", logEvery: BATCH_SIZE });
 
   await pool(batches, CONCURRENCY, async (batch) => {
-    const result = await processBatch(batch.items, batch.idx, totalBatches);
-    totalNewEntities += result.newEntities;
+    const result = await processBatch(batch.items, progress);
     totalLinked += result.linked;
     totalErrors += result.errors;
   });
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\n=== Summary ===`);
-  console.log(`Elapsed: ${elapsed}s`);
+  progress.done();
   console.log(`Memories processed: ${unlinked.length}`);
-  console.log(`New entities created: ${totalNewEntities}`);
   console.log(`Memory-entity links created: ${totalLinked}`);
-  console.log(`Entity cache size: ${entityCache.size} (typed), ${entityByName.size} (cross-type)`);
   console.log(`Batches with errors: ${totalErrors}`);
 
-  // Re-link users ↔ entities by matching display_name to entity aliases
-  console.log(`\n=== Linking Users ↔ Entities ===`);
+  console.log(`\n=== Linking Users <-> Entities ===`);
 
-  // 1. Set users.entity_id from matching person entity
   const linkResult = await db.execute(sql`
     UPDATE users u
     SET entity_id = sub.entity_id
@@ -474,9 +179,8 @@ async function main() {
     WHERE u.id = sub.user_id
   `);
   const linkedCount = (linkResult as any).rowCount ?? 0;
-  console.log(`✓ Linked ${linkedCount} users → person entities`);
+  console.log(`Linked ${linkedCount} users -> person entities`);
 
-  // 2. Backfill entities.slack_user_id from linked users
   const slackResult = await db.execute(sql`
     UPDATE entities e
     SET slack_user_id = u.slack_user_id
@@ -486,7 +190,7 @@ async function main() {
       AND e.slack_user_id IS NULL
   `);
   const slackCount = (slackResult as any).rowCount ?? 0;
-  console.log(`✓ Set slack_user_id on ${slackCount} entities from linked users`);
+  console.log(`Set slack_user_id on ${slackCount} entities from linked users`);
 }
 
 main().catch((err) => {

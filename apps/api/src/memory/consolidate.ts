@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { memories } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+import { DECAY_FACTOR } from "./importance.js";
 
 /**
  * Memory consolidation — runs as a daily Vercel Cron job.
@@ -11,6 +12,7 @@ import { logger } from "../lib/logger.js";
  * 2. Find and merge duplicate memories (high cosine similarity)
  * 3. Flag contradictory memories
  */
+const MIN_SCORE = 0.01;
 
 /**
  * Decay relevance scores.
@@ -19,8 +21,6 @@ import { logger } from "../lib/logger.js";
  * Memories with a score below the floor are not deleted, just deprioritized.
  */
 export async function decayRelevanceScores(): Promise<number> {
-  const DECAY_FACTOR = 0.995;
-  const MIN_SCORE = 0.01;
 
   try {
     const result = await db

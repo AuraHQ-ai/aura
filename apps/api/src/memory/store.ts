@@ -1,8 +1,9 @@
-import { eq, sql, isNull, and } from "drizzle-orm";
+import { eq, sql, isNull, and, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { messages, memories, notes, eventLocks, type NewMessage, type NewMemory } from "@aura/db/schema";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
+import { importanceToRelevance } from "./importance.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
 import type { ChannelType } from "../pipeline/context.js";
 
@@ -25,6 +26,52 @@ export async function claimEvent(eventTs: string, channelId: string): Promise<bo
     .onConflictDoNothing()
     .returning({ id: eventLocks.id });
   return result.length > 0;
+}
+
+export interface ThreadMessage {
+  role: string;
+  userId: string;
+  content: string;
+  createdAt: Date;
+}
+
+/**
+ * Fetch all persisted messages for a Slack thread, ordered chronologically.
+ * Used by memory extraction to build thread-scoped context.
+ */
+export async function fetchThreadMessages(params: {
+  channelId: string;
+  threadTs: string;
+  limit?: number;
+}): Promise<ThreadMessage[]> {
+  const { channelId, threadTs, limit = 30 } = params;
+  try {
+    const rows = await db
+      .select({
+        role: messages.role,
+        userId: messages.userId,
+        content: messages.content,
+        createdAt: messages.createdAt,
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          sql`(${messages.slackThreadTs} = ${threadTs} OR ${messages.slackTs} = ${threadTs})`,
+        ),
+      )
+      .orderBy(desc(messages.createdAt))
+      .limit(limit);
+
+    return rows.reverse();
+  } catch (error) {
+    logger.warn("Failed to fetch thread messages for extraction", {
+      error: String(error),
+      channelId,
+      threadTs,
+    });
+    return [];
+  }
 }
 
 /**
@@ -85,8 +132,22 @@ export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { 
  * Backfill embeddings for existing messages that don't have them.
  * Processes in batches to avoid overwhelming the embedding API.
  */
-export async function backfillMessageEmbeddings(batchSize = 50): Promise<number> {
+export async function backfillMessageEmbeddings(
+  batchSize = 50,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<number> {
   let totalEmbedded = 0;
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(messages)
+    .where(
+      and(
+        isNull(messages.embedding),
+        sql`${messages.content} IS NOT NULL AND length(${messages.content}) > 0`,
+      ),
+    );
+  const total = count;
 
   try {
     while (true) {
@@ -114,6 +175,7 @@ export async function backfillMessageEmbeddings(batchSize = 50): Promise<number>
       }
 
       totalEmbedded += batch.length;
+      onProgress?.(totalEmbedded, total);
       logger.info(`Backfilled ${totalEmbedded} message embeddings so far`);
     }
 
@@ -132,8 +194,22 @@ export async function backfillMessageEmbeddings(batchSize = 50): Promise<number>
  * Backfill embeddings for existing memories that don't have them.
  * Processes in batches to avoid overwhelming the embedding API.
  */
-export async function backfillMemoryEmbeddings(batchSize = 50): Promise<number> {
+export async function backfillMemoryEmbeddings(
+  batchSize = 50,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<number> {
   let totalEmbedded = 0;
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(memories)
+    .where(
+      and(
+        isNull(memories.embedding),
+        sql`${memories.content} IS NOT NULL AND length(${memories.content}) > 0`,
+      ),
+    );
+  const total = count;
 
   try {
     while (true) {
@@ -161,6 +237,7 @@ export async function backfillMemoryEmbeddings(batchSize = 50): Promise<number> 
       }
 
       totalEmbedded += batch.length;
+      onProgress?.(totalEmbedded, total);
       logger.info(`Backfilled ${totalEmbedded} memory embeddings so far`);
     }
 
@@ -179,8 +256,22 @@ export async function backfillMemoryEmbeddings(batchSize = 50): Promise<number> 
  * Backfill embeddings for existing notes that don't have them.
  * Processes in batches to avoid overwhelming the embedding API.
  */
-export async function backfillNoteEmbeddings(batchSize = 50): Promise<number> {
+export async function backfillNoteEmbeddings(
+  batchSize = 50,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<number> {
   let totalEmbedded = 0;
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(notes)
+    .where(
+      and(
+        isNull(notes.embedding),
+        sql`${notes.content} IS NOT NULL AND length(${notes.content}) > 0`,
+      ),
+    );
+  const total = count;
 
   try {
     while (true) {
@@ -208,6 +299,7 @@ export async function backfillNoteEmbeddings(batchSize = 50): Promise<number> {
       }
 
       totalEmbedded += batch.length;
+      onProgress?.(totalEmbedded, total);
       logger.info(`Backfilled ${totalEmbedded} note embeddings so far`);
     }
 
@@ -503,6 +595,66 @@ export async function storeChannelReadMessage(
       error: String(error),
       channel: channelName,
     });
+  }
+}
+
+/**
+ * Update an existing memory's content and re-embed it.
+ * Used by thread-scoped reconciliation when the LLM refines an existing memory.
+ */
+export async function updateMemoryContent(
+  memoryId: string,
+  newContent: string,
+  newEmbedding: number[] | null,
+  newImportance?: number,
+): Promise<void> {
+  const now = new Date();
+  try {
+    const updates: Record<string, unknown> = {
+      content: newContent,
+      embedding: newEmbedding,
+      updatedAt: now,
+    };
+    if (newImportance != null) {
+      updates.importance = newImportance;
+      updates.relevanceScore = importanceToRelevance(newImportance);
+    }
+    await db
+      .update(memories)
+      .set(updates)
+      .where(eq(memories.id, memoryId));
+    logger.info("Updated memory content", { memoryId, contentLength: newContent.length });
+  } catch (error) {
+    logger.warn("Failed to update memory content", {
+      memoryId,
+      error: String(error),
+    });
+    throw error;
+  }
+}
+
+/**
+ * Archive a memory (soft delete). Sets status='archived'.
+ * Used by thread-scoped reconciliation when the LLM determines a memory is outdated.
+ */
+export async function archiveMemory(
+  memoryId: string,
+  reason: string,
+): Promise<void> {
+  const now = new Date();
+  try {
+    await db
+      .update(memories)
+      .set({ status: "archived", updatedAt: now })
+      .where(eq(memories.id, memoryId));
+    logger.info("Archived memory", { memoryId, reason });
+  } catch (error) {
+    logger.warn("Failed to archive memory", {
+      memoryId,
+      reason,
+      error: String(error),
+    });
+    throw error;
   }
 }
 

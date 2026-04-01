@@ -14,6 +14,7 @@ interface LinkedMemory {
   role: string | null;
   content: string;
   type: string;
+  importance: number | null;
   relevanceScore: number;
   createdAt: string;
 }
@@ -28,7 +29,6 @@ interface EntityDetail {
   id: string;
   type: string;
   canonicalName: string;
-  description: string | null;
   slackUserId: string | null;
   summary: string | null;
   summaryUpdatedAt: string | null;
@@ -64,15 +64,21 @@ function EntityDetailPage() {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <CardHeader><CardTitle className="text-sm">Description</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm">Summary</CardTitle></CardHeader>
           <CardContent>
-            <span className="text-sm">{entity.description || "—"}</span>
+            <span className="text-sm">{entity.summary || "No summary generated yet"}</span>
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle className="text-sm">Slack User</CardTitle></CardHeader>
           <CardContent>
-            <span className="text-sm font-mono">{entity.slackUserId || "—"}</span>
+            {entity.slackUserId ? (
+              <Link to="/users/$slackUserId" params={{ slackUserId: entity.slackUserId }}>
+                <span className="text-sm font-mono hover:underline">{entity.slackUserId}</span>
+              </Link>
+            ) : (
+              <span className="text-sm font-mono">—</span>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -88,24 +94,6 @@ function EntityDetailPage() {
           </CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm">Summary</CardTitle>
-            {entity.summaryUpdatedAt && (
-              <span className="text-xs text-muted-foreground">
-                Updated {formatDate(entity.summaryUpdatedAt)}
-              </span>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
-            {entity.summary || "No summary generated yet"}
-          </p>
-        </CardContent>
-      </Card>
 
       {entity.aliases.length > 0 && (
         <Card>
@@ -131,6 +119,7 @@ function EntityDetailPage() {
                 <TableHead>Content</TableHead>
                 <TableHead className="w-[90px]">Type</TableHead>
                 <TableHead className="w-[80px]">Role</TableHead>
+                <TableHead className="w-[100px]">Importance</TableHead>
                 <TableHead className="w-[80px]">Relevance</TableHead>
                 <TableHead className="w-[160px]">Created</TableHead>
               </TableRow>
@@ -138,7 +127,7 @@ function EntityDetailPage() {
             <TableBody>
               {entity.linkedMemories.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">No linked memories</TableCell>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No linked memories</TableCell>
                 </TableRow>
               ) : (
                 entity.linkedMemories.map((m) => (
@@ -150,6 +139,7 @@ function EntityDetailPage() {
                     </TableCell>
                     <TableCell><Badge variant="secondary">{m.type}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground">{m.role ?? "—"}</TableCell>
+                    <TableCell className="text-sm font-mono">{m.importance ?? "—"}</TableCell>
                     <TableCell className="text-sm">{m.relevanceScore?.toFixed(2) ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground text-sm">{formatDate(m.createdAt)}</TableCell>
                   </TableRow>

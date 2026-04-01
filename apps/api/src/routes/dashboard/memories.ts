@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, count, inArray, sql } from "drizzle-orm";
-import { memories, users, memoryEntities, entities } from "@aura/db/schema";
+import { memories, messages, users, memoryEntities, entities } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, idParamSchema, createDashboardApp } from "./schemas.js";
@@ -11,11 +11,14 @@ const memoryColumns = {
   id: memories.id,
   content: memories.content,
   type: memories.type,
+  category: memories.category,
+  importance: memories.importance,
   sourceMessageId: memories.sourceMessageId,
   sourceChannelType: memories.sourceChannelType,
   relatedUserIds: memories.relatedUserIds,
   relevanceScore: memories.relevanceScore,
   shareable: memories.shareable,
+  status: memories.status,
   createdAt: memories.createdAt,
   updatedAt: memories.updatedAt,
 } as const;
@@ -164,13 +167,24 @@ dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
         role: memoryEntities.role,
         canonicalName: entities.canonicalName,
         type: entities.type,
-        description: entities.description,
+        summary: entities.summary,
       })
       .from(memoryEntities)
       .innerJoin(entities, eq(entities.id, memoryEntities.entityId))
       .where(eq(memoryEntities.memoryId, id));
 
-    return c.json({ ...memory, relatedUsers, linkedEntities } as any, 200);
+    let sourceThread: { channelId: string; threadTs: string; messageAt: string } | null = null;
+    if (memory.sourceMessageId) {
+      const [msg] = await db
+        .select({ channelId: messages.channelId, threadTs: messages.slackThreadTs, createdAt: messages.createdAt })
+        .from(messages)
+        .where(eq(messages.id, memory.sourceMessageId));
+      if (msg?.threadTs) {
+        sourceThread = { channelId: msg.channelId, threadTs: msg.threadTs, messageAt: msg.createdAt.toISOString() };
+      }
+    }
+
+    return c.json({ ...memory, relatedUsers, linkedEntities, sourceThread } as any, 200);
   } catch (error) {
     logger.error("Failed to get memory", { error });
     return c.json({ error: "Failed to get memory" }, 500);

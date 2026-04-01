@@ -22,6 +22,83 @@ interface FuzzyCandidate {
   similarity: number;
 }
 
+const ALIAS_STOPWORDS = new Set([
+  "de",
+  "da",
+  "del",
+  "la",
+  "le",
+  "du",
+  "di",
+  "van",
+  "von",
+  "der",
+  "den",
+  "el",
+  "al",
+]);
+const SLACK_USER_ID_RE = /^[UW][A-Z0-9]{8,}$/;
+
+function normalizeToken(value: string): string {
+  return value.toLowerCase().trim();
+}
+
+function isMostlyDigits(value: string): boolean {
+  const compact = value.replace(/[\s\-_.]/g, "");
+  return compact.length > 0 && /^[0-9]+$/.test(compact);
+}
+
+function isValidAlias(alias: string): boolean {
+  const normalized = normalizeToken(alias);
+  if (!normalized) return false;
+  if (ALIAS_STOPWORDS.has(normalized)) return false;
+  if (isMostlyDigits(normalized)) return false;
+  if (SLACK_USER_ID_RE.test(alias.trim())) return false;
+
+  // Allow short handles/acronyms only.
+  if (normalized.length <= 2) {
+    if (alias.startsWith("@")) return true;
+    if (/^[A-Z0-9]{2}$/.test(alias)) return true;
+    return false;
+  }
+
+  return true;
+}
+
+function wordTokens(value: string): string[] {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map((p) => normalizeToken(p))
+    .filter(Boolean);
+}
+
+function isLowSignalTemporalEntityName(name: string): boolean {
+  const normalized = normalizeToken(name);
+  // Ambiguous quarter shorthand without a year/context anchor.
+  // Examples: Q1, q2, Q3, q4
+  if (/^q[1-4]$/.test(normalized)) return true;
+  return false;
+}
+
+async function isAmbiguousPersonFirstName(
+  workspaceId: string,
+  firstName: string,
+): Promise<boolean> {
+  if (!firstName) return false;
+  const rows = extractRows(
+    await db.execute(sql`
+      SELECT count(*)::int AS c
+      FROM entities
+      WHERE workspace_id = ${workspaceId}
+        AND type = 'person'
+        AND lower(split_part(canonical_name, ' ', 1)) = ${firstName}
+    `),
+  );
+  const count = Number(rows[0]?.c ?? 0);
+  return count > 1;
+}
+
 const disambiguationSchema = z.object({
   match_index: z
     .number()
@@ -74,7 +151,7 @@ async function persistLlmAliases(entityId: string, llmAliases?: string[]): Promi
   if (!llmAliases || llmAliases.length === 0) return;
   for (const raw of llmAliases) {
     const trimmed = raw.trim();
-    if (!trimmed) continue;
+    if (!trimmed || !isValidAlias(trimmed)) continue;
     try {
       await db
         .insert(entityAliases)
@@ -286,21 +363,19 @@ export async function resolveEntity(
       await persistLlmAliases(newEntity.id, llmAliases);
 
       if (type === "person") {
-        const parts = name.split(/\s+/).filter((p) => p.length > 1);
-        const additionalAliases = new Set<string>();
-        additionalAliases.add(name.toLowerCase());
-        for (const part of parts) {
-          additionalAliases.add(part.toLowerCase());
-        }
-        const primaryLower = name.toLowerCase();
-        for (const alias of additionalAliases) {
-          if (alias === primaryLower && parts.length <= 1) continue;
+        const parts = wordTokens(name);
+        const firstName = parts[0];
+        if (
+          firstName &&
+          isValidAlias(firstName) &&
+          !(await isAmbiguousPersonFirstName(workspaceId, firstName))
+        ) {
           try {
             await db
               .insert(entityAliases)
               .values({
                 entityId: newEntity.id,
-                alias,
+                alias: firstName,
                 source: "auto_generated",
               })
               .onConflictDoNothing();
@@ -493,17 +568,86 @@ export async function resolveEntities(
 ): Promise<Array<ResolvedEntity & { role?: MemoryEntityRole }>> {
   if (extracted.length === 0) return [];
 
+  // Guardrail: if a standalone first-name person matches multiple existing
+  // person entities in this workspace, skip it instead of creating ambiguity.
+  const ambiguousPersonTokens = new Set<string>();
+  const hasSingleTokenPersons = extracted.some(
+    (e) => e.type === "person" && !e.name.trim().includes(" "),
+  );
+  if (hasSingleTokenPersons) {
+    try {
+      const rows = extractRows(
+        await db.execute(sql`
+          SELECT first_name
+          FROM (
+            SELECT lower(split_part(canonical_name, ' ', 1)) AS first_name
+            FROM entities
+            WHERE workspace_id = ${workspaceId}
+              AND type = 'person'
+          ) t
+          WHERE first_name IS NOT NULL
+            AND first_name <> ''
+          GROUP BY first_name
+          HAVING count(*) > 1
+        `),
+      );
+      for (const r of rows) {
+        const token = String(r.first_name ?? "").trim();
+        if (token) ambiguousPersonTokens.add(token);
+      }
+    } catch (error) {
+      logger.warn("Failed to compute ambiguous person tokens", {
+        workspaceId,
+        error: String(error),
+      });
+    }
+  }
+
   // Deduplicate by type:name, keeping the highest-priority role and merging aliases
   const bestByKey = new Map<string, { name: string; type: EntityType; role?: MemoryEntityRole; aliases?: string[] }>();
   for (const item of extracted) {
-    const key = `${item.type}:${item.name.toLowerCase()}`;
+    const normalizedName = item.name.trim();
+    if (!normalizedName) continue;
+    if (isLowSignalTemporalEntityName(normalizedName)) {
+      logger.info("Skipping low-signal temporal entity", {
+        name: item.name,
+        workspaceId,
+      });
+      continue;
+    }
+    const nameParts = wordTokens(normalizedName);
+    const firstName = nameParts[0] ?? "";
+
+    if (item.type === "person" && !normalizedName.includes(" ")) {
+      if (ambiguousPersonTokens.has(firstName)) {
+        logger.info("Skipping ambiguous standalone person entity", {
+          name: item.name,
+          workspaceId,
+        });
+        continue;
+      }
+    }
+
+    const cleanedAliases = (item.aliases ?? []).filter((raw) => {
+      if (!isValidAlias(raw)) return false;
+      if (item.type !== "person") return true;
+
+      const alias = raw.trim();
+      if (alias.startsWith("@")) return true;
+      if (alias.includes(" ")) return true;
+
+      const aliasToken = normalizeToken(alias);
+      // Drop single-token person aliases (including first names) when ambiguous.
+      return !ambiguousPersonTokens.has(aliasToken);
+    });
+    const key = `${item.type}:${normalizedName.toLowerCase()}`;
     const existing = bestByKey.get(key);
     if (!existing) {
-      bestByKey.set(key, { ...item });
+      bestByKey.set(key, { ...item, aliases: cleanedAliases });
     } else {
       const mergedAliases = [
         ...(existing.aliases ?? []),
-        ...(item.aliases ?? []),
+        ...cleanedAliases,
       ];
       if ((ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) < (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)) {
         bestByKey.set(key, { ...item, aliases: mergedAliases });

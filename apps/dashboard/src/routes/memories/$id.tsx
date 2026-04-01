@@ -16,17 +16,21 @@ interface LinkedEntity {
   role: string | null;
   canonicalName: string;
   type: string;
-  description: string | null;
+  summary: string | null;
 }
 
 interface MemoryDetail {
   id: string;
   content: string;
   type: string;
+  category: string;
+  importance: number | null;
+  status: string;
   relevanceScore: number;
   shareable: number;
-  sourceType: string;
-  sourceId: string | null;
+  sourceMessageId: string | null;
+  sourceChannelType: string | null;
+  sourceThread: { channelId: string; threadTs: string; messageAt?: string } | null;
   createdAt: string;
   relatedUsers: { slackUserId: string; displayName: string }[];
   linkedEntities: LinkedEntity[];
@@ -163,34 +167,75 @@ function MemoryDetailPage() {
           </Card>
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Relevance Score</CardTitle></CardHeader>
-            <CardContent>
-              <span className="text-sm">{memory.relevanceScore?.toFixed(1) ?? "—"}</span>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Shareable</CardTitle></CardHeader>
-            <CardContent>
-              <span className="text-sm">{memory.shareable ? "Shareable across channels" : "Private"}</span>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Related Users</CardTitle></CardHeader>
-            <CardContent>
-              {relatedUsers.length === 0 ? (
-                <span className="text-sm text-muted-foreground">None</span>
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {relatedUsers.map((u) => (
-                    <Badge key={u.slackUserId} variant="outline">{u.displayName}</Badge>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <>
+          <div className="grid gap-3 sm:grid-cols-4">
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Category</CardTitle></CardHeader>
+              <CardContent>
+                <Badge variant="outline">{memory.category ?? "—"}</Badge>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Importance</CardTitle></CardHeader>
+              <CardContent>
+                <span className="text-sm font-mono">{memory.importance ?? "—"}</span>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Relevance Score</CardTitle></CardHeader>
+              <CardContent>
+                <span className="text-sm font-mono">{memory.relevanceScore?.toFixed(2) ?? "—"}</span>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Status</CardTitle></CardHeader>
+              <CardContent>
+                <Badge variant={memory.status === "current" ? "secondary" : "outline"}>{memory.status ?? "—"}</Badge>
+              </CardContent>
+            </Card>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Shareable</CardTitle></CardHeader>
+              <CardContent>
+                <span className="text-sm">{memory.shareable ? "Shareable across channels" : "Private"}</span>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Source</CardTitle></CardHeader>
+              <CardContent>
+                {memory.sourceThread ? (
+                  <Link
+                    to="/conversations/threads/$channelId/$threadTs"
+                    params={{ channelId: memory.sourceThread.channelId, threadTs: memory.sourceThread.threadTs }}
+                    search={{ highlight: memory.sourceThread.messageAt }}
+                    className="text-sm text-primary hover:underline"
+                  >
+                    View conversation →
+                  </Link>
+                ) : (
+                  <span className="text-sm text-muted-foreground">
+                    {memory.sourceChannelType ?? "Unknown"}
+                  </span>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle className="text-sm">Related Users</CardTitle></CardHeader>
+              <CardContent>
+                {relatedUsers.length === 0 ? (
+                  <span className="text-sm text-muted-foreground">None</span>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {relatedUsers.map((u) => (
+                      <Badge key={u.slackUserId} variant="outline">{u.displayName}</Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
       )}
 
       {(memory.linkedEntities ?? []).length > 0 && (
@@ -205,7 +250,7 @@ function MemoryDetailPage() {
                   <TableHead>Name</TableHead>
                   <TableHead className="w-[90px]">Type</TableHead>
                   <TableHead className="w-[80px]">Role</TableHead>
-                  <TableHead>Description</TableHead>
+                  <TableHead>Summary</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -219,7 +264,7 @@ function MemoryDetailPage() {
                     <TableCell><Badge variant="secondary">{e.type}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground">{e.role ?? "—"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {e.description ? truncate(e.description, 60) : "—"}
+                      {e.summary ? truncate(e.summary, 90) : "—"}
                     </TableCell>
                   </TableRow>
                 ))}

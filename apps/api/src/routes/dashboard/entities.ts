@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, count, sql, ilike, and, type SQL } from "drizzle-orm";
-import { entities, entityAliases, memoryEntities, memories, entityTypeEnum } from "@aura/db/schema";
+import { entities, entityAliases, memoryEntities, memories, users, entityTypeEnum } from "@aura/db/schema";
 import type { EntityType } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
@@ -61,22 +61,28 @@ dashboardEntitiesApp.openapi(listEntitiesRoute, async (c) => {
           id: entities.id,
           type: entities.type,
           canonicalName: entities.canonicalName,
-          description: entities.description,
+          summary: entities.summary,
           slackUserId: entities.slackUserId,
           metadata: entities.metadata,
           createdAt: entities.createdAt,
           updatedAt: entities.updatedAt,
-          memoryCount: sql<number>`(
-            SELECT count(*)::int FROM memory_entities
-            WHERE memory_entities.entity_id = ${entities.id}
-          )`,
-          aliasCount: sql<number>`(
-            SELECT count(*)::int FROM entity_aliases
-            WHERE entity_aliases.entity_id = ${entities.id}
-          )`,
+          memoryCount: sql<number>`count(distinct ${memoryEntities.memoryId})::int`.mapWith(Number),
+          aliasCount: sql<number>`count(distinct ${entityAliases.id})::int`.mapWith(Number),
         })
         .from(entities)
+        .leftJoin(memoryEntities, eq(memoryEntities.entityId, entities.id))
+        .leftJoin(entityAliases, eq(entityAliases.entityId, entities.id))
         .where(where)
+        .groupBy(
+          entities.id,
+          entities.type,
+          entities.canonicalName,
+          entities.summary,
+          entities.slackUserId,
+          entities.metadata,
+          entities.createdAt,
+          entities.updatedAt,
+        )
         .orderBy(desc(entities.updatedAt))
         .limit(limit)
         .offset(offset),
@@ -137,6 +143,7 @@ dashboardEntitiesApp.openapi(getEntityRoute, async (c) => {
         role: memoryEntities.role,
         content: memories.content,
         type: memories.type,
+        importance: memories.importance,
         relevanceScore: memories.relevanceScore,
         createdAt: memories.createdAt,
       })
@@ -145,7 +152,16 @@ dashboardEntitiesApp.openapi(getEntityRoute, async (c) => {
       .where(eq(memoryEntities.entityId, id))
       .orderBy(desc(memories.createdAt));
 
-    return c.json({ ...entity, aliases, linkedMemories } as any, 200);
+    const relatedUsers: { id: string; slackUserId: string | null; displayName: string }[] = await db
+      .select({
+        id: users.id,
+        slackUserId: users.slackUserId,
+        displayName: users.displayName,
+      })
+      .from(users)
+      .where(eq(users.entityId, id));
+
+    return c.json({ ...entity, aliases, linkedMemories, relatedUsers } as any, 200);
   } catch (error) {
     logger.error("Failed to get entity", { error: String(error) });
     return c.json({ error: "Failed to get entity" }, 500);

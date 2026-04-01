@@ -7,8 +7,8 @@ import {
   type LanguageModelUsage,
 } from "ai";
 import { waitUntil } from "@vercel/functions";
-import { eq, and, sql, asc } from "drizzle-orm";
-import { conversationTraces, conversationMessages, conversationParts } from "@aura/db/schema";
+import { eq, and, sql, asc, inArray } from "drizzle-orm";
+import { conversationTraces, conversationMessages, conversationParts, users } from "@aura/db/schema";
 import { gateway } from "@ai-sdk/gateway";
 import { db } from "../../db/client.js";
 import { getMainModel, getMainModelId, withAnthropicFallback, type WrappableModel } from "../../lib/ai.js";
@@ -91,7 +91,10 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
         })
         .from(conversationMessages)
         .where(
-          sql`${conversationMessages.conversationId} IN ${firstTraceIds} AND ${conversationMessages.role} = 'user'`,
+          and(
+            inArray(conversationMessages.conversationId, firstTraceIds),
+            eq(conversationMessages.role, "user"),
+          ),
         )
         .orderBy(conversationMessages.orderIndex);
 
@@ -176,7 +179,7 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
     const allMessages = await db
       .select()
       .from(conversationMessages)
-      .where(sql`${conversationMessages.conversationId} IN ${traceIds}`)
+      .where(inArray(conversationMessages.conversationId, traceIds))
       .orderBy(asc(conversationMessages.orderIndex));
 
     const allMsgIds = allMessages.map((m) => m.id);
@@ -185,7 +188,7 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
       allParts = await db
         .select()
         .from(conversationParts)
-        .where(sql`${conversationParts.messageId} IN ${allMsgIds}`)
+        .where(inArray(conversationParts.messageId, allMsgIds))
         .orderBy(asc(conversationParts.orderIndex));
     }
 
@@ -436,8 +439,10 @@ async function persistDashboardConversation(params: {
     const userExternalId = `dashboard-${userId}-${messageId}`;
     const assistantExternalId = `${userExternalId}-aura`;
 
-    await Promise.all([
-      storeMessage({
+    // Best-effort message storage: memory extraction should still run even if one insert fails.
+    let userMessageId: string | undefined;
+    try {
+      userMessageId = await storeMessage({
         externalId: userExternalId,
         channelId: "dashboard",
         channelType: "dashboard",
@@ -445,8 +450,17 @@ async function persistDashboardConversation(params: {
         userId,
         role: "user",
         content: userMessage,
-      }),
-      storeMessage({
+      });
+    } catch (error) {
+      logger.error("Failed to store dashboard user message (continuing)", {
+        error: String(error),
+        externalId: userExternalId,
+        threadId,
+      });
+    }
+
+    try {
+      await storeMessage({
         externalId: assistantExternalId,
         channelId: "dashboard",
         channelType: "dashboard",
@@ -460,15 +474,31 @@ async function persistDashboardConversation(params: {
           totalTokens: totalUsage.totalTokens ?? 0,
         },
         model: modelId,
-      }),
-    ]);
+      });
+    } catch (error) {
+      logger.error("Failed to store dashboard assistant message (continuing)", {
+        error: String(error),
+        externalId: assistantExternalId,
+        threadId,
+      });
+    }
 
-    await extractMemories({
-      userMessage,
-      assistantResponse: assistantText,
-      userId,
-      channelType: "dashboard",
-    });
+    try {
+      await extractMemories({
+        userMessage,
+        assistantResponse: assistantText,
+        userId,
+        channelType: "dashboard",
+        sourceMessageId: userMessageId,
+        channelId: "dashboard",
+        threadTs: threadId ?? undefined,
+        displayName: await resolveDashboardDisplayName(userId),
+      });
+    } catch (extractErr: any) {
+      logger.warn("Memory extraction failed (non-fatal)", {
+        error: extractErr?.message || String(extractErr),
+      });
+    }
 
     const traceId = await createConversationTrace({
       sourceType: "interactive",
@@ -499,6 +529,19 @@ async function persistDashboardConversation(params: {
       error: error instanceof Error ? error.stack ?? error.message : String(error),
       threadId,
     });
+  }
+}
+
+async function resolveDashboardDisplayName(userId: string): Promise<string> {
+  try {
+    const [row] = await db
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.slackUserId, userId))
+      .limit(1);
+    return row?.displayName || userId;
+  } catch {
+    return userId;
   }
 }
 
