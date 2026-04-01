@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, count, sql, ilike, and, type SQL } from "drizzle-orm";
-import { entities, entityAliases, memoryEntities, memories, entityTypeEnum } from "@aura/db/schema";
+import { entities, entityAliases, memoryEntities, memories, users, entityTypeEnum } from "@aura/db/schema";
 import type { EntityType } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
@@ -152,7 +152,16 @@ dashboardEntitiesApp.openapi(getEntityRoute, async (c) => {
       .where(eq(memoryEntities.entityId, id))
       .orderBy(desc(memories.createdAt));
 
-    return c.json({ ...entity, aliases, linkedMemories } as any, 200);
+    const relatedUsers: { id: string; slackUserId: string | null; displayName: string }[] = await db
+      .select({
+        id: users.id,
+        slackUserId: users.slackUserId,
+        displayName: users.displayName,
+      })
+      .from(users)
+      .where(eq(users.entityId, id));
+
+    return c.json({ ...entity, aliases, linkedMemories, relatedUsers } as any, 200);
   } catch (error) {
     logger.error("Failed to get entity", { error: String(error) });
     return c.json({ error: "Failed to get entity" }, 500);

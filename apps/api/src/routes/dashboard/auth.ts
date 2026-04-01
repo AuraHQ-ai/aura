@@ -7,6 +7,7 @@ import { errorSchema, createDashboardApp } from "./schemas.js";
 import { SignJWT } from "jose";
 import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import crypto from "node:crypto";
+import { ensureSlackUserEntityLink } from "../../users/entity-link.js";
 
 function getSessionSecret(): Uint8Array {
   const secret = process.env.DASHBOARD_SESSION_SECRET;
@@ -42,6 +43,14 @@ export async function checkUserRole(
 
   if (existing.length > 0) {
     const role = existing[0].role;
+    try {
+      await ensureSlackUserEntityLink({ slackUserId, displayName: name });
+    } catch (error) {
+      logger.warn("Failed to ensure user/entity link during role check", {
+        slackUserId,
+        error: String(error),
+      });
+    }
     if (ALLOWED_ROLES.includes(role)) {
       return { allowed: true, role };
     }
@@ -77,6 +86,14 @@ export async function checkUserRole(
   });
 
   if (bootstrapResult) {
+    try {
+      await ensureSlackUserEntityLink({ slackUserId, displayName: name });
+    } catch (error) {
+      logger.warn("Failed to ensure user/entity link during bootstrap", {
+        slackUserId,
+        error: String(error),
+      });
+    }
     logger.info("Auto-seeded first user as admin", { slackUserId });
     return { allowed: true, role: bootstrapResult, bootstrapped: true };
   }

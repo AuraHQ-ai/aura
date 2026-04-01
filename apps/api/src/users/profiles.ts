@@ -10,6 +10,7 @@ import {
 } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
+import { ensureSlackUserEntityLink } from "./entity-link.js";
 
 /**
  * Get or create a user profile.
@@ -35,6 +36,12 @@ export async function getOrCreateProfile(
         .where(eq(users.slackUserId, slackUserId));
       Object.assign(profile, { timezone });
     }
+    await ensureSlackUserEntityLink({
+      userId: profile.id,
+      slackUserId,
+      displayName,
+      workspaceId: profile.workspaceId ?? "default",
+    });
     return profile;
   }
 
@@ -51,6 +58,12 @@ export async function getOrCreateProfile(
 
   if (result.length > 0) {
     const profile = result[0];
+    await ensureSlackUserEntityLink({
+      userId: profile.id,
+      slackUserId,
+      displayName,
+      workspaceId: profile.workspaceId ?? "default",
+    });
     logger.info("Created new user profile", { slackUserId, displayName });
     return profile;
   }
@@ -61,6 +74,15 @@ export async function getOrCreateProfile(
     .from(users)
     .where(eq(users.slackUserId, slackUserId))
     .limit(1);
+
+  if (concurrentlyCreated) {
+    await ensureSlackUserEntityLink({
+      userId: concurrentlyCreated.id,
+      slackUserId,
+      displayName,
+      workspaceId: concurrentlyCreated.workspaceId ?? "default",
+    });
+  }
 
   return concurrentlyCreated;
 }

@@ -72,7 +72,13 @@ function EntityDetailPage() {
         <Card>
           <CardHeader><CardTitle className="text-sm">Slack User</CardTitle></CardHeader>
           <CardContent>
-            <span className="text-sm font-mono">{entity.slackUserId || "—"}</span>
+            {entity.slackUserId ? (
+              <Link to="/users/$slackUserId" params={{ slackUserId: entity.slackUserId }}>
+                <span className="text-sm font-mono hover:underline">{entity.slackUserId}</span>
+              </Link>
+            ) : (
+              <span className="text-sm font-mono">—</span>
+            )}
           </CardContent>
         </Card>
         <Card>

@@ -19,6 +19,7 @@ const threadLimit = limitArg ? parseInt(limitArg.split("=")[1], 10) : Infinity;
 
 const { db } = await import("../db/client.js");
 const { extractMemories } = await import("../memory/extract.js");
+const { ensureSlackUserEntityLink } = await import("../users/entity-link.js");
 
 type ResultRow = Record<string, unknown>;
 function extractRows(result: unknown): ResultRow[] {
@@ -40,6 +41,13 @@ interface ThreadInfo {
   lastUserId: string;
   messageCount: number;
   firstMessageAt: Date;
+}
+
+interface SlackUserRow {
+  id: string;
+  workspace_id: string;
+  slack_user_id: string;
+  display_name: string;
 }
 
 async function discoverThreads(): Promise<ThreadInfo[]> {
@@ -131,6 +139,46 @@ async function processThread(
 
 async function main() {
   console.log("=== Memory Backfill Script (Thread-Scoped Reconciliation) ===\n");
+
+  console.log("Ensuring person entities exist for Slack users...");
+  const slackUsers = extractRows(
+    await db.execute(sql`
+      SELECT id, workspace_id, slack_user_id, display_name
+      FROM users
+      WHERE slack_user_id IS NOT NULL
+      ORDER BY created_at ASC
+    `),
+  ).map((row) => ({
+    id: String(row.id),
+    workspace_id: String(row.workspace_id),
+    slack_user_id: String(row.slack_user_id),
+    display_name: String(row.display_name),
+  })) as SlackUserRow[];
+
+  let ensuredUserEntityLinks = 0;
+  let failedUserEntityLinks = 0;
+  for (const user of slackUsers) {
+    try {
+      const linked = await ensureSlackUserEntityLink({
+        userId: user.id,
+        slackUserId: user.slack_user_id,
+        displayName: user.display_name,
+        workspaceId: user.workspace_id,
+      });
+      if (linked) ensuredUserEntityLinks++;
+    } catch (error) {
+      failedUserEntityLinks++;
+      console.error(
+        `  ERROR ensuring entity for user ${user.slack_user_id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  console.log(
+    `Ensured links for ${ensuredUserEntityLinks}/${slackUsers.length} Slack users` +
+      (failedUserEntityLinks > 0 ? ` (${failedUserEntityLinks} failures)` : ""),
+  );
 
   const allThreads = await discoverThreads();
   console.log(`Found ${allThreads.length} threads with >= 2 user/assistant messages`);

@@ -6,6 +6,7 @@ import {
   type User,
 } from "@aura/db/schema";
 import { logger } from "./logger.js";
+import { ensureSlackUserEntityLink } from "../users/entity-link.js";
 
 /**
  * Find a user by any address (email, phone, slack ID).
@@ -103,6 +104,15 @@ export async function createPersonWithAddress(
   } catch (error) {
     await db.delete(users).where(eq(users.id, user.id)).catch(() => {});
     throw error;
+  }
+
+  if (channel === "slack") {
+    await ensureSlackUserEntityLink({
+      userId: user.id,
+      slackUserId: normalised,
+      displayName: user.displayName,
+      workspaceId: user.workspaceId ?? "default",
+    });
   }
 
   return user;
