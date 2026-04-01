@@ -602,8 +602,8 @@ async function extractWithReconciliation(
     // Keep memory_entities in sync with updated memory text.
     const extractedEntities = upd.entities ?? [];
     try {
-      await db.delete(memoryEntities).where(eq(memoryEntities.memoryId, memoryId));
       if (extractedEntities.length > 0) {
+        await db.delete(memoryEntities).where(eq(memoryEntities.memoryId, memoryId));
         const resolved = await resolveEntities(extractedEntities, workspaceId, model);
         await linkMemoryEntities(memoryId, resolved);
       }
