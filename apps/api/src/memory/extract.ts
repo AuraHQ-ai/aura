@@ -317,11 +317,17 @@ DO NOT save:
 
 ## Importance Scoring (be strict, use the 1-100 scale)
 
-- **90-100**: Business decisions, org changes, key relationships, strategic context.
-- **70-89**: Product discussions, bugs with impact, personal facts, workflow preferences.
-- **40-69**: Status updates with substance, meeting outcomes.
-- **20-39**: Routine coordination, minor updates.
+- **90-100**: Company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents with lasting impact.
+- **70-89**: Important technical/product decisions, high-impact customer or org context, durable people/ownership facts, non-trivial constraints.
+- **40-69**: Useful but replaceable context (project updates, meeting outcomes, tactical plans, substantial status).
+- **20-39**: Routine coordination, recurring operational updates, minor progress check-ins.
 - **1-19**: Operational noise, status checks, agent actions, acknowledgments -- these will be DISCARDED.
+
+Aggressive scoring guidance:
+- Default conservative: if unsure, score LOWER.
+- Routine sales motion chatter (new offer, pricing discussion, pipeline activity, "need more sales", generic MRR/revenue commentary) should usually be 20-45 unless it contains an explicit strategic decision, policy, or durable commitment.
+- Generic quarter references ("Q1 was strong", "Q2 is hard") without a concrete decision or lasting constraint should be <=40.
+- Explicit OKRs, strategy choices, hard rules, governance decisions, and durable operating principles should be >=75, and often >=85 when they affect planning/execution across teams.
 
 ## Rules
 
@@ -400,7 +406,18 @@ Types of memories:
 
 Categories: semantic (durable facts), episodic (time-bound events), procedural (how-to knowledge).
 
-Importance (be strict): 90-100: business decisions, org changes. 70-89: product discussions, personal facts. 40-69: substantial updates. 20-39: routine. 1-19: noise (will be DISCARDED).
+Importance (be strict):
+- 90-100: company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents.
+- 70-89: important technical/product decisions, high-impact org/customer context, durable people facts.
+- 40-69: useful but replaceable tactical updates and meeting outcomes.
+- 20-39: routine operational updates and minor coordination.
+- 1-19: noise (will be DISCARDED).
+
+Aggressive scoring guidance:
+- Default conservative: if unsure, score LOWER.
+- Routine sales motion chatter (new offer, pricing discussion, pipeline activity, generic MRR/revenue commentary) should usually be 20-45 unless there is an explicit strategic decision or durable constraint.
+- Generic quarter references ("Q1 was strong", "Q2 is hard") without explicit decisions should be <=40.
+- OKRs, strategy, and important operating rules should score >=75 (often >=85 if broadly impactful).
 
 ## What NOT to extract
 - Aura's own actions ("Aura ran a query", "Aura checked the deploy")

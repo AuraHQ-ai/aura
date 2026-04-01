@@ -66,19 +66,23 @@ dashboardEntitiesApp.openapi(listEntitiesRoute, async (c) => {
           metadata: entities.metadata,
           createdAt: entities.createdAt,
           updatedAt: entities.updatedAt,
-          memoryCount: sql<number>`(
-            SELECT count(*)::int
-            FROM ${memoryEntities} me
-            WHERE me.entity_id = ${entities.id}
-          )`.mapWith(Number),
-          aliasCount: sql<number>`(
-            SELECT count(*)::int
-            FROM ${entityAliases} ea
-            WHERE ea.entity_id = ${entities.id}
-          )`.mapWith(Number),
+          memoryCount: sql<number>`count(distinct ${memoryEntities.memoryId})::int`.mapWith(Number),
+          aliasCount: sql<number>`count(distinct ${entityAliases.id})::int`.mapWith(Number),
         })
         .from(entities)
+        .leftJoin(memoryEntities, eq(memoryEntities.entityId, entities.id))
+        .leftJoin(entityAliases, eq(entityAliases.entityId, entities.id))
         .where(where)
+        .groupBy(
+          entities.id,
+          entities.type,
+          entities.canonicalName,
+          entities.summary,
+          entities.slackUserId,
+          entities.metadata,
+          entities.createdAt,
+          entities.updatedAt,
+        )
         .orderBy(desc(entities.updatedAt))
         .limit(limit)
         .offset(offset),

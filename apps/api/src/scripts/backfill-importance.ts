@@ -34,13 +34,18 @@ const classificationSchema = z.object({
 const SYSTEM_PROMPT = `Rate each memory's importance from 1 to 100. How valuable would it be to recall this memory months from now?
 
 Score anchors:
-- 90-100: Business decisions, org changes, key relationships, architecture decisions, product strategy, hiring, customer-impacting incidents
-- 70-89: Product discussions, bug reports with real impact, personal facts about team members, strategy context, technical decisions
-- 40-69: Status updates with substance, meeting notes, feature discussions, general work context, process documentation
-- 20-39: Routine coordination, minor updates, ephemeral context, progress check-ins
+- 90-100: Company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents with lasting impact
+- 70-89: Important technical/product decisions, high-impact customer or org context, durable people/ownership facts, non-trivial constraints
+- 40-69: Useful but replaceable context (project updates, meeting outcomes, tactical plans, substantial status)
+- 20-39: Routine coordination, recurring operational updates, minor progress check-ins
 - 1-19: Operational noise ("ok thanks", "let me check"), agent self-actions, test messages, trivial scheduling
 
-Be generous — if a memory would be useful to recall in 3 months, score it 70+.
+Aggressive scoring rules:
+- Default conservative: if unsure, score LOWER.
+- Routine sales motion chatter (new offer, pricing discussion, pipeline activity, "need more sales", generic MRR/revenue commentary) should usually be 20-45 unless it contains an explicit strategic decision, policy, or durable commitment.
+- Generic quarter references ("Q1 was strong", "Q2 is hard") without a concrete decision or lasting constraint should be <=40.
+- Explicit OKRs, strategy choices, hard rules, governance decisions, and durable operating principles should be >=75, and often >=85 when they affect planning/execution across teams.
+
 Return the memory id and its importance score.`;
 
 type ResultRow = Record<string, any>;
