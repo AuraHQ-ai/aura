@@ -622,12 +622,7 @@ export async function resolveEntities(
       if (alias.includes(" ")) return true;
 
       const aliasToken = normalizeToken(alias);
-      // For person entities, only keep standalone first-name aliases when unique.
-      if (aliasToken === firstName) {
-        return !ambiguousPersonTokens.has(aliasToken);
-      }
-
-      // Drop single-token person aliases only when ambiguous.
+      // Drop single-token person aliases (including first names) when ambiguous.
       return !ambiguousPersonTokens.has(aliasToken);
     });
     const key = `${item.type}:${normalizedName.toLowerCase()}`;
