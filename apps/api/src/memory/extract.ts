@@ -480,6 +480,7 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
       error: String(error).slice(0, 200),
       userId: context.userId,
     });
+    throw error;
   }
 }
 
@@ -570,7 +571,14 @@ async function extractWithReconciliation(
   for (const del of deletes) {
     const memoryId = refToId.get(del.memoryRef);
     if (memoryId) {
-      await archiveMemory(memoryId, del.reason);
+      try {
+        await archiveMemory(memoryId, del.reason);
+      } catch {
+        logger.warn("Skipping delete because archive failed", {
+          memoryId,
+          ref: del.memoryRef,
+        });
+      }
     } else {
       logger.warn("Delete op referenced unknown memory", { ref: del.memoryRef });
     }

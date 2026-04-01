@@ -840,16 +840,22 @@ async function runBackgroundTasks(params: {
     // Extract memories — thread-scoped reconciliation when threadTs is available,
     // falls back to single-exchange extraction with tool context summary otherwise
     const toolContextSummary = buildToolContextForExtraction(toolCalls);
-    await extractMemories({
-      userMessage: context.text,
-      assistantResponse: response + toolContextSummary,
-      userId: context.userId,
-      channelType: context.channelType,
-      sourceMessageId: userMessageId || undefined,
-      displayName,
-      channelId: context.channelId,
-      threadTs: context.threadTs,
-    });
+    try {
+      await extractMemories({
+        userMessage: context.text,
+        assistantResponse: response + toolContextSummary,
+        userId: context.userId,
+        channelType: context.channelType,
+        sourceMessageId: userMessageId || undefined,
+        displayName,
+        channelId: context.channelId,
+        threadTs: context.threadTs,
+      });
+    } catch (extractErr: any) {
+      logger.warn("Memory extraction failed (non-fatal)", {
+        error: extractErr?.message || String(extractErr),
+      });
+    }
 
     // Record interaction and potentially update profile
     await recordInteraction(context.userId);

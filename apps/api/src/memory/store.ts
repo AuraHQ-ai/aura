@@ -654,6 +654,7 @@ export async function archiveMemory(
       reason,
       error: String(error),
     });
+    throw error;
   }
 }
 

@@ -483,16 +483,22 @@ async function persistDashboardConversation(params: {
       });
     }
 
-    await extractMemories({
-      userMessage,
-      assistantResponse: assistantText,
-      userId,
-      channelType: "dashboard",
-      sourceMessageId: userMessageId,
-      channelId: "dashboard",
-      threadTs: threadId ?? undefined,
-      displayName: await resolveDashboardDisplayName(userId),
-    });
+    try {
+      await extractMemories({
+        userMessage,
+        assistantResponse: assistantText,
+        userId,
+        channelType: "dashboard",
+        sourceMessageId: userMessageId,
+        channelId: "dashboard",
+        threadTs: threadId ?? undefined,
+        displayName: await resolveDashboardDisplayName(userId),
+      });
+    } catch (extractErr: any) {
+      logger.warn("Memory extraction failed (non-fatal)", {
+        error: extractErr?.message || String(extractErr),
+      });
+    }
 
     const traceId = await createConversationTrace({
       sourceType: "interactive",
