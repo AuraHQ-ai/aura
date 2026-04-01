@@ -630,7 +630,7 @@ export async function resolveEntities(
       // Drop single-token person aliases only when ambiguous.
       return !ambiguousPersonTokens.has(aliasToken);
     });
-    const key = `${item.type}:${item.name.toLowerCase()}`;
+    const key = `${item.type}:${normalizedName.toLowerCase()}`;
     const existing = bestByKey.get(key);
     if (!existing) {
       bestByKey.set(key, { ...item, aliases: cleanedAliases });
