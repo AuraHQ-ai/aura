@@ -59,11 +59,14 @@ For each entity, also return aliases — alternative names for THE EXACT SAME en
 - For companies: abbreviations, stock tickers, common short forms. E.g. "RealAdvisor" → ["RA"]
 - For technologies: common abbreviations. E.g. "PostgreSQL" → ["Postgres", "PG"]
 - For others: any short form or alternative reference used in conversation that means the same thing.
+- Never output aliases that are just linguistic particles or stopwords (e.g. "de", "da", "del", "la", "le", "van", "von").
+- Avoid 1-2 character aliases unless they are established acronyms/tickers/handles (e.g. "RA", "@jd").
 
 Typing rules:
 - Slack channel names (e.g. #bugs, #general) are type "channel"
 - npm packages, libraries, frameworks, programming languages are type "technology"
 - Do not classify abstract concepts, metric labels, or KPI names as person entities
+- For person entities, prefer full names. Avoid creating a new person from a standalone first name unless the context uniquely identifies that exact person.
 
 DO NOT extract as entities:
 - Metric names, KPI labels, or analytics segments (e.g. "90-day active users", "2nd-year churners", "MRR", "churn rate")
