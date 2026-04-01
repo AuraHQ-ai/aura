@@ -7,6 +7,7 @@
  */
 
 import { backfillMessageEmbeddings, backfillMemoryEmbeddings, backfillNoteEmbeddings } from "../memory/store.js";
+import { createProgress, type ProgressTracker } from "../lib/progress.js";
 
 const BATCH_SIZE = parseInt(process.env.BACKFILL_BATCH_SIZE || "50", 10);
 const args = process.argv.slice(2);
@@ -16,22 +17,42 @@ const doNotes = args.includes("--notes") || args.includes("--all") || args.lengt
 
 console.log(`Backfill config: batch=${BATCH_SIZE}, messages=${doMessages}, memories=${doMemories}, notes=${doNotes}`);
 
+function makeProgressCb(label: string): { cb: (completed: number, total: number) => void; getTracker: () => ProgressTracker | null } {
+  let tracker: ProgressTracker | null = null;
+  let lastCompleted = 0;
+  return {
+    cb: (completed, total) => {
+      if (!tracker) tracker = createProgress(total, { label, logEvery: BATCH_SIZE });
+      const delta = completed - lastCompleted;
+      if (delta > 0) tracker.tick(delta);
+      lastCompleted = completed;
+    },
+    getTracker: () => tracker,
+  };
+}
+
 try {
   if (doMessages) {
     console.log("\n--- Backfilling message embeddings ---");
-    const msgCount = await backfillMessageEmbeddings(BATCH_SIZE);
+    const p = makeProgressCb("messages");
+    const msgCount = await backfillMessageEmbeddings(BATCH_SIZE, p.cb);
+    p.getTracker()?.done();
     console.log(`Messages done: embedded ${msgCount} rows.`);
   }
 
   if (doMemories) {
     console.log("\n--- Backfilling memory embeddings ---");
-    const memCount = await backfillMemoryEmbeddings(BATCH_SIZE);
+    const p = makeProgressCb("memories");
+    const memCount = await backfillMemoryEmbeddings(BATCH_SIZE, p.cb);
+    p.getTracker()?.done();
     console.log(`Memories done: embedded ${memCount} rows.`);
   }
 
   if (doNotes) {
     console.log("\n--- Backfilling note embeddings ---");
-    const noteCount = await backfillNoteEmbeddings(BATCH_SIZE);
+    const p = makeProgressCb("notes");
+    const noteCount = await backfillNoteEmbeddings(BATCH_SIZE, p.cb);
+    p.getTracker()?.done();
     console.log(`Notes done: embedded ${noteCount} rows.`);
   }
 

@@ -414,6 +414,13 @@
       "when": 1775472000000,
       "tag": "0058_memory_taxonomy_simplification",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1775558400000,
+      "tag": "0059_drop_entities_description",
+      "breakpoints": true
     }
   ]
 }

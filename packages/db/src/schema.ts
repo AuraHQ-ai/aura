@@ -193,7 +193,6 @@ export const entities = pgTable(
     workspaceId: workspaceId().references(() => workspaces.id),
     type: entityTypeEnum("type").notNull(),
     canonicalName: text("canonical_name").notNull(),
-    description: text("description"),
     slackUserId: text("slack_user_id"),
     summary: text("summary"),
     summaryUpdatedAt: timestamptz("summary_updated_at"),

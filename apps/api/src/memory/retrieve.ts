@@ -210,11 +210,13 @@ async function fetchEntityMatchedMemories(
 
     const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
 
+    const entityIdList = sql.join(entityIds.map(id => sql`${id}`), sql`, `);
+
     const memoryResult = await db.execute(sql`
       SELECT DISTINCT m.*
       FROM memories m
       JOIN memory_entities me ON m.id = me.memory_id
-      WHERE me.entity_id = ANY(${entityIds})
+      WHERE me.entity_id IN (${entityIdList})
         AND m.relevance_score >= ${minRelevanceScore}
         AND m.status IN ('current', 'disputed')
         ${privacyFilter}
@@ -227,12 +229,13 @@ async function fetchEntityMatchedMemories(
     const memoryIds = rows.map((r) => r.id as string);
 
     // Restrict entity map to only the candidate memory IDs to avoid unbounded result sets
+    const memoryIdList = sql.join(memoryIds.map(id => sql`${id}`), sql`, `);
     const entityMapResult = memoryIds.length > 0
       ? await db.execute(sql`
           SELECT me.memory_id, me.entity_id
           FROM memory_entities me
-          WHERE me.entity_id = ANY(${entityIds})
-            AND me.memory_id = ANY(${memoryIds})
+          WHERE me.entity_id IN (${entityIdList})
+            AND me.memory_id IN (${memoryIdList})
         `)
       : [];
     const entityMapRows = ((entityMapResult as any).rows ?? entityMapResult) as Array<Record<string, any>>;

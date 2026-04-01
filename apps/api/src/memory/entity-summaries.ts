@@ -162,7 +162,7 @@ export async function generateEntitySummary(
  * then by memory count DESC within each type (most-referenced entities first).
  */
 export async function regenerateStaleSummaries(
-  opts?: { forceAll?: boolean; concurrency?: number },
+  opts?: { forceAll?: boolean; concurrency?: number; onProgress?: (completed: number, total: number) => void },
 ): Promise<{ updated: number; skipped: number }> {
   const forceAll = opts?.forceAll ?? false;
 
@@ -235,6 +235,7 @@ export async function regenerateStaleSummaries(
         );
         skipped++;
       }
+      opts?.onProgress?.(updated + skipped, total);
     }
   }
 

@@ -73,7 +73,7 @@ export async function enrichEntityAliases(workspaceId: string): Promise<number> 
       SELECT slack_user_id, display_name
       FROM users
       WHERE workspace_id = ${workspaceId}
-        AND slack_user_id = ANY(${slackUserIds})
+        AND slack_user_id IN (${sql.join(slackUserIds.map(id => sql`${id}`), sql`, `)})
     `)) as any).rows as Array<{ slack_user_id: string; display_name: string }>;
     for (const row of userRows) {
       slackDisplayNames.set(row.slack_user_id, row.display_name);
@@ -133,6 +133,8 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
   const safeLoserIds = loserIds.filter((id) => id !== winnerId);
   if (safeLoserIds.length === 0) return;
 
+  const loserIdList = sql.join(safeLoserIds.map(id => sql`${id}`), sql`, `);
+
   await db.transaction(async (tx) => {
     // 1. Repoint memory_entities from losers → winner (insert-then-delete
     //    to avoid duplicate PK when multiple losers share a memory_id;
@@ -141,7 +143,7 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
       INSERT INTO memory_entities (memory_id, entity_id, role)
       SELECT DISTINCT ON (memory_id) memory_id, ${winnerId}, role
       FROM memory_entities
-      WHERE entity_id = ANY(${safeLoserIds})
+      WHERE entity_id IN (${loserIdList})
       ORDER BY memory_id, CASE role
         WHEN 'subject' THEN 0
         WHEN 'object' THEN 1
@@ -161,7 +163,7 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
     `);
     await tx.execute(sql`
       DELETE FROM memory_entities
-      WHERE entity_id = ANY(${safeLoserIds})
+      WHERE entity_id IN (${loserIdList})
     `);
 
     // 2. Move aliases from losers → winner (insert-then-delete
@@ -171,25 +173,25 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
       INSERT INTO entity_aliases (entity_id, alias, source)
       SELECT DISTINCT ON (alias_lower) ${winnerId}, alias, source
       FROM entity_aliases
-      WHERE entity_id = ANY(${safeLoserIds})
+      WHERE entity_id IN (${loserIdList})
       ON CONFLICT DO NOTHING
     `);
     await tx.execute(sql`
       DELETE FROM entity_aliases
-      WHERE entity_id = ANY(${safeLoserIds})
+      WHERE entity_id IN (${loserIdList})
     `);
 
     // 3. Repoint users.entity_id from losers → winner (no CASCADE on this FK)
     await tx.execute(sql`
       UPDATE users
       SET entity_id = ${winnerId}
-      WHERE entity_id = ANY(${safeLoserIds})
+      WHERE entity_id IN (${loserIdList})
     `);
 
     // 4. Delete loser entities
     await tx.execute(sql`
       DELETE FROM entities
-      WHERE id = ANY(${safeLoserIds})
+      WHERE id IN (${loserIdList})
     `);
   });
 

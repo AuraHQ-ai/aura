@@ -167,7 +167,7 @@ dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
         role: memoryEntities.role,
         canonicalName: entities.canonicalName,
         type: entities.type,
-        description: entities.description,
+        summary: entities.summary,
       })
       .from(memoryEntities)
       .innerJoin(entities, eq(entities.id, memoryEntities.entityId))

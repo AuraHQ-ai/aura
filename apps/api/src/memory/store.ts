@@ -132,8 +132,22 @@ export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { 
  * Backfill embeddings for existing messages that don't have them.
  * Processes in batches to avoid overwhelming the embedding API.
  */
-export async function backfillMessageEmbeddings(batchSize = 50): Promise<number> {
+export async function backfillMessageEmbeddings(
+  batchSize = 50,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<number> {
   let totalEmbedded = 0;
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(messages)
+    .where(
+      and(
+        isNull(messages.embedding),
+        sql`${messages.content} IS NOT NULL AND length(${messages.content}) > 0`,
+      ),
+    );
+  const total = count;
 
   try {
     while (true) {
@@ -161,6 +175,7 @@ export async function backfillMessageEmbeddings(batchSize = 50): Promise<number>
       }
 
       totalEmbedded += batch.length;
+      onProgress?.(totalEmbedded, total);
       logger.info(`Backfilled ${totalEmbedded} message embeddings so far`);
     }
 
@@ -179,8 +194,22 @@ export async function backfillMessageEmbeddings(batchSize = 50): Promise<number>
  * Backfill embeddings for existing memories that don't have them.
  * Processes in batches to avoid overwhelming the embedding API.
  */
-export async function backfillMemoryEmbeddings(batchSize = 50): Promise<number> {
+export async function backfillMemoryEmbeddings(
+  batchSize = 50,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<number> {
   let totalEmbedded = 0;
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(memories)
+    .where(
+      and(
+        isNull(memories.embedding),
+        sql`${memories.content} IS NOT NULL AND length(${memories.content}) > 0`,
+      ),
+    );
+  const total = count;
 
   try {
     while (true) {
@@ -208,6 +237,7 @@ export async function backfillMemoryEmbeddings(batchSize = 50): Promise<number> 
       }
 
       totalEmbedded += batch.length;
+      onProgress?.(totalEmbedded, total);
       logger.info(`Backfilled ${totalEmbedded} memory embeddings so far`);
     }
 
@@ -226,8 +256,22 @@ export async function backfillMemoryEmbeddings(batchSize = 50): Promise<number> 
  * Backfill embeddings for existing notes that don't have them.
  * Processes in batches to avoid overwhelming the embedding API.
  */
-export async function backfillNoteEmbeddings(batchSize = 50): Promise<number> {
+export async function backfillNoteEmbeddings(
+  batchSize = 50,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<number> {
   let totalEmbedded = 0;
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(notes)
+    .where(
+      and(
+        isNull(notes.embedding),
+        sql`${notes.content} IS NOT NULL AND length(${notes.content}) > 0`,
+      ),
+    );
+  const total = count;
 
   try {
     while (true) {
@@ -255,6 +299,7 @@ export async function backfillNoteEmbeddings(batchSize = 50): Promise<number> {
       }
 
       totalEmbedded += batch.length;
+      onProgress?.(totalEmbedded, total);
       logger.info(`Backfilled ${totalEmbedded} note embeddings so far`);
     }
 

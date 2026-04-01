@@ -3,6 +3,7 @@ import { resolve } from "path";
 import { fileURLToPath } from "url";
 import { sql } from "drizzle-orm";
 import { pool } from "../lib/pool.js";
+import { createProgress } from "../lib/progress.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -92,21 +93,15 @@ async function discoverThreads(): Promise<ThreadInfo[]> {
 
 // ── Process a single thread ─────────────────────────────────────────────────
 
-let processed = 0;
 let errors = 0;
 
 async function processThread(
   thread: ThreadInfo,
-  idx: number,
-  total: number,
+  progress: ReturnType<typeof createProgress>,
 ): Promise<void> {
   try {
     if (dryRun) {
-      console.log(
-        `[${idx + 1}/${total}] DRY RUN: thread ${thread.channelId}/${thread.threadTs} ` +
-          `(${thread.messageCount} msgs, last user: "${thread.lastUserMessage.slice(0, 80)}...")`,
-      );
-      processed++;
+      progress.tick();
       return;
     }
 
@@ -121,14 +116,12 @@ async function processThread(
       createdAt: thread.firstMessageAt,
     });
 
-    processed++;
-    if (processed % 10 === 0 || idx === total - 1) {
-      console.log(`[${idx + 1}/${total}] Processed ${processed} threads (${errors} errors)`);
-    }
+    progress.tick();
   } catch (err) {
     errors++;
+    progress.tick();
     console.error(
-      `[${idx + 1}/${total}] ERROR on thread ${thread.channelId}/${thread.threadTs}: ` +
+      `  ERROR on thread ${thread.channelId}/${thread.threadTs}: ` +
         `${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -154,11 +147,10 @@ async function main() {
 
   console.log(`Concurrency: ${CONCURRENCY}\n`);
 
-  const startTime = Date.now();
+  const progress = createProgress(threads.length, { label: "threads", logEvery: 5 });
 
-  const indexed = threads.map((t, i) => ({ thread: t, idx: i }));
-  await pool(indexed, CONCURRENCY, async ({ thread, idx }) => {
-    await processThread(thread, idx, threads.length);
+  await pool(threads, CONCURRENCY, async (thread) => {
+    await processThread(thread, progress);
   });
 
   // Fix entity timestamps: set created_at to earliest linked memory, updated_at to latest
@@ -182,10 +174,8 @@ async function main() {
   const fixedCount = (fixResult as any).rowCount ?? "?";
   console.log(`Updated timestamps for ${fixedCount} entities`);
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\n=== Summary ===`);
-  console.log(`Elapsed: ${elapsed}s`);
-  console.log(`Threads processed: ${processed}`);
+  progress.done();
   console.log(`Errors: ${errors}`);
 }
 

@@ -10,6 +10,7 @@ import {
   ENTITY_EXTRACTION_RULES,
 } from "../memory/entity-extraction-schema.js";
 import { pool } from "../lib/pool.js";
+import { createProgress } from "../lib/progress.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -54,8 +55,7 @@ function extractRows(result: unknown): ResultRow[] {
 
 async function processBatch(
   batch: Array<{ id: string; content: string }>,
-  batchIdx: number,
-  totalBatches: number,
+  progress: ReturnType<typeof createProgress>,
 ): Promise<{ newEntities: number; linked: number; errors: number }> {
   try {
     const memoriesPayload = batch.map((m) => ({
@@ -71,9 +71,7 @@ async function processBatch(
     });
 
     if (!result) {
-      console.warn(
-        `[batch ${batchIdx + 1}/${totalBatches}] LLM returned no output, skipping`,
-      );
+      progress.tick(batch.length);
       return { newEntities: 0, linked: 0, errors: 1 };
     }
 
@@ -105,15 +103,12 @@ async function processBatch(
       }
     }
 
-    console.log(
-      `[batch ${batchIdx + 1}/${totalBatches}] processed ${batch.length} memories, ` +
-        `linked ${batchLinked} memory_entities`,
-    );
-
+    progress.tick(batch.length);
     return { newEntities: 0, linked: batchLinked, errors: 0 };
   } catch (err) {
+    progress.tick(batch.length);
     console.error(
-      `[batch ${batchIdx + 1}/${totalBatches}] ERROR: ${err instanceof Error ? err.message : String(err)}`,
+      `  ERROR: ${err instanceof Error ? err.message : String(err)}`,
     );
     return { newEntities: 0, linked: 0, errors: 1 };
   }
@@ -153,17 +148,17 @@ async function main() {
 
   let totalLinked = 0;
   let totalErrors = 0;
-  const startTime = Date.now();
+
+  const progress = createProgress(unlinked.length, { label: "memories", logEvery: BATCH_SIZE });
 
   await pool(batches, CONCURRENCY, async (batch) => {
-    const result = await processBatch(batch.items, batch.idx, totalBatches);
+    const result = await processBatch(batch.items, progress);
     totalLinked += result.linked;
     totalErrors += result.errors;
   });
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\n=== Summary ===`);
-  console.log(`Elapsed: ${elapsed}s`);
+  progress.done();
   console.log(`Memories processed: ${unlinked.length}`);
   console.log(`Memory-entity links created: ${totalLinked}`);
   console.log(`Batches with errors: ${totalErrors}`);

@@ -29,7 +29,6 @@ interface EntityDetail {
   id: string;
   type: string;
   canonicalName: string;
-  description: string | null;
   slackUserId: string | null;
   summary: string | null;
   summaryUpdatedAt: string | null;
@@ -65,9 +64,9 @@ function EntityDetailPage() {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <CardHeader><CardTitle className="text-sm">Description</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm">Summary</CardTitle></CardHeader>
           <CardContent>
-            <span className="text-sm">{entity.description || "—"}</span>
+            <span className="text-sm">{entity.summary || "No summary generated yet"}</span>
           </CardContent>
         </Card>
         <Card>
@@ -89,24 +88,6 @@ function EntityDetailPage() {
           </CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm">Summary</CardTitle>
-            {entity.summaryUpdatedAt && (
-              <span className="text-xs text-muted-foreground">
-                Updated {formatDate(entity.summaryUpdatedAt)}
-              </span>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">
-            {entity.summary || "No summary generated yet"}
-          </p>
-        </CardContent>
-      </Card>
 
       {entity.aliases.length > 0 && (
         <Card>

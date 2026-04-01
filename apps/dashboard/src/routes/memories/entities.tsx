@@ -15,7 +15,7 @@ interface Entity {
   id: string;
   type: string;
   canonicalName: string;
-  description: string | null;
+  summary: string | null;
   slackUserId: string | null;
   memoryCount: number;
   aliasCount: number;
@@ -102,7 +102,7 @@ function EntitiesPage() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead className="w-[90px]">Type</TableHead>
-              <TableHead>Description</TableHead>
+              <TableHead>Summary</TableHead>
               <TableHead className="w-[90px]">Memories</TableHead>
               <TableHead className="w-[80px]">Aliases</TableHead>
               <TableHead className="w-[160px]">Updated</TableHead>
@@ -128,7 +128,7 @@ function EntitiesPage() {
                   </TableCell>
                   <TableCell><Badge variant="secondary">{entity.type}</Badge></TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {entity.description ? truncate(entity.description, 60) : "—"}
+                    {entity.summary ? truncate(entity.summary, 90) : "—"}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{entity.memoryCount}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{entity.aliasCount}</TableCell>

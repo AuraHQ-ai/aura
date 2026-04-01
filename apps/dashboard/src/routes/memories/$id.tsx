@@ -16,7 +16,7 @@ interface LinkedEntity {
   role: string | null;
   canonicalName: string;
   type: string;
-  description: string | null;
+  summary: string | null;
 }
 
 interface MemoryDetail {
@@ -250,7 +250,7 @@ function MemoryDetailPage() {
                   <TableHead>Name</TableHead>
                   <TableHead className="w-[90px]">Type</TableHead>
                   <TableHead className="w-[80px]">Role</TableHead>
-                  <TableHead>Description</TableHead>
+                  <TableHead>Summary</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -264,7 +264,7 @@ function MemoryDetailPage() {
                     <TableCell><Badge variant="secondary">{e.type}</Badge></TableCell>
                     <TableCell className="text-sm text-muted-foreground">{e.role ?? "—"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {e.description ? truncate(e.description, 60) : "—"}
+                      {e.summary ? truncate(e.summary, 90) : "—"}
                     </TableCell>
                   </TableRow>
                 ))}

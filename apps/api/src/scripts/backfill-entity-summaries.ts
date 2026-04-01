@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import { resolve } from "path";
 import { fileURLToPath } from "url";
+import { createProgress, type ProgressTracker } from "../lib/progress.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -15,13 +16,19 @@ const { regenerateStaleSummaries } = await import(
 
 async function main() {
   console.log("=== Entity Summary Backfill ===\n");
-  const start = Date.now();
 
-  const result = await regenerateStaleSummaries({ forceAll: true });
+  let progress: ProgressTracker | null = null;
 
-  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+  const result = await regenerateStaleSummaries({
+    forceAll: true,
+    onProgress: (_completed, total) => {
+      if (!progress) progress = createProgress(total, { label: "entities", logEvery: 5 });
+      progress.tick();
+    },
+  });
+
   console.log(`\n=== Summary ===`);
-  console.log(`Elapsed: ${elapsed}s`);
+  (progress as ProgressTracker | null)?.done();
   console.log(`Updated: ${result.updated}`);
   console.log(`Skipped: ${result.skipped}`);
 }

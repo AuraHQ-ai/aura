@@ -7,6 +7,7 @@ import { z } from "zod";
 import { importanceToRelevance } from "../memory/importance.js";
 import { DECAY_FACTOR } from "../memory/consolidate.js";
 import { pool } from "../lib/pool.js";
+import { createProgress } from "../lib/progress.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -50,8 +51,7 @@ function extractRows(result: unknown): ResultRow[] {
 
 async function processBatch(
   batch: Array<{ id: string; content: string; created_at: string }>,
-  batchIdx: number,
-  totalBatches: number,
+  progress: ReturnType<typeof createProgress>,
 ): Promise<{ classified: number; errors: number }> {
   try {
     const payload = batch.map((m) => ({ id: m.id, content: m.content }));
@@ -64,7 +64,7 @@ async function processBatch(
     });
 
     if (!result) {
-      console.warn(`[batch ${batchIdx + 1}/${totalBatches}] LLM returned no output`);
+      progress.tick(batch.length);
       return { classified: 0, errors: 1 };
     }
 
@@ -88,13 +88,12 @@ async function processBatch(
       classified++;
     }
 
-    console.log(
-      `[batch ${batchIdx + 1}/${totalBatches}] classified ${classified} memories`,
-    );
+    progress.tick(batch.length);
     return { classified, errors: 0 };
   } catch (err) {
+    progress.tick(batch.length);
     console.error(
-      `[batch ${batchIdx + 1}/${totalBatches}] ERROR: ${err instanceof Error ? err.message : String(err)}`,
+      `  ERROR: ${err instanceof Error ? err.message : String(err)}`,
     );
     return { classified: 0, errors: 1 };
   }
@@ -134,15 +133,14 @@ async function main() {
 
   let totalClassified = 0;
   let totalErrors = 0;
-  const startTime = Date.now();
+
+  const progress = createProgress(allMemories.length, { label: "memories", logEvery: BATCH_SIZE });
 
   await pool(batches, CONCURRENCY, async (batch) => {
-    const result = await processBatch(batch.items, batch.idx, totalBatches);
+    const result = await processBatch(batch.items, progress);
     totalClassified += result.classified;
     totalErrors += result.errors;
   });
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   const stats = extractRows(
     await db.execute(sql`
@@ -165,7 +163,7 @@ async function main() {
   );
 
   console.log(`\n=== Summary ===`);
-  console.log(`Elapsed: ${elapsed}s`);
+  progress.done();
   console.log(`Classified: ${totalClassified}`);
   console.log(`Batches with errors: ${totalErrors}`);
   console.log(`\nDistribution:`);

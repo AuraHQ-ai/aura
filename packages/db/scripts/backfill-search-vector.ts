@@ -47,8 +47,22 @@ async function run() {
   const BATCH_SIZE = 500;
   let totalUpdated = 0;
 
+  const [{ nullCount }] = await sql`SELECT count(*)::int AS "nullCount" FROM memories WHERE search_vector IS NULL`;
+  const toBackfill = nullCount as number;
+  const startTime = Date.now();
+
+  function formatDuration(ms: number): string {
+    const totalSec = Math.round(ms / 1000);
+    if (totalSec < 60) return `${totalSec}s`;
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    if (min < 60) return `${min}m ${sec}s`;
+    const hrs = Math.floor(min / 60);
+    return `${hrs}h ${min % 60}m ${sec}s`;
+  }
+
   while (true) {
-    const result = await sql`
+    await sql`
       UPDATE memories
       SET search_vector = to_tsvector('english', coalesce(content, ''))
       WHERE id IN (
@@ -57,17 +71,22 @@ async function run() {
         LIMIT ${BATCH_SIZE}
       )
     `;
-    const updated = result.length !== undefined ? result.length : (result as any).count ?? 0;
 
-    // neon() returns rows for SELECT, but for UPDATE we check rowCount
-    // If no rows matched, we're done
     const batchResult = await sql`
       SELECT count(*)::int AS remaining FROM memories WHERE search_vector IS NULL
     `;
-    const remaining = batchResult[0].remaining;
-    totalUpdated = count - remaining;
+    const remaining = batchResult[0].remaining as number;
+    totalUpdated = toBackfill - remaining;
 
-    console.log(`  Updated batch → ${totalUpdated}/${count} done, ${remaining} remaining`);
+    const elapsed = Date.now() - startTime;
+    const pct = toBackfill > 0 ? ((totalUpdated / toBackfill) * 100).toFixed(1) : "0.0";
+    let eta = "—";
+    if (totalUpdated > 0 && remaining > 0) {
+      eta = formatDuration((elapsed / totalUpdated) * remaining);
+    }
+    console.log(
+      `  [${totalUpdated}/${toBackfill}] ${pct}% | elapsed ${formatDuration(elapsed)} | ETA ${eta}`,
+    );
 
     if (remaining === 0) break;
   }
