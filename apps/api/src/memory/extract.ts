@@ -16,8 +16,8 @@ import {
 } from "./entity-extraction-schema.js";
 import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importance.js";
 import { db } from "../db/client.js";
-import { users } from "@aura/db/schema";
-import { inArray } from "drizzle-orm";
+import { users, memoryEntities } from "@aura/db/schema";
+import { inArray, eq } from "drizzle-orm";
 import type { NewMemory, Memory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
@@ -356,6 +356,7 @@ const updateOperationSchema = z.object({
   memoryRef: z.string().describe("Reference ID from existing memories, e.g. M1, M2"),
   content: z.string().describe("Updated content for this memory"),
   importance: z.number().int().min(1).max(100).optional(),
+  entities: z.array(extractedEntitySchema).optional().default([]),
 });
 
 const deleteOperationSchema = z.object({
@@ -412,7 +413,7 @@ Importance (be strict): 90-100: business decisions, org changes. 70-89: product 
 - Be concise — one clear sentence per memory.
 - ALWAYS use the person's real name in memory content (e.g. "Joan Rodriguez prefers..."), NEVER raw Slack user IDs (e.g. "U0678NQJ2 prefers..."). The thread context shows names — use them.
 - Only mark shareable=true if the user explicitly asked Aura to tell someone something.
-- For create operations, include entity extraction.
+- For create and update operations, include entity extraction that matches the final memory content.
 
 ${ENTITY_EXTRACTION_RULES}`;
 
@@ -572,6 +573,22 @@ async function extractWithReconciliation(
       logger.warn("Failed to embed updated memory content", { ref: upd.memoryRef });
     }
     await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined);
+
+    // Keep memory_entities in sync with updated memory text.
+    const extractedEntities = upd.entities ?? [];
+    try {
+      await db.delete(memoryEntities).where(eq(memoryEntities.memoryId, memoryId));
+      if (extractedEntities.length > 0) {
+        const resolved = await resolveEntities(extractedEntities, workspaceId, model);
+        await linkMemoryEntities(memoryId, resolved);
+      }
+    } catch (entityError) {
+      logger.warn("Failed to refresh entity links for updated memory", {
+        memoryId,
+        ref: upd.memoryRef,
+        error: String(entityError),
+      });
+    }
   }
 
   // Process CREATE operations (same pipeline as single-exchange: importance filter, embed, dedup, store)

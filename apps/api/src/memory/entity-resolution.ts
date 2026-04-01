@@ -73,6 +73,14 @@ function wordTokens(value: string): string[] {
     .filter(Boolean);
 }
 
+function isLowSignalTemporalEntityName(name: string): boolean {
+  const normalized = normalizeToken(name);
+  // Ambiguous quarter shorthand without a year/context anchor.
+  // Examples: Q1, q2, Q3, q4
+  if (/^q[1-4]$/.test(normalized)) return true;
+  return false;
+}
+
 async function isAmbiguousPersonFirstName(
   workspaceId: string,
   firstName: string,
@@ -600,6 +608,13 @@ export async function resolveEntities(
   for (const item of extracted) {
     const normalizedName = item.name.trim();
     if (!normalizedName) continue;
+    if (isLowSignalTemporalEntityName(normalizedName)) {
+      logger.info("Skipping low-signal temporal entity", {
+        name: item.name,
+        workspaceId,
+      });
+      continue;
+    }
     const nameParts = wordTokens(normalizedName);
     const firstName = nameParts[0] ?? "";
 
