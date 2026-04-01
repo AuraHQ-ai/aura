@@ -5,7 +5,7 @@ description: "Role-based access control: user roles, tool permissions, note scop
 
 # Permissions
 
-Aura uses a three-tier role system to control access to tools, notes, and resources. Roles are stored in the database (`users.role`) with an env var fallback for backwards compatibility.
+Aura uses a three-tier role system to control access to tools, notes, and resources. Roles are stored in the database (`users.role`) with `AURA_ADMIN_USER_IDS` as a hard override (checked first, before the DB).
 
 ## Roles
 
@@ -25,13 +25,13 @@ The `owner` role was removed in the RBAC simplification (migration 0048). Existi
 
 The `hasRole(userId, minimumRole)` function in `apps/api/src/lib/permissions.ts` is the single source of truth:
 
-1. Look up `users.role` in the database
-2. If a DB role exists, compare it against the minimum required role and return the result
-3. If no DB profile exists (or query fails), fall back to `AURA_ADMIN_USER_IDS` env var — users listed there get `admin`-level access
-4. The system user `aura` always resolves to `admin` and passes all role checks
+1. The system user `aura` always resolves to `admin` and passes all role checks
+2. Check `AURA_ADMIN_USER_IDS` env var first -- users listed there get `admin`-level access as a hard override
+3. If not in the env var, look up `users.role` in the database and compare against the minimum required role
+4. If no DB profile exists (or query fails), default to `member`
 
 <Warning>
-If a user has an explicit role in the database, the env var is **not** consulted. A user demoted to `member` in the DB won't regain admin via the env var. This is intentional — the DB is authoritative once set.
+The env var is checked **before** the database. A user listed in `AURA_ADMIN_USER_IDS` gets `admin` regardless of their DB role. This is intentional -- the env var acts as a hard override to prevent lockouts when DB roles are misconfigured (e.g. after a migration that resets all roles to `member`).
 </Warning>
 
 ## Tool Permissions
@@ -95,7 +95,7 @@ Users who interact with Aura in Slack but never log into the dashboard won't hav
 
 ## Migration from `AURA_ADMIN_USER_IDS`
 
-The env var still works as a fallback for users without a DB profile. For new deployments, set roles via the dashboard instead. The env var will be deprecated in a future release.
+The env var is checked before the DB and acts as a hard override. For new deployments, set roles via the dashboard instead. The env var will be deprecated in a future release once all deployments have properly backfilled DB roles.
 
 ## Database Schema
 

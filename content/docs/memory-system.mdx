@@ -13,15 +13,11 @@ Each memory has a `type` that determines how it's used during retrieval:
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `fact` | Objective information about the world | "The BigQuery dataset is `analytics.prod`" |
-| `decision` | A decision made by someone | "Team decided to delay the launch by 2 weeks" |
-| `personal` | Personal details about a person | "Joan's birthday is March 15" |
-| `preference` | How someone likes things done | "Joan prefers bullet points over prose" |
-| `relationship` | How two people or entities relate | "Tali reports to Marc and works on the search team" |
-| `sentiment` | How someone feels about something | "The team is frustrated with the slow CI pipeline" |
-| `event` | A notable occurrence or milestone | "v2.0 launched on March 1st" |
-| `open_thread` | Something that needs follow-up | "Marc promised to share the Q4 numbers by Friday" |
-| `insight` | A derived observation or pattern | "Sales team closes more deals after Thursday demos" |
+| `fact` | Durable information about people, the org, or the world (subsumes the former `personal`, `relationship`, `sentiment` types) | "The BigQuery dataset is `analytics.prod`" |
+| `decision` | An explicit choice made by someone, with participants | "Team decided to delay the launch by 2 weeks" |
+| `preference` | How someone wants things done | "Joan prefers bullet points over prose" |
+| `event` | Something that happened at a specific time | "v2.0 launched on March 1st" |
+| `open_thread` | Unresolved work or pending questions | "Marc promised to share the Q4 numbers by Friday" |
 
 ## Storage
 
@@ -59,7 +55,7 @@ Memories are also classified by `category`:
 
 | Category | Description |
 |----------|-------------|
-| `semantic` | Facts, relationships, preferences -- the default |
+| `semantic` | Facts, preferences, decisions -- the default |
 | `episodic` | Specific events, conversations, moments in time |
 | `procedural` | How-to knowledge, workflows, processes |
 
@@ -105,7 +101,7 @@ In addition to discrete memory facts, Aura retrieves full conversation threads f
 After every conversation turn, Aura extracts new memories:
 
 1. The recent messages are sent to Claude with a structured extraction prompt
-2. Claude identifies facts, decisions, sentiments, open threads, and entity mentions
+2. Claude identifies facts, decisions, preferences, events, open threads, and entity mentions
 3. Each extraction is checked for duplicates against existing memories
 4. New memories are embedded and stored
 5. Extracted entities are resolved and linked to their memories (see below)
