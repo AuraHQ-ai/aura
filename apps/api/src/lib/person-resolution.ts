@@ -107,12 +107,19 @@ export async function createPersonWithAddress(
   }
 
   if (channel === "slack") {
-    await ensureSlackUserEntityLink({
-      userId: user.id,
-      slackUserId: normalised,
-      displayName: user.displayName,
-      workspaceId: user.workspaceId ?? "default",
-    });
+    try {
+      await ensureSlackUserEntityLink({
+        userId: user.id,
+        slackUserId: normalised,
+        displayName: user.displayName,
+        workspaceId: user.workspaceId ?? "default",
+      });
+    } catch (error) {
+      logger.warn("Failed to ensure entity link for new slack user", {
+        slackUserId: normalised,
+        error: String(error),
+      });
+    }
   }
 
   return user;

@@ -36,12 +36,19 @@ export async function getOrCreateProfile(
         .where(eq(users.slackUserId, slackUserId));
       Object.assign(profile, { timezone });
     }
-    await ensureSlackUserEntityLink({
-      userId: profile.id,
-      slackUserId,
-      displayName,
-      workspaceId: profile.workspaceId ?? "default",
-    });
+    try {
+      await ensureSlackUserEntityLink({
+        userId: profile.id,
+        slackUserId,
+        displayName,
+        workspaceId: profile.workspaceId ?? "default",
+      });
+    } catch (error) {
+      logger.warn("Failed to ensure entity link for existing user", {
+        slackUserId,
+        error: String(error),
+      });
+    }
     return profile;
   }
 
@@ -58,12 +65,19 @@ export async function getOrCreateProfile(
 
   if (result.length > 0) {
     const profile = result[0];
-    await ensureSlackUserEntityLink({
-      userId: profile.id,
-      slackUserId,
-      displayName,
-      workspaceId: profile.workspaceId ?? "default",
-    });
+    try {
+      await ensureSlackUserEntityLink({
+        userId: profile.id,
+        slackUserId,
+        displayName,
+        workspaceId: profile.workspaceId ?? "default",
+      });
+    } catch (error) {
+      logger.warn("Failed to ensure entity link for new user", {
+        slackUserId,
+        error: String(error),
+      });
+    }
     logger.info("Created new user profile", { slackUserId, displayName });
     return profile;
   }
@@ -76,12 +90,19 @@ export async function getOrCreateProfile(
     .limit(1);
 
   if (concurrentlyCreated) {
-    await ensureSlackUserEntityLink({
-      userId: concurrentlyCreated.id,
-      slackUserId,
-      displayName,
-      workspaceId: concurrentlyCreated.workspaceId ?? "default",
-    });
+    try {
+      await ensureSlackUserEntityLink({
+        userId: concurrentlyCreated.id,
+        slackUserId,
+        displayName,
+        workspaceId: concurrentlyCreated.workspaceId ?? "default",
+      });
+    } catch (error) {
+      logger.warn("Failed to ensure entity link for concurrent user", {
+        slackUserId,
+        error: String(error),
+      });
+    }
   }
 
   return concurrentlyCreated;
