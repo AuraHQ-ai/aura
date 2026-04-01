@@ -629,6 +629,7 @@ export async function updateMemoryContent(
       memoryId,
       error: String(error),
     });
+    throw error;
   }
 }
 

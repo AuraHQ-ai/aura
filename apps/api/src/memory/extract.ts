@@ -589,7 +589,15 @@ async function extractWithReconciliation(
     } catch {
       logger.warn("Failed to embed updated memory content", { ref: upd.memoryRef });
     }
-    await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined);
+    try {
+      await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined);
+    } catch {
+      logger.warn("Skipping entity link refresh because content update failed", {
+        memoryId,
+        ref: upd.memoryRef,
+      });
+      continue;
+    }
 
     // Keep memory_entities in sync with updated memory text.
     const extractedEntities = upd.entities ?? [];
