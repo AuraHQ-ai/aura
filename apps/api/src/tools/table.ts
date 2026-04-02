@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { formatForSlack } from "../lib/format.js";
-import { resolveSlackDestination, resolveUserByName } from "./slack.js";
+import { resolveChannelByName, resolveUserByName } from "./slack.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import { formatTimestamp } from "../lib/temporal.js";
 
@@ -208,11 +208,11 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
             }
             channelId = dm.channel.id;
           } else {
-            const resolved = await resolveSlackDestination(client, target_channel!);
+            const resolved = await resolveChannelByName(client, target_channel!);
             if (!resolved) {
               return { ok: false, error: `Could not find channel "${target_channel}".` };
             }
-            channelId = resolved;
+            channelId = resolved.id;
           }
 
           const result = await postTable(
