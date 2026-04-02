@@ -64,7 +64,7 @@ When a Slack message arrives:
 5. **LLM reasoning** — The selected model (Claude, Grok, etc.) processes the message with full context and available tools. Extended thinking captures the reasoning trace (Claude models).
 6. **Response streaming** — The response streams back to Slack in real-time via the Vercel AI SDK.
 7. **Conversation persistence** — The full conversation trace (messages, tool calls, reasoning, token usage) is stored with cost tracking.
-8. **Memory extraction** — Facts, decisions, and sentiments are extracted from the conversation and stored as new memories.
+8. **Memory extraction** — Thread-scoped reconciliation compares the full conversation against existing memories and produces create, update, and delete operations to keep memory accurate.
 
 ## Conversation Traces
 

@@ -102,13 +102,16 @@ In addition to discrete memory facts, Aura retrieves full conversation threads f
 
 ## Memory Extraction
 
-After every conversation turn, Aura extracts new memories:
+After each conversation, Aura runs **thread-scoped reconciliation** to maintain memory accuracy:
 
-1. The recent messages are sent to Claude with a structured extraction prompt
-2. Claude identifies facts, decisions, sentiments, open threads, and entity mentions
-3. Each extraction is checked for duplicates against existing memories
-4. New memories are embedded and stored
-5. Extracted entities are resolved and linked to their memories (see below)
+1. The full conversation thread is loaded alongside all existing memories linked to its participants
+2. The LLM sees both the thread and existing memories, then produces explicit **create**, **update**, and **delete** operations
+3. New memories are checked for importance (low-signal extractions are filtered), embedded, and deduplicated against existing memories
+4. Updated memories have their content and embeddings refreshed in place
+5. Outdated or contradicted memories are archived with a supersession chain
+6. Extracted entities are resolved and linked to their memories (see below)
+
+When thread context is unavailable (e.g. during dashboard replay or backfill), Aura falls back to **single-exchange extraction** -- the same create pipeline but scoped to the latest message pair only.
 
 ## Entity Extraction & Resolution
 
