@@ -10,7 +10,7 @@ import { formatForSlack } from "../lib/format.js";
 import { embedText } from "../lib/embeddings.js";
 import { db } from "../db/client.js";
 import { voiceCalls, notes } from "@aura/db/schema";
-import { getUserList, resolveSlackDestination } from "../tools/slack.js";
+import { getUserList, resolveUserByName } from "../tools/slack.js";
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 import { getConfig } from "../lib/settings.js";
 
@@ -127,17 +127,22 @@ async function handleSendDm(
     const { user_name, message } = params;
     if (!user_name || !message) return "Missing required parameters: user_name, message";
 
-    const dmChannelId = await resolveSlackDestination(slackClient, user_name);
-    if (!dmChannelId) {
+    const user = await resolveUserByName(slackClient, user_name);
+    if (!user) {
       return `Could not find a Slack user matching "${user_name}".`;
     }
 
+    const dm = await slackClient.conversations.open({ users: user.id });
+    if (!dm.channel?.id) {
+      return `Failed to open DM conversation with ${user.name}.`;
+    }
+
     await safePostMessage(slackClient, {
-      channel: dmChannelId,
+      channel: dm.channel.id,
       text: formatForSlack(message),
     });
 
-    return `Message sent to ${user_name} successfully.`;
+    return `Message sent to ${user.name} successfully.`;
   } catch (err) {
     logger.error("send_dm failed", {
       user_name: params.user_name,

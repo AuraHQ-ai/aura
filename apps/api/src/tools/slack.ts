@@ -1470,11 +1470,44 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
       }),
       execute: async ({ user_name, limit, oldest_ts, latest_ts, cursor: inputCursor }) => {
         try {
-          const dmChannelId = await resolveSlackDestination(client, user_name);
-          if (!dmChannelId) {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
             return {
               ok: false,
               error: `Could not find a user named "${user_name}". Use list_users or search_users to find the right name.`,
+            };
+          }
+
+          // Find existing DM channel without creating a new one
+          let dmChannelId: string | undefined;
+          let imCursor: string | undefined;
+
+          do {
+            const imResult = await client.conversations.list({
+              types: "im",
+              limit: 200,
+              cursor: imCursor,
+            });
+
+            for (const ch of imResult.channels || []) {
+              if (ch.user === user.id && ch.id) {
+                dmChannelId = ch.id;
+                break;
+              }
+            }
+
+            if (dmChannelId) break;
+            imCursor = imResult.response_metadata?.next_cursor || undefined;
+          } while (imCursor);
+
+          if (!dmChannelId) {
+            return {
+              ok: true,
+              user: user.name,
+              user_id: user.id,
+              messages: [],
+              count: 0,
+              note: "No prior DM conversation exists with this user.",
             };
           }
 
@@ -1507,7 +1540,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
               if (replyCount && replyCount > 0 && threadTs) {
                 try {
                   const threadResult = await client.conversations.replies({
-                    channel: dmChannelId,
+                    channel: dmChannelId!,
                     ts: threadTs,
                     limit: 200,
                   });
@@ -1558,7 +1591,8 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
           );
 
           logger.info("read_dm_history tool called", {
-            user: user_name,
+            user: user.name,
+            userId: user.id,
             dmChannelId,
             messageCount: messages.length,
             oldest_ts,
@@ -1569,7 +1603,8 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
           return {
             ok: true,
-            user: user_name,
+            user: user.name,
+            user_id: user.id,
             dm_channel_id: dmChannelId,
             messages,
             count: messages.length,

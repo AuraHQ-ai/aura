@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
 import { formatForSlack } from "../lib/format.js";
-import { resolveSlackDestination } from "./slack.js";
+import { resolveSlackDestination, resolveUserByName } from "./slack.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import { formatTimestamp } from "../lib/temporal.js";
 
@@ -195,10 +195,24 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
 
         // ── Targeted mode: post to a specific channel or DM ──────────
         try {
-          const destination = target_user ?? target_channel!;
-          const channelId = await resolveSlackDestination(client, destination);
-          if (!channelId) {
-            return { ok: false, error: `Could not resolve destination "${destination}".` };
+          let channelId: string;
+
+          if (target_user) {
+            const user = await resolveUserByName(client, target_user);
+            if (!user) {
+              return { ok: false, error: `Could not find user "${target_user}".` };
+            }
+            const dm = await client.conversations.open({ users: user.id });
+            if (!dm.channel?.id) {
+              return { ok: false, error: `Failed to open DM with ${user.name}.` };
+            }
+            channelId = dm.channel.id;
+          } else {
+            const resolved = await resolveSlackDestination(client, target_channel!);
+            if (!resolved) {
+              return { ok: false, error: `Could not find channel "${target_channel}".` };
+            }
+            channelId = resolved;
           }
 
           const result = await postTable(
