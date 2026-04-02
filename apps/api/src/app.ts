@@ -29,6 +29,7 @@ import { resolveConfirmation } from "./lib/confirmation.js";
 import { executionContext } from "./lib/tool.js";
 import { setSetting, getConfig } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
+import { resolveSlackDestination } from "./tools/slack.js";
 import { recordError } from "./lib/metrics.js";
 import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
@@ -922,10 +923,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         }
       }
 
-      const dmResult = await slackClient.conversations.open({
-        users: dmTarget,
-      });
-      const dmChannelId = dmResult.channel?.id;
+      const dmChannelId = await resolveSlackDestination(slackClient, dmTarget);
 
       if (dmChannelId) {
         const useThreadTs =

@@ -73,11 +73,12 @@ async function notifyOwnerExpired(
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return;
   const { WebClient } = await import("@slack/web-api");
+  const { resolveSlackDestination } = await import("../tools/slack.js");
   const client = new WebClient(token);
-  const dm = await client.conversations.open({ users: ownerId });
-  if (dm.channel?.id) {
+  const dmChannelId = await resolveSlackDestination(client, ownerId);
+  if (dmChannelId) {
     await client.chat.postMessage({
-      channel: dm.channel.id,
+      channel: dmChannelId,
       text: `Your credential *${credentialName}* has expired. Please update or rotate it in the App Home.`,
     });
   }
