@@ -9,19 +9,15 @@ Aura's memory is the core of what makes her different from a stateless chatbot. 
 
 ## Memory Types
 
-Each memory has a `type` that determines how it's used during retrieval:
+Each memory has a `type` that determines how it's classified. Since v0.58, the taxonomy was simplified from 9 types to 5 -- `personal`, `relationship`, `sentiment`, and `insight` were folded into `fact`:
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `fact` | Objective information about the world | "The BigQuery dataset is `analytics.prod`" |
-| `decision` | A decision made by someone | "Team decided to delay the launch by 2 weeks" |
-| `personal` | Personal details about a person | "Joan's birthday is March 15" |
-| `preference` | How someone likes things done | "Joan prefers bullet points over prose" |
-| `relationship` | How two people or entities relate | "Tali reports to Marc and works on the search team" |
-| `sentiment` | How someone feels about something | "The team is frustrated with the slow CI pipeline" |
-| `event` | A notable occurrence or milestone | "v2.0 launched on March 1st" |
-| `open_thread` | Something that needs follow-up | "Marc promised to share the Q4 numbers by Friday" |
-| `insight` | A derived observation or pattern | "Sales team closes more deals after Thursday demos" |
+| `fact` | Durable information about people, the org, or the world. Subsumes what was previously `personal`, `relationship`, `sentiment`, and `insight`. | "Joan manages the Aura codebase", "The BigQuery dataset is `analytics.prod`" |
+| `decision` | An explicit choice made, with who made it | "Team decided to use Postgres instead of MongoDB" |
+| `preference` | How someone wants things done -- communication style, tool choices, formatting | "Joan prefers bullet points over prose" |
+| `event` | Something that happened at a specific time -- incidents, launches, meetings with outcomes | "Production went down on March 10 due to a migration bug" |
+| `open_thread` | Unresolved work, pending questions, things someone said they'd do | "Marc promised to share the Q4 numbers by Friday" |
 
 ## Storage
 
@@ -30,24 +26,25 @@ Memories are stored in PostgreSQL with a 1536-dimensional vector embedding (Open
 ```sql
 CREATE TABLE memories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id TEXT NOT NULL DEFAULT 'default' REFERENCES workspaces(id),
   content TEXT NOT NULL,
-  type memory_type NOT NULL,
+  type memory_type NOT NULL,        -- fact | decision | preference | event | open_thread
+  category TEXT NOT NULL DEFAULT 'semantic', -- semantic | episodic | procedural
   source_message_id UUID REFERENCES messages(id),
   source_channel_type channel_type NOT NULL,
   related_user_ids TEXT[] NOT NULL DEFAULT '{}',
   embedding vector(1536),
-  category TEXT NOT NULL DEFAULT 'semantic',
+  importance INTEGER,               -- 1-100, set by extraction LLM
   relevance_score REAL NOT NULL DEFAULT 1.0,
   shareable INTEGER NOT NULL DEFAULT 0,
-  search_vector tsvector GENERATED ALWAYS AS (
-    to_tsvector('english', coalesce(content, ''))
-  ) STORED,
-  -- Temporal lifecycle (added v0.55)
+  extraction_source_role extraction_source_role, -- user | assistant | tool
+  search_vector tsvector,
+  -- Temporal lifecycle
   status memory_status NOT NULL DEFAULT 'current',
   confidence REAL DEFAULT 0.8,
   valid_from TIMESTAMPTZ,
   valid_until TIMESTAMPTZ,
-  supersedes_memory_id UUID REFERENCES memories(id),
+  supersedes_memory_id UUID,
   superseded_at TIMESTAMPTZ,
   superseded_by_memory_id UUID,
   created_at TIMESTAMPTZ DEFAULT NOW(),
