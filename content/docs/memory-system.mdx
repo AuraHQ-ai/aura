@@ -112,16 +112,21 @@ After every conversation turn, Aura extracts new memories:
 
 ## Entity Extraction & Resolution
 
-Alongside memory extraction, Aura identifies **entities** -- people, companies, projects, products, channels, and technologies -- mentioned in conversations. Each entity is resolved to a canonical record using a four-step cascade:
+Alongside memory extraction, Aura identifies **entities** -- people, companies, projects, products, channels, technologies, concepts, and locations -- mentioned in conversations. Each entity is extracted with:
 
-1. **Exact canonical match** -- direct match against known entity names
+- A **type**: `person`, `company`, `project`, `product`, `channel`, `technology`, `concept`, `location`
+- A **role**: `subject` (primary), `object` (secondary), or `mentioned` (just referenced)
+- Optional **aliases**: first names, abbreviations, usernames (e.g. "Joan" for "Joan Rodriguez")
+
+Entities are resolved to a canonical record using a cascade:
+
+1. **Exact canonical match** -- direct match against known entity names (same type)
 2. **Alias match** -- match against registered aliases (e.g. "Joan" → "Joan Rodriguez")
-3. **Fuzzy match** -- trigram similarity (>0.4 threshold) catches misspellings and variations
-4. **Create new** -- if no match is found, a new entity record is created
+3. **Cross-type match** -- prevents duplicates across types (e.g. "SMG" as technology when "SMG" as company exists)
+4. **Fuzzy match** -- trigram similarity (>0.4 threshold) with LLM disambiguation to confirm
+5. **Create new** -- if no match is found, a new entity record is created with any extracted aliases
 
-Entities are linked to the memories that mention them via the `memory_entities` join table. This enables **entity-first retrieval**: when a query mentions a known entity, Aura finds all memories linked to that entity and merges them into the hybrid search results with an RRF boost, ensuring relevant context surfaces even when the exact wording differs.
-
-Entity types: `person`, `company`, `project`, `product`, `channel`, `technology`.
+Entities are linked to the memories that mention them via the `memory_entities` join table (with the role preserved). This enables **entity-first retrieval**: when a query mentions a known entity, Aura finds all memories linked to that entity and merges them into the hybrid search results with an RRF boost, ensuring relevant context surfaces even when the exact wording differs.
 
 ### LLM-Based Entity Extraction
 
