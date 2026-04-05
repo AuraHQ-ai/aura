@@ -18,6 +18,7 @@ import { createVoiceTools } from "./voice.js";
 import { createJobTools } from "./jobs.js";
 import { createSubagentTools } from "./subagents.js";
 import { createScratchpadTools } from "./scratchpad.js";
+import { createMemoryTools } from "./memories.js";
 import { filterToolsByCredentials } from "../lib/tool.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -55,6 +56,7 @@ export async function createCoreTools(context?: ScheduleContext, preResolvedCred
     ...createJobTools(undefined, context),
     ...createSubagentTools(undefined, context),
     ...createScratchpadTools(crypto.randomUUID()),
+    ...createMemoryTools(context),
   };
 
   try {
