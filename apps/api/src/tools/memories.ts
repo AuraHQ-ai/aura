@@ -107,7 +107,7 @@ export function createMemoryTools(context?: ScheduleContext) {
 
     search_memories: defineTool({
       description:
-        "Search memories with flexible filters. Supports two modes: 'text' (default, full-text keyword search on content) and 'semantic' (vector similarity for conceptual matches). Can filter by type (fact, decision, preference, event, open_thread), status (current, superseded, disputed, archived — defaults to 'current'), date range, and related user. Use this to find specific memories before updating or deleting them.",
+        "Search memories with flexible filters. Supports two modes: 'text' (default, full-text keyword search on content) and 'semantic' (vector similarity for conceptual matches). Can filter by type (fact, decision, preference, event, open_thread), status (current, superseded, disputed, archived, deleted — defaults to 'current'), date range, and related user. Use this to find specific memories before updating or deleting them.",
       inputSchema: z.object({
         query: z.string().optional().describe("Text to search across memory content"),
         type: z
@@ -115,7 +115,7 @@ export function createMemoryTools(context?: ScheduleContext) {
           .optional()
           .describe("Filter by memory type"),
         status: z
-          .enum(["current", "superseded", "disputed", "archived"])
+          .enum(["current", "superseded", "disputed", "archived", "deleted"])
           .optional()
           .default("current")
           .describe("Filter by status. Default: 'current'"),
@@ -307,7 +307,7 @@ export function createMemoryTools(context?: ScheduleContext) {
         id: z.string().uuid().describe("UUID of the memory to update"),
         content: z.string().optional().describe("New content text. Triggers re-embedding if changed."),
         status: z
-          .enum(["current", "superseded", "disputed", "archived"])
+          .enum(["current", "superseded", "disputed", "archived", "deleted"])
           .optional()
           .describe("New status for the memory"),
         confidence: z
