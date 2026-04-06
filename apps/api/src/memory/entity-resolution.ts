@@ -716,3 +716,149 @@ export async function linkMemoryEntities(
     });
   }
 }
+
+/**
+ * Resolve an entity by name without requiring a type.
+ * Uses the same cascade as resolveEntityReadOnly but skips same-type steps:
+ * 1. Exact canonical match (any type)
+ * 2. Exact alias match (any type)
+ * 3. Trigram fuzzy match (any type, similarity > 0.4)
+ *
+ * Shared by: context builder (retrieve.ts), search_memories tool, search_entities tool.
+ */
+export async function resolveEntityByName(
+  name: string,
+  workspaceId: string,
+): Promise<ResolvedEntity | null> {
+  const lowerName = name.toLowerCase().trim();
+  if (!lowerName) return null;
+
+  try {
+    // 1. Exact canonical match
+    const exactCanonical = await db.execute(sql`
+      SELECT id, canonical_name, type
+      FROM entities
+      WHERE workspace_id = ${workspaceId}
+        AND lower(canonical_name) = ${lowerName}
+      LIMIT 1
+    `);
+    const exactRows = ((exactCanonical as any).rows ?? exactCanonical) as Array<Record<string, any>>;
+    if (exactRows.length > 0) {
+      return {
+        entityId: exactRows[0].id,
+        canonicalName: exactRows[0].canonical_name,
+        type: exactRows[0].type,
+        confidence: "exact",
+      };
+    }
+
+    // 2. Exact alias match
+    const exactAlias = await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower = ${lowerName}
+        AND e.workspace_id = ${workspaceId}
+      LIMIT 1
+    `);
+    const aliasRows = ((exactAlias as any).rows ?? exactAlias) as Array<Record<string, any>>;
+    if (aliasRows.length > 0) {
+      return {
+        entityId: aliasRows[0].id,
+        canonicalName: aliasRows[0].canonical_name,
+        type: aliasRows[0].type,
+        confidence: "alias",
+      };
+    }
+
+    // 3. Trigram fuzzy match (>0.4 similarity)
+    const fuzzyMatch = await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type, similarity(ea.alias_lower, ${lowerName}) AS sim
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower % ${lowerName}
+        AND e.workspace_id = ${workspaceId}
+        AND similarity(ea.alias_lower, ${lowerName}) > 0.4
+      ORDER BY sim DESC
+      LIMIT 1
+    `);
+    const fuzzyRows = ((fuzzyMatch as any).rows ?? fuzzyMatch) as Array<Record<string, any>>;
+    if (fuzzyRows.length > 0) {
+      return {
+        entityId: fuzzyRows[0].id,
+        canonicalName: fuzzyRows[0].canonical_name,
+        type: fuzzyRows[0].type,
+        confidence: "fuzzy",
+      };
+    }
+
+    return null;
+  } catch (error) {
+    logger.warn("Type-agnostic entity resolution failed", {
+      name,
+      workspaceId,
+      error: String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Fuzzy-search entities by name. Returns multiple matches ranked by similarity.
+ * Used by the search_entities tool to browse/discover entities.
+ */
+export async function searchEntities(
+  query: string,
+  workspaceId: string,
+  options: { type?: string; limit?: number } = {},
+): Promise<Array<{ entityId: string; canonicalName: string; type: string; similarity: number; memoryCount: number; summary: string | null }>> {
+  const lowerQuery = query.toLowerCase().trim();
+  if (!lowerQuery) return [];
+
+  const { type, limit = 20 } = options;
+  const typeFilter = type ? sql`AND e.type = ${type}` : sql``;
+
+  try {
+    const result = await db.execute(sql`
+      SELECT
+        e.id,
+        e.canonical_name,
+        e.type,
+        GREATEST(
+          similarity(lower(e.canonical_name), ${lowerQuery}),
+          COALESCE((
+            SELECT MAX(similarity(ea.alias_lower, ${lowerQuery}))
+            FROM entity_aliases ea
+            WHERE ea.entity_id = e.id
+          ), 0)
+        ) AS sim,
+        (SELECT COUNT(*)::int FROM memory_entities me WHERE me.entity_id = e.id) AS memory_count,
+        e.summary
+      FROM entities e
+      WHERE e.workspace_id = ${workspaceId}
+        ${typeFilter}
+        AND (
+          lower(e.canonical_name) % ${lowerQuery}
+          OR e.id IN (
+            SELECT ea.entity_id FROM entity_aliases ea
+            WHERE ea.alias_lower % ${lowerQuery}
+          )
+        )
+      ORDER BY sim DESC
+      LIMIT ${limit}
+    `);
+
+    const rows = ((result as any).rows ?? result) as Array<Record<string, any>>;
+    return rows.map((r) => ({
+      entityId: r.id,
+      canonicalName: r.canonical_name,
+      type: r.type,
+      similarity: parseFloat(r.sim),
+      memoryCount: r.memory_count,
+      summary: r.summary ?? null,
+    }));
+  } catch (error) {
+    logger.warn("Entity search failed", { query, error: String(error) });
+    return [];
+  }
+}
