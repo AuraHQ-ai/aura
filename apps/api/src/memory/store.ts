@@ -431,6 +431,66 @@ export async function supersedeMemory(oldMemoryId: string, newMemoryId: string):
 }
 
 /**
+ * A candidate memory that might contradict a new memory.
+ */
+export interface ContradictionCandidate {
+  id: string;
+  content: string;
+  similarity: number;
+}
+
+/**
+ * Find existing current memories that are in the same semantic neighborhood
+ * as a new memory (0.50–0.85 cosine similarity) AND share at least one
+ * relatedUserId. These are candidates for contradiction detection — too
+ * different for dedup, but close enough that they might be about the same
+ * topic with conflicting claims.
+ *
+ * Returns at most `limit` candidates ordered by descending similarity.
+ */
+export async function findContradictionCandidates(
+  embedding: number[],
+  relatedUserIds: string[],
+  workspaceId: string,
+  limit = 5,
+  excludeIds: string[] = [],
+): Promise<ContradictionCandidate[]> {
+  try {
+    const vectorSql = sql.raw(`'[${embedding.join(",")}]'::vector`);
+    const userIdsArray = sql`ARRAY[${sql.join(relatedUserIds.map(id => sql`${id}`), sql`, `)}]::text[]`;
+    const excludeClause = excludeIds.length > 0
+      ? sql`AND id NOT IN (${sql.join(excludeIds.map(id => sql`${id}::uuid`), sql`, `)})`
+      : sql``;
+
+    const result = await db.execute(sql`
+      SELECT id, content, 1 - (embedding <=> ${vectorSql}) AS similarity
+      FROM memories
+      WHERE workspace_id = ${workspaceId}
+        AND embedding IS NOT NULL
+        AND status IN ('current', 'disputed')
+        AND relevance_score > 0.01
+        AND related_user_ids && ${userIdsArray}
+        AND (1 - (embedding <=> ${vectorSql})) BETWEEN 0.50 AND 0.85
+        ${excludeClause}
+      ORDER BY embedding <=> ${vectorSql}
+      LIMIT ${limit}
+    `);
+
+    const rows = ((result as any).rows ?? result) as Array<Record<string, any>>;
+    return rows.map((row) => ({
+      id: row.id as string,
+      content: row.content as string,
+      similarity: parseFloat(row.similarity),
+    }));
+  } catch (error) {
+    logger.warn("Failed to find contradiction candidates", {
+      error: String(error),
+    });
+    return [];
+  }
+}
+
+/**
  * Batch store multiple memories.
  * Automatically sets status='current' and validFrom=now() on all new memories.
  */

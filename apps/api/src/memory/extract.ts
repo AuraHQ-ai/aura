@@ -1,10 +1,11 @@
-import { generateText, Output } from "ai";
+import { generateText, generateObject, Output } from "ai";
 import { z } from "zod";
 import { getFastModel } from "../lib/ai.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
   fetchThreadMessages, updateMemoryContent, archiveMemory,
+  findContradictionCandidates,
 } from "./store.js";
 import { retrieveMemories } from "./retrieve.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
@@ -630,6 +631,100 @@ async function extractWithReconciliation(
   }
 }
 
+// ── Contradiction Detection ──────────────────────────────────────────────────
+
+const contradictionResultSchema = z.object({
+  results: z.array(z.object({
+    candidateIndex: z.number().int().describe("0-based index of the candidate memory"),
+    contradicts: z.boolean().describe("True only if the candidate makes a claim that directly conflicts with the new memory about the same entity/topic"),
+    reason: z.string().describe("Brief explanation of why this is or is not a contradiction"),
+  })),
+});
+
+const CONTRADICTION_PROMPT = `You are a memory contradiction detector. Given a NEW memory and a list of EXISTING candidate memories, determine if any existing memory **directly contradicts** the new one.
+
+A contradiction means: both memories are about the SAME entity/topic, but make OPPOSITE or MUTUALLY EXCLUSIVE claims.
+
+Examples of contradictions:
+- "Alice has read-only access to repo X" vs "Alice has full admin access to repo X"
+- "The team uses PostgreSQL" vs "The team uses MongoDB"
+- "Project Alpha launches in Q1" vs "Project Alpha launches in Q3"
+
+NOT contradictions (do not flag these):
+- Refinements: "Alice works on frontend" → "Alice works on frontend and backend" (addition, not conflict)
+- Different topics: "Alice likes coffee" vs "Alice prefers Slack over email" (unrelated)
+- Temporal updates: "Sprint 5 goal is X" → "Sprint 6 goal is Y" (different time periods)
+- Complementary facts: "Bob manages 3 reports" vs "Bob's team is growing" (compatible)
+
+Be CONSERVATIVE — only flag true contradictions where both facts cannot simultaneously be true.`;
+
+/**
+ * Detect contradictions between newly stored memories and existing ones.
+ * For each new memory, queries moderate-similarity neighbors (0.50–0.85 cosine)
+ * that share relatedUserIds, then uses a fast LLM to check for semantic contradictions.
+ * Contradicting old memories are superseded by the new one.
+ */
+async function detectContradictions(
+  storedMemories: Array<{
+    id: string;
+    content: string;
+    embedding: number[] | null;
+    relatedUserIds: string[];
+  }>,
+  workspaceId: string,
+  model: Awaited<ReturnType<typeof getFastModel>>,
+): Promise<void> {
+  const batchIds = storedMemories.map((m) => m.id);
+  for (const newMem of storedMemories) {
+    if (!newMem.embedding || newMem.relatedUserIds.length === 0) continue;
+
+    const candidates = await findContradictionCandidates(
+      newMem.embedding,
+      newMem.relatedUserIds,
+      workspaceId,
+      5,
+      batchIds,
+    );
+
+    if (candidates.length === 0) continue;
+
+    try {
+      const candidateList = candidates
+        .map((c, i) => `[${i}] ${c.content}`)
+        .join("\n");
+
+      const { object } = await generateObject({
+        model,
+        schema: contradictionResultSchema,
+        system: CONTRADICTION_PROMPT,
+        prompt: `NEW MEMORY: ${newMem.content}\n\nEXISTING CANDIDATE MEMORIES:\n${candidateList}`,
+        temperature: 0,
+      });
+
+      for (const result of object.results) {
+        if (!result.contradicts) continue;
+        const candidate = candidates[result.candidateIndex];
+        if (!candidate) continue;
+
+        logger.info("Contradiction detected — superseding old memory", {
+          oldId: candidate.id,
+          newId: newMem.id,
+          reason: result.reason,
+          similarity: candidate.similarity,
+        });
+
+        await supersedeMemory(candidate.id, newMem.id);
+      }
+    } catch (error) {
+      logger.warn("Contradiction detection LLM call failed — skipping", {
+        newMemoryId: newMem.id,
+        candidateCount: candidates.length,
+        error: String(error).slice(0, 200),
+      });
+    }
+  }
+}
+
 async function processCreateOperations(
   creates: z.infer<typeof createOperationSchema>[],
   context: ExtractionContext,
@@ -702,6 +797,27 @@ async function processCreateOperations(
     if (oldId && newId) {
       await supersedeMemory(oldId, newId);
     }
+  }
+
+  // Contradiction detection: supersede existing memories that make
+  // conflicting claims about the same entity/topic as a new memory.
+  // Runs after dedup so we only check memories that survived dedup.
+  try {
+    const storedForContradiction = survivingIndices
+      .map((i, j) => ({
+        id: memoryIds[j],
+        content: normalizedMemories[i].content,
+        embedding: embeddings[i] ?? null,
+        relatedUserIds: newMemories[j].relatedUserIds ?? [],
+      }))
+      .filter((m) => m.id);
+    if (storedForContradiction.length > 0) {
+      await detectContradictions(storedForContradiction, workspaceId, model);
+    }
+  } catch (error) {
+    logger.warn("Contradiction detection pass failed — continuing without it", {
+      error: String(error).slice(0, 200),
+    });
   }
 
   for (let j = 0; j < survivingIndices.length; j++) {
