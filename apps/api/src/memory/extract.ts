@@ -806,7 +806,7 @@ async function processCreateOperations(
         id: memoryIds[j],
         content: normalizedMemories[i].content,
         embedding: embeddings[i] ?? null,
-        relatedUserIds: normalizedMemories[i].relatedUserIds,
+        relatedUserIds: newMemories[j].relatedUserIds ?? [],
       }))
       .filter((m) => m.id);
     if (storedForContradiction.length > 0) {
