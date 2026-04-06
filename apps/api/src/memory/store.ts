@@ -453,10 +453,14 @@ export async function findContradictionCandidates(
   relatedUserIds: string[],
   workspaceId: string,
   limit = 5,
+  excludeIds: string[] = [],
 ): Promise<ContradictionCandidate[]> {
   try {
     const vectorSql = sql.raw(`'[${embedding.join(",")}]'::vector`);
     const userIdsArray = sql`ARRAY[${sql.join(relatedUserIds.map(id => sql`${id}`), sql`, `)}]::text[]`;
+    const excludeClause = excludeIds.length > 0
+      ? sql`AND id NOT IN (${sql.join(excludeIds.map(id => sql`${id}::uuid`), sql`, `)})`
+      : sql``;
 
     const result = await db.execute(sql`
       SELECT id, content, 1 - (embedding <=> ${vectorSql}) AS similarity
@@ -467,6 +471,7 @@ export async function findContradictionCandidates(
         AND relevance_score > 0.01
         AND related_user_ids && ${userIdsArray}
         AND (1 - (embedding <=> ${vectorSql})) BETWEEN 0.50 AND 0.85
+        ${excludeClause}
       ORDER BY embedding <=> ${vectorSql}
       LIMIT ${limit}
     `);

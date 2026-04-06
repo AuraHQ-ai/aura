@@ -674,6 +674,7 @@ async function detectContradictions(
   workspaceId: string,
   model: Awaited<ReturnType<typeof getFastModel>>,
 ): Promise<void> {
+  const batchIds = storedMemories.map((m) => m.id);
   for (const newMem of storedMemories) {
     if (!newMem.embedding || newMem.relatedUserIds.length === 0) continue;
 
@@ -682,6 +683,7 @@ async function detectContradictions(
       newMem.relatedUserIds,
       workspaceId,
       5,
+      batchIds,
     );
 
     if (candidates.length === 0) continue;
