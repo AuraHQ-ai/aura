@@ -190,12 +190,7 @@ export function createMemoryTools(context?: ScheduleContext) {
 
           if (query?.trim()) {
             const trimmed = query.trim();
-
-            const statusFilter = status ? sql`AND status = ${status}` : sql``;
-            const typeFilter = type ? sql`AND type = ${type}` : sql``;
-            const sinceFilter = since ? sql`AND created_at >= ${new Date(since)}` : sql``;
-            const untilFilter = until ? sql`AND created_at <= ${new Date(until)}` : sql``;
-            const userFilter = user_id ? sql`AND related_user_ids @> ARRAY[${user_id}]::text[]` : sql``;
+            const filterClause = conditions.length > 0 ? sql`AND ${and(...conditions)}` : sql``;
 
             let rows: any[];
             try {
@@ -208,11 +203,7 @@ export function createMemoryTools(context?: ScheduleContext) {
                 FROM memories
                 WHERE to_tsvector('english', content)
                   @@ websearch_to_tsquery('english', ${trimmed})
-                  ${statusFilter}
-                  ${typeFilter}
-                  ${sinceFilter}
-                  ${untilFilter}
-                  ${userFilter}
+                  ${filterClause}
                 ORDER BY rank DESC
                 LIMIT ${limit}
               `);
@@ -224,11 +215,7 @@ export function createMemoryTools(context?: ScheduleContext) {
                 SELECT id, content, type, status, created_at
                 FROM memories
                 WHERE lower(content) LIKE ${pattern} ESCAPE '\\'
-                  ${statusFilter}
-                  ${typeFilter}
-                  ${sinceFilter}
-                  ${untilFilter}
-                  ${userFilter}
+                  ${filterClause}
                 ORDER BY created_at DESC
                 LIMIT ${limit}
               `);
