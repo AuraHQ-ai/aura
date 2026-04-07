@@ -1,0 +1,115 @@
+---
+title: "Memories"
+description: "Tools for searching, inspecting, updating, and deleting Aura's stored memories and entities."
+---
+
+# Memory Management Tools
+
+Five tools for directly interacting with Aura's memory store. Use these to find specific memories, inspect their details, correct inaccuracies, and manage entities.
+
+<Note>
+These tools operate on the same memory store described in [Memory System](/memory-system). Memories are normally created automatically during conversations -- these tools give you manual control when needed.
+</Note>
+
+## search_memories
+
+Search memories with flexible filters. Supports two modes and multiple filter dimensions.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | No | Text to search. Required for `semantic` mode. |
+| `mode` | `text` \| `semantic` | No | `text` (default): keyword/full-text search with ILIKE fallback. `semantic`: vector similarity using embeddings. |
+| `type` | enum | No | Filter by type: `fact`, `decision`, `preference`, `event`, `open_thread` |
+| `status` | enum | No | Filter by status: `current` (default), `superseded`, `disputed`, `archived`, `deleted` |
+| `since` | ISO 8601 | No | Only memories created after this date |
+| `until` | ISO 8601 | No | Only memories created before this date |
+| `user_id` | string | No | Filter by related Slack user ID |
+| `entity` | string | No | Filter by entity name. Resolves via the same cascade as the context builder (exact canonical -> alias -> trigram fuzzy). |
+| `entity_type` | enum | No | Narrow entity resolution: `person`, `company`, `channel`, `technology`, `product`, `project` |
+| `limit` | number | No | Max results (default 20, max 50) |
+
+### Behavior
+
+- **Text mode** runs PostgreSQL full-text search first, falls back to case-insensitive substring match (ILIKE) if FTS returns nothing.
+- **Semantic mode** embeds the query and compares against stored memory embeddings via cosine similarity.
+- **Filter-only mode** (no query): omit `query` to browse memories by type, status, date range, user, or entity.
+- Entity filtering joins through the `memory_entities` junction table using the same trigram resolution index as the automatic context builder.
+
+### Example
+
+```
+search_memories(query="deployment process", type="decision", since="2026-01-01")
+```
+
+## search_entities
+
+Search for entities (people, companies, products, projects, channels, technologies) by name. Returns matches ranked by trigram similarity with memory counts and summaries.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Entity name or partial name to search for |
+| `type` | enum | No | Filter to a specific entity type |
+| `limit` | number | No | Max results (default 20, max 50) |
+
+### Behavior
+
+Uses the same trigram index as the context builder. Returns each entity's canonical name, type, similarity score, memory count, and summary. Use this to discover entity names before filtering `search_memories` by entity.
+
+## get_memory
+
+Retrieve full details of a single memory by UUID. Returns all fields including content, type, status, confidence, lifecycle metadata (supersession chain), and related user IDs.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | UUID | Yes | The memory's UUID |
+
+### Returns
+
+Full memory object with: `id`, `content`, `type`, `status`, `confidence`, `relevance_score`, `importance`, `related_user_ids`, `source_channel_type`, `supersedes_memory_id`, `superseded_by_memory_id`, `superseded_at`, `valid_from`, `valid_until`, `created_at`, `updated_at`.
+
+## update_memory
+
+Update a memory's content, status, or confidence. If content changes, the embedding is automatically re-computed.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | UUID | Yes | The memory's UUID |
+| `content` | string | No | New content text (triggers re-embedding) |
+| `status` | enum | No | New status: `current`, `superseded`, `disputed`, `archived`, `deleted` |
+| `confidence` | number | No | New confidence score (0.0 -- 1.0) |
+
+At least one of `content`, `status`, or `confidence` must be provided.
+
+### Use cases
+
+- Correct an inaccurate memory's content
+- Mark a memory as `archived` or `superseded`
+- Adjust confidence when you learn a memory was uncertain
+
+## delete_memory
+
+Permanently delete a memory by UUID. Irreversible -- use `get_memory` first to verify you're deleting the right one.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | UUID | Yes | The memory's UUID |
+
+<Warning>
+Deletion is permanent. Consider using `update_memory` to set status to `archived` instead if you might need the memory later.
+</Warning>
+
+## Typical workflow
+
+1. **Find** -- Use `search_memories` or `search_entities` to locate relevant memories
+2. **Inspect** -- Use `get_memory` to see full details of a specific result
+3. **Act** -- Use `update_memory` to correct or `delete_memory` to remove

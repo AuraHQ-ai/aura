@@ -179,6 +179,17 @@ The new memory gets `supersedes_memory_id` pointing back to the old one. This cr
 
 Retrieval filters to `status IN ('current', 'disputed')` -- superseded and archived memories are automatically excluded.
 
+### Contradiction detection
+
+After new memories are stored, a contradiction detection pipeline runs automatically. For each new memory with an embedding and related user IDs, it:
+
+1. **Finds candidates** -- queries existing memories in the 0.50--0.85 cosine similarity range that share at least one related user ID. This "moderate similarity" band catches memories about the same topic that say different things (too-similar memories are caught by dedup instead).
+2. **LLM evaluation** -- a fast model evaluates each candidate against the new memory to determine if they make mutually exclusive claims about the same entity or topic.
+3. **Supersession** -- confirmed contradictions cause the old memory to be marked `superseded`, with a proper supersession chain linking to the new memory.
+
+The pipeline is conservative by design: refinements, complementary facts, and temporal updates are not flagged as contradictions. Only true mutual exclusions trigger supersession.
+
+
 ## Consolidation
 
 A nightly consolidation job (4 AM UTC) maintains memory quality:
