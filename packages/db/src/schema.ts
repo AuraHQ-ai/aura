@@ -142,6 +142,8 @@ export const memories = pgTable(
     category: text("category").notNull().default("semantic"),
     sourceMessageId: uuid("source_message_id").references(() => messages.id),
     sourceChannelType: channelTypeEnum("source_channel_type").notNull(),
+    sourceThreadTs: text("source_thread_ts"),
+    sourceChannelId: text("source_channel_id"),
     relatedUserIds: text("related_user_ids")
       .array()
       .notNull()
@@ -179,6 +181,7 @@ export const memories = pgTable(
     index("memories_supersedes_idx")
       .on(table.supersedesMemoryId)
       .where(sql`supersedes_memory_id IS NOT NULL`),
+    index("memories_source_channel_id_idx").on(table.sourceChannelId),
   ],
 );
 
