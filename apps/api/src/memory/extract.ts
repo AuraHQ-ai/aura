@@ -777,6 +777,8 @@ async function processCreateOperations(
     workspaceId,
     sourceMessageId: context.sourceMessageId || undefined,
     sourceChannelType: toDbChannelType(context.channelType),
+    sourceThreadTs: context.threadTs || undefined,
+    sourceChannelId: context.channelId || undefined,
     relatedUserIds: normalizedMemories[i].relatedUserIds.length > 0
       ? normalizedMemories[i].relatedUserIds
       : [context.userId],
