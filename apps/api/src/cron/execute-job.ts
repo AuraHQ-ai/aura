@@ -18,6 +18,7 @@ import {
 } from "./persist-conversation.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
+import { resolveSlackDestination } from "../tools/slack.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
@@ -453,12 +454,10 @@ export async function executeJob(
       // Escalate: DM the requester
       try {
         if (job.requestedBy && job.requestedBy !== "aura") {
-          const dmResult = await slackClient.conversations.open({
-            users: job.requestedBy,
-          });
-          if (dmResult.channel?.id) {
+          const dmChannelId = await resolveSlackDestination(slackClient, job.requestedBy);
+          if (dmChannelId) {
             await safePostMessage(slackClient, {
-              channel: dmResult.channel.id,
+              channel: dmChannelId,
               text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
             });
           }

@@ -446,6 +446,11 @@ export async function resolveSlackDestination(
   if (/^D[A-Z0-9]+$/.test(destination)) return destination;
   if (/^[CG][A-Z0-9]+$/.test(destination)) return destination;
 
+  if (/^U[A-Z0-9]+$/.test(destination)) {
+    const dm = await client.conversations.open({ users: destination });
+    return dm.channel?.id ?? null;
+  }
+
   const resolved = await resolveChannelByName(client, destination);
   if (resolved) return resolved.id;
 

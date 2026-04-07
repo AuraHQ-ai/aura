@@ -208,11 +208,11 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
             }
             channelId = dm.channel.id;
           } else {
-            const channel = await resolveChannelByName(client, target_channel!);
-            if (!channel) {
+            const resolved = await resolveChannelByName(client, target_channel!);
+            if (!resolved) {
               return { ok: false, error: `Could not find channel "${target_channel}".` };
             }
-            channelId = channel.id;
+            channelId = resolved.id;
           }
 
           const result = await postTable(
