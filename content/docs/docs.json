@@ -78,7 +78,8 @@
               "tools/voice",
               "tools/cursor-agent",
               "tools/resources",
-              "tools/conversations"
+              "tools/conversations",
+              "tools/memories"
             ]
           },
           {
