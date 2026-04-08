@@ -32,6 +32,8 @@ CREATE TABLE memories (
   category TEXT NOT NULL DEFAULT 'semantic',  -- semantic | episodic | procedural
   source_message_id UUID REFERENCES messages(id),
   source_channel_type channel_type NOT NULL,
+  source_thread_ts TEXT,                   -- thread the memory was extracted from
+  source_channel_id TEXT,                  -- channel the memory was extracted from
   related_user_ids TEXT[] NOT NULL DEFAULT '{}',
   embedding vector(1536),
   importance INTEGER,                         -- 1-100, set by extraction LLM
@@ -203,6 +205,7 @@ Memory respects channel boundaries:
 - Memories from DMs are marked `shareable: 0` and only surface in conversations with the same user
 - Memories from public channels are `shareable: 1` and can surface anywhere
 - The `source_channel_type` field enables this filtering at query time
+- The `source_channel_id` and `source_thread_ts` fields provide full provenance -- every memory traces back to the exact conversation that generated it
 
 ## Notes: The Knowledge Graph
 
