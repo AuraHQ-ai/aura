@@ -8,6 +8,7 @@ import { ModelAutocomplete, type ModelAutocompleteOption } from "@/components/mo
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageSkeleton } from "@/components/page-skeleton";
+import { ThemeSelect } from "@/components/theme-toggle";
 import { formatDate } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { RefreshCw, Save, Plus, Pencil } from "lucide-react";
@@ -140,6 +141,19 @@ function SettingsPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Appearance</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="max-w-xs space-y-1.5">
+            <label className="text-sm font-medium">Theme</label>
+            <ThemeSelect />
+            <p className="text-sm text-muted-foreground">
+              Choose light, dark, or follow your system setting.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader><CardTitle className="text-base">Model Selection</CardTitle></CardHeader>
