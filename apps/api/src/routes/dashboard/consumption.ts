@@ -1,17 +1,55 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { conversationTraces } from "@aura/db/schema";
-import { sql } from "drizzle-orm";
+import { and, gte, isNotNull, lt, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
 
 export const dashboardConsumptionApp = createDashboardApp();
 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD");
+
+const consumptionQuerySchema = z
+  .object({
+    start: isoDate.optional(),
+    end: isoDate.optional(),
+  })
+  .refine((q) => (q.start === undefined) === (q.end === undefined), {
+    message: "start and end must both be provided together",
+    path: ["end"],
+  })
+  .refine((q) => !q.start || !q.end || q.start <= q.end, {
+    message: "start must be on or before end",
+    path: ["start"],
+  });
+
+/** Inclusive calendar start (UTC midnight) and exclusive upper bound (UTC midnight of day after `end`). */
+function parseCalendarRange(startStr: string | undefined, endStr: string | undefined): {
+  rangeStart: Date;
+  rangeEndExclusive: Date | null;
+} {
+  if (!startStr && !endStr) {
+    return {
+      rangeStart: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+      rangeEndExclusive: null,
+    };
+  }
+  const [ys, ms, ds] = startStr!.split("-").map(Number);
+  const [ye, me, de] = endStr!.split("-").map(Number);
+  const rangeStart = new Date(Date.UTC(ys, ms - 1, ds, 0, 0, 0, 0));
+  const endDayStart = new Date(Date.UTC(ye, me - 1, de, 0, 0, 0, 0));
+  const rangeEndExclusive = new Date(endDayStart.getTime() + 24 * 60 * 60 * 1000);
+  return { rangeStart, rangeEndExclusive };
+}
+
 const getConsumptionRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Consumption"],
-  summary: "Get cost and token consumption data (last 30 days)",
+  summary: "Get cost and token consumption (default: last 30 days rolling; optional start/end YYYY-MM-DD)",
+  request: {
+    query: consumptionQuerySchema,
+  },
   responses: {
     200: {
       content: {
@@ -49,7 +87,20 @@ const getConsumptionRoute = createRoute({
 
 dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
   try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const q = c.req.valid("query");
+    const { rangeStart, rangeEndExclusive } = parseCalendarRange(q.start, q.end);
+
+    const traceWhere = rangeEndExclusive === null
+      ? and(isNotNull(conversationTraces.costUsd), gte(conversationTraces.createdAt, rangeStart))
+      : and(
+        isNotNull(conversationTraces.costUsd),
+        gte(conversationTraces.createdAt, rangeStart),
+        lt(conversationTraces.createdAt, rangeEndExclusive),
+      );
+
+    const timeClause = rangeEndExclusive === null
+      ? sql`ct.created_at >= ${rangeStart}`
+      : sql`ct.created_at >= ${rangeStart} AND ct.created_at < ${rangeEndExclusive}`;
 
     const dailyCostRows = await db
       .select({
@@ -58,7 +109,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
         conversations: sql<number>`count(*)::int`.as("conversations"),
       })
       .from(conversationTraces)
-      .where(sql`${conversationTraces.costUsd} IS NOT NULL AND ${conversationTraces.createdAt} >= ${thirtyDaysAgo}`)
+      .where(traceWhere)
       .groupBy(sql`date_trunc('day', ${conversationTraces.createdAt})::date`)
       .orderBy(sql`date_trunc('day', ${conversationTraces.createdAt})::date`);
 
@@ -77,7 +128,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
       FROM conversation_traces ct
       LEFT JOIN users up ON up.slack_user_id = ct.user_id
       WHERE ct.cost_usd IS NOT NULL
-        AND ct.created_at >= ${thirtyDaysAgo}
+        AND ${timeClause}
         AND ct.source_type = 'interactive'
       GROUP BY ct.user_id, up.display_name
     `);
@@ -93,7 +144,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
       JOIN jobs j ON j.id = je.job_id
       LEFT JOIN users up ON up.slack_user_id = j.requested_by
       WHERE ct.cost_usd IS NOT NULL
-        AND ct.created_at >= ${thirtyDaysAgo}
+        AND ${timeClause}
         AND ct.source_type = 'job_execution'
       GROUP BY j.requested_by, up.display_name
     `);
@@ -167,7 +218,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
       JOIN jobs j ON j.id = je.job_id
       LEFT JOIN users up ON up.slack_user_id = j.requested_by
       WHERE ct.cost_usd IS NOT NULL
-        AND ct.created_at >= ${thirtyDaysAgo}
+        AND ${timeClause}
         AND ct.source_type = 'job_execution'
       GROUP BY j.name, up.display_name
       ORDER BY total_cost DESC
@@ -194,11 +245,15 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
         conversations: sql<number>`count(*)::int`.as("conversations"),
       })
       .from(conversationTraces)
-      .where(sql`${conversationTraces.costUsd} IS NOT NULL AND ${conversationTraces.createdAt} >= ${thirtyDaysAgo}`);
+      .where(traceWhere);
 
     const totalCost = Number(totalsRow.totalCost);
     const conversations = Number(totalsRow.conversations);
     const avgDailyCost = dailyCost.length > 0 ? totalCost / dailyCost.length : 0;
+
+    const tokenTimeClause = rangeEndExclusive === null
+      ? sql`created_at >= ${rangeStart}`
+      : sql`created_at >= ${rangeStart} AND created_at < ${rangeEndExclusive}`;
 
     const tokenResult = await db.execute(sql`
       SELECT
@@ -212,7 +267,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
         )), 0) AS uncached,
         COALESCE(SUM(("token_usage"->>'outputTokens')::bigint), 0) AS output_tokens
       FROM conversation_traces
-      WHERE cost_usd IS NOT NULL AND created_at >= ${thirtyDaysAgo}
+      WHERE cost_usd IS NOT NULL AND ${tokenTimeClause}
     `);
 
     const tokenRows = ((tokenResult as any).rows ?? tokenResult) as Array<{

@@ -16,6 +16,16 @@ function headers(): Record<string, string> {
   return h;
 }
 
+function buildQueryString(searchParams?: Record<string, string | undefined>): string {
+  if (!searchParams) return "";
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(searchParams)) {
+    if (v !== undefined && v !== "") q.set(k, v);
+  }
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
 async function apiFetch<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api/dashboard${path}`, {
     method,
@@ -29,8 +39,8 @@ async function apiFetch<T>(method: string, path: string, body?: unknown): Promis
   return res.json();
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-  return apiFetch<T>("GET", path);
+export async function apiGet<T>(path: string, searchParams?: Record<string, string | undefined>): Promise<T> {
+  return apiFetch<T>("GET", `${path}${buildQueryString(searchParams)}`);
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
