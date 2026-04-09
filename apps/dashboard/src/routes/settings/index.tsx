@@ -4,12 +4,12 @@ import { apiGet, apiPost, apiPut } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ModelAutocomplete, type ModelAutocompleteOption } from "@/components/model-autocomplete";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { formatDate } from "@/lib/utils";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { RefreshCw, Save, Plus, Pencil } from "lucide-react";
 
 interface Setting {
@@ -118,10 +118,23 @@ function SettingsPage() {
     (s) => !s.key.startsWith("model_") && !s.key.startsWith("credential:"),
   );
 
-  const MAIN_MODELS = models?.main ?? [];
-  const FAST_MODELS = models?.fast ?? [];
-  const EMBEDDING_MODELS = models?.embedding ?? [];
+  const providerByModelId = useMemo(
+    () => new Map((models?.catalog ?? []).map((model) => [model.value, model.provider])),
+    [models?.catalog],
+  );
+  const enrichOptions = useMemo(
+    () => (options: ModelOption[]): ModelAutocompleteOption[] =>
+      options.map((option) => ({
+        ...option,
+        provider: providerByModelId.get(option.value),
+      })),
+    [providerByModelId],
+  );
+  const MAIN_MODELS = enrichOptions(models?.main ?? []);
+  const FAST_MODELS = enrichOptions(models?.fast ?? []);
+  const EMBEDDING_MODELS = enrichOptions(models?.embedding ?? []);
   const isEditing = editingKey !== null;
+  const defaultOption = [{ value: "__default", label: "Default" }];
 
   return (
     <div className="space-y-4">
@@ -149,39 +162,33 @@ function SettingsPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Main Model</label>
-              <Select value={actualMainModel || "__default"} onValueChange={(v) => setMainModel(v === "__default" ? "" : v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__default">Default</SelectItem>
-                  {MAIN_MODELS.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ModelAutocomplete
+                value={actualMainModel || "__default"}
+                onValueChange={(v) => setMainModel(v === "__default" ? "" : v)}
+                options={MAIN_MODELS}
+                pinnedOptions={defaultOption}
+                placeholder="Select main model"
+              />
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Fast Model</label>
-              <Select value={actualFastModel || "__default"} onValueChange={(v) => setFastModel(v === "__default" ? "" : v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__default">Default</SelectItem>
-                  {FAST_MODELS.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ModelAutocomplete
+                value={actualFastModel || "__default"}
+                onValueChange={(v) => setFastModel(v === "__default" ? "" : v)}
+                options={FAST_MODELS}
+                pinnedOptions={defaultOption}
+                placeholder="Select fast model"
+              />
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Embedding Model</label>
-              <Select value={actualEmbeddingModel || "__default"} onValueChange={(v) => setEmbeddingModel(v === "__default" ? "" : v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__default">Default</SelectItem>
-                  {EMBEDDING_MODELS.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ModelAutocomplete
+                value={actualEmbeddingModel || "__default"}
+                onValueChange={(v) => setEmbeddingModel(v === "__default" ? "" : v)}
+                options={EMBEDDING_MODELS}
+                pinnedOptions={defaultOption}
+                placeholder="Select embedding model"
+              />
             </div>
           </div>
           <Button onClick={() => saveModelsMutation.mutate()} disabled={saveModelsMutation.isPending} size="sm">
