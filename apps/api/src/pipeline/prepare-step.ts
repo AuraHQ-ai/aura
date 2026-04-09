@@ -57,6 +57,7 @@ export function createPrepareStep(opts: {
   modelId?: string;
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  recordStepModelId?: (stepNumber: number, modelId?: string) => void;
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
@@ -156,6 +157,7 @@ export function createPrepareStep(opts: {
 
     // Recompute capability flags for the effective model (may differ after escalation)
     const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
+    opts.recordStepModelId?.(stepNumber, effectiveModelId);
     const activeHasEffortSupport = effectiveModelId ? supportsEffort(effectiveModelId) : false;
     const activeHasAdaptiveThinking = effectiveModelId ? supportsAdaptiveThinking(effectiveModelId) : false;
     const activeHasThinkingSupport = effectiveModelId ? supportsThinking(effectiveModelId) : false;
@@ -215,6 +217,7 @@ export function createInteractivePrepareStep(opts: {
   defaultEffort?: EffortLevel;
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  recordStepModelId?: (stepNumber: number, modelId?: string) => void;
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
@@ -229,6 +232,7 @@ export function createInteractivePrepareStep(opts: {
     defaultEffort: opts.defaultEffort,
     thinkingBudget: opts.thinkingBudget,
     getEscalationModel: opts.getEscalationModel,
+    recordStepModelId: opts.recordStepModelId,
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
@@ -244,6 +248,7 @@ export function createHeadlessPrepareStep(opts: {
   defaultEffort?: EffortLevel;
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
+  recordStepModelId?: (stepNumber: number, modelId?: string) => void;
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
@@ -258,6 +263,7 @@ export function createHeadlessPrepareStep(opts: {
     defaultEffort: opts.defaultEffort,
     thinkingBudget: opts.thinkingBudget,
     getEscalationModel: opts.getEscalationModel,
+    recordStepModelId: opts.recordStepModelId,
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,

@@ -32,6 +32,7 @@ export interface Step {
   toolResults?: ToolResult[];
   finishReason?: string;
   modelId?: string;
+  resolvedModelId?: string;
   usage?: DetailedTokenUsage;
 }
 
@@ -82,6 +83,7 @@ function insertMessage(
   parts: PartRow[],
   content?: string | null,
   modelId?: string | null,
+  resolvedModelId?: string | null,
   tokenUsage?: DetailedTokenUsage | null,
 ) {
   const msgId = crypto.randomUUID();
@@ -93,6 +95,7 @@ function insertMessage(
     content: content ?? null,
     orderIndex,
     modelId: modelId ?? null,
+    resolvedModelId: resolvedModelId ?? null,
     tokenUsage: tokenUsage ?? null,
   });
 
@@ -150,8 +153,11 @@ function stepToParts(step: Step): PartRow[] {
 /**
  * Map raw AI SDK steps to ConversationStep (Step) objects for persistence.
  */
-export function buildConversationSteps(rawSteps: any[]): Step[] {
-  return rawSteps.map((step: any) => ({
+export function buildConversationSteps(
+  rawSteps: any[],
+  canonicalStepModelIds: Array<string | undefined> = [],
+): Step[] {
+  return rawSteps.map((step: any, index: number) => ({
     text: step.text,
     reasoning: Array.isArray(step.reasoning) ? step.reasoning : undefined,
     toolCalls: step.toolCalls?.map((tc: any) => ({
@@ -165,7 +171,8 @@ export function buildConversationSteps(rawSteps: any[]): Step[] {
       output: tr.output,
     })),
     finishReason: step.finishReason,
-    modelId: step.response?.modelId,
+    modelId: canonicalStepModelIds[index] ?? step.response?.modelId,
+    resolvedModelId: step.response?.modelId,
     usage: step.usage ? {
       inputTokens: step.usage.inputTokens ?? 0,
       outputTokens: step.usage.outputTokens ?? 0,
@@ -196,19 +203,19 @@ export async function persistConversationInputs(
 
     await insertMessage(conversationId, "system", orderIndex++, [
       { type: "text", orderIndex: 0, textValue: systemPrompt },
-    ], systemPrompt);
+    ], systemPrompt, null, null);
 
     if (conversationHistory && conversationHistory.length > 0) {
       for (const msg of conversationHistory) {
         await insertMessage(conversationId, msg.role, orderIndex++, [
           { type: "text", orderIndex: 0, textValue: msg.content },
-        ], msg.content);
+        ], msg.content, null, null);
       }
     }
 
     await insertMessage(conversationId, "user", orderIndex++, [
       { type: "text", orderIndex: 0, textValue: userPrompt },
-    ], userPrompt);
+    ], userPrompt, null, null);
 
     logger.info("persistConversationInputs: saved", { conversationId, historyMessages: conversationHistory?.length ?? 0 });
     return orderIndex;
@@ -239,6 +246,7 @@ export async function persistConversationSteps(
         parts,
         undefined,
         step.modelId,
+        step.resolvedModelId,
         step.usage,
       );
     }
@@ -350,6 +358,9 @@ export async function updateConversationTraceUsage(
         tokenUsage: cumulativeUsage,
         ...(costUsd != null && { costUsd }),
         ...(costPricedAt != null && { costPricedAt }),
+        ...(stepUsages?.[0]?.resolvedModelId && {
+          resolvedModelId: stepUsages[0].resolvedModelId,
+        }),
       })
       .where(eq(conversationTraces.id, conversationId));
   } catch (err: any) {

@@ -5,6 +5,7 @@ import { logger } from "./logger.js";
 
 export interface StepUsage {
   modelId: string;
+  resolvedModelId?: string;
   usage: DetailedTokenUsage;
 }
 
@@ -15,23 +16,6 @@ interface PricingRow {
 
 const pricingCache = new Map<string, PricingRow[]>();
 
-/**
- * Normalize a model ID for pricing lookup.
- * The AI SDK gateway returns IDs like "anthropic/claude-sonnet-4-20250514"
- * while step.response.modelId may return just "claude-sonnet-4-20250514".
- * We strip the provider prefix and the date suffix for flexible matching.
- */
-function normalizeModelId(modelId: string): string[] {
-  const stripped = modelId.replace(/^[^/]+\//, "");
-  const withoutDate = stripped.replace(/-\d{8}$/, "");
-  const candidates = [modelId, stripped, withoutDate];
-  if (modelId.includes("/")) {
-    const prefix = modelId.split("/")[0];
-    candidates.push(`${prefix}/${withoutDate}`);
-  }
-  return [...new Set(candidates)];
-}
-
 async function lookupPricing(
   modelId: string,
   asOfDate: Date,
@@ -40,35 +24,26 @@ async function lookupPricing(
   const cacheKey = `${workspaceId}:${modelId}:${asOfDate.toISOString()}`;
   if (pricingCache.has(cacheKey)) return pricingCache.get(cacheKey)!;
 
-  const candidates = normalizeModelId(modelId);
-
-  for (const candidate of candidates) {
-    const rows = await db
-      .select({
-        tokenType: modelPricing.tokenType,
-        pricePerMillion: modelPricing.pricePerMillion,
-      })
-      .from(modelPricing)
-      .where(
-        and(
-          eq(modelPricing.workspaceId, workspaceId),
-          eq(modelPricing.modelId, candidate),
-          lte(modelPricing.effectiveFrom, asOfDate),
-          or(
-            isNull(modelPricing.effectiveUntil),
-            gte(modelPricing.effectiveUntil, asOfDate),
-          ),
+  const rows = await db
+    .select({
+      tokenType: modelPricing.tokenType,
+      pricePerMillion: modelPricing.pricePerMillion,
+    })
+    .from(modelPricing)
+    .where(
+      and(
+        eq(modelPricing.workspaceId, workspaceId),
+        eq(modelPricing.modelId, modelId),
+        lte(modelPricing.effectiveFrom, asOfDate),
+        or(
+          isNull(modelPricing.effectiveUntil),
+          gte(modelPricing.effectiveUntil, asOfDate),
         ),
-      );
+      ),
+    );
 
-    if (rows.length > 0) {
-      pricingCache.set(cacheKey, rows);
-      return rows;
-    }
-  }
-
-  pricingCache.set(cacheKey, []);
-  return [];
+  pricingCache.set(cacheKey, rows);
+  return rows;
 }
 
 function getPrice(
@@ -133,11 +108,18 @@ function computeStepCost(
  * Build per-step usage data from raw AI SDK steps.
  * Filters to steps that have both a modelId and usage, then maps to StepUsage[].
  */
-export function buildStepUsages(rawSteps: any[]): StepUsage[] {
+export function buildStepUsages(
+  rawSteps: any[],
+  canonicalStepModelIds: Array<string | undefined> = [],
+): StepUsage[] {
   return rawSteps
-    .filter((step: any) => step.response?.modelId && step.usage)
-    .map((step: any) => ({
-      modelId: step.response.modelId,
+    .filter(
+      (step: any, index: number) =>
+        (canonicalStepModelIds[index] ?? step.response?.modelId) && step.usage,
+    )
+    .map((step: any, index: number) => ({
+      modelId: canonicalStepModelIds[index] ?? step.response.modelId,
+      resolvedModelId: step.response.modelId,
       usage: {
         inputTokens: step.usage.inputTokens ?? 0,
         outputTokens: step.usage.outputTokens ?? 0,

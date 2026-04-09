@@ -264,7 +264,7 @@ export async function executeJob(
       prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`\n\n---\n\n${prompt}`;
     }
 
-    const { agent, modelId } = await createHeadlessAgent({
+  const { agent, modelId, getStepModelIds } = await createHeadlessAgent({
       slackClient,
       context: {
         userId: job.requestedBy,
@@ -303,7 +303,8 @@ export async function executeJob(
     const { text, steps, totalUsage: usage } = generateResult;
 
     // Phase 2a: persist assistant steps now that generate succeeded
-    const conversationSteps = buildConversationSteps(steps);
+    const stepModelIds = getStepModelIds();
+    const conversationSteps = buildConversationSteps(steps, stepModelIds);
     await persistConversationSteps(conversationId, conversationSteps, conversationOrderIndex);
 
     const serializedSteps = steps.map((step) => ({
@@ -327,7 +328,7 @@ export async function executeJob(
       outputTokenDetails: usage.outputTokenDetails,
     };
 
-    const stepUsages = buildStepUsages(steps);
+    const stepUsages = buildStepUsages(steps, stepModelIds);
 
     // Update trace with token usage + cost
     await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);

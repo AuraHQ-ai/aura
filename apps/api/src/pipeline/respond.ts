@@ -161,6 +161,8 @@ export interface LLMResponse {
   modelId?: string;
   /** Promise that resolves to the conversation steps (for persistence) */
   stepsPromise?: PromiseLike<any[]>;
+  /** Canonical gateway model ID used for each step in order */
+  stepModelIds?: string[];
   /** Whether the response was interrupted by a newer invocation */
   interrupted?: boolean;
 }
@@ -393,7 +395,7 @@ export async function generateResponse(
   let streamKeepAlive: ReturnType<typeof setInterval> | null = null;
 
   // ── Build agent ──────────────────────────────────────────────────────
-  const { agent, tools, modelId } = await createInteractiveAgent({
+  const { agent, tools, modelId, getStepModelIds } = await createInteractiveAgent({
     slackClient: options.slackClient,
     context: options.context,
     stablePrefix: options.stablePrefix,
@@ -984,6 +986,7 @@ export async function generateResponse(
       toolCalls: toolCallRecords,
       modelId,
       stepsPromise: result.steps,
+      stepModelIds: getStepModelIds(),
     };
   } catch (error: any) {
     clearTimeout(inactivityTimer);
@@ -1012,6 +1015,7 @@ export async function generateResponse(
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         toolCalls: toolCallRecords,
         modelId,
+        stepModelIds: getStepModelIds(),
         interrupted: true,
       };
     }

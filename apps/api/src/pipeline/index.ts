@@ -448,6 +448,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       systemPrompt: fullSystemPrompt,
       userPrompt: messageText,
       stepsPromise: response.stepsPromise,
+      stepModelIds: response.stepModelIds,
       replyThreadTs,
       ...(() => {
         const all = (conversation.thread ?? conversation.recentMessages)
@@ -590,10 +591,22 @@ async function persistConversationTrace(params: {
   systemPrompt: string;
   userPrompt: string;
   stepsPromise?: PromiseLike<any[]>;
+  stepModelIds?: string[];
   usage?: DetailedTokenUsage;
   stepsTimeoutMs?: number;
 }): Promise<string> {
-  const { channelId, threadTs, userId, modelId, systemPrompt, userPrompt, stepsPromise, usage, stepsTimeoutMs } = params;
+  const {
+    channelId,
+    threadTs,
+    userId,
+    modelId,
+    systemPrompt,
+    userPrompt,
+    stepsPromise,
+    stepModelIds,
+    usage,
+    stepsTimeoutMs,
+  } = params;
 
   const conversationId = await createConversationTrace({
     sourceType: "interactive",
@@ -622,9 +635,12 @@ async function persistConversationTrace(params: {
       } else {
         rawSteps = await stepsPromise;
       }
-      const conversationSteps = buildConversationSteps(rawSteps);
+      const conversationSteps = buildConversationSteps(
+        rawSteps,
+        stepModelIds ?? [],
+      );
       await persistConversationSteps(conversationId, conversationSteps, orderIndex);
-      stepUsages = buildStepUsages(rawSteps);
+      stepUsages = buildStepUsages(rawSteps, stepModelIds ?? []);
     } catch (stepsErr: any) {
       logger.error("Failed to persist conversation steps (non-fatal)", {
         conversationId,
@@ -714,6 +730,7 @@ async function persistInterruptedResponse(params: {
         systemPrompt,
         userPrompt,
         stepsPromise: response.stepsPromise,
+        stepModelIds: response.stepModelIds,
         usage: response.usage,
         stepsTimeoutMs: STEPS_PROMISE_TIMEOUT_MS,
       });
@@ -773,9 +790,10 @@ async function runBackgroundTasks(params: {
   systemPrompt?: string;
   userPrompt?: string;
   stepsPromise?: PromiseLike<any[]>;
+  stepModelIds?: string[];
   replyThreadTs?: string;
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, replyThreadTs } = params;
+  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, stepModelIds, replyThreadTs } = params;
 
   try {
     // Store the user's message
@@ -876,6 +894,7 @@ async function runBackgroundTasks(params: {
           systemPrompt,
           userPrompt,
           stepsPromise,
+          stepModelIds,
           usage: tokenUsage,
         });
 

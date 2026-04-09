@@ -435,6 +435,20 @@
       "when": 1775750400000,
       "tag": "0061_live_model_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1775836800000,
+      "tag": "0062_canonical_model_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1775923200000,
+      "tag": "0063_anthropic_model_id_alignment",
+      "breakpoints": true
     }
   ]
 }
