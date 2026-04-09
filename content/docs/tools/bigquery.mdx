@@ -5,13 +5,26 @@ description: "Query your data warehouse, inspect schemas, browse sheets, and sea
 
 # BigQuery & Data Tools
 
-Aura connects to Google BigQuery using a service account (`BQ_SA_KEY_JSON`). Access is **read-only by default** — no DML or DDL is allowed. Before querying unfamiliar tables, always call `inspect_table` to see actual data formats and sparsity.
+Aura connects to Google BigQuery using a service account (`BQ_SA_KEY_JSON`). Access is **read-only by default** — no DML or DDL is allowed. BigQuery tools use **Standard SQL** (`useLegacySql: false`) and a step-by-step recovery ladder to avoid malformed queries and false permission diagnoses.
+
+**BigQuery recovery ladder (follow in order):**
+1. `list_bigquery_datasets`
+2. `list_bigquery_tables`
+3. `inspect_bigquery_table`
+4. `SELECT COUNT(*)`
+5. `SELECT * LIMIT 5`
+6. Then run the real analytical query
+
+**Table reference styles (pick one while debugging):**
+- Preferred: `FROM dataset.table`
+- Fully qualified when needed: ``FROM `project.dataset.table` ``
+- Do **not** mix qualification styles mid-debug.
 
 ---
 
 ## BigQuery
 
-### `list_datasets`
+### `list_bigquery_datasets`
 List all datasets in the BigQuery warehouse. Use to discover what data is available.
 
 No parameters required.
@@ -20,7 +33,7 @@ No parameters required.
 
 ---
 
-### `list_tables`
+### `list_bigquery_tables`
 List all tables in a dataset, including type, row count, and description.
 
 | Param | Type | Required | Description |
@@ -29,7 +42,7 @@ List all tables in a dataset, including type, row count, and description.
 
 ---
 
-### `inspect_table`
+### `inspect_bigquery_table`
 Get a table's full schema, metadata, and sample rows. **Always use before querying an unfamiliar table** — sample rows reveal actual data formats, value ranges, and sparsity.
 
 | Param | Type | Required | Description |
@@ -40,7 +53,7 @@ Get a table's full schema, metadata, and sample rows. **Always use before queryi
 
 ---
 
-### `execute_query`
+### `execute_bigquery_query`
 Run a read-only SQL query against BigQuery. `SELECT`/`WITH` only — DML/DDL is blocked. 1 GB scan limit. Use `LIMIT` on large tables.
 
 | Param | Type | Required | Description |
@@ -48,10 +61,25 @@ Run a read-only SQL query against BigQuery. `SELECT`/`WITH` only — DML/DDL is 
 | `sql` | string | **yes** | Standard SQL query (SELECT/WITH only) |
 | `max_rows` | number | no | Max rows to return (default 100, max 1000) |
 
+**Failure-recovery guidance:**
+- For parse/syntax errors, re-check Standard SQL syntax and table references.
+- For "Access Denied" on complex queries, **do not** jump directly to permission conclusions.
+- First retry a minimal valid query (`SELECT COUNT(*) FROM dataset.table`) after confirming dataset/table names via the ladder above.
+
 **Important guardrails:**
 - Monetary values are often stored in **cents** — divide by 100 for euros/CHF
 - Always check the `data-warehouse-map` note before re-exploring from scratch
 - Timestamps may be Unix epoch — use `TIMESTAMP_SECONDS()` to convert
+
+---
+
+### Backward-compatible aliases
+
+The legacy tool names remain available for compatibility:
+- `list_datasets` → `list_bigquery_datasets`
+- `list_tables` → `list_bigquery_tables`
+- `inspect_table` → `inspect_bigquery_table`
+- `execute_query` → `execute_bigquery_query`
 
 ---
 

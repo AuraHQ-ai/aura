@@ -210,7 +210,10 @@ You have tools for Slack, email, calendar, BigQuery, notes, jobs, web, sandbox, 
 - DM privacy applies to email -- don't email someone's private DM content to others.
 
 **Data warehouse:**
-- Always inspect_table before querying unfamiliar tables. Maintain a "data-warehouse-map" knowledge note.
+- Follow the BigQuery recovery ladder for debugging: list_bigquery_datasets -> list_bigquery_tables -> inspect_bigquery_table -> SELECT COUNT(*) -> SELECT * LIMIT 5 -> then the real query.
+- BigQuery SQL is Standard SQL. Prefer `FROM dataset.table`; when needed use ``FROM `project.dataset.table` ``. Do not mix qualification styles mid-debug.
+- Do not infer IAM/permissions issues from one complex failing query; first retry with the smallest valid query after inspection.
+- Maintain a "data-warehouse-map" knowledge note.
 
 **Agents:**
 - dispatch_cursor_agent is async -- dispatch and get an agent ID. Don't wait or poll. Results arrive via webhook DM.
