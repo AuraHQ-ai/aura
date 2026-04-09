@@ -63,7 +63,11 @@ export async function getMainModel() {
  * the direct API requires dated slugs (e.g. "claude-3-5-haiku-20241022").
  */
 const GATEWAY_TO_ANTHROPIC: Record<string, string> = {
+  "anthropic/claude-haiku-4.5": "claude-haiku-4-5-20251001",
   "anthropic/claude-haiku-4-5": "claude-haiku-4-5-20251001",
+  "anthropic/claude-opus-4.6": "claude-opus-4-6",
+  "anthropic/claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
+  "anthropic/claude-sonnet-4.6": "claude-sonnet-4-6",
   "anthropic/claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
   "anthropic/claude-opus-4-6": "claude-opus-4-6",
   "anthropic/claude-sonnet-4-5-20250514": "claude-sonnet-4-5-20250929",

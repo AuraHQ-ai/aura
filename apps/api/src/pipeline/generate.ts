@@ -41,17 +41,22 @@ export interface AgenticStreamOptions {
   invocationId?: string;
   onFinish?: (event: {
     steps: StepResult<any>[];
+    stepModelIds: string[];
     totalUsage: LanguageModelUsage;
     text: string;
   }) => void;
 }
 
 export function createAgenticStream(options: AgenticStreamOptions) {
+  const stepModelIds: string[] = [];
   const prepareStep = createInteractivePrepareStep({
     stablePrefix: options.stablePrefix,
     conversationContext: options.conversationContext,
     dynamicContext: options.dynamicContext,
     modelId: options.modelId,
+    recordStepModelId: (stepNumber, stepModelId) => {
+      stepModelIds[stepNumber - 1] = stepModelId ?? options.modelId;
+    },
     channelId: options.channelId,
     threadTs: options.threadTs,
     invocationId: options.invocationId,
@@ -71,6 +76,12 @@ export function createAgenticStream(options: AgenticStreamOptions) {
     tools: options.tools,
     prepareStep,
     stopWhen: stepCountIs(options.maxSteps ?? 250),
-    onFinish: options.onFinish,
+    onFinish: options.onFinish
+      ? (event) =>
+          options.onFinish?.({
+            ...event,
+            stepModelIds: [...stepModelIds],
+          })
+      : undefined,
   });
 }

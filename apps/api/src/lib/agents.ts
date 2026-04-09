@@ -33,6 +33,7 @@ export interface InteractiveAgentResult {
   agent: ToolLoopAgent<never, Awaited<ReturnType<typeof createSlackTools>>>;
   tools: Awaited<ReturnType<typeof createSlackTools>>;
   modelId: string;
+  getStepModelIds: () => string[];
 }
 
 export async function createInteractiveAgent(
@@ -40,6 +41,7 @@ export async function createInteractiveAgent(
 ): Promise<InteractiveAgentResult> {
   const { modelId, model } = await getMainModel();
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
+  const stepModelIds: string[] = [];
   const systemMessages = buildCachedSystemMessages(
     options.stablePrefix,
     options.conversationContext,
@@ -59,13 +61,16 @@ export async function createInteractiveAgent(
       defaultEffort: "medium",
       thinkingBudget: 8000,
       getEscalationModel,
+      recordStepModelId: (stepNumber, stepModelId) => {
+        stepModelIds[stepNumber - 1] = stepModelId ?? modelId;
+      },
       invocationId: options.invocationId,
       channelId: options.channelId,
       threadTs: options.threadTs,
     }),
   });
 
-  return { agent, tools, modelId };
+  return { agent, tools, modelId, getStepModelIds: () => [...stepModelIds] };
 }
 
 // ── Headless Agent ───────────────────────────────────────────────────────────
@@ -81,6 +86,7 @@ export interface HeadlessAgentOptions {
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
   const { modelId, model } = await getMainModel();
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
+  const stepModelIds: string[] = [];
 
   const agent = new ToolLoopAgent({
     model,
@@ -93,10 +99,13 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       defaultEffort: "medium",
       thinkingBudget: 16000,
       getEscalationModel,
+      recordStepModelId: (stepNumber, stepModelId) => {
+        stepModelIds[stepNumber - 1] = stepModelId ?? modelId;
+      },
     }),
   });
 
-  return { agent, modelId };
+  return { agent, modelId, getStepModelIds: () => [...stepModelIds] };
 }
 
 // ── Subagent ─────────────────────────────────────────────────────────────────

@@ -387,7 +387,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
         channelId: "dashboard",
         threadTs: threadId ?? undefined,
         userId,
-        onFinish: ({ steps, totalUsage, text }) => {
+        onFinish: ({ steps, stepModelIds, totalUsage, text }) => {
           logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
           const fullSystemPrompt = [prompt.stablePrefix, prompt.conversationContext, prompt.dynamicContext].filter(Boolean).join("\n\n");
           waitUntil(
@@ -401,6 +401,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
               systemPrompt: fullSystemPrompt,
               conversationHistory: priorMessages,
               steps,
+              stepModelIds,
               totalUsage,
             }).catch((err) => {
               logger.error("persistDashboardConversation rejected", { error: String(err) });
@@ -430,9 +431,10 @@ async function persistDashboardConversation(params: {
   systemPrompt: string;
   conversationHistory?: Array<{ role: string; content: string }>;
   steps: StepResult<any>[];
+  stepModelIds: string[];
   totalUsage: LanguageModelUsage;
 }): Promise<void> {
-  const { userId, messageId, modelId, threadId, userMessage, assistantText, systemPrompt, conversationHistory, steps, totalUsage } = params;
+  const { userId, messageId, modelId, threadId, userMessage, assistantText, systemPrompt, conversationHistory, steps, stepModelIds, totalUsage } = params;
 
   try {
     logger.info("persistDashboardConversation started", { threadId, messageId });
@@ -512,10 +514,10 @@ async function persistDashboardConversation(params: {
     if (traceId) {
       const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage, conversationHistory);
 
-      const conversationSteps = buildConversationSteps(steps);
+      const conversationSteps = buildConversationSteps(steps, stepModelIds);
       await persistConversationSteps(traceId, conversationSteps, orderIndex);
 
-      const stepUsages = buildStepUsages(steps);
+      const stepUsages = buildStepUsages(steps, stepModelIds);
       await updateConversationTraceUsage(traceId, {
         inputTokens: totalUsage.inputTokens ?? 0,
         outputTokens: totalUsage.outputTokens ?? 0,
