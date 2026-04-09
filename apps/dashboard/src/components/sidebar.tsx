@@ -56,10 +56,10 @@ function NavContent({ onClose, showLabels }: { onClose?: () => void; showLabels?
               to={item.href}
               onClick={onClose}
               className={cn(
-                "flex items-center rounded-lg transition-colors",
+                "flex items-center rounded-xl transition-colors",
                 showLabels
-                  ? "gap-2 px-2 py-1.5 text-[13px]"
-                  : "justify-center w-12 h-12",
+                  ? "gap-2 px-1.5 py-1.5 text-[13px]"
+                  : "justify-center w-11 h-11",
                 isActive
                   ? "bg-foreground/15 text-foreground"
                   : "text-muted-foreground",

@@ -1,6 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { format } from "date-fns";
 import { CalendarIcon } from "lucide-react";
 import type { DateRange } from "react-day-picker";
@@ -8,7 +8,6 @@ import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Pagination } from "@/components/pagination";
 import {
   Popover,
   PopoverContent,
@@ -37,6 +36,7 @@ interface ConsumptionData {
     conversations: number;
   }>;
   perJob: Array<{
+    jobId: string;
     jobName: string | null;
     creatorName: string | null;
     executionCount: number;
@@ -72,8 +72,6 @@ const chartUsdFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 4,
 });
 
-const COST_TABLE_PAGE_SIZE = 12;
-
 function formatCost(cost: number): string {
   if (cost === 0) return "$0.00";
   return cost < 0.01 ? "< $0.01" : usdFormatter.format(cost);
@@ -102,8 +100,6 @@ function ConsumptionPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const search = Route.useSearch();
   const [defaultRange] = useState(defaultDateRange);
-  const [userPage, setUserPage] = useState(1);
-  const [jobPage, setJobPage] = useState(1);
 
   const committed =
     search.start && search.end
@@ -132,11 +128,6 @@ function ConsumptionPage() {
       from: parseLocalYMD(committed.start),
       to: parseLocalYMD(committed.end),
     });
-  }, [committed.end, committed.start]);
-
-  useEffect(() => {
-    setUserPage(1);
-    setJobPage(1);
   }, [committed.end, committed.start]);
 
   const rangeInvalid = committed.start > committed.end;
@@ -209,14 +200,6 @@ function ConsumptionPage() {
     data.tokenBreakdown.output;
   const userTotalCost = data.perUser.reduce((sum, user) => sum + user.totalCost, 0);
   const jobTotalCost = data.perJob.reduce((sum, job) => sum + job.totalCost, 0);
-  const paginatedUsers = data.perUser.slice(
-    (userPage - 1) * COST_TABLE_PAGE_SIZE,
-    userPage * COST_TABLE_PAGE_SIZE,
-  );
-  const paginatedJobs = data.perJob.slice(
-    (jobPage - 1) * COST_TABLE_PAGE_SIZE,
-    jobPage * COST_TABLE_PAGE_SIZE,
-  );
 
   return (
     <div className="space-y-4">
@@ -303,102 +286,104 @@ function ConsumptionPage() {
       </Card>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-            <CardTitle className="text-base">Cost by User</CardTitle>
-            <div className="text-right">
-              <div className="text-sm font-medium">{formatCost(userTotalCost)}</div>
-              <p className="text-xs text-muted-foreground">{data.perUser.length.toLocaleString()} users</p>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead className="w-[100px] text-right">Interactive</TableHead>
-                  <TableHead className="w-[100px] text-right">Jobs</TableHead>
-                  <TableHead className="w-[100px] text-right">Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedUsers.map((u) => (
-                  <TableRow key={u.userId}>
-                    <TableCell className="py-2">
-                      <CostShareLabel
-                        label={u.displayName || u.userId}
-                        share={userTotalCost > 0 ? (u.totalCost / userTotalCost) * 100 : 0}
-                      />
-                    </TableCell>
-                    <TableCell className="py-2 text-right">{formatCost(u.interactiveCost)}</TableCell>
-                    <TableCell className="py-2 text-right">{formatCost(u.jobCost)}</TableCell>
-                    <TableCell className="py-2 text-right font-medium">{formatCost(u.totalCost)}</TableCell>
+        <Card className="h-full max-h-[43rem] gap-0 overflow-hidden p-0">
+          <CostTableCardHeader
+            title="Cost by User"
+            totalCost={userTotalCost}
+            itemCount={data.perUser.length}
+            itemLabel="users"
+          />
+          <CardContent className="min-h-0 flex-1 px-0 pb-0">
+            <div className="h-full overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-0 hover:bg-transparent">
+                    <TableHead>User</TableHead>
+                    <TableHead className="w-[100px] text-right">Interactive</TableHead>
+                    <TableHead className="w-[100px] text-right">Jobs</TableHead>
+                    <TableHead className="w-[100px] text-right">Total</TableHead>
                   </TableRow>
-                ))}
-                {data.perUser.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-4">No data</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-            <div className="mt-3">
-              <Pagination
-                total={data.perUser.length}
-                pageSize={COST_TABLE_PAGE_SIZE}
-                page={userPage}
-                onPageChange={setUserPage}
-              />
+                </TableHeader>
+                <TableBody className="[&_tr]:border-0">
+                  {data.perUser.map((u) => (
+                    <TableRow key={u.userId}>
+                      <TableCell className="py-2">
+                        <CostShareLabel
+                          label={
+                            <Link
+                              to="/users/$slackUserId"
+                              params={{ slackUserId: u.userId }}
+                              className="truncate font-medium hover:underline"
+                            >
+                              {u.displayName || u.userId}
+                            </Link>
+                          }
+                          share={userTotalCost > 0 ? (u.totalCost / userTotalCost) * 100 : 0}
+                        />
+                      </TableCell>
+                      <TableCell className="py-2 text-right">{formatCost(u.interactiveCost)}</TableCell>
+                      <TableCell className="py-2 text-right">{formatCost(u.jobCost)}</TableCell>
+                      <TableCell className="py-2 text-right font-medium">{formatCost(u.totalCost)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {data.perUser.length === 0 && (
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableCell colSpan={4} className="py-4 text-center text-muted-foreground">No data</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-            <CardTitle className="text-base">Cost by Job</CardTitle>
-            <div className="text-right">
-              <div className="text-sm font-medium">{formatCost(jobTotalCost)}</div>
-              <p className="text-xs text-muted-foreground">{data.perJob.length.toLocaleString()} jobs</p>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Job</TableHead>
-                  <TableHead className="w-[140px]">Creator</TableHead>
-                  <TableHead className="w-[80px] text-right">Runs</TableHead>
-                  <TableHead className="w-[100px] text-right">Cost</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedJobs.map((j, i) => (
-                  <TableRow key={`${j.jobName}-${j.creatorName}-${i}`}>
-                    <TableCell className="py-2">
-                      <CostShareLabel
-                        label={j.jobName || "Unknown"}
-                        share={jobTotalCost > 0 ? (j.totalCost / jobTotalCost) * 100 : 0}
-                      />
-                    </TableCell>
-                    <TableCell className="py-2">{j.creatorName || "—"}</TableCell>
-                    <TableCell className="py-2 text-right">{j.executionCount}</TableCell>
-                    <TableCell className="py-2 text-right font-medium">{formatCost(j.totalCost)}</TableCell>
+        <Card className="h-full max-h-[43rem] gap-0 overflow-hidden p-0">
+          <CostTableCardHeader
+            title="Cost by Job"
+            totalCost={jobTotalCost}
+            itemCount={data.perJob.length}
+            itemLabel="jobs"
+          />
+          <CardContent className="min-h-0 flex-1 px-0 pb-0">
+            <div className="h-full overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-0 hover:bg-transparent">
+                    <TableHead>Job</TableHead>
+                    <TableHead className="w-[140px]">Creator</TableHead>
+                    <TableHead className="w-[80px] text-right">Runs</TableHead>
+                    <TableHead className="w-[100px] text-right">Cost</TableHead>
                   </TableRow>
-                ))}
-                {data.perJob.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-4">No data</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-            <div className="mt-3">
-              <Pagination
-                total={data.perJob.length}
-                pageSize={COST_TABLE_PAGE_SIZE}
-                page={jobPage}
-                onPageChange={setJobPage}
-              />
+                </TableHeader>
+                <TableBody className="[&_tr]:border-0">
+                  {data.perJob.map((j) => (
+                    <TableRow key={j.jobId}>
+                      <TableCell className="py-2">
+                        <CostShareLabel
+                          label={
+                            <Link
+                              to="/jobs/$id"
+                              params={{ id: j.jobId }}
+                              className="truncate font-medium hover:underline"
+                            >
+                              {j.jobName || "Unknown"}
+                            </Link>
+                          }
+                          share={jobTotalCost > 0 ? (j.totalCost / jobTotalCost) * 100 : 0}
+                        />
+                      </TableCell>
+                      <TableCell className="py-2">{j.creatorName || "—"}</TableCell>
+                      <TableCell className="py-2 text-right">{j.executionCount}</TableCell>
+                      <TableCell className="py-2 text-right font-medium">{formatCost(j.totalCost)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {data.perJob.length === 0 && (
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableCell colSpan={4} className="py-4 text-center text-muted-foreground">No data</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
             </div>
           </CardContent>
         </Card>
@@ -456,7 +441,7 @@ function CostShareLabel({
   label,
   share,
 }: {
-  label: string;
+  label: ReactNode;
   share: number;
 }) {
   const width = Math.max(share, share > 0 ? 2 : 0);
@@ -474,6 +459,30 @@ function CostShareLabel({
         />
       </div>
     </div>
+  );
+}
+
+function CostTableCardHeader({
+  title,
+  totalCost,
+  itemCount,
+  itemLabel,
+}: {
+  title: string;
+  totalCost: number;
+  itemCount: number;
+  itemLabel: string;
+}) {
+  return (
+    <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 px-6 pt-6 pb-4">
+      <CardTitle className="text-base">{title}</CardTitle>
+      <div className="text-right">
+        <div className="text-sm font-medium">{formatCost(totalCost)}</div>
+        <p className="text-xs text-muted-foreground">
+          {itemCount.toLocaleString()} {itemLabel}
+        </p>
+      </div>
+    </CardHeader>
   );
 }
 

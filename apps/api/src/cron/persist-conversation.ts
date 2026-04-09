@@ -3,6 +3,7 @@ import { db } from "../db/client.js";
 import { conversationTraces, conversationMessages, conversationParts, type DetailedTokenUsage } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { computeConversationCost, sumStepUsages, type StepUsage } from "../lib/cost-calculator.js";
+import { syncModelCatalogFromGateway } from "../lib/model-catalog.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -296,6 +297,7 @@ export async function updateConversationTraceUsage(
 ): Promise<void> {
   try {
     let costUsd: string | null = null;
+    let costPricedAt: Date | null = null;
 
     // Use cumulative tokens from stepUsages when available (the SDK's
     // tokenUsage is just the *last* step, not the sum of all steps).
@@ -306,7 +308,33 @@ export async function updateConversationTraceUsage(
 
     if (stepUsages && stepUsages.length > 0) {
       try {
-        const cost = await computeConversationCost(stepUsages);
+        const [trace] = await db
+          .select({
+            workspaceId: conversationTraces.workspaceId,
+          })
+          .from(conversationTraces)
+          .where(eq(conversationTraces.id, conversationId))
+          .limit(1);
+
+        const workspaceId = trace?.workspaceId ?? "default";
+
+        try {
+          const syncResult = await syncModelCatalogFromGateway(workspaceId);
+          costPricedAt = syncResult.syncedAt;
+        } catch (syncErr: any) {
+          costPricedAt = new Date();
+          logger.warn("updateConversationTraceUsage: live model sync failed, using latest DB pricing", {
+            conversationId,
+            workspaceId,
+            error: syncErr.message,
+          });
+        }
+
+        const cost = await computeConversationCost(
+          stepUsages,
+          costPricedAt,
+          workspaceId,
+        );
         if (cost > 0) costUsd = cost.toFixed(6);
       } catch (costErr: any) {
         logger.warn("updateConversationTraceUsage: cost computation failed (non-fatal)", {
@@ -321,6 +349,7 @@ export async function updateConversationTraceUsage(
       .set({
         tokenUsage: cumulativeUsage,
         ...(costUsd != null && { costUsd }),
+        ...(costPricedAt != null && { costPricedAt }),
       })
       .where(eq(conversationTraces.id, conversationId));
   } catch (err: any) {

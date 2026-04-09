@@ -7,14 +7,14 @@ import {
 /** The model type that wrapLanguageModel accepts (LanguageModelV3, not re-exported by "ai"). */
 export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
+import { getDefaultModelId } from "./model-catalog.js";
 import { logger } from "./logger.js";
-import { MODEL_DEFAULTS } from "./models.js";
 
 /**
  * All LLM and embedding calls go through Vercel AI Gateway.
  *
  * Models are resolved dynamically: DB settings take priority,
- * then env vars, then hardcoded defaults. This lets admins
+ * then DB-backed catalog defaults. This lets admins
  * change models from the Slack App Home without redeploying.
  *
  * When deployed on Vercel, auth is handled automatically via OIDC.
@@ -26,21 +26,30 @@ import { MODEL_DEFAULTS } from "./models.js";
  * directly using ANTHROPIC_API_KEY.
  */
 
-/** Default main model ID used across the codebase. */
-export const DEFAULT_MAIN_MODEL = MODEL_DEFAULTS.main;
+async function resolveModelId(
+  settingKey: string,
+  category: "main" | "fast" | "embedding" | "escalation",
+): Promise<string> {
+  const override = await getSetting(settingKey);
+  if (override) return override;
+
+  const defaultModelId = await getDefaultModelId(category);
+  if (defaultModelId) return defaultModelId;
+
+  throw new Error(`No default model configured for category: ${category}`);
+}
 
 /**
  * Resolve the main model ID string (no gateway wrapping).
- * Priority: DB setting > env var > default
+ * Priority: DB setting > catalog default
  */
 export async function getMainModelId(): Promise<string> {
-  const override = await getSetting("model_main");
-  return override || process.env.MODEL_MAIN || MODEL_DEFAULTS.main;
+  return resolveModelId("model_main", "main");
 }
 
 /**
  * Get the main conversation model with Anthropic fallback support.
- * Priority: DB setting > env var > default
+ * Priority: DB setting > catalog default
  */
 export async function getMainModel() {
   const modelId = await getMainModelId();
@@ -134,24 +143,20 @@ export function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: s
 
 /**
  * Get the fast model (memory extraction, profile updates) with Anthropic fallback support.
- * Priority: DB setting > env var > default.
+ * Priority: DB setting > catalog default.
  */
 export async function getFastModel() {
-  const override = await getSetting("model_fast");
-  const gatewayId =
-    override || process.env.MODEL_FAST || MODEL_DEFAULTS.fast;
+  const gatewayId = await resolveModelId("model_fast", "fast");
   const gatewayModel = gateway(gatewayId);
   return withAnthropicFallback(gatewayModel, gatewayId);
 }
 
 /**
  * Get the embedding model with Anthropic fallback support.
- * Priority: DB setting > env var > default
+ * Priority: DB setting > catalog default
  */
 export async function getEmbeddingModel() {
-  const override = await getSetting("model_embedding");
-  const gatewayId =
-    override || process.env.MODEL_EMBEDDING || MODEL_DEFAULTS.embedding;
+  const gatewayId = await resolveModelId("model_embedding", "embedding");
   return gateway.embedding(gatewayId);
 }
 
@@ -191,12 +196,10 @@ export function isAnthropicModel(modelId: string): boolean {
 /**
  * Get the escalation model for automatic model escalation.
  * Used when the default model is struggling — prepareStep can swap to this mid-conversation.
- * Priority: DB setting > env var > default (Opus 4.6)
+ * Priority: DB setting > catalog default
  */
 export async function getEscalationModel() {
-  const override = await getSetting("model_escalation");
-  const modelId =
-    override || process.env.MODEL_ESCALATION || "anthropic/claude-opus-4-6";
+  const modelId = await resolveModelId("model_escalation", "escalation");
   const gatewayModel = gateway(modelId);
   return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
 }
@@ -212,26 +215,6 @@ export async function getEscalationModel() {
 
 
 
-
-/**
- * Static references kept for backward compatibility where async isn't feasible.
- * These use env vars only (no DB lookup) and include Anthropic fallback support.
- */
-const STATIC_MAIN_MODEL_ID = process.env.MODEL_MAIN || MODEL_DEFAULTS.main;
-const STATIC_FAST_MODEL_ID = process.env.MODEL_FAST || MODEL_DEFAULTS.fast;
-const STATIC_EMBEDDING_MODEL_ID = process.env.MODEL_EMBEDDING || MODEL_DEFAULTS.embedding;
-
-export const mainModel = withAnthropicFallback(
-  gateway(STATIC_MAIN_MODEL_ID),
-  STATIC_MAIN_MODEL_ID,
-);
-
-export const fastModel = withAnthropicFallback(
-  gateway(STATIC_FAST_MODEL_ID),
-  STATIC_FAST_MODEL_ID,
-);
-
-export const embeddingModel = gateway.embedding(STATIC_EMBEDDING_MODEL_ID);
 
 /**
  * Wrap a system prompt string with Anthropic cache control.

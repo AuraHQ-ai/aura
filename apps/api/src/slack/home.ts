@@ -9,20 +9,9 @@ import {
   getCredentialById,
 } from "../lib/api-credentials.js";
 import {
-  MAIN_MODELS,
-  FAST_MODELS,
-  EMBEDDING_MODELS,
-  MODEL_DEFAULTS,
+  getModelCatalogResponse,
   type ModelOption,
-} from "../lib/models.js";
-
-// ── Defaults ─────────────────────────────────────────────────────────────────
-
-const DEFAULTS: Record<string, string> = {
-  model_main: process.env.MODEL_MAIN || MODEL_DEFAULTS.main,
-  model_fast: process.env.MODEL_FAST || MODEL_DEFAULTS.fast,
-  model_embedding: process.env.MODEL_EMBEDDING || MODEL_DEFAULTS.embedding,
-};
+} from "../lib/model-catalog.js";
 
 // ── Credential Definitions ───────────────────────────────────────────────────
 
@@ -595,11 +584,16 @@ export async function publishHomeTab(
 ): Promise<void> {
   try {
     const currentSettings = await getAllSettings();
+    const catalog = await getModelCatalogResponse();
     const admin = await hasRole(userId, "admin");
+    const labelByValue = new Map(
+      catalog.catalog.map((model) => [model.value, model.label]),
+    );
 
-    const mainValue = currentSettings.model_main || DEFAULTS.model_main;
-    const fastValue = currentSettings.model_fast || DEFAULTS.model_fast;
-    const embeddingValue = currentSettings.model_embedding || DEFAULTS.model_embedding;
+    const mainValue = currentSettings.model_main || catalog.defaults.main || "";
+    const fastValue = currentSettings.model_fast || catalog.defaults.fast || "";
+    const embeddingValue =
+      currentSettings.model_embedding || catalog.defaults.embedding || "";
 
     const blocks: any[] = [
       {
@@ -630,7 +624,7 @@ export async function publishHomeTab(
             text: "*:brain: Main Model*\nUsed for conversation responses. Quality matters most here.",
           },
         },
-        buildDropdown("select_model_main", "Main Model", MAIN_MODELS, mainValue),
+        buildDropdown("select_model_main", "Main Model", catalog.main, mainValue),
         { type: "divider" },
         {
           type: "section",
@@ -639,7 +633,7 @@ export async function publishHomeTab(
             text: "*:zap: Fast Model*\nUsed for memory extraction and profile updates. Speed and cost matter most.",
           },
         },
-        buildDropdown("select_model_fast", "Fast Model", FAST_MODELS, fastValue),
+        buildDropdown("select_model_fast", "Fast Model", catalog.fast, fastValue),
         { type: "divider" },
         {
           type: "section",
@@ -648,13 +642,18 @@ export async function publishHomeTab(
             text: "*:mag: Embedding Model*\nUsed for vectorizing memories and queries.\n:warning: _Changing this may require updating the DB vector dimensions (currently 1536)._",
           },
         },
-        buildDropdown("select_model_embedding", "Embedding Model", EMBEDDING_MODELS, embeddingValue),
+        buildDropdown(
+          "select_model_embedding",
+          "Embedding Model",
+          catalog.embedding,
+          embeddingValue,
+        ),
       );
     } else {
       // Read-only view
-      const mainLabel = MAIN_MODELS.find((m) => m.value === mainValue)?.label || mainValue;
-      const fastLabel = FAST_MODELS.find((m) => m.value === fastValue)?.label || fastValue;
-      const embeddingLabel = EMBEDDING_MODELS.find((m) => m.value === embeddingValue)?.label || embeddingValue;
+      const mainLabel = labelByValue.get(mainValue) || mainValue;
+      const fastLabel = labelByValue.get(fastValue) || fastValue;
+      const embeddingLabel = labelByValue.get(embeddingValue) || embeddingValue;
 
       blocks.push(
         {

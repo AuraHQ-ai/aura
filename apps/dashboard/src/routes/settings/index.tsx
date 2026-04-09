@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPut } from "@/lib/api";
+import { apiGet, apiPost, apiPut } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { PageSkeleton } from "@/components/page-skeleton";
 import { formatDate } from "@/lib/utils";
 import { useState } from "react";
-import { Save, Plus, Pencil } from "lucide-react";
+import { RefreshCw, Save, Plus, Pencil } from "lucide-react";
 
 interface Setting {
   key: string;
@@ -29,7 +29,18 @@ interface ModelCatalog {
   main: ModelOption[];
   fast: ModelOption[];
   embedding: ModelOption[];
-  defaults: { main: string; fast: string; embedding: string };
+  escalation: ModelOption[];
+  defaults: { main?: string; fast?: string; embedding?: string; escalation?: string };
+  catalog: Array<{
+    value: string;
+    label: string;
+    provider: string;
+    type: string;
+    enabledCategories: string[];
+    defaultCategories: string[];
+    lastSyncedAt: string | null;
+  }>;
+  lastSyncedAt: string | null;
 }
 
 function SettingsPage() {
@@ -78,11 +89,18 @@ function SettingsPage() {
 
   const saveModelsMutation = useMutation({
     mutationFn: async () => {
-      if (actualMainModel) await apiPut("/settings/model_main", { value: actualMainModel });
-      if (actualFastModel) await apiPut("/settings/model_fast", { value: actualFastModel });
-      if (actualEmbeddingModel) await apiPut("/settings/model_embedding", { value: actualEmbeddingModel });
+      await apiPut("/settings/model_main", { value: actualMainModel || "" });
+      await apiPut("/settings/model_fast", { value: actualFastModel || "" });
+      await apiPut("/settings/model_embedding", { value: actualEmbeddingModel || "" });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
+  });
+
+  const refreshModelsMutation = useMutation({
+    mutationFn: () => apiPost("/models/refresh", {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+    },
   });
 
   const saveSettingMutation = useMutation({
@@ -112,6 +130,22 @@ function SettingsPage() {
       <Card>
         <CardHeader><CardTitle className="text-base">Model Selection</CardTitle></CardHeader>
         <CardContent className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              {models?.lastSyncedAt
+                ? `Catalog refreshed ${formatDate(models.lastSyncedAt)}`
+                : "Catalog has not been refreshed yet."}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refreshModelsMutation.mutate()}
+              disabled={refreshModelsMutation.isPending}
+            >
+              <RefreshCw className="h-4 w-4" />
+              {refreshModelsMutation.isPending ? "Refreshing..." : "Refresh Catalog"}
+            </Button>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Main Model</label>
