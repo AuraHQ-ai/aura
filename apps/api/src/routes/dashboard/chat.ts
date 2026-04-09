@@ -514,10 +514,10 @@ async function persistDashboardConversation(params: {
     if (traceId) {
       const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage, conversationHistory);
 
-      const conversationSteps = buildConversationSteps(steps, stepModelIds);
+      const conversationSteps = buildConversationSteps(steps, stepModelIds, modelId);
       await persistConversationSteps(traceId, conversationSteps, orderIndex);
 
-      const stepUsages = buildStepUsages(steps, stepModelIds);
+      const stepUsages = buildStepUsages(steps, stepModelIds, modelId);
       await updateConversationTraceUsage(traceId, {
         inputTokens: totalUsage.inputTokens ?? 0,
         outputTokens: totalUsage.outputTokens ?? 0,

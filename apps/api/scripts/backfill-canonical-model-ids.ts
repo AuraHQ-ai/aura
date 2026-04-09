@@ -7,6 +7,7 @@ import {
 } from "@aura/db/schema";
 import {
   computeConversationCost,
+  resolveCanonicalStepModelId,
   type StepUsage,
 } from "../src/lib/cost-calculator.js";
 import { syncModelCatalogFromGateway } from "../src/lib/model-catalog.js";
@@ -90,7 +91,11 @@ async function main() {
           } => message.modelId != null && message.tokenUsage != null,
         )
         .map((message) => ({
-          modelId: message.modelId,
+          modelId: resolveCanonicalStepModelId({
+            canonicalStepModelId: message.modelId,
+            resolvedModelId: message.resolvedModelId ?? undefined,
+            fallbackModelId: trace.modelId ?? undefined,
+          })!,
           resolvedModelId: message.resolvedModelId ?? undefined,
           usage: message.tokenUsage,
         }));

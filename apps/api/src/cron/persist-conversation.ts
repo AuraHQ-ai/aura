@@ -2,7 +2,12 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { conversationTraces, conversationMessages, conversationParts, type DetailedTokenUsage } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
-import { computeConversationCost, sumStepUsages, type StepUsage } from "../lib/cost-calculator.js";
+import {
+  computeConversationCost,
+  resolveCanonicalStepModelId,
+  sumStepUsages,
+  type StepUsage,
+} from "../lib/cost-calculator.js";
 import { syncModelCatalogFromGateway } from "../lib/model-catalog.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -156,6 +161,7 @@ function stepToParts(step: Step): PartRow[] {
 export function buildConversationSteps(
   rawSteps: any[],
   canonicalStepModelIds: Array<string | undefined> = [],
+  fallbackModelId?: string,
 ): Step[] {
   return rawSteps.map((step: any, index: number) => ({
     text: step.text,
@@ -171,7 +177,11 @@ export function buildConversationSteps(
       output: tr.output,
     })),
     finishReason: step.finishReason,
-    modelId: canonicalStepModelIds[index] ?? step.response?.modelId,
+    modelId: resolveCanonicalStepModelId({
+      canonicalStepModelId: canonicalStepModelIds[index],
+      resolvedModelId: step.response?.modelId,
+      fallbackModelId,
+    }),
     resolvedModelId: step.response?.modelId,
     usage: step.usage ? {
       inputTokens: step.usage.inputTokens ?? 0,
