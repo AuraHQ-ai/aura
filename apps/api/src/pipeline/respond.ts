@@ -50,7 +50,7 @@ function serializeToolOutput(toolName: string, output: any): string {
   if (typeof output !== "object") return String(output);
 
   switch (toolName) {
-    case "execute_query": {
+    case "bq_execute_query": {
       if (output.rows && Array.isArray(output.rows)) {
         const capped = { ...output, rows: output.rows.slice(0, 50) };
         if (output.rows.length > 50) capped._truncated = true;

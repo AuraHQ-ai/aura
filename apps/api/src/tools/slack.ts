@@ -3038,7 +3038,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
     const DEFERRED_TOOLS = new Set([
       // BigQuery / Data
-      "list_datasets", "list_tables", "inspect_table", "execute_query",
+      "bq_list_datasets", "bq_list_tables", "bq_inspect_table", "bq_execute_query",
       // Google Sheets
       "read_google_sheet",
       // Google Drive

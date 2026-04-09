@@ -2,6 +2,9 @@ import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
+import {
+  augmentBigQueryErrorMessage,
+} from "../lib/bigquery-errors.js";
 import { defineTool } from "../lib/tool.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
@@ -63,6 +66,25 @@ function isSafeBigQueryIdentifier(id: string): boolean {
 /** Max result payload size to avoid token bloat. */
 const MAX_RESULT_CHARS = 8000;
 
+const BIGQUERY_SQL_STYLE_GUIDANCE =
+  "BigQuery Standard SQL only (not legacy SQL). Prefer `FROM dataset.table`; when needed use fully-qualified ``FROM `project.dataset.table` ``. Do not mix qualification styles mid-debug.";
+const BIGQUERY_DEBUGGING_LADDER =
+  "Debugging ladder: bq_list_datasets -> bq_list_tables -> bq_inspect_table -> SELECT COUNT(*) -> SELECT * LIMIT 5 -> then your real query.";
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function formatBigQueryToolError(prefix: string, error: unknown): string {
+  return `${prefix}: ${augmentBigQueryErrorMessage(getErrorMessage(error))}`;
+}
+
 /**
  * Extract the first dataset reference from a SQL query so we can resolve its
  * location. Handles backtick-quoted `project.dataset.table`,
@@ -106,203 +128,323 @@ async function resolveDatasetLocation(
  * All tools are read-only. DML/DDL is rejected.
  */
 export function createBigQueryTools(context?: ScheduleContext) {
+  const listTablesInputSchema = z.object({
+    dataset: z.string().describe("The dataset ID to list tables from"),
+  });
+  const inspectTableInputSchema = z.object({
+    dataset: z.string().describe("The dataset ID"),
+    table: z.string().describe("The table ID"),
+    sample_rows: z
+      .number()
+      .min(0)
+      .max(20)
+      .default(5)
+      .describe("Number of sample rows to fetch (default 5, max 20)"),
+  });
+  const executeQueryInputSchema = z.object({
+    sql: z
+      .string()
+      .describe("The SQL query to execute (BigQuery Standard SQL, SELECT/WITH only)"),
+    max_rows: z
+      .number()
+      .min(1)
+      .max(1000)
+      .default(100)
+      .describe("Maximum rows to return (default 100, max 1000)"),
+  });
+
+  const executeListBigQueryDatasets = async (toolName: string) => {
+    const client = await getBigQueryClient();
+    if (!client) {
+      return {
+        ok: false as const,
+        error: "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
+      };
+    }
+
+    try {
+      const [datasets] = await client.getDatasets();
+      const result = datasets.map((ds) => ({
+        id: ds.id,
+        location: ds.metadata?.location ?? null,
+        description: ds.metadata?.description ?? null,
+      }));
+
+      logger.info(`${toolName} called`, { count: result.length });
+      return { ok: true as const, datasets: result };
+    } catch (error: unknown) {
+      logger.error(`${toolName} failed`, { error: getErrorMessage(error) });
+      return {
+        ok: false as const,
+        error: formatBigQueryToolError("Failed to list datasets", error),
+      };
+    }
+  };
+
+  const executeListBigQueryTables = async (
+    { dataset }: z.infer<typeof listTablesInputSchema>,
+    toolName: string,
+  ) => {
+    const client = await getBigQueryClient();
+    if (!client) {
+      return {
+        ok: false as const,
+        error: "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
+      };
+    }
+
+    try {
+      const [tables] = await client.dataset(dataset).getTables();
+      const result = tables.map((t) => ({
+        id: t.id,
+        type: t.metadata?.type ?? null,
+        description: t.metadata?.description ?? null,
+        row_count: t.metadata?.numRows ?? null,
+      }));
+
+      logger.info(`${toolName} called`, { dataset, count: result.length });
+      return { ok: true as const, dataset, tables: result };
+    } catch (error: unknown) {
+      logger.error(`${toolName} failed`, { dataset, error: getErrorMessage(error) });
+      return {
+        ok: false as const,
+        error: formatBigQueryToolError(`Failed to list tables in ${dataset}`, error),
+      };
+    }
+  };
+
+  const executeInspectBigQueryTable = async (
+    { dataset, table, sample_rows }: z.infer<typeof inspectTableInputSchema>,
+    toolName: string,
+  ) => {
+    const client = await getBigQueryClient();
+    if (!client) {
+      return {
+        ok: false as const,
+        error: "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
+      };
+    }
+
+    if (!isSafeBigQueryIdentifier(dataset) || !isSafeBigQueryIdentifier(table)) {
+      return {
+        ok: false as const,
+        error:
+          "Invalid dataset or table name. Only alphanumeric characters, underscores, and hyphens are allowed.",
+      };
+    }
+
+    try {
+      const tableRef = client.dataset(dataset).table(table);
+      const [metadata] = await tableRef.getMetadata();
+
+      const schema = (metadata.schema?.fields ?? []).map((f: any) => ({
+        name: f.name,
+        type: f.type,
+        mode: f.mode ?? "NULLABLE",
+        description: f.description ?? null,
+      }));
+
+      const info = {
+        row_count: metadata.numRows ?? null,
+        size_bytes: metadata.numBytes ?? null,
+        description: metadata.description ?? null,
+        created: metadata.creationTime
+          ? formatTimestamp(new Date(Number(metadata.creationTime)), context?.timezone)
+          : null,
+        modified: metadata.lastModifiedTime
+          ? formatTimestamp(new Date(Number(metadata.lastModifiedTime)), context?.timezone)
+          : null,
+      };
+
+      const location: string | undefined = metadata.location ?? undefined;
+
+      let samples: any[] = [];
+      if (sample_rows > 0) {
+        try {
+          const [rows] = await client.query({
+            query: `SELECT * FROM \`${dataset}.${table}\` LIMIT ${sample_rows}`,
+            useLegacySql: false,
+            maximumBytesBilled: String(1e9),
+            location,
+          });
+          samples = rows;
+        } catch (sampleError: unknown) {
+          logger.warn(`${toolName} sample query failed`, {
+            dataset,
+            table,
+            error: getErrorMessage(sampleError),
+          });
+        }
+      }
+
+      logger.info(`${toolName} called`, {
+        dataset,
+        table,
+        schemaFields: schema.length,
+        sampleRows: samples.length,
+      });
+
+      const result = {
+        ok: true as const,
+        dataset,
+        table,
+        schema,
+        ...info,
+        sample_rows: samples,
+      };
+
+      const serialized = JSON.stringify(result);
+      if (serialized.length > MAX_RESULT_CHARS) {
+        let truncated = samples.slice();
+        let output: typeof result & { _truncated?: boolean; _note?: string };
+        do {
+          truncated = truncated.slice(0, Math.floor(truncated.length / 2));
+          output = {
+            ...result,
+            sample_rows: truncated,
+            _truncated: true,
+            _note: `Showing ${truncated.length} of ${samples.length} sample rows to stay within size limits.`,
+          };
+        } while (
+          JSON.stringify(output).length > MAX_RESULT_CHARS &&
+          truncated.length > 0
+        );
+        return output;
+      }
+
+      return result;
+    } catch (error: unknown) {
+      logger.error(`${toolName} failed`, {
+        dataset,
+        table,
+        error: getErrorMessage(error),
+      });
+      return {
+        ok: false as const,
+        error: formatBigQueryToolError(`Failed to inspect ${dataset}.${table}`, error),
+      };
+    }
+  };
+
+  const executeBigQueryQuery = async (
+    { sql, max_rows }: z.infer<typeof executeQueryInputSchema>,
+    toolName: string,
+  ) => {
+    const client = await getBigQueryClient();
+    if (!client) {
+      return {
+        ok: false as const,
+        error: "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
+      };
+    }
+
+    // Safety: only allow read-only SELECT / WITH queries
+    const validationError = validateReadOnlySQL(sql);
+    if (validationError) {
+      return { ok: false as const, error: validationError };
+    }
+
+    // Inject LIMIT if not already present
+    const hasLimit = /\bLIMIT\s+\d+/i.test(sql);
+    const finalSql = hasLimit ? sql : `${sql.replace(/;\s*$/, "")} LIMIT ${max_rows}`;
+
+    try {
+      // Resolve dataset location so the query job runs in the right region
+      const datasetId = extractDatasetFromSQL(finalSql);
+      const location = datasetId
+        ? await resolveDatasetLocation(client, datasetId)
+        : undefined;
+
+      const queryResult = await client.query({
+        query: finalSql,
+        useLegacySql: false,
+        maximumBytesBilled: String(1e9),
+        maxResults: max_rows,
+        location,
+      });
+      const rows = queryResult[0];
+      const responseMeta = (queryResult as any)[2];
+      const columns =
+        responseMeta?.schema?.fields?.map((f: any) => f.name) ??
+        (rows.length > 0 ? Object.keys(rows[0]) : []);
+      const totalRows = rows.length;
+      const bytesProcessed = responseMeta?.totalBytesProcessed ?? null;
+
+      logger.info(`${toolName} called`, {
+        sqlLength: sql.length,
+        rowCount: rows.length,
+        bytesProcessed,
+      });
+
+      const resultRows = rows.slice(0, max_rows);
+      const result = {
+        ok: true as const,
+        columns,
+        rows: resultRows,
+        total_rows: totalRows,
+        bytes_processed: bytesProcessed,
+      };
+
+      const serialized = JSON.stringify(result);
+      if (serialized.length > MAX_RESULT_CHARS) {
+        let truncated = resultRows.slice();
+        let output;
+        do {
+          truncated = truncated.slice(0, Math.floor(truncated.length / 2));
+          output = {
+            ok: true as const,
+            columns,
+            rows: truncated,
+            total_rows: totalRows,
+            bytes_processed: bytesProcessed,
+            _truncated: true,
+            _note: `Showing ${truncated.length} of ${totalRows} rows. Use a more specific query or smaller LIMIT.`,
+          };
+        } while (
+          JSON.stringify(output).length > MAX_RESULT_CHARS &&
+          truncated.length > 0
+        );
+        return output;
+      }
+
+      return result;
+    } catch (error: unknown) {
+      logger.error(`${toolName} failed`, {
+        sql: sql.substring(0, 200),
+        error: getErrorMessage(error),
+      });
+      return {
+        ok: false as const,
+        error: formatBigQueryToolError("Query failed", error),
+      };
+    }
+  };
+
   return {
-    list_datasets: defineTool({
+    bq_list_datasets: defineTool({
       requiredCredentials: ["google_bq_credentials"],
       description:
-        "List all datasets in the BigQuery data warehouse. Use this to discover what data is available. After exploring, save findings to a 'data-warehouse-map' knowledge note for future reference.",
+        "List all datasets in BigQuery. This is step 1 of the recovery ladder and the safest reset point when queries fail. Use this before table/query calls so you know the real dataset names and locations. After exploring, save findings to a 'data-warehouse-map' knowledge note for future reference.",
       inputSchema: z.object({}),
-      execute: async () => {
-        const client = await getBigQueryClient();
-        if (!client) {
-          return {
-            ok: false,
-            error:
-              "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
-          };
-        }
-
-        try {
-          const [datasets] = await client.getDatasets();
-          const result = datasets.map((ds) => ({
-            id: ds.id,
-            location: ds.metadata?.location ?? null,
-            description: ds.metadata?.description ?? null,
-          }));
-
-          logger.info("list_datasets called", { count: result.length });
-          return { ok: true, datasets: result };
-        } catch (error: any) {
-          logger.error("list_datasets failed", { error: error.message });
-          return { ok: false, error: `Failed to list datasets: ${error.message}` };
-        }
-      },
+      execute: async () => executeListBigQueryDatasets("bq_list_datasets"),
       slack: { status: "Listing datasets...", output: (r) => r.ok === false ? r.error : `${(r.datasets ?? []).length} datasets` },
     }),
 
-    list_tables: defineTool({
+    bq_list_tables: defineTool({
       requiredCredentials: ["google_bq_credentials"],
       description:
-        "List all tables in a BigQuery dataset, including type, row count, and description.",
-      inputSchema: z.object({
-        dataset: z.string().describe("The dataset ID to list tables from"),
-      }),
-      execute: async ({ dataset }) => {
-        const client = await getBigQueryClient();
-        if (!client) {
-          return {
-            ok: false,
-            error:
-              "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
-          };
-        }
-
-        try {
-          const [tables] = await client.dataset(dataset).getTables();
-          const result = tables.map((t) => ({
-            id: t.id,
-            type: t.metadata?.type ?? null,
-            description: t.metadata?.description ?? null,
-            row_count: t.metadata?.numRows ?? null,
-          }));
-
-          logger.info("list_tables called", { dataset, count: result.length });
-          return { ok: true, dataset, tables: result };
-        } catch (error: any) {
-          logger.error("list_tables failed", { dataset, error: error.message });
-          return {
-            ok: false,
-            error: `Failed to list tables in ${dataset}: ${error.message}`,
-          };
-        }
-      },
+        "List all tables in a BigQuery dataset, including type, row count, and description. This is step 2 in the recovery ladder after bq_list_datasets.",
+      inputSchema: listTablesInputSchema,
+      execute: async (input) => executeListBigQueryTables(input, "bq_list_tables"),
       slack: { status: "Listing tables...", detail: (i) => i.dataset, output: (r) => r.ok === false ? r.error : `${(r.tables ?? []).length} tables` },
     }),
 
-    inspect_table: defineTool({
+    bq_inspect_table: defineTool({
       requiredCredentials: ["google_bq_credentials"],
       description:
-        "Get a table's full schema, metadata, and sample rows. Always use this before querying an unfamiliar table — the sample rows show actual data values, formats, and sparsity, which is much more useful than schema alone. After exploring, update the 'data-warehouse-map' knowledge note with what you learn about datasets, key tables, useful columns, common joins, and data quirks.",
-      inputSchema: z.object({
-        dataset: z.string().describe("The dataset ID"),
-        table: z.string().describe("The table ID"),
-        sample_rows: z
-          .number()
-          .min(0)
-          .max(20)
-          .default(5)
-          .describe("Number of sample rows to fetch (default 5, max 20)"),
-      }),
-      execute: async ({ dataset, table, sample_rows }) => {
-        const client = await getBigQueryClient();
-        if (!client) {
-          return {
-            ok: false,
-            error:
-              "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
-          };
-        }
-
-        if (!isSafeBigQueryIdentifier(dataset) || !isSafeBigQueryIdentifier(table)) {
-          return {
-            ok: false,
-            error:
-              "Invalid dataset or table name. Only alphanumeric characters, underscores, and hyphens are allowed.",
-          };
-        }
-
-        try {
-          const tableRef = client.dataset(dataset).table(table);
-          const [metadata] = await tableRef.getMetadata();
-
-          const schema = (metadata.schema?.fields ?? []).map((f: any) => ({
-            name: f.name,
-            type: f.type,
-            mode: f.mode ?? "NULLABLE",
-            description: f.description ?? null,
-          }));
-
-          const info = {
-            row_count: metadata.numRows ?? null,
-            size_bytes: metadata.numBytes ?? null,
-            description: metadata.description ?? null,
-            created: metadata.creationTime
-              ? formatTimestamp(new Date(Number(metadata.creationTime)), context?.timezone)
-              : null,
-            modified: metadata.lastModifiedTime
-              ? formatTimestamp(new Date(Number(metadata.lastModifiedTime)), context?.timezone)
-              : null,
-          };
-
-          const location: string | undefined = metadata.location ?? undefined;
-
-          let samples: any[] = [];
-          if (sample_rows > 0) {
-            try {
-              const [rows] = await client.query({
-                query: `SELECT * FROM \`${dataset}.${table}\` LIMIT ${sample_rows}`,
-                useLegacySql: false,
-                maximumBytesBilled: String(1e9),
-                location,
-              });
-              samples = rows;
-            } catch (sampleError: any) {
-              logger.warn("inspect_table sample query failed", {
-                dataset,
-                table,
-                error: sampleError.message,
-              });
-            }
-          }
-
-          logger.info("inspect_table called", {
-            dataset,
-            table,
-            schemaFields: schema.length,
-            sampleRows: samples.length,
-          });
-
-          const result = {
-            ok: true,
-            dataset,
-            table,
-            schema,
-            ...info,
-            sample_rows: samples,
-          };
-
-          const serialized = JSON.stringify(result);
-          if (serialized.length > MAX_RESULT_CHARS) {
-            let truncated = samples.slice();
-            let output: typeof result & { _truncated?: boolean; _note?: string };
-            do {
-              truncated = truncated.slice(0, Math.floor(truncated.length / 2));
-              output = {
-                ...result,
-                sample_rows: truncated,
-                _truncated: true,
-                _note: `Showing ${truncated.length} of ${samples.length} sample rows to stay within size limits.`,
-              };
-            } while (
-              JSON.stringify(output).length > MAX_RESULT_CHARS &&
-              truncated.length > 0
-            );
-            return output;
-          }
-
-          return result;
-        } catch (error: any) {
-          logger.error("inspect_table failed", {
-            dataset,
-            table,
-            error: error.message,
-          });
-          return {
-            ok: false,
-            error: `Failed to inspect ${dataset}.${table}: ${error.message}`,
-          };
-        }
-      },
+        `Get a table's full schema, metadata, and sample rows. This is step 3 of the recovery ladder and should be used before querying any unfamiliar table. ${BIGQUERY_DEBUGGING_LADDER} ${BIGQUERY_SQL_STYLE_GUIDANCE} After exploring, update the 'data-warehouse-map' knowledge note with useful columns, joins, and quirks.`,
+      inputSchema: inspectTableInputSchema,
+      execute: async (input) => executeInspectBigQueryTable(input, "bq_inspect_table"),
       slack: {
         status: "Inspecting table...",
         detail: (i) => `${i.dataset}.${i.table}`,
@@ -314,112 +456,12 @@ export function createBigQueryTools(context?: ScheduleContext) {
       },
     }),
 
-    execute_query: defineTool({
+    bq_execute_query: defineTool({
       requiredCredentials: ["google_bq_credentials"],
       description:
-        "Run a read-only SQL query against BigQuery. Only SELECT/WITH queries are allowed — DML/DDL is blocked. Uses standard SQL (not legacy). Has a 1 GB scan limit to prevent runaway costs. Use LIMIT for large result sets to keep responses manageable. Read the 'data-warehouse-map' note before re-exploring from scratch.",
-      inputSchema: z.object({
-        sql: z
-          .string()
-          .describe("The SQL query to execute (SELECT only, standard SQL)"),
-        max_rows: z
-          .number()
-          .min(1)
-          .max(1000)
-          .default(100)
-          .describe("Maximum rows to return (default 100, max 1000)"),
-      }),
-      execute: async ({ sql, max_rows }) => {
-        const client = await getBigQueryClient();
-        if (!client) {
-          return {
-            ok: false,
-            error:
-              "BigQuery is not configured. GOOGLE_BQ_CREDENTIALS is missing.",
-          };
-        }
-
-        // Safety: only allow read-only SELECT / WITH queries
-        const validationError = validateReadOnlySQL(sql);
-        if (validationError) {
-          return { ok: false, error: validationError };
-        }
-
-        // Inject LIMIT if not already present
-        const hasLimit = /\bLIMIT\s+\d+/i.test(sql);
-        const finalSql = hasLimit ? sql : `${sql.replace(/;\s*$/, "")} LIMIT ${max_rows}`;
-
-        try {
-          // Resolve dataset location so the query job runs in the right region
-          const datasetId = extractDatasetFromSQL(finalSql);
-          const location = datasetId
-            ? await resolveDatasetLocation(client, datasetId)
-            : undefined;
-
-          const queryResult = await client.query({
-            query: finalSql,
-            useLegacySql: false,
-            maximumBytesBilled: String(1e9),
-            maxResults: max_rows,
-            location,
-          });
-          const rows = queryResult[0];
-          const responseMeta = (queryResult as any)[2];
-          const columns =
-            responseMeta?.schema?.fields?.map((f: any) => f.name) ??
-            (rows.length > 0 ? Object.keys(rows[0]) : []);
-          const totalRows = rows.length;
-          const bytesProcessed = responseMeta?.totalBytesProcessed ?? null;
-
-          logger.info("execute_query called", {
-            sqlLength: sql.length,
-            rowCount: rows.length,
-            bytesProcessed,
-          });
-
-          const resultRows = rows.slice(0, max_rows);
-          const result = {
-            ok: true,
-            columns,
-            rows: resultRows,
-            total_rows: totalRows,
-            bytes_processed: bytesProcessed,
-          };
-
-          const serialized = JSON.stringify(result);
-          if (serialized.length > MAX_RESULT_CHARS) {
-            let truncated = resultRows.slice();
-            let output;
-            do {
-              truncated = truncated.slice(0, Math.floor(truncated.length / 2));
-              output = {
-                ok: true,
-                columns,
-                rows: truncated,
-                total_rows: totalRows,
-                bytes_processed: bytesProcessed,
-                _truncated: true,
-                _note: `Showing ${truncated.length} of ${totalRows} rows. Use a more specific query or smaller LIMIT.`,
-              };
-            } while (
-              JSON.stringify(output).length > MAX_RESULT_CHARS &&
-              truncated.length > 0
-            );
-            return output;
-          }
-
-          return result;
-        } catch (error: any) {
-          logger.error("execute_query failed", {
-            sql: sql.substring(0, 200),
-            error: error.message,
-          });
-          return {
-            ok: false,
-            error: `Query failed: ${error.message}`,
-          };
-        }
-      },
+        `Run a read-only BigQuery query (SELECT/WITH only). ${BIGQUERY_SQL_STYLE_GUIDANCE} ${BIGQUERY_DEBUGGING_LADDER} For unfamiliar tables, bq_inspect_table before querying. Do not infer permissions issues from one complex failing query; retry a minimal valid query first.`,
+      inputSchema: executeQueryInputSchema,
+      execute: async (input) => executeBigQueryQuery(input, "bq_execute_query"),
       slack: {
         status: "Running a SQL query...",
         detail: (input) =>
