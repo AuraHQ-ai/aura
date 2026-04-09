@@ -1,26 +1,21 @@
 import { createRootRoute, Outlet, useRouterState } from "@tanstack/react-router";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { Sidebar, MobileNav } from "@/components/sidebar";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { useAuth } from "@/lib/auth";
-import { LogOut, MessageCircle } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useCallback } from "react";
 
 const PUBLIC_ROUTES = ["/login", "/unauthorized"];
 
 function Header({
-  session,
   chatOpen,
   toggleChat,
 }: {
-  session: { name: string; picture: string; slackUserId: string } | null;
   chatOpen: boolean;
   toggleChat: () => void;
 }) {
-  const { logout } = useAuth();
-
   return (
     <header className="flex h-12 items-center justify-between border-b px-4">
       <div className="flex items-center gap-2">
@@ -43,29 +38,6 @@ function Header({
           <MessageCircle className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Chat</span>
         </button>
-        <ThemeToggle />
-        {session && (
-          <div className="flex items-center gap-2">
-            {session.picture && (
-              <img
-                src={session.picture}
-                alt={session.name}
-                className="h-6 w-6 rounded-full"
-                referrerPolicy="no-referrer"
-              />
-            )}
-            <span className="text-[13px] hidden sm:inline">
-              {session.name}
-            </span>
-            <button
-              onClick={logout}
-              className="p-1 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
-              title="Sign out"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
       </div>
     </header>
   );
@@ -104,7 +76,7 @@ function RootLayout() {
       <Group orientation="horizontal" className="flex-1 overflow-hidden">
         <Panel id="content" minSize="50%">
           <div className="flex h-full flex-col overflow-hidden">
-            <Header session={session} chatOpen={chatOpen} toggleChat={toggleChat} />
+            <Header chatOpen={chatOpen} toggleChat={toggleChat} />
             <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <div className="flex-1 flex flex-col min-h-0 overflow-y-auto px-4 py-3 md:px-5 md:py-4">
                 <Outlet />
