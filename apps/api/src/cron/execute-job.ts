@@ -304,7 +304,7 @@ export async function executeJob(
 
     // Phase 2a: persist assistant steps now that generate succeeded
     const stepModelIds = getStepModelIds();
-    const conversationSteps = buildConversationSteps(steps, stepModelIds);
+    const conversationSteps = buildConversationSteps(steps, stepModelIds, modelId);
     await persistConversationSteps(conversationId, conversationSteps, conversationOrderIndex);
 
     const serializedSteps = steps.map((step) => ({
@@ -328,7 +328,7 @@ export async function executeJob(
       outputTokenDetails: usage.outputTokenDetails,
     };
 
-    const stepUsages = buildStepUsages(steps, stepModelIds);
+    const stepUsages = buildStepUsages(steps, stepModelIds, modelId);
 
     // Update trace with token usage + cost
     await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);

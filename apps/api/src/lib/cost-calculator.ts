@@ -16,6 +16,19 @@ interface PricingRow {
 
 const pricingCache = new Map<string, PricingRow[]>();
 
+export function resolveCanonicalStepModelId(params: {
+  canonicalStepModelId?: string;
+  resolvedModelId?: string;
+  fallbackModelId?: string;
+}): string | undefined {
+  const { canonicalStepModelId, resolvedModelId, fallbackModelId } = params;
+
+  if (canonicalStepModelId?.includes("/")) return canonicalStepModelId;
+  if (resolvedModelId && resolvedModelId.includes("/")) return resolvedModelId;
+  if (fallbackModelId) return fallbackModelId;
+  return canonicalStepModelId ?? resolvedModelId;
+}
+
 async function lookupPricing(
   modelId: string,
   asOfDate: Date,
@@ -111,14 +124,23 @@ function computeStepCost(
 export function buildStepUsages(
   rawSteps: any[],
   canonicalStepModelIds: Array<string | undefined> = [],
+  fallbackModelId?: string,
 ): StepUsage[] {
   return rawSteps
     .filter(
       (step: any, index: number) =>
-        (canonicalStepModelIds[index] ?? step.response?.modelId) && step.usage,
+        resolveCanonicalStepModelId({
+          canonicalStepModelId: canonicalStepModelIds[index],
+          resolvedModelId: step.response?.modelId,
+          fallbackModelId,
+        }) && step.usage,
     )
     .map((step: any, index: number) => ({
-      modelId: canonicalStepModelIds[index] ?? step.response.modelId,
+      modelId: resolveCanonicalStepModelId({
+        canonicalStepModelId: canonicalStepModelIds[index],
+        resolvedModelId: step.response?.modelId,
+        fallbackModelId,
+      })!,
       resolvedModelId: step.response.modelId,
       usage: {
         inputTokens: step.usage.inputTokens ?? 0,
