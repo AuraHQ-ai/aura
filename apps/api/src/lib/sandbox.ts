@@ -6,6 +6,7 @@ import { credentials, credentialGrants } from "@aura/db/schema";
 import { logger } from "./logger.js";
 
 const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
+const SANDBOX_TEMPLATE_KEY = "e2b_sandbox_template_id";
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Per-invocation cache -- reuse the same sandbox within a single request */
@@ -279,7 +280,25 @@ export async function getOrCreateSandbox(): Promise<any> {
   }
 
   // Try to resume a previously paused sandbox
-  const savedId = await getSetting(SANDBOX_NOTE_KEY);
+  let savedId = await getSetting(SANDBOX_NOTE_KEY);
+  const savedTemplateId = await getSetting(SANDBOX_TEMPLATE_KEY);
+  const currentTemplateId = envs.E2B_TEMPLATE_ID || process.env.E2B_TEMPLATE_ID || undefined;
+
+  // If the template was upgraded, kill the old sandbox so we create a fresh one
+  if (savedId && currentTemplateId && savedTemplateId !== currentTemplateId) {
+    logger.info("Template mismatch, killing old sandbox", {
+      savedId,
+      savedTemplateId: savedTemplateId || "unknown",
+      currentTemplateId,
+    });
+    try {
+      await Sandbox.kill(savedId, { apiKey });
+    } catch (e: any) {
+      logger.warn("Failed to kill old sandbox (best-effort)", { error: e.message });
+    }
+    savedId = null;
+  }
+
   if (savedId) {
     try {
       logger.info("Resuming E2B sandbox", { sandboxId: savedId });
@@ -322,6 +341,7 @@ export async function getOrCreateSandbox(): Promise<any> {
 
   // Save the sandbox ID for future resumption
   await setSetting(SANDBOX_NOTE_KEY, sandbox.sandboxId, "aura");
+  await setSetting(SANDBOX_TEMPLATE_KEY, templateId || "", "aura");
 
   cachedSandbox = sandbox;
   logger.info("E2B sandbox created", { sandboxId: sandbox.sandboxId });
