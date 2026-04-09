@@ -638,9 +638,10 @@ async function persistConversationTrace(params: {
       const conversationSteps = buildConversationSteps(
         rawSteps,
         stepModelIds ?? [],
+        modelId,
       );
       await persistConversationSteps(conversationId, conversationSteps, orderIndex);
-      stepUsages = buildStepUsages(rawSteps, stepModelIds ?? []);
+      stepUsages = buildStepUsages(rawSteps, stepModelIds ?? [], modelId);
     } catch (stepsErr: any) {
       logger.error("Failed to persist conversation steps (non-fatal)", {
         conversationId,
