@@ -203,9 +203,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
       }
     }
 
-    const perUser = Array.from(userMap.values())
-      .sort((a, b) => b.totalCost - a.totalCost)
-      .slice(0, 20);
+    const perUser = Array.from(userMap.values()).sort((a, b) => b.totalCost - a.totalCost);
 
     const perJobResult = await db.execute(sql`
       SELECT
@@ -222,7 +220,6 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
         AND ct.source_type = 'job_execution'
       GROUP BY j.name, up.display_name
       ORDER BY total_cost DESC
-      LIMIT 20
     `);
 
     const perJobRows = ((perJobResult as any).rows ?? perJobResult) as Array<{

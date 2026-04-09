@@ -8,6 +8,7 @@ import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pagination } from "@/components/pagination";
 import {
   Popover,
   PopoverContent,
@@ -57,9 +58,25 @@ type ConsumptionSearch = {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+const usdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const chartUsdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 4,
+});
+
+const COST_TABLE_PAGE_SIZE = 12;
+
 function formatCost(cost: number): string {
   if (cost === 0) return "$0.00";
-  return cost < 0.01 ? "< $0.01" : `$${cost.toFixed(2)}`;
+  return cost < 0.01 ? "< $0.01" : usdFormatter.format(cost);
 }
 
 function formatLocalYMD(d: Date): string {
@@ -85,6 +102,8 @@ function ConsumptionPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const search = Route.useSearch();
   const [defaultRange] = useState(defaultDateRange);
+  const [userPage, setUserPage] = useState(1);
+  const [jobPage, setJobPage] = useState(1);
 
   const committed =
     search.start && search.end
@@ -113,6 +132,11 @@ function ConsumptionPage() {
       from: parseLocalYMD(committed.start),
       to: parseLocalYMD(committed.end),
     });
+  }, [committed.end, committed.start]);
+
+  useEffect(() => {
+    setUserPage(1);
+    setJobPage(1);
   }, [committed.end, committed.start]);
 
   const rangeInvalid = committed.start > committed.end;
@@ -183,6 +207,16 @@ function ConsumptionPage() {
     data.tokenBreakdown.cacheWrite +
     data.tokenBreakdown.uncached +
     data.tokenBreakdown.output;
+  const userTotalCost = data.perUser.reduce((sum, user) => sum + user.totalCost, 0);
+  const jobTotalCost = data.perJob.reduce((sum, job) => sum + job.totalCost, 0);
+  const paginatedUsers = data.perUser.slice(
+    (userPage - 1) * COST_TABLE_PAGE_SIZE,
+    userPage * COST_TABLE_PAGE_SIZE,
+  );
+  const paginatedJobs = data.perJob.slice(
+    (jobPage - 1) * COST_TABLE_PAGE_SIZE,
+    jobPage * COST_TABLE_PAGE_SIZE,
+  );
 
   return (
     <div className="space-y-4">
@@ -237,7 +271,7 @@ function ConsumptionPage() {
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="date" className="text-xs" />
-                <YAxis className="text-xs" tickFormatter={(v) => `$${v}`} />
+                <YAxis className="text-xs" tickFormatter={(v) => chartUsdFormatter.format(v)} />
                 <Tooltip
                   contentStyle={{
                     background: "var(--bg)",
@@ -246,7 +280,7 @@ function ConsumptionPage() {
                     fontSize: "12px",
                   }}
                   formatter={(value: number, name: string) =>
-                    name === "Cost" ? [`$${value.toFixed(4)}`, name] : [value.toLocaleString(), name]
+                    name === "Cost" ? [chartUsdFormatter.format(value), name] : [value.toLocaleString(), name]
                   }
                 />
                 <Area
@@ -270,8 +304,12 @@ function ConsumptionPage() {
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
             <CardTitle className="text-base">Cost by User</CardTitle>
+            <div className="text-right">
+              <div className="text-sm font-medium">{formatCost(userTotalCost)}</div>
+              <p className="text-xs text-muted-foreground">{data.perUser.length.toLocaleString()} users</p>
+            </div>
           </CardHeader>
           <CardContent>
             <Table>
@@ -284,12 +322,17 @@ function ConsumptionPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.perUser.map((u) => (
+                {paginatedUsers.map((u) => (
                   <TableRow key={u.userId}>
-                    <TableCell className="font-medium">{u.displayName || u.userId}</TableCell>
-                    <TableCell className="text-right">{formatCost(u.interactiveCost)}</TableCell>
-                    <TableCell className="text-right">{formatCost(u.jobCost)}</TableCell>
-                    <TableCell className="text-right font-medium">{formatCost(u.totalCost)}</TableCell>
+                    <TableCell className="py-2">
+                      <CostShareLabel
+                        label={u.displayName || u.userId}
+                        share={userTotalCost > 0 ? (u.totalCost / userTotalCost) * 100 : 0}
+                      />
+                    </TableCell>
+                    <TableCell className="py-2 text-right">{formatCost(u.interactiveCost)}</TableCell>
+                    <TableCell className="py-2 text-right">{formatCost(u.jobCost)}</TableCell>
+                    <TableCell className="py-2 text-right font-medium">{formatCost(u.totalCost)}</TableCell>
                   </TableRow>
                 ))}
                 {data.perUser.length === 0 && (
@@ -299,12 +342,24 @@ function ConsumptionPage() {
                 )}
               </TableBody>
             </Table>
+            <div className="mt-3">
+              <Pagination
+                total={data.perUser.length}
+                pageSize={COST_TABLE_PAGE_SIZE}
+                page={userPage}
+                onPageChange={setUserPage}
+              />
+            </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
             <CardTitle className="text-base">Cost by Job</CardTitle>
+            <div className="text-right">
+              <div className="text-sm font-medium">{formatCost(jobTotalCost)}</div>
+              <p className="text-xs text-muted-foreground">{data.perJob.length.toLocaleString()} jobs</p>
+            </div>
           </CardHeader>
           <CardContent>
             <Table>
@@ -317,12 +372,17 @@ function ConsumptionPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.perJob.map((j, i) => (
+                {paginatedJobs.map((j, i) => (
                   <TableRow key={`${j.jobName}-${j.creatorName}-${i}`}>
-                    <TableCell className="font-medium">{j.jobName || "Unknown"}</TableCell>
-                    <TableCell>{j.creatorName || "—"}</TableCell>
-                    <TableCell className="text-right">{j.executionCount}</TableCell>
-                    <TableCell className="text-right font-medium">{formatCost(j.totalCost)}</TableCell>
+                    <TableCell className="py-2">
+                      <CostShareLabel
+                        label={j.jobName || "Unknown"}
+                        share={jobTotalCost > 0 ? (j.totalCost / jobTotalCost) * 100 : 0}
+                      />
+                    </TableCell>
+                    <TableCell className="py-2">{j.creatorName || "—"}</TableCell>
+                    <TableCell className="py-2 text-right">{j.executionCount}</TableCell>
+                    <TableCell className="py-2 text-right font-medium">{formatCost(j.totalCost)}</TableCell>
                   </TableRow>
                 ))}
                 {data.perJob.length === 0 && (
@@ -332,37 +392,87 @@ function ConsumptionPage() {
                 )}
               </TableBody>
             </Table>
+            <div className="mt-3">
+              <Pagination
+                total={data.perJob.length}
+                pageSize={COST_TABLE_PAGE_SIZE}
+                page={jobPage}
+                onPageChange={setJobPage}
+              />
+            </div>
           </CardContent>
         </Card>
       </div>
 
       {totalTokens > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Token breakdown</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Cache Read</p>
-                <p className="text-lg font-semibold">{data.tokenBreakdown.cacheRead.toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Cache Write</p>
-                <p className="text-lg font-semibold">{data.tokenBreakdown.cacheWrite.toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Uncached Input</p>
-                <p className="text-lg font-semibold">{data.tokenBreakdown.uncached.toLocaleString()}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Output</p>
-                <p className="text-lg font-semibold">{data.tokenBreakdown.output.toLocaleString()}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-sm font-medium tracking-tight">Token Statistics</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Total tokens processed across the selected date range
+            </p>
+          </div>
+          <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Cache Read</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl font-bold">{data.tokenBreakdown.cacheRead.toLocaleString()}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Cache Write</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl font-bold">{data.tokenBreakdown.cacheWrite.toLocaleString()}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Uncached Input</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl font-bold">{data.tokenBreakdown.uncached.toLocaleString()}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Output</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl font-bold">{data.tokenBreakdown.output.toLocaleString()}</div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       )}
+    </div>
+  );
+}
+
+function CostShareLabel({
+  label,
+  share,
+}: {
+  label: string;
+  share: number;
+}) {
+  const width = Math.max(share, share > 0 ? 2 : 0);
+
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-medium">{label}</span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">{share.toFixed(1)}%</span>
+      </div>
+      <div className="h-1 w-full overflow-hidden rounded-full bg-muted/70">
+        <div
+          className="h-full rounded-full bg-primary/70"
+          style={{ width: `${Math.min(width, 100)}%` }}
+        />
+      </div>
     </div>
   );
 }
