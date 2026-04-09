@@ -45,7 +45,7 @@ export function getBigQueryErrorHints(errorMessage: string): string[] {
 
   if (DATASET_OR_LOCATION_PATTERNS.some((pattern) => pattern.test(errorMessage))) {
     hints.push(
-      "Use explicit table references (`dataset.table` or ``project.dataset.table``) and restart the recovery ladder: list_bigquery_datasets -> list_bigquery_tables -> inspect_bigquery_table -> SELECT COUNT(*) -> SELECT * LIMIT 5.",
+      "Use explicit table references (`dataset.table` or ``project.dataset.table``) and restart the recovery ladder: bq_list_datasets -> bq_list_tables -> bq_inspect_table -> SELECT COUNT(*) -> SELECT * LIMIT 5.",
     );
   }
 

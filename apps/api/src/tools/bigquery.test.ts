@@ -30,8 +30,8 @@ describe("BigQuery error hint augmentation", () => {
     const hints = getBigQueryErrorHints(message);
 
     expect(hints.length).toBeGreaterThan(0);
-    expect(hints.join("\n")).toContain("list_bigquery_datasets");
-    expect(hints.join("\n")).toContain("inspect_bigquery_table");
+    expect(hints.join("\n")).toContain("bq_list_datasets");
+    expect(hints.join("\n")).toContain("bq_inspect_table");
   });
 
   it("includes multiple hints when multiple patterns match", () => {
@@ -42,7 +42,7 @@ describe("BigQuery error hint augmentation", () => {
     expect(augmented).toContain("Debug hints:");
     expect(augmented).toContain("IAM");
     expect(augmented).toContain("Standard SQL");
-    expect(augmented).toContain("list_bigquery_datasets");
+    expect(augmented).toContain("bq_list_datasets");
   });
 
   it("returns unchanged message when no known pattern matches", () => {
