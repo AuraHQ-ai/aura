@@ -12,15 +12,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectSeparator,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  ModelAutocomplete,
+  type ModelAutocompleteOption,
+} from "@/components/model-autocomplete";
 import {
   Conversation,
   ConversationContent,
@@ -71,49 +65,16 @@ interface ModelOption {
   label: string;
 }
 
-interface ModelGroup {
-  label: string;
-  models: ModelOption[];
-}
-
 interface ModelCatalogResponse {
   main: ModelOption[];
   fast: ModelOption[];
+  catalog?: Array<{
+    value: string;
+    provider: string;
+  }>;
   defaults?: {
     main?: string;
   };
-}
-
-const PROVIDER_LABELS: Record<string, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  google: "Google",
-  xai: "xAI",
-  deepseek: "DeepSeek",
-};
-
-function buildModelGroups(main: ModelOption[], fast: ModelOption[]): ModelGroup[] {
-  const allModels = [...main, ...fast];
-  const seen = new Set<string>();
-  const groups: Record<string, ModelOption[]> = {};
-
-  for (const m of allModels) {
-    if (seen.has(m.value)) continue;
-    seen.add(m.value);
-    const provider = m.value.split("/")[0];
-    const groupLabel = PROVIDER_LABELS[provider] ?? provider;
-    (groups[groupLabel] ??= []).push(m);
-  }
-
-  return Object.entries(groups).map(([label, models]) => ({ label, models }));
-}
-
-function getModelLabel(groups: ModelGroup[], value: string): string {
-  for (const group of groups) {
-    const found = group.models.find((m) => m.value === value);
-    if (found) return found.label;
-  }
-  return value;
 }
 
 interface ChatThread {
@@ -140,7 +101,7 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const [showHistory, setShowHistory] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
-  const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
+  const [modelOptions, setModelOptions] = useState<ModelAutocompleteOption[]>([]);
   const threadIdRef = useRef(currentThreadId);
   threadIdRef.current = currentThreadId;
   const selectedModelRef = useRef(selectedModel);
@@ -168,9 +129,15 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
       .then((res) => (res.ok ? res.json() : null))
       .then((data: ModelCatalogResponse | null) => {
         if (!data) return;
-        const groups = buildModelGroups(data.main ?? [], data.fast ?? []);
-        setModelGroups(groups);
-        setSelectedModel((current) => current || data.defaults?.main || groups[0]?.models[0]?.value || "");
+        const providerByModelId = new Map(
+          (data.catalog ?? []).map((model) => [model.value, model.provider]),
+        );
+        const options = [...(data.main ?? []), ...(data.fast ?? [])].map((model) => ({
+          ...model,
+          provider: providerByModelId.get(model.value),
+        }));
+        setModelOptions(options);
+        setSelectedModel((current) => current || data.defaults?.main || options[0]?.value || "");
       })
       .catch(() => {});
   }, []);
@@ -284,7 +251,7 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
           onNewChat={handleNewChat}
         />
       ) : isEmpty ? (
-        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelGroups={modelGroups} />
+        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
       ) : (
         <>
           <Conversation className="flex-1">
@@ -320,7 +287,7 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
             <ConversationScrollButton />
           </Conversation>
 
-          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelGroups={modelGroups} />
+          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
         </>
       )}
     </div>
@@ -333,14 +300,14 @@ function EmptyState({
   onStop,
   selectedModel,
   onModelChange,
-  modelGroups,
+  modelOptions,
 }: {
   onSubmit: (msg: PromptInputMessage) => void;
   status: ReturnType<typeof useChat>["status"];
   onStop: () => void;
   selectedModel: string;
   onModelChange: (value: string) => void;
-  modelGroups: ModelGroup[];
+  modelOptions: ModelAutocompleteOption[];
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center">
@@ -350,7 +317,7 @@ function EmptyState({
         your data, notes, or memories.
       </p>
       <div className="w-full">
-        <ChatInput onSubmit={onSubmit} status={status} onStop={onStop} selectedModel={selectedModel} onModelChange={onModelChange} modelGroups={modelGroups} />
+        <ChatInput onSubmit={onSubmit} status={status} onStop={onStop} selectedModel={selectedModel} onModelChange={onModelChange} modelOptions={modelOptions} />
       </div>
     </div>
   );
@@ -362,14 +329,14 @@ function ChatInput({
   onStop,
   selectedModel,
   onModelChange,
-  modelGroups,
+  modelOptions,
 }: {
   onSubmit: (msg: PromptInputMessage) => void;
   status: ReturnType<typeof useChat>["status"];
   onStop: () => void;
   selectedModel: string;
   onModelChange: (value: string) => void;
-  modelGroups: ModelGroup[];
+  modelOptions: ModelAutocompleteOption[];
 }) {
   return (
     <div className="px-2 pb-1.5">
@@ -381,7 +348,18 @@ function ChatInput({
         />
         <PromptInputFooter className="justify-between px-1.5 pb-1 pt-0">
           <div className="flex items-center gap-1">
-            <ModelSelector value={selectedModel} onChange={onModelChange} groups={modelGroups} />
+            <ModelAutocomplete
+              value={selectedModel}
+              onValueChange={onModelChange}
+              options={modelOptions}
+              placeholder="Select model"
+              searchPlaceholder="Search models..."
+              fullWidth={false}
+              triggerVariant="ghost"
+              triggerClassName="h-6 gap-1 px-1 text-[11px] text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground focus-visible:ring-0"
+              contentClassName="w-80 p-0"
+              side="top"
+            />
             <PromptInputTools>
               <PromptInputActionMenu>
                 <PromptInputActionMenuTrigger>
@@ -604,37 +582,6 @@ function MessageItem({
         })}
       </MessageContent>
     </Message>
-  );
-}
-
-function ModelSelector({
-  value,
-  onChange,
-  groups,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  groups: ModelGroup[];
-}) {
-  return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-6 gap-1 border-none bg-transparent px-1 text-[11px] text-muted-foreground shadow-none hover:text-foreground focus-visible:ring-0">
-        <SelectValue>{getModelLabel(groups, value)}</SelectValue>
-      </SelectTrigger>
-      <SelectContent align="start" side="top">
-        {groups.map((group, gi) => (
-          <SelectGroup key={group.label}>
-            {gi > 0 && <SelectSeparator />}
-            <SelectLabel>{group.label}</SelectLabel>
-            {group.models.map((model) => (
-              <SelectItem key={model.value} value={model.value} className="text-[13px]">
-                {model.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
 
