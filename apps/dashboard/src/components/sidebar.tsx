@@ -13,8 +13,19 @@ import {
   BarChart3,
   Menu,
   X,
+  LogOut,
 } from "lucide-react";
 import { useState } from "react";
+import { useAuth } from "@/lib/auth";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -39,61 +50,176 @@ const navItems = [
   { href: "/resources", label: "Resources", icon: FileText },
   { href: "/consumption", label: "Consumption", icon: BarChart3 },
   { href: "/credentials", label: "Credentials", icon: KeyRound },
-  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
+
+function getInitials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
 
 function NavContent({ onClose, showLabels }: { onClose?: () => void; showLabels?: boolean }) {
   const routerState = useRouterState();
   const pathname = routerState.location.pathname;
 
   return (
-    <TooltipProvider delayDuration={150}>
-      <nav className={cn("flex h-full flex-col py-2 gap-0.5", showLabels ? "px-2" : "items-center")}>
-        {navItems.map((item) => {
-          const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-          const link = (
-            <Link
-              to={item.href}
-              onClick={onClose}
-              className={cn(
-                "flex items-center rounded-xl transition-colors",
-                showLabels
-                  ? "gap-2 px-1.5 py-1.5 text-[13px]"
-                  : "justify-center w-11 h-11",
-                isActive
-                  ? "bg-foreground/15 text-foreground"
-                  : "text-muted-foreground",
-              )}
-            >
-              <item.icon className="h-[22px] w-[22px] shrink-0" strokeWidth="1.75" />
-              {showLabels && item.label}
-            </Link>
-          );
+    <nav className={cn("flex flex-col gap-0.5", showLabels ? "px-2" : "items-center")}>
+      {navItems.map((item) => {
+        const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+        const link = (
+          <Link
+            to={item.href}
+            onClick={onClose}
+            className={cn(
+              "flex items-center rounded-xl transition-colors",
+              showLabels
+                ? "gap-2 px-1.5 py-1.5 text-[13px]"
+                : "justify-center w-11 h-11",
+              isActive
+                ? "bg-foreground/15 text-foreground"
+                : "text-muted-foreground",
+            )}
+          >
+            <item.icon className="h-[22px] w-[22px] shrink-0" strokeWidth="1.75" />
+            {showLabels && item.label}
+          </Link>
+        );
 
-          if (showLabels) {
-            return <div key={item.href}>{link}</div>;
-          }
+        if (showLabels) {
+          return <div key={item.href}>{link}</div>;
+        }
 
-          return (
-            <Tooltip key={item.href}>
-              <TooltipTrigger asChild>
-                {link}
-              </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={6}>
-                {item.label}
-              </TooltipContent>
-            </Tooltip>
-          );
-        })}
-      </nav>
-    </TooltipProvider>
+        return (
+          <Tooltip key={item.href}>
+            <TooltipTrigger asChild>
+              {link}
+            </TooltipTrigger>
+            <TooltipContent side="right" sideOffset={6}>
+              {item.label}
+            </TooltipContent>
+          </Tooltip>
+        );
+      })}
+    </nav>
+  );
+}
+
+function SettingsLink({ onClose, showLabels }: { onClose?: () => void; showLabels?: boolean }) {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const isActive = pathname.startsWith("/settings");
+  const link = (
+    <Link
+      to="/settings"
+      onClick={onClose}
+      className={cn(
+        "flex items-center rounded-xl transition-colors",
+        showLabels
+          ? "gap-2 px-1.5 py-1.5 text-[13px]"
+          : "justify-center h-11 w-11",
+        isActive
+          ? "bg-foreground/15 text-foreground"
+          : "text-muted-foreground",
+      )}
+    >
+      <Settings className="h-[22px] w-[22px] shrink-0" strokeWidth="1.75" />
+      {showLabels && "Settings"}
+    </Link>
+  );
+
+  if (showLabels) {
+    return link;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {link}
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={6}>
+        Settings
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function UserMenu({ onClose, showLabels }: { onClose?: () => void; showLabels?: boolean }) {
+  const { session, logout } = useAuth();
+
+  if (!session) {
+    return null;
+  }
+
+  const trigger = (
+    <button
+      type="button"
+      className={cn(
+        "flex items-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+        showLabels
+          ? "w-full gap-2 px-1.5 py-1.5 text-[13px]"
+          : "h-11 w-11 justify-center",
+      )}
+      title={showLabels ? undefined : session.name}
+    >
+      <Avatar size={showLabels ? "sm" : "default"}>
+        <AvatarImage src={session.picture} alt={session.name} referrerPolicy="no-referrer" />
+        <AvatarFallback>{getInitials(session.name)}</AvatarFallback>
+      </Avatar>
+      {showLabels && <span className="truncate">{session.name}</span>}
+      <span className="sr-only">Open account menu</span>
+    </button>
+  );
+
+  const menu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        {trigger}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align={showLabels ? "start" : "end"} side={showLabels ? "top" : "right"}>
+        <DropdownMenuLabel className="max-w-48 truncate">{session.name}</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          onSelect={(event) => {
+            event.preventDefault();
+            logout();
+            onClose?.();
+          }}
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  if (showLabels) {
+    return menu;
+  }
+
+  return menu;
+}
+
+function SidebarFooter({ onClose, showLabels }: { onClose?: () => void; showLabels?: boolean }) {
+  return (
+    <div className={cn("mt-auto flex w-full flex-col gap-1 pt-3", showLabels ? "px-2" : "items-center")}>
+      <UserMenu onClose={onClose} showLabels={showLabels} />
+      <SettingsLink onClose={onClose} showLabels={showLabels} />
+    </div>
   );
 }
 
 export function Sidebar() {
   return (
-    <aside className="hidden md:flex md:flex-col w-[52px] shrink-0 border-r items-center" style={{ background: "var(--sidebar-bg)" }}>
-      <NavContent />
+    <aside className="hidden md:flex md:flex-col w-[52px] shrink-0 border-r" style={{ background: "var(--sidebar-bg)" }}>
+      <TooltipProvider delayDuration={150}>
+        <div className="flex h-full w-full flex-col items-center py-2">
+          <NavContent />
+          <SidebarFooter />
+        </div>
+      </TooltipProvider>
     </aside>
   );
 }
@@ -118,9 +244,12 @@ export function MobileNav() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="pt-8">
-              <NavContent onClose={() => setOpen(false)} showLabels />
-            </div>
+            <TooltipProvider delayDuration={150}>
+              <div className="flex h-full flex-col pb-2 pt-8">
+                <NavContent onClose={() => setOpen(false)} showLabels />
+                <SidebarFooter onClose={() => setOpen(false)} showLabels />
+              </div>
+            </TooltipProvider>
           </div>
         </div>
       )}

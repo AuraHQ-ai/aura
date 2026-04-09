@@ -1,19 +1,46 @@
 import { useTheme } from "next-themes";
-import { Sun, Moon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-export function ThemeToggle() {
+const themeOptions = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System default" },
+] as const;
+
+export function ThemeSelect({ className }: { className?: string }) {
   const { theme, setTheme } = useTheme();
+  const value = theme ?? "system";
 
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-    >
-      <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-      <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-      <span className="sr-only">Toggle theme</span>
-    </Button>
+    <Select value={value} onValueChange={(nextTheme) => setTheme(nextTheme)}>
+      <SelectTrigger
+        className={cn("w-full", className)}
+        aria-label="Theme preference"
+      >
+        <SelectValue placeholder="Select theme" />
+      </SelectTrigger>
+      <SelectContent align="end">
+        {themeOptions.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+export function ThemeToggle() {
+  return (
+    <ThemeSelect
+      className="w-[180px]"
+    />
   );
 }
