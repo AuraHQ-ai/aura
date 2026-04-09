@@ -35,8 +35,9 @@ function normalizeModelId(modelId: string): string[] {
 async function lookupPricing(
   modelId: string,
   asOfDate: Date,
+  workspaceId = "default",
 ): Promise<PricingRow[]> {
-  const cacheKey = `${modelId}:${asOfDate.toISOString().slice(0, 10)}`;
+  const cacheKey = `${workspaceId}:${modelId}:${asOfDate.toISOString()}`;
   if (pricingCache.has(cacheKey)) return pricingCache.get(cacheKey)!;
 
   const candidates = normalizeModelId(modelId);
@@ -50,6 +51,7 @@ async function lookupPricing(
       .from(modelPricing)
       .where(
         and(
+          eq(modelPricing.workspaceId, workspaceId),
           eq(modelPricing.modelId, candidate),
           lte(modelPricing.effectiveFrom, asOfDate),
           or(
@@ -154,12 +156,13 @@ export function buildStepUsages(rawSteps: any[]): StepUsage[] {
 export async function computeConversationCost(
   steps: StepUsage[],
   asOfDate: Date = new Date(),
+  workspaceId = "default",
 ): Promise<number> {
   let totalCost = 0;
 
   for (const step of steps) {
     try {
-      const pricing = await lookupPricing(step.modelId, asOfDate);
+      const pricing = await lookupPricing(step.modelId, asOfDate, workspaceId);
       totalCost += computeStepCost(step.usage, pricing);
     } catch (err: any) {
       logger.warn("Cost calculation failed for step (non-fatal)", {

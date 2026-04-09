@@ -75,6 +75,13 @@ export const memoryEntityRoleEnum = pgEnum("memory_entity_role", [
   "mentioned",
 ]);
 
+export const modelCatalogCategoryEnum = pgEnum("model_catalog_category", [
+  "main",
+  "fast",
+  "embedding",
+  "escalation",
+]);
+
 // Helper for timestamptz columns
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
@@ -368,6 +375,67 @@ export const settings = pgTable(
   ],
 );
 
+// ── Model Catalog ───────────────────────────────────────────────────────────
+
+export const modelCatalog = pgTable(
+  "model_catalog",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    modelId: text("model_id").notNull(),
+    provider: text("provider").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    type: text("type").notNull(),
+    contextWindow: integer("context_window"),
+    maxTokens: integer("max_tokens"),
+    tags: jsonb("tags").$type<string[]>(),
+    rawPricing: jsonb("raw_pricing").$type<Record<string, string | number | null>>(),
+    rawPayload: jsonb("raw_payload").$type<Record<string, unknown>>(),
+    lastSyncedAt: timestamptz("last_synced_at").notNull().defaultNow(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("model_catalog_workspace_model_id_idx").on(
+      table.workspaceId,
+      table.modelId,
+    ),
+    index("model_catalog_provider_idx").on(table.provider),
+    index("model_catalog_type_idx").on(table.type),
+  ],
+);
+
+export const modelCatalogSelections = pgTable(
+  "model_catalog_selections",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    modelId: text("model_id").notNull(),
+    category: modelCatalogCategoryEnum("category").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("model_catalog_selections_workspace_model_category_idx").on(
+      table.workspaceId,
+      table.modelId,
+      table.category,
+    ),
+    index("model_catalog_selections_category_idx").on(
+      table.workspaceId,
+      table.category,
+      table.enabled,
+    ),
+  ],
+);
+
 // ── Notes (agent scratchpad with three-tier hierarchy) ──────────────────────
 
 export const notes = pgTable(
@@ -550,8 +618,8 @@ export const modelPricing = pgTable(
     modelId: text("model_id").notNull(),
     tokenType: text("token_type").notNull(),
     pricePerMillion: numeric("price_per_million").notNull(),
-    effectiveFrom: date("effective_from", { mode: "date" }).notNull(),
-    effectiveUntil: date("effective_until", { mode: "date" }),
+    effectiveFrom: timestamptz("effective_from").notNull(),
+    effectiveUntil: timestamptz("effective_until"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
@@ -562,10 +630,6 @@ export const modelPricing = pgTable(
       table.effectiveFrom,
     ),
     index("model_pricing_model_id_idx").on(table.modelId),
-    check(
-      "model_pricing_token_type_check",
-      sql`${table.tokenType} IN ('input', 'cache_read', 'cache_write', 'output', 'reasoning')`,
-    ),
   ],
 );
 
@@ -587,6 +651,7 @@ export const conversationTraces = pgTable(
     modelId: text("model_id"),
     tokenUsage: jsonb("token_usage").$type<DetailedTokenUsage>(),
     costUsd: numeric("cost_usd"),
+    costPricedAt: timestamptz("cost_priced_at"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [

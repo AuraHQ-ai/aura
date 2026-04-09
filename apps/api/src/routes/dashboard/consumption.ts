@@ -207,6 +207,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
 
     const perJobResult = await db.execute(sql`
       SELECT
+        j.id AS job_id,
         j.name AS job_name,
         up.display_name AS creator_name,
         COUNT(DISTINCT je.id)::int AS execution_count,
@@ -218,11 +219,12 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
       WHERE ct.cost_usd IS NOT NULL
         AND ${timeClause}
         AND ct.source_type = 'job_execution'
-      GROUP BY j.name, up.display_name
+      GROUP BY j.id, j.name, up.display_name
       ORDER BY total_cost DESC
     `);
 
     const perJobRows = ((perJobResult as any).rows ?? perJobResult) as Array<{
+      job_id: string;
       job_name: string | null;
       creator_name: string | null;
       execution_count: number;
@@ -230,6 +232,7 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
     }>;
 
     const perJob = perJobRows.map((j) => ({
+      jobId: j.job_id,
       jobName: j.job_name,
       creatorName: j.creator_name,
       executionCount: Number(j.execution_count),

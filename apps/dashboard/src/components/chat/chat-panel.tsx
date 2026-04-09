@@ -76,6 +76,14 @@ interface ModelGroup {
   models: ModelOption[];
 }
 
+interface ModelCatalogResponse {
+  main: ModelOption[];
+  fast: ModelOption[];
+  defaults?: {
+    main?: string;
+  };
+}
+
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
@@ -99,8 +107,6 @@ function buildModelGroups(main: ModelOption[], fast: ModelOption[]): ModelGroup[
 
   return Object.entries(groups).map(([label, models]) => ({ label, models }));
 }
-
-const DEFAULT_MODEL = "anthropic/claude-opus-4-6";
 
 function getModelLabel(groups: ModelGroup[], value: string): string {
   for (const group of groups) {
@@ -133,7 +139,7 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
+  const [selectedModel, setSelectedModel] = useState("");
   const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
   const threadIdRef = useRef(currentThreadId);
   threadIdRef.current = currentThreadId;
@@ -158,10 +164,13 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const isEmpty = messages.length === 0 && !loadingThread;
 
   useEffect(() => {
-    fetch("/api/dashboard/chat/models", { headers: getAuthHeaders() })
+    fetch("/api/dashboard/models", { headers: getAuthHeaders() })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data) setModelGroups(buildModelGroups(data.main ?? [], data.fast ?? []));
+      .then((data: ModelCatalogResponse | null) => {
+        if (!data) return;
+        const groups = buildModelGroups(data.main ?? [], data.fast ?? []);
+        setModelGroups(groups);
+        setSelectedModel((current) => current || data.defaults?.main || groups[0]?.models[0]?.value || "");
       })
       .catch(() => {});
   }, []);
