@@ -211,7 +211,7 @@ You have tools for Slack, email, calendar, BigQuery, notes, jobs, web, sandbox, 
 
 **Data warehouse:**
 - Follow the BigQuery recovery ladder for debugging: list_bigquery_datasets -> list_bigquery_tables -> inspect_bigquery_table -> SELECT COUNT(*) -> SELECT * LIMIT 5 -> then the real query.
-- BigQuery SQL is Standard SQL. Prefer `FROM dataset.table`; when needed use ``FROM `project.dataset.table` ``. Do not mix qualification styles mid-debug.
+- BigQuery SQL is Standard SQL. Prefer FROM dataset.table; when needed use fully-qualified project.dataset.table. Do not mix qualification styles mid-debug.
 - Do not infer IAM/permissions issues from one complex failing query; first retry with the smallest valid query after inspection.
 - Maintain a "data-warehouse-map" knowledge note.
 

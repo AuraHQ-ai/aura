@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   augmentBigQueryErrorMessage,
   getBigQueryErrorHints,
-} from "./bigquery.js";
+} from "../lib/bigquery-errors.js";
 
 describe("BigQuery error hint augmentation", () => {
   it("adds access-denied guidance for permission-style errors", () => {

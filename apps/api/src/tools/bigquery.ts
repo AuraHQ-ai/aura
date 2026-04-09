@@ -2,6 +2,10 @@ import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
+import {
+  augmentBigQueryErrorMessage,
+  getBigQueryErrorHints,
+} from "../lib/bigquery-errors.js";
 import { defineTool } from "../lib/tool.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
@@ -68,33 +72,6 @@ const BIGQUERY_SQL_STYLE_GUIDANCE =
 const BIGQUERY_DEBUGGING_LADDER =
   "Debugging ladder: list_bigquery_datasets -> list_bigquery_tables -> inspect_bigquery_table -> SELECT COUNT(*) -> SELECT * LIMIT 5 -> then your real query.";
 
-const ACCESS_DENIED_PATTERNS = [
-  /access denied/i,
-  /permission denied/i,
-  /insufficient permissions?/i,
-  /does not have .* permission/i,
-  /not have .* permission/i,
-  /missing .* permission/i,
-];
-
-const SYNTAX_ERROR_PATTERNS = [
-  /syntax error/i,
-  /parse error/i,
-  /unexpected/i,
-  /expected/i,
-  /unrecognized name/i,
-];
-
-const DATASET_OR_LOCATION_PATTERNS = [
-  /not found: dataset/i,
-  /dataset .* was not found/i,
-  /not found: table/i,
-  /table .* was not found/i,
-  /must be qualified with a dataset/i,
-  /not found in location/i,
-  /cannot read and write in different locations/i,
-];
-
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string") return error;
@@ -106,37 +83,12 @@ function getErrorMessage(error: unknown): string {
 }
 
 /**
- * Lightweight pattern-based BigQuery error hints to reduce bad recovery loops.
+ * Exported for isolated tests without importing the full tool module.
  */
-export function getBigQueryErrorHints(errorMessage: string): string[] {
-  const hints: string[] = [];
-
-  if (ACCESS_DENIED_PATTERNS.some((pattern) => pattern.test(errorMessage))) {
-    hints.push(
-      "Access Denied from a complex query does not automatically mean IAM is wrong. Verify table references first (`FROM dataset.table` or ``FROM `project.dataset.table` ``), then retry the smallest valid query (`SELECT COUNT(*) FROM dataset.table`).",
-    );
-  }
-
-  if (SYNTAX_ERROR_PATTERNS.some((pattern) => pattern.test(errorMessage))) {
-    hints.push(
-      "BigQuery uses Standard SQL (`useLegacySql: false`). Use valid table references (`FROM dataset.table` or ``FROM `project.dataset.table` ``) and keep one qualification style while debugging.",
-    );
-  }
-
-  if (DATASET_OR_LOCATION_PATTERNS.some((pattern) => pattern.test(errorMessage))) {
-    hints.push(
-      "Use explicit table references (`dataset.table` or ``project.dataset.table``) and restart the recovery ladder: list_bigquery_datasets -> list_bigquery_tables -> inspect_bigquery_table -> SELECT COUNT(*) -> SELECT * LIMIT 5.",
-    );
-  }
-
-  return hints;
-}
-
-export function augmentBigQueryErrorMessage(errorMessage: string): string {
-  const hints = getBigQueryErrorHints(errorMessage);
-  if (hints.length === 0) return errorMessage;
-  return `${errorMessage}\n\nDebug hints:\n${hints.map((hint) => `- ${hint}`).join("\n")}`;
-}
+export const __testBigQueryErrorHelpers = {
+  getBigQueryErrorHints,
+  augmentBigQueryErrorMessage,
+};
 
 function formatBigQueryToolError(prefix: string, error: unknown): string {
   return `${prefix}: ${augmentBigQueryErrorMessage(getErrorMessage(error))}`;
