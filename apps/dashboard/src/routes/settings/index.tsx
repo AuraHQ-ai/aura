@@ -111,13 +111,6 @@ function SettingsPage() {
     },
   });
 
-  if (loadingSettings) return <PageSkeleton rows={8} />;
-  if (settingsError) return <div className="text-destructive text-sm">Failed to load settings: {settingsError.message}</div>;
-
-  const nonModelSettings = (settings ?? []).filter(
-    (s) => !s.key.startsWith("model_") && !s.key.startsWith("credential:"),
-  );
-
   const providerByModelId = useMemo(
     () => new Map((models?.catalog ?? []).map((model) => [model.value, model.provider])),
     [models?.catalog],
@@ -130,6 +123,14 @@ function SettingsPage() {
       })),
     [providerByModelId],
   );
+
+  if (loadingSettings) return <PageSkeleton rows={8} />;
+  if (settingsError) return <div className="text-destructive text-sm">Failed to load settings: {settingsError.message}</div>;
+
+  const nonModelSettings = (settings ?? []).filter(
+    (s) => !s.key.startsWith("model_") && !s.key.startsWith("credential:"),
+  );
+
   const MAIN_MODELS = enrichOptions(models?.main ?? []);
   const FAST_MODELS = enrichOptions(models?.fast ?? []);
   const EMBEDDING_MODELS = enrichOptions(models?.embedding ?? []);
