@@ -215,3 +215,7 @@ Beyond extracted memories, Aura maintains a self-authored knowledge base in the 
 | `knowledge` | General reference, business context | Permanent (default) |
 
 Notes with `inject_in_context: true` appear in every prompt via the auto-generated notes index, ensuring critical operational knowledge is always available. Each note has an importance score (1-100) for sort order and a summary (max 250 chars) that powers the index.
+
+## Maintenance Tools
+
+- Entity Summary Backfill: Run `pnpm run script backfill-entity-summaries --force-all --concurrency 5` to regenerate entity summaries. By default it runs in incremental mode.
