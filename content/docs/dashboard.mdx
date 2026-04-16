@@ -27,10 +27,13 @@ The **Invocations** sub-tab (`/conversations/invocations`) shows each individual
 
 Track token usage and costs over time:
 
-- Daily/weekly/monthly cost charts
+- Daily/weekly/monthly cost charts with shareable date range filters
 - Breakdown by model (Claude, Grok, etc.)
-- Per-user consumption
+- Per-user consumption tables with totals and pagination
 - Token type distribution (input vs output vs cache)
+- Share bars for quick relative comparisons
+
+The date range selection is reflected in the URL so specific windows can be bookmarked and shared.
 
 ### Memories
 
@@ -96,8 +99,9 @@ Manage ingested content:
 Configure instance behavior:
 
 - Admin user IDs
-- Model selection
+- Model selection (searchable autocomplete grouped by provider)
 - Feature flags
+- Theme selection (light/dark/system) -- moved here from the header
 
 ## Access & Authentication
 
@@ -115,3 +119,9 @@ The callback issues a session JWT (HS256, 30-day expiry) stored as an HTTP-only 
 ## Chat
 
 The dashboard includes an embedded chat interface for interacting with Aura directly from the admin UI -- useful for testing and debugging without switching to Slack.
+
+The model picker in the chat panel uses the same searchable autocomplete as the Settings page, grouped by provider. Both stay in sync -- changing the model in one place updates the other.
+
+## Navigation
+
+Account controls (settings, account menu) live in the sidebar footer, following the Cursor navigation pattern. The header stays focused on page actions. Theme selection (light/dark/system) is inside Settings rather than the header.
