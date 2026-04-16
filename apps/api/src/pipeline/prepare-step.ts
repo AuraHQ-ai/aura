@@ -54,6 +54,32 @@ type PrepareStepFn = (options: {
  * `defaultEffort` is accepted for backwards compatibility but currently
  * ignored — we rely on the model's own adaptive behavior.
  */
+
+/**
+ * Some Anthropic models only support adaptive thinking (self-managed budget),
+ * not the classic `{ type: "enabled", budgetTokens }` API. Opus 4.7 is the
+ * first such model. Sending `enabled` to an adaptive-only model causes the
+ * direct Anthropic API to reject the request, producing
+ * `AI_NoOutputGeneratedError` with an empty stream.
+ *
+ * The gateway catalog only exposes a single `reasoning` tag and doesn't
+ * distinguish the two thinking modes, so we keep a small allowlist of
+ * adaptive-only gateway IDs. When more land, add them here.
+ */
+const ADAPTIVE_ONLY_THINKING_MODELS = new Set<string>([
+  "anthropic/claude-opus-4.7",
+]);
+
+function getAnthropicThinkingOptions(
+  modelId: string,
+  budgetTokens: number,
+): { type: "adaptive" } | { type: "enabled"; budgetTokens: number } {
+  if (ADAPTIVE_ONLY_THINKING_MODELS.has(modelId)) {
+    return { type: "adaptive" };
+  }
+  return { type: "enabled", budgetTokens };
+}
+
 export function createPrepareStep(opts: {
   stepLimit?: number;
   warningThreshold?: number;
@@ -168,10 +194,10 @@ export function createPrepareStep(opts: {
     const thinkingEnabled = await modelSupportsThinking(effectiveModelId);
 
     // --- Build Anthropic provider options ---
-    if (thinkingEnabled && opts.thinkingBudget) {
+    if (thinkingEnabled && opts.thinkingBudget && effectiveModelId) {
       providerOptions = {
         anthropic: {
-          thinking: { type: "enabled", budgetTokens: opts.thinkingBudget },
+          thinking: getAnthropicThinkingOptions(effectiveModelId, opts.thinkingBudget),
         },
       };
     }
