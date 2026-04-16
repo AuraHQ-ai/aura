@@ -408,14 +408,26 @@ export function createBigQueryTools(context?: ScheduleContext) {
       }
 
       return result;
-    } catch (error: unknown) {
+    } catch (error: any) {
       logger.error(`${toolName} failed`, {
         sql: sql.substring(0, 200),
         error: getErrorMessage(error),
       });
+      let hint = "";
+      const msg = error.message ?? "";
+      if (msg.includes("Access Denied") || msg.includes("permission")) {
+        hint =
+          " HINT: This may be malformed SQL, not a real permissions issue. Retry with: SELECT COUNT(*) FROM dataset.table (unquoted, no backticks, no project prefix). Only diagnose permissions if the minimal query also fails.";
+      } else if (msg.includes("Not found") || msg.includes("not found")) {
+        hint =
+          " HINT: Table or dataset not found. Use list_datasets then list_tables to verify the exact names.";
+      } else if (msg.includes("Syntax error")) {
+        hint =
+          " HINT: SQL syntax error. Simplify to SELECT COUNT(*) FROM dataset.table first, then add complexity incrementally.";
+      }
       return {
         ok: false as const,
-        error: formatBigQueryToolError("Query failed", error),
+        error: `Query failed: ${error.message}${hint}`,
       };
     }
   };
@@ -424,7 +436,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
     bq_list_datasets: defineTool({
       requiredCredentials: ["google_bq_credentials"],
       description:
-        "List all datasets in BigQuery. This is step 1 of the recovery ladder and the safest reset point when queries fail. Use this before table/query calls so you know the real dataset names and locations. After exploring, save findings to a 'data-warehouse-map' knowledge note for future reference.",
+        "List all BigQuery datasets. STEP 1 of the debug ladder: always start here when you don't know what data exists, or when a query fails and you need to verify table references. Returns dataset IDs needed for list_tables. After exploring, save findings to a 'data-warehouse-map' knowledge note.",
       inputSchema: z.object({}),
       execute: async () => executeListBigQueryDatasets("bq_list_datasets"),
       slack: { status: "Listing datasets...", output: (r) => r.ok === false ? r.error : `${(r.datasets ?? []).length} datasets` },
@@ -433,7 +445,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
     bq_list_tables: defineTool({
       requiredCredentials: ["google_bq_credentials"],
       description:
-        "List all tables in a BigQuery dataset, including type, row count, and description. This is step 2 in the recovery ladder after bq_list_datasets.",
+        "List all tables in a BigQuery dataset. STEP 2 of the debug ladder: call after list_datasets to find the exact table name. Returns table IDs, types, row counts, and descriptions.",
       inputSchema: listTablesInputSchema,
       execute: async (input) => executeListBigQueryTables(input, "bq_list_tables"),
       slack: { status: "Listing tables...", detail: (i) => i.dataset, output: (r) => r.ok === false ? r.error : `${(r.tables ?? []).length} tables` },
@@ -442,7 +454,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
     bq_inspect_table: defineTool({
       requiredCredentials: ["google_bq_credentials"],
       description:
-        `Get a table's full schema, metadata, and sample rows. This is step 3 of the recovery ladder and should be used before querying any unfamiliar table. ${BIGQUERY_DEBUGGING_LADDER} ${BIGQUERY_SQL_STYLE_GUIDANCE} After exploring, update the 'data-warehouse-map' knowledge note with useful columns, joins, and quirks.`,
+        "Get schema, sample rows, and row count for a BigQuery table. STEP 3 of the debug ladder: call before writing any aggregation query to understand column names, data types, and values. Common gotchas: epoch timestamps (not dates), amounts in cents (divide by 100), nullable fields.",
       inputSchema: inspectTableInputSchema,
       execute: async (input) => executeInspectBigQueryTable(input, "bq_inspect_table"),
       slack: {
@@ -459,7 +471,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
     bq_execute_query: defineTool({
       requiredCredentials: ["google_bq_credentials"],
       description:
-        `Run a read-only BigQuery query (SELECT/WITH only). ${BIGQUERY_SQL_STYLE_GUIDANCE} ${BIGQUERY_DEBUGGING_LADDER} For unfamiliar tables, bq_inspect_table before querying. Do not infer permissions issues from one complex failing query; retry a minimal valid query first.`,
+        "Run a read-only BigQuery Standard SQL query. STEP 4 of the debug ladder — only call after inspect_table confirms column names. Use unquoted `dataset.table` syntax (e.g. `FROM fr_stripe.subscriptions`). No backticks, no project prefix unless required. SELECT/WITH only — DML/DDL blocked. 1 GB scan limit. If a query fails: retry with `SELECT COUNT(*) FROM dataset.table` first — never diagnose permissions from a complex query failure. Read 'data-query-guardrails' note before data analysis.",
       inputSchema: executeQueryInputSchema,
       execute: async (input) => executeBigQueryQuery(input, "bq_execute_query"),
       slack: {
