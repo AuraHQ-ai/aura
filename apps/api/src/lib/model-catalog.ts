@@ -367,3 +367,62 @@ export async function getDefaultModelId(
   return catalog.defaults[category] ?? null;
 }
 
+// ── Model capabilities (from gateway tags) ───────────────────────────────────
+// The Vercel AI Gateway returns a `tags` array per model. We treat the
+// presence of `"reasoning"` as the signal that a model supports thinking —
+// this is the same source of truth used across repos (mako/mono). No model
+// ID parsing.
+
+export interface ModelCapabilities {
+  supportsThinking: boolean;
+  tags: string[];
+}
+
+const CAPABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
+const capabilityCache = new Map<string, { value: ModelCapabilities; expiresAt: number }>();
+const MISSING_CAPABILITIES: ModelCapabilities = { supportsThinking: false, tags: [] };
+
+export async function getModelCapabilities(
+  modelId: string,
+  workspaceId = DEFAULT_WORKSPACE_ID,
+): Promise<ModelCapabilities> {
+  const cacheKey = `${workspaceId}::${modelId}`;
+  const cached = capabilityCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const [row] = await db
+    .select({ tags: modelCatalog.tags })
+    .from(modelCatalog)
+    .where(
+      and(
+        eq(modelCatalog.workspaceId, workspaceId),
+        eq(modelCatalog.modelId, modelId),
+      ),
+    )
+    .limit(1);
+
+  const tags = Array.isArray(row?.tags) ? row!.tags : [];
+  const value: ModelCapabilities = {
+    supportsThinking: tags.includes("reasoning"),
+    tags,
+  };
+
+  if (!row) {
+    logger.warn("getModelCapabilities: model not in catalog", {
+      modelId,
+      workspaceId,
+    });
+    capabilityCache.set(cacheKey, {
+      value: MISSING_CAPABILITIES,
+      expiresAt: Date.now() + CAPABILITY_CACHE_TTL_MS,
+    });
+    return MISSING_CAPABILITIES;
+  }
+
+  capabilityCache.set(cacheKey, {
+    value,
+    expiresAt: Date.now() + CAPABILITY_CACHE_TTL_MS,
+  });
+  return value;
+}
+

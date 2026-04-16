@@ -9,6 +9,8 @@ import {
   ArrowUpIcon,
   SquareIcon,
   PaperclipIcon,
+  Copy,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -100,6 +102,7 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelAutocompleteOption[]>([]);
   const threadIdRef = useRef(currentThreadId);
@@ -180,6 +183,28 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
     setShowHistory(false);
   }, [setMessages]);
 
+  const handleCopyChat = useCallback(async () => {
+    if (messages.length === 0) return;
+    try {
+      const payload = {
+        threadId: currentThreadId,
+        exportedAt: new Date().toISOString(),
+        messages: messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          parts: m.parts,
+          metadata: (m as { metadata?: unknown }).metadata,
+        })),
+      };
+      const json = JSON.stringify(payload, null, 2);
+      await navigator.clipboard.writeText(json);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard API may fail in insecure contexts; silently ignore
+    }
+  }, [messages, currentThreadId]);
+
   const handleSelectThread = useCallback(
     async (threadId: string) => {
       if (threadId === currentThreadId) {
@@ -233,6 +258,18 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
             title="Chat history"
           >
             <Clock className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={handleCopyChat}
+            disabled={messages.length === 0}
+            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+            title={copied ? "Copied!" : "Copy chat as JSON"}
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
           </button>
           <button
             onClick={onClose}

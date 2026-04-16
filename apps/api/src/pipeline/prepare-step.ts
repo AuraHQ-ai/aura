@@ -1,7 +1,8 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { supportsEffort, supportsAdaptiveThinking, supportsThinking } from "../lib/ai.js";
+import { isAnthropicModel } from "../lib/ai.js";
+import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
 
@@ -42,10 +43,16 @@ type PrepareStepFn = (options: {
  * Build a `prepareStep` callback for AI SDK's streamText/generateText.
  *
  * Handles:
- * 1. Effort escalation (Anthropic only): starts at defaultEffort (usually "medium"),
- *    bumps to "high" when the agent is deep into a task or hitting tool failures,
- *    and optionally escalates the model from Sonnet to Opus for persistent failures.
- * 2. Step limit warning: injects a system-level wrap-up nudge near the step limit.
+ * 1. Thinking: enables extended thinking with `budgetTokens` on any model
+ *    whose gateway catalog entry carries the `reasoning` tag. No model ID
+ *    parsing — the AI Gateway tells us which models support thinking.
+ * 2. Model escalation: after repeated tool failures, swaps to the escalation
+ *    model (typically Sonnet → Opus).
+ * 3. Step limit warning: injects a system-level wrap-up nudge near the step
+ *    limit.
+ *
+ * `defaultEffort` is accepted for backwards compatibility but currently
+ * ignored — we rely on the model's own adaptive behavior.
  */
 export function createPrepareStep(opts: {
   stepLimit?: number;
@@ -64,11 +71,32 @@ export function createPrepareStep(opts: {
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
-  const hasEffortSupport = opts.modelId ? supportsEffort(opts.modelId) : false;
-  let currentEffort: EffortLevel = opts.defaultEffort ?? "medium";
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
+
+  // Cache thinking support per model ID for this prepareStep instance.
+  // Catalog lookups are already in-memory-cached (5 min TTL), but we also
+  // memoize here so we don't hit the cache on every step.
+  const thinkingCache = new Map<string, boolean>();
+  async function modelSupportsThinking(modelId: string | undefined): Promise<boolean> {
+    if (!modelId) return false;
+    if (!isAnthropicModel(modelId)) return false;
+    const hit = thinkingCache.get(modelId);
+    if (hit !== undefined) return hit;
+    try {
+      const caps = await getModelCapabilities(modelId);
+      thinkingCache.set(modelId, caps.supportsThinking);
+      return caps.supportsThinking;
+    } catch (err: any) {
+      logger.warn("prepareStep: capability lookup failed", {
+        modelId,
+        error: err?.message,
+      });
+      thinkingCache.set(modelId, false);
+      return false;
+    }
+  }
 
   return async ({ stepNumber, steps, messages }) => {
     // --- Invocation staleness check (abort if superseded) ---
@@ -109,32 +137,10 @@ export function createPrepareStep(opts: {
 
     if (hadToolFailure) failureCount++;
 
-    // --- Effort escalation (runs first so currentEffort is up to date for model escalation) ---
-    if (hasEffortSupport) {
-      let newEffort = currentEffort;
-
-      if (stepNumber > 8 || hadToolFailure) {
-        if (currentEffort === "low") newEffort = "medium";
-        else if (currentEffort === "medium") newEffort = "high";
-      }
-
-      if (newEffort !== currentEffort) {
-        currentEffort = newEffort;
-        logger.info("prepareStep: escalating effort", {
-          stepNumber,
-          effort: currentEffort,
-        });
-      }
-    }
-
     // --- Model escalation: persistent failures → escalation model ---
-    const readyToEscalateModel = hasEffortSupport
-      ? (currentEffort === "high" && hadToolFailure)
-      : (failureCount >= 3);
-
     if (
       stepNumber > 15 &&
-      readyToEscalateModel &&
+      failureCount >= 3 &&
       !hasEscalatedModel &&
       opts.getEscalationModel
     ) {
@@ -155,25 +161,19 @@ export function createPrepareStep(opts: {
       modelOverride = escalatedModel.model;
     }
 
-    // Recompute capability flags for the effective model (may differ after escalation)
+    // Effective model may have changed via escalation; look up its thinking
+    // support via the gateway-sourced catalog (tags.includes("reasoning")).
     const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
-    const activeHasEffortSupport = effectiveModelId ? supportsEffort(effectiveModelId) : false;
-    const activeHasAdaptiveThinking = effectiveModelId ? supportsAdaptiveThinking(effectiveModelId) : false;
-    const activeHasThinkingSupport = effectiveModelId ? supportsThinking(effectiveModelId) : false;
+    const thinkingEnabled = await modelSupportsThinking(effectiveModelId);
 
-    // --- Build Anthropic provider options (thinking + effort) ---
-    const anthropicOpts: Record<string, any> = {};
-    if (activeHasAdaptiveThinking) {
-      anthropicOpts.thinking = { type: "adaptive" };
-    } else if (activeHasThinkingSupport && opts.thinkingBudget) {
-      anthropicOpts.thinking = { type: "enabled", budgetTokens: opts.thinkingBudget };
-    }
-    if (activeHasEffortSupport) {
-      anthropicOpts.effort = currentEffort;
-    }
-    if (Object.keys(anthropicOpts).length > 0) {
-      providerOptions = { anthropic: anthropicOpts };
+    // --- Build Anthropic provider options ---
+    if (thinkingEnabled && opts.thinkingBudget) {
+      providerOptions = {
+        anthropic: {
+          thinking: { type: "enabled", budgetTokens: opts.thinkingBudget },
+        },
+      };
     }
 
     // --- Step limit warning ---
