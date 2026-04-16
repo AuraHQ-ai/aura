@@ -133,6 +133,13 @@ function stepToParts(step: Step): PartRow[] {
     parts.push({ type: "reasoning", orderIndex: idx++, textValue: step.reasoning.map((r) => r.text).join('\n\n') });
   }
 
+  // Text must precede tool-invocations. Anthropic's API rejects assistant
+  // messages that have tool_use blocks followed by text, because the next
+  // message MUST start with tool_result for the pending tool_use IDs.
+  if (step.text) {
+    parts.push({ type: "text", orderIndex: idx++, textValue: step.text });
+  }
+
   if (step.toolCalls && step.toolCalls.length > 0) {
     for (const tc of step.toolCalls) {
       const tr = step.toolResults?.find((r) => r.toolCallId === tc.toolCallId);
@@ -146,10 +153,6 @@ function stepToParts(step: Step): PartRow[] {
         toolState: tr ? "result" : "call",
       });
     }
-  }
-
-  if (step.text) {
-    parts.push({ type: "text", orderIndex: idx++, textValue: step.text });
   }
 
   return parts;
@@ -197,16 +200,14 @@ export function buildConversationSteps(
 // Saves system + user messages immediately so they survive crashes.
 // Returns the next orderIndex for assistant messages.
 //
-// Optional `conversationHistory` captures prior user/assistant turns that were
-// sent to the model as `messages` (dashboard path). For Slack, thread context
-// is already inside the system prompt as <conversation>, so this is typically
-// only used by the dashboard.
+// Each trace represents ONE turn (system + user + assistant steps). Prior
+// turns live in their own traces and are reconstructed by walking all traces
+// of a thread in order — so we do NOT re-persist prior history here.
 
 export async function persistConversationInputs(
   conversationId: string,
   systemPrompt: string,
   userPrompt: string,
-  conversationHistory?: Array<{ role: string; content: string }>,
 ): Promise<number> {
   try {
     let orderIndex = 0;
@@ -215,26 +216,18 @@ export async function persistConversationInputs(
       { type: "text", orderIndex: 0, textValue: systemPrompt },
     ], systemPrompt, null, null);
 
-    if (conversationHistory && conversationHistory.length > 0) {
-      for (const msg of conversationHistory) {
-        await insertMessage(conversationId, msg.role, orderIndex++, [
-          { type: "text", orderIndex: 0, textValue: msg.content },
-        ], msg.content, null, null);
-      }
-    }
-
     await insertMessage(conversationId, "user", orderIndex++, [
       { type: "text", orderIndex: 0, textValue: userPrompt },
     ], userPrompt, null, null);
 
-    logger.info("persistConversationInputs: saved", { conversationId, historyMessages: conversationHistory?.length ?? 0 });
+    logger.info("persistConversationInputs: saved", { conversationId });
     return orderIndex;
   } catch (err: any) {
     logger.error("persistConversationInputs: failed (non-fatal)", {
       conversationId,
       error: err.message,
     });
-    return conversationHistory ? conversationHistory.length + 2 : 2;
+    return 2;
   }
 }
 

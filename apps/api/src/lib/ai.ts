@@ -58,31 +58,14 @@ export async function getMainModel() {
 }
 
 /**
- * Map Vercel AI Gateway model IDs to direct Anthropic API model IDs.
- * Gateway uses short names (e.g. "anthropic/claude-haiku-4-5") while
- * the direct API requires dated slugs (e.g. "claude-3-5-haiku-20241022").
+ * Convert a Vercel AI Gateway model ID into a direct Anthropic API model ID.
+ * Gateway uses dotted versions (e.g. "anthropic/claude-opus-4.7") while the
+ * direct API uses dashed versions ("claude-opus-4-7"). Returns null for
+ * non-Anthropic models.
  */
-const GATEWAY_TO_ANTHROPIC: Record<string, string> = {
-  "anthropic/claude-haiku-4.5": "claude-haiku-4-5-20251001",
-  "anthropic/claude-haiku-4-5": "claude-haiku-4-5-20251001",
-  "anthropic/claude-opus-4.6": "claude-opus-4-6",
-  "anthropic/claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
-  "anthropic/claude-sonnet-4.6": "claude-sonnet-4-6",
-  "anthropic/claude-sonnet-4-20250514": "claude-sonnet-4-20250514",
-  "anthropic/claude-opus-4-6": "claude-opus-4-6",
-  "anthropic/claude-sonnet-4-5-20250514": "claude-sonnet-4-5-20250929",
-  "anthropic/claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
-  "anthropic/claude-sonnet-4-6": "claude-sonnet-4-6",
-};
-
 function toDirectAnthropicId(gatewayId: string): string | null {
-  if (GATEWAY_TO_ANTHROPIC[gatewayId]) {
-    return GATEWAY_TO_ANTHROPIC[gatewayId];
-  }
-  // Fallback: strip "anthropic/" prefix (works when gateway ID matches API ID)
-  return gatewayId.startsWith("anthropic/")
-    ? gatewayId.slice("anthropic/".length)
-    : null;
+  if (!gatewayId.startsWith("anthropic/")) return null;
+  return gatewayId.slice("anthropic/".length).replace(/\./g, "-");
 }
 
 async function getDirectAnthropicModel(modelId: string) {
@@ -165,36 +148,10 @@ export async function getEmbeddingModel() {
 }
 
 /**
- * Check if a model supports the Anthropic `effort` parameter.
- * Currently supported: Claude Opus 4.5, Opus 4.6, and Sonnet 4.6.
- */
-export function supportsEffort(modelId: string): boolean {
-  return /claude-(?:opus-4-[56]|sonnet-4-6)/.test(modelId);
-}
-
-/**
- * Check if a model supports adaptive thinking (`thinking.type: "adaptive"`).
- * All models that support the `effort` parameter also require adaptive thinking;
- * sending manual `type: "enabled"` with `budgetTokens` alongside `effort` is invalid.
- */
-export function supportsAdaptiveThinking(modelId: string): boolean {
-  return /claude-(?:opus-4-[56]|sonnet-4-6)/.test(modelId);
-}
-
-/**
- * Check if a model supports extended thinking (manual `type: "enabled"` with `budgetTokens`).
- * Matches Sonnet 4, Sonnet 4.5, Opus 4.5, etc. — but NOT Haiku or non-Claude models.
- * For models that also support adaptive thinking, `supportsAdaptiveThinking` takes priority.
- */
-export function supportsThinking(modelId: string): boolean {
-  return /claude-(?:sonnet|opus)-4/.test(modelId);
-}
-
-/**
- * Check if a model is Anthropic (general check, not thinking-specific).
+ * Check if a model is Anthropic (used to decide where provider options apply).
  */
 export function isAnthropicModel(modelId: string): boolean {
-  return modelId.includes("anthropic") || modelId.includes("claude");
+  return modelId.startsWith("anthropic/") || modelId.startsWith("claude");
 }
 
 /**

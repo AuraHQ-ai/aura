@@ -2,7 +2,6 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   convertToModelMessages,
   type UIMessage,
-  type ModelMessage,
   type StepResult,
   type LanguageModelUsage,
 } from "ai";
@@ -211,11 +210,20 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
 
         if (uiParts.length === 0) continue;
 
+        const metadata =
+          msg.role === "assistant" && (msg.modelId || msg.resolvedModelId)
+            ? {
+                modelId: msg.modelId ?? undefined,
+                resolvedModelId: msg.resolvedModelId ?? undefined,
+              }
+            : undefined;
+
         uiMessages.push({
           id: `restored-${msgIndex++}`,
           role: msg.role as "user" | "assistant",
           parts: uiParts,
-        });
+          ...(metadata ? { metadata } : {}),
+        } as UIMessage);
       }
     }
 
@@ -226,6 +234,35 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
   }
 });
 
+/**
+ * Anthropic rejects assistant messages where tool_use blocks are followed by
+ * text in the same message, because the next message must immediately start
+ * with tool_result. Reorder parts so text comes before tool-invocations.
+ * Also strip reasoning parts from non-final messages (they require signed
+ * provider metadata that we don't persist).
+ */
+function sanitizeAssistantPartOrder(messages: UIMessage[]): UIMessage[] {
+  return messages.map((msg) => {
+    if (msg.role !== "assistant" || !msg.parts) return msg;
+
+    const textParts: any[] = [];
+    const toolParts: any[] = [];
+    const otherParts: any[] = [];
+
+    for (const part of msg.parts as any[]) {
+      if (part.type === "text") textParts.push(part);
+      else if (part.type === "dynamic-tool" || (typeof part.type === "string" && part.type.startsWith("tool-")))
+        toolParts.push(part);
+      else if (part.type === "reasoning" || part.type === "step-start") {
+        // drop: reasoning needs signed metadata, step-start is UI-only
+      } else otherParts.push(part);
+    }
+
+    if (toolParts.length === 0) return msg;
+    return { ...msg, parts: [...otherParts, ...textParts, ...toolParts] } as UIMessage;
+  });
+}
+
 function partsToUIParts(
   parts: (typeof conversationParts.$inferSelect)[],
   fallbackContent: string | null,
@@ -234,23 +271,19 @@ function partsToUIParts(
     return [{ type: "text", text: fallbackContent }];
   }
 
-  const uiParts: UIMessage["parts"] = [];
+  const textParts: UIMessage["parts"] = [];
+  const toolParts: UIMessage["parts"] = [];
 
   for (const part of parts) {
     switch (part.type) {
       case "text":
         if (part.textValue) {
-          uiParts.push({ type: "text", text: part.textValue });
-        }
-        break;
-      case "reasoning":
-        if (part.textValue) {
-          uiParts.push({ type: "reasoning", text: part.textValue, providerMetadata: {} });
+          textParts.push({ type: "text", text: part.textValue });
         }
         break;
       case "tool-invocation":
         if (part.toolCallId && part.toolName) {
-          uiParts.push({
+          toolParts.push({
             type: "dynamic-tool",
             toolName: part.toolName,
             toolCallId: part.toolCallId,
@@ -260,10 +293,17 @@ function partsToUIParts(
           });
         }
         break;
+      // "reasoning" and "step-start" parts are intentionally dropped on restore:
+      // reasoning requires signed provider metadata to re-send to Anthropic, and
+      // step-start is a UI-only marker. Dropping them is safe for follow-up turns.
     }
   }
 
-  return uiParts;
+  // Anthropic requires assistant messages with tool_use blocks to end with
+  // tool_use (tool_result must come immediately after). Put text BEFORE
+  // tool-invocations so the trailing text doesn't break the tool_use →
+  // tool_result pairing that convertToModelMessages emits.
+  return [...textParts, ...toolParts];
 }
 
 // ── Dashboard chat (streaming) ──────────────────────────────────────────────
@@ -363,15 +403,8 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
 
     const tools = await createCoreTools({ userId, channelId: "dashboard" });
 
-    for (const msg of messages) {
-      const partTypes = msg.parts?.map((p: any) => p.type) ?? [];
-      if (partTypes.some((t: string) => t.startsWith("tool") || t === "dynamic-tool" || t === "step-start")) {
-        logger.info("Dashboard chat message with tools", { id: msg.id, role: msg.role, partTypes });
-      }
-    }
-
-    const modelMessages = await convertToModelMessages(messages);
-    const priorMessages = serializeConversationHistory(modelMessages);
+    const sanitizedMessages = sanitizeAssistantPartOrder(messages);
+    const modelMessages = await convertToModelMessages(sanitizedMessages);
 
     const result = executionContext.run(
       { triggeredBy: userId, triggerType: "user_message", callingUserId: userId, channelId: "dashboard" },
@@ -399,7 +432,6 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
               userMessage: messageText,
               assistantText: text,
               systemPrompt: fullSystemPrompt,
-              conversationHistory: priorMessages,
               steps,
               stepModelIds,
               totalUsage,
@@ -414,9 +446,17 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
     return result.toUIMessageStreamResponse({
       originalMessages: messages,
       sendReasoning: true,
+      messageMetadata: ({ part }) => {
+        if (part.type === "start") {
+          return { modelId };
+        }
+      },
     });
   } catch (error) {
-    logger.error("Dashboard chat error", { error });
+    logger.error("Dashboard chat error", {
+      error: error instanceof Error ? error.stack ?? error.message : String(error),
+      name: error instanceof Error ? error.name : undefined,
+    });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -429,12 +469,11 @@ async function persistDashboardConversation(params: {
   userMessage: string;
   assistantText: string;
   systemPrompt: string;
-  conversationHistory?: Array<{ role: string; content: string }>;
   steps: StepResult<any>[];
   stepModelIds: string[];
   totalUsage: LanguageModelUsage;
 }): Promise<void> {
-  const { userId, messageId, modelId, threadId, userMessage, assistantText, systemPrompt, conversationHistory, steps, stepModelIds, totalUsage } = params;
+  const { userId, messageId, modelId, threadId, userMessage, assistantText, systemPrompt, steps, stepModelIds, totalUsage } = params;
 
   try {
     logger.info("persistDashboardConversation started", { threadId, messageId });
@@ -512,7 +551,7 @@ async function persistDashboardConversation(params: {
     });
 
     if (traceId) {
-      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage, conversationHistory);
+      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage);
 
       const conversationSteps = buildConversationSteps(steps, stepModelIds, modelId);
       await persistConversationSteps(traceId, conversationSteps, orderIndex);
@@ -545,45 +584,4 @@ async function resolveDashboardDisplayName(userId: string): Promise<string> {
   } catch {
     return userId;
   }
-}
-
-/**
- * Extract a flat {role, content} array from ModelMessage[] for trace persistence.
- * Strips the last user message (persisted separately by persistConversationInputs)
- * and skips system messages (already in the system prompt).
- */
-function serializeConversationHistory(
-  modelMessages: ModelMessage[],
-): Array<{ role: string; content: string }> {
-  const result: Array<{ role: string; content: string }> = [];
-
-  for (const msg of modelMessages) {
-    if (msg.role === "system" || msg.role === "tool") continue;
-
-    let content: string;
-    if (typeof msg.content === "string") {
-      content = msg.content;
-    } else if (Array.isArray(msg.content)) {
-      content = msg.content
-        .map((part: any) => {
-          if (part.type === "text") return part.text;
-          if (part.type === "tool-call") return `[tool_call: ${part.toolName}(${JSON.stringify(part.args).slice(0, 200)})]`;
-          if (part.type === "tool-result") return `[tool_result: ${part.toolName} → ${JSON.stringify(part.result).slice(0, 500)}]`;
-          return "";
-        })
-        .filter(Boolean)
-        .join("\n");
-    } else {
-      content = String(msg.content ?? "");
-    }
-
-    if (content) result.push({ role: msg.role, content });
-  }
-
-  // Drop the last user message — it's saved separately as the "current" user prompt
-  if (result.length > 0 && result[result.length - 1].role === "user") {
-    result.pop();
-  }
-
-  return result;
 }
