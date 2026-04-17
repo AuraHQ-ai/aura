@@ -122,6 +122,10 @@ The dashboard includes an embedded chat interface for interacting with Aura dire
 
 The model picker in the chat panel uses the same searchable autocomplete as the Settings page, grouped by provider. Both stay in sync -- changing the model in one place updates the other.
 
+A copy-to-clipboard button in the chat header exports the current conversation (including tool calls, tool results, and reasoning) as JSON -- handy for sharing a repro, filing a bug, or seeding an evaluation case.
+
+Each chat message carries its own `modelId` / `resolvedModelId` metadata, so the exported JSON records which model actually produced each turn even when the selection changes mid-conversation.
+
 ## Navigation
 
 Account controls (settings, account menu) live in the sidebar footer, following the Cursor navigation pattern. The header stays focused on page actions. Theme selection (light/dark/system) is inside Settings rather than the header.

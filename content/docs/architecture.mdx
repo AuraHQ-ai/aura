@@ -119,6 +119,13 @@ Aura uses Claude's extended thinking capability, which captures the model's reas
 - Visible in the dashboard for debugging
 - Useful for understanding why Aura made specific decisions or tool calls
 
+Thinking capability is detected from the gateway model catalog rather than a hand-maintained regex. `getModelCapabilities` reads the `tags` column synced from the Vercel AI Gateway and reports `supportsThinking` when the catalog tags include `reasoning`. This means new Claude releases light up automatically without a code change.
+
+Two thinking modes are supported:
+
+- **Classic budget** -- `{ type: "enabled", budgetTokens }`. The caller sets a token budget per step. Used for Sonnet and older Opus models.
+- **Adaptive** -- `{ type: "adaptive" }`. The model self-manages its own reasoning budget. Opus 4.7 is adaptive-only and will reject a classic budget request with `AI_NoOutputGeneratedError`. Adaptive-only gateway IDs are kept in a small allowlist in `prepare-step.ts`.
+
 ## Multi-Tenancy
 
 Aura's database schema is workspace-scoped. A central `workspaces` table (keyed by Slack team ID) owns all data, and every major table includes a `workspace_id` foreign key:
