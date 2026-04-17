@@ -27,6 +27,7 @@ Rules:
     person: `${base}
 Focus on: role/title, what they work on, key relationships, communication style, notable preferences or decisions.
 Skip: routine interactions, trivial scheduling details.
+Use pronouns matching gender field exactly. If gender is male -> he/him/his. If female -> she/her/hers. If non_binary or null -> they/them/their. Never use pronouns conflicting with the gender field.
 ${rules}`,
 
     company: `${base}
@@ -110,8 +111,10 @@ export async function generateEntitySummary(
     const linkedUsers = await db
       .select({
         displayName: users.displayName,
+        gender: users.gender,
+        preferredLanguage: users.preferredLanguage,
+        role: users.role,
         jobTitle: users.jobTitle,
-        knownFacts: users.knownFacts,
         timezone: users.timezone,
         slackUserId: users.slackUserId,
       })
@@ -122,14 +125,11 @@ export async function generateEntitySummary(
     if (linkedUsers.length > 0) {
       const u = linkedUsers[0];
       const parts: string[] = [];
+      parts.push(`Display name: ${u.displayName}`);
+      parts.push(`Gender: ${u.gender ?? "null"}`);
+      parts.push(`Preferred language: ${u.preferredLanguage ?? "null"}`);
+      parts.push(`Role: ${u.role}`);
       if (u.jobTitle) parts.push(`Title: ${u.jobTitle}`);
-      const facts = u.knownFacts as Record<string, unknown> | null;
-      if (facts?.role) parts.push(`Role: ${facts.role}`);
-      if (facts?.team) parts.push(`Team: ${facts.team}`);
-      if (facts?.interests && Array.isArray(facts.interests) && facts.interests.length > 0)
-        parts.push(`Interests: ${facts.interests.join(", ")}`);
-      if (facts?.personalDetails && Array.isArray(facts.personalDetails) && facts.personalDetails.length > 0)
-        parts.push(`Details: ${facts.personalDetails.join(", ")}`);
       if (u.timezone) parts.push(`Timezone: ${u.timezone}`);
       if (parts.length > 0) {
         profileContext = `\n\nProfile data:\n${parts.map((p) => `- ${p}`).join("\n")}`;
