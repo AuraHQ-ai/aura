@@ -18,6 +18,11 @@ import { db } from "../db/client.js";
 import { inArray, eq, and, sql, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { logger } from "../lib/logger.js";
+import {
+  retrieveSkillsForTurn,
+  logSkillRetrievals,
+  type RetrievedSkill,
+} from "../skills/retrieve.js";
 
 // Re-export for consumers that previously imported from prompt.ts
 export type { PersonProfile };
@@ -29,6 +34,8 @@ export type ChannelType = "dm" | "dashboard" | "public_channel" | "private_chann
 export interface ChannelSession {
   channel: "slack" | "dashboard";
   userId: string;
+  /** Per-message/turn identifier for retrieval telemetry. */
+  turnId?: string;
   conversationId: string;
   threadId?: string;
   messageText: string;
@@ -243,6 +250,7 @@ export interface CorePrompt {
   memories: Memory[];
   conversations: ConversationThread[];
   userProfile: UserProfile | null;
+  retrievedSkills: RetrievedSkill[];
 }
 
 /**
@@ -271,7 +279,12 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
-  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity] =
+  const threadKey = session.threadId ?? session.conversationId;
+  const turnId =
+    session.turnId ??
+    `${session.channel}:${session.conversationId}:${threadKey}:${Date.now()}`;
+
+  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity, retrievedSkills] =
     await Promise.all([
       queryEmbedding
         ? retrieveMemories({
@@ -298,7 +311,27 @@ export async function buildCorePrompt(
       lookupPerson(session.userId),
       getUsageStats(),
       fetchInterlocutorEntity(session.userId),
+      queryEmbedding
+        ? retrieveSkillsForTurn({
+            queryEmbedding,
+            workspaceId: "default",
+          })
+        : Promise.resolve([] as RetrievedSkill[]),
     ]);
+
+  if (retrievedSkills.length > 0) {
+    await logSkillRetrievals({
+      turnId,
+      userId: session.userId,
+      retrievedSkills,
+      workspaceId: "default",
+    }).catch((error) => {
+      logger.warn("Failed to log skill retrievals", {
+        error: String(error),
+        turnId,
+      });
+    });
+  }
 
   // Build entity summaries (related-entities lookup depends on retrieved memories)
   const entitySummaries = await buildEntitySummaries(session.userId, interlocutorEntity, memories);
@@ -322,6 +355,7 @@ export async function buildCorePrompt(
     mentionedPeople,
     interlocutor: interlocutor ?? undefined,
     entitySummaries,
+    retrievedSkills,
   });
 
   const modelId = session.modelIdOverride ?? await getMainModelId();
@@ -353,6 +387,7 @@ export async function buildCorePrompt(
     memories,
     conversations,
     userProfile,
+    retrievedSkills,
   };
 }
 

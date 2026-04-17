@@ -468,6 +468,48 @@ export const notes = pgTable(
   ],
 );
 
+// ── Skill embeddings + retrieval telemetry ───────────────────────────────────
+
+export const skillEmbeddings = pgTable(
+  "skill_embeddings",
+  {
+    workspaceId: workspaceId().references(() => workspaces.id),
+    id: uuid("id")
+      .primaryKey()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    embedding: vector("embedding", { dimensions: 1536 }).notNull(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("skill_embeddings_embedding_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+  ],
+);
+
+export const skillRetrievals = pgTable(
+  "skill_retrievals",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    turnId: text("turn_id").notNull(),
+    userId: text("user_id").notNull(),
+    skillId: uuid("skill_id")
+      .notNull()
+      .references(() => notes.id, { onDelete: "cascade" }),
+    similarity: real("similarity").notNull(),
+    ts: timestamptz("ts").notNull().defaultNow(),
+  },
+  (table) => [
+    index("skill_retrievals_turn_idx").on(table.workspaceId, table.turnId),
+    index("skill_retrievals_user_ts_idx").on(table.workspaceId, table.userId, table.ts),
+    index("skill_retrievals_skill_ts_idx").on(table.workspaceId, table.skillId, table.ts),
+  ],
+);
+
 // ── Resources (raw ingested source material) ─────────────────────────────────
 
 export const resources = pgTable(
@@ -959,6 +1001,10 @@ export type Setting = typeof settings.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type Note = typeof notes.$inferSelect;
+export type SkillEmbedding = typeof skillEmbeddings.$inferSelect;
+export type NewSkillEmbedding = typeof skillEmbeddings.$inferInsert;
+export type SkillRetrieval = typeof skillRetrievals.$inferSelect;
+export type NewSkillRetrieval = typeof skillRetrievals.$inferInsert;
 export type Resource = typeof resources.$inferSelect;
 export type NewResource = typeof resources.$inferInsert;
 export type EventLock = typeof eventLocks.$inferSelect;
