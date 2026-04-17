@@ -275,6 +275,23 @@ export async function buildCorePrompt(
     });
   }
 
+  // Skill retrieval uses a slightly broader query: message + trailing thread
+  // context. Short messages like "do it" or "ok" embed poorly on their own but
+  // match well when combined with the preceding turn. Capped at ~2k chars to
+  // keep embedding cost bounded.
+  let skillQueryEmbedding: number[] | undefined = queryEmbedding;
+  if (session.conversationContext) {
+    const tail = session.conversationContext.slice(-1500);
+    const combined = `${tail}\n\nlatest: ${session.messageText}`.slice(0, 2000);
+    try {
+      skillQueryEmbedding = await embedText(combined);
+    } catch (error) {
+      logger.warn("Skill query embedding failed, falling back to message-only", {
+        error: String(error),
+      });
+    }
+  }
+
   const participantIds = (session.participantUserIds ?? [])
     .filter((id) => id !== session.userId)
     .slice(0, 10);
@@ -311,9 +328,9 @@ export async function buildCorePrompt(
       lookupPerson(session.userId),
       getUsageStats(),
       fetchInterlocutorEntity(session.userId),
-      queryEmbedding
+      skillQueryEmbedding
         ? retrieveSkillsForTurn({
-            queryEmbedding,
+            queryEmbedding: skillQueryEmbedding,
             workspaceId: "default",
           })
         : Promise.resolve([] as RetrievedSkill[]),

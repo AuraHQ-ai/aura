@@ -4,9 +4,14 @@ import { notes, skillEmbeddings, skillRetrievals } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
 
-const SKILL_RETRIEVAL_TOP_K = 5;
-const SKILL_EMBEDDING_CONTENT_PREVIEW_CHARS = 500;
-const DEFAULT_SKILL_RETRIEVAL_THRESHOLD = 0.35;
+const DEFAULT_SKILL_RETRIEVAL_TOP_K = 5;
+// Raised from 500 to 2000: most skills are <2k chars and critical trigger
+// keywords are often in the middle of the content, not the first 500 chars.
+const SKILL_EMBEDDING_CONTENT_PREVIEW_CHARS = 2000;
+// Threshold bumped from 0.35 (noisy) to 0.55 (actually relevant).
+// On text-embedding-3-small, 0.35 matches marginal topical overlap; 0.55 is
+// where "this is a skill for this turn" starts. Tune down from telemetry, not up.
+const DEFAULT_SKILL_RETRIEVAL_THRESHOLD = 0.55;
 const DEFAULT_SKILL_RETRIEVAL_TOKEN_CAP = 4000;
 const CHARS_PER_TOKEN_ESTIMATE = 4;
 const DEFAULT_WORKSPACE_ID = process.env.DEFAULT_WORKSPACE_ID || "default";
@@ -46,6 +51,15 @@ export function isSkillRetrievalEnabled(): boolean {
   const flag = process.env.ENABLE_SKILL_RETRIEVAL;
   if (flag == null) return true;
   return flag.toLowerCase() !== "false";
+}
+
+function getSkillRetrievalTopK(): number {
+  const raw = process.env.SKILL_RETRIEVAL_TOP_K;
+  if (!raw) return DEFAULT_SKILL_RETRIEVAL_TOP_K;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_SKILL_RETRIEVAL_TOP_K;
 }
 
 function getSkillRetrievalThreshold(): number {
@@ -126,6 +140,7 @@ export async function retrieveSkillsForTurn(
   const workspaceId = options.workspaceId ?? DEFAULT_WORKSPACE_ID;
   const similarityThreshold = getSkillRetrievalThreshold();
   const tokenCap = getSkillRetrievalTokenCap();
+  const topK = getSkillRetrievalTopK();
   const vectorSql = sql.raw(`'[${options.queryEmbedding.join(",")}]'::vector`);
 
   const rows = await db
@@ -148,18 +163,31 @@ export async function retrieveSkillsForTurn(
       ),
     )
     .orderBy(sql`${skillEmbeddings.embedding} <=> ${vectorSql}`)
-    .limit(SKILL_RETRIEVAL_TOP_K);
+    .limit(topK);
 
   const aboveThreshold = filterSkillsByThreshold(rows, similarityThreshold);
   const withTokenEstimates = mapRowsToRetrievedSkills(aboveThreshold);
   const capped = applySkillTokenCap(withTokenEstimates, tokenCap);
 
+  // Log top-K *candidates* (pre-threshold) so we can tune threshold from real data.
+  // Without this, we can only see what got through, not what was almost-relevant.
+  const topCandidates = rows.slice(0, Math.min(rows.length, topK)).map((r) => ({
+    id: r.id,
+    topic: r.topic,
+    similarity: Number(r.similarity.toFixed(4)),
+    kept: r.similarity >= similarityThreshold,
+  }));
+
   logger.info("Semantic skill retrieval complete", {
     workspaceId,
     retrievedCount: capped.length,
+    candidatesEvaluated: rows.length,
+    missedBelowThreshold: rows.length - aboveThreshold.length,
     threshold: similarityThreshold,
+    topK,
     tokenCap,
     totalEstimatedTokens: capped.reduce((sum, skill) => sum + skill.estimatedTokens, 0),
+    topCandidates,
   });
 
   return capped;
@@ -174,15 +202,25 @@ export async function logSkillRetrievals(params: {
   if (params.retrievedSkills.length === 0) return;
 
   const workspaceId = params.workspaceId ?? DEFAULT_WORKSPACE_ID;
-  await db.insert(skillRetrievals).values(
-    params.retrievedSkills.map((skill) => ({
-      workspaceId,
-      turnId: params.turnId,
-      userId: params.userId,
-      skillId: skill.id,
-      similarity: skill.similarity,
-    })),
-  );
+  // Fire-and-forget: never block the hot path on telemetry writes.
+  // If the insert fails, log it and move on; retrieval already succeeded.
+  void db
+    .insert(skillRetrievals)
+    .values(
+      params.retrievedSkills.map((skill) => ({
+        workspaceId,
+        turnId: params.turnId,
+        userId: params.userId,
+        skillId: skill.id,
+        similarity: skill.similarity,
+      })),
+    )
+    .catch((err) => {
+      logger.warn("skill_retrievals insert failed", {
+        error: err instanceof Error ? err.message : String(err),
+        turnId: params.turnId,
+      });
+    });
 }
 
 export async function upsertSkillEmbedding(params: {

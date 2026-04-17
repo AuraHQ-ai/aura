@@ -394,6 +394,11 @@ function formatConversations(conversations: ConversationThread[]): string {
 function formatRetrievedSkills(skills: RetrievedSkill[]): string {
   if (skills.length === 0) return "";
 
+  const preamble =
+    "The skills below are authoritative operational playbooks retrieved as relevant to this turn. " +
+    "Follow them for this turn unless you have a specific reason not to. " +
+    "If a skill conflicts with the user's explicit instruction, the instruction wins -- surface the conflict.";
+
   const entries = skills
     .map(
       (skill) =>
@@ -401,7 +406,7 @@ function formatRetrievedSkills(skills: RetrievedSkill[]): string {
     )
     .join("\n\n");
 
-  return `<retrieved_skills>\n${entries}\n</retrieved_skills>`;
+  return `<retrieved_skills>\n${preamble}\n\n${entries}\n</retrieved_skills>`;
 }
 
 export interface SystemPromptLayers {

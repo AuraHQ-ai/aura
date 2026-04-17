@@ -27,3 +27,16 @@ describe("skill retrieval ranking and gating", () => {
     expect(capped.map((s: { id: string }) => s.id)).toEqual(["s1", "s2"]);
   });
 });
+
+describe("skill retrieval threshold defaults", () => {
+  it("default threshold of 0.55 excludes marginal matches", () => {
+    // Simulates the new default. 0.35-0.52 range was noise at old threshold.
+    const marginalRows: SkillRetrievalRow[] = [
+      { id: "weak1", topic: "weak", content: "X".repeat(500), similarity: 0.40 },
+      { id: "weak2", topic: "weaker", content: "X".repeat(500), similarity: 0.50 },
+      { id: "strong", topic: "strong", content: "X".repeat(500), similarity: 0.62 },
+    ];
+    const kept = filterSkillsByThreshold(marginalRows, 0.55);
+    expect(kept.map((r) => r.id)).toEqual(["strong"]);
+  });
+});
