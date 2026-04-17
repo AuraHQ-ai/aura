@@ -82,3 +82,79 @@ describe("formatUserProfile unified profile v2", () => {
     expect(text).not.toContain("legacy known facts should not appear");
   });
 });
+
+describe("person block snapshot", () => {
+  const originalFlag = process.env.UNIFIED_PROFILE_V2;
+
+  afterEach(() => {
+    if (originalFlag === undefined) {
+      delete process.env.UNIFIED_PROFILE_V2;
+    } else {
+      process.env.UNIFIED_PROFILE_V2 = originalFlag;
+    }
+  });
+
+  it("renders the expected <person> block shape for a male owner", () => {
+    process.env.UNIFIED_PROFILE_V2 = "true";
+    const profile = makeUserProfile({
+      displayName: "Joan Rodriguez",
+      gender: "male",
+      preferredLanguage: "en",
+      role: "owner",
+      timezone: "Europe/Zurich",
+    });
+
+    const text = formatUserProfile(profile, {
+      interlocutorEntitySummary: "Joan is a co-founder at RealAdvisor focused on product strategy.",
+    });
+
+    // Assert structural ordering - not free-form string comparison.
+    const lines = text.split("\n");
+    expect(lines[0]).toBe("About the person you're talking to:");
+    expect(lines[1]).toBe("Display name: Joan Rodriguez");
+    expect(lines[2]).toBe("Pronouns: he/him/his (gender=male)");
+    expect(lines[3]).toBe("Preferred language: en");
+    expect(lines[4]).toBe("Role: owner");
+    expect(text).toContain("Timezone: Europe/Zurich");
+    expect(text).toContain("Compiled profile (entities.summary): Joan is a co-founder");
+    expect(text).not.toContain("known_facts");
+    expect(text).not.toContain("personalDetails");
+  });
+
+  it("renders the expected <person> block shape for a female member", () => {
+    process.env.UNIFIED_PROFILE_V2 = "true";
+    const profile = makeUserProfile({
+      displayName: "Jane Doe",
+      gender: "female",
+      preferredLanguage: "fr",
+      role: "member",
+    });
+
+    const text = formatUserProfile(profile, {
+      interlocutorEntitySummary: "Jane leads customer success.",
+    });
+
+    expect(text).toContain("Pronouns: she/her/hers (gender=female)");
+    expect(text).toContain("Preferred language: fr");
+    expect(text).toContain("Compiled profile (entities.summary): Jane leads customer success.");
+    expect(text).not.toContain("legacy known facts should not appear");
+  });
+
+  it("omits preferred language line when null rather than rendering empty value", () => {
+    process.env.UNIFIED_PROFILE_V2 = "true";
+    const profile = makeUserProfile({
+      gender: "male",
+      preferredLanguage: null,
+    });
+
+    const text = formatUserProfile(profile, {
+      interlocutor: { slackUserId: "U_TEST", displayName: null, gender: null, preferredLanguage: null, jobTitle: null, managerName: null, notes: null },
+      interlocutorEntitySummary: null,
+    });
+
+    // Line should be absent entirely, not rendered as "Preferred language: null" or "Preferred language: "
+    expect(text).not.toMatch(/Preferred language:\s*$/m);
+    expect(text).not.toContain("Preferred language: null");
+    expect(text).not.toContain("Preferred language: undefined");
+  });
+});
