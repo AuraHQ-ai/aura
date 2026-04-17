@@ -13,7 +13,9 @@ import {
   type PronounFamily,
 } from "../lib/pronoun-audit.js";
 
-const JOAN_ENTITY_ID = "f212a72d-a781-4af6-990b-2a908bf3c1e6";
+const DEFAULT_CANARY_ENTITY_ID = "f212a72d-a781-4af6-990b-2a908bf3c1e6";
+const CANARY_ENTITY_ID =
+  process.env.PRONOUN_AUDIT_CANARY_ENTITY_ID ?? DEFAULT_CANARY_ENTITY_ID;
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -54,6 +56,7 @@ interface AuditSummary {
   match: number;
   mismatchSimplePatched: number;
   mismatchSimpleDetected: number;
+  mismatchSimpleSkippedAmbiguous: number;
   mismatchComplexQueued: number;
   skippedNoGender: number;
   skippedUnknownGender: number;
@@ -63,6 +66,11 @@ interface CliOptions {
   apply: boolean;
   dryRun: boolean;
   isProd: boolean;
+  /**
+   * When true, rows whose patch would depend on ambiguous `her` disambiguation
+   * are surfaced for manual review instead of auto-patched. Default true.
+   */
+  skipAmbiguousHer: boolean;
 }
 
 function parseCliOptions(args: string[]): CliOptions {
@@ -70,14 +78,21 @@ function parseCliOptions(args: string[]): CliOptions {
   const apply = argSet.has("--apply");
   const dryRunFlag = argSet.has("--dry-run");
   const isProd = argSet.has("--prod");
+  // Default behaviour is to SKIP ambiguous `her` resolutions so we don't silently
+  // write bad patches. --allow-ambiguous-her opts into the older permissive mode.
+  const allowAmbiguous = argSet.has("--allow-ambiguous-her");
 
-  const unknownArgs = args.filter(
-    (arg) => !["--apply", "--dry-run", "--prod"].includes(arg),
-  );
+  const knownFlags = new Set([
+    "--apply",
+    "--dry-run",
+    "--prod",
+    "--allow-ambiguous-her",
+  ]);
+  const unknownArgs = args.filter((arg) => !knownFlags.has(arg));
   if (unknownArgs.length > 0) {
     throw new Error(
       `Unknown arguments: ${unknownArgs.join(", ")}\n` +
-        "Usage: pnpm tsx scripts/pronoun-audit.ts [--dry-run] [--apply] [--prod]",
+        "Usage: pnpm tsx scripts/pronoun-audit.ts [--dry-run] [--apply] [--prod] [--allow-ambiguous-her]",
     );
   }
 
@@ -89,6 +104,7 @@ function parseCliOptions(args: string[]): CliOptions {
     apply,
     dryRun: dryRunFlag || !apply,
     isProd,
+    skipAmbiguousHer: !allowAmbiguous,
   };
 }
 
@@ -182,22 +198,22 @@ function expectedFamilyOrSkip(
   return { expectedFamily, skipKind: null };
 }
 
-async function verifyJoanSummary(db: Database): Promise<void> {
+async function verifyCanarySummary(db: Database): Promise<void> {
   const rows = await db
     .select({
       id: entities.id,
       summary: entities.summary,
     })
     .from(entities)
-    .where(eq(entities.id, JOAN_ENTITY_ID))
+    .where(eq(entities.id, CANARY_ENTITY_ID))
     .limit(1);
 
   const row = rows[0];
   if (!row) {
-    throw new Error(`Verification failed: Joan entity ${JOAN_ENTITY_ID} not found.`);
+    throw new Error(`Verification failed: canary entity ${CANARY_ENTITY_ID} not found.`);
   }
   if (!row.summary || row.summary.trim() === "") {
-    throw new Error("Verification failed: Joan summary is empty.");
+    throw new Error("Verification failed: canary summary is empty.");
   }
 
   const classification = classifyPronounSummary(row.summary, "masculine");
@@ -208,9 +224,11 @@ async function verifyJoanSummary(db: Database): Promise<void> {
     scan.counts.feminine > 0 ||
     scan.counts.neutral > 0
   ) {
-    throw new Error(
-      "Verification failed: Joan summary does not end in he/him pronouns only.",
-    );
+    // NOTE: canary gender is expected to be masculine; override via PRONOUN_AUDIT_CANARY_ENTITY_ID
+      // if you pick a different canary.
+      throw new Error(
+        "Verification failed: canary summary does not end in he/him pronouns only.",
+      );
   }
 }
 
@@ -220,13 +238,17 @@ export async function main(args: string[]): Promise<void> {
   config({ path: resolve(repoRoot, envFile) });
   const { db } = await import("../db/client.js");
 
-  const csvPath = `/tmp/pronoun_audit_${Date.now()}.csv`;
+  const runTimestamp = Date.now();
+  const csvPath = `/tmp/pronoun_audit_${runTimestamp}.csv`;
+  const rollbackSqlPath = `/tmp/pronoun_audit_${runTimestamp}.rollback.sql`;
   const csvRows: CsvRow[] = [];
+  const rollbackStatements: string[] = [];
   const summary: AuditSummary = {
     totalAudited: 0,
     match: 0,
     mismatchSimplePatched: 0,
     mismatchSimpleDetected: 0,
+    mismatchSimpleSkippedAmbiguous: 0,
     mismatchComplexQueued: 0,
     skippedNoGender: 0,
     skippedUnknownGender: 0,
@@ -262,24 +284,53 @@ export async function main(args: string[]): Promise<void> {
     if (classification.kind === "MISMATCH_SIMPLE") {
       summary.mismatchSimpleDetected += 1;
 
-      if (options.apply) {
-        const patch = patchSimplePronounMismatch(
-          row.summary,
-          classification.sourceFamily,
-          classification.targetFamily,
-        );
+      // Always preview the patch up-front so we can gate on ambiguity before writing.
+      const previewPatch = patchSimplePronounMismatch(
+        row.summary,
+        classification.sourceFamily,
+        classification.targetFamily,
+      );
+      const hasAmbiguous = previewPatch.ambiguousChoices.length > 0;
 
+      if (options.skipAmbiguousHer && hasAmbiguous) {
+        summary.mismatchSimpleSkippedAmbiguous += 1;
+        csvRows.push({
+          entityId: row.id,
+          workspaceId: row.workspaceId,
+          canonicalName: row.canonicalName,
+          slackUserId: row.slackUserId,
+          gender: row.gender ?? "",
+          expectedFamily: classification.targetFamily,
+          classification: "MISMATCH_SIMPLE",
+          reason:
+            "" + classification.reason +
+            " (skipped: ambiguous her disambiguation; re-run with --allow-ambiguous-her to patch, or regenerate via entity summary pipeline)",
+          counts: formatCounts(row.summary),
+          beforeSummary: row.summary,
+          afterSummary: previewPatch.summary,
+          ambiguousChoices: previewPatch.ambiguousChoices.join(" | "),
+        });
+        continue;
+      }
+
+      if (options.apply) {
         await db
           .update(entities)
           .set({
-            summary: patch.summary,
+            summary: previewPatch.summary,
             summaryUpdatedAt: now,
             updatedAt: now,
           })
           .where(eq(entities.id, row.id));
 
+        // Capture a precise rollback statement for every write.
+        const escapedBefore = row.summary.replace(/'/g, "''");
+        rollbackStatements.push(
+          `UPDATE entities SET summary = '${escapedBefore}' WHERE id = '${row.id}';`,
+        );
+
         const patchedClassification = classifyPronounSummary(
-          patch.summary,
+          previewPatch.summary,
           classification.targetFamily,
         );
         if (patchedClassification.kind !== "MATCH") {
@@ -300,8 +351,8 @@ export async function main(args: string[]): Promise<void> {
           reason: classification.reason,
           counts: formatCounts(row.summary),
           beforeSummary: row.summary,
-          afterSummary: patch.summary,
-          ambiguousChoices: patch.ambiguousChoices.join(" | "),
+          afterSummary: previewPatch.summary,
+          ambiguousChoices: previewPatch.ambiguousChoices.join(" | "),
         });
       } else {
         csvRows.push({
@@ -347,18 +398,37 @@ export async function main(args: string[]): Promise<void> {
       const expected = normalizeGenderToPronounFamily(row.gender);
       if (!expected) return count;
       const classification = classifyPronounSummary(row.summary, expected);
-      return count + (classification.kind === "MISMATCH_SIMPLE" ? 1 : 0);
+      if (classification.kind !== "MISMATCH_SIMPLE") return count;
+      // Ambiguous-her skips are expected residue when running with the default flag.
+      if (options.skipAmbiguousHer) {
+        const preview = patchSimplePronounMismatch(
+          row.summary,
+          classification.sourceFamily,
+          classification.targetFamily,
+        );
+        if (preview.ambiguousChoices.length > 0) return count;
+      }
+      return count + 1;
     }, 0);
 
     if (remainingSimpleMismatches > 0) {
       throw new Error(
-        `Idempotency check failed: ${remainingSimpleMismatches} simple mismatches remain after --apply.`,
+        `Idempotency check failed: ${remainingSimpleMismatches} non-ambiguous simple mismatches remain after --apply.`,
       );
     }
   }
 
-  await verifyJoanSummary(db);
+  await verifyCanarySummary(db);
   await writeFile(csvPath, toCsv(csvRows), "utf8");
+  if (options.apply && rollbackStatements.length > 0) {
+    const header = `-- Pronoun audit rollback generated at ${new Date(runTimestamp).toISOString()}\n` +
+      `-- ${rollbackStatements.length} UPDATE statement(s). Run inside a transaction.\n`;
+    await writeFile(
+      rollbackSqlPath,
+      header + "BEGIN;\n" + rollbackStatements.join("\n") + "\nCOMMIT;\n",
+      "utf8",
+    );
+  }
 
   console.log("\n=== Pronoun Audit Summary ===");
   console.log(`total_audited: ${summary.totalAudited}`);
@@ -373,6 +443,15 @@ export async function main(args: string[]): Promise<void> {
         summary.mismatchSimpleDetected - summary.mismatchSimplePatched
       }`,
     );
+  }
+  if (summary.mismatchSimpleSkippedAmbiguous > 0) {
+    console.log(
+      `mismatch_simple_skipped_ambiguous: ${summary.mismatchSimpleSkippedAmbiguous} ` +
+        `(use --allow-ambiguous-her to patch, or regenerate via summary pipeline)`,
+    );
+  }
+  if (options.apply && rollbackStatements.length > 0) {
+    console.log(`rollback_sql_path: ${rollbackSqlPath}`);
   }
   if (summary.skippedNoGender > 0 || summary.skippedUnknownGender > 0) {
     console.log(`skipped_no_gender: ${summary.skippedNoGender}`);

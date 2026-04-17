@@ -77,3 +77,28 @@ describe("scanPronouns", () => {
     expect(result.counts.neutral).toBe(2);
   });
 });
+
+describe("patchSimplePronounMismatch ambiguity surfacing", () => {
+  it("flags trailing sentence-final `her` as ambiguous in ambiguousChoices", () => {
+    // "her" with no following word -> ambiguous (object vs possessive adjective)
+    const summary = "The team appreciates her.";
+    const result = patchSimplePronounMismatch(summary, "feminine", "masculine");
+    expect(result.ambiguousChoices.length).toBeGreaterThan(0);
+    expect(result.ambiguousChoices[0]).toContain("Ambiguous");
+  });
+
+  it("does NOT flag `her` as ambiguous when followed by a noun (possessive adjective)", () => {
+    const summary = "Her team ships fast.";
+    const result = patchSimplePronounMismatch(summary, "feminine", "masculine");
+    // "her team" - unambiguous possessive adjective
+    expect(result.ambiguousChoices).toHaveLength(0);
+    expect(result.summary.toLowerCase()).toContain("his team");
+  });
+
+  it("does NOT flag `to her` as ambiguous (clear object)", () => {
+    const summary = "Joan reports to her weekly.";
+    const result = patchSimplePronounMismatch(summary, "feminine", "masculine");
+    expect(result.ambiguousChoices).toHaveLength(0);
+    expect(result.summary).toContain("to him");
+  });
+});
