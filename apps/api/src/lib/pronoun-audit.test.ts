@@ -73,7 +73,7 @@ describe("scanPronouns", () => {
   it("counts pronoun families using the tracked regex set", () => {
     const result = scanPronouns("She said he helped them with their launch.");
     expect(result.counts.feminine).toBe(1);
-    expect(result.counts.masculine).toBe(2);
+    expect(result.counts.masculine).toBe(1);
     expect(result.counts.neutral).toBe(2);
   });
 });
