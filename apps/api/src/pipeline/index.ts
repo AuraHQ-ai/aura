@@ -34,6 +34,7 @@ import { getSettingJSON } from "../lib/settings.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
+import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
 import {
   createConversationTrace,
   persistConversationInputs,
@@ -253,22 +254,18 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
 
     // Set assistant thread status — triggers the shimmer animation on
     // Aura's name and shows a loading indicator while processing.
-    // Requires the `assistant:write` scope (enabled via Agents & AI Apps
-    // toggle in Slack app settings). Status auto-clears on reply.
-    try {
-      await client.assistant.threads.setStatus({
-        channel_id: context.channelId,
-        thread_ts: replyThreadTs,
-        status: "Thinking...",
-        loading_messages: [
-          "Gathering context...",
-          "Searching memories...",
-          "Pulling it together...",
-        ],
-      });
-    } catch {
-      // Non-fatal: scope may not be configured or channel type unsupported
-    }
+    // Status auto-clears on reply.
+    await trySetAssistantThreadStatus({
+      client,
+      channelId: context.channelId,
+      threadTs: replyThreadTs,
+      status: "Thinking...",
+      loadingMessages: [
+        "Gathering context...",
+        "Searching memories...",
+        "Pulling it together...",
+      ],
+    });
 
     // ── Edge case: extremely long message ────────────────────────────────
     let messageText = context.text || (hasFiles ? "What can you tell me about this file?" : "");

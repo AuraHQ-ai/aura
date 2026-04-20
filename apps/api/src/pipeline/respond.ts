@@ -1,17 +1,25 @@
 import { streamText } from "ai";
-import type { WebClient } from "@slack/web-api";
+import type { ChatAppendStreamArguments, WebClient } from "@slack/web-api";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { formatForSlack, prettifyAndWrapTable } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
-import { safePostMessage, isChannelTypeNotSupported, isInvalidBlocks, isMsgTooLong } from "../lib/slack-messaging.js";
+import {
+  safePostMessage,
+  isChannelTypeNotSupported,
+  isInvalidBlocks,
+  isInvalidChunks,
+  isMsgTooLong,
+} from "../lib/slack-messaging.js";
 import { getSlackMeta } from "../lib/tool.js";
 import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 import { InvocationSupersededError } from "./prepare-step.js";
 import { cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
+import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
+import { getSettingJSON } from "../lib/settings.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -231,6 +239,157 @@ function estimateAppendSize(payload: any): number {
   return JSON.stringify(payload).length;
 }
 
+type SlackTaskDisplayMode = "timeline" | "plan" | "hybrid";
+type URLSourceElement = { type: "url"; url: string; text: string };
+type LegacyTaskUpdateChunk = {
+  type: "task_update";
+  id: string;
+  title: string;
+  status: "pending" | "in_progress" | "complete" | "error";
+  details?: string;
+  output?: string;
+  sources?: URLSourceElement[];
+};
+type LegacyPlanUpdateChunk = { type: "plan_update"; title: string };
+type LegacyMarkdownChunk = { type: "markdown_text"; text: string };
+type LegacyKnownChunk = LegacyTaskUpdateChunk | LegacyPlanUpdateChunk | LegacyMarkdownChunk;
+type SlackStreamChunk = LegacyKnownChunk | { type: string; [key: string]: unknown };
+type TaskCardPreview = {
+  type: "task_card";
+  task_id: string;
+  title: string;
+  status: "pending" | "in_progress" | "complete" | "error";
+};
+
+function normalizeTaskDisplayMode(value: unknown): SlackTaskDisplayMode {
+  if (value === "plan" || value === "hybrid" || value === "timeline") return value;
+  return "timeline";
+}
+
+function toChunkMarkdownText(text: string): SlackStreamChunk {
+  // The Slack methods docs use `markdown_text` in examples while current
+  // @slack/types uses `text`. Send both for forward/backward compatibility.
+  return {
+    type: "markdown_text",
+    text,
+    markdown_text: text,
+  };
+}
+
+function toPlanChunk(params: {
+  title: string;
+  tasks: TaskCardPreview[];
+}): SlackStreamChunk {
+  return {
+    type: "plan",
+    title: params.title,
+    tasks: params.tasks,
+  };
+}
+
+function toTaskUpdateChunk(params: {
+  id: string;
+  title: string;
+  status: "pending" | "in_progress" | "complete" | "error";
+  details?: string;
+  output?: string;
+  sources?: URLSourceElement[];
+}): SlackStreamChunk {
+  return {
+    type: "task_update",
+    ...params,
+  };
+}
+
+function toUrlSourceChunk(source: URLSourceElement): SlackStreamChunk {
+  return {
+    type: "url_source",
+    url: source.url,
+    text: source.text,
+  };
+}
+
+function toBlocksChunk(blocks: Record<string, any>[]): SlackStreamChunk {
+  return {
+    type: "blocks",
+    blocks,
+  };
+}
+
+function asAppendPayload(payload: {
+  markdown_text?: string;
+  chunks?: SlackStreamChunk[];
+}): Omit<ChatAppendStreamArguments, "channel" | "ts"> {
+  const normalizeChunk = (chunk: SlackStreamChunk): LegacyKnownChunk => {
+    if (
+      chunk.type === "task_update" &&
+      typeof chunk.id === "string" &&
+      typeof chunk.title === "string" &&
+      typeof chunk.status === "string"
+    ) {
+      return {
+        type: "task_update",
+        id: chunk.id,
+        title: chunk.title,
+        status: chunk.status as LegacyTaskUpdateChunk["status"],
+        ...(typeof chunk.details === "string" ? { details: chunk.details } : {}),
+        ...(typeof chunk.output === "string" ? { output: chunk.output } : {}),
+        ...(Array.isArray(chunk.sources) ? { sources: chunk.sources as URLSourceElement[] } : {}),
+      };
+    }
+    if (chunk.type === "plan_update" && typeof chunk.title === "string") {
+      return { type: "plan_update", title: chunk.title };
+    }
+    if (chunk.type === "markdown_text") {
+      const text =
+        typeof (chunk as { text?: unknown }).text === "string"
+          ? (chunk as { text: string }).text
+          : "";
+      return { type: "markdown_text", text };
+    }
+    // Unknown / forward-compatible chunk types are intentionally cast here.
+    return chunk as unknown as LegacyKnownChunk;
+  };
+
+  const result: Omit<ChatAppendStreamArguments, "channel" | "ts"> = {
+    ...(payload.chunks
+      ? {
+          chunks: payload.chunks.map(normalizeChunk) as ChatAppendStreamArguments["chunks"],
+        }
+      : {}),
+  };
+  if (payload.markdown_text != null) {
+    result.markdown_text = payload.markdown_text;
+    result.chunks = [...(result.chunks ?? []), toChunkMarkdownText(payload.markdown_text) as any];
+  }
+  return result;
+}
+
+function buildPlanPreviewChunks(
+  tools: Record<string, unknown>,
+  limit = 8,
+): SlackStreamChunk[] {
+  const tasks: TaskCardPreview[] = [];
+  for (const [name, toolDef] of Object.entries(tools)) {
+    const slackMeta = getSlackMeta(toolDef);
+    if (!slackMeta?.status) continue;
+    tasks.push({
+      type: "task_card",
+      task_id: name,
+      title: slackMeta.status,
+      status: "pending",
+    });
+    if (tasks.length >= limit) break;
+  }
+  if (tasks.length === 0) return [];
+  return [
+    toPlanChunk({
+      title: "Plan",
+      tasks,
+    }),
+  ];
+}
+
 /** Channels known to not support streaming (persists for process lifetime) */
 const streamingUnsupportedChannels = new Set<string>();
 
@@ -272,7 +431,6 @@ export async function generateResponse(
   const streamParams: Record<string, any> = {
     channel: channelId,
     thread_ts: threadTs,
-    task_display_mode: "timeline",
   };
 
   // recipient_team_id and recipient_user_id are required for channels
@@ -280,9 +438,6 @@ export async function generateResponse(
   if (options.recipientUserId) streamParams.recipient_user_id = options.recipientUserId;
 
   let streamer: any = null;
-  if (!skipStreaming) {
-    streamer = slackClient.chatStream(streamParams as any);
-  }
 
   // ── Streaming fallback ──────────────────────────────────────────────
   // Some channel types (e.g. Slack List internal channels) don't support
@@ -290,10 +445,13 @@ export async function generateResponse(
   // and post the final result via chat.postMessage.
   let streamingFailed = skipStreaming;
 
-  async function tryStreamAppend(payload: any): Promise<void> {
-    if (streamingFailed) return;
+  async function tryStreamAppend(
+    payload: Omit<ChatAppendStreamArguments, "channel" | "ts">,
+  ): Promise<boolean> {
+    if (streamingFailed || !streamer) return false;
     try {
       await streamer.append(payload);
+      return true;
     } catch (err: any) {
       if (isChannelTypeNotSupported(err)) {
         streamingFailed = true;
@@ -309,6 +467,22 @@ export async function generateResponse(
           channelId,
           context: { fallback: "postMessage" },
         });
+      } else if (isInvalidChunks(err)) {
+        // Non-fatal: some chunk shapes may not be supported in older Slack
+        // clients/SDKs. Continue streaming text and keep block fallback paths.
+        logger.warn("chatStream append returned invalid_chunks; skipping this chunk", {
+          channelId,
+          slackError: err?.data?.error,
+          payloadKeys: Object.keys(payload as Record<string, unknown>),
+        });
+        logError({
+          errorName: "InvalidChunks",
+          errorMessage: err?.message || "invalid_chunks on stream append",
+          errorCode: err?.data?.error || "invalid_chunks",
+          channelId,
+          context: { payloadKeys: Object.keys(payload as Record<string, unknown>) },
+        });
+        return false;
       } else if (isInvalidBlocks(err)) {
         streamingFailed = true;
         logger.warn("chatStream append returned invalid_blocks, falling back to postMessage", {
@@ -341,6 +515,7 @@ export async function generateResponse(
         try {
           await new Promise(r => setTimeout(r, 500));
           await streamer.append(payload);
+          return true;
         } catch (retryErr: any) {
           streamingFailed = true;
           logger.warn("chatStream append failed on retry after internal_error, falling back to postMessage", {
@@ -373,6 +548,7 @@ export async function generateResponse(
         });
       }
     }
+    return false;
   }
 
   // ── Inactivity timeout ───────────────────────────────────────────────
@@ -405,6 +581,15 @@ export async function generateResponse(
     channelId: options.channelId,
     threadTs: options.threadTs,
   });
+
+  const configuredTaskDisplayMode = normalizeTaskDisplayMode(
+    (await getSettingJSON<SlackTaskDisplayMode>("slack_task_display_mode", "timeline")) ?? "timeline",
+  );
+  streamParams.task_display_mode = configuredTaskDisplayMode;
+
+  if (!skipStreaming) {
+    streamer = slackClient.chatStream(streamParams as any);
+  }
 
   const streamCallOptions: Record<string, any> = {
     abortSignal: abortController.signal,
@@ -549,14 +734,24 @@ export async function generateResponse(
 
   try {
     // Signal extended thinking phase to the user via Slack thread status
-    try {
-      await slackClient.assistant.threads.setStatus({
-        channel_id: channelId,
-        thread_ts: threadTs,
-        status: "Thinking deeply...",
-      });
-    } catch {
-      // Non-fatal: scope may not be configured or channel type unsupported
+    await trySetAssistantThreadStatus({
+      client: slackClient,
+      channelId,
+      threadTs,
+      status: "Thinking deeply...",
+    });
+
+    // Seed a coalesced plan preview before tool cards in plan/hybrid mode.
+    if (
+      !streamingFailed &&
+      (configuredTaskDisplayMode === "plan" || configuredTaskDisplayMode === "hybrid")
+    ) {
+      const planChunks = buildPlanPreviewChunks(tools as Record<string, unknown>, 8);
+      if (planChunks.length > 0) {
+        const planPayload = asAppendPayload({ chunks: planChunks });
+        currentStreamLength += estimateAppendSize(planPayload);
+        await tryStreamAppend(planPayload);
+      }
     }
 
     const result = await agent.stream(streamCallOptions as any);
@@ -575,7 +770,7 @@ export async function generateResponse(
 
             if (continuationCount >= MAX_CONTINUATIONS) {
               currentStreamLength += remaining.length;
-              await tryStreamAppend({ markdown_text: remaining });
+              await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
               if (streamingFailed) {
                 fallbackStartIdx = streamedRawIdx;
               }
@@ -586,7 +781,7 @@ export async function generateResponse(
 
             if (breakIdx < 0) {
               currentStreamLength += remaining.length;
-              await tryStreamAppend({ markdown_text: remaining });
+              await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
               if (streamingFailed) {
                 fallbackStartIdx = streamedRawIdx;
               }
@@ -598,7 +793,7 @@ export async function generateResponse(
 
             if (before) {
               currentStreamLength += before.length;
-              await tryStreamAppend({ markdown_text: before });
+              await tryStreamAppend(asAppendPayload({ markdown_text: before }));
             }
 
             if (streamingFailed) {
@@ -616,7 +811,7 @@ export async function generateResponse(
             } else {
               // Max continuations reached, stream still active — flush remaining
               currentStreamLength += remaining.length;
-              await tryStreamAppend({ markdown_text: remaining });
+              await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
               if (streamingFailed) {
                 fallbackStartIdx = streamedRawIdx;
               }
@@ -636,7 +831,7 @@ export async function generateResponse(
             const preToolFlush = flushRemainingTableBuffer();
             if (preToolFlush) {
               currentStreamLength += preToolFlush.length;
-              await tryStreamAppend({ markdown_text: preToolFlush });
+              await tryStreamAppend(asAppendPayload({ markdown_text: preToolFlush }));
             }
             if (streamingFailed) {
               fallbackStartIdx = streamedRawIdx;
@@ -650,15 +845,14 @@ export async function generateResponse(
           const inputArgs = (chunk as any).input ?? {};
           let details: string | undefined;
           try { details = slackMeta?.detail?.(inputArgs); } catch { /* partial input args — safe to ignore */ }
-          const toolCallPayload = {
-            chunks: [{
-              type: "task_update",
+          const toolCallPayload = asAppendPayload({
+            chunks: [toTaskUpdateChunk({
               id: chunk.toolCallId,
               title,
               status: "in_progress",
               ...(details && { details }),
-            }],
-          };
+            })],
+          });
           currentStreamLength += estimateAppendSize(toolCallPayload);
           if (!streamingFailed) {
             await tryStreamAppend(toolCallPayload);
@@ -684,7 +878,7 @@ export async function generateResponse(
                 streamKeepAlive = null;
                 return;
               }
-              await tryStreamAppend({ markdown_text: " " });
+              await tryStreamAppend(asAppendPayload({ markdown_text: " " }));
             }, 20_000);
           }
           break;
@@ -703,6 +897,14 @@ export async function generateResponse(
             TABLE_BLOCK_KEY in output && output[TABLE_BLOCK_KEY]
           ) {
             pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
+            if (!streamingFailed) {
+              const streamedTable = await tryStreamAppend(asAppendPayload({
+                chunks: [toBlocksChunk([pendingTableBlock])],
+              }));
+              if (streamedTable) {
+                pendingTableBlock = null;
+              }
+            }
           }
 
           const outputAny = output as any;
@@ -712,21 +914,32 @@ export async function generateResponse(
           let sources: Array<{ type: "url"; url: string; text: string }> | undefined;
           try { sources = resultSlackMeta?.sources?.(output); } catch { /* safe to ignore — display-only */ }
 
-          const toolResultPayload = {
-            chunks: [{
-              type: "task_update",
+          const toolResultPayload = asAppendPayload({
+            chunks: [toTaskUpdateChunk({
               id: chunk.toolCallId,
               title,
               status: isError ? "error" : "complete",
               ...(taskOutput && { output: taskOutput }),
-              ...(sources && { sources }),
-            }],
-          };
+              ...(sources ? { sources: sources as URLSourceElement[] } : {}),
+            })],
+          });
           currentStreamLength += estimateAppendSize(toolResultPayload);
           if (!streamingFailed) {
             await tryStreamAppend(toolResultPayload);
             if (streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
+            }
+          }
+
+          if (sources && sources.length > 0 && !streamingFailed) {
+            for (const source of sources as URLSourceElement[]) {
+              const sourcePayload = asAppendPayload({ chunks: [toUrlSourceChunk(source)] });
+              currentStreamLength += estimateAppendSize(sourcePayload);
+              await tryStreamAppend(sourcePayload);
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length;
+                break;
+              }
             }
           }
 
@@ -759,15 +972,14 @@ export async function generateResponse(
           const title = errSlackMeta?.status ?? "Failed";
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
-          const toolErrorPayload = {
-            chunks: [{
-              type: "task_update",
+          const toolErrorPayload = asAppendPayload({
+            chunks: [toTaskUpdateChunk({
               id: errToolCallId,
               title,
               status: "error",
               output: truncate(errorMsg, 200),
-            }],
-          };
+            })],
+          });
           currentStreamLength += estimateAppendSize(toolErrorPayload);
           if (!streamingFailed) {
             await tryStreamAppend(toolErrorPayload);
@@ -803,7 +1015,7 @@ export async function generateResponse(
     const finalTableFlush = flushRemainingTableBuffer();
     if (finalTableFlush && !streamingFailed) {
       currentStreamLength += finalTableFlush.length;
-      await tryStreamAppend({ markdown_text: finalTableFlush });
+      await tryStreamAppend(asAppendPayload({ markdown_text: finalTableFlush }));
       if (streamingFailed) {
         fallbackStartIdx = streamedRawIdx;
       }
@@ -1002,7 +1214,7 @@ export async function generateResponse(
       if (streamer && !streamingFailed) {
         try {
           await streamer.stop({
-            chunks: [{ type: "markdown_text", text: "\n\n_[interrupted — new message received]_" }],
+            chunks: [toChunkMarkdownText("\n\n_[interrupted — new message received]_")],
           });
         } catch {
           // Stream may already be closed
@@ -1065,7 +1277,7 @@ export async function generateResponse(
 
           if (chunk.type === "text-delta") {
             retryText += chunk.text;
-            await tryStreamAppend({ markdown_text: chunk.text });
+            await tryStreamAppend(asAppendPayload({ markdown_text: chunk.text }));
           }
         }
 
@@ -1131,9 +1343,7 @@ export async function generateResponse(
           ? "\n\n_...interrupted. Something went wrong._"
           : "_Sorry, I got interrupted before I could finish. Try again?_";
 
-        await streamer.stop({
-          chunks: [{ type: "markdown_text", text: errorText }],
-        });
+        await streamer.stop({ chunks: [toChunkMarkdownText(errorText)] });
       } catch {
         // Stream may already be closed — nothing we can do
       }
