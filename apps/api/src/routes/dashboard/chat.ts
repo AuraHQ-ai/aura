@@ -253,12 +253,29 @@ function sanitizeAssistantPartOrder(messages: UIMessage[]): UIMessage[] {
   return messages.map((msg, index) => {
     if (msg.role !== "assistant" || !msg.parts) return msg;
     const isLastAssistantMessage = index === lastAssistantIndex;
+    const rawParts = msg.parts as any[];
+    const hasToolParts = rawParts.some(
+      (part) =>
+        part.type === "dynamic-tool" ||
+        (typeof part.type === "string" && part.type.startsWith("tool-")),
+    );
+
+    if (!hasToolParts) {
+      const filteredParts = rawParts.filter((part) => {
+        if (part.type === "step-start") return false;
+        if (part.type === "reasoning" && !isLastAssistantMessage) return false;
+        return true;
+      });
+      return filteredParts.length === rawParts.length
+        ? msg
+        : ({ ...msg, parts: filteredParts } as UIMessage);
+    }
 
     const textParts: any[] = [];
     const toolParts: any[] = [];
     const otherParts: any[] = [];
 
-    for (const part of msg.parts as any[]) {
+    for (const part of rawParts) {
       if (part.type === "text") textParts.push(part);
       else if (part.type === "dynamic-tool" || (typeof part.type === "string" && part.type.startsWith("tool-")))
         toolParts.push(part);
@@ -270,7 +287,6 @@ function sanitizeAssistantPartOrder(messages: UIMessage[]): UIMessage[] {
       } else otherParts.push(part);
     }
 
-    if (toolParts.length === 0) return msg;
     return { ...msg, parts: [...otherParts, ...textParts, ...toolParts] } as UIMessage;
   });
 }
@@ -295,7 +311,7 @@ function partsToUIParts(
         break;
       case "reasoning":
         if (part.textValue) {
-          textParts.push({ type: "reasoning", reasoning: part.textValue });
+          textParts.push({ type: "reasoning", text: part.textValue });
         }
         break;
       case "tool-invocation":
