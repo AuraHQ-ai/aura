@@ -163,10 +163,27 @@ export interface ShouldRespondResult {
   reason: string;
 }
 
+export function isChannelGatedOut(
+  context: Pick<MessageContext, "isDm" | "isMentioned" | "channelId">,
+  gatedChannels: Set<string>,
+): boolean {
+  if (context.isDm || context.isMentioned) {
+    return false;
+  }
+
+  return gatedChannels.has(context.channelId);
+}
+
 // ── Channel-level override ───────────────────────────────────────────────────
 // Channels in this list always process new messages without LLM gating (Tier 4
 // is bypassed). Managed via DB setting "always_process_channels" (comma-separated
 // channel IDs). Change at runtime — no redeploy needed.
+//
+// ── Channel gating (hard, code-level) ────────────────────────────────────────
+// Channels in the "gated_channels" setting (JSON array of channel IDs) require
+// an explicit @Aura mention to trigger any pipeline processing. Unlike
+// "always_process_channels" (which OPENS the gate), "gated_channels" CLOSES it.
+// Enforced in runPipeline — see issue #918.
 
 
 /**
