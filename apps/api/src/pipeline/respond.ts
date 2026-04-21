@@ -352,18 +352,26 @@ function asAppendPayload(payload: {
     return chunk as unknown as LegacyKnownChunk;
   };
 
-  const result: Omit<ChatAppendStreamArguments, "channel" | "ts"> = {
-    ...(payload.chunks
-      ? {
-          chunks: payload.chunks.map(normalizeChunk) as ChatAppendStreamArguments["chunks"],
-        }
-      : {}),
-  };
-  if (payload.markdown_text != null) {
-    result.markdown_text = payload.markdown_text;
-    result.chunks = [...(result.chunks ?? []), toChunkMarkdownText(payload.markdown_text) as any];
+  // Slack's chat.appendStream accepts EITHER `markdown_text` OR `chunks` --
+  // not both. Sending both keys in the same payload is rejected with
+  // `invalid_arguments` and the entire chunk is dropped, which looks to the
+  // user like "silence, then a wall of text at the end". Prefer `chunks` when
+  // present (richer), otherwise fall back to `markdown_text`.
+  if (payload.chunks && payload.chunks.length > 0) {
+    const chunks = payload.chunks.map(normalizeChunk);
+    // If a caller passed both, fold the markdown_text into the chunks array
+    // as a markdown_text chunk so nothing is lost.
+    if (payload.markdown_text != null) {
+      chunks.push(toChunkMarkdownText(payload.markdown_text) as LegacyKnownChunk);
+    }
+    return {
+      chunks: chunks as ChatAppendStreamArguments["chunks"],
+    };
   }
-  return result;
+  if (payload.markdown_text != null) {
+    return { markdown_text: payload.markdown_text };
+  }
+  return {};
 }
 
 function buildPlanPreviewChunks(
