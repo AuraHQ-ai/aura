@@ -375,12 +375,15 @@ function ChatInput({
   onModelChange: (value: string) => void;
   modelOptions: ModelAutocompleteOption[];
 }) {
+  const isGenerating = status === "submitted" || status === "streaming";
+
   return (
     <div className="px-2 pb-1.5">
       <PromptInput onSubmit={onSubmit} accept="image/*">
         <AttachmentStrip />
         <PromptInputTextarea
-          placeholder="Message Aura..."
+          disabled={isGenerating}
+          placeholder={isGenerating ? "Aura is responding..." : "Message Aura..."}
           className="min-h-8 text-[13px] px-2.5 py-2"
         />
         <PromptInputFooter className="justify-between px-1.5 pb-1 pt-0">
