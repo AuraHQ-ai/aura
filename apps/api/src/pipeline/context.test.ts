@@ -1,5 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { isChannelGatedOut } from "./context.js";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+let isChannelGatedOut: (
+  context: { isDm: boolean; isMentioned: boolean; channelId: string },
+  gatedChannels: Set<string>,
+) => boolean;
+
+beforeAll(async () => {
+  vi.mock("../lib/ai.js", () => ({
+    getFastModel: vi.fn(),
+    withCacheControl: vi.fn(),
+  }));
+  vi.mock("../tools/slack.js", () => ({
+    resolveChannelById: vi.fn(),
+  }));
+  ({ isChannelGatedOut } = await import("./context.js"));
+});
 
 describe("isChannelGatedOut", () => {
   it("gates channel messages without explicit mention when channel is configured", () => {
