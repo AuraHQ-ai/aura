@@ -35,6 +35,7 @@ export interface AgenticStreamOptions {
   dynamicContext: string;
   messages: ModelMessage[];
   maxSteps?: number;
+  thinkingBudget?: number;
   userId?: string;
   channelId?: string;
   threadTs?: string;
@@ -53,6 +54,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
     stablePrefix: options.stablePrefix,
     conversationContext: options.conversationContext,
     dynamicContext: options.dynamicContext,
+    thinkingBudget: options.thinkingBudget ?? 8000,
     modelId: options.modelId,
     recordStepModelId: (stepNumber, stepModelId) => {
       stepModelIds[stepNumber - 1] = stepModelId ?? options.modelId;
