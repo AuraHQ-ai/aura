@@ -920,7 +920,6 @@ export async function generateResponse(
               title,
               status: isError ? "error" : "complete",
               ...(taskOutput && { output: taskOutput }),
-              ...(sources ? { sources: sources as URLSourceElement[] } : {}),
             })],
           });
           currentStreamLength += estimateAppendSize(toolResultPayload);
