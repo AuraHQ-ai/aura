@@ -648,6 +648,62 @@ export async function publishHomeTab(
           catalog.embedding,
           embeddingValue,
         ),
+        { type: "divider" },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*:clipboard: Slack task display mode*\nControls how streaming tool tasks are shown in replies.",
+          },
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*Task display mode*",
+          },
+          accessory: {
+            type: "static_select",
+            action_id: "select_slack_task_display_mode",
+            placeholder: {
+              type: "plain_text",
+              text: "Select task display mode",
+            },
+            options: [
+              {
+                text: { type: "plain_text", text: "Timeline" },
+                value: "\"timeline\"",
+              },
+              {
+                text: { type: "plain_text", text: "Plan" },
+                value: "\"plan\"",
+              },
+              {
+                text: { type: "plain_text", text: "Hybrid" },
+                value: "\"hybrid\"",
+              },
+            ],
+            initial_option: (() => {
+              const mode = currentSettings.slack_task_display_mode || "\"timeline\"";
+              if (mode === "\"plan\"") {
+                return {
+                  text: { type: "plain_text", text: "Plan" },
+                  value: "\"plan\"",
+                };
+              }
+              if (mode === "\"hybrid\"") {
+                return {
+                  text: { type: "plain_text", text: "Hybrid" },
+                  value: "\"hybrid\"",
+                };
+              }
+              return {
+                text: { type: "plain_text", text: "Timeline" },
+                value: "\"timeline\"",
+              };
+            })(),
+          },
+        },
       );
     } else {
       // Read-only view
@@ -708,6 +764,7 @@ export const ACTION_TO_SETTING: Record<string, string> = {
   select_model_main: "model_main",
   select_model_fast: "model_fast",
   select_model_embedding: "model_embedding",
+  select_slack_task_display_mode: "slack_task_display_mode",
 };
 
 export { hasRole } from "../lib/permissions.js";
