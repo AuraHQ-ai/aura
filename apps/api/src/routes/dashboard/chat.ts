@@ -242,8 +242,17 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
  * provider metadata that we don't persist).
  */
 function sanitizeAssistantPartOrder(messages: UIMessage[]): UIMessage[] {
-  return messages.map((msg) => {
+  let lastAssistantIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "assistant") {
+      lastAssistantIndex = i;
+      break;
+    }
+  }
+
+  return messages.map((msg, index) => {
     if (msg.role !== "assistant" || !msg.parts) return msg;
+    const isLastAssistantMessage = index === lastAssistantIndex;
 
     const textParts: any[] = [];
     const toolParts: any[] = [];
@@ -253,8 +262,11 @@ function sanitizeAssistantPartOrder(messages: UIMessage[]): UIMessage[] {
       if (part.type === "text") textParts.push(part);
       else if (part.type === "dynamic-tool" || (typeof part.type === "string" && part.type.startsWith("tool-")))
         toolParts.push(part);
-      else if (part.type === "reasoning" || part.type === "step-start") {
-        // drop: reasoning needs signed metadata, step-start is UI-only
+      else if (part.type === "reasoning") {
+        // Preserve reasoning on the final assistant message so the dashboard can render it.
+        if (isLastAssistantMessage) otherParts.push(part);
+      } else if (part.type === "step-start") {
+        // drop: step-start is UI-only
       } else otherParts.push(part);
     }
 
@@ -281,6 +293,11 @@ function partsToUIParts(
           textParts.push({ type: "text", text: part.textValue });
         }
         break;
+      case "reasoning":
+        if (part.textValue) {
+          textParts.push({ type: "reasoning", reasoning: part.textValue });
+        }
+        break;
       case "tool-invocation":
         if (part.toolCallId && part.toolName) {
           toolParts.push({
@@ -293,9 +310,7 @@ function partsToUIParts(
           });
         }
         break;
-      // "reasoning" and "step-start" parts are intentionally dropped on restore:
-      // reasoning requires signed provider metadata to re-send to Anthropic, and
-      // step-start is a UI-only marker. Dropping them is safe for follow-up turns.
+      // "step-start" parts are intentionally dropped on restore because they are UI-only.
     }
   }
 
