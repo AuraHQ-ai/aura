@@ -236,6 +236,7 @@ function findContinuationBreak(delta: string, streamLength: number): number {
 }
 
 function estimateAppendSize(payload: any): number {
+  if (Array.isArray(payload?.chunks)) return JSON.stringify(payload.chunks).length;
   if (payload.markdown_text) return payload.markdown_text.length;
   return JSON.stringify(payload).length;
 }
@@ -255,12 +256,6 @@ type LegacyPlanUpdateChunk = { type: "plan_update"; title: string };
 type LegacyMarkdownChunk = { type: "markdown_text"; text: string };
 type LegacyKnownChunk = LegacyTaskUpdateChunk | LegacyPlanUpdateChunk | LegacyMarkdownChunk;
 type SlackStreamChunk = LegacyKnownChunk | { type: string; [key: string]: unknown };
-type TaskCardPreview = {
-  type: "task_card";
-  task_id: string;
-  title: string;
-  status: "pending" | "in_progress" | "complete" | "error";
-};
 
 function normalizeTaskDisplayMode(value: unknown): SlackTaskDisplayMode {
   if (value === "plan" || value === "hybrid" || value === "timeline") return value;
@@ -268,23 +263,10 @@ function normalizeTaskDisplayMode(value: unknown): SlackTaskDisplayMode {
 }
 
 function toChunkMarkdownText(text: string): SlackStreamChunk {
-  // The Slack methods docs use `markdown_text` in examples while current
-  // @slack/types uses `text`. Send both for forward/backward compatibility.
   return {
     type: "markdown_text",
     text,
-    markdown_text: text,
-  };
-}
-
-function toPlanChunk(params: {
-  title: string;
-  tasks: TaskCardPreview[];
-}): SlackStreamChunk {
-  return {
-    type: "plan",
-    title: params.title,
-    tasks: params.tasks,
+    // Keep chunk payload shape minimal for live API compatibility.
   };
 }
 
@@ -299,14 +281,6 @@ function toTaskUpdateChunk(params: {
   return {
     type: "task_update",
     ...params,
-  };
-}
-
-function toUrlSourceChunk(source: URLSourceElement): SlackStreamChunk {
-  return {
-    type: "url_source",
-    url: source.url,
-    text: source.text,
   };
 }
 
@@ -352,51 +326,20 @@ function asAppendPayload(payload: {
     return chunk as unknown as LegacyKnownChunk;
   };
 
-  // Slack's chat.appendStream accepts EITHER `markdown_text` OR `chunks` --
-  // not both. Sending both keys in the same payload is rejected with
-  // `invalid_arguments` and the entire chunk is dropped, which looks to the
-  // user like "silence, then a wall of text at the end". Prefer `chunks` when
-  // present (richer), otherwise fall back to `markdown_text`.
+  // Always stream in chunks mode to avoid `streaming_mode_mismatch`.
+  const chunks: LegacyKnownChunk[] = [];
+  if (payload.markdown_text != null) {
+    chunks.push(normalizeChunk(toChunkMarkdownText(payload.markdown_text)));
+  }
   if (payload.chunks && payload.chunks.length > 0) {
-    const chunks = payload.chunks.map(normalizeChunk);
-    // If a caller passed both, fold the markdown_text into the chunks array
-    // as a markdown_text chunk so nothing is lost.
-    if (payload.markdown_text != null) {
-      chunks.push(toChunkMarkdownText(payload.markdown_text) as LegacyKnownChunk);
-    }
+    chunks.push(...payload.chunks.map(normalizeChunk));
+  }
+  if (chunks.length > 0) {
     return {
       chunks: chunks as ChatAppendStreamArguments["chunks"],
     };
   }
-  if (payload.markdown_text != null) {
-    return { markdown_text: payload.markdown_text };
-  }
   return {};
-}
-
-function buildPlanPreviewChunks(
-  tools: Record<string, unknown>,
-  limit = 8,
-): SlackStreamChunk[] {
-  const tasks: TaskCardPreview[] = [];
-  for (const [name, toolDef] of Object.entries(tools)) {
-    const slackMeta = getSlackMeta(toolDef);
-    if (!slackMeta?.status) continue;
-    tasks.push({
-      type: "task_card",
-      task_id: name,
-      title: slackMeta.status,
-      status: "pending",
-    });
-    if (tasks.length >= limit) break;
-  }
-  if (tasks.length === 0) return [];
-  return [
-    toPlanChunk({
-      title: "Plan",
-      tasks,
-    }),
-  ];
 }
 
 /** Channels known to not support streaming (persists for process lifetime) */
@@ -762,19 +705,6 @@ export async function generateResponse(
       status: "Thinking deeply...",
     });
 
-    // Seed a coalesced plan preview before tool cards in plan/hybrid mode.
-    if (
-      !streamingFailed &&
-      (configuredTaskDisplayMode === "plan" || configuredTaskDisplayMode === "hybrid")
-    ) {
-      const planChunks = buildPlanPreviewChunks(tools as Record<string, unknown>, 8);
-      if (planChunks.length > 0) {
-        const planPayload = asAppendPayload({ chunks: planChunks });
-        currentStreamLength += estimateAppendSize(planPayload);
-        await tryStreamAppend(planPayload);
-      }
-    }
-
     const result = await agent.stream(streamCallOptions as any);
 
     for await (const chunk of result.fullStream) {
@@ -932,9 +862,6 @@ export async function generateResponse(
           let taskOutput: string | undefined;
           try { taskOutput = resultSlackMeta?.output?.(output); } catch { /* safe to ignore — display-only */ }
           taskOutput ??= (isError && outputAny.error ? String(outputAny.error) : undefined);
-          let sources: Array<{ type: "url"; url: string; text: string }> | undefined;
-          try { sources = resultSlackMeta?.sources?.(output); } catch { /* safe to ignore — display-only */ }
-
           const toolResultPayload = asAppendPayload({
             chunks: [toTaskUpdateChunk({
               id: chunk.toolCallId,
@@ -948,18 +875,6 @@ export async function generateResponse(
             await tryStreamAppend(toolResultPayload);
             if (streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
-            }
-          }
-
-          if (sources && sources.length > 0 && !streamingFailed) {
-            for (const source of sources as URLSourceElement[]) {
-              const sourcePayload = asAppendPayload({ chunks: [toUrlSourceChunk(source)] });
-              currentStreamLength += estimateAppendSize(sourcePayload);
-              await tryStreamAppend(sourcePayload);
-              if (streamingFailed) {
-                fallbackStartIdx = accumulatedText.length;
-                break;
-              }
             }
           }
 
