@@ -8,6 +8,7 @@ import { TABLE_BLOCK_KEY } from "../tools/table.js";
 import {
   safePostMessage,
   isChannelTypeNotSupported,
+  isInvalidArguments,
   isInvalidBlocks,
   isInvalidChunks,
   isMsgTooLong,
@@ -467,20 +468,32 @@ export async function generateResponse(
           channelId,
           context: { fallback: "postMessage" },
         });
-      } else if (isInvalidChunks(err)) {
-        // Non-fatal: some chunk shapes may not be supported in older Slack
-        // clients/SDKs. Continue streaming text and keep block fallback paths.
-        logger.warn("chatStream append returned invalid_chunks; skipping this chunk", {
+      } else if (isInvalidChunks(err) || isInvalidArguments(err)) {
+        // Non-fatal: some chunk shapes (e.g. the 2026 `plan` / `url_source` /
+        // `blocks` chunk types) may be rejected by the Slack API with either
+        // `invalid_chunks` or `invalid_arguments` depending on which
+        // validation layer trips. Skip the offending payload, keep streaming,
+        // and let the rest of the response land as normal `task_update` /
+        // `markdown_text` chunks.
+        const errCode = err?.data?.error || (isInvalidArguments(err) ? "invalid_arguments" : "invalid_chunks");
+        const chunkTypes = Array.isArray((payload as any)?.chunks)
+          ? (payload as any).chunks.map((c: any) => c?.type).filter(Boolean)
+          : [];
+        logger.warn("chatStream append returned recoverable validation error; skipping this chunk", {
           channelId,
-          slackError: err?.data?.error,
+          slackError: errCode,
           payloadKeys: Object.keys(payload as Record<string, unknown>),
+          chunkTypes,
         });
         logError({
-          errorName: "InvalidChunks",
-          errorMessage: err?.message || "invalid_chunks on stream append",
-          errorCode: err?.data?.error || "invalid_chunks",
+          errorName: isInvalidArguments(err) ? "InvalidArguments" : "InvalidChunks",
+          errorMessage: err?.message || `${errCode} on stream append`,
+          errorCode: errCode,
           channelId,
-          context: { payloadKeys: Object.keys(payload as Record<string, unknown>) },
+          context: {
+            payloadKeys: Object.keys(payload as Record<string, unknown>),
+            chunkTypes,
+          },
         });
         return false;
       } else if (isInvalidBlocks(err)) {
