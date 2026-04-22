@@ -375,9 +375,19 @@ function ChatInput({
   onModelChange: (value: string) => void;
   modelOptions: ModelAutocompleteOption[];
 }) {
+  const isGenerating = status === "submitted" || status === "streaming";
+
+  const guardedSubmit = useCallback(
+    (msg: PromptInputMessage) => {
+      if (isGenerating) return;
+      onSubmit(msg);
+    },
+    [isGenerating, onSubmit],
+  );
+
   return (
     <div className="px-2 pb-1.5">
-      <PromptInput onSubmit={onSubmit} accept="image/*">
+      <PromptInput onSubmit={guardedSubmit} accept="image/*">
         <AttachmentStrip />
         <PromptInputTextarea
           placeholder="Message Aura..."
