@@ -15,7 +15,7 @@ aura/
 │   ├── api/            # Core agent (Hono + Vercel Functions)
 │   │   └── src/
 │   │       ├── pipeline/    # Message processing, prompt assembly
-│   │       ├── tools/       # 23 tool modules (Slack, email, BigQuery, etc.)
+│   │       ├── tools/       # 25 tool modules (Slack, email, BigQuery, etc.)
 │   │       ├── memory/      # Extract, store, retrieve, consolidate
 │   │       ├── cron/        # Heartbeat, memory consolidation, email sync
 │   │       └── routes/      # API routes (Slack events, dashboard, chat)
@@ -48,7 +48,7 @@ Slack Event → Vercel Function → Hono Router → Message Pipeline → LLM (Ve
                                               PostgreSQL + pgvector
                                       (memories, messages, conversations, notes, jobs)
                                                       ↕
-                                              Tools (23 modules)
+                                              Tools (25 modules)
                                                       ↕
                                               Admin Dashboard (Vite + React)
 ```
@@ -80,7 +80,7 @@ The [Dashboard](/dashboard) provides a UI for browsing conversation traces, filt
 
 ## Tool System
 
-Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `tool()` that adds audit logging and approval policies. Aura has **23 tool modules** organized by domain:
+Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `tool()` that adds audit logging and approval policies. Aura has **25 tool modules** organized by domain:
 
 | Category | Tools | Description |
 |----------|-------|-------------|
@@ -118,6 +118,31 @@ Aura uses Claude's extended thinking capability, which captures the model's reas
 - Stored alongside conversation messages
 - Visible in the dashboard for debugging
 - Useful for understanding why Aura made specific decisions or tool calls
+
+Thinking capability is detected from the gateway model catalog rather than a hand-maintained regex. `getModelCapabilities` reads the `tags` column synced from the Vercel AI Gateway and reports `supportsThinking` when the catalog tags include `reasoning`. This means new Claude releases light up automatically without a code change.
+
+Two thinking modes are supported:
+
+- **Classic budget** -- `{ type: "enabled", budgetTokens }`. The caller sets a token budget per step. Used for Sonnet and older Opus models.
+- **Adaptive** -- `{ type: "adaptive" }`. The model self-manages its own reasoning budget. Opus 4.7 is adaptive-only and will reject a classic budget request with `AI_NoOutputGeneratedError`. Adaptive-only gateway IDs are kept in a small allowlist in `prepare-step.ts`.
+
+## Slack Streaming & Task Display
+
+Aura uses the Slack 2026 Agent SDK (`chat.startStream` / `chat.appendStream`) to stream responses in real time. Tool calls render as native task cards rather than inline markdown.
+
+Three display modes are supported via the `slack_task_display_mode` workspace setting (configurable from the App Home admin panel):
+
+- **`timeline`** (default) -- per-step `task_update` chunks render as a live feed of tool cards.
+- **`plan`** -- an upfront plan block is emitted at stream start, seeded from the registered tools' `slackMeta.status`, then updated as steps progress.
+- **`hybrid`** -- both a plan block and per-step timeline cards.
+
+When a tool result includes sources, they are emitted as dedicated `url_source` chunks (separate from the `task_update` payload) so Slack renders citation blocks inline with the response.
+
+Non-fatal chunk shapes (e.g. `plan`, `url_source`, `blocks`) are skipped rather than collapsing the stream to a `postMessage` fallback. Truly invalid payloads log a warning and continue.
+
+### setStatus shimmer
+
+While Aura reasons, an assistant-thread status is shown via `assistant.threads.setStatus` (e.g. "Thinking...", "Thinking deeply..."). Channels where the workspace lacks permission are cached in-process on first failure and skipped on subsequent calls to avoid log spam and repeated retries.
 
 ## Multi-Tenancy
 
