@@ -2,6 +2,7 @@ import type { WebClient } from "@slack/web-api";
 import {
   buildMessageContext,
   shouldRespond,
+  isChannelGatedOut,
   resolveSlackEntities,
   isSlackbotListNotification,
   type MessageContext,
@@ -143,6 +144,26 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   if (!context) {
     logger.debug("Skipped event — no valid context");
     return;
+  }
+
+  // Gated-channel gate: for channels listed in the "gated_channels" setting,
+  // only proceed if Aura is explicitly @mentioned. This is a HARD, code-level
+  // rule that cannot be bypassed by an LLM gate or prompt (see issue #918).
+  if (!context.isDm && !context.isMentioned) {
+    const gatedChannels = new Set(
+      (await getSettingJSON<string[]>("gated_channels", [])) ?? [],
+    );
+    if (isChannelGatedOut(context, gatedChannels)) {
+      logger.info("gated_channel_skip", {
+        channelId: context.channelId,
+        userId: context.userId,
+        reason: "gated_channel_no_mention",
+      });
+      // Still store the message for long-term memory / search. Do NOT run
+      // conversation fetch, shouldRespond, invocation lock, or LLM.
+      await scheduleStoreUserMessage(context, event, waitUntil);
+      return;
+    }
   }
 
   // 1a. Dedup: atomically claim this event; skip if another handler got there first
