@@ -85,10 +85,15 @@ function shouldFastReject(event: SlackEvent, botUserId: string): boolean {
  * Returns undefined when there's nothing worth storing.
  */
 function buildMessageMetadata(
+  context: MessageContext,
   event: SlackEvent,
 ): Record<string, unknown> | undefined {
   const meta: Record<string, unknown> = {};
   const ev = event as unknown as Record<string, unknown>;
+
+  // Persist engagement signal so usage stats can distinguish true interactions
+  // (@mentions and DMs) from ambient channel chatter.
+  meta.isMentioned = context.isMentioned;
 
   if (Array.isArray(ev.attachments) && ev.attachments.length > 0) {
     meta.attachments = ev.attachments;
@@ -754,7 +759,7 @@ async function storeUserMessage(context: MessageContext, event: SlackEvent): Pro
       userId: context.userId,
       role: "user",
       content: context.text,
-      metadata: buildMessageMetadata(event),
+      metadata: buildMessageMetadata(context, event),
     });
   } catch (error: any) {
     recordError("storeUserMessage", error, { userId: context.userId });
@@ -804,7 +809,7 @@ async function runBackgroundTasks(params: {
       userId: context.userId,
       role: "user",
       content: context.text,
-      metadata: buildMessageMetadata(event),
+      metadata: buildMessageMetadata(context, event),
     });
 
     // Store Aura's response with a pseudo-timestamp
