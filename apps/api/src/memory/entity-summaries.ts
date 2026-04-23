@@ -9,6 +9,13 @@ import { logger } from "../lib/logger.js";
 const MAX_MEMORIES_PER_ENTITY = 50;
 const MIN_RELEVANCE_SCORE = 0.1;
 const SUMMARY_CONCURRENCY = 1;
+const PRONOUN_HINTS: Record<string, string> = {
+  male: "he/him (use masculine pronouns: he, him, his)",
+  female: "she/her (use feminine pronouns: she, her, hers)",
+  "non-binary": "they/them (use singular they: they, them, their)",
+  nonbinary: "they/them (use singular they: they, them, their)",
+  other: "they/them (use singular they)",
+};
 
 function getSystemPrompt(entityName: string, entityType: string): string {
   const base = `You are summarizing what Aura (an AI team member) knows about "${entityName}" (${entityType}).`;
@@ -21,6 +28,7 @@ Rules:
 - No filler phrases ("This entity is...", "Based on memories...").
 - Start directly with the most important fact.
 - Include specifics: names, numbers, dates when available.
+- If profile data specifies pronouns, you MUST use those pronouns throughout. Never guess gender from name alone.
 - If information conflicts, state the most recent version.`;
 
   const typeGuidance: Record<string, string> = {
@@ -114,6 +122,7 @@ export async function generateEntitySummary(
         knownFacts: users.knownFacts,
         timezone: users.timezone,
         slackUserId: users.slackUserId,
+        gender: users.gender,
       })
       .from(users)
       .where(eq(users.entityId, entityId))
@@ -131,6 +140,12 @@ export async function generateEntitySummary(
       if (facts?.personalDetails && Array.isArray(facts.personalDetails) && facts.personalDetails.length > 0)
         parts.push(`Details: ${facts.personalDetails.join(", ")}`);
       if (u.timezone) parts.push(`Timezone: ${u.timezone}`);
+      if (u.gender) {
+        const hint =
+          PRONOUN_HINTS[u.gender.toLowerCase()] ??
+          `${u.gender} (use appropriate pronouns)`;
+        parts.push(`Pronouns: ${hint}`);
+      }
       if (parts.length > 0) {
         profileContext = `\n\nProfile data:\n${parts.map((p) => `- ${p}`).join("\n")}`;
       }
