@@ -424,7 +424,7 @@ export function createEmailSyncTools(
           return { ok: false, error: `Digest failed: ${error.message}` };
         }
       },
-      slack: { status: "Running email digest...", detail: (i) => i.user_name, output: (r) => r.ok === false ? r.error : `${r.threads?.length ?? 0} threads` },
+      slack: { status: "Running email digest...", detail: (i) => i.user_name, output: (r) => "error" in r ? r.error : `${r.threads.length} threads` },
     }),
 
     update_email_thread: defineTool({
@@ -682,7 +682,7 @@ export function createEmailSyncTools(
           };
         }
       },
-      slack: { status: "Updating email threads...", output: (r) => r.ok === false ? (r.error ?? r.message) : `${r.updated ?? 0} threads updated` },
+      slack: { status: "Updating email threads...", output: (r) => "error" in r ? r.error : ("message" in r && r.ok === false ? r.message : `${r.updated} threads updated`) },
     }),
 
     search_emails: defineTool({
