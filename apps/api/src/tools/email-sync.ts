@@ -14,15 +14,115 @@ import { embedText } from "../lib/embeddings.js";
 
 // ── Tool Definitions ────────────────────────────────────────────────────────
 
+const RECENT_EMAIL_SYNC_QUERY = "newer_than:30d";
+const RECENT_EMAIL_SYNC_MAX_MESSAGES = 100;
+const UPDATE_FALLBACK_MAX_MESSAGES = 200;
+const EMAIL_SYNC_STALE_AFTER_MS = 6 * 60 * 60 * 1000;
+
+type EmailSyncRefresh = {
+  attempted: boolean;
+  reason: string;
+  latest_synced_at?: string;
+  synced?: number;
+  skipped?: number;
+  errors?: number;
+  classified_threads?: number;
+  error?: string;
+};
+
+async function assertCanAccessUserEmail(
+  callerUserId: string | undefined,
+  targetUserId: string,
+) {
+  if (callerUserId && callerUserId === targetUserId) {
+    return { ok: true as const };
+  }
+
+  if (await hasRole(callerUserId, "admin")) {
+    return { ok: true as const };
+  }
+
+  return {
+    ok: false as const,
+    error:
+      "You can only access your own email pipeline. Ask an admin to work with another user's email.",
+  };
+}
+
+async function getLatestSyncedEmailDate(userId: string): Promise<Date | null> {
+  const rows = await db
+    .select({ latestDate: sql<Date | null>`max(${emailsRaw.date})` })
+    .from(emailsRaw)
+    .where(eq(emailsRaw.userId, userId));
+
+  const latest = rows[0]?.latestDate;
+  if (!latest) return null;
+  return latest instanceof Date ? latest : new Date(latest);
+}
+
+async function refreshRecentEmailsIfStale(
+  userId: string,
+  reason: string,
+  options: { force?: boolean; maxMessages?: number } = {},
+): Promise<EmailSyncRefresh> {
+  try {
+    let latest: Date | null = null;
+    if (!options.force) {
+      latest = await getLatestSyncedEmailDate(userId);
+      if (latest && Date.now() - latest.getTime() < EMAIL_SYNC_STALE_AFTER_MS) {
+        return {
+          attempted: false,
+          reason: "emails_raw_recent",
+          latest_synced_at: latest.toISOString(),
+        };
+      }
+    }
+
+    const { syncEmails } = await import("../lib/email-sync.js");
+    const syncResult = await syncEmails(userId, {
+      query: RECENT_EMAIL_SYNC_QUERY,
+      maxMessages: options.maxMessages ?? RECENT_EMAIL_SYNC_MAX_MESSAGES,
+    });
+
+    let classifiedThreads: number | undefined;
+    if (syncResult.synced > 0) {
+      const { computeThreadStates } = await import("../lib/email-triage.js");
+      const threadStates = await computeThreadStates(userId);
+      classifiedThreads = threadStates.processed;
+    }
+
+    return {
+      attempted: true,
+      reason,
+      ...(latest ? { latest_synced_at: latest.toISOString() } : {}),
+      synced: syncResult.synced,
+      skipped: syncResult.skipped,
+      errors: syncResult.errors,
+      classified_threads: classifiedThreads,
+    };
+  } catch (error: any) {
+    logger.warn("Email pipeline refresh failed", {
+      userId,
+      reason,
+      error: error.message,
+    });
+    return {
+      attempted: true,
+      reason,
+      error: error.message,
+    };
+  }
+}
+
 export function createEmailSyncTools(
   client: WebClient,
   context?: ScheduleContext,
 ) {
   return {
     sync_emails: defineTool({
-      requiredCredentials: ["admin_access"],
+      requiredCredentials: ["google_oauth"],
       description:
-        "Sync emails from a user's Gmail into the staging pipeline. Supports date windows (after/before), relative dates (newer_than), or raw Gmail queries. Resumable — re-running with the same query skips already-synced emails.",
+        "Sync emails from a user's Gmail into the staging pipeline. Users may sync their own authorized Gmail account; admins may sync another user's authorized account. Supports date windows (after/before), relative dates (newer_than), or raw Gmail queries. Resumable — re-running with the same query skips already-synced emails.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -81,6 +181,9 @@ export function createEmailSyncTools(
               error: `Could not resolve user '${user_name}'. They need to exist in the workspace.`,
             };
           }
+
+          const access = await assertCanAccessUserEmail(context?.userId, user.id);
+          if (!access.ok) return access;
 
           const { syncEmails } = await import("../lib/email-sync.js");
 
@@ -157,9 +260,9 @@ export function createEmailSyncTools(
     }),
 
     email_digest: defineTool({
-      requiredCredentials: ["admin_access"],
+      requiredCredentials: ["google_oauth"],
       description:
-        "Get an email digest for a user: returns structured data with counts and thread objects (each with gmail_thread_id). Use threads[].gmail_thread_id for follow-up actions.",
+        "Get an email digest for a user's synced Gmail pipeline. Users may read their own digest; admins may read another user's digest. Automatically performs a bounded recent Gmail sync when emails_raw is stale so counts and gmail_thread_id values are current. Use threads[].gmail_thread_id for follow-up actions.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -182,6 +285,13 @@ export function createEmailSyncTools(
           }
 
           const userId = user.id;
+          const access = await assertCanAccessUserEmail(context?.userId, userId);
+          if (!access.ok) return access;
+
+          const syncRefresh = await refreshRecentEmailsIfStale(
+            userId,
+            "email_digest_stale_check",
+          );
 
           const stateFilter = include_fyi
             ? sql`(${emailsRaw.threadState} IS NULL OR ${emailsRaw.threadState} != 'junk')`
@@ -239,19 +349,21 @@ export function createEmailSyncTools(
 
           // Get actual message counts per thread
           const threadIds = [...threadMap.keys()];
-          const threadCounts = await db
-            .select({
-              gmailThreadId: emailsRaw.gmailThreadId,
-              messageCount: sql<number>`count(*)::int`,
-            })
-            .from(emailsRaw)
-            .where(
-              and(
-                eq(emailsRaw.userId, userId),
-                inArray(emailsRaw.gmailThreadId, threadIds)
-              )
-            )
-            .groupBy(emailsRaw.gmailThreadId);
+          const threadCounts = threadIds.length > 0
+            ? await db
+                .select({
+                  gmailThreadId: emailsRaw.gmailThreadId,
+                  messageCount: sql<number>`count(*)::int`,
+                })
+                .from(emailsRaw)
+                .where(
+                  and(
+                    eq(emailsRaw.userId, userId),
+                    inArray(emailsRaw.gmailThreadId, threadIds)
+                  )
+                )
+                .groupBy(emailsRaw.gmailThreadId)
+            : [];
 
           const threadCountMap = new Map<string, number>();
           for (const tc of threadCounts) {
@@ -299,6 +411,10 @@ export function createEmailSyncTools(
               total: threads.length,
             },
             threads,
+            sync: syncRefresh,
+            ...(syncRefresh.error
+              ? { warning: `Email digest may be stale: ${syncRefresh.error}` }
+              : {}),
           };
         } catch (error: any) {
           logger.error("email_digest tool failed", {
@@ -312,8 +428,9 @@ export function createEmailSyncTools(
     }),
 
     update_email_thread: defineTool({
+      requiredCredentials: ["google_oauth"],
       description:
-        "Update the triage state of an email thread by gmail_thread_id. Get the thread ID from email_digest or search_emails. Any user can update their own threads.",
+        "Update the triage state of an email thread by gmail_thread_id. Get the thread ID from email_digest or search_emails. Users may update their own threads; admins may update another user's threads. If the thread is missing from emails_raw, this performs a bounded recent Gmail sync and retries once.",
       inputSchema: z
         .object({
           user_name: z
@@ -347,30 +464,41 @@ export function createEmailSyncTools(
             };
           }
 
-          if (user.id !== context?.userId && !(await hasRole(context?.userId, "admin"))) {
-            return {
-              ok: false as const,
-              error:
-                "You can only update your own email threads. Ask an admin to update other users' threads.",
-            };
-          }
-
           const userId = user.id;
+          const access = await assertCanAccessUserEmail(context?.userId, userId);
+          if (!access.ok) return access;
 
           const conditions = [eq(emailsRaw.userId, userId)];
 
           conditions.push(eq(emailsRaw.gmailThreadId, gmail_thread_id));
 
           // Find distinct threads that match
-          const matchingThreads = await db
+          let matchingThreads = await db
             .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId, subject: emailsRaw.subject })
             .from(emailsRaw)
             .where(and(...conditions));
 
+          let syncRefresh: EmailSyncRefresh | undefined;
+          if (matchingThreads.length === 0) {
+            syncRefresh = await refreshRecentEmailsIfStale(
+              userId,
+              "update_email_thread_not_found",
+              { force: true, maxMessages: UPDATE_FALLBACK_MAX_MESSAGES },
+            );
+
+            matchingThreads = await db
+              .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId, subject: emailsRaw.subject })
+              .from(emailsRaw)
+              .where(and(...conditions));
+          }
+
           if (matchingThreads.length === 0) {
             return {
               ok: false as const,
-              error: `No emails found for thread ID '${gmail_thread_id}'.`,
+              error: syncRefresh?.error
+                ? `No emails found for thread ID '${gmail_thread_id}'. A recent Gmail sync was attempted but failed: ${syncRefresh.error}`
+                : `No emails found for thread ID '${gmail_thread_id}'. A recent Gmail sync was attempted but the thread is still absent from emails_raw.`,
+              sync: syncRefresh,
             };
           }
 
@@ -412,6 +540,7 @@ export function createEmailSyncTools(
             updated: result.length,
             threads: subjects,
             thread_state,
+            ...(syncRefresh ? { sync: syncRefresh } : {}),
             message: `Updated ${result.length} email(s) across ${threadIds.length} thread(s) to '${thread_state}': ${subjects.join(", ")}`,
           };
         } catch (error: any) {
@@ -429,9 +558,9 @@ export function createEmailSyncTools(
     }),
 
     update_email_threads: defineTool({
-      requiredCredentials: ["admin_access"],
+      requiredCredentials: ["google_oauth"],
       description:
-        "Batch-update triage states for multiple email threads at once. Accepts an array of {gmail_thread_id, thread_state, reason?}. Use after email_digest to dismiss/resolve/reclassify several threads in one call.",
+        "Batch-update triage states for multiple email threads at once. Users may update their own threads; admins may update another user's threads. Accepts an array of {gmail_thread_id, thread_state, reason?}. Use after email_digest to dismiss/resolve/reclassify several threads in one call.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -465,6 +594,9 @@ export function createEmailSyncTools(
           }
 
           const userId = user.id;
+          const access = await assertCanAccessUserEmail(context?.userId, userId);
+          if (!access.ok) return access;
+
           let totalUpdated = 0;
           let totalFailed = 0;
           const details: Array<{
@@ -554,9 +686,9 @@ export function createEmailSyncTools(
     }),
 
     search_emails: defineTool({
-      requiredCredentials: ["admin_access"],
+      requiredCredentials: ["google_oauth"],
       description:
-        "Search synced emails by keyword (text mode) or meaning (semantic mode). Text mode uses PostgreSQL full-text search on subject + body. Semantic mode embeds the query and finds similar email threads via cosine similarity. Returns one result per thread (latest email).",
+        "Search a user's synced Gmail pipeline by keyword (text mode) or meaning (semantic mode). Users may search their own email; admins may search another user's email. Automatically performs a bounded recent Gmail sync when emails_raw is stale. Text mode uses PostgreSQL full-text search on subject + body. Semantic mode embeds the query and finds similar email threads via cosine similarity. Returns one result per thread (latest email).",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -592,6 +724,14 @@ export function createEmailSyncTools(
           }
 
           const userId = user.id;
+          const access = await assertCanAccessUserEmail(context?.userId, userId);
+          if (!access.ok) return access;
+
+          const syncRefresh = await refreshRecentEmailsIfStale(
+            userId,
+            "search_emails_stale_check",
+          );
+
           const conditions = [eq(emailsRaw.userId, userId)];
 
           if (thread_state) {
@@ -739,6 +879,10 @@ export function createEmailSyncTools(
             mode,
             count: formatted.length,
             results: formatted,
+            sync: syncRefresh,
+            ...(syncRefresh.error
+              ? { warning: `Email search may be stale: ${syncRefresh.error}` }
+              : {}),
             message: `Found ${formatted.length} thread(s) matching "${query}" (${mode} search)`,
           };
         } catch (error: any) {
