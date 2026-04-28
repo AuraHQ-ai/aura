@@ -1,9 +1,16 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { eq, desc, count, inArray, sql } from "drizzle-orm";
+import { and, eq, desc, count, inArray, sql, type SQL } from "drizzle-orm";
 import { memories, messages, users, memoryEntities, entities } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, idParamSchema, createDashboardApp } from "./schemas.js";
+import {
+  canAuditAllMemories,
+  getDashboardPrincipal,
+  getEffectiveMemoryScope,
+  type DashboardPrincipal,
+  type MemoryScope,
+} from "./principal.js";
 
 export const dashboardMemoriesApp = createDashboardApp();
 
@@ -23,6 +30,31 @@ const memoryColumns = {
   updatedAt: memories.updatedAt,
 } as const;
 
+function canUseAllScope(principal: DashboardPrincipal | undefined): boolean {
+  return canAuditAllMemories(principal);
+}
+
+function userMemoryCondition(slackUserId: string): SQL {
+  return sql`${memories.relatedUserIds} @> ARRAY[${slackUserId}]::text[]`;
+}
+
+function getMemoryAccessCondition(
+  principal: DashboardPrincipal | undefined,
+  scope: MemoryScope = "all",
+): SQL | undefined {
+  if (scope === "all" && canUseAllScope(principal)) return undefined;
+  if (principal?.slackUserId) return userMemoryCondition(principal.slackUserId);
+  return sql`FALSE`;
+}
+
+function getScopedMemoryIdCondition(
+  id: string,
+  principal: DashboardPrincipal | undefined,
+): SQL | undefined {
+  const accessCondition = getMemoryAccessCondition(principal);
+  return accessCondition ? and(eq(memories.id, id), accessCondition) : eq(memories.id, id);
+}
+
 const listMemoriesRoute = createRoute({
   method: "get",
   path: "/",
@@ -32,6 +64,7 @@ const listMemoriesRoute = createRoute({
     query: z.object({
       search: z.string().optional(),
       type: z.string().optional(),
+      scope: z.enum(["mine", "all"]).optional(),
       page: z.coerce.number().optional(),
       limit: z.coerce.number().optional(),
     }),
@@ -59,11 +92,13 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
   try {
     const search = c.req.query("search");
     const type = c.req.query("type");
+    const principal = getDashboardPrincipal(c);
+    const scope = getEffectiveMemoryScope(principal, c.req.query("scope"));
     const page = Math.max(1, Number(c.req.query("page")) || 1);
     const limit = Math.max(1, Math.min(500, Number(c.req.query("limit")) || 100));
     const offset = (page - 1) * limit;
 
-    if (search) {
+    if (search && scope === "all") {
       try {
         const { retrieveMemories } = await import("../../memory/retrieve.js");
         const results = await retrieveMemories({
@@ -83,7 +118,9 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
       }
     }
 
-    const conditions = [];
+    const conditions: SQL[] = [];
+    const accessCondition = getMemoryAccessCondition(principal, scope);
+    if (accessCondition) conditions.push(accessCondition);
     if (search) {
       conditions.push(
         sql`to_tsvector('english', coalesce(${memories.content}, '')) @@ plainto_tsquery('english', ${search})`,
@@ -91,11 +128,7 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
     }
     if (type) conditions.push(eq(memories.type, type as any));
 
-    const where = conditions.length > 0
-      ? conditions.length === 1
-        ? conditions[0]
-        : sql`${conditions[0]} AND ${conditions[1]}`
-      : undefined;
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const [items, [totalRow]] = await Promise.all([
       db
@@ -142,10 +175,12 @@ const getMemoryRoute = createRoute({
 dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
   try {
     const id = c.req.param("id");
+    const principal = getDashboardPrincipal(c);
+    const where = getScopedMemoryIdCondition(id, principal);
     const [memory] = await db
       .select(memoryColumns)
       .from(memories)
-      .where(eq(memories.id, id));
+      .where(where);
 
     if (!memory) return c.json({ error: "Memory not found" }, 404);
 
@@ -230,6 +265,7 @@ const updateMemoryRoute = createRoute({
 dashboardMemoriesApp.openapi(updateMemoryRoute, async (c) => {
   try {
     const id = c.req.param("id");
+    const principal = getDashboardPrincipal(c);
     const body = await c.req.json<{
       content?: string;
       relevanceScore?: number;
@@ -244,7 +280,7 @@ dashboardMemoriesApp.openapi(updateMemoryRoute, async (c) => {
     const [updated] = await db
       .update(memories)
       .set(updates)
-      .where(eq(memories.id, id))
+      .where(getScopedMemoryIdCondition(id, principal))
       .returning(memoryColumns);
 
     if (!updated) return c.json({ error: "Memory not found" }, 404);
@@ -286,9 +322,10 @@ const deleteMemoryRoute = createRoute({
 dashboardMemoriesApp.openapi(deleteMemoryRoute, async (c) => {
   try {
     const id = c.req.param("id");
+    const principal = getDashboardPrincipal(c);
     const [deleted] = await db
       .delete(memories)
-      .where(eq(memories.id, id))
+      .where(getScopedMemoryIdCondition(id, principal))
       .returning({ id: memories.id });
 
     if (!deleted) return c.json({ error: "Memory not found" }, 404);

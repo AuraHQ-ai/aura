@@ -4,6 +4,7 @@ export interface Session {
   slackUserId: string;
   name: string;
   picture: string;
+  role?: string;
 }
 
 export interface AuthContextValue {
@@ -44,10 +45,14 @@ export async function decodeToken(token: string): Promise<Session | null> {
     if (parts.length !== 3) return null;
     const payload = JSON.parse(atob(parts[1]!));
     if (payload.purpose) return null;
+    const slackUserId = payload.slackUserId;
+    if (typeof slackUserId !== "string" || !slackUserId) return null;
+
     return {
-      slackUserId: payload.slackUserId as string,
+      slackUserId,
       name: (payload.name as string) || "User",
       picture: (payload.picture as string) || "",
+      role: typeof payload.role === "string" ? payload.role : undefined,
     };
   } catch {
     return null;
