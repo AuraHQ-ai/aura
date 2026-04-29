@@ -1,0 +1,108 @@
+---
+title: Self-authored tools
+description: Runtime tools an Aura instance can write, version, and run for repeated operational work.
+---
+
+Self-authored tools are small scripts an Aura instance creates when a workflow should not be re-reasoned from scratch every time. They sit between ad hoc shell commands and productized platform tools.
+
+Use them for repeated, stateful, operational work:
+
+- syncing an external API into a local store
+- normalizing data before an LLM reads it
+- running deterministic checks inside scheduled jobs
+- hiding, tagging, or escalating items through an API
+- keeping a durable local cache such as SQLite
+
+Do not use them for one-off analysis. A tool should earn its existence by being reused.
+
+## Repository
+
+Tools should live in a dedicated Git repository, not only in a sandbox filesystem.
+
+The default convention is:
+
+```bash
+TOOLS_REPO=<org>/aura-tools
+```
+
+A checkout contains:
+
+```text
+manifest.json           # Registry of tools
+runner.py               # Validates input, executes tools, tracks usage
+tool_name/
+  tool.json             # Schema, metadata, runtime, output contract
+  main.py               # Implementation
+  test.py               # Smoke tests
+```
+
+The checkout path is deployment-specific. Jobs and skills must not hard-code a universal path like `/opt/aura-tools`. Resolve the configured checkout path, or verify the path in the runtime before scheduling a job.
+
+For example, RealAdvisor's current sandbox checkout is:
+
+```bash
+/home/user/aura-tools
+```
+
+A different workspace may use a different path.
+
+## Execution contract
+
+Every tool follows the same CLI contract:
+
+- input: JSON as the first CLI argument or stdin
+- output: JSON on stdout
+- exit code `0`: successful tool execution
+- exit code non-zero: failed tool execution
+- failure payload: `{"ok": false, "error": "..."}` when possible
+
+Run tools through the runner:
+
+```bash
+python3 /path/to/aura-tools/runner.py tool_name '{"key":"value"}'
+```
+
+## Scheduled jobs
+
+Self-authored tools compose with the job system through the `script` field.
+
+A good recurring job either:
+
+- runs only the script and posts the script output, or
+- runs the script first, then feeds compact JSON output into a short playbook for judgment work.
+
+Jobs must treat a failed script as a failed underlying workflow. Do not report "Done" because the error handler succeeded.
+
+## Persistence
+
+Tools may use deployment-provided persistent storage for stateful workflows. The path must be configurable and documented by the tool.
+
+Common pattern:
+
+```text
+persistent filesystem -> SQLite -> deterministic sync/classification -> compact JSON result
+```
+
+When a tool stores SQLite or another local database, it must document:
+
+- storage path
+- whether the path survives sandbox restarts
+- schema
+- migration behavior
+- what counts as source of truth if the local DB and remote API disagree
+
+Important SQLite rule: `CREATE TABLE IF NOT EXISTS` does not add columns to an existing table. Long-lived persistent DBs need explicit additive migrations.
+
+## When to promote to platform code
+
+Keep a self-authored tool as a tool while it is exploratory, workspace-specific, or operationally narrow.
+
+Promote it into Aura's main codebase when:
+
+- multiple customers would use it
+- it needs first-class UI/API support
+- it handles sensitive credentials beyond the sandbox boundary
+- it needs stronger audit logs, permissions, or multi-tenant isolation
+- failures need product-level observability
+
+Self-authored tools are a strategic bridge: they let an Aura instance become more capable before the platform has a polished feature for that workflow.
