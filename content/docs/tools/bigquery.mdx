@@ -5,7 +5,7 @@ description: "Query your data warehouse, inspect schemas, browse sheets, and sea
 
 # BigQuery & Data Tools
 
-Aura connects to Google BigQuery using a service account (`BQ_SA_KEY_JSON`). Access is **read-only by default** — no DML or DDL is allowed. BigQuery tools use **Standard SQL** (`useLegacySql: false`) and a step-by-step recovery ladder to avoid malformed queries and false permission diagnoses.
+Aura connects to Google BigQuery using a base64-encoded service account JSON stored as the encrypted credential `google_bq_credentials`. Access is **read-only by default** — no DML or DDL is allowed. BigQuery tools use **Standard SQL** (`useLegacySql: false`) and a step-by-step recovery ladder to avoid malformed queries and false permission diagnoses.
 
 **BigQuery recovery ladder (follow in order):**
 1. `bq_list_datasets`
@@ -143,6 +143,6 @@ List all shared drives in the Google Workspace organization.
 
 ## Authentication
 
-BigQuery uses a service account key (`BQ_SA_KEY_JSON` env var — base64-encoded JSON key).
+BigQuery uses a base64-encoded service account JSON stored in Aura's encrypted credential store under the name `google_bq_credentials`. Legacy environment variables such as `GOOGLE_BQ_CREDENTIALS` are listed for older deployments, but the current runtime resolves the encrypted credential first.
 
 Google Drive/Sheets/Calendar use **per-user OAuth tokens** stored in the `oauth_tokens` table. Users must connect their Google account first. Aura's own token is only for Aura's own internal work, never for accessing another user's data.
