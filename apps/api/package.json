@@ -13,7 +13,8 @@
     "test": "vitest run",
     "content:index": "tsx scripts/index-content.ts",
     "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings",
-    "backfill:canonical-model-ids": "tsx scripts/backfill-canonical-model-ids.ts"
+    "backfill:canonical-model-ids": "tsx scripts/backfill-canonical-model-ids.ts",
+    "backfill:skill-embeddings": "tsx src/scripts/backfill-skill-embeddings.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.46",

@@ -1,4 +1,4 @@
-import { eq, or, and, isNull, gt, desc } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { notes } from "@aura/db/schema";
@@ -6,6 +6,7 @@ import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
 import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
+import type { RetrievedSkill } from "../skills/retrieve.js";
 
 export interface PersonProfile {
   slackUserId: string;
@@ -44,6 +45,8 @@ interface SystemPromptContext {
   interlocutor?: PersonProfile;
   /** Compiled entity summaries (dossiers) to inject as high-signal context */
   entitySummaries?: EntitySummary[];
+  /** Semantically retrieved skill notes for this turn */
+  retrievedSkills?: RetrievedSkill[];
 }
 
 /**
@@ -388,6 +391,24 @@ function formatConversations(conversations: ConversationThread[]): string {
   return `<related_threads>\n${threads}\n</related_threads>`;
 }
 
+function formatRetrievedSkills(skills: RetrievedSkill[]): string {
+  if (skills.length === 0) return "";
+
+  const preamble =
+    "The skills below are authoritative operational playbooks retrieved as relevant to this turn. " +
+    "Follow them for this turn unless you have a specific reason not to. " +
+    "If a skill conflicts with the user's explicit instruction, the instruction wins -- surface the conflict.";
+
+  const entries = skills
+    .map(
+      (skill) =>
+        `<skill topic="${skill.topic}" similarity="${skill.similarity.toFixed(3)}">\n${skill.content}\n</skill>`,
+    )
+    .join("\n\n");
+
+  return `<retrieved_skills>\n${preamble}\n\n${entries}\n</retrieved_skills>`;
+}
+
 export interface SystemPromptLayers {
   /** Stable across ALL requests: personality + self-directive + auto-generated notes index */
   stablePrefix: string;
@@ -401,7 +422,9 @@ export interface SystemPromptLayers {
  * Returns: PERSONALITY + self-directive + auto-generated notes index.
  * Async because it queries notes from the database.
  */
-export async function buildStablePrefix(): Promise<string> {
+export async function buildStablePrefix(
+  retrievedSkills: RetrievedSkill[] = [],
+): Promise<string> {
   const parts: string[] = [];
 
   parts.push(`<personality>\n${PERSONALITY}\n</personality>`);
@@ -430,6 +453,10 @@ export async function buildStablePrefix(): Promise<string> {
     }
   } catch (error) {
     logger.warn("Failed to load self-directive note", { error });
+  }
+
+  if (retrievedSkills.length > 0) {
+    parts.push(formatRetrievedSkills(retrievedSkills));
   }
 
   try {
@@ -506,7 +533,7 @@ export async function buildSystemPrompt(
   context: SystemPromptContext,
 ): Promise<SystemPromptLayers> {
   // ── Layer 1: Stable prefix ──────────────────────────────────────────
-  const stablePrefix = await buildStablePrefix();
+  const stablePrefix = await buildStablePrefix(context.retrievedSkills ?? []);
 
   // ── Layer 2: Conversation context ───────────────────────────────────
   const contextParts: string[] = [];
