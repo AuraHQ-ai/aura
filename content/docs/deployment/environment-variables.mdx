@@ -92,8 +92,4 @@ printf '%s' 'your-value' | npx --yes vercel@50.13.2 env add VAR_NAME production 
 
 Always use `printf '%s'` — never `echo`, which adds trailing newlines that break Vercel.
 
-After adding variables, redeploy:
-
-```bash
-npx --yes vercel@50.13.2 --prod --scope realadvisor
-```
+After adding variables, redeploy from Git or your hosting provider's deploy hook. Do not run `vercel --prod` from a local checkout or sandbox; that deploys the local filesystem instead of the reviewed Git commit.
