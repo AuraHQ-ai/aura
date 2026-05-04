@@ -1,8 +1,53 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   augmentBigQueryErrorMessage,
   getBigQueryErrorHints,
 } from "../lib/bigquery-errors.js";
+
+const queryMock = vi.fn();
+const getMetadataMock = vi.fn();
+
+vi.mock("../db/client.js", () => ({
+  db: {},
+}));
+
+vi.mock("../lib/logger.js", () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
+vi.mock("../lib/bigquery.js", () => ({
+  getBigQueryClient: vi.fn(async () => ({
+    query: queryMock,
+    dataset: vi.fn(() => ({
+      getMetadata: getMetadataMock,
+      table: vi.fn(() => ({
+        getMetadata: getMetadataMock,
+      })),
+    })),
+  })),
+}));
+
+class BigLikeNumeric {
+  constructor(private readonly value: string) {}
+
+  toJSON() {
+    return this.value;
+  }
+
+  plus() {
+    return this;
+  }
+}
+
+beforeEach(() => {
+  queryMock.mockReset();
+  getMetadataMock.mockReset();
+});
 
 describe("BigQuery error hint augmentation", () => {
   it("adds access-denied guidance for permission-style errors", () => {
@@ -50,5 +95,32 @@ describe("BigQuery error hint augmentation", () => {
     const augmented = augmentBigQueryErrorMessage(message);
 
     expect(augmented).toBe(message);
+  });
+});
+
+describe("BigQuery row sanitization", () => {
+  it("returns structured-cloneable rows from bq_execute_query", async () => {
+    const numericValue = new BigLikeNumeric("1.23");
+    expect(() => structuredClone(numericValue)).toThrow();
+    queryMock.mockResolvedValueOnce([
+      [{ x: numericValue }],
+      undefined,
+      { schema: { fields: [{ name: "x" }] }, totalBytesProcessed: "0" },
+    ]);
+
+    const { createBigQueryTools } = await import("./bigquery.js");
+    const tools = createBigQueryTools();
+    const result = await (tools.bq_execute_query as any).execute({
+      sql: "SELECT CAST(1.23 AS NUMERIC) AS x",
+      max_rows: 10,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      columns: ["x"],
+      rows: [{ x: "1.23" }],
+      total_rows: 1,
+    });
+    expect(() => structuredClone(result)).not.toThrow();
   });
 });
