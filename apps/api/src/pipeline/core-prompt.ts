@@ -24,7 +24,7 @@ export type { PersonProfile };
 
 // ── Channel Session ──────────────────────────────────────────────────────────
 
-export type ChannelType = "dm" | "dashboard" | "public_channel" | "private_channel";
+export type ChannelType = "dm" | "mpim" | "dashboard" | "public_channel" | "private_channel";
 
 export interface ChannelSession {
   channel: "slack" | "dashboard";

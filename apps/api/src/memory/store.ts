@@ -11,6 +11,7 @@ export type DbChannelType = "dm" | "public_channel" | "private_channel" | "dashb
 
 export function toDbChannelType(ct: ChannelType | "dashboard"): DbChannelType {
   if (ct === "dm" || ct === "public_channel" || ct === "private_channel" || ct === "dashboard") return ct;
+  if (ct === "mpim") return "dm";
   return "public_channel";
 }
 

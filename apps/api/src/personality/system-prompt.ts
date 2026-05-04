@@ -514,7 +514,9 @@ export async function buildSystemPrompt(
   // Setting (channel/DM + current time)
   const settingText = context.channelType === "dm"
     ? `You're in a private DM. Be conversational and personal.`
-    : `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`;
+    : context.channelType === "mpim"
+      ? `You're in a group DM (MPIM). Be conversational and personal.`
+      : `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`;
   contextParts.push(`  <setting>\n${settingText}\n  </setting>`);
 
   // User profile
