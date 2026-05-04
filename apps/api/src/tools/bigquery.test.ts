@@ -33,6 +33,8 @@ vi.mock("../lib/bigquery.js", () => ({
 }));
 
 class BigLikeNumeric {
+  private readonly cloneBreaker = () => this.value;
+
   constructor(private readonly value: string) {}
 
   toJSON() {
