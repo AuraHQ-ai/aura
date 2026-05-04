@@ -267,7 +267,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
             maximumBytesBilled: String(1e9),
             location,
           });
-          samples = rows;
+          samples = JSON.parse(JSON.stringify(rows));
         } catch (sampleError: unknown) {
           logger.warn(`${toolName} sample query failed`, {
             dataset,
@@ -363,20 +363,21 @@ export function createBigQueryTools(context?: ScheduleContext) {
         location,
       });
       const rows = queryResult[0];
+      const cleanRows = JSON.parse(JSON.stringify(rows));
       const responseMeta = (queryResult as any)[2];
       const columns =
         responseMeta?.schema?.fields?.map((f: any) => f.name) ??
-        (rows.length > 0 ? Object.keys(rows[0]) : []);
-      const totalRows = rows.length;
+        (cleanRows.length > 0 ? Object.keys(cleanRows[0]) : []);
+      const totalRows = cleanRows.length;
       const bytesProcessed = responseMeta?.totalBytesProcessed ?? null;
 
       logger.info(`${toolName} called`, {
         sqlLength: sql.length,
-        rowCount: rows.length,
+        rowCount: cleanRows.length,
         bytesProcessed,
       });
 
-      const resultRows = rows.slice(0, max_rows);
+      const resultRows = cleanRows.slice(0, max_rows);
       const result = {
         ok: true as const,
         columns,
