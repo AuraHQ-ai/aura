@@ -16,6 +16,7 @@ import {
   updateConversationTraceUsage,
   buildConversationSteps,
 } from "./persist-conversation.js";
+import { detectScriptOutputError } from "./script-output.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import { resolveSlackDestination } from "../tools/slack.js";
@@ -195,8 +196,35 @@ export async function executeJob(
           envs,
         });
 
-        if (scriptResult.exitCode === 0) {
-          scriptOutput = truncateOutput(scriptResult.stdout, 50_000);
+        const exitCode = scriptResult.exitCode;
+        const stdout = scriptResult.stdout || "";
+        const stderr = scriptResult.stderr || "";
+
+        if (exitCode !== 0) {
+          if (job.playbook) {
+            logger.warn("executeJob: script failed, falling through to LLM", {
+              jobId,
+              jobName: job.name,
+              exitCode,
+              stderr: stderr.slice(0, 500),
+            });
+          } else {
+            const outputTail = (stderr || stdout).slice(-2000);
+            throw new Error(
+              `Script exited with code ${exitCode}:\n${outputTail}`,
+            );
+          }
+        } else {
+          scriptOutput = truncateOutput(stdout, 50_000);
+
+          const outputError = detectScriptOutputError(stdout);
+
+          if (outputError && !job.playbook) {
+            const outputTail = stdout.slice(-2000);
+            throw new Error(
+              `Script reported error: ${outputError}\n${outputTail}`,
+            );
+          }
 
           if (!job.playbook) {
             const resultText = scriptOutput || "(script produced no output)";
@@ -240,16 +268,20 @@ export async function executeJob(
             logger.info("executeJob: script-only job completed", { jobId, jobName: job.name });
             return true;
           }
-        } else {
-          logger.warn("executeJob: script failed, falling through to LLM", {
-            jobId,
-            jobName: job.name,
-            exitCode: scriptResult.exitCode,
-            stderr: scriptResult.stderr?.slice(0, 500),
-          });
+
+          if (outputError) {
+            logger.warn("executeJob: script output contains error JSON, falling through to LLM", {
+              jobId,
+              jobName: job.name,
+              outputError,
+            });
+          }
         }
       } catch (scriptErr: any) {
         if (scriptOutput) {
+          throw scriptErr;
+        }
+        if (!job.playbook) {
           throw scriptErr;
         }
         logger.warn("executeJob: script execution error, falling through to LLM", {
