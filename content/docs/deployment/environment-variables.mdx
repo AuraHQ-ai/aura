@@ -36,8 +36,8 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 |----------|-------------|
 | `GOOGLE_EMAIL_CLIENT_ID` | Google OAuth client ID (for Gmail integration) |
 | `GOOGLE_EMAIL_CLIENT_SECRET` | Google OAuth client secret (for Gmail integration) |
-| `GOOGLE_BQ_CREDENTIALS` | Base64-encoded Google service account key JSON (for BigQuery) |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | Google service account key JSON (alternative to `GOOGLE_BQ_CREDENTIALS`) |
+| `GOOGLE_BQ_CREDENTIALS` | Legacy BigQuery service account fallback for older deployments. Current runtime expects the encrypted credential `google_bq_credentials`. |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | Legacy alternative to `GOOGLE_BQ_CREDENTIALS` for older deployments. |
 | `TAVILY_API_KEY` | Tavily API key for web search |
 | `BROWSERBASE_API_KEY` | Browserbase API key for browser automation |
 | `BROWSERBASE_PROJECT_ID` | Browserbase project ID |
@@ -71,11 +71,11 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MODEL_MAIN` | Primary model ID (Vercel AI Gateway format) | `anthropic/claude-sonnet-4-20250514` |
-| `MODEL_FAST` | Fast model for simple tasks | `anthropic/claude-haiku-4-5` |
+| `MODEL_FAST` | Fast model for simple tasks | `anthropic/claude-haiku-4.5` |
 | `MODEL_EMBEDDING` | Embedding model ID | `openai/text-embedding-3-small` |
-| `MODEL_ESCALATION` | Escalation model for complex reasoning | `anthropic/claude-opus-4-6` |
+| `MODEL_ESCALATION` | Escalation model for complex reasoning | `anthropic/claude-opus-4.6` |
 
-Models can also be configured via the `settings` table in the database, which takes precedence over environment variables.
+Models are normally resolved from database settings first, then the DB-backed model catalog defaults. The environment variable defaults are legacy/local-development references; admins can refresh the live catalog from Vercel AI Gateway in Settings without redeploying.
 
 ## Debugging
 
@@ -92,8 +92,4 @@ printf '%s' 'your-value' | npx --yes vercel@50.13.2 env add VAR_NAME production 
 
 Always use `printf '%s'` — never `echo`, which adds trailing newlines that break Vercel.
 
-After adding variables, redeploy:
-
-```bash
-npx --yes vercel@50.13.2 --prod --scope realadvisor
-```
+After adding variables, redeploy from Git or your hosting provider's deploy hook. Do not run `vercel --prod` from a local checkout or sandbox; that deploys the local filesystem instead of the reviewed Git commit.
