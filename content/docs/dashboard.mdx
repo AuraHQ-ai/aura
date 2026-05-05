@@ -39,9 +39,9 @@ The date range selection is reflected in the URL so specific windows can be book
 
 Browse and search Aura's extracted memories:
 
-- Filter by type (fact, decision, personal, relationship, sentiment, open_thread)
-- View related users and source conversations
-- Check relevance scores and decay status
+- Filter by type (fact, decision, preference, event, open_thread)
+- View category, importance, relevance score, status, and creation time
+- Open a detail dialog or delete stale memories
 
 The **Entities** sub-tab (`/memories/entities`) lists resolved entities (people, companies, projects, technologies) that Aura has extracted from conversations. Each entity has a canonical name, type, alias list, and count of linked memories.
 
@@ -75,9 +75,10 @@ Manage the encrypted credential store:
 
 Track production errors:
 
-- Error events with stack traces
-- Filter by type, severity, and time range
-- Link back to the conversation that triggered the error
+- Error events with stack traces and captured context
+- Search by error name and filter by open/resolved status
+- Bulk-resolve selected errors from the list
+- Open detail pages to inspect user, channel, channel type, context, and stack trace
 
 ### Users
 
