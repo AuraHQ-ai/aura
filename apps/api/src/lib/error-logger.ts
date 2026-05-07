@@ -37,6 +37,41 @@ const slackWindows = new Map<
   { lastPostTime: number; batchedCount: number }
 >();
 
+/**
+ * Strip long numeric arrays from error messages.
+ * Postgres "Failed query: ... params: ... [0.012, -0.034, ...]" dumps
+ * full embedding vectors into error.message. Truncate them so #aura-errors
+ * stays readable. Keep first 4 + last 2 values for debuggability.
+ */
+export function sanitizeErrorText(
+  input: string | undefined | null,
+  maxLen = 2000,
+): string {
+  if (!input) return "";
+
+  // Match bracketed numeric arrays of >= 16 numeric items (signed floats incl. exp notation).
+  // Regex is intentionally narrow to avoid stripping legitimate JSON arrays of strings.
+  const NUM_ARRAY_RE =
+    /\[(?:\s*-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\s*,){15,}\s*-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\s*\]/g;
+
+  let out = input.replace(NUM_ARRAY_RE, (match) => {
+    const nums = match
+      .slice(1, -1)
+      .split(",")
+      .map((s) => s.trim());
+    const head = nums.slice(0, 4).join(",");
+    const tail = nums.slice(-2).join(",");
+
+    return `[${head},…(${nums.length} floats omitted)…,${tail}]`;
+  });
+
+  if (out.length > maxLen) {
+    out = out.slice(0, maxLen) + `…(truncated, original ${input.length} chars)`;
+  }
+
+  return out;
+}
+
 function isRateLimited(errorCode: string): boolean {
   const now = Date.now();
 
@@ -142,7 +177,7 @@ async function postToSlack(params: LogErrorParams): Promise<void> {
   const channelId = await getErrorsChannelId(slack);
   if (!channelId) return;
 
-  let text = `*${params.errorName}*: ${params.errorMessage}`;
+  let text = `*${params.errorName}*: ${sanitizeErrorText(params.errorMessage)}`;
   if (params.errorCode) text += `\n*Code*: \`${params.errorCode}\``;
   if (params.userId) text += `  |  *User*: \`${params.userId}\``;
   if (params.channelId) text += `  |  *Channel*: \`${params.channelId}\``;
@@ -174,13 +209,13 @@ export function logError(params: LogErrorParams): void {
     db.insert(errorEvents)
       .values({
         errorName: params.errorName,
-        errorMessage: params.errorMessage,
+        errorMessage: sanitizeErrorText(params.errorMessage),
         errorCode: params.errorCode,
         userId: params.userId,
         channelId: params.channelId,
         channelType: params.channelType,
         context: params.context,
-        stackTrace: params.stackTrace,
+        stackTrace: sanitizeErrorText(params.stackTrace),
       })
       .catch(() => {});
   }
