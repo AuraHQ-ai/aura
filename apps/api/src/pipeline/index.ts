@@ -35,6 +35,7 @@ import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
+import { isValidTitle, sanitizeTitle } from "./dm-title.js";
 import {
   createConversationTrace,
   persistConversationInputs,
@@ -989,11 +990,6 @@ async function runBackgroundTasks(params: {
   }
 }
 
-/** Strip wrapping quotes and trailing punctuation that LLMs sometimes add despite instructions. */
-function sanitizeTitle(raw: string): string {
-  return raw.trim().replace(/^["'""]+|["'""]+$/g, "").replace(/[.!;:]+$/, "").trim();
-}
-
 /**
  * Generate and set the initial title for a DM thread.
  * Triggered after the first assistant response so both sides of the
@@ -1014,10 +1010,13 @@ async function setInitialDmThreadTitle(params: {
     const { text: raw } = await generateText({
       model: fastModel,
       maxOutputTokens: 40,
-      prompt: `What is this conversation about? Name the core topic in 3-8 words. No quotes, no punctuation at the end.\n\nUser: "${userMessage.slice(0, 300)}"\n\nAssistant: "${assistantResponse.slice(0, 500)}"`,
+      prompt: `What is this conversation about? Name the core topic in 3-8 words. No quotes, no punctuation at the end.\n\nUser: "${userMessage.slice(0, 300)}"\n\nAssistant: "${assistantResponse.slice(0, 500)}"\n\nRules: Never start with 'I', 'User', 'Assistant', or 'Sorry'. Never describe the user's emotional state. Just name the topic. If unclear, respond with the single word: SKIP`,
     });
     const title = sanitizeTitle(raw).slice(0, 100);
-    if (!title) return;
+    if (!isValidTitle(title)) {
+      logger.warn("Rejected invalid DM thread title", { rawTitle: raw, channelId });
+      return;
+    }
     await client.assistant.threads.setTitle({
       channel_id: channelId,
       thread_ts: threadTs,
@@ -1076,22 +1075,24 @@ async function maybeUpdateDmThreadTitle(params: {
     const { text: raw } = await generateText({
       model: fastModel,
       maxOutputTokens: 40,
-      prompt: `What are the 1-3 core topics discussed in this Slack DM conversation? Express as a short title (5-10 words). If multiple distinct topics, separate them with " / ". Capture the essence of the whole conversation arc, not just the latest messages. No quotes, no punctuation at the end.\n\nConversation:\n${messagesContext}\n\nLatest assistant response: "${assistantResponse.slice(0, 300)}"`,
+      prompt: `What are the 1-3 core topics discussed in this Slack DM conversation? Express as a short title (5-10 words). If multiple distinct topics, separate them with " / ". Capture the essence of the whole conversation arc, not just the latest messages. No quotes, no punctuation at the end.\n\nConversation:\n${messagesContext}\n\nLatest assistant response: "${assistantResponse.slice(0, 300)}"\n\nRules: Never start with 'I', 'User', 'Assistant', or 'Sorry'. Never describe the user's emotional state. Just name the topic. If unclear, respond with the single word: SKIP`,
     });
 
-    const newTitle = sanitizeTitle(raw).slice(0, 100);
-    if (newTitle) {
-      await client.assistant.threads.setTitle({
-        channel_id: channelId,
-        thread_ts: threadTs,
-        title: newTitle,
-      });
-      logger.info("Updated DM thread title at checkpoint", {
-        newTitle,
-        channelId,
-        messageCount: totalMessages,
-      });
+    const title = sanitizeTitle(raw).slice(0, 100);
+    if (!isValidTitle(title)) {
+      logger.warn("Rejected invalid DM thread title", { rawTitle: raw, channelId });
+      return;
     }
+    await client.assistant.threads.setTitle({
+      channel_id: channelId,
+      thread_ts: threadTs,
+      title,
+    });
+    logger.info("Updated DM thread title at checkpoint", {
+      newTitle: title,
+      channelId,
+      messageCount: totalMessages,
+    });
   } catch (error: any) {
     logger.warn("Failed to update DM thread title", {
       error: error?.message || String(error),
