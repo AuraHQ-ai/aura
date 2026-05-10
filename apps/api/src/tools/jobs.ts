@@ -348,7 +348,7 @@ export function createJobTools(
 
     cancel_job: defineTool({
       description:
-        "Cancel a pending one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Accepts a job ID or name.",
+        "Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Accepts a job ID or name.",
       inputSchema: z.object({
         job_id: z
           .string()
