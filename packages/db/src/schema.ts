@@ -268,6 +268,7 @@ export interface CommunicationStyle {
   preferredFormat: "prose" | "bullets" | "mixed";
 }
 
+/** @deprecated Retired by unified profile v2; kept temporarily for rollback safety. */
 export interface KnownFacts {
   role?: string;
   team?: string;
@@ -302,6 +303,7 @@ export const users = pgTable(
         emojiUsage: "light",
         preferredFormat: "mixed",
       }),
+    /** @deprecated Retired by unified profile v2; do not read/write in runtime context paths. */
     knownFacts: jsonb("known_facts").$type<KnownFacts>().default({}),
     role: text("role").notNull().default("member"),
     interactionCount: integer("interaction_count").notNull().default(0),

@@ -22,7 +22,6 @@ export async function getKnowledgeAboutUser(
   profile: {
     displayName: string;
     communicationStyle: unknown;
-    knownFacts: unknown;
     interactionCount: number;
     lastInteractionAt: Date | null;
   } | null;
@@ -56,7 +55,6 @@ export async function getKnowledgeAboutUser(
       ? {
           displayName: profile.displayName,
           communicationStyle: profile.communicationStyle,
-          knownFacts: profile.knownFacts,
           interactionCount: profile.interactionCount,
           lastInteractionAt: profile.lastInteractionAt,
         }
@@ -85,19 +83,6 @@ export function formatKnowledgeSummary(
     parts.push(`*Profile*`);
     parts.push(`Name: ${p.displayName}`);
     parts.push(`We've talked ${p.interactionCount} times.`);
-
-    const facts = p.knownFacts as any;
-    if (facts) {
-      if (facts.role) parts.push(`Role: ${facts.role}`);
-      if (facts.team) parts.push(`Team: ${facts.team}`);
-      if (facts.interests?.length) parts.push(`Interests: ${facts.interests.join(", ")}`);
-      if (facts.personalDetails?.length) {
-        parts.push(`Personal notes: ${facts.personalDetails.join("; ")}`);
-      }
-      if (facts.preferences?.length) {
-        parts.push(`Preferences: ${facts.preferences.join("; ")}`);
-      }
-    }
 
     const style = p.communicationStyle as any;
     if (style) {

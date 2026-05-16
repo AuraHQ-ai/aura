@@ -44,6 +44,8 @@ interface SystemPromptContext {
   interlocutor?: PersonProfile;
   /** Compiled entity summaries (dossiers) to inject as high-signal context */
   entitySummaries?: EntitySummary[];
+  /** Interlocutor's compiled entity summary text (may be null during backfill) */
+  interlocutorEntitySummary?: string | null;
 }
 
 /**
@@ -280,60 +282,83 @@ function formatMemories(memories: Memory[]): string {
   return `These are things you've learned from previous interactions. Use them naturally if relevant -- don't force them in. Don't tell the user you're "checking your memories."\n\n${formatted}`;
 }
 
+function estimateTokenCount(text: string): number {
+  // Simple heuristic used for debug logs: ~4 chars/token for English prose.
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function parseBooleanEnvDefaultTrue(value: string | undefined): boolean {
+  if (value === undefined) return true;
+  const normalized = value.trim().toLowerCase();
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  return true;
+}
+
+export function resolvePronounsForGender(gender: string | null | undefined): string {
+  if (gender === "male") return "he/him/his";
+  if (gender === "female") return "she/her/hers";
+  return "they/them/their";
+}
+
+export function isUnifiedProfileV2Enabled(): boolean {
+  return parseBooleanEnvDefaultTrue(process.env.UNIFIED_PROFILE_V2);
+}
+
+function formatCommunicationStyle(style: UserProfile["communicationStyle"]): string | null {
+  if (!style) return null;
+  return `verbosity=${style.verbosity}; formality=${style.formality}; emoji_usage=${style.emojiUsage}; preferred_format=${style.preferredFormat}`;
+}
+
+interface FormatUserProfileOptions {
+  interlocutor?: PersonProfile;
+  interlocutorEntitySummary?: string | null;
+  unifiedProfileV2?: boolean;
+}
+
 /**
  * Format user profile for tone adaptation hints.
  */
-function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): string {
-  const style = profile.communicationStyle;
-  const facts = profile.knownFacts;
+export function formatUserProfile(
+  profile: UserProfile,
+  options: FormatUserProfileOptions = {},
+): string {
+  const unifiedProfileV2 = options.unifiedProfileV2 ?? isUnifiedProfileV2Enabled();
+  const summaryText = options.interlocutorEntitySummary?.trim() || "No profile compiled yet.";
+
+  const displayName = profile.displayName || options.interlocutor?.displayName || "Unknown";
+  const gender = profile.gender ?? options.interlocutor?.gender ?? null;
+  const preferredLanguage =
+    profile.preferredLanguage ?? options.interlocutor?.preferredLanguage ?? null;
+  const role = profile.role || options.interlocutor?.jobTitle || "member";
+  const communicationStyle = formatCommunicationStyle(profile.communicationStyle);
+
   const parts: string[] = [];
-
   parts.push(`About the person you're talking to:`);
-  parts.push(`Display name: ${profile.displayName}`);
+  parts.push(`Display name: ${displayName}`);
 
-  // Enrich with people DB fields (gender, pronouns, language, role, notes)
-  if (interlocutor) {
-    const PRONOUN_MAP: Record<string, string> = { male: 'he/him', female: 'she/her' };
-    if (interlocutor.gender && PRONOUN_MAP[interlocutor.gender]) parts.push(`Communication style: ${PRONOUN_MAP[interlocutor.gender]} pronouns`);
-    if (interlocutor.preferredLanguage) parts.push(`Preferred language: ${interlocutor.preferredLanguage}`);
-    if (interlocutor.jobTitle) parts.push(`Role: ${interlocutor.jobTitle}`);
-    if (interlocutor.managerName) parts.push(`Manager: ${interlocutor.managerName}`);
-    if (interlocutor.notes) parts.push(`Notes: ${interlocutor.notes}`);
+  if (unifiedProfileV2) {
+    parts.push(`Pronouns: ${resolvePronounsForGender(gender)} (gender=${gender ?? "null"})`);
+    if (preferredLanguage) parts.push(`Preferred language: ${preferredLanguage}`);
+    parts.push(`Role: ${role}`);
+    if (communicationStyle) parts.push(`Communication style: ${communicationStyle}`);
+    if (profile.timezone) parts.push(`Timezone: ${profile.timezone}`);
+    parts.push(`Compiled profile (entities.summary): ${summaryText}`);
+    parts.push(`Interactions so far: ${profile.interactionCount}`);
+
+    const formatted = parts.join("\n");
+    logger.debug("Profile context token estimate", {
+      unifiedProfileV2,
+      approxTokens: estimateTokenCount(formatted),
+      hasEntitySummary: Boolean(options.interlocutorEntitySummary),
+    });
+    return formatted;
   }
 
-  if (style) {
-    const styleParts: string[] = [];
-    if (style.verbosity === "terse")
-      styleParts.push("they tend to be brief — match that");
-    if (style.verbosity === "verbose")
-      styleParts.push("they like detailed responses");
-    if (style.formality === "casual")
-      styleParts.push("they're casual — be casual back");
-    if (style.formality === "formal")
-      styleParts.push("they're more formal — adjust your tone slightly");
-    if (style.emojiUsage === "heavy")
-      styleParts.push("they use emoji — you can mirror lightly");
-    if (style.emojiUsage === "none")
-      styleParts.push("they don't use emoji — skip them");
-    if (style.preferredFormat === "bullets")
-      styleParts.push("they prefer bullet-point answers");
-    if (style.preferredFormat === "prose")
-      styleParts.push("they prefer prose answers");
-    if (styleParts.length > 0) {
-      parts.push(`Communication style: ${styleParts.join("; ")}`);
-    }
-  }
-
-  if (facts) {
-    if (facts.role) parts.push(`Role: ${facts.role}`);
-    if (facts.team) parts.push(`Team: ${facts.team}`);
-    if (facts.personalDetails && facts.personalDetails.length > 0) {
-      parts.push(`Personal: ${facts.personalDetails.slice(-10).join("; ")}`);
-    }
-  }
-
+  // Legacy fallback path behind UNIFIED_PROFILE_V2=false (known_facts intentionally excluded).
+  if (communicationStyle) parts.push(`Communication style: ${communicationStyle}`);
+  if (profile.timezone) parts.push(`Timezone: ${profile.timezone}`);
   parts.push(`Interactions so far: ${profile.interactionCount}`);
-
   return parts.join("\n");
 }
 
@@ -519,7 +544,12 @@ export async function buildSystemPrompt(
 
   // User profile
   if (context.userProfile) {
-    contextParts.push(`  <person>\n${formatUserProfile(context.userProfile, context.interlocutor)}\n  </person>`);
+    contextParts.push(
+      `  <person>\n${formatUserProfile(context.userProfile, {
+        interlocutor: context.interlocutor,
+        interlocutorEntitySummary: context.interlocutorEntitySummary,
+      })}\n  </person>`,
+    );
   }
 
   // Mentioned people

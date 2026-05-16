@@ -152,7 +152,6 @@ async function fetchInterlocutorEntity(
       .where(
         and(
           eq(entities.slackUserId, userId),
-          isNotNull(entities.summary),
         ),
       )
       .limit(1);
@@ -322,6 +321,7 @@ export async function buildCorePrompt(
     mentionedPeople,
     interlocutor: interlocutor ?? undefined,
     entitySummaries,
+    interlocutorEntitySummary: interlocutorEntity?.summary ?? null,
   });
 
   const modelId = session.modelIdOverride ?? await getMainModelId();
