@@ -38,6 +38,8 @@ Built with TypeScript, Hono, Vercel serverless functions, Vercel AI SDK v6, and 
 
 **Memory** — After every exchange, facts, decisions, and open threads are extracted, embedded, and stored. Semantic search over all past conversations.
 
+**Skills retrieval** — On each turn, Aura semantically retrieves the most relevant skill notes (top-K with threshold and token cap) and injects them into the prompt under `<retrieved_skills>`. Configure with `ENABLE_SKILL_RETRIEVAL`, `SKILL_RETRIEVAL_MIN_SIMILARITY`, and `SKILL_RETRIEVAL_TOKEN_CAP`.
+
 **Jobs** — Scheduled and recurring tasks with cron execution, playbooks, and retry logic. Aura creates jobs for herself when she spots recurring work.
 
 ---

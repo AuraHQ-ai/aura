@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, and, gt, or, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes, jobs } from "@aura/db/schema";
+import { deleteSkillEmbedding, upsertSkillEmbeddingForNote } from "../skills/retrieve.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
@@ -52,6 +53,39 @@ function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
   embedText(text).then(embedding => {
     db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
   }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
+}
+
+function updateSkillEmbedding(
+  params: {
+    id: string;
+    category: string;
+    topic: string;
+    content: string;
+    summary: string | null;
+  },
+): void {
+  if (params.category !== "skill") {
+    void deleteSkillEmbedding(params.id).catch((error) => {
+      logger.error("Skill embedding delete failed", {
+        noteId: params.id,
+        topic: params.topic,
+        error: String(error),
+      });
+    });
+    return;
+  }
+
+  void upsertSkillEmbeddingForNote({
+    noteId: params.id,
+    summary: params.summary,
+    content: params.content,
+  }).catch((error) => {
+    logger.error("Skill embedding update failed", {
+      noteId: params.id,
+      topic: params.topic,
+      error: String(error),
+    });
+  });
 }
 
 const SYSTEM_TOPICS = ["self-directive", "business-map", "gaps-log"];
@@ -167,7 +201,7 @@ export function createNoteTools(context?: ScheduleContext) {
           updateSet.ownerId = ownerId;
           updateSet.visibility = visibility;
 
-          await db
+          const [savedNote] = await db
             .insert(notes)
             .values({
               topic,
@@ -184,9 +218,19 @@ export function createNoteTools(context?: ScheduleContext) {
             .onConflictDoUpdate({
               target: [notes.workspaceId, notes.topic],
               set: updateSet,
+            })
+            .returning({
+              id: notes.id,
+              category: notes.category,
+              topic: notes.topic,
+              content: notes.content,
+              summary: notes.summary,
             });
 
           updateNoteEmbedding(content, topic, savedAt);
+          if (savedNote) {
+            updateSkillEmbedding(savedNote);
+          }
 
           logger.info("save_note tool called", {
             topic,
@@ -484,12 +528,22 @@ export function createNoteTools(context?: ScheduleContext) {
           if (importance !== undefined) {
             editUpdate.importance = importance;
           }
-          await db
+          const [updatedNote] = await db
             .update(notes)
             .set(editUpdate)
-            .where(eq(notes.topic, topic));
+            .where(eq(notes.topic, topic))
+            .returning({
+              id: notes.id,
+              category: notes.category,
+              topic: notes.topic,
+              content: notes.content,
+              summary: notes.summary,
+            });
 
           updateNoteEmbedding(newContent, topic, savedAt);
+          if (updatedNote) {
+            updateSkillEmbedding(updatedNote);
+          }
 
           const finalLineCount = newContent.split("\n").length;
 
