@@ -449,6 +449,13 @@
       "when": 1775923200000,
       "tag": "0063_anthropic_model_id_alignment",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1779222720000,
+      "tag": "0064_enforce_credential_scope_check",
+      "breakpoints": true
     }
   ]
 }
