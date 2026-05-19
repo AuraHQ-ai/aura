@@ -12,6 +12,18 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 /** Per-invocation cache -- reuse the same sandbox within a single request */
 let cachedSandbox: any | null = null;
 
+interface SandboxCredentialRow {
+  id: string;
+  name: string;
+  ownerId: string;
+  scope: string;
+  sandboxEnvName: string | null;
+}
+
+interface SandboxCredentialValueRow extends SandboxCredentialRow {
+  value: string;
+}
+
 /**
  * Clear the cached sandbox reference so the next call to
  * getOrCreateSandbox() creates a fresh instance. Call this when a
@@ -37,35 +49,33 @@ async function loadE2B() {
   return Sandbox;
 }
 
-/**
- * Build the env vars map for sandbox commands from the credentials DB.
- *
- * Resolves which credentials the user can access, decrypts them, and
- * returns a flat NAME → value map. Uses `sandboxEnvName` when set on the
- * credential row, otherwise falls back to uppercasing the credential name.
- *
- * Owner-aware: for `owner` scoped credentials, only the calling user's
- * row is injected. This prevents collisions when multiple users store a
- * credential with the same name (e.g. `github_token`).
- *
- * Must be passed to every `commands.run({ envs })` call — E2B does NOT
- * persist envs across pause/resume (see e2b-dev/E2B#884).
- */
-export async function getSandboxEnvs(userId?: string): Promise<Record<string, string>> {
-  const envs: Record<string, string> = {};
-  const envOwnedByCaller = new Set<string>();
+function resolveSandboxEnvName(row: SandboxCredentialRow): string {
+  return row.sandboxEnvName || row.name.toUpperCase();
+}
 
+async function resolveSandboxCredentialRows(
+  userId: string | undefined,
+  includeValue: true,
+): Promise<SandboxCredentialValueRow[]>;
+async function resolveSandboxCredentialRows(
+  userId?: string,
+  includeValue?: false,
+): Promise<SandboxCredentialRow[]>;
+async function resolveSandboxCredentialRows(
+  userId?: string,
+  includeValue = false,
+): Promise<SandboxCredentialRow[]> {
   let userCredNames: Set<string> | null = null;
   if (userId) {
     try {
       const { resolveUserCredentials } = await import("./permissions.js");
       userCredNames = await resolveUserCredentials(userId);
     } catch (e: any) {
-      logger.warn("getSandboxEnvs: credential resolution failed", {
+      logger.warn("resolveSandboxCredentialRows: credential resolution failed", {
         userId,
         error: e.message,
       });
-      return envs;
+      return [];
     }
   }
 
@@ -87,17 +97,23 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
       for (const g of grants) grantedCredentialIds.add(g.credentialId);
     }
 
-    const rows = await db
-      .select({
-        id: credentials.id,
-        name: credentials.name,
-        value: credentials.value,
-        ownerId: credentials.ownerId,
-        scope: credentials.scope,
-        sandboxEnvName: credentials.sandboxEnvName,
-      })
-      .from(credentials);
+    const baseSelection = {
+      id: credentials.id,
+      name: credentials.name,
+      ownerId: credentials.ownerId,
+      scope: credentials.scope,
+      sandboxEnvName: credentials.sandboxEnvName,
+    };
+    const rows = includeValue
+      ? await db
+          .select({
+            ...baseSelection,
+            value: credentials.value,
+          })
+          .from(credentials)
+      : await db.select(baseSelection).from(credentials);
 
+    const accessibleRows: SandboxCredentialRow[] = [];
     for (const row of rows) {
       // Gate 1: user must have access to this credential name
       if (userCredNames && !userCredNames.has(row.name)) continue;
@@ -128,29 +144,56 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
         continue;
       }
 
-      // Use the explicit sandboxEnvName if set, otherwise uppercase the name
-      const envName = row.sandboxEnvName || row.name.toUpperCase();
-      const ownedByCaller = !!userId && row.ownerId === userId;
-      // Caller-owned credentials always win name/env-name collisions, even if
-      // another accessible row with the same env var is processed later.
-      if (envs[envName] !== undefined && envOwnedByCaller.has(envName) && !ownedByCaller) {
-        continue;
-      }
-      try {
-        envs[envName] = decryptCredential(row.value);
-        if (ownedByCaller) {
-          envOwnedByCaller.add(envName);
-        }
-      } catch (e: any) {
-        logger.warn("Failed to decrypt credential for sandbox injection", {
-          name: row.name,
-          envName,
-          error: e.message,
-        });
-      }
+      accessibleRows.push(row);
     }
+
+    return accessibleRows;
   } catch (e: any) {
     logger.warn("Failed to query credentials for sandbox injection", { error: e.message });
+    return [];
+  }
+}
+
+/**
+ * Build the env vars map for sandbox commands from the credentials DB.
+ *
+ * Resolves which credentials the user can access, decrypts them, and
+ * returns a flat NAME → value map. Uses `sandboxEnvName` when set on the
+ * credential row, otherwise falls back to uppercasing the credential name.
+ *
+ * Owner-aware: for `owner` scoped credentials, only the calling user's
+ * row is injected. This prevents collisions when multiple users store a
+ * credential with the same name (e.g. `github_token`).
+ *
+ * Must be passed to every `commands.run({ envs })` call — E2B does NOT
+ * persist envs across pause/resume (see e2b-dev/E2B#884).
+ */
+export async function getSandboxEnvs(userId?: string): Promise<Record<string, string>> {
+  const envs: Record<string, string> = {};
+  const envOwnedByCaller = new Set<string>();
+  const rows = await resolveSandboxCredentialRows(userId, true);
+
+  for (const row of rows) {
+    // Use the explicit sandboxEnvName if set, otherwise uppercase the name
+    const envName = resolveSandboxEnvName(row);
+    const ownedByCaller = !!userId && row.ownerId === userId;
+    // Caller-owned credentials always win name/env-name collisions, even if
+    // another accessible row with the same env var is processed later.
+    if (envs[envName] !== undefined && envOwnedByCaller.has(envName) && !ownedByCaller) {
+      continue;
+    }
+    try {
+      envs[envName] = decryptCredential(row.value);
+      if (ownedByCaller) {
+        envOwnedByCaller.add(envName);
+      }
+    } catch (e: any) {
+      logger.warn("Failed to decrypt credential for sandbox injection", {
+        name: row.name,
+        envName,
+        error: e.message,
+      });
+    }
   }
 
   if (envs.GITHUB_TOKEN && !envs.GH_TOKEN) {
@@ -158,6 +201,18 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
   }
 
   return envs;
+}
+
+/**
+ * Return the sandbox env var names available to the user.
+ *
+ * Mirrors getSandboxEnvs() access control without selecting, decrypting, or
+ * returning credential values. Used to make the LLM aware of available
+ * sandbox capabilities without exposing secrets.
+ */
+export async function getSandboxEnvNames(userId?: string): Promise<string[]> {
+  const rows = await resolveSandboxCredentialRows(userId, false);
+  return [...new Set(rows.map(resolveSandboxEnvName))].sort();
 }
 
 /**

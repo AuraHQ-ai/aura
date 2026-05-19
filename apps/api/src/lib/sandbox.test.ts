@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMock = vi.hoisted(() => {
   const state = {
@@ -21,6 +21,7 @@ const dbMock = vi.hoisted(() => {
   return state;
 });
 
+const decryptCredentialMock = vi.hoisted(() => vi.fn((value: string) => value));
 const resolveUserCredentialsMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../db/client.js", () => ({
@@ -30,7 +31,7 @@ vi.mock("../db/client.js", () => ({
 }));
 
 vi.mock("./credentials.js", () => ({
-  decryptCredential: vi.fn((value: string) => value),
+  decryptCredential: decryptCredentialMock,
 }));
 
 vi.mock("./permissions.js", () => ({
@@ -51,11 +52,22 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
+import { getSandboxEnvs, getSandboxEnvNames } from "./sandbox.js";
+
+interface CredentialRow {
+  id: string;
+  name: string;
+  value: string;
+  ownerId: string;
+  scope: string;
+  sandboxEnvName: string | null;
+}
+
 function queueDbResults(...results: unknown[][]) {
   dbMock.results = [...results];
 }
 
-const callerCredential = {
+const callerCredential: CredentialRow = {
   id: "cred-caller",
   name: "github_token",
   value: "caller-token",
@@ -64,7 +76,7 @@ const callerCredential = {
   sandboxEnvName: null,
 };
 
-const otherCredential = {
+const otherCredential: CredentialRow = {
   id: "cred-other",
   name: "github_token",
   value: "other-token",
@@ -86,7 +98,6 @@ describe("getSandboxEnvs", () => {
   ])("prefers caller-owned credentials on env name collisions (%s)", async (rows) => {
     queueDbResults([], rows);
 
-    const { getSandboxEnvs } = await import("./sandbox.js");
     const envs = await getSandboxEnvs("U_CALLER");
 
     expect(envs.GITHUB_TOKEN).toBe("caller-token");
@@ -107,9 +118,142 @@ describe("getSandboxEnvs", () => {
       ],
     );
 
-    const { getSandboxEnvs } = await import("./sandbox.js");
     const envs = await getSandboxEnvs("U_CALLER");
 
     expect(envs.GITHUB_TOKEN).toBe("caller-token");
+  });
+});
+
+describe("getSandboxEnvNames", () => {
+  beforeEach(() => {
+    queueDbResults();
+    vi.clearAllMocks();
+    resolveUserCredentialsMock.mockResolvedValue(new Set<string>());
+  });
+
+  it("applies the owner-scoped gate for owned, granted, and ungranted credentials", async () => {
+    const rows: CredentialRow[] = [
+      {
+        id: "owned",
+        name: "github_token",
+        value: "owned-secret-value",
+        ownerId: "U_CALLER",
+        scope: "owner",
+        sandboxEnvName: "GITHUB_TOKEN",
+      },
+      {
+        id: "granted",
+        name: "notion_api_key",
+        value: "granted-secret-value",
+        ownerId: "U_OTHER",
+        scope: "owner",
+        sandboxEnvName: "NOTION_API_KEY",
+      },
+      {
+        id: "blocked",
+        name: "linear_api_key",
+        value: "blocked-secret-value",
+        ownerId: "U_OTHER",
+        scope: "owner",
+        sandboxEnvName: "LINEAR_API_KEY",
+      },
+    ];
+    queueDbResults([{ credentialId: "granted" }], rows);
+    resolveUserCredentialsMock.mockResolvedValue(
+      new Set(["github_token", "notion_api_key", "linear_api_key"]),
+    );
+
+    await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
+      "GITHUB_TOKEN",
+      "NOTION_API_KEY",
+    ]);
+  });
+
+  it("honors Gate 1 for per_user-scoped credentials with and without grants", async () => {
+    const perUserCredential: CredentialRow = {
+      id: "per-user",
+      name: "notion_api_key",
+      value: "notion-secret-value",
+      ownerId: "U_OWNER",
+      scope: "per_user",
+      sandboxEnvName: "NOTION_API_KEY",
+    };
+
+    queueDbResults([], [perUserCredential]);
+    resolveUserCredentialsMock.mockResolvedValue(new Set<string>());
+    await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([]);
+
+    dbMock.select.mockClear();
+    queueDbResults([{ credentialId: "per-user" }], [perUserCredential]);
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["notion_api_key"]));
+
+    await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
+      "NOTION_API_KEY",
+    ]);
+  });
+
+  it("honors resolved role-tier credential access and falls back to uppercase names", async () => {
+    const rows: CredentialRow[] = [
+      {
+        id: "member",
+        name: "member_token",
+        value: "member-secret-value",
+        ownerId: "U_OWNER",
+        scope: "member",
+        sandboxEnvName: "MEMBER_TOKEN",
+      },
+      {
+        id: "power",
+        name: "power_token",
+        value: "power-secret-value",
+        ownerId: "U_OWNER",
+        scope: "power_user",
+        sandboxEnvName: null,
+      },
+      {
+        id: "admin",
+        name: "admin_token",
+        value: "admin-secret-value",
+        ownerId: "U_OWNER",
+        scope: "admin",
+        sandboxEnvName: "ADMIN_TOKEN",
+      },
+    ];
+    queueDbResults([], rows);
+    resolveUserCredentialsMock.mockResolvedValue(
+      new Set(["member_token", "power_token"]),
+    );
+
+    await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
+      "MEMBER_TOKEN",
+      "POWER_TOKEN",
+    ]);
+  });
+
+  it("does not select or decrypt credential values", async () => {
+    queueDbResults(
+      [],
+      [
+        {
+          id: "secret",
+          name: "secret_token",
+          value: "super-secret-value",
+          ownerId: "U_CALLER",
+          scope: "owner",
+          sandboxEnvName: "SECRET_TOKEN",
+        },
+      ],
+    );
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["secret_token"]));
+
+    await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
+      "SECRET_TOKEN",
+    ]);
+
+    const selectedValue = dbMock.select.mock.calls.some(([selection]) =>
+      Object.keys(selection ?? {}).includes("value"),
+    );
+    expect(selectedValue).toBe(false);
+    expect(decryptCredentialMock).not.toHaveBeenCalled();
   });
 });

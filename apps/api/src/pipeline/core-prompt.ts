@@ -12,6 +12,7 @@ import {
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
+import { getSandboxEnvNames } from "../lib/sandbox.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { users, entities } from "@aura/db/schema";
 import { db } from "../db/client.js";
@@ -271,7 +272,7 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
-  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity] =
+  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity, sandboxEnvNames] =
     await Promise.all([
       queryEmbedding
         ? retrieveMemories({
@@ -298,6 +299,7 @@ export async function buildCorePrompt(
       lookupPerson(session.userId),
       getUsageStats(),
       fetchInterlocutorEntity(session.userId),
+      getSandboxEnvNames(session.userId),
     ]);
 
   // Build entity summaries (related-entities lookup depends on retrieved memories)
@@ -332,6 +334,7 @@ export async function buildCorePrompt(
     channelId: session.conversationId,
     threadTs: session.threadId,
     usageStats,
+    sandboxEnvNames,
   });
 
   if (session.channel === "dashboard") {

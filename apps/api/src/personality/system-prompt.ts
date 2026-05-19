@@ -388,6 +388,16 @@ function formatConversations(conversations: ConversationThread[]): string {
   return `<related_threads>\n${threads}\n</related_threads>`;
 }
 
+function formatCapabilities(envNames: string[]): string {
+  const names = [...new Set(envNames)].sort();
+  if (names.length === 0) return "";
+
+  return `<capabilities>
+You have these credentials/API keys available in your sandbox env (run_command, etc.). Names only — never paste or log values. Use them when relevant; don't claim you "don't have access" without checking first.
+${names.map((name) => `- ${name}`).join("\n")}
+</capabilities>`;
+}
+
 export interface SystemPromptLayers {
   /** Stable across ALL requests: personality + self-directive + auto-generated notes index */
   stablePrefix: string;
@@ -569,6 +579,7 @@ export function buildDynamicContext(context: {
   channelId?: string;
   threadTs?: string;
   usageStats?: string;
+  sandboxEnvNames?: string[];
 }): string {
   let s = `<runtime>\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
   if (context.modelId) s += `\nActive model: \`${context.modelId}\``;
@@ -576,5 +587,7 @@ export function buildDynamicContext(context: {
   if (context.threadTs) s += `\nCurrent thread_ts: ${context.threadTs}`;
   if (context.usageStats) s += `\n\n${context.usageStats}`;
   s += "\n</runtime>";
+  const capabilities = formatCapabilities(context.sandboxEnvNames ?? []);
+  if (capabilities) s += `\n\n${capabilities}`;
   return s;
 }
