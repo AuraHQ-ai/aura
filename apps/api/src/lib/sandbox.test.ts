@@ -1,49 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockState = vi.hoisted(() => ({
-  credentialRows: [] as Array<{
-    id: string;
-    name: string;
-    value: string;
-    ownerId: string;
-    scope: string;
-    sandboxEnvName: string | null;
-  }>,
-  grantRows: [] as Array<{ credentialId: string }>,
-}));
-
-const mocks = vi.hoisted(() => ({
-  dbSelect: vi.fn(),
-  decryptCredential: vi.fn((value: string) => `decrypted:${value}`),
-  resolveUserCredentials: vi.fn(),
-}));
-
-vi.mock("../db/client.js", () => {
-  mocks.dbSelect.mockImplementation((selection: Record<string, unknown>) => {
-    const keys = Object.keys(selection ?? {});
-    return {
-      from: vi.fn(() => {
-        if (keys.length === 1 && keys[0] === "credentialId") {
-          return { where: vi.fn(async () => mockState.grantRows) };
-        }
-        return Promise.resolve(mockState.credentialRows);
-      }),
-    };
-  });
-
-  return {
-    db: {
-      select: mocks.dbSelect,
-    },
+const dbMock = vi.hoisted(() => {
+  const state = {
+    results: [] as unknown[][],
+    select: vi.fn(),
   };
+
+  function createQuery() {
+    const query: any = {
+      from: vi.fn(() => query),
+      where: vi.fn(() => query),
+      then: (onFulfilled: any, onRejected: any) =>
+        Promise.resolve(state.results.shift() ?? []).then(onFulfilled, onRejected),
+    };
+    return query;
+  }
+
+  state.select.mockImplementation(() => createQuery());
+
+  return state;
 });
 
+const decryptCredentialMock = vi.hoisted(() => vi.fn((value: string) => value));
+const resolveUserCredentialsMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../db/client.js", () => ({
+  db: {
+    select: dbMock.select,
+  },
+}));
+
 vi.mock("./credentials.js", () => ({
-  decryptCredential: mocks.decryptCredential,
+  decryptCredential: decryptCredentialMock,
 }));
 
 vi.mock("./permissions.js", () => ({
-  resolveUserCredentials: mocks.resolveUserCredentials,
+  resolveUserCredentials: resolveUserCredentialsMock,
 }));
 
 vi.mock("./settings.js", () => ({
@@ -60,20 +52,87 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
-import { getSandboxEnvNames } from "./sandbox.js";
+import { getSandboxEnvs, getSandboxEnvNames } from "./sandbox.js";
+
+interface CredentialRow {
+  id: string;
+  name: string;
+  value: string;
+  ownerId: string;
+  scope: string;
+  sandboxEnvName: string | null;
+}
+
+function queueDbResults(...results: unknown[][]) {
+  dbMock.results = [...results];
+}
+
+const callerCredential: CredentialRow = {
+  id: "cred-caller",
+  name: "github_token",
+  value: "caller-token",
+  ownerId: "U_CALLER",
+  scope: "owner",
+  sandboxEnvName: null,
+};
+
+const otherCredential: CredentialRow = {
+  id: "cred-other",
+  name: "github_token",
+  value: "other-token",
+  ownerId: "U_OTHER",
+  scope: "member",
+  sandboxEnvName: null,
+};
+
+describe("getSandboxEnvs", () => {
+  beforeEach(() => {
+    queueDbResults();
+    vi.clearAllMocks();
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["github_token"]));
+  });
+
+  it.each([
+    [[callerCredential, otherCredential], "caller row first"],
+    [[otherCredential, callerCredential], "caller row last"],
+  ])("prefers caller-owned credentials on env name collisions (%s)", async (rows) => {
+    queueDbResults([], rows);
+
+    const envs = await getSandboxEnvs("U_CALLER");
+
+    expect(envs.GITHUB_TOKEN).toBe("caller-token");
+    expect(envs.GH_TOKEN).toBe("caller-token");
+  });
+
+  it("does not inject another user's per_user credential with the same name", async () => {
+    queueDbResults(
+      [],
+      [
+        callerCredential,
+        {
+          ...otherCredential,
+          id: "cred-per-user",
+          value: "other-per-user-token",
+          scope: "per_user",
+        },
+      ],
+    );
+
+    const envs = await getSandboxEnvs("U_CALLER");
+
+    expect(envs.GITHUB_TOKEN).toBe("caller-token");
+  });
+});
 
 describe("getSandboxEnvNames", () => {
   beforeEach(() => {
-    mockState.credentialRows = [];
-    mockState.grantRows = [];
-    mocks.dbSelect.mockClear();
-    mocks.decryptCredential.mockClear();
-    mocks.resolveUserCredentials.mockReset();
-    mocks.resolveUserCredentials.mockResolvedValue(new Set<string>());
+    queueDbResults();
+    vi.clearAllMocks();
+    resolveUserCredentialsMock.mockResolvedValue(new Set<string>());
   });
 
   it("applies the owner-scoped gate for owned, granted, and ungranted credentials", async () => {
-    mockState.credentialRows = [
+    const rows: CredentialRow[] = [
       {
         id: "owned",
         name: "github_token",
@@ -99,8 +158,8 @@ describe("getSandboxEnvNames", () => {
         sandboxEnvName: "LINEAR_API_KEY",
       },
     ];
-    mockState.grantRows = [{ credentialId: "granted" }];
-    mocks.resolveUserCredentials.mockResolvedValue(
+    queueDbResults([{ credentialId: "granted" }], rows);
+    resolveUserCredentialsMock.mockResolvedValue(
       new Set(["github_token", "notion_api_key", "linear_api_key"]),
     );
 
@@ -111,23 +170,22 @@ describe("getSandboxEnvNames", () => {
   });
 
   it("honors Gate 1 for per_user-scoped credentials with and without grants", async () => {
-    mockState.credentialRows = [
-      {
-        id: "per-user",
-        name: "notion_api_key",
-        value: "notion-secret-value",
-        ownerId: "U_OWNER",
-        scope: "per_user",
-        sandboxEnvName: "NOTION_API_KEY",
-      },
-    ];
+    const perUserCredential: CredentialRow = {
+      id: "per-user",
+      name: "notion_api_key",
+      value: "notion-secret-value",
+      ownerId: "U_OWNER",
+      scope: "per_user",
+      sandboxEnvName: "NOTION_API_KEY",
+    };
 
-    mocks.resolveUserCredentials.mockResolvedValue(new Set<string>());
+    queueDbResults([], [perUserCredential]);
+    resolveUserCredentialsMock.mockResolvedValue(new Set<string>());
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([]);
 
-    mocks.dbSelect.mockClear();
-    mockState.grantRows = [{ credentialId: "per-user" }];
-    mocks.resolveUserCredentials.mockResolvedValue(new Set(["notion_api_key"]));
+    dbMock.select.mockClear();
+    queueDbResults([{ credentialId: "per-user" }], [perUserCredential]);
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["notion_api_key"]));
 
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
       "NOTION_API_KEY",
@@ -135,7 +193,7 @@ describe("getSandboxEnvNames", () => {
   });
 
   it("honors resolved role-tier credential access and falls back to uppercase names", async () => {
-    mockState.credentialRows = [
+    const rows: CredentialRow[] = [
       {
         id: "member",
         name: "member_token",
@@ -161,7 +219,8 @@ describe("getSandboxEnvNames", () => {
         sandboxEnvName: "ADMIN_TOKEN",
       },
     ];
-    mocks.resolveUserCredentials.mockResolvedValue(
+    queueDbResults([], rows);
+    resolveUserCredentialsMock.mockResolvedValue(
       new Set(["member_token", "power_token"]),
     );
 
@@ -172,26 +231,29 @@ describe("getSandboxEnvNames", () => {
   });
 
   it("does not select or decrypt credential values", async () => {
-    mockState.credentialRows = [
-      {
-        id: "secret",
-        name: "secret_token",
-        value: "super-secret-value",
-        ownerId: "U_CALLER",
-        scope: "owner",
-        sandboxEnvName: "SECRET_TOKEN",
-      },
-    ];
-    mocks.resolveUserCredentials.mockResolvedValue(new Set(["secret_token"]));
+    queueDbResults(
+      [],
+      [
+        {
+          id: "secret",
+          name: "secret_token",
+          value: "super-secret-value",
+          ownerId: "U_CALLER",
+          scope: "owner",
+          sandboxEnvName: "SECRET_TOKEN",
+        },
+      ],
+    );
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["secret_token"]));
 
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
       "SECRET_TOKEN",
     ]);
 
-    const selectedValue = mocks.dbSelect.mock.calls.some(([selection]) =>
+    const selectedValue = dbMock.select.mock.calls.some(([selection]) =>
       Object.keys(selection ?? {}).includes("value"),
     );
     expect(selectedValue).toBe(false);
-    expect(mocks.decryptCredential).not.toHaveBeenCalled();
+    expect(decryptCredentialMock).not.toHaveBeenCalled();
   });
 });

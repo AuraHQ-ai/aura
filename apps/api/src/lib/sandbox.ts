@@ -118,15 +118,30 @@ async function resolveSandboxCredentialRows(
       // Gate 1: user must have access to this credential name
       if (userCredNames && !userCredNames.has(row.name)) continue;
 
-      // Gate 2: for owner-scoped credentials, only inject the calling user's
+      // Gate 2: for row-scoped credentials, only inject the calling user's
       // own row OR rows they've been explicitly granted access to.
       // Without this, two users with the same credential name (e.g.
       // `github_token`) would collide and the last row wins silently.
-      // When userId is omitted, skip ALL owner-scoped credentials to prevent
+      // When userId is omitted, skip ALL row-scoped credentials to prevent
       // leaking every user's secrets into an anonymous sandbox.
-      if (row.scope === "owner") {
+      const scope = row.scope || "member";
+      if (scope === "owner") {
         if (!userId) continue;
         if (row.ownerId !== userId && !grantedCredentialIds.has(row.id)) continue;
+      } else if (scope === "per_user") {
+        if (!userId) continue;
+        if (row.ownerId !== userId && !grantedCredentialIds.has(row.id)) continue;
+      } else if (
+        scope !== "member" &&
+        scope !== "power_user" &&
+        scope !== "admin"
+      ) {
+        logger.warn("getSandboxEnvs: unknown credential scope", {
+          userId,
+          credentialName: row.name,
+          scope,
+        });
+        continue;
       }
 
       accessibleRows.push(row);
@@ -155,13 +170,23 @@ async function resolveSandboxCredentialRows(
  */
 export async function getSandboxEnvs(userId?: string): Promise<Record<string, string>> {
   const envs: Record<string, string> = {};
+  const envOwnedByCaller = new Set<string>();
   const rows = await resolveSandboxCredentialRows(userId, true);
 
   for (const row of rows) {
     // Use the explicit sandboxEnvName if set, otherwise uppercase the name
     const envName = resolveSandboxEnvName(row);
+    const ownedByCaller = !!userId && row.ownerId === userId;
+    // Caller-owned credentials always win name/env-name collisions, even if
+    // another accessible row with the same env var is processed later.
+    if (envs[envName] !== undefined && envOwnedByCaller.has(envName) && !ownedByCaller) {
+      continue;
+    }
     try {
       envs[envName] = decryptCredential(row.value);
+      if (ownedByCaller) {
+        envOwnedByCaller.add(envName);
+      }
     } catch (e: any) {
       logger.warn("Failed to decrypt credential for sandbox injection", {
         name: row.name,
