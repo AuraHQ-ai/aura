@@ -1,6 +1,6 @@
 ---
 title: "Sandbox & Code Execution"
-description: "Run arbitrary shell commands in an isolated Linux VM — 1 tool."
+description: "Run arbitrary shell commands in an isolated Linux VM."
 ---
 
 # Sandbox & Code Execution
@@ -8,6 +8,18 @@ description: "Run arbitrary shell commands in an isolated Linux VM — 1 tool."
 Aura has access to a sandboxed Linux VM powered by [E2B](https://e2b.dev). This allows her to run shell commands, execute code, process files, and interact with the filesystem safely — without risking the production environment.
 
 **Required env var:** `E2B_API_KEY` (and optionally `E2B_TEMPLATE_ID` for a custom template)
+
+---
+
+## Command tools
+
+Aura has three sandbox command tools:
+
+| Tool | Use when | Behavior |
+|------|----------|----------|
+| `run_command` | The command should finish inline, usually under 120s | Starts the process, waits up to `timeout_seconds`, then returns exit code/stdout/stderr. If the process is still running at timeout, returns an `id` and `pid` for polling instead of losing progress. |
+| `run_command_detached` | The command is long-running or has uncertain duration | Starts the process in the background and returns immediately with `id`, `pid`, and `started_at`. |
+| `check_command` | You need progress or final status for a detached command | Polls `/tmp/aura-bg/<id>.*` and returns status, exit code when available, stdout/stderr tails, and runtime. |
 
 ---
 
@@ -22,6 +34,48 @@ Execute a shell command in the sandboxed Linux VM.
 | `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to `/home/user`. |
 
 **Returns:** exit code, stdout, stderr.
+
+If the command exceeds its inline timeout but is still running, `run_command` returns:
+
+```json
+{
+  "ok": false,
+  "error": "Command exceeded inline timeout (90s) but is still running as PID 1234. Call check_command({id: 'abcd1234'}) to poll progress, or run 'kill 1234' to stop it.",
+  "id": "abcd1234",
+  "pid": 1234
+}
+```
+
+Call `check_command({ "id": "abcd1234" })` to continue monitoring the same process.
+
+---
+
+## `run_command_detached`
+
+Start a command in the background and return immediately.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | **yes** | Shell command to run, e.g. `sleep 300` |
+| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to `/home/user`. |
+| `env` | object | no | Additional environment variables for this command. |
+
+**Returns:** `id`, `pid`, `started_at`.
+
+Use this for installs, test suites, crawls, data jobs, or any command where blocking the current Slack stream would be risky.
+
+---
+
+## `check_command`
+
+Poll a command started by `run_command_detached`, or a `run_command` call that timed out and returned an `id`.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | **yes** | The 8-character command id. |
+| `tail_lines` | number | no | Number of recent stdout/stderr lines to return from each stream (default 200, max 1000). |
+
+**Returns:** `status` (`running`, `exited`, or `not_found`), `exit_code` when available, `stdout_tail`, `stderr_tail`, `runtime_s`.
 
 ---
 
@@ -50,7 +104,7 @@ Install additional packages with `apt-get install` or `pip install`.
 
 ## Credential injection
 
-When `run_command` executes, Aura injects environment variables based on the calling user's identity. The function `getSandboxEnvs(userId)` resolves which credentials each user can access:
+When a sandbox command tool executes, Aura injects environment variables based on the calling user's identity. The function `getSandboxEnvs(userId)` resolves which credentials each user can access:
 
 - **Owner-scoped credentials** (scope = `owner`) are only injected for the credential's owner
 - **Role-scoped credentials** (scope = `admin`, `power_user`, or `member`) are injected for any user meeting the minimum role
@@ -109,7 +163,7 @@ When `MONGODB_ATLAS_URI` is configured, Aura has a dedicated schema-less scratch
 - Postgres (`DATABASE_URL`) is the system's mission-critical spine: memories, messages, entities, jobs, notes. Aura does not write DDL or mutate Postgres without explicit owner approval.
 - MongoDB Atlas is Aura's scratch space. Create collections freely.
 
-The mount is set up automatically when `run_command` executes. If the mount isn't available (e.g. GCS credentials not configured), Aura falls back to `/home/user/` with a warning.
+The mount is set up automatically when a sandbox command tool executes. If the mount isn't available (e.g. GCS credentials not configured), Aura falls back to `/home/user/` with a warning.
 
 Common persistent paths:
 - `/mnt/aura-files/<user_id>/` — per-user persistent root
@@ -138,8 +192,8 @@ The sandbox is currently a single shared instance across all users and threads. 
 |------|-------------------|
 | Quick commands (`ls`, `grep`, `git log`) | 10–30s |
 | Code execution, file processing | 60–90s |
-| `claude` agent tasks (multi-file changes) | 400–750s |
-| Long web crawls or batch processing | 300–600s |
+| `claude` agent tasks (multi-file changes) | Use `run_command_detached`, or 400-750s only for intentionally blocking work |
+| Long web crawls or batch processing | Use `run_command_detached` and poll with `check_command` |
 
 Slack `chat.stream` sessions cap at around 3 minutes. Individual foreground tool calls longer than 90s can leave the in-flight Slack message frozen on a tool widget before the response continues elsewhere, so prefer smaller commands and only set higher `timeout_seconds` when the work is headless or intentionally long-running.
 

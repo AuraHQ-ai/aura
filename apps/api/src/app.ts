@@ -4,6 +4,7 @@ import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
+import { createSandboxCommandWebhookApp } from "./webhook/sandbox-command.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
 import { runPipeline } from "./pipeline/index.js";
 import {
@@ -263,6 +264,7 @@ app.post("/api/slack/events", async (c) => {
         callingUserId: event.user || undefined,
         channelId: event.channel || undefined,
         threadTs: event.thread_ts || event.ts || undefined,
+        workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
       },
       async () =>
         runPipeline({
@@ -765,6 +767,10 @@ app.get("/api/oauth/google/callback", async (c) => {
     }, 500);
   }
 });
+
+// ── Sandbox Command Webhook ─────────────────────────────────────────────────
+
+app.route("/api/webhook/sandbox-command", createSandboxCommandWebhookApp(slackClient));
 
 // ── Cursor Agent Webhook ───────────────────────────────────────────────────
 

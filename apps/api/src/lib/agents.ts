@@ -84,7 +84,7 @@ export async function createInteractiveAgent(
 
 export interface HeadlessAgentOptions {
   slackClient: WebClient;
-  context?: { userId?: string; channelId?: string; threadTs?: string };
+  context?: ScheduleContext;
   systemPrompt: string;
   invocationId?: string;
 }

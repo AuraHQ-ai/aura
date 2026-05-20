@@ -15,6 +15,7 @@ export interface ExecutionContext {
   jobId?: string;
   channelId?: string;
   threadTs?: string;
+  workspaceId?: string;
 }
 
 export const executionContext = new AsyncLocalStorage<ExecutionContext>();

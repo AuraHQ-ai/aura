@@ -90,7 +90,8 @@ List recent Cursor agents. Optionally filter by PR URL.
 
 | Use Case | Tool |
 |----------|------|
-| Simple one-line fix, typo, config change | `run_command` (sandbox) |
-| Read code, explore repo, run tests | `run_command` (sandbox) |
+| Simple one-line fix, typo, config change | `run_command` (sandbox inline) |
+| Read code, explore repo, run short tests | `run_command` (sandbox inline) |
+| Long test suites, installs, or uncertain-duration shell work | `run_command_detached` + `check_command` |
 | Multi-file refactor, new feature, complex bug fix | `dispatch_cursor_agent` |
 | Changes requiring understanding of 5+ files | `dispatch_cursor_agent` |
