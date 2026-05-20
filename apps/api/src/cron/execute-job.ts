@@ -1,9 +1,7 @@
-import { WebClient } from "@slack/web-api";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
-import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext } from "../lib/tool.js";
 import { getCurrentTimeContext } from "../lib/temporal.js";
@@ -18,11 +16,8 @@ import {
 } from "./persist-conversation.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
-import { resolveSlackDestination } from "../tools/slack.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
-
-const botToken = process.env.SLACK_BOT_TOKEN || "";
-const slackClient = new WebClient(botToken);
+import { sendJobFailureDm } from "./job-notifications.js";
 
 /** Max retries before marking as failed */
 export const MAX_RETRIES = 3;
@@ -452,20 +447,13 @@ export async function executeJob(
         })
         .where(eq(jobs.id, jobId));
 
-      // Escalate: DM the requester
-      try {
-        if (job.requestedBy && job.requestedBy !== "aura") {
-          const dmChannelId = await resolveSlackDestination(slackClient, job.requestedBy);
-          if (dmChannelId) {
-            await safePostMessage(slackClient, {
-              channel: dmChannelId,
-              text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
-            });
-          }
-        }
-      } catch {
-        logger.error("Heartbeat: failed to send escalation DM", { jobId, executionId });
-      }
+      await sendJobFailureDm({
+        jobId,
+        requestedBy: job.requestedBy,
+        fallbackToAdmin: false,
+        text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
+        logContext: { executionId },
+      });
 
       logger.error("Heartbeat: job failed permanently", {
         jobName: job.name,
