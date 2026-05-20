@@ -78,6 +78,21 @@ RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
 # Enable allow_other for FUSE mounts by non-root users
 RUN echo "user_allow_other" >> /etc/fuse.conf
 
+# MongoDB shell (mongosh) — for interactive Atlas debugging
+RUN curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc \
+    | gpg --dearmor -o /usr/share/keyrings/mongodb-org.gpg \
+    && echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-org.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" \
+    | tee /etc/apt/sources.list.d/mongodb-org-7.0.list > /dev/null \
+    && apt-get update -qq && apt-get install -y mongodb-mongosh \
+    && rm -rf /var/lib/apt/lists/*
+
+# MongoDB node driver — pre-installed at /home/user so scripts can `require('mongodb')`
+# without a per-job `npm install` cold-start cost (~3-5s saved).
+RUN mkdir -p /home/user && cd /home/user \
+    && npm init -y > /dev/null \
+    && npm install --silent mongodb \
+    && chown -R user:user /home/user
+
 # Working dirs
 RUN mkdir -p /home/user/downloads /home/user/data /home/user/aura \
     && chown -R user:user /home/user
