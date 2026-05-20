@@ -36,6 +36,10 @@ import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
 import {
+  generateInitialDmThreadTitle,
+  generateUpdatedDmThreadTitle,
+} from "./dm-title.js";
+import {
   createConversationTrace,
   persistConversationInputs,
   persistConversationSteps,
@@ -1005,11 +1009,6 @@ async function runBackgroundTasks(params: {
   }
 }
 
-/** Strip wrapping quotes and trailing punctuation that LLMs sometimes add despite instructions. */
-function sanitizeTitle(raw: string): string {
-  return raw.trim().replace(/^["'""]+|["'""]+$/g, "").replace(/[.!;:]+$/, "").trim();
-}
-
 /**
  * Generate and set the initial title for a DM thread.
  * Triggered after the first assistant response so both sides of the
@@ -1024,15 +1023,10 @@ async function setInitialDmThreadTitle(params: {
 }): Promise<void> {
   const { userMessage, assistantResponse, channelId, threadTs, client } = params;
   try {
-    const { getFastModel } = await import("../lib/ai.js");
-    const { generateText } = await import("ai");
-    const fastModel = await getFastModel();
-    const { text: raw } = await generateText({
-      model: fastModel,
-      maxOutputTokens: 40,
-      prompt: `What is this conversation about? Name the core topic in 3-8 words. No quotes, no punctuation at the end.\n\nUser: "${userMessage.slice(0, 300)}"\n\nAssistant: "${assistantResponse.slice(0, 500)}"`,
+    const title = await generateInitialDmThreadTitle({
+      userMessage,
+      assistantResponse,
     });
-    const title = sanitizeTitle(raw).slice(0, 100);
     if (!title) return;
     await client.assistant.threads.setTitle({
       channel_id: channelId,
@@ -1072,30 +1066,11 @@ async function maybeUpdateDmThreadTitle(params: {
   if (totalMessages < 5 || totalMessages % 5 > 1) return;
 
   try {
-    const { getFastModel } = await import("../lib/ai.js");
-    const { generateText } = await import("ai");
-    const fastModel = await getFastModel();
-
-    const half = Math.ceil(recentMessages.length / 2);
-    const messagesContext = messagesElided
-      ? [
-          "--- Start of conversation ---",
-          ...recentMessages.slice(0, half).map(m => `${m.displayName}: ${m.text.slice(0, 150)}`),
-          "--- ... ---",
-          ...recentMessages.slice(half).map(m => `${m.displayName}: ${m.text.slice(0, 150)}`),
-          "--- Latest ---",
-        ].join("\n")
-      : recentMessages
-          .map(m => `${m.displayName}: ${m.text.slice(0, 150)}`)
-          .join("\n");
-
-    const { text: raw } = await generateText({
-      model: fastModel,
-      maxOutputTokens: 40,
-      prompt: `What are the 1-3 core topics discussed in this Slack DM conversation? Express as a short title (5-10 words). If multiple distinct topics, separate them with " / ". Capture the essence of the whole conversation arc, not just the latest messages. No quotes, no punctuation at the end.\n\nConversation:\n${messagesContext}\n\nLatest assistant response: "${assistantResponse.slice(0, 300)}"`,
+    const newTitle = await generateUpdatedDmThreadTitle({
+      recentMessages,
+      messagesElided,
+      assistantResponse,
     });
-
-    const newTitle = sanitizeTitle(raw).slice(0, 100);
     if (newTitle) {
       await client.assistant.threads.setTitle({
         channel_id: channelId,
