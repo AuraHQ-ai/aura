@@ -40,6 +40,8 @@ The sandbox template includes:
 | `rg` (ripgrep) | Fast code search |
 | `curl`, `jq` | HTTP requests and JSON processing |
 | `claude` | Claude Code for agentic code tasks |
+| `mongosh` | MongoDB Atlas shell (when `MONGODB_ATLAS_URI` is set) |
+| `mongodb` (node driver) | Programmatic Mongo access -- `require('mongodb')` with zero install cost |
 | `pdftotext` | PDF text extraction |
 
 Install additional packages with `apt-get install` or `pip install`.
@@ -76,8 +78,27 @@ Each user gets a persistent home directory backed by Google Cloud Storage (GCS) 
 
 Use persistent storage for:
 - Long-running work that spans multiple conversations (large datasets, intermediate results)
-- SQLite databases for complex analysis
+- SQLite databases for complex analysis (note: SQLite files can be lost on sandbox pause/resume edge cases -- prefer MongoDB Atlas for anything that must survive)
 - Downloaded files you need to reference later
+
+### MongoDB Atlas (recommended for structured cross-session state)
+
+When `MONGODB_ATLAS_URI` is configured, Aura has a dedicated schema-less scratch database for ad-hoc per-task collections. This is the preferred storage layer for anything that needs structured CRUD across sessions -- it's faster than GCS FUSE, more durable than SQLite-in-sandbox, and doesn't require schema migrations.
+
+**Typical uses:**
+- Tracking state for daily/recurring jobs (e.g. Facebook comment moderation: which comment IDs have been classified and what action was taken).
+- Staging area between fetch and load jobs (Notion dumps, scraping, enrichment pipelines).
+- Long-lived task collections that don't deserve a Postgres schema.
+
+**Conventions:**
+- One DB (default `aura`), many collections.
+- Collection naming: `<domain>_<purpose>` (e.g. `fb_comments`, `notion_dump_2026_05_20`).
+- `mongosh` and the `mongodb` node driver are pre-installed in the sandbox template.
+- The Mongo URI is injected per-job via the credential system -- never logged or echoed.
+
+**Boundary with Postgres:**
+- Postgres (`DATABASE_URL`) is the system's mission-critical spine: memories, messages, entities, jobs, notes. Aura does not write DDL or mutate Postgres without explicit owner approval.
+- MongoDB Atlas is Aura's scratch space. Create collections freely.
 
 The mount is set up automatically when `run_command` executes. If the mount isn't available (e.g. GCS credentials not configured), Aura falls back to `/home/user/` with a warning.
 
