@@ -14,7 +14,7 @@ export function createMemoryTools(context?: ScheduleContext) {
   return {
     get_memory: defineTool({
       description:
-        "Retrieve full details of a single memory by its UUID. Returns all fields including content, type, status, confidence, lifecycle metadata (supersedes/superseded_by), and related user IDs. Use this after search_memories to inspect a specific result.",
+        "Retrieve full details of a single memory by its UUID. Returns all fields including content, type, status, confidence, lifecycle metadata (supersedes/superseded_by), source provenance (thread_ts, channel_id), and related user IDs. Use this after search_memories to inspect a specific result.",
       inputSchema: z.object({
         id: z.string().uuid().describe("UUID of the memory to retrieve"),
       }),
@@ -45,6 +45,8 @@ export function createMemoryTools(context?: ScheduleContext) {
               importance: memory.importance,
               related_user_ids: memory.relatedUserIds,
               source_channel_type: memory.sourceChannelType,
+              source_thread_ts: memory.sourceThreadTs ?? null,
+              source_channel_id: memory.sourceChannelId ?? null,
               supersedes_memory_id: memory.supersedesMemoryId,
               superseded_by_memory_id: memory.supersededByMemoryId,
               superseded_at: memory.supersededAt?.toISOString() ?? null,
@@ -193,7 +195,7 @@ export function createMemoryTools(context?: ScheduleContext) {
             const whereClause = sql.join(conditions, sql` AND `);
 
             const result = await db.execute(sql`
-              SELECT m.id, m.content, m.type, m.status, m.created_at,
+              SELECT m.id, m.content, m.type, m.status, m.created_at, m.source_thread_ts, m.source_channel_id,
                      1 - (m.embedding <=> ${vectorSql}) AS similarity
               FROM memories m
               ${entityJoin}
@@ -223,6 +225,8 @@ export function createMemoryTools(context?: ScheduleContext) {
                 status: r.status,
                 created_at: new Date(r.created_at).toISOString(),
                 relevance_score: parseFloat(r.similarity).toFixed(3),
+                source_thread_ts: r.source_thread_ts ?? null,
+                source_channel_id: r.source_channel_id ?? null,
               })),
               count: rows.length,
             };
@@ -243,7 +247,7 @@ export function createMemoryTools(context?: ScheduleContext) {
 
             // Try full-text search first, fall back to ILIKE
             const ftsResult = await db.execute(sql`
-              SELECT m.id, m.content, m.type, m.status, m.created_at,
+              SELECT m.id, m.content, m.type, m.status, m.created_at, m.source_thread_ts, m.source_channel_id,
                      ts_rank(to_tsvector('english', m.content), plainto_tsquery('english', ${query})) AS rank
               FROM memories m
               ${entityJoin}
@@ -258,7 +262,7 @@ export function createMemoryTools(context?: ScheduleContext) {
             // Fallback to ILIKE if FTS returns nothing
             if (rows.length === 0) {
               const ilikeResult = await db.execute(sql`
-                SELECT m.id, m.content, m.type, m.status, m.created_at, 0 AS rank
+                SELECT m.id, m.content, m.type, m.status, m.created_at, m.source_thread_ts, m.source_channel_id, 0 AS rank
                 FROM memories m
                 ${entityJoin}
                 WHERE m.content ILIKE ${"%" + query + "%"}
@@ -288,6 +292,8 @@ export function createMemoryTools(context?: ScheduleContext) {
                 status: r.status,
                 created_at: new Date(r.created_at).toISOString(),
                 relevance_score: parseFloat(r.rank).toFixed(3),
+                source_thread_ts: r.source_thread_ts ?? null,
+                source_channel_id: r.source_channel_id ?? null,
               })),
               count: rows.length,
             };
@@ -312,7 +318,7 @@ export function createMemoryTools(context?: ScheduleContext) {
               ? sql`AND ${sql.join(conditions, sql` AND `)}`
               : sql``;
             result = await db.execute(sql`
-              SELECT m.id, m.content, m.type, m.status, m.created_at
+              SELECT m.id, m.content, m.type, m.status, m.created_at, m.source_thread_ts, m.source_channel_id
               FROM memories m
               ${entityJoin}
               WHERE TRUE ${filterClause}
@@ -321,7 +327,7 @@ export function createMemoryTools(context?: ScheduleContext) {
             `);
           } else {
             result = await db.execute(sql`
-              SELECT m.id, m.content, m.type, m.status, m.created_at
+              SELECT m.id, m.content, m.type, m.status, m.created_at, m.source_thread_ts, m.source_channel_id
               FROM memories m
               ${whereClause}
               ORDER BY m.created_at DESC
@@ -349,6 +355,8 @@ export function createMemoryTools(context?: ScheduleContext) {
               status: r.status,
               created_at: new Date(r.created_at).toISOString(),
               relevance_score: null,
+              source_thread_ts: r.source_thread_ts ?? null,
+              source_channel_id: r.source_channel_id ?? null,
             })),
             count: results.length,
           };
