@@ -112,7 +112,7 @@ export async function followupCursorAgent(
   agentId: string,
   prompt: string,
 ): Promise<CursorAgentResponse> {
-  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/follow-up`, {
+  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/followup`, {
     method: "POST",
     headers: await headers(),
     body: JSON.stringify({ prompt: { text: prompt } }),
@@ -120,7 +120,7 @@ export async function followupCursorAgent(
   if (!res.ok) {
     const text = await res.text();
     throw new Error(
-      `Cursor API POST /agents/${agentId}/follow-up failed (${res.status}): ${text}`,
+      `Cursor API POST /agents/${agentId}/followup failed (${res.status}): ${text}`,
     );
   }
   return (await res.json()) as CursorAgentResponse;
