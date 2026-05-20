@@ -10,6 +10,8 @@ import {
 } from "ai";
 import { createInteractivePrepareStep } from "./prepare-step.js";
 import { buildCachedSystemMessages, getEscalationModel } from "../lib/ai.js";
+import { getDeferredToolManifest } from "../tools/deferred.js";
+import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
 
 /**
  * Channel-agnostic agentic stream.
@@ -50,10 +52,14 @@ export interface AgenticStreamOptions {
 
 export function createAgenticStream(options: AgenticStreamOptions) {
   const stepModelIds: string[] = [];
+  const dynamicContext = appendDeferredToolsBlock(
+    options.dynamicContext,
+    getDeferredToolManifest(options.tools),
+  ) ?? options.dynamicContext;
   const prepareStep = createInteractivePrepareStep({
     stablePrefix: options.stablePrefix,
     conversationContext: options.conversationContext,
-    dynamicContext: options.dynamicContext,
+    dynamicContext,
     thinkingBudget: options.thinkingBudget ?? 8000,
     modelId: options.modelId,
     recordStepModelId: (stepNumber, stepModelId) => {
@@ -68,7 +74,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
   const system = buildCachedSystemMessages(
     options.stablePrefix,
     options.conversationContext,
-    options.dynamicContext,
+    dynamicContext,
   );
 
   return streamText({

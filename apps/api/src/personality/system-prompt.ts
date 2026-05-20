@@ -46,6 +46,11 @@ interface SystemPromptContext {
   entitySummaries?: EntitySummary[];
 }
 
+export interface DeferredToolSummary {
+  name: string;
+  description: string;
+}
+
 /**
  * Aura's base personality — the soul of the system.
  * Version-controlled. Changes are deliberate.
@@ -414,14 +419,148 @@ function formatStorage(envNames: string[]): string {
   return `<storage>\n${lines.join("\n")}\n</storage>`;
 }
 
-function formatCapabilities(envNames: string[]): string {
+const CAPABILITY_DOMAINS: Array<{
+  label: string;
+  envNames: string[];
+  guidance: string;
+  wrappers?: string[];
+}> = [
+  {
+    label: "Cursor Cloud Agents",
+    envNames: ["CURSOR_API_KEY"],
+    wrappers: [
+      "dispatch_cursor_agent",
+      "check_cursor_agent",
+      "followup_cursor_agent",
+      "list_cursor_agents",
+      "stop_cursor_agent",
+    ],
+    guidance: "dispatch and manage async coding agents with the typed Cursor tools",
+  },
+  {
+    label: "GitHub",
+    envNames: ["GITHUB_TOKEN"],
+    guidance: "prefer the `gh` CLI in the sandbox; for issue/PR ops use it directly",
+  },
+  {
+    label: "Slack",
+    envNames: ["SLACK_BOT_TOKEN", "SLACK_USER_TOKEN"],
+    wrappers: [
+      "search_messages",
+      "read_channel_history",
+      "send_channel_message",
+      "send_direct_message",
+      "read_thread_replies",
+    ],
+    guidance: "use the Slack tools, not Web API curl",
+  },
+  {
+    label: "Postgres",
+    envNames: ["DATABASE_URL"],
+    guidance: "use `psql $DATABASE_URL` in the sandbox for direct database inspection",
+  },
+  {
+    label: "BigQuery",
+    envNames: ["GOOGLE_BQ_CREDENTIALS"],
+    wrappers: [
+      "bq_list_datasets",
+      "bq_list_tables",
+      "bq_inspect_table",
+      "bq_execute_query",
+    ],
+    guidance: "use the BigQuery tools, especially `bq_execute_query`, not bq CLI curl",
+  },
+  {
+    label: "E2B Sandboxes",
+    envNames: ["E2B_API_KEY", "E2B_PAT"],
+    wrappers: ["run_command", "dispatch_headless", "run_subagent"],
+    guidance: "use the sandbox tools instead of calling E2B APIs directly",
+  },
+];
+
+function formatToolList(toolNames: string[]): string {
+  return toolNames.map((name) => `\`${name}\``).join(" / ");
+}
+
+function formatCapabilities(
+  envNames: string[],
+  availableToolNames?: string[],
+): string {
   const names = [...new Set(envNames)].sort();
   if (names.length === 0) return "";
 
+  const availableTools = availableToolNames
+    ? new Set(availableToolNames)
+    : null;
+  const covered = new Set<string>();
+  const lines: string[] = [
+    "You have access to these systems from the sandbox environment. Credential names are identifiers only -- never paste or log values. Prefer typed Aura tools and safe CLIs before raw HTTP/API calls.",
+    "",
+    "Hard rule: Seeing a credential name is not a reason to use it -- it's a reason to check if a typed tool wraps it. Before `curl` with a secret, run `tool_search_tool_bm25` for the domain.",
+    "",
+  ];
+
+  for (const domain of CAPABILITY_DOMAINS) {
+    const presentEnvNames = domain.envNames.filter((name) => names.includes(name));
+    if (presentEnvNames.length === 0) continue;
+    presentEnvNames.forEach((name) => covered.add(name));
+
+    const presentWrappers = domain.wrappers?.filter((name) =>
+      availableTools ? availableTools.has(name) : true,
+    ) ?? [];
+    const wrapperText = presentWrappers.length > 0
+      ? ` -> ${formatToolList(presentWrappers)}`
+      : "";
+    lines.push(
+      `- ${domain.label}: ${presentEnvNames.map((name) => `\`${name}\``).join(" / ")}${wrapperText} -- ${domain.guidance}`,
+    );
+  }
+
+  const uncategorized = names.filter((name) => !covered.has(name));
+  if (uncategorized.length > 0) {
+    lines.push(
+      `- Other available credentials: ${uncategorized.map((name) => `\`${name}\``).join(", ")} -- search typed tools for the relevant domain before raw API use`,
+    );
+  }
+
   return `<capabilities>
-You have these credentials/API keys available in your sandbox env (run_command, etc.). Names only — never paste or log values. Use them when relevant; don't claim you "don't have access" without checking first.
-${names.map((name) => `- ${name}`).join("\n")}
+${lines.join("\n")}
 </capabilities>`;
+}
+
+export function formatDeferredTools(
+  deferredTools: DeferredToolSummary[] | undefined,
+  immediateToolNames: string[] = [],
+): string {
+  if (!deferredTools?.length) return "";
+
+  const immediateTools = new Set(immediateToolNames);
+  const seen = new Set<string>();
+  const entries = deferredTools
+    .filter((tool) => {
+      if (immediateTools.has(tool.name) || seen.has(tool.name)) return false;
+      seen.add(tool.name);
+      return true;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (entries.length === 0) return "";
+
+  return `<deferred_tools>
+Available on demand (call tool_search_tool_bm25 to load schemas):
+${entries.map((tool) => `- ${tool.name}: ${tool.description}`).join("\n")}
+</deferred_tools>`;
+}
+
+export function appendDeferredToolsBlock(
+  prompt: string | undefined,
+  deferredTools: DeferredToolSummary[] | undefined,
+  immediateToolNames: string[] = [],
+): string | undefined {
+  const block = formatDeferredTools(deferredTools, immediateToolNames);
+  if (!block) return prompt;
+  if (prompt?.includes("<deferred_tools>")) return prompt;
+  return prompt ? `${prompt}\n\n${block}` : block;
 }
 
 export interface SystemPromptLayers {
@@ -606,6 +745,9 @@ export function buildDynamicContext(context: {
   threadTs?: string;
   usageStats?: string;
   sandboxEnvNames?: string[];
+  availableToolNames?: string[];
+  deferredTools?: DeferredToolSummary[];
+  immediateToolNames?: string[];
 }): string {
   let s = `<runtime>\n## Current context\n\n${getCurrentTimeContext(context.userTimezone)}`;
   if (context.modelId) s += `\nActive model: \`${context.modelId}\``;
@@ -613,7 +755,15 @@ export function buildDynamicContext(context: {
   if (context.threadTs) s += `\nCurrent thread_ts: ${context.threadTs}`;
   if (context.usageStats) s += `\n\n${context.usageStats}`;
   s += "\n</runtime>";
-  const capabilities = formatCapabilities(context.sandboxEnvNames ?? []);
+  const deferredTools = formatDeferredTools(
+    context.deferredTools,
+    context.immediateToolNames,
+  );
+  if (deferredTools) s += `\n\n${deferredTools}`;
+  const capabilities = formatCapabilities(
+    context.sandboxEnvNames ?? [],
+    context.availableToolNames,
+  );
   if (capabilities) s += `\n\n${capabilities}`;
   const storage = formatStorage(context.sandboxEnvNames ?? []);
   if (storage) s += `\n\n${storage}`;

@@ -8,6 +8,8 @@ import {
   withCacheControl,
 } from "./ai.js";
 import { createSlackTools } from "../tools/slack.js";
+import { getDeferredToolManifest } from "../tools/deferred.js";
+import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
 import {
   createInteractivePrepareStep,
   createHeadlessPrepareStep,
@@ -42,10 +44,14 @@ export async function createInteractiveAgent(
   const { modelId, model } = await getMainModel();
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const stepModelIds: string[] = [];
+  const dynamicContext = appendDeferredToolsBlock(
+    options.dynamicContext,
+    getDeferredToolManifest(tools),
+  );
   const systemMessages = buildCachedSystemMessages(
     options.stablePrefix,
     options.conversationContext,
-    options.dynamicContext,
+    dynamicContext,
   );
 
   const agent = new ToolLoopAgent({
@@ -56,7 +62,7 @@ export async function createInteractiveAgent(
     prepareStep: createInteractivePrepareStep({
       stablePrefix: options.stablePrefix,
       conversationContext: options.conversationContext,
-      dynamicContext: options.dynamicContext,
+      dynamicContext,
       modelId,
       defaultEffort: "medium",
       thinkingBudget: 8000,
@@ -87,14 +93,18 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
   const { modelId, model } = await getMainModel();
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const stepModelIds: string[] = [];
+  const systemPrompt = appendDeferredToolsBlock(
+    options.systemPrompt,
+    getDeferredToolManifest(tools),
+  ) ?? options.systemPrompt;
 
   const agent = new ToolLoopAgent({
     model,
     tools,
-    instructions: withCacheControl(options.systemPrompt),
+    instructions: withCacheControl(systemPrompt),
     stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
     prepareStep: createHeadlessPrepareStep({
-      stablePrefix: options.systemPrompt,
+      stablePrefix: systemPrompt,
       modelId,
       defaultEffort: "medium",
       thinkingBudget: 16000,
@@ -119,10 +129,15 @@ export interface SubagentAgentOptions {
 }
 
 export function createSubAgent(options: SubagentAgentOptions) {
+  const systemPrompt = appendDeferredToolsBlock(
+    options.systemPrompt,
+    getDeferredToolManifest(options.tools),
+  ) ?? options.systemPrompt;
+
   return new ToolLoopAgent({
     model: options.model,
     tools: options.tools,
-    instructions: options.systemPrompt,
+    instructions: systemPrompt,
     stopWhen: stepCountIs(options.maxSteps ?? 50),
   });
 }

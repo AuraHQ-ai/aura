@@ -58,7 +58,7 @@ async function buildToolScope(
     case "slack": {
       if (!client) {
         const { createCoreTools } = await import("./core.js");
-        return await createCoreTools(context, userCreds);
+        return await createCoreTools(context, userCreds, modelId);
       }
       const { createSlackTools } = await import("./slack.js");
       return { ...(await createSlackTools(client, context, modelId)) };
@@ -75,7 +75,7 @@ async function buildToolScope(
     default: {
       if (!client) {
         const { createCoreTools } = await import("./core.js");
-        return await createCoreTools(context, userCreds);
+        return await createCoreTools(context, userCreds, modelId);
       }
       const { createSlackTools } = await import("./slack.js");
       return await createSlackTools(client, context, modelId);

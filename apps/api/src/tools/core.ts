@@ -19,9 +19,10 @@ import { createJobTools } from "./jobs.js";
 import { createSubagentTools } from "./subagents.js";
 import { createScratchpadTools } from "./scratchpad.js";
 import { createMemoryTools } from "./memories.js";
-import { filterToolsByCredentials } from "../lib/tool.js";
+import { filterToolsByCredentials, registerToolNames } from "../lib/tool.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
+import { applyAnthropicToolDiscovery } from "./deferred.js";
 
 /**
  * Channel-agnostic tools available to every connector (Slack, Dashboard, etc.).
@@ -34,7 +35,11 @@ import { logger } from "../lib/logger.js";
  *
  * Filters tools based on the calling user's credential access.
  */
-export async function createCoreTools(context?: ScheduleContext, preResolvedCreds?: Set<string>) {
+export async function createCoreTools(
+  context?: ScheduleContext,
+  preResolvedCreds?: Set<string>,
+  modelId?: string,
+) {
   const allTools = {
     ...createDateTimeTools(),
     ...createNoteTools(context),
@@ -61,12 +66,16 @@ export async function createCoreTools(context?: ScheduleContext, preResolvedCred
 
   try {
     const userCreds = preResolvedCreds ?? await resolveUserCredentials(context?.userId);
-    return filterToolsByCredentials(allTools, userCreds);
+    const filteredTools = filterToolsByCredentials(allTools, userCreds);
+    await applyAnthropicToolDiscovery(filteredTools, modelId);
+    return registerToolNames(filteredTools);
   } catch (e: any) {
     logger.warn("createCoreTools: credential resolution failed, returning ungated tools only", {
       userId: context?.userId,
       error: e.message,
     });
-    return filterToolsByCredentials(allTools, new Set());
+    const filteredTools = filterToolsByCredentials(allTools, new Set());
+    await applyAnthropicToolDiscovery(filteredTools, modelId);
+    return registerToolNames(filteredTools);
   }
 }
