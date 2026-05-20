@@ -512,7 +512,12 @@ export async function generateResponse(
           errorMessage: err?.message || "unexpected error on stream append",
           errorCode: err?.data?.error || "unknown",
           channelId,
-          context: { fallback: "postMessage" },
+          context: {
+            fallback: "postMessage",
+            ...(err?.data?.error === "message_not_in_streaming_state" && {
+              isFallbackRecovery: true,
+            }),
+          },
         });
       }
       if (streamingFailed) {
@@ -566,6 +571,20 @@ export async function generateResponse(
 
   const streamCallOptions: Record<string, any> = {
     abortSignal: abortController.signal,
+    onError: ({ error }: { error: unknown }) => {
+      const streamError = error instanceof Error ? error : undefined;
+      const errorLike = error && typeof error === "object"
+        ? error as { name?: string; message?: string; stack?: string }
+        : undefined;
+      logError({
+        errorName: errorLike?.name || streamError?.name || "StreamMidFlightError",
+        errorMessage: errorLike?.message || streamError?.message || String(error),
+        errorCode: "stream_on_error_callback",
+        channelId,
+        context: { accumulatedTextLength: accumulatedText.length },
+        stackTrace: errorLike?.stack || streamError?.stack,
+      });
+    },
   };
 
   if (hasFiles) {
@@ -596,6 +615,8 @@ export async function generateResponse(
   let continuationCount = 0;
   let tableBuffer: string[] = [];
   let lineCarry = "";
+  let emptyCompletionDetected = false;
+  const emptyCompletionFallbackText = "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_";
 
   function clearLongToolSplitTimer() {
     if (longToolSplitTimer) {
@@ -1054,6 +1075,42 @@ export async function generateResponse(
       }
     }
 
+    if (accumulatedText.length === 0 && toolCallRecords.length > 0) {
+      let finishReason: unknown;
+      try {
+        finishReason = (result as any).finishReason
+          ? await (result as any).finishReason
+          : undefined;
+      } catch {
+        finishReason = undefined;
+      }
+
+      logError({
+        errorName: "EmptyCompletion",
+        errorMessage: "Stream completed without usable output after tool calls",
+        errorCode: "empty_completion_after_tools",
+        channelId,
+        context: {
+          toolCallCount: toolCallRecords.length,
+          toolErrorCount: toolCallRecords.filter((record) => record.is_error).length,
+          finishReason,
+        },
+      });
+
+      streamingFailed = true;
+      emptyCompletionDetected = true;
+
+      if (streamer) {
+        try {
+          await streamer.stop({
+            chunks: [toChunkMarkdownText("\n\n_...(no output generated — see Aura logs)_")],
+          });
+        } catch {
+          // Stream may already be unrecoverable.
+        }
+      }
+    }
+
     // ── Finalize ──────────────────────────────────────────────────────────
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
@@ -1071,7 +1128,7 @@ export async function generateResponse(
 
     if (streamingFailed) {
       // Stop the current streamer to avoid leaving an orphaned stream on Slack
-      if (streamer) {
+      if (streamer && !emptyCompletionDetected) {
         try { await streamer.stop(); } catch { /* stream may already be broken */ }
       }
 
@@ -1107,7 +1164,9 @@ export async function generateResponse(
       });
 
       const toolMeta = buildToolMetadata(toolCallRecords);
-      const fallbackText = formattedUnsent || "_I processed your request but had nothing to say._";
+      const fallbackText = emptyCompletionDetected
+        ? emptyCompletionFallbackText
+        : formattedUnsent || "_I processed your request but had nothing to say._";
 
       try {
         const fallbackResult = await safePostMessage(slackClient, {
