@@ -51,7 +51,7 @@ Aura is not a chatbot or a search bar. She is a deployed team member: she rememb
 
 ## Open source
 
-GitHub: https://github.com/realadvisor/aura
+GitHub: https://github.com/AuraHQ-ai/aura
 License: MIT
 
 ## Blog

@@ -17,6 +17,8 @@ import {
   openUpdateCredentialModal,
   openShareCredentialModal,
   openCredentialAccessModal,
+  TOOLS_REPO_SAVE_ACTION,
+  TOOLS_REPO_SETTING_KEY,
 } from "./slack/home.js";
 import {
   storeApiCredential,
@@ -386,6 +388,23 @@ app.post("/api/slack/interactions", async (c) => {
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.save", err, { userId, settingKey });
+          }
+        })();
+
+        waitUntil(savePromise);
+      }
+
+      if (action.action_id === TOOLS_REPO_SAVE_ACTION) {
+        const newValue =
+          payload.view?.state?.values?.tools_repo_input_block?.tools_repo_value
+            ?.value?.trim() ?? "";
+
+        const savePromise = (async () => {
+          try {
+            await setSetting(TOOLS_REPO_SETTING_KEY, newValue, userId);
+            await publishHomeTab(slackClient, userId);
+          } catch (err) {
+            recordError("interactions.tools_repo_save", err, { userId });
           }
         })();
 

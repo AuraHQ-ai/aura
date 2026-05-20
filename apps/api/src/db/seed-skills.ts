@@ -28,7 +28,7 @@ const SEED_SKILLS = [
     content: `# How to read and modify your own source code
 
 1. Clone the repo (once per sandbox session):
-   run_command("git clone https://$GITHUB_TOKEN@github.com/realadvisor/aura.git /home/user/aura")
+   run_command("git clone https://$GITHUB_TOKEN@github.com/<owner>/<repo>.git /home/user/aura")
 
 2. Search for code:
    run_command("rg 'pattern' /home/user/aura/src/")

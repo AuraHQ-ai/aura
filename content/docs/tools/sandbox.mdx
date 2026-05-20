@@ -69,6 +69,15 @@ The sandbox persists between messages **within a session** — files and state a
 Common paths:
 - `/home/user/` — working directory
 - `/home/user/downloads/` — files saved to disk via `download_slack_file` or `download_email_attachment`
+- `/home/user/aura-tools/` — optional checkout for this workspace's self-authored tools repository
+
+### Self-authored tools repository
+
+Workspace admins can configure the `tools_repo` setting from App Home → Settings using the **Self-authored tools repository** field. The value is a single GitHub repository, either `owner/name` or a full `https://github.com/owner/name` URL.
+
+When `tools_repo` is empty or unset, sandbox startup does not clone any tools repository. When it is set, Aura clones the repository into `/home/user/aura-tools` after the sandbox is acquired. If that path already contains a valid Git repository, Aura runs `git pull --ff-only` instead so recycled sandboxes pick up updates.
+
+Clone or pull failures are logged as warnings and do not block sandbox startup. Ensure the sandbox has access to a `GITHUB_TOKEN` credential that can read the configured repository.
 
 ---
 

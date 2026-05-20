@@ -19,10 +19,12 @@ Do not use them for one-off analysis. A tool should earn its existence by being 
 
 Tools should live in a dedicated Git repository, not only in a sandbox filesystem.
 
-The default convention is:
+Configure the workspace setting `tools_repo` from App Home → Settings → **Self-authored tools repository**. The value is a single GitHub repository in either shorthand or URL form:
 
 ```bash
-TOOLS_REPO=<org>/aura-tools
+tools_repo=<owner>/<repo>
+# or
+tools_repo=https://github.com/<owner>/<repo>
 ```
 
 A checkout contains:
@@ -36,15 +38,13 @@ tool_name/
   test.py               # Smoke tests
 ```
 
-The checkout path is deployment-specific. Jobs and skills must not hard-code a universal path like `/opt/aura-tools`. Resolve the configured checkout path, or verify the path in the runtime before scheduling a job.
-
-For example, RealAdvisor's current sandbox checkout is:
+When `tools_repo` is empty or unset, Aura skips this step and the sandbox starts cleanly with no self-authored tools checkout. When it is set, Aura clones or refreshes the repository after sandbox acquisition at:
 
 ```bash
 /home/user/aura-tools
 ```
 
-A different workspace may use a different path.
+The checkout is refreshed with `git pull --ff-only` when the directory already contains a valid Git repository. Clone or pull failures are warnings only; they do not make the sandbox unusable.
 
 ## Execution contract
 
@@ -59,7 +59,7 @@ Every tool follows the same CLI contract:
 Run tools through the runner:
 
 ```bash
-python3 /path/to/aura-tools/runner.py tool_name '{"key":"value"}'
+python3 /home/user/aura-tools/runner.py tool_name '{"key":"value"}'
 ```
 
 ## Scheduled jobs
