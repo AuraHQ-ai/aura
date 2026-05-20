@@ -2400,7 +2400,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
               };
             }
             const { getOrCreateSandbox } = await import("../lib/sandbox.js");
-            const sandbox = await getOrCreateSandbox();
+            const sandbox = await getOrCreateSandbox(context?.userId);
             const fileBytes = await sandbox.files.read(file_path, { format: "bytes" });
             fileBuffer = Buffer.from(fileBytes);
           } else {

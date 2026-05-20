@@ -5,12 +5,16 @@ import { db } from "../db/client.js";
 import { credentials, credentialGrants } from "@aura/db/schema";
 import { logger } from "./logger.js";
 
-const SANDBOX_NOTE_KEY = "e2b_sandbox_id";
-const SANDBOX_TEMPLATE_KEY = "e2b_sandbox_template_id";
-const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const sandboxNoteKey = (userId?: string) =>
+  userId ? `e2b_sandbox_id:${userId}` : "e2b_sandbox_id";
+const sandboxTemplateKey = (userId?: string) =>
+  userId ? `e2b_sandbox_template_id:${userId}` : "e2b_sandbox_template_id";
+const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour -- autoPause handles inactivity
 
-/** Per-invocation cache -- reuse the same sandbox within a single request */
+/** Per-invocation cache -- reuse the same sandbox within a single request.
+ *  Keyed by userId so concurrent invocations for different users don't share state. */
 let cachedSandbox: any | null = null;
+let cachedSandboxUserId: string | undefined;
 
 interface SandboxCredentialRow {
   id: string;
@@ -35,6 +39,7 @@ export function clearCachedSandbox(): void {
       sandboxId: cachedSandbox.sandboxId,
     });
     cachedSandbox = null;
+    cachedSandboxUserId = undefined;
   }
   userHomeReady.clear();
 }
@@ -336,17 +341,26 @@ export async function ensureUserHome(
  * Get or create a sandbox. Tries to resume a previously paused sandbox,
  * creates a new one if none exists or resume fails.
  */
-export async function getOrCreateSandbox(): Promise<any> {
-  // Return cached instance within the same invocation
-  if (cachedSandbox) {
+export async function getOrCreateSandbox(userId?: string): Promise<any> {
+  // Return cached instance within the same invocation IF it's for the same user.
+  // Per-invocation caches must not be shared across users -- a warm Vercel instance
+  // serving two different users back-to-back must hit fresh per-user sandboxes.
+  if (cachedSandbox && cachedSandboxUserId === userId) {
     try {
       // Reset timeout to keep it alive
       await cachedSandbox.setTimeout(DEFAULT_TIMEOUT_MS);
       return cachedSandbox;
     } catch {
       cachedSandbox = null;
+      cachedSandboxUserId = undefined;
       userHomeReady.clear();
     }
+  } else if (cachedSandbox && cachedSandboxUserId !== userId) {
+    // Different user this invocation -- drop the cache reference (don't kill the sandbox,
+    // it stays running/paused under its own ID for that other user).
+    cachedSandbox = null;
+    cachedSandboxUserId = undefined;
+    userHomeReady.clear();
   }
 
   const Sandbox = await loadE2B();
@@ -359,9 +373,11 @@ export async function getOrCreateSandbox(): Promise<any> {
     );
   }
 
-  // Try to resume a previously paused sandbox
-  let savedId = await getSetting(SANDBOX_NOTE_KEY);
-  const savedTemplateId = await getSetting(SANDBOX_TEMPLATE_KEY);
+  // Try to resume a previously paused sandbox (per-user key).
+  const noteKey = sandboxNoteKey(userId);
+  const templateKey = sandboxTemplateKey(userId);
+  let savedId = await getSetting(noteKey);
+  const savedTemplateId = await getSetting(templateKey);
   const currentTemplateId = envs.E2B_TEMPLATE_ID || process.env.E2B_TEMPLATE_ID || undefined;
 
   // If the template was upgraded, kill the old sandbox so we create a fresh one
@@ -396,7 +412,8 @@ export async function getOrCreateSandbox(): Promise<any> {
       }
 
       cachedSandbox = sandbox;
-      logger.info("E2B sandbox resumed", { sandboxId: savedId });
+      cachedSandboxUserId = userId;
+      logger.info("E2B sandbox resumed", { sandboxId: savedId, userId });
     } catch (error: any) {
       logger.warn("Failed to resume sandbox, creating new one", {
         savedId,
@@ -414,17 +431,22 @@ export async function getOrCreateSandbox(): Promise<any> {
   const templateId = envs.E2B_TEMPLATE_ID || process.env.E2B_TEMPLATE_ID || undefined;
   logger.info("Creating new E2B sandbox", { templateId: templateId || "default" });
 
-  const createOptions: any = { apiKey, timeoutMs: DEFAULT_TIMEOUT_MS };
+  // autoPause: E2B pauses the sandbox after DEFAULT_TIMEOUT_MS of inactivity
+  // and Sandbox.connect() will auto-resume it on the next call. This removes
+  // our need to manually pauseSandbox() (which triggered E2B bug #884 -- file
+  // state loss after 2+ pause/resume cycles on the legacy betaPause path).
+  const createOptions: any = { apiKey, timeoutMs: DEFAULT_TIMEOUT_MS, autoPause: true };
   const sandbox = templateId
     ? await Sandbox.create(templateId, createOptions)
     : await Sandbox.create(createOptions);
 
-  // Save the sandbox ID for future resumption
-  await setSetting(SANDBOX_NOTE_KEY, sandbox.sandboxId, "aura");
-  await setSetting(SANDBOX_TEMPLATE_KEY, templateId || "", "aura");
+  // Save the sandbox ID for future resumption (per-user keys)
+  await setSetting(noteKey, sandbox.sandboxId, "aura");
+  await setSetting(templateKey, templateId || "", "aura");
 
   cachedSandbox = sandbox;
-  logger.info("E2B sandbox created", { sandboxId: sandbox.sandboxId });
+  cachedSandboxUserId = userId;
+  logger.info("E2B sandbox created", { sandboxId: sandbox.sandboxId, userId });
 
   // Ensure the downloads directory exists for file-to-disk tools
   try {
@@ -468,27 +490,6 @@ export async function getOrCreateSandbox(): Promise<any> {
   return sandbox;
 }
 
-/**
- * Pause the sandbox to save credits. The sandbox state (filesystem, memory)
- * is preserved and can be resumed later.
- */
-export async function pauseSandbox(): Promise<void> {
-  if (!cachedSandbox) return;
-
-  try {
-    const sandboxId = cachedSandbox.sandboxId;
-    await cachedSandbox.betaPause();
-    // Save the sandbox ID so we can resume it later
-    await setSetting(SANDBOX_NOTE_KEY, sandboxId, "aura");
-    logger.info("E2B sandbox paused", { sandboxId });
-  } catch (error: any) {
-    logger.warn("Failed to pause sandbox", { error: error.message });
-    throw error;
-  } finally {
-    cachedSandbox = null;
-    userHomeReady.clear();
-  }
-}
 
 /**
  * Write binary data (as a Buffer) to the sandbox filesystem.
@@ -501,7 +502,7 @@ export async function writeToSandbox(
   subdir: string = "downloads",
   userId?: string,
 ): Promise<string> {
-  const sandbox = await getOrCreateSandbox();
+  const sandbox = await getOrCreateSandbox(userId);
 
   let base = "/home/user";
   if (userId) {

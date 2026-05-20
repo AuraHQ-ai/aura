@@ -3,7 +3,6 @@ import {
   getOrCreateSandbox,
   getSandboxEnvs,
   truncateOutput,
-  clearCachedSandbox,
   ensureUserHome,
 } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
@@ -44,9 +43,9 @@ export function createSandboxTools(context?: ScheduleContext) {
           ),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
+        const userId = context?.userId || "aura";
         try {
-          const sandbox = await getOrCreateSandbox();
-          const userId = context?.userId || "aura";
+          const sandbox = await getOrCreateSandbox(userId);
           const envs = await getSandboxEnvs(userId);
           const userHome = await ensureUserHome(sandbox, userId, envs);
 
@@ -104,7 +103,9 @@ export function createSandboxTools(context?: ScheduleContext) {
           });
 
           if (error.message?.includes("timed out")) {
-            clearCachedSandbox();
+            // Don't clear the cache on timeout -- a slow sandbox is not a dead
+            // sandbox. autoPause will reclaim it after inactivity, and the next
+            // invocation will Sandbox.connect() to resume it.
             return {
               ok: false,
               error: `Command timed out after ${timeout_seconds} seconds. Try increasing timeout_seconds or breaking the command into smaller steps.`,
