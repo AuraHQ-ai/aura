@@ -29,6 +29,8 @@ export const MAX_RETRIES = 3;
 
 /** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
 const RETRY_DELAY_MS = 30 * 60 * 1000;
+const RECURRING_JOB_HEALTH_MONITOR_SCRIPT =
+  "internal:recurring-job-health-monitor";
 
 // ── Job-specific additive instructions ───────────────────────────────────────
 
@@ -66,6 +68,70 @@ async function loadPlanNote(topic: string): Promise<string | null> {
     .where(eq(notes.topic, topic))
     .limit(1);
   return rows[0]?.content ?? null;
+}
+
+async function runInternalJobScript(
+  script: string,
+  job: typeof jobs.$inferSelect,
+): Promise<string | null> {
+  if (script.trim() !== RECURRING_JOB_HEALTH_MONITOR_SCRIPT) {
+    return null;
+  }
+
+  const { runRecurringJobHealthMonitor } = await import("../jobs/health.js");
+  return runRecurringJobHealthMonitor({
+    founderUserId: job.requestedBy,
+    slackClient,
+  });
+}
+
+async function completeScriptOnlyJob(
+  job: typeof jobs.$inferSelect,
+  executionId: string,
+  resultText: string,
+  isRecurring: boolean,
+): Promise<void> {
+  if (job.channelId && job.threadTs) {
+    await safePostMessage(slackClient, {
+      channel: job.channelId,
+      thread_ts: job.threadTs,
+      text: resultText,
+    });
+  } else if (job.channelId) {
+    await safePostMessage(slackClient, {
+      channel: job.channelId,
+      text: resultText,
+    });
+  }
+
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const isNewDay = job.lastExecutionDate !== todayStr;
+
+  await db
+    .update(jobs)
+    .set({
+      status: isRecurring ? "pending" : "completed",
+      ...(isRecurring ? { executeAt: null } : {}),
+      result: resultText.slice(0, 2000),
+      lastResult: resultText.slice(0, 2000),
+      lastExecutedAt: now,
+      executionCount: sql`${jobs.executionCount} + 1`,
+      todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
+      lastExecutionDate: todayStr,
+      retries: 0,
+      updatedAt: now,
+    })
+    .where(eq(jobs.id, job.id));
+
+  await db
+    .update(jobExecutions)
+    .set({
+      status: "completed",
+      finishedAt: now,
+      summary: resultText.slice(0, 500),
+    })
+    .where(eq(jobExecutions.id, executionId));
 }
 
 // ── Job Execution ────────────────────────────────────────────────────────────
@@ -184,79 +250,61 @@ export async function executeJob(
     let scriptOutput: string | null = null;
 
     if (job.script) {
-      try {
-        const { getOrCreateSandbox, truncateOutput, getSandboxEnvs } = await import("../lib/sandbox.js");
-        const sandbox = await getOrCreateSandbox();
-        const envs = await getSandboxEnvs(job.requestedBy);
+      const internalScriptOutput = await runInternalJobScript(job.script, job);
 
-        const scriptResult = await sandbox.commands.run(job.script, {
-          timeoutMs: 120_000,
-          cwd: "/home/user",
-          envs,
-        });
+      if (internalScriptOutput !== null) {
+        scriptOutput = internalScriptOutput;
 
-        if (scriptResult.exitCode === 0) {
-          scriptOutput = truncateOutput(scriptResult.stdout, 50_000);
+        if (!job.playbook) {
+          const resultText = scriptOutput || "(script produced no output)";
+          await completeScriptOnlyJob(job, executionId, resultText, isRecurring);
 
-          if (!job.playbook) {
-            const resultText = scriptOutput || "(script produced no output)";
-
-            if (job.channelId && job.threadTs) {
-              await safePostMessage(slackClient, {
-                channel: job.channelId,
-                thread_ts: job.threadTs,
-                text: resultText,
-              });
-            } else if (job.channelId) {
-              await safePostMessage(slackClient, {
-                channel: job.channelId,
-                text: resultText,
-              });
-            }
-
-            const now = new Date();
-            const todayStr = now.toISOString().slice(0, 10);
-            const isNewDay = job.lastExecutionDate !== todayStr;
-
-            await db.update(jobs).set({
-              status: isRecurring ? "pending" : "completed",
-              ...(isRecurring ? { executeAt: null } : {}),
-              result: resultText.slice(0, 2000),
-              lastResult: resultText.slice(0, 2000),
-              lastExecutedAt: now,
-              executionCount: sql`${jobs.executionCount} + 1`,
-              todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
-              lastExecutionDate: todayStr,
-              retries: 0,
-              updatedAt: now,
-            }).where(eq(jobs.id, jobId));
-
-            await db.update(jobExecutions).set({
-              status: "completed",
-              finishedAt: now,
-              summary: resultText.slice(0, 500),
-            }).where(eq(jobExecutions.id, executionId));
-
-            logger.info("executeJob: script-only job completed", { jobId, jobName: job.name });
-            return true;
-          }
-        } else {
-          logger.warn("executeJob: script failed, falling through to LLM", {
+          logger.info("executeJob: internal script-only job completed", {
             jobId,
             jobName: job.name,
-            exitCode: scriptResult.exitCode,
-            stderr: scriptResult.stderr?.slice(0, 500),
+          });
+          return true;
+        }
+      } else {
+        try {
+          const { getOrCreateSandbox, truncateOutput, getSandboxEnvs } = await import("../lib/sandbox.js");
+          const sandbox = await getOrCreateSandbox();
+          const envs = await getSandboxEnvs(job.requestedBy);
+
+          const scriptResult = await sandbox.commands.run(job.script, {
+            timeoutMs: 120_000,
+            cwd: "/home/user",
+            envs,
+          });
+
+          if (scriptResult.exitCode === 0) {
+            scriptOutput = truncateOutput(scriptResult.stdout, 50_000);
+
+            if (!job.playbook) {
+              const resultText = scriptOutput || "(script produced no output)";
+              await completeScriptOnlyJob(job, executionId, resultText, isRecurring);
+
+              logger.info("executeJob: script-only job completed", { jobId, jobName: job.name });
+              return true;
+            }
+          } else {
+            logger.warn("executeJob: script failed, falling through to LLM", {
+              jobId,
+              jobName: job.name,
+              exitCode: scriptResult.exitCode,
+              stderr: scriptResult.stderr?.slice(0, 500),
+            });
+          }
+        } catch (scriptErr: any) {
+          if (scriptOutput) {
+            throw scriptErr;
+          }
+          logger.warn("executeJob: script execution error, falling through to LLM", {
+            jobId,
+            jobName: job.name,
+            error: scriptErr.message,
           });
         }
-      } catch (scriptErr: any) {
-        if (scriptOutput) {
-          throw scriptErr;
-        }
-        logger.warn("executeJob: script execution error, falling through to LLM", {
-          jobId,
-          jobName: job.name,
-          error: scriptErr.message,
-        });
       }
     }
 

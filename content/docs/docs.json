@@ -54,6 +54,7 @@
             "group": "Core Systems",
             "pages": [
               "memory-system",
+              "concepts/jobs",
               "self-improvement",
               "permissions"
             ]

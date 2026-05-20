@@ -1,0 +1,31 @@
+---
+title: "Jobs"
+description: "How Aura schedules recurring work and monitors job health."
+---
+
+# Jobs
+
+Aura stores one-shot tasks, recurring work, and continuations in the `jobs` table.
+The heartbeat cron wakes up regularly, finds due enabled jobs, and sends them
+through the normal job executor.
+
+## Health monitor
+
+Aura includes a seeded recurring job named `recurring-job-health-monitor`.
+It runs daily at 09:00 Europe/Zurich (`0 9 * * *`) and surveys every enabled
+recurring job (`enabled = true` and `cron_schedule IS NOT NULL`).
+
+The monitor flags a job when any of these are true:
+
+- it has at least 3 consecutive failed executions since its last success
+- its last successful execution was at least 2 days ago
+- the job is still enabled but its current status is `failed`
+
+When at least one job is flagged, the monitor sends Joan a single Slack DM with
+a table containing the job name, last successful run, consecutive failure count,
+current status, and cron schedule. The DM is idempotent: each founder can receive
+at most one recurring-job health alert per calendar day.
+
+This monitor is implemented as a discoverable script-only job rather than as
+inline heartbeat logic, so it appears in `list_jobs`, can be disabled or tuned
+like any other recurring job, and avoids LLM cost for the daily survey.
