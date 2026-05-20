@@ -21,7 +21,7 @@ Every synced email thread has a state:
 
 ## How It Works
 
-1. **Sync** — Gmail inbox is periodically synced. New emails are stored with embeddings for semantic search.
+1. **Sync** — Gmail inbox is synced via `sync_emails`, or automatically when `email_digest` / `search_emails` detect a stale `emails_raw` (older than ~6h). New emails are stored with embeddings for semantic search.
 2. **Classify** — New threads are automatically classified into triage states based on content, sender, and patterns.
 3. **Digest** — Daily email digests summarize the inbox: what's new, what's aging, what needs attention.
 4. **Search** — Two modes: keyword (full-text) and semantic (meaning-based vector search).
@@ -43,6 +43,12 @@ Aura produces daily email digests that include:
 - **Aging threads** — Items awaiting reply for too long
 - **Deadlines** — Upcoming due dates extracted from email content
 - **Auto-resolved** — Threads automatically dismissed as noise
+
+## Access
+
+By default, every email tool operates on the caller's own connected Gmail account. Admins (users with the `admin` role) can additionally pass `user_name` to operate on another connected account. Non-admins cannot read or modify another user's inbox -- the tool returns an explicit access error.
+
+This is enforced at runtime by `assertCanAccessUserEmail` in `apps/api/src/tools/email-sync.ts` (added in PR #933).
 
 ## Privacy
 

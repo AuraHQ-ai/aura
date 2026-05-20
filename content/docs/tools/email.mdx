@@ -126,7 +126,9 @@ Generate a Google OAuth consent URL so a user can connect their Gmail account. D
 
 ---
 
-## Email Triage (Admin-only)
+## Email Triage
+
+Each tool below works for the caller's own Gmail account by default. Workspace admins can additionally operate on another user's synced inbox by passing `user_name`. The previous admin-only restriction was lifted in PR #933 (May 2026).
 
 ### `sync_emails`
 Sync emails from a user's Gmail into Aura's staging pipeline. Supports date windows and Gmail query syntax. Resumable — re-running skips already-synced emails.
