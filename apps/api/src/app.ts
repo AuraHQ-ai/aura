@@ -29,7 +29,7 @@ import {
   hasPermission,
 } from "./lib/api-credentials.js";
 import { resolveConfirmation } from "./lib/confirmation.js";
-import { executionContext } from "./lib/tool.js";
+import { executionContext, type ExecutionContext } from "./lib/tool.js";
 import { setSetting, getConfig } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
 import { resolveSlackDestination } from "./tools/slack.js";
@@ -38,7 +38,7 @@ import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { notes, feedback } from "@aura/db/schema";
+import { errorEvents, notes, feedback } from "@aura/db/schema";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,73 @@ if (!signingSecret || !botToken) {
 }
 
 const slackClient = new WebClient(botToken);
+
+// ── Process-level crash fallback ────────────────────────────────────────────
+
+let latestInFlightContext: ExecutionContext | null = null;
+const globalForProcessHooks = globalThis as typeof globalThis & {
+  __auraProcessErrorHooksRegistered?: boolean;
+};
+
+function stringifyUnhandledReason(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  if (typeof reason === "string") return reason;
+  try {
+    return JSON.stringify(reason);
+  } catch {
+    return String(reason);
+  }
+}
+
+function stackForUnhandledReason(reason: unknown): string | undefined {
+  if (reason instanceof Error) return reason.stack;
+  if (reason && typeof reason === "object" && "stack" in reason) {
+    return String((reason as { stack?: unknown }).stack);
+  }
+  return undefined;
+}
+
+function logProcessLevelError(
+  errorName: "UnhandledRejection" | "UncaughtException",
+  reason: unknown,
+): void {
+  try {
+    const ctx = executionContext.getStore() ?? latestInFlightContext ?? undefined;
+    const write = db.insert(errorEvents)
+      .values({
+        errorName,
+        errorMessage: stringifyUnhandledReason(reason) || errorName,
+        errorCode: "function_died_unhandled",
+        userId: ctx?.callingUserId ?? ctx?.triggeredBy,
+        channelId: ctx?.channelId,
+        context: {
+          triggerType: ctx?.triggerType,
+          threadTs: ctx?.threadTs,
+          workspaceId: ctx?.workspaceId,
+        },
+        stackTrace: stackForUnhandledReason(reason),
+      })
+      .catch(() => {});
+
+    const timeout = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1_500);
+      (timer as any).unref?.();
+    });
+    void Promise.race([write, timeout]).catch(() => {});
+  } catch {
+    // Process-level handlers must never throw.
+  }
+}
+
+if (!globalForProcessHooks.__auraProcessErrorHooksRegistered) {
+  globalForProcessHooks.__auraProcessErrorHooksRegistered = true;
+  process.on("unhandledRejection", (reason) => {
+    logProcessLevelError("UnhandledRejection", reason);
+  });
+  process.on("uncaughtException", (error) => {
+    logProcessLevelError("UncaughtException", error);
+  });
+}
 
 // ── Hono App ────────────────────────────────────────────────────────────────
 
@@ -257,15 +324,17 @@ app.post("/api/slack/events", async (c) => {
     // On Vercel, we must acknowledge within 3 seconds, so we process
     // in the background using waitUntil where available.
     const userId = event.user || "unknown";
+    const eventExecutionContext: ExecutionContext = {
+      triggeredBy: userId,
+      triggerType: "user_message",
+      callingUserId: event.user || undefined,
+      channelId: event.channel || undefined,
+      threadTs: event.thread_ts || event.ts || undefined,
+      workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+    };
+    latestInFlightContext = eventExecutionContext;
     const pipelinePromise = executionContext.run(
-      {
-        triggeredBy: userId,
-        triggerType: "user_message",
-        callingUserId: event.user || undefined,
-        channelId: event.channel || undefined,
-        threadTs: event.thread_ts || event.ts || undefined,
-        workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
-      },
+      eventExecutionContext,
       async () =>
         runPipeline({
           event,
@@ -278,6 +347,10 @@ app.post("/api/slack/events", async (c) => {
         eventType: event.type,
         channel: event.channel,
       });
+    }).finally(() => {
+      if (latestInFlightContext === eventExecutionContext) {
+        latestInFlightContext = null;
+      }
     });
 
     // Keep the function alive after the response is sent so the

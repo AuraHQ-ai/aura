@@ -528,14 +528,19 @@ export async function generateResponse(
   }
 
   // ── Inactivity timeout ───────────────────────────────────────────────
+  type StreamAbortReason = "inactivity" | "long_tool" | "superseded" | "unknown";
+  type ContinuationReason = "length" | "long_tool";
+
   const abortController = new AbortController();
   let inactivityTimer: ReturnType<typeof setTimeout> = undefined as any;
+  let lastAbortReason: StreamAbortReason = "unknown";
 
   const resetTimer = () => {
     clearTimeout(inactivityTimer);
     inactivityTimer = setTimeout(() => {
       logger.warn("LLM inactivity timeout (180s), aborting");
-      abortController.abort();
+      lastAbortReason = "inactivity";
+      abortController.abort("inactivity");
     }, 180_000);
   };
   resetTimer();
@@ -613,10 +618,53 @@ export async function generateResponse(
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   let continuationCount = 0;
+  let currentSegmentIndex = 0;
+  let currentSegmentTextLength = 0;
+  let currentSegmentToolRecordStart = 0;
+  let currentSegmentContinuationReason: ContinuationReason | "root" = "root";
+  const loggedEmptyContinuationSegments = new Set<number>();
   let tableBuffer: string[] = [];
   let lineCarry = "";
   let emptyCompletionDetected = false;
   const emptyCompletionFallbackText = "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_";
+
+  async function logEmptyContinuationSegmentIfNeeded(params: {
+    segmentEnd: "split" | "final";
+    finishReason?: unknown;
+  }): Promise<void> {
+    if (currentSegmentIndex === 0) return;
+    if (loggedEmptyContinuationSegments.has(currentSegmentIndex)) return;
+    if (currentSegmentTextLength > 0) return;
+
+    const segmentToolRecords = toolCallRecords.slice(currentSegmentToolRecordStart);
+    if (segmentToolRecords.length === 0) return;
+
+    loggedEmptyContinuationSegments.add(currentSegmentIndex);
+    logError({
+      errorName: "EmptyCompletion",
+      errorMessage: "Continuation stream completed without usable output after tool calls",
+      errorCode: "empty_completion_after_tools_continuation",
+      channelId,
+      context: {
+        toolCallCount: segmentToolRecords.length,
+        toolErrorCount: segmentToolRecords.filter((record) => record.is_error).length,
+        segmentIndex: currentSegmentIndex,
+        continuationReason: currentSegmentContinuationReason,
+        segmentEnd: params.segmentEnd,
+        finishReason: params.finishReason,
+      },
+    });
+
+    if (params.segmentEnd === "final" && streamer && !streamingFailed) {
+      try {
+        const tombstone = "\n\n_...(no output generated in continuation — see Aura logs)_";
+        currentStreamLength += tombstone.length;
+        await streamer.append(asAppendPayload({ markdown_text: tombstone }));
+      } catch {
+        // Stream may already be unrecoverable; the error row above is the durable signal.
+      }
+    }
+  }
 
   function clearLongToolSplitTimer() {
     if (longToolSplitTimer) {
@@ -741,7 +789,7 @@ export async function generateResponse(
     return output;
   }
 
-  async function splitToNewStream(reason: "length" | "long_tool" = "length"): Promise<boolean> {
+  async function splitToNewStream(reason: ContinuationReason = "length"): Promise<boolean> {
     if (streamingFailed || continuationCount >= MAX_CONTINUATIONS) {
       if (continuationCount >= MAX_CONTINUATIONS) {
         logger.warn("Max continuation messages reached", { continuationCount });
@@ -754,6 +802,10 @@ export async function generateResponse(
       totalAccumulated: accumulatedText.length,
       continuationCount: continuationCount + 1,
       reason,
+    });
+
+    await logEmptyContinuationSegmentIfNeeded({
+      segmentEnd: "split",
     });
 
     if (reason === "long_tool") {
@@ -773,6 +825,10 @@ export async function generateResponse(
       currentStreamLength = 0;
       streamTombstoneSent = false;
       continuationCount++;
+      currentSegmentIndex = continuationCount;
+      currentSegmentTextLength = 0;
+      currentSegmentToolRecordStart = toolCallRecords.length;
+      currentSegmentContinuationReason = reason;
       return true;
     } catch (startErr: any) {
       logger.warn(
@@ -829,6 +885,7 @@ export async function generateResponse(
       switch (chunk.type) {
         case "text-delta": {
           accumulatedText += chunk.text;
+          currentSegmentTextLength += chunk.text.length;
           let remaining = processChunkForTables(chunk.text);
           if (!remaining) break;
 
@@ -1074,6 +1131,20 @@ export async function generateResponse(
         fallbackStartIdx = streamedRawIdx;
       }
     }
+
+    let continuationFinishReason: unknown;
+    try {
+      continuationFinishReason = (result as any).finishReason
+        ? await (result as any).finishReason
+        : undefined;
+    } catch {
+      continuationFinishReason = undefined;
+    }
+
+    await logEmptyContinuationSegmentIfNeeded({
+      segmentEnd: "final",
+      finishReason: continuationFinishReason,
+    });
 
     if (accumulatedText.length === 0 && toolCallRecords.length > 0) {
       let finishReason: unknown;
@@ -1469,6 +1540,54 @@ export async function generateResponse(
           stackTrace: retryError instanceof Error ? retryError.stack : undefined,
         });
       }
+    }
+
+    const isAbortError = error?.name === "AbortError" || error?.code === "ABORT_ERR";
+    if (isAbortError) {
+      const reason = lastAbortReason || "unknown";
+      const tombstone = `_[stream aborted: ${reason}]_`;
+
+      logError({
+        errorName: "StreamAborted",
+        errorMessage: error?.message || `Stream aborted: ${reason}`,
+        errorCode: "stream_aborted_by_watchdog",
+        channelId,
+        context: {
+          reason,
+          accumulatedTextLength: accumulatedText.length,
+          toolCallCount: toolCallRecords.length,
+          segmentIndex: currentSegmentIndex,
+        },
+        stackTrace: error?.stack,
+      });
+
+      if (streamer && !streamingFailed) {
+        try {
+          await streamer.stop({ chunks: [toChunkMarkdownText(`\n\n${tombstone}`)] });
+        } catch {
+          try {
+            await safePostMessage(slackClient, {
+              channel: channelId,
+              text: tombstone,
+              thread_ts: threadTs,
+            });
+          } catch {
+            // Best effort only; preserve the original abort error.
+          }
+        }
+      } else {
+        try {
+          await safePostMessage(slackClient, {
+            channel: channelId,
+            text: tombstone,
+            thread_ts: threadTs,
+          });
+        } catch {
+          // Best effort only; preserve the original abort error.
+        }
+      }
+
+      throw error;
     }
 
     logError({
