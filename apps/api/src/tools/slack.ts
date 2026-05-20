@@ -11,6 +11,7 @@ import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createScratchpadTools } from "./scratchpad.js";
+import { applyAnthropicToolDiscovery } from "./deferred.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -589,7 +590,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
   const tools: Record<string, any> = {
     // ── Core Tools (channel-agnostic, shared with Dashboard etc.) ────────
-    ...(await createCoreTools(context, userCreds)),
+    ...(await createCoreTools(context, userCreds, modelId)),
 
     list_channels: defineTool({
       description:
@@ -3014,74 +3015,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     if (!(k in filteredTools)) delete tools[k];
   }
 
-  // ── Anthropic Tool Discovery ──────────────────────────────────────
-  // When running on an Anthropic model, mark infrequently-used tools as
-  // deferred so their schemas aren't sent upfront, and register the
-  // tool search meta-tool so Claude can discover them on demand.
-  // Non-Anthropic providers don't support these features.
-  const isAnthropic = modelId?.startsWith("anthropic/") ?? false;
-
-  if (isAnthropic) {
-    const { anthropic } = await import("@ai-sdk/anthropic");
-    // TODO: toolSearchBm25_20251119() returns an Anthropic-native tool object that bypasses
-    // defineTool(), so it never gets the `slack` metadata we use for Slack action cards.
-    // Workaround: cast to any and attach the slack property manually so the pipeline
-    // renders a proper card (status + detail) instead of the fallback "Done" label.
-    // Long-term fix: Anthropic should expose a way to attach metadata to built-in tools,
-    // or we should wrap it in defineTool() once the SDK supports that pattern.
-    const _toolSearch = anthropic.tools.toolSearchBm25_20251119();
-    ((_toolSearch as unknown) as Record<string, unknown>).slack = {
-      status: "Searching tools...",
-      detail: (i: { query: string }) => i.query,
-    };
-    tools.toolSearch = _toolSearch;
-
-    const DEFERRED_TOOLS = new Set([
-      // BigQuery / Data
-      "bq_list_datasets", "bq_list_tables", "bq_inspect_table", "bq_execute_query",
-      // Google Sheets
-      "read_google_sheet",
-      // Google Drive
-      "search_drive", "read_drive_file", "list_drive_folder", "list_shared_drives",
-      // Calendar
-      "check_calendar", "create_event", "update_event", "delete_event", "find_available_slot",
-      // Canvas
-      "read_canvas", "create_canvas", "edit_canvas", "delete_canvas", "share_canvas", "list_canvases",
-      // Slack Lists (list + get are eager -- used in every bug triage session)
-      "create_slack_list_item", "update_slack_list_item", "delete_slack_list_item",
-      // Email
-      "send_email", "reply_to_email",
-      // Email triage (per-user Gmail)
-      "sync_emails", "email_digest", "update_email_thread",
-      "read_user_emails", "read_user_email",
-      "generate_gmail_auth_url", "create_gmail_draft", "list_gmail_drafts", "delete_gmail_draft",
-      // Dev / Code (run_command is eager -- used reflexively in most sessions)
-      "dispatch_headless", "read_job_trace",
-      "dispatch_cursor_agent", "check_cursor_agent", "followup_cursor_agent",
-      "stop_cursor_agent", "get_cursor_conversation", "list_cursor_agents",
-      // Browser
-      "browse", "download_slack_file",
-      // Voice / Calls
-      "list_voice_agents", "place_call", "send_sms", "send_voice_note",
-      // Directory / Contacts
-      "lookup_workspace_user", "list_workspace_users", "lookup_contact",
-      // Checkpoint
-      "checkpoint_plan",
-      // Resources
-      "ingest_resource", "search_resources", "get_resource", "list_resources",
-      // Subagent
-      "run_subagent",
-      // People
-      "get_person", "update_person",
-    ]);
-
-    const deferOpts = { anthropic: { deferLoading: true } };
-    for (const name of DEFERRED_TOOLS) {
-      if (name in tools) {
-        tools[name] = { ...tools[name], providerOptions: deferOpts };
-      }
-    }
-  }
+  await applyAnthropicToolDiscovery(tools, modelId);
 
   return registerToolNames(tools);
 }

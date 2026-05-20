@@ -13,7 +13,7 @@ vi.mock("../lib/logger.js", () => ({
   },
 }));
 
-import { buildDynamicContext } from "./system-prompt.js";
+import { buildDynamicContext, formatDeferredTools } from "./system-prompt.js";
 
 function extractCapabilitiesBlock(prompt: string): string {
   const match = prompt.match(/<capabilities>[\s\S]*<\/capabilities>/);
@@ -21,15 +21,18 @@ function extractCapabilitiesBlock(prompt: string): string {
 }
 
 describe("buildDynamicContext capabilities", () => {
-  it("renders sorted sandbox credential names in the expected format", () => {
+  it("renders sorted sandbox credential names grouped by capability", () => {
     const prompt = buildDynamicContext({
       sandboxEnvNames: ["NOTION_API_KEY", "GITHUB_TOKEN"],
     });
 
     const expected = `<capabilities>
-You have these credentials/API keys available in your sandbox env (run_command, etc.). Names only — never paste or log values. Use them when relevant; don't claim you "don't have access" without checking first.
-- GITHUB_TOKEN
-- NOTION_API_KEY
+You have access to these systems from the sandbox environment. Credential names are identifiers only -- never paste or log values. Prefer typed Aura tools and safe CLIs before raw HTTP/API calls.
+
+Hard rule: Seeing a credential name is not a reason to use it -- it's a reason to check if a typed tool wraps it. Before \`curl\` with a secret, run \`tool_search_tool_bm25\` for the domain.
+
+- GitHub: \`GITHUB_TOKEN\` -- prefer the \`gh\` CLI in the sandbox; for issue/PR ops use it directly
+- Other available credentials: \`NOTION_API_KEY\` -- search typed tools for the relevant domain before raw API use
 </capabilities>`;
 
     expect(extractCapabilitiesBlock(prompt)).toBe(expected);
@@ -46,8 +49,30 @@ You have these credentials/API keys available in your sandbox env (run_command, 
     });
 
     const block = extractCapabilitiesBlock(prompt);
-    expect(block).toContain("- NOTION_API_KEY");
+    expect(block).toContain("`NOTION_API_KEY`");
     expect(block).not.toContain(secretValue);
+  });
+
+  it("contains the hard guardrail line inside the capabilities block", () => {
+    const prompt = buildDynamicContext({
+      sandboxEnvNames: ["SLACK_BOT_TOKEN"],
+    });
+
+    expect(extractCapabilitiesBlock(prompt)).toContain(
+      "Seeing a credential name is not a reason to use it -- it's a reason to check if a typed tool wraps it. Before `curl` with a secret, run `tool_search_tool_bm25` for the domain.",
+    );
+  });
+
+  it("annotates CURSOR_API_KEY with Cursor tool wrappers when present", () => {
+    const prompt = buildDynamicContext({
+      sandboxEnvNames: ["CURSOR_API_KEY"],
+      availableToolNames: ["dispatch_cursor_agent", "check_cursor_agent"],
+    });
+
+    const block = extractCapabilitiesBlock(prompt);
+    expect(block).toContain("`CURSOR_API_KEY`");
+    expect(block).toContain("`dispatch_cursor_agent`");
+    expect(block).toContain("`check_cursor_agent`");
   });
 
   it("omits the capabilities block when no credential names are available", () => {
@@ -55,6 +80,55 @@ You have these credentials/API keys available in your sandbox env (run_command, 
       "<capabilities>",
     );
     expect(buildDynamicContext({})).not.toContain("<capabilities>");
+  });
+});
+
+describe("deferred tools manifest", () => {
+  it("renders a deferred_tools block when deferred tools exist", () => {
+    const prompt = buildDynamicContext({
+      deferredTools: [
+        {
+          name: "dispatch_cursor_agent",
+          description: "dispatch async coding agent to Aura repo",
+        },
+        {
+          name: "check_cursor_agent",
+          description: "check status of dispatched agent",
+        },
+      ],
+    });
+
+    expect(prompt).toContain(`<deferred_tools>
+Available on demand (call tool_search_tool_bm25 to load schemas):
+- check_cursor_agent: check status of dispatched agent
+- dispatch_cursor_agent: dispatch async coding agent to Aura repo
+</deferred_tools>`);
+  });
+
+  it("excludes manifest entries that are already immediate tools", () => {
+    const manifest = formatDeferredTools(
+      [
+        {
+          name: "dispatch_cursor_agent",
+          description: "dispatch async coding agent to Aura repo",
+        },
+        {
+          name: "run_command",
+          description: "run shell commands in the sandbox",
+        },
+      ],
+      ["run_command"],
+    );
+
+    expect(manifest).toContain("- dispatch_cursor_agent:");
+    expect(manifest).not.toContain("run_command");
+  });
+
+  it("omits the deferred_tools block when there are no deferred tools", () => {
+    expect(buildDynamicContext({ deferredTools: [] })).not.toContain(
+      "<deferred_tools>",
+    );
+    expect(formatDeferredTools(undefined)).toBe("");
   });
 });
 

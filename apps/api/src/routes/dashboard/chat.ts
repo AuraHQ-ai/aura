@@ -432,7 +432,11 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
       modelIdOverride: modelId,
     });
 
-    const tools = await createCoreTools({ userId, channelId: "dashboard" });
+    const tools = await createCoreTools(
+      { userId, channelId: "dashboard" },
+      undefined,
+      modelId,
+    );
 
     const sanitizedMessages = sanitizeAssistantPartOrder(messages);
     const modelMessages = await convertToModelMessages(sanitizedMessages);
