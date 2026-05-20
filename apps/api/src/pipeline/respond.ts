@@ -201,6 +201,9 @@ const STREAM_THRESHOLD_SENTENCE = 8_000;
 const STREAM_THRESHOLD_WHITESPACE = 9_000;
 const STREAM_HARD_LIMIT = 9_500;
 const MAX_CONTINUATIONS = 5;
+const LONG_TOOL_SPLIT_MS = 75_000;
+const STREAM_CONTINUATION_TOMBSTONE = "_(continuing in a new message...)_";
+const TOOL_CONTINUATION_OUTPUT = "continuing in a new message...";
 
 /**
  * Find the best split index in a text delta for stream continuation.
@@ -396,6 +399,7 @@ export async function generateResponse(
   // chat.startStream. When we detect this, we flip to buffer-only mode
   // and post the final result via chat.postMessage.
   let streamingFailed = skipStreaming;
+  let streamTombstoneSent = false;
 
   async function tryStreamAppend(
     payload: Omit<ChatAppendStreamArguments, "channel" | "ts">,
@@ -511,6 +515,9 @@ export async function generateResponse(
           context: { fallback: "postMessage" },
         });
       }
+      if (streamingFailed) {
+        await stopFrozenStreamWithTombstone();
+      }
     }
     return false;
   }
@@ -533,6 +540,8 @@ export async function generateResponse(
 
   // Slack stream keepalive — sends minimal payload to prevent ~30s idle timeout
   let streamKeepAlive: ReturnType<typeof setInterval> | null = null;
+  let longToolSplitTimer: ReturnType<typeof setTimeout> | null = null;
+  let longToolSplitInFlight = false;
 
   // ── Build agent ──────────────────────────────────────────────────────
   const { agent, tools, modelId, getStepModelIds } = await createInteractiveAgent({
@@ -587,6 +596,58 @@ export async function generateResponse(
   let continuationCount = 0;
   let tableBuffer: string[] = [];
   let lineCarry = "";
+
+  function clearLongToolSplitTimer() {
+    if (longToolSplitTimer) {
+      clearTimeout(longToolSplitTimer);
+      longToolSplitTimer = null;
+    }
+  }
+
+  function buildStreamTombstoneChunks(): SlackStreamChunk[] {
+    const chunks: SlackStreamChunk[] = [];
+    for (const [toolCallId, pending] of pendingToolInputs.entries()) {
+      const slackMeta = getSlackMeta(tools[pending.name]);
+      chunks.push(toTaskUpdateChunk({
+        id: toolCallId,
+        title: slackMeta?.status ?? "Working on it...",
+        status: "complete",
+        output: TOOL_CONTINUATION_OUTPUT,
+      }));
+    }
+    chunks.push(toChunkMarkdownText(`\n${STREAM_CONTINUATION_TOMBSTONE}\n`));
+    return chunks;
+  }
+
+  async function appendStreamTombstone(): Promise<void> {
+    if (!streamer || streamTombstoneSent) return;
+    const payload = asAppendPayload({ chunks: buildStreamTombstoneChunks() });
+    try {
+      currentStreamLength += estimateAppendSize(payload);
+      await streamer.append(payload);
+      streamTombstoneSent = true;
+    } catch (err: any) {
+      logger.warn("Failed to append stream continuation tombstone", {
+        channelId,
+        slackError: err?.data?.error,
+        error: err?.message,
+      });
+    }
+  }
+
+  async function stopFrozenStreamWithTombstone(): Promise<void> {
+    if (!streamer || streamTombstoneSent) return;
+    try {
+      await streamer.stop({ chunks: buildStreamTombstoneChunks() });
+      streamTombstoneSent = true;
+    } catch (err: any) {
+      logger.warn("Failed to stop frozen stream with continuation tombstone", {
+        channelId,
+        slackError: err?.data?.error,
+        error: err?.message,
+      });
+    }
+  }
 
   /**
    * Process a text chunk through the table line buffer.
@@ -659,7 +720,7 @@ export async function generateResponse(
     return output;
   }
 
-  async function splitToNewStream(): Promise<boolean> {
+  async function splitToNewStream(reason: "length" | "long_tool" = "length"): Promise<boolean> {
     if (streamingFailed || continuationCount >= MAX_CONTINUATIONS) {
       if (continuationCount >= MAX_CONTINUATIONS) {
         logger.warn("Max continuation messages reached", { continuationCount });
@@ -671,7 +732,12 @@ export async function generateResponse(
       currentStreamLength,
       totalAccumulated: accumulatedText.length,
       continuationCount: continuationCount + 1,
+      reason,
     });
+
+    if (reason === "long_tool") {
+      await appendStreamTombstone();
+    }
 
     try {
       await streamer.stop();
@@ -684,6 +750,7 @@ export async function generateResponse(
     try {
       streamer = slackClient.chatStream(streamParams as any);
       currentStreamLength = 0;
+      streamTombstoneSent = false;
       continuationCount++;
       return true;
     } catch (startErr: any) {
@@ -693,6 +760,34 @@ export async function generateResponse(
       );
       streamingFailed = true;
       return false;
+    }
+  }
+
+  function startLongToolSplitTimer() {
+    if (streamingFailed || longToolSplitTimer || pendingToolInputs.size === 0) return;
+    longToolSplitTimer = setTimeout(() => {
+      longToolSplitTimer = null;
+      void splitLongRunningToolStream();
+    }, LONG_TOOL_SPLIT_MS);
+  }
+
+  async function splitLongRunningToolStream(): Promise<void> {
+    if (longToolSplitInFlight || streamingFailed || pendingToolInputs.size === 0) return;
+    longToolSplitInFlight = true;
+    try {
+      logger.info("Long-running tool still active; splitting Slack stream", {
+        channelId,
+        pendingToolCount: pendingToolInputs.size,
+        thresholdMs: LONG_TOOL_SPLIT_MS,
+      });
+      if (!await splitToNewStream("long_tool") && streamingFailed) {
+        fallbackStartIdx = accumulatedText.length;
+      }
+    } finally {
+      longToolSplitInFlight = false;
+      if (!streamingFailed && pendingToolInputs.size > 0) {
+        startLongToolSplitTimer();
+      }
     }
   }
 
@@ -816,6 +911,7 @@ export async function generateResponse(
             name: chunk.toolName,
             input: truncateToBytes(JSON.stringify(inputArgs), 1500),
           });
+          startLongToolSplitTimer();
 
           // Keep resetting inactivity timer during long tool execution
           if (toolKeepAlive) clearInterval(toolKeepAlive);
@@ -890,6 +986,7 @@ export async function generateResponse(
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+          if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
@@ -934,6 +1031,7 @@ export async function generateResponse(
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+          if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
@@ -960,6 +1058,7 @@ export async function generateResponse(
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
     if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+    clearLongToolSplitTimer();
 
     const llmMs = Date.now() - start;
     const usage = await result.usage;
@@ -1189,6 +1288,7 @@ export async function generateResponse(
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
     if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+    clearLongToolSplitTimer();
 
     if (error instanceof InvocationSupersededError) {
       logger.info("Stream interrupted — invocation superseded", {

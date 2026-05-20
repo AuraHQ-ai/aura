@@ -39,7 +39,10 @@ const SEED_SKILLS = [
 4. For changes: create a branch, make edits, commit, push, open PR via gh CLI.
    Always create PRs on branches, never push to main.
    Tag Joan for review on anything non-trivial.
-   For prompt changes (system-prompt.ts): flag as "self-edit" and explain reasoning.`,
+   For prompt changes (system-prompt.ts): flag as "self-edit" and explain reasoning.
+   Before any gh pr merge, run: gh pr view "$PR_NUMBER" --json mergeStateStatus,reviewDecision.
+   If mergeStateStatus is BLOCKED, fail fast with: "PR #N is BLOCKED (review required). Use --admin to bypass or wait for review."
+   In shell loops with gh/network calls, use set -e so one failure aborts the loop.`,
   },
   {
     topic: "follow-up-protocol",

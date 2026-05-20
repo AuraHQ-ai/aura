@@ -18,7 +18,7 @@ Execute a shell command in the sandboxed Linux VM.
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `command` | string | **yes** | Shell command to run, e.g. `git clone https://github.com/org/repo.git` |
-| `timeout_seconds` | number | no | Timeout in seconds (default 120, max 750). Use higher values for long-running agent commands. |
+| `timeout_seconds` | number | no | Timeout in seconds (default 90, max 750). Explicitly opt in to values above 90s only for headless/batch work or long-running agent commands. |
 | `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to `/home/user`. |
 
 **Returns:** exit code, stdout, stderr.
@@ -137,8 +137,12 @@ The sandbox is currently a single shared instance across all users and threads. 
 | Task | Recommended timeout |
 |------|-------------------|
 | Quick commands (`ls`, `grep`, `git log`) | 10–30s |
-| Code execution, file processing | 60–120s |
+| Code execution, file processing | 60–90s |
 | `claude` agent tasks (multi-file changes) | 400–750s |
 | Long web crawls or batch processing | 300–600s |
+
+Slack `chat.stream` sessions cap at around 3 minutes. Individual foreground tool calls longer than 90s can leave the in-flight Slack message frozen on a tool widget before the response continues elsewhere, so prefer smaller commands and only set higher `timeout_seconds` when the work is headless or intentionally long-running.
+
+When running `for` or `while` loops that make outbound network calls, start the script with `set -e` so one failed or timed-out command aborts the loop instead of compounding many slow failures.
 
 The Vercel function timeout is 800s. Leave a 50s buffer for overhead — use 750s maximum.

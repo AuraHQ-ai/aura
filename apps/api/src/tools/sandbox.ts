@@ -19,7 +19,7 @@ export function createSandboxTools(context?: ScheduleContext) {
   return {
     run_command: defineTool({
       description:
-        "Execute a shell command in a sandboxed Linux VM. This is the universal primitive for computation: file ops, git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (claude). Pre-installed: git, node, python, gh, gcloud, vercel CLI, ripgrep, curl, jq, claude. Install more with apt-get or pip. The sandbox persists between conversations — files and state are preserved across messages. Output is truncated; use head, tail, grep to filter. Break complex tasks into smaller commands. For complex workflows, check your skill notes first. Use higher timeouts (up to 750s) for long-running agent commands like Claude Code — the 750s ceiling leaves a 50s buffer before the Vercel function timeout at 800s.",
+        "Execute a shell command in a sandboxed Linux VM. This is the universal primitive for computation: file ops, git, code execution (node, python), search (rg, grep), data processing (curl, jq), and self-modification via Claude Code (claude). Pre-installed: git, node, python, gh, gcloud, vercel CLI, ripgrep, curl, jq, claude. Install more with apt-get or pip. The sandbox persists between conversations — files and state are preserved across messages. Output is truncated; use head, tail, grep to filter. Break complex tasks into smaller commands. Default timeout is 90s; explicitly opt in to longer timeouts only for headless/batch work or long-running agent commands. Slack chat.stream sessions cap around 3 minutes, so individual tool calls longer than 90s risk freezing the in-flight Slack stream before the final result arrives. If you run for/while loops with outbound network calls, start the script with set -e so one failure or timeout aborts the loop instead of compounding many slow failures. For complex workflows, check your skill notes first. Hard max is 750s for headless jobs and agent commands like Claude Code, leaving a 50s buffer before the Vercel function timeout at 800s.",
       requiredCredentials: ["e2b_api_key"],
       inputSchema: z.object({
         command: z
@@ -37,9 +37,9 @@ export function createSandboxTools(context?: ScheduleContext) {
           .number()
           .min(1)
           .max(750)
-          .default(120)
+          .default(90)
           .describe(
-            "Command timeout in seconds (default 120, max 750). Use higher timeouts for long-running agent commands like Claude Agent SDK or Codex CLI.",
+            "Command timeout in seconds (default 90, max 750). Explicitly opt in to values above 90s only for headless/batch work or long-running agent commands; Slack chat.stream caps around 3 minutes, so longer foreground calls can freeze the active Slack message.",
           ),
       }),
       execute: async ({ command, workdir, timeout_seconds }) => {
