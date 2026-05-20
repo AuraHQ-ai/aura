@@ -57,6 +57,7 @@ vi.mock("./prepare-step.js", () => ({
 }));
 
 import { generateResponse } from "./respond.js";
+import { logError } from "../lib/error-logger.js";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -87,6 +88,7 @@ function mockAgentStream(fullStream: AsyncIterable<any>) {
       stream: vi.fn().mockResolvedValue({
         fullStream,
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 1 }),
+        finishReason: Promise.resolve("stop"),
         steps: Promise.resolve([]),
       }),
     },
@@ -246,6 +248,57 @@ describe("generateResponse Slack stream handling", () => {
       channel: "C123",
       thread_ts: "1710000000.000000",
       text: expect.stringContaining("Fallback text."),
+    }));
+  });
+
+  it("logs empty completions after tool errors without recording unexpected stream errors", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-error",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        error: new Error("sandbox died"),
+      };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    const logErrorMock = vi.mocked(logError);
+    const emptyCompletionLogs = logErrorMock.mock.calls.filter(
+      ([entry]) => entry.errorCode === "empty_completion_after_tools",
+    );
+    const unexpectedStreamLogs = logErrorMock.mock.calls.filter(
+      ([entry]) => entry.errorName === "UnexpectedStreamError",
+    );
+
+    expect(emptyCompletionLogs).toHaveLength(1);
+    expect(emptyCompletionLogs[0]?.[0]).toMatchObject({
+      errorName: "EmptyCompletion",
+      errorCode: "empty_completion_after_tools",
+      channelId: "C123",
+      context: {
+        toolCallCount: 1,
+        toolErrorCount: 1,
+        finishReason: "stop",
+      },
+    });
+    expect(unexpectedStreamLogs).toHaveLength(0);
+    expect(stream.stop).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: expect.stringContaining("no output generated"),
+      })],
+    });
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C123",
+      thread_ts: "1710000000.000000",
+      text: "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_",
     }));
   });
 });
