@@ -473,8 +473,8 @@ const CAPABILITY_DOMAINS: Array<{
   {
     label: "E2B Sandboxes",
     envNames: ["E2B_API_KEY", "E2B_PAT"],
-    wrappers: ["run_command", "dispatch_headless", "run_subagent"],
-    guidance: "use the sandbox tools instead of calling E2B APIs directly",
+    wrappers: ["run_command", "run_command_detached", "check_command", "dispatch_headless", "run_subagent"],
+    guidance: "use run_command for short inline work, run_command_detached for long sandbox work, and check_command to poll it; do not call E2B APIs directly",
   },
 ];
 
