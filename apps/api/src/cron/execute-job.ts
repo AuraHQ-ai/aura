@@ -1,7 +1,7 @@
 import { WebClient } from "@slack/web-api";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { jobs, notes, jobExecutions } from "@aura/db/schema";
+import { jobs, notes, jobExecutions, errorEvents } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
@@ -49,6 +49,66 @@ You are resuming a multi-step task. Your accumulated progress and context are be
 - Post results in the thread you're continuing (routing is automatic).
 - Be concise and focused. Don't re-explain what was already done -- just continue the work.
 - If the continuation depth limit is reached, explain your current status and ask if you should keep going.`;
+
+export class ScriptHardFailure extends Error {
+  readonly exitCode: number;
+  readonly stderr: string;
+
+  constructor(exitCode: number, stderr: string) {
+    super(`Script hard failure (exit ${exitCode}): ${stderr || "(no stderr)"}`);
+    this.name = "ScriptHardFailure";
+    this.exitCode = exitCode;
+    this.stderr = stderr;
+  }
+}
+
+function isHardScriptFailure(exitCode: number, stdout: string, stderr: string): boolean {
+  if (exitCode === 127) return true; // command not found
+  if (exitCode === 126) return true; // not executable
+  if (/No such file or directory/i.test(stderr)) return true;
+  if (/command not found/i.test(stderr)) return true;
+  if (/ModuleNotFoundError|ImportError/i.test(stderr)) return true;
+  if (exitCode !== 0 && (!stdout || stdout.trim().length === 0)) return true;
+  return false;
+}
+
+function truncateScriptStderr(stderr: string): string {
+  return stderr.slice(0, 2000);
+}
+
+async function recordScriptHardFailure(params: {
+  jobId: string;
+  jobName: string;
+  requestedBy: string;
+  channelId: string | null;
+  exitCode: number;
+  stderr: string;
+}) {
+  try {
+    await db.insert(errorEvents).values({
+      timestamp: new Date(),
+      errorName: "ScriptHardFailure",
+      errorMessage: params.stderr || "(no stderr)",
+      errorCode: `SCRIPT_EXIT_${params.exitCode}`,
+      userId: params.requestedBy,
+      channelId: params.channelId,
+      context: {
+        jobId: params.jobId,
+        jobName: params.jobName,
+        exitCode: params.exitCode,
+        stderr: params.stderr,
+      },
+    });
+  } catch (error: any) {
+    logger.error("executeJob: failed to record script hard failure", {
+      jobId: params.jobId,
+      jobName: params.jobName,
+      exitCode: params.exitCode,
+      stderr: params.stderr,
+      error: error.message,
+    });
+  }
+}
 
 // ── Continuation Detection ───────────────────────────────────────────────────
 
@@ -182,6 +242,7 @@ export async function executeJob(
 
     // ── Script execution layer ──────────────────────────────────────────────
     let scriptOutput: string | null = null;
+    let scriptStderr: string | null = null;
 
     if (job.script) {
       try {
@@ -241,30 +302,77 @@ export async function executeJob(
             return true;
           }
         } else {
-          logger.warn("executeJob: script failed, falling through to LLM", {
+          const stdout = scriptResult.stdout || "";
+          const stderr = scriptResult.stderr || "";
+          scriptOutput = truncateOutput(stdout, 50_000);
+          scriptStderr = truncateScriptStderr(stderr);
+
+          if (isHardScriptFailure(scriptResult.exitCode, stdout, stderr)) {
+            await recordScriptHardFailure({
+              jobId,
+              jobName: job.name,
+              requestedBy: job.requestedBy,
+              channelId: job.channelId,
+              exitCode: scriptResult.exitCode,
+              stderr: scriptStderr,
+            });
+            throw new ScriptHardFailure(scriptResult.exitCode, scriptStderr);
+          }
+
+          logger.warn("executeJob: script soft-failed, falling through to LLM", {
             jobId,
             jobName: job.name,
             exitCode: scriptResult.exitCode,
-            stderr: scriptResult.stderr?.slice(0, 500),
+            stderr: scriptStderr.slice(0, 500),
           });
         }
       } catch (scriptErr: any) {
-        if (scriptOutput) {
+        if (scriptErr instanceof ScriptHardFailure) {
           throw scriptErr;
         }
-        logger.warn("executeJob: script execution error, falling through to LLM", {
-          jobId,
-          jobName: job.name,
-          error: scriptErr.message,
-        });
+
+        const exitCode = typeof scriptErr.exitCode === "number" ? scriptErr.exitCode : 1;
+        const stdout = typeof scriptErr.stdout === "string" ? scriptErr.stdout : (scriptOutput ?? "");
+        const stderr =
+          typeof scriptErr.stderr === "string"
+            ? scriptErr.stderr
+            : scriptErr.message || "Script execution failed";
+
+        if (isHardScriptFailure(exitCode, stdout, stderr)) {
+          const truncatedStderr = truncateScriptStderr(stderr);
+          await recordScriptHardFailure({
+            jobId,
+            jobName: job.name,
+            requestedBy: job.requestedBy,
+            channelId: job.channelId,
+            exitCode,
+            stderr: truncatedStderr,
+          });
+          throw new ScriptHardFailure(exitCode, truncatedStderr);
+        }
+
+        if (scriptOutput || (stdout && stdout.trim().length > 0)) {
+          scriptOutput = scriptOutput ?? stdout.slice(0, 50_000);
+          scriptStderr = truncateScriptStderr(stderr);
+          logger.warn("executeJob: script execution soft error, falling through to LLM", {
+            jobId,
+            jobName: job.name,
+            exitCode,
+            error: scriptErr.message,
+            stderr: scriptStderr.slice(0, 500),
+          });
+        }
       }
     }
 
     if (scriptOutput) {
-      prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`\n\n---\n\n${prompt}`;
+      const stderrSection = scriptStderr
+        ? `\n\n## Script stderr\n\n\`\`\`\n${scriptStderr}\n\`\`\``
+        : "";
+      prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`${stderrSection}\n\n---\n\n${prompt}`;
     }
 
-  const { agent, modelId, getStepModelIds } = await createHeadlessAgent({
+    const { agent, modelId, getStepModelIds } = await createHeadlessAgent({
       slackClient,
       context: {
         userId: job.requestedBy,
