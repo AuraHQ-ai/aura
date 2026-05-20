@@ -282,7 +282,7 @@ describe("bootstrapToolsRepo", () => {
 
   it("clones the configured repository when the checkout is missing", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
-    const run = vi.fn(async (command: string) => {
+    const run = vi.fn(async (command: string, _options?: unknown) => {
       if (command.includes("rev-parse")) {
         return { exitCode: 128, stdout: "", stderr: "missing" };
       }
@@ -308,7 +308,7 @@ describe("bootstrapToolsRepo", () => {
   it("pulls on re-acquire when the checkout is already a git repository", async () => {
     getSettingMock.mockResolvedValue("https://github.com/acme/tools.git");
     let checkoutExists = false;
-    const run = vi.fn(async (command: string) => {
+    const run = vi.fn(async (command: string, _options?: unknown) => {
       if (command.includes("rev-parse")) {
         return { exitCode: checkoutExists ? 0 : 128, stdout: "", stderr: "" };
       }
@@ -336,7 +336,7 @@ describe("bootstrapToolsRepo", () => {
 
   it("logs a warning but does not throw when clone fails", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
-    const run = vi.fn(async (command: string) => {
+    const run = vi.fn(async (command: string, _options?: unknown) => {
       if (command.includes("rev-parse")) {
         return { exitCode: 128, stdout: "", stderr: "missing" };
       }
