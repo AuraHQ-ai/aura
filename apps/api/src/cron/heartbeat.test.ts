@@ -248,7 +248,11 @@ describe("heartbeat stale running recovery", () => {
         }),
       ]),
     );
-    expect(updateSets().some((set) => set.status === "failed")).toBe(false);
+    expect(
+      updateSets().some(
+        (set) => set.result === "Failed: job stuck in running state and exceeded retry limit",
+      ),
+    ).toBe(false);
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 });

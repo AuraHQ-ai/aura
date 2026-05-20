@@ -1,7 +1,9 @@
+import { WebClient } from "@slack/web-api";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext } from "../lib/tool.js";
 import { getCurrentTimeContext } from "../lib/temporal.js";
@@ -18,6 +20,9 @@ import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 import { sendJobFailureDm } from "./job-notifications.js";
+
+const botToken = process.env.SLACK_BOT_TOKEN || "";
+const slackClient = new WebClient(botToken);
 
 /** Max retries before marking as failed */
 export const MAX_RETRIES = 3;
