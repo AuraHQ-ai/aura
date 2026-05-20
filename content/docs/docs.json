@@ -51,6 +51,12 @@
             ]
           },
           {
+            "group": "Configuration",
+            "pages": [
+              "configuration/special-keys"
+            ]
+          },
+          {
             "group": "Core Systems",
             "pages": [
               "memory-system",

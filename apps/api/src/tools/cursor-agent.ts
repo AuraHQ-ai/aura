@@ -6,6 +6,7 @@ import { notes } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { getConfig } from "../lib/settings.js";
+import { DEFAULT_GITHUB_REPO_SETTING } from "../config/registry.js";
 
 /**
  * Create Cursor Cloud Agent tools for the AI SDK.
@@ -58,7 +59,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             "../lib/cursor-agent.js"
           );
 
-          const defaultRepo = await getConfig("default_github_repo", "AuraHQ-ai/aura");
+          const defaultRepo = await getConfig(
+            DEFAULT_GITHUB_REPO_SETTING.key,
+            DEFAULT_GITHUB_REPO_SETTING.default ?? "AuraHQ-ai/aura",
+          );
           const repo = repository || defaultRepo;
           const repoUrl = `https://github.com/${repo}`;
 

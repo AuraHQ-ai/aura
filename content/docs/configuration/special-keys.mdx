@@ -1,0 +1,68 @@
+---
+title: "Special configuration keys"
+description: "Settings and environment variables with runtime side effects in Aura."
+---
+
+# Special configuration keys
+
+This page is generated from `apps/api/src/config/registry.ts`. Update the registry, then run `pnpm gen:special-keys-docs` to refresh it.
+
+These keys do more than store static configuration: they change runtime behavior, bootstrap sandbox resources, or alter agent capabilities.
+
+| Key | Kind | Scope | Effect | Example | Default |
+| --- | --- | --- | --- | --- | --- |
+| [`tools_repo`](#tools_repo) | setting | workspace | Clones github.com/&lt;value&gt; to /home/user/aura-tools on every sandbox acquisition. Tools registered there become callable from recurring jobs via `python3 /home/user/aura-tools/runner.py &lt;tool_name&gt; &lt;args&gt;`. | `realadvisor/aura-tools` | _none_ |
+| [`default_github_repo`](#default_github_repo) | setting | workspace | Sets the default GitHub repository used when dispatching Cursor Cloud Agents without an explicit repository. | `AuraHQ-ai/aura` | `AuraHQ-ai/aura` |
+| [`MONGODB_ATLAS_URI`](#mongodb_atlas_uri) | env | global | Advertises MongoDB Atlas as a sandbox scratch/staging storage layer in the agent prompt when the env var is available to the sandbox. | `mongodb+srv://user:password@cluster.example.mongodb.net/aura` | _none_ |
+| [`GOOGLE_SA_KEY_B64`](#google_sa_key_b64) | env | global | Mounts the GCS bucket gs://aura-files at /mnt/aura-files inside the sandbox via gcsfuse when present. | `base64-encoded-service-account-json` | _none_ |
+| [`E2B_TEMPLATE_ID`](#e2b_template_id) | env | global | Selects the E2B sandbox template. Changing it forces the next sandbox acquisition to discard a saved sandbox using an older template. | `tmpl_abc123` | _none_ |
+
+## tools_repo
+
+<a id="tools_repo" />
+
+- **Kind:** setting
+- **Scope:** workspace
+- **Effect:** Clones github.com/&lt;value&gt; to /home/user/aura-tools on every sandbox acquisition. Tools registered there become callable from recurring jobs via `python3 /home/user/aura-tools/runner.py &lt;tool_name&gt; &lt;args&gt;`.
+- **Example:** `realadvisor/aura-tools`
+- **Default:** _none_
+
+## default_github_repo
+
+<a id="default_github_repo" />
+
+- **Kind:** setting
+- **Scope:** workspace
+- **Effect:** Sets the default GitHub repository used when dispatching Cursor Cloud Agents without an explicit repository.
+- **Example:** `AuraHQ-ai/aura`
+- **Default:** `AuraHQ-ai/aura`
+
+## MONGODB_ATLAS_URI
+
+<a id="mongodb_atlas_uri" />
+
+- **Kind:** env
+- **Scope:** global
+- **Effect:** Advertises MongoDB Atlas as a sandbox scratch/staging storage layer in the agent prompt when the env var is available to the sandbox.
+- **Example:** `mongodb+srv://user:password@cluster.example.mongodb.net/aura`
+- **Default:** _none_
+
+## GOOGLE_SA_KEY_B64
+
+<a id="google_sa_key_b64" />
+
+- **Kind:** env
+- **Scope:** global
+- **Effect:** Mounts the GCS bucket gs://aura-files at /mnt/aura-files inside the sandbox via gcsfuse when present.
+- **Example:** `base64-encoded-service-account-json`
+- **Default:** _none_
+
+## E2B_TEMPLATE_ID
+
+<a id="e2b_template_id" />
+
+- **Kind:** env
+- **Scope:** global
+- **Effect:** Selects the E2B sandbox template. Changing it forces the next sandbox acquisition to discard a saved sandbox using an older template.
+- **Example:** `tmpl_abc123`
+- **Default:** _none_

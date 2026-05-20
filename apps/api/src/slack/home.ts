@@ -12,6 +12,7 @@ import {
   getModelCatalogResponse,
   type ModelOption,
 } from "../lib/model-catalog.js";
+import { getWorkspaceSpecialSettings } from "../config/registry.js";
 
 // ── Credential Definitions ───────────────────────────────────────────────────
 
@@ -67,6 +68,85 @@ function buildDropdown(
       initial_option: initialOption,
     },
   };
+}
+
+const SPECIAL_KEY_ACTION_PREFIX = "special_setting_";
+
+function truncatePlainText(text: string, maxLength: number): string {
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 3)}...`;
+}
+
+function buildSpecialSettingsBlocks(
+  currentSettings: Record<string, string>,
+  editable: boolean,
+): any[] {
+  const specialSettings = getWorkspaceSpecialSettings();
+  if (specialSettings.length === 0) return [];
+
+  const blocks: any[] = [
+    { type: "divider" },
+    {
+      type: "header",
+      text: { type: "plain_text", text: "Sandbox & integrations" },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: editable
+            ? "Workspace-scoped settings with runtime side effects. Press Enter in a field to save it."
+            : "Workspace-scoped settings with runtime side effects.",
+        },
+      ],
+    },
+  ];
+
+  for (const entry of specialSettings) {
+    const currentValue = currentSettings[entry.key] || "";
+    if (editable) {
+      blocks.push(
+        {
+          type: "input",
+          block_id: `special_key_${entry.key}`,
+          optional: true,
+          dispatch_action: true,
+          label: {
+            type: "plain_text",
+            text: entry.key,
+          },
+          hint: {
+            type: "plain_text",
+            text: truncatePlainText(entry.effect, 2000),
+          },
+          element: {
+            type: "plain_text_input",
+            action_id: `${SPECIAL_KEY_ACTION_PREFIX}${entry.key}`,
+            initial_value: currentValue || undefined,
+            placeholder: {
+              type: "plain_text",
+              text: truncatePlainText(entry.example || entry.key, 150),
+            },
+            dispatch_action_config: {
+              trigger_actions_on: ["on_enter_pressed"],
+            },
+          },
+        },
+      );
+    } else {
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*\`${entry.key}\`*\n${entry.effect}\nCurrent: ${
+            currentValue ? `\`${currentValue}\`` : "_not set_"
+          }`,
+        },
+      });
+    }
+  }
+
+  return blocks;
 }
 
 async function buildCredentialBlocks(): Promise<any[]> {
@@ -705,6 +785,8 @@ export async function publishHomeTab(
           },
         },
       );
+
+      blocks.push(...buildSpecialSettingsBlocks(currentSettings, true));
     } else {
       // Read-only view
       const mainLabel = labelByValue.get(mainValue) || mainValue;
@@ -720,6 +802,8 @@ export async function publishHomeTab(
           },
         },
       );
+
+      blocks.push(...buildSpecialSettingsBlocks(currentSettings, false));
     }
 
     const userCredBlocks = await buildUserCredentialBlocks(userId);
@@ -767,4 +851,5 @@ export const ACTION_TO_SETTING: Record<string, string> = {
   select_slack_task_display_mode: "slack_task_display_mode",
 };
 
+export { SPECIAL_KEY_ACTION_PREFIX };
 export { hasRole } from "../lib/permissions.js";

@@ -6,6 +6,7 @@ import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
 import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
+import { MONGODB_ATLAS_URI_ENV } from "../config/registry.js";
 
 export interface PersonProfile {
   slackUserId: string;
@@ -397,7 +398,7 @@ function formatStorage(envNames: string[]): string {
   const has = (name: string) => envNames.includes(name);
   const lines: string[] = [];
 
-  if (has("MONGODB_ATLAS_URI")) {
+  if (has(MONGODB_ATLAS_URI_ENV.key)) {
     lines.push(
       "**MongoDB Atlas** is wired up as your scratch/staging storage layer. Use it whenever a job needs to persist or retrieve arbitrary structured data across sessions -- especially when you'd otherwise reinvent storage in the sandbox.",
       "",
@@ -407,7 +408,7 @@ function formatStorage(envNames: string[]): string {
       "- Per-task collections that don't deserve a Postgres schema and outlive a single sandbox session.",
       "",
       "Rules:",
-      "- The URI is in `MONGODB_ATLAS_URI` (sandbox env). The `mongodb` node driver and `mongosh` are pre-baked into the sandbox template.",
+      `- The URI is in \`${MONGODB_ATLAS_URI_ENV.key}\` (sandbox env). The \`mongodb\` node driver and \`mongosh\` are pre-baked into the sandbox template.`,
       "- Schemaless by design -- create collections on demand, no migrations, no DDL approvals needed. Name them `<domain>_<purpose>` (e.g. `fb_comments`, `notion_dump_2026_05_20`).",
       "- This is NOT a replacement for Postgres. Postgres (`DATABASE_URL`) is mission-critical, schema-managed core state (memories, messages, entities, jobs, notes) -- you do not write DDL or mutate it without Joan's approval. Mongo is your scratch space; Postgres is the system's spine.",
       "- Prefer Mongo over SQLite-in-sandbox or GCS FUSE for anything that needs to survive sandbox resets or be queried later. SQLite can vanish on e2b pause/resume; GCS FUSE is slow and not query-shaped.",

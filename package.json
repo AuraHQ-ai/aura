@@ -4,6 +4,8 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "prepare": "husky",
+    "gen:special-keys-docs": "pnpm --filter aura-api exec tsx ../../scripts/gen-special-keys-docs.ts",
+    "build": "pnpm gen:special-keys-docs && pnpm --filter @aura/db build && pnpm --filter aura-api build && pnpm --filter aura-dashboard build && pnpm --filter aurahq-web build",
     "dev": "pnpm --filter @aura/db build && pnpm --filter aura-api --filter aura-dashboard --parallel dev",
     "typecheck": "pnpm --filter aura-api typecheck && pnpm --filter aura-dashboard typecheck",
     "db:generate": "./scripts/env.sh pnpm --filter @aura/db db:generate",

@@ -17,6 +17,7 @@ import {
   openUpdateCredentialModal,
   openShareCredentialModal,
   openCredentialAccessModal,
+  SPECIAL_KEY_ACTION_PREFIX,
 } from "./slack/home.js";
 import {
   storeApiCredential,
@@ -36,6 +37,7 @@ import crypto from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
 import { notes, feedback } from "@aura/db/schema";
+import { getWorkspaceSpecialSettings } from "./config/registry.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -390,6 +392,29 @@ app.post("/api/slack/interactions", async (c) => {
         })();
 
         waitUntil(savePromise);
+      }
+
+      if (action.action_id?.startsWith(SPECIAL_KEY_ACTION_PREFIX)) {
+        const key = action.action_id.slice(SPECIAL_KEY_ACTION_PREFIX.length);
+        const specialSetting = getWorkspaceSpecialSettings().find(
+          (entry) => entry.key === key,
+        );
+
+        if (specialSetting && typeof action.value === "string") {
+          const savePromise = (async () => {
+            try {
+              await setSetting(specialSetting.key, action.value, userId);
+              await publishHomeTab(slackClient, userId);
+            } catch (err) {
+              recordError("interactions.special_setting_save", err, {
+                userId,
+                settingKey: specialSetting.key,
+              });
+            }
+          })();
+
+          waitUntil(savePromise);
+        }
       }
 
       const credentialKey = CREDENTIAL_ACTIONS[action.action_id];

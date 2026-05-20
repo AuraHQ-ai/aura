@@ -4,6 +4,12 @@ import { decryptCredential } from "./credentials.js";
 import { db } from "../db/client.js";
 import { credentials, credentialGrants } from "@aura/db/schema";
 import { logger } from "./logger.js";
+import {
+  E2B_TEMPLATE_ID_ENV,
+  GOOGLE_SA_KEY_B64_ENV,
+  TOOLS_REPO_SETTING,
+  type SpecialKey,
+} from "../config/registry.js";
 
 const sandboxNoteKey = (userId?: string) =>
   userId ? `e2b_sandbox_id:${userId}` : "e2b_sandbox_id";
@@ -15,6 +21,7 @@ const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour -- autoPause handles inacti
  *  Keyed by userId so concurrent invocations for different users don't share state. */
 let cachedSandbox: any | null = null;
 let cachedSandboxUserId: string | undefined;
+const toolsRepoReady = new Set<string>();
 
 interface SandboxCredentialRow {
   id: string;
@@ -42,6 +49,7 @@ export function clearCachedSandbox(): void {
     cachedSandboxUserId = undefined;
   }
   userHomeReady.clear();
+  toolsRepoReady.clear();
 }
 
 /**
@@ -56,6 +64,24 @@ async function loadE2B() {
 
 function resolveSandboxEnvName(row: SandboxCredentialRow): string {
   return row.sandboxEnvName || row.name.toUpperCase();
+}
+
+function logBootstrap(
+  entry: SpecialKey,
+  valueLabel: string | null,
+  effectSummary: string,
+): void {
+  if (valueLabel) {
+    logger.info(
+      `[bootstrap] ${entry.key}=${valueLabel} -> ${effectSummary}`,
+      { key: entry.key, value: valueLabel, effect: effectSummary },
+    );
+  } else {
+    logger.info(
+      `[bootstrap] ${entry.key} unset, skipping`,
+      { key: entry.key, effect: effectSummary },
+    );
+  }
 }
 
 async function resolveSandboxCredentialRows(
@@ -220,6 +246,85 @@ export async function getSandboxEnvNames(userId?: string): Promise<string[]> {
   return [...new Set(rows.map(resolveSandboxEnvName))].sort();
 }
 
+async function ensureToolsRepo(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<void> {
+  const repo = (await getSetting(TOOLS_REPO_SETTING.key))?.trim();
+  const checkoutPath = "/home/user/aura-tools";
+  const effectSummary = `cloning to ${checkoutPath}`;
+
+  if (!repo) {
+    logBootstrap(TOOLS_REPO_SETTING, null, effectSummary);
+    return;
+  }
+
+  logBootstrap(TOOLS_REPO_SETTING, repo, effectSummary);
+
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    logger.warn(`Invalid ${TOOLS_REPO_SETTING.key} setting; expected owner/repo`, { repo });
+    return;
+  }
+
+  const sandboxId = sandbox.sandboxId || "unknown";
+  const cacheKey = `${sandboxId}:${repo}`;
+  if (toolsRepoReady.has(cacheKey)) return;
+
+  const cloneUrl = envs.GITHUB_TOKEN
+    ? `https://x-access-token:${envs.GITHUB_TOKEN}@github.com/${repo}.git`
+    : `https://github.com/${repo}.git`;
+  const command = [
+    "set -e",
+    `target="${checkoutPath}"`,
+    'if [ -d "$target/.git" ]; then',
+    '  origin="$(git -C "$target" remote get-url origin || true)"',
+    '  case "$origin" in',
+    '    *"github.com/$TOOLS_REPO.git") git -C "$target" pull --quiet --ff-only ;;',
+    '    *) rm -rf "$target"; git clone --depth=1 "$TOOLS_REPO_CLONE_URL" "$target" ;;',
+    "  esac",
+    "else",
+    '  rm -rf "$target"',
+    '  git clone --depth=1 "$TOOLS_REPO_CLONE_URL" "$target"',
+    "fi",
+  ].join("\n");
+
+  try {
+    const result = await sandbox.commands.run(command, {
+      timeoutMs: 60_000,
+      envs: {
+        ...envs,
+        TOOLS_REPO: repo,
+        TOOLS_REPO_CLONE_URL: cloneUrl,
+      },
+    });
+
+    if (result.exitCode !== 0) {
+      logger.warn("Failed to bootstrap tools repo in sandbox", {
+        repo,
+        exitCode: result.exitCode,
+        stderr: envs.GITHUB_TOKEN
+          ? result.stderr?.replace(envs.GITHUB_TOKEN, "[REDACTED]")
+          : result.stderr,
+      });
+      return;
+    }
+
+    toolsRepoReady.add(cacheKey);
+    logger.info("Tools repo ready in sandbox", {
+      repo,
+      checkoutPath,
+      sandboxId,
+    });
+  } catch (error: any) {
+    logger.warn("Failed to bootstrap tools repo in sandbox", {
+      repo,
+      error: envs.GITHUB_TOKEN
+        ? error.message?.replace(envs.GITHUB_TOKEN, "[REDACTED]")
+        : error.message,
+    });
+  }
+}
+
 /**
  * Mount the GCS bucket `gs://aura-files` at `/mnt/aura-files`.
  * Installs gcsfuse if needed and uses the base64-encoded SA key from envs.
@@ -230,50 +335,53 @@ async function setupSandboxFilesystem(
   envs: Record<string, string>,
 ): Promise<void> {
   try {
-    const mountCheck = await sandbox.commands.run(
-      "mountpoint -q /mnt/aura-files && echo mounted || echo not",
-      { timeoutMs: 5_000, envs },
-    );
-    if (mountCheck.stdout?.trim() === "mounted") return;
-
-    if (!envs.GOOGLE_SA_KEY_B64) {
-      logger.info("Skipping GCS mount — GOOGLE_SA_KEY_B64 not available");
-      return;
-    }
-
-    const gcsfuseCheck = await sandbox.commands.run("which gcsfuse", {
-      timeoutMs: 5_000,
-    });
-    if (gcsfuseCheck.exitCode !== 0) {
-      const distro = "bookworm";
-      const installResult = await sandbox.commands.run(
-        `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse && { grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | sudo tee -a /etc/fuse.conf > /dev/null; }`,
-        { timeoutMs: 60_000, envs },
+    const mountEffect = "mounting gs://aura-files at /mnt/aura-files";
+    if (!envs[GOOGLE_SA_KEY_B64_ENV.key]) {
+      logBootstrap(GOOGLE_SA_KEY_B64_ENV, null, mountEffect);
+    } else {
+      logBootstrap(GOOGLE_SA_KEY_B64_ENV, "set", mountEffect);
+      const mountCheck = await sandbox.commands.run(
+        "mountpoint -q /mnt/aura-files && echo mounted || echo not",
+        { timeoutMs: 5_000, envs },
       );
-      if (installResult.exitCode !== 0) {
-        logger.warn("gcsfuse install failed", {
-          exitCode: installResult.exitCode,
-          stderr: installResult.stderr,
+
+      if (mountCheck.stdout?.trim() !== "mounted") {
+        const gcsfuseCheck = await sandbox.commands.run("which gcsfuse", {
+          timeoutMs: 5_000,
         });
-        return;
+        if (gcsfuseCheck.exitCode !== 0) {
+          const distro = "bookworm";
+          const installResult = await sandbox.commands.run(
+            `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse && { grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | sudo tee -a /etc/fuse.conf > /dev/null; }`,
+            { timeoutMs: 60_000, envs },
+          );
+          if (installResult.exitCode !== 0) {
+            logger.warn("gcsfuse install failed", {
+              exitCode: installResult.exitCode,
+              stderr: installResult.stderr,
+            });
+          }
+        }
+
+        const mountResult = await sandbox.commands.run(
+          `touch /tmp/gcs-sa-key.json && chmod 600 /tmp/gcs-sa-key.json && echo "$${GOOGLE_SA_KEY_B64_ENV.key}" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && sudo chown 1000:1000 /mnt/aura-files && sudo gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs --uid=1000 --gid=1000 -o allow_other aura-files /mnt/aura-files; EXIT=$?; rm -f /tmp/gcs-sa-key.json; exit $EXIT`,
+          { timeoutMs: 30_000, envs },
+        );
+        if (mountResult.exitCode !== 0) {
+          logger.warn("gcsfuse mount failed", {
+            exitCode: mountResult.exitCode,
+            stderr: mountResult.stderr,
+          });
+        } else {
+          logger.info("GCS bucket mounted at /mnt/aura-files");
+        }
       }
     }
-
-    const mountResult = await sandbox.commands.run(
-      `touch /tmp/gcs-sa-key.json && chmod 600 /tmp/gcs-sa-key.json && echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && sudo chown 1000:1000 /mnt/aura-files && sudo gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs --uid=1000 --gid=1000 -o allow_other aura-files /mnt/aura-files; EXIT=$?; rm -f /tmp/gcs-sa-key.json; exit $EXIT`,
-      { timeoutMs: 30_000, envs },
-    );
-    if (mountResult.exitCode !== 0) {
-      logger.warn("gcsfuse mount failed", {
-        exitCode: mountResult.exitCode,
-        stderr: mountResult.stderr,
-      });
-      return;
-    }
-    logger.info("GCS bucket mounted at /mnt/aura-files");
   } catch (error: any) {
     logger.warn("Failed to mount GCS bucket", { error: error.message });
   }
+
+  await ensureToolsRepo(sandbox, envs);
 }
 
 /**
@@ -378,7 +486,13 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
   const templateKey = sandboxTemplateKey(userId);
   let savedId = await getSetting(noteKey);
   const savedTemplateId = await getSetting(templateKey);
-  const currentTemplateId = envs.E2B_TEMPLATE_ID || process.env.E2B_TEMPLATE_ID || undefined;
+  const currentTemplateId =
+    envs[E2B_TEMPLATE_ID_ENV.key] || process.env[E2B_TEMPLATE_ID_ENV.key] || undefined;
+  logBootstrap(
+    E2B_TEMPLATE_ID_ENV,
+    currentTemplateId ?? null,
+    "selecting E2B sandbox template",
+  );
 
   // If the template was upgraded, kill the old sandbox so we create a fresh one
   if (savedId && currentTemplateId && savedTemplateId !== currentTemplateId) {
@@ -428,7 +542,8 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
   }
 
   // Create a new sandbox
-  const templateId = envs.E2B_TEMPLATE_ID || process.env.E2B_TEMPLATE_ID || undefined;
+  const templateId =
+    envs[E2B_TEMPLATE_ID_ENV.key] || process.env[E2B_TEMPLATE_ID_ENV.key] || undefined;
   logger.info("Creating new E2B sandbox", { templateId: templateId || "default" });
 
   // autoPause: E2B pauses the sandbox after DEFAULT_TIMEOUT_MS of inactivity
