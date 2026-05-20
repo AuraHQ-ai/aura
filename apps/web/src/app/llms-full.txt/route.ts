@@ -36,7 +36,7 @@ export async function GET() {
 > An AI colleague that lives in Slack -- with persistent memory, autonomous background work, and a codebase that evolves itself.
 
 Source: https://aurahq.ai
-GitHub: https://github.com/realadvisor/aura
+GitHub: https://github.com/AuraHQ-ai/aura
 
 ---`);
 

@@ -10,6 +10,9 @@ const sandboxNoteKey = (userId?: string) =>
 const sandboxTemplateKey = (userId?: string) =>
   userId ? `e2b_sandbox_template_id:${userId}` : "e2b_sandbox_template_id";
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour -- autoPause handles inactivity
+const TOOLS_REPO_SETTING_KEY = "tools_repo";
+const TOOLS_REPO_CHECKOUT_DIR_NAME = ["aura", "tools"].join("-");
+const TOOLS_REPO_CHECKOUT_PATH = `/home/user/${TOOLS_REPO_CHECKOUT_DIR_NAME}`;
 
 /** Per-invocation cache -- reuse the same sandbox within a single request.
  *  Keyed by userId so concurrent invocations for different users don't share state. */
@@ -26,6 +29,52 @@ interface SandboxCredentialRow {
 
 interface SandboxCredentialValueRow extends SandboxCredentialRow {
   value: string;
+}
+
+interface SandboxCommandRunner {
+  commands: {
+    run: (
+      command: string,
+      options?: { timeoutMs?: number; envs?: Record<string, string> },
+    ) => Promise<{ exitCode?: number; stdout?: string; stderr?: string }>;
+  };
+}
+
+function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function normalizeToolsRepo(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  let ownerAndRepo = trimmed;
+  if (/^https:\/\//i.test(trimmed)) {
+    try {
+      const url = new URL(trimmed);
+      if (url.hostname.toLowerCase() !== "github.com") return null;
+      ownerAndRepo = url.pathname.replace(/^\/+/, "");
+    } catch {
+      return null;
+    }
+  }
+
+  ownerAndRepo = ownerAndRepo.replace(/\/+$/, "").replace(/\.git$/i, "");
+  const parts = ownerAndRepo.split("/");
+  if (parts.length !== 2) return null;
+
+  const [owner, repo] = parts;
+  const segmentPattern = /^[A-Za-z0-9_.-]+$/;
+  if (!segmentPattern.test(owner) || !segmentPattern.test(repo)) return null;
+
+  return `${owner}/${repo}`;
+}
+
+function redactGitAuth(stderr?: string): string | undefined {
+  return stderr?.replace(
+    /x-access-token:[^@\s]+@/g,
+    "x-access-token:[REDACTED]@",
+  );
 }
 
 /**
@@ -277,6 +326,83 @@ async function setupSandboxFilesystem(
 }
 
 /**
+ * Clone or refresh the workspace-configured self-authored tools repository.
+ * Non-fatal by design: a bad repo setting must not make the sandbox unusable.
+ */
+export async function bootstrapToolsRepo(
+  sandbox: SandboxCommandRunner,
+  envs: Record<string, string>,
+): Promise<void> {
+  const rawToolsRepo = (await getSetting(TOOLS_REPO_SETTING_KEY))?.trim();
+  if (!rawToolsRepo) return;
+
+  const toolsRepo = normalizeToolsRepo(rawToolsRepo);
+  if (!toolsRepo) {
+    logger.warn("Invalid tools_repo setting; expected a GitHub owner/name or HTTPS URL", {
+      value: rawToolsRepo,
+    });
+    return;
+  }
+
+  const commandEnvs = { ...envs };
+  if (!commandEnvs.GITHUB_TOKEN && commandEnvs.GH_TOKEN) {
+    commandEnvs.GITHUB_TOKEN = commandEnvs.GH_TOKEN;
+  }
+
+  if (!commandEnvs.GITHUB_TOKEN) {
+    logger.warn("Skipping tools_repo clone because GITHUB_TOKEN is not available", {
+      toolsRepo,
+    });
+    return;
+  }
+
+  const checkoutPath = TOOLS_REPO_CHECKOUT_PATH;
+  const checkoutPathArg = quoteShellArg(checkoutPath);
+
+  try {
+    const repoCheck = await sandbox.commands.run(
+      `git -C ${checkoutPathArg} rev-parse --is-inside-work-tree`,
+      { timeoutMs: 5_000, envs: commandEnvs },
+    );
+
+    if (repoCheck.exitCode === 0) {
+      const pullResult = await sandbox.commands.run(
+        `git -C ${checkoutPathArg} pull --ff-only`,
+        { timeoutMs: 60_000, envs: commandEnvs },
+      );
+      if (pullResult.exitCode !== 0) {
+        logger.warn("Failed to refresh configured tools repository", {
+          toolsRepo,
+          checkoutPath,
+          exitCode: pullResult.exitCode,
+          stderr: redactGitAuth(pullResult.stderr),
+        });
+      }
+      return;
+    }
+
+    const cloneResult = await sandbox.commands.run(
+      `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/${toolsRepo}.git" ${checkoutPathArg}`,
+      { timeoutMs: 120_000, envs: commandEnvs },
+    );
+    if (cloneResult.exitCode !== 0) {
+      logger.warn("Failed to clone configured tools repository", {
+        toolsRepo,
+        checkoutPath,
+        exitCode: cloneResult.exitCode,
+        stderr: redactGitAuth(cloneResult.stderr),
+      });
+    }
+  } catch (error: any) {
+    logger.warn("Failed to bootstrap configured tools repository", {
+      toolsRepo,
+      checkoutPath,
+      error: error.message,
+    });
+  }
+}
+
+/**
  * Ensure per-user persistent home directory exists on the GCS mount.
  * Creates directory structure and symlinks on first call per user per session.
  * Falls back gracefully if GCS mount is unavailable.
@@ -423,6 +549,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
 
     if (cachedSandbox) {
       await setupSandboxFilesystem(cachedSandbox, envs);
+      await bootstrapToolsRepo(cachedSandbox, envs);
       return cachedSandbox;
     }
   }
@@ -486,6 +613,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
   }
 
   await setupSandboxFilesystem(sandbox, envs);
+  await bootstrapToolsRepo(sandbox, envs);
 
   return sandbox;
 }
