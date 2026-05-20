@@ -1,11 +1,13 @@
 import { Hono } from "hono";
-import { eq, and, lt, lte, sql, isNull, or, inArray } from "drizzle-orm";
+import { eq, and, lt, lte, gte, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "@aura/db/schema";
 import type { FrequencyConfig } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { executeJob, MAX_RETRIES } from "./execute-job.js";
+import { computeNextCronTick } from "./cron-utils.js";
+import { sendJobFailureDm, truncateJobFailureText } from "./job-notifications.js";
 
 /** Max jobs to process per heartbeat sweep */
 const MAX_JOBS_PER_SWEEP = 10;
@@ -192,7 +194,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
     // ── 5. Recover jobs stuck in "running" ─────────────────────────────
 
-    const staleRunningCutoff = new Date(Date.now() - STALE_RUNNING_THRESHOLD_MS);
+    const staleRunningCutoff = new Date(now.getTime() - STALE_RUNNING_THRESHOLD_MS);
     const staleRunning = await db
       .update(jobs)
       .set({
@@ -210,19 +212,97 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       .returning({ id: jobs.id, name: jobs.name });
 
     const staleExhausted = await db
-      .update(jobs)
-      .set({
-        status: "failed",
-        result: "Failed: job stuck in running state and exceeded retry limit",
-        updatedAt: new Date(),
-      })
+      .select()
+      .from(jobs)
       .where(
         and(
           eq(jobs.status, "running"),
           lt(jobs.updatedAt, staleRunningCutoff),
+          gte(jobs.retries, MAX_RETRIES),
         ),
-      )
-      .returning({ id: jobs.id, name: jobs.name });
+      );
+
+    const recoveredRecurringJobs: Array<{ id: string; name: string; executeAt: Date }> = [];
+    const failedExhaustedJobs: Array<{ id: string; name: string }> = [];
+
+    for (const job of staleExhausted) {
+      const lastError = truncateJobFailureText(job.lastResult);
+
+      if (job.cronSchedule != null) {
+        try {
+          const executeAt = computeNextCronTick(job.cronSchedule, job.timezone, now);
+
+          await db
+            .update(jobs)
+            .set({
+              status: "pending",
+              retries: 0,
+              executeAt,
+              updatedAt: new Date(),
+            })
+            .where(eq(jobs.id, job.id));
+
+          recoveredRecurringJobs.push({ id: job.id, name: job.name, executeAt });
+          logger.warn("recurring_job_recovered_after_exhaustion", {
+            jobId: job.id,
+            jobName: job.name,
+            cronSchedule: job.cronSchedule,
+            timezone: job.timezone,
+            executeAt: executeAt.toISOString(),
+          });
+
+          await sendJobFailureDm({
+            jobId: job.id,
+            requestedBy: job.requestedBy,
+            text: `Recurring job \`${job.name}\` exhausted retries (last error: ${lastError}). Auto-recovered. Next attempt: ${executeAt.toISOString()}.`,
+            logContext: { event: "recurring_job_recovered_after_exhaustion" },
+          });
+        } catch (error: any) {
+          await db
+            .update(jobs)
+            .set({
+              status: "failed",
+              result: `Failed: job stuck in running state and exceeded retry limit; auto-recovery failed: ${error?.message ?? "invalid cron schedule"}`,
+              updatedAt: new Date(),
+            })
+            .where(eq(jobs.id, job.id));
+
+          failedExhaustedJobs.push({ id: job.id, name: job.name });
+          logger.error("recurring_job_recovery_failed", {
+            jobId: job.id,
+            jobName: job.name,
+            cronSchedule: job.cronSchedule,
+            timezone: job.timezone,
+            error: error?.message,
+          });
+
+          await sendJobFailureDm({
+            jobId: job.id,
+            requestedBy: job.requestedBy,
+            text: `Recurring job \`${job.name}\` exhausted retries but could not be auto-recovered. Last error: ${lastError}.`,
+            logContext: { event: "recurring_job_recovery_failed" },
+          });
+        }
+      } else {
+        await db
+          .update(jobs)
+          .set({
+            status: "failed",
+            result: "Failed: job stuck in running state and exceeded retry limit",
+            updatedAt: new Date(),
+          })
+          .where(eq(jobs.id, job.id));
+
+        failedExhaustedJobs.push({ id: job.id, name: job.name });
+
+        await sendJobFailureDm({
+          jobId: job.id,
+          requestedBy: job.requestedBy,
+          text: `Job ${job.name} exhausted retries. Last error: ${lastError}.`,
+          logContext: { event: "one_shot_job_exhausted_retries" },
+        });
+      }
+    }
 
     const allStaleIds = [
       ...staleRunning.map((j) => j.id),
@@ -253,7 +333,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     }
     if (staleExhausted.length > 0) {
       logger.error(`Heartbeat: ${staleExhausted.length} stale jobs exceeded retry limit`, {
-        jobs: staleExhausted.map((j) => j.name),
+        recoveredRecurringJobs: recoveredRecurringJobs.map((j) => j.name),
+        failedJobs: failedExhaustedJobs.map((j) => j.name),
       });
     }
 

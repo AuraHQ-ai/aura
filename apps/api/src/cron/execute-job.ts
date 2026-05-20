@@ -19,8 +19,8 @@ import {
 import { detectScriptOutputError } from "./script-output.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
-import { resolveSlackDestination } from "../tools/slack.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
+import { sendJobFailureDm } from "./job-notifications.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -484,20 +484,13 @@ export async function executeJob(
         })
         .where(eq(jobs.id, jobId));
 
-      // Escalate: DM the requester
-      try {
-        if (job.requestedBy && job.requestedBy !== "aura") {
-          const dmChannelId = await resolveSlackDestination(slackClient, job.requestedBy);
-          if (dmChannelId) {
-            await safePostMessage(slackClient, {
-              channel: dmChannelId,
-              text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
-            });
-          }
-        }
-      } catch {
-        logger.error("Heartbeat: failed to send escalation DM", { jobId, executionId });
-      }
+      await sendJobFailureDm({
+        jobId,
+        requestedBy: job.requestedBy,
+        fallbackToAdmin: false,
+        text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
+        logContext: { executionId },
+      });
 
       logger.error("Heartbeat: job failed permanently", {
         jobName: job.name,
