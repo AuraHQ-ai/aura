@@ -301,4 +301,144 @@ describe("generateResponse Slack stream handling", () => {
       text: "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_",
     }));
   });
+
+  it("logs empty completions for tool-error-only continuation segments", async () => {
+    vi.useFakeTimers();
+    const finishTool = deferred<void>();
+    const firstStream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const secondStream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([firstStream, secondStream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Starting the job.\n" };
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "sleep 200", timeout_seconds: 200 },
+      };
+      await finishTool.promise;
+      yield {
+        type: "tool-error",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        error: new Error("sandbox died"),
+      };
+    })());
+
+    const responsePromise = generateResponse(baseOptions(slackClient));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(75_000);
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
+
+    finishTool.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(responsePromise).resolves.toMatchObject({
+      raw: "Starting the job.\n",
+      alreadyPosted: true,
+    });
+
+    const logErrorMock = vi.mocked(logError);
+    const continuationLogs = logErrorMock.mock.calls.filter(
+      ([entry]) => entry.errorCode === "empty_completion_after_tools_continuation",
+    );
+    const aggregateLogs = logErrorMock.mock.calls.filter(
+      ([entry]) => entry.errorCode === "empty_completion_after_tools",
+    );
+
+    expect(continuationLogs).toHaveLength(1);
+    expect(continuationLogs[0]?.[0]).toMatchObject({
+      errorName: "EmptyCompletion",
+      errorCode: "empty_completion_after_tools_continuation",
+      channelId: "C123",
+      context: {
+        toolCallCount: 1,
+        toolErrorCount: 1,
+        segmentIndex: 1,
+        continuationReason: "long_tool",
+        segmentEnd: "final",
+        finishReason: "stop",
+      },
+    });
+    expect(aggregateLogs).toHaveLength(0);
+    expect(secondStream.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: expect.stringContaining("no output generated in continuation"),
+      })],
+    });
+  });
+
+  it("logs and tombstones watchdog AbortError streams", async () => {
+    vi.useFakeTimers();
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const abortError = Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+      code: "ABORT_ERR",
+    });
+
+    agentMocks.createInteractiveAgent.mockResolvedValue({
+      agent: {
+        stream: vi.fn().mockImplementation(async (options: { abortSignal: AbortSignal }) => ({
+          fullStream: (async function* () {
+            await new Promise<void>((_resolve, reject) => {
+              if (options.abortSignal.aborted) {
+                reject(abortError);
+                return;
+              }
+              options.abortSignal.addEventListener("abort", () => reject(abortError), { once: true });
+            });
+          })(),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 0 }),
+          finishReason: Promise.resolve("abort"),
+          steps: Promise.resolve([]),
+        })),
+      },
+      tools: {},
+      modelId: "test-model",
+      getStepModelIds: () => ["test-model"],
+    });
+
+    const responsePromise = generateResponse(baseOptions(slackClient));
+    const responseExpectation = expect(responsePromise).rejects.toMatchObject({
+      name: "AbortError",
+      code: "ABORT_ERR",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(180_000);
+
+    await responseExpectation;
+
+    const abortLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "stream_aborted_by_watchdog",
+    );
+    expect(abortLogs).toHaveLength(1);
+    expect(abortLogs[0]?.[0]).toMatchObject({
+      errorName: "StreamAborted",
+      errorCode: "stream_aborted_by_watchdog",
+      channelId: "C123",
+      context: {
+        reason: "inactivity",
+        accumulatedTextLength: 0,
+        toolCallCount: 0,
+        segmentIndex: 0,
+      },
+    });
+    expect(stream.stop).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: expect.stringContaining("[stream aborted: inactivity]"),
+      })],
+    });
+  });
 });
