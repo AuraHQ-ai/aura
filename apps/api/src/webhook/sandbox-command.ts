@@ -135,6 +135,7 @@ export function createSandboxCommandWebhookApp(
         return c.json({ ok: true, notified: false });
       }
 
+      const shouldNotify = existing.status === "running";
       const updatedRows = await database
         .update(detachedCommands)
         .set({
@@ -156,6 +157,15 @@ export function createSandboxCommandWebhookApp(
       };
 
       let notified = false;
+      if (!shouldNotify) {
+        logger.info("Sandbox command webhook already notified, skipping Slack post", {
+          id: payload.id,
+          previousStatus: existing.status,
+          status,
+        });
+        return c.json({ ok: true, notified: false, reason: "already_notified" });
+      }
+
       if (updated.channelId) {
         try {
           await safePostMessage(slackClient, {

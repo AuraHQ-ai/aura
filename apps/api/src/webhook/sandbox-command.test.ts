@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const safePostMessageMock = vi.hoisted(() => vi.fn());
+const recordErrorMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../db/client.js", () => ({
   db: {},
@@ -21,7 +22,7 @@ vi.mock("../lib/logger.js", () => ({
 }));
 
 vi.mock("../lib/metrics.js", () => ({
-  recordError: vi.fn(),
+  recordError: recordErrorMock,
 }));
 
 import {
@@ -33,15 +34,19 @@ function sign(rawBody: string, secret: string): string {
   return "sha256=" + crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
 }
 
-function createDatabaseMock(row: any, updatedRow = row) {
-  const limit = vi.fn(async () => row ? [row] : []);
+function createDatabaseMock(row: any) {
+  let currentRow = row;
+  const limit = vi.fn(async () => currentRow ? [currentRow] : []);
   const whereSelect = vi.fn(() => ({ limit }));
   const from = vi.fn(() => ({ where: whereSelect }));
   const select = vi.fn(() => ({ from }));
 
-  const returning = vi.fn(async () => updatedRow ? [updatedRow] : []);
+  const returning = vi.fn(async () => currentRow ? [currentRow] : []);
   const whereUpdate = vi.fn(() => ({ returning }));
-  const set = vi.fn(() => ({ where: whereUpdate }));
+  const set = vi.fn((values: Record<string, unknown>) => {
+    if (currentRow) currentRow = { ...currentRow, ...values };
+    return { where: whereUpdate };
+  });
   const update = vi.fn(() => ({ set }));
 
   return {
@@ -98,15 +103,7 @@ describe("sandbox command webhook", () => {
       stdoutTail: null,
       stderrTail: null,
     };
-    const updatedRow = {
-      ...row,
-      status: "failed",
-      exitCode: 1,
-      completedAt: new Date(),
-      stdoutTail: "last stdout",
-      stderrTail: "last stderr",
-    };
-    const { database, calls } = createDatabaseMock(row, updatedRow);
+    const { database, calls } = createDatabaseMock(row);
     const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database);
     const body = JSON.stringify({
       id: "abcdef12",
@@ -137,5 +134,56 @@ describe("sandbox command webhook", () => {
       thread_ts: "1710000000.000000",
       text: expect.stringContaining("Detached command `abcdef12` failed with exit code 1"),
     }));
+  });
+
+  it("skips duplicate Slack notifications for curl retry payloads", async () => {
+    const row = {
+      id: "abcdef12",
+      workspaceId: "default",
+      pid: 4321,
+      command: "sleep 1",
+      status: "running",
+      exitCode: null,
+      requestedBy: "U123",
+      channelId: "C123",
+      threadTs: "1710000000.000000",
+      startedAt: new Date(Date.now() - 1_000),
+      completedAt: null,
+      stdoutTail: null,
+      stderrTail: null,
+    };
+    const { database } = createDatabaseMock(row);
+    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database);
+    const body = JSON.stringify({
+      id: "abcdef12",
+      exit_code: 0,
+      stdout_tail: "done",
+      stderr_tail: "",
+    });
+    const headers = {
+      "content-type": "application/json",
+      "x-webhook-signature": sign(body, "sandbox-secret"),
+    };
+
+    const first = await app.request("/", {
+      method: "POST",
+      headers,
+      body,
+    });
+    const second = await app.request("/", {
+      method: "POST",
+      headers,
+      body,
+    });
+
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ ok: true, notified: true });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({
+      ok: true,
+      notified: false,
+      reason: "already_notified",
+    });
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
   });
 });
