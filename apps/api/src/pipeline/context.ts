@@ -42,7 +42,7 @@ export interface SlackAppMentionEvent {
 
 export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
-export type ChannelType = "dm" | "dashboard" | "public_channel" | "private_channel" | "slack_list_item";
+export type ChannelType = "dm" | "mpim" | "dashboard" | "public_channel" | "private_channel" | "slack_list_item";
 
 export interface SlackListItemContext {
   /** The message ts that doubles as the list item's thread_ts */
@@ -152,7 +152,7 @@ export function buildMessageContext(
     channelType,
     threadTs,
     messageTs,
-    isDm: channelType === "dm",
+    isDm: channelType === "dm" || channelType === "mpim",
     isMentioned,
     isAddressedByName,
   };
@@ -163,10 +163,27 @@ export interface ShouldRespondResult {
   reason: string;
 }
 
+export function isChannelGatedOut(
+  context: Pick<MessageContext, "isDm" | "isMentioned" | "channelId">,
+  gatedChannels: Set<string>,
+): boolean {
+  if (context.isDm || context.isMentioned) {
+    return false;
+  }
+
+  return gatedChannels.has(context.channelId);
+}
+
 // ── Channel-level override ───────────────────────────────────────────────────
 // Channels in this list always process new messages without LLM gating (Tier 4
 // is bypassed). Managed via DB setting "always_process_channels" (comma-separated
 // channel IDs). Change at runtime — no redeploy needed.
+//
+// ── Channel gating (hard, code-level) ────────────────────────────────────────
+// Channels in the "gated_channels" setting (JSON array of channel IDs) require
+// an explicit @Aura mention to trigger any pipeline processing. Unlike
+// "always_process_channels" (which OPENS the gate), "gated_channels" CLOSES it.
+// Enforced in runPipeline — see issue #918.
 
 
 /**
@@ -343,7 +360,8 @@ function resolveChannelType(
   if ("channel_type" in event) {
     const ct = (event as any).channel_type;
     if (ct === "im") return "dm";
-    if (ct === "group" || ct === "mpim") return "private_channel";
+    if (ct === "mpim") return "mpim";
+    if (ct === "group") return "private_channel";
     if (ct === "slack_list_item") return "slack_list_item";
     return "public_channel";
   }

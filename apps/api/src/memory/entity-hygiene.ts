@@ -25,7 +25,7 @@ function generateOrgAliases(canonicalName: string): string[] {
 
   aliases.add(canonicalName.toLowerCase());
 
-  // Whitespace-stripped variant ("Real Advisor" → "realadvisor")
+  // Whitespace-stripped variant ("Example Co" -> "exampleco")
   const stripped = canonicalName.replace(/\s+/g, "").toLowerCase();
   if (stripped !== canonicalName.toLowerCase()) {
     aliases.add(stripped);

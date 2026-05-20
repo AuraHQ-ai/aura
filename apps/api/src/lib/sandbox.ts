@@ -16,12 +16,13 @@ const sandboxNoteKey = (userId?: string) =>
 const sandboxTemplateKey = (userId?: string) =>
   userId ? `e2b_sandbox_template_id:${userId}` : "e2b_sandbox_template_id";
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour -- autoPause handles inactivity
+const TOOLS_REPO_CHECKOUT_DIR_NAME = ["aura", "tools"].join("-");
+const TOOLS_REPO_CHECKOUT_PATH = `/home/user/${TOOLS_REPO_CHECKOUT_DIR_NAME}`;
 
 /** Per-invocation cache -- reuse the same sandbox within a single request.
  *  Keyed by userId so concurrent invocations for different users don't share state. */
 let cachedSandbox: any | null = null;
 let cachedSandboxUserId: string | undefined;
-const toolsRepoReady = new Set<string>();
 
 interface SandboxCredentialRow {
   id: string;
@@ -33,6 +34,52 @@ interface SandboxCredentialRow {
 
 interface SandboxCredentialValueRow extends SandboxCredentialRow {
   value: string;
+}
+
+interface SandboxCommandRunner {
+  commands: {
+    run: (
+      command: string,
+      options?: { timeoutMs?: number; envs?: Record<string, string> },
+    ) => Promise<{ exitCode?: number; stdout?: string; stderr?: string }>;
+  };
+}
+
+function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function normalizeToolsRepo(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  let ownerAndRepo = trimmed;
+  if (/^https:\/\//i.test(trimmed)) {
+    try {
+      const url = new URL(trimmed);
+      if (url.hostname.toLowerCase() !== "github.com") return null;
+      ownerAndRepo = url.pathname.replace(/^\/+/, "");
+    } catch {
+      return null;
+    }
+  }
+
+  ownerAndRepo = ownerAndRepo.replace(/\/+$/, "").replace(/\.git$/i, "");
+  const parts = ownerAndRepo.split("/");
+  if (parts.length !== 2) return null;
+
+  const [owner, repo] = parts;
+  const segmentPattern = /^[A-Za-z0-9_.-]+$/;
+  if (!segmentPattern.test(owner) || !segmentPattern.test(repo)) return null;
+
+  return `${owner}/${repo}`;
+}
+
+function redactGitAuth(stderr?: string): string | undefined {
+  return stderr?.replace(
+    /x-access-token:[^@\s]+@/g,
+    "x-access-token:[REDACTED]@",
+  );
 }
 
 /**
@@ -49,7 +96,6 @@ export function clearCachedSandbox(): void {
     cachedSandboxUserId = undefined;
   }
   userHomeReady.clear();
-  toolsRepoReady.clear();
 }
 
 /**
@@ -246,85 +292,6 @@ export async function getSandboxEnvNames(userId?: string): Promise<string[]> {
   return [...new Set(rows.map(resolveSandboxEnvName))].sort();
 }
 
-async function ensureToolsRepo(
-  sandbox: any,
-  envs: Record<string, string>,
-): Promise<void> {
-  const repo = (await getSetting(TOOLS_REPO_SETTING.key))?.trim();
-  const checkoutPath = "/home/user/aura-tools";
-  const effectSummary = `cloning to ${checkoutPath}`;
-
-  if (!repo) {
-    logBootstrap(TOOLS_REPO_SETTING, null, effectSummary);
-    return;
-  }
-
-  logBootstrap(TOOLS_REPO_SETTING, repo, effectSummary);
-
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
-    logger.warn(`Invalid ${TOOLS_REPO_SETTING.key} setting; expected owner/repo`, { repo });
-    return;
-  }
-
-  const sandboxId = sandbox.sandboxId || "unknown";
-  const cacheKey = `${sandboxId}:${repo}`;
-  if (toolsRepoReady.has(cacheKey)) return;
-
-  const cloneUrl = envs.GITHUB_TOKEN
-    ? `https://x-access-token:${envs.GITHUB_TOKEN}@github.com/${repo}.git`
-    : `https://github.com/${repo}.git`;
-  const command = [
-    "set -e",
-    `target="${checkoutPath}"`,
-    'if [ -d "$target/.git" ]; then',
-    '  origin="$(git -C "$target" remote get-url origin || true)"',
-    '  case "$origin" in',
-    '    *"github.com/$TOOLS_REPO.git") git -C "$target" pull --quiet --ff-only ;;',
-    '    *) rm -rf "$target"; git clone --depth=1 "$TOOLS_REPO_CLONE_URL" "$target" ;;',
-    "  esac",
-    "else",
-    '  rm -rf "$target"',
-    '  git clone --depth=1 "$TOOLS_REPO_CLONE_URL" "$target"',
-    "fi",
-  ].join("\n");
-
-  try {
-    const result = await sandbox.commands.run(command, {
-      timeoutMs: 60_000,
-      envs: {
-        ...envs,
-        TOOLS_REPO: repo,
-        TOOLS_REPO_CLONE_URL: cloneUrl,
-      },
-    });
-
-    if (result.exitCode !== 0) {
-      logger.warn("Failed to bootstrap tools repo in sandbox", {
-        repo,
-        exitCode: result.exitCode,
-        stderr: envs.GITHUB_TOKEN
-          ? result.stderr?.replace(envs.GITHUB_TOKEN, "[REDACTED]")
-          : result.stderr,
-      });
-      return;
-    }
-
-    toolsRepoReady.add(cacheKey);
-    logger.info("Tools repo ready in sandbox", {
-      repo,
-      checkoutPath,
-      sandboxId,
-    });
-  } catch (error: any) {
-    logger.warn("Failed to bootstrap tools repo in sandbox", {
-      repo,
-      error: envs.GITHUB_TOKEN
-        ? error.message?.replace(envs.GITHUB_TOKEN, "[REDACTED]")
-        : error.message,
-    });
-  }
-}
-
 /**
  * Mount the GCS bucket `gs://aura-files` at `/mnt/aura-files`.
  * Installs gcsfuse if needed and uses the base64-encoded SA key from envs.
@@ -381,7 +348,90 @@ async function setupSandboxFilesystem(
     logger.warn("Failed to mount GCS bucket", { error: error.message });
   }
 
-  await ensureToolsRepo(sandbox, envs);
+}
+
+/**
+ * Clone or refresh the workspace-configured self-authored tools repository.
+ * Non-fatal by design: a bad repo setting must not make the sandbox unusable.
+ */
+export async function bootstrapToolsRepo(
+  sandbox: SandboxCommandRunner,
+  envs: Record<string, string>,
+): Promise<void> {
+  const effectSummary = `cloning to ${TOOLS_REPO_CHECKOUT_PATH}`;
+  const rawToolsRepo = (await getSetting(TOOLS_REPO_SETTING.key))?.trim();
+  if (!rawToolsRepo) {
+    logBootstrap(TOOLS_REPO_SETTING, null, effectSummary);
+    return;
+  }
+
+  const toolsRepo = normalizeToolsRepo(rawToolsRepo);
+  if (!toolsRepo) {
+    logger.warn(
+      `Invalid ${TOOLS_REPO_SETTING.key} setting; expected a GitHub owner/name or HTTPS URL`,
+      { value: rawToolsRepo },
+    );
+    return;
+  }
+
+  logBootstrap(TOOLS_REPO_SETTING, toolsRepo, effectSummary);
+
+  const commandEnvs = { ...envs };
+  if (!commandEnvs.GITHUB_TOKEN && commandEnvs.GH_TOKEN) {
+    commandEnvs.GITHUB_TOKEN = commandEnvs.GH_TOKEN;
+  }
+
+  if (!commandEnvs.GITHUB_TOKEN) {
+    logger.warn("Skipping tools_repo clone because GITHUB_TOKEN is not available", {
+      toolsRepo,
+    });
+    return;
+  }
+
+  const checkoutPath = TOOLS_REPO_CHECKOUT_PATH;
+  const checkoutPathArg = quoteShellArg(checkoutPath);
+
+  try {
+    const repoCheck = await sandbox.commands.run(
+      `git -C ${checkoutPathArg} rev-parse --is-inside-work-tree`,
+      { timeoutMs: 5_000, envs: commandEnvs },
+    );
+
+    if (repoCheck.exitCode === 0) {
+      const pullResult = await sandbox.commands.run(
+        `git -C ${checkoutPathArg} pull --ff-only`,
+        { timeoutMs: 60_000, envs: commandEnvs },
+      );
+      if (pullResult.exitCode !== 0) {
+        logger.warn("Failed to refresh configured tools repository", {
+          toolsRepo,
+          checkoutPath,
+          exitCode: pullResult.exitCode,
+          stderr: redactGitAuth(pullResult.stderr),
+        });
+      }
+      return;
+    }
+
+    const cloneResult = await sandbox.commands.run(
+      `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/${toolsRepo}.git" ${checkoutPathArg}`,
+      { timeoutMs: 120_000, envs: commandEnvs },
+    );
+    if (cloneResult.exitCode !== 0) {
+      logger.warn("Failed to clone configured tools repository", {
+        toolsRepo,
+        checkoutPath,
+        exitCode: cloneResult.exitCode,
+        stderr: redactGitAuth(cloneResult.stderr),
+      });
+    }
+  } catch (error: any) {
+    logger.warn("Failed to bootstrap configured tools repository", {
+      toolsRepo,
+      checkoutPath,
+      error: error.message,
+    });
+  }
 }
 
 /**
@@ -537,6 +587,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
 
     if (cachedSandbox) {
       await setupSandboxFilesystem(cachedSandbox, envs);
+      await bootstrapToolsRepo(cachedSandbox, envs);
       return cachedSandbox;
     }
   }
@@ -601,6 +652,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
   }
 
   await setupSandboxFilesystem(sandbox, envs);
+  await bootstrapToolsRepo(sandbox, envs);
 
   return sandbox;
 }

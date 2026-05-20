@@ -52,7 +52,12 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
-import { getSandboxEnvs, getSandboxEnvNames } from "./sandbox.js";
+import { logger } from "./logger.js";
+import { getSetting } from "./settings.js";
+import { bootstrapToolsRepo, getSandboxEnvs, getSandboxEnvNames } from "./sandbox.js";
+
+const getSettingMock = vi.mocked(getSetting);
+const loggerWarnMock = vi.mocked(logger.warn);
 
 interface CredentialRow {
   id: string;
@@ -255,5 +260,103 @@ describe("getSandboxEnvNames", () => {
     );
     expect(selectedValue).toBe(false);
     expect(decryptCredentialMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("bootstrapToolsRepo", () => {
+  const checkoutPath = `/home/user/${["aura", "tools"].join("-")}`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getSettingMock.mockResolvedValue(null);
+  });
+
+  it("skips cleanly when tools_repo is not configured", async () => {
+    const run = vi.fn();
+
+    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+  });
+
+  it("clones the configured repository when the checkout is missing", async () => {
+    getSettingMock.mockResolvedValue("acme/tools");
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.includes("rev-parse")) {
+        return { exitCode: 128, stdout: "", stderr: "missing" };
+      }
+      if (command.startsWith("git clone")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1][0]).toContain(
+      'git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
+    );
+    expect(run.mock.calls[1][0]).not.toContain("token@");
+    expect(run.mock.calls[1][1]).toMatchObject({
+      envs: { GITHUB_TOKEN: "token" },
+    });
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+  });
+
+  it("pulls on re-acquire when the checkout is already a git repository", async () => {
+    getSettingMock.mockResolvedValue("https://github.com/acme/tools.git");
+    let checkoutExists = false;
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.includes("rev-parse")) {
+        return { exitCode: checkoutExists ? 0 : 128, stdout: "", stderr: "" };
+      }
+      if (command.startsWith("git clone")) {
+        checkoutExists = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (command.includes("pull --ff-only")) {
+        return { exitCode: 0, stdout: "Already up to date.", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      `git -C '${checkoutPath}' rev-parse --is-inside-work-tree`,
+      `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git" '${checkoutPath}'`,
+      `git -C '${checkoutPath}' rev-parse --is-inside-work-tree`,
+      `git -C '${checkoutPath}' pull --ff-only`,
+    ]);
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+  });
+
+  it("logs a warning but does not throw when clone fails", async () => {
+    getSettingMock.mockResolvedValue("acme/tools");
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.includes("rev-parse")) {
+        return { exitCode: 128, stdout: "", stderr: "missing" };
+      }
+      if (command.startsWith("git clone")) {
+        return { exitCode: 128, stdout: "", stderr: "repository not found" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    await expect(
+      bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" }),
+    ).resolves.toBeUndefined();
+
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "Failed to clone configured tools repository",
+      expect.objectContaining({
+        toolsRepo: "acme/tools",
+        exitCode: 128,
+        stderr: "repository not found",
+      }),
+    );
   });
 });

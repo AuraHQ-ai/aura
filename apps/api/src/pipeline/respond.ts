@@ -1090,6 +1090,24 @@ export async function generateResponse(
           } catch {
             // Stream may already be finalized
           }
+          // Deliver the table block via chat.postMessage as a follow-up
+          // when the stream rejected it (e.g. MPIMs, some channel types).
+          if (pendingTableBlock) {
+            try {
+              await slackClient.chat.postMessage({
+                channel: channelId,
+                text: "Here's a table:",
+                blocks: [pendingTableBlock as any],
+                thread_ts: threadTs,
+              });
+              pendingTableBlock = null;
+            } catch (tablePostErr: any) {
+              logger.warn("Failed to post table block via chat.postMessage fallback", {
+                channelId,
+                error: tablePostErr?.message,
+              });
+            }
+          }
         } else if (isMsgTooLong(stopErr)) {
           logger.warn("streamer.stop() returned msg_too_long, finalizing without payload", {
             channelId,
@@ -1103,6 +1121,22 @@ export async function generateResponse(
             context: { currentStreamLength },
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
+          if (pendingTableBlock) {
+            try {
+              await slackClient.chat.postMessage({
+                channel: channelId,
+                text: "Here's a table:",
+                blocks: [pendingTableBlock as any],
+                thread_ts: threadTs,
+              });
+              pendingTableBlock = null;
+            } catch (tablePostErr: any) {
+              logger.warn("Failed to post table block via chat.postMessage fallback", {
+                channelId,
+                error: tablePostErr?.message,
+              });
+            }
+          }
         } else if (isChannelTypeNotSupported(stopErr)) {
           streamingUnsupportedChannels.add(channelId);
           logger.warn("streamer.stop() hit channel_type_not_supported, finalizing without payload", {
@@ -1115,6 +1149,22 @@ export async function generateResponse(
             channelId,
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
+          if (pendingTableBlock) {
+            try {
+              await slackClient.chat.postMessage({
+                channel: channelId,
+                text: "Here's a table:",
+                blocks: [pendingTableBlock as any],
+                thread_ts: threadTs,
+              });
+              pendingTableBlock = null;
+            } catch (tablePostErr: any) {
+              logger.warn("Failed to post table block via chat.postMessage fallback", {
+                channelId,
+                error: tablePostErr?.message,
+              });
+            }
+          }
         } else {
           throw stopErr;
         }

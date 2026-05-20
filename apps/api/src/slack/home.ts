@@ -35,6 +35,11 @@ export const CREDENTIAL_ACTIONS: Record<string, string> = {
   credential_edit_github_token: "github_token",
 };
 
+export const TOOLS_REPO_SAVE_ACTION = "save_tools_repo";
+export const TOOLS_REPO_SETTING_KEY = "tools_repo";
+
+const TOOLS_REPO_CHECKOUT_PATH = `/home/user/${["aura", "tools"].join("-")}`;
+
 // ── Block Kit Helpers ────────────────────────────────────────────────────────
 
 function buildDropdown(
@@ -186,6 +191,50 @@ async function buildCredentialBlocks(): Promise<any[]> {
   }
 
   return blocks;
+}
+
+function buildToolsRepoBlocks(currentValue: string): any[] {
+  const inputElement: any = {
+    type: "plain_text_input",
+    action_id: "tools_repo_value",
+    placeholder: {
+      type: "plain_text",
+      text: "owner/repo or https://github.com/owner/repo",
+    },
+  };
+
+  if (currentValue) {
+    inputElement.initial_value = currentValue;
+  }
+
+  return [
+    { type: "divider" },
+    {
+      type: "input",
+      block_id: "tools_repo_input_block",
+      optional: true,
+      label: {
+        type: "plain_text",
+        text: "Self-authored tools repository",
+      },
+      element: inputElement,
+      hint: {
+        type: "plain_text",
+        text: `GitHub repo (owner/name) containing this workspace's self-authored tools. Cloned into the sandbox at ${TOOLS_REPO_CHECKOUT_PATH} on startup. Leave empty to skip.`,
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Save tools repository" },
+          action_id: TOOLS_REPO_SAVE_ACTION,
+          style: "primary",
+        },
+      ],
+    },
+  ];
 }
 
 // ── User API Credential Blocks ──────────────────────────────────────────────
