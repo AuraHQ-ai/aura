@@ -52,7 +52,13 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
-import { getSandboxEnvs, getSandboxEnvNames } from "./sandbox.js";
+import { logger } from "./logger.js";
+import {
+  clearCachedSandbox,
+  ensureAuraTools,
+  getSandboxEnvs,
+  getSandboxEnvNames,
+} from "./sandbox.js";
 
 interface CredentialRow {
   id: string;
@@ -66,6 +72,25 @@ interface CredentialRow {
 function queueDbResults(...results: unknown[][]) {
   dbMock.results = [...results];
 }
+
+type CommandResult = {
+  exitCode: number;
+  stdout?: string;
+  stderr?: string;
+};
+
+function createSandboxStub(sandboxId: string, results: CommandResult[]) {
+  return {
+    sandboxId,
+    commands: {
+      run: vi.fn().mockImplementation(() =>
+        Promise.resolve(results.shift() ?? { exitCode: 0, stdout: "", stderr: "" }),
+      ),
+    },
+  };
+}
+
+const auraToolsEnvs = { GITHUB_TOKEN: "github-token" };
 
 const callerCredential: CredentialRow = {
   id: "cred-caller",
@@ -255,5 +280,80 @@ describe("getSandboxEnvNames", () => {
     );
     expect(selectedValue).toBe(false);
     expect(decryptCredentialMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("ensureAuraTools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearCachedSandbox();
+  });
+
+  it("clones realadvisor/aura-tools when .git is absent", async () => {
+    const sandbox = createSandboxStub("sandbox-clone", [
+      { exitCode: 1, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+    ]);
+
+    await ensureAuraTools(sandbox, auraToolsEnvs);
+
+    expect(sandbox.commands.run).toHaveBeenNthCalledWith(
+      1,
+      "[ -d /home/user/aura-tools/.git ]",
+      { timeoutMs: 5_000, envs: auraToolsEnvs },
+    );
+    expect(sandbox.commands.run).toHaveBeenNthCalledWith(
+      2,
+      "git clone --depth=1 https://x-access-token:$GITHUB_TOKEN@github.com/realadvisor/aura-tools.git /home/user/aura-tools",
+      { timeoutMs: 60_000, envs: auraToolsEnvs },
+    );
+  });
+
+  it("pulls realadvisor/aura-tools when .git is present", async () => {
+    const sandbox = createSandboxStub("sandbox-pull", [
+      { exitCode: 0, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+    ]);
+
+    await ensureAuraTools(sandbox, auraToolsEnvs);
+
+    expect(sandbox.commands.run).toHaveBeenNthCalledWith(
+      1,
+      "[ -d /home/user/aura-tools/.git ]",
+      { timeoutMs: 5_000, envs: auraToolsEnvs },
+    );
+    expect(sandbox.commands.run).toHaveBeenNthCalledWith(
+      2,
+      "git -C /home/user/aura-tools pull --quiet --ff-only origin main",
+      { timeoutMs: 30_000, envs: auraToolsEnvs },
+    );
+  });
+
+  it("does nothing on the second call for the same sandbox id", async () => {
+    const sandbox = createSandboxStub("sandbox-cache", [
+      { exitCode: 1, stdout: "", stderr: "" },
+      { exitCode: 0, stdout: "", stderr: "" },
+    ]);
+
+    await ensureAuraTools(sandbox, auraToolsEnvs);
+    await ensureAuraTools(sandbox, auraToolsEnvs);
+
+    expect(sandbox.commands.run).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs and swallows command failures", async () => {
+    const sandbox = createSandboxStub("sandbox-failure", [
+      { exitCode: 1, stdout: "", stderr: "" },
+      { exitCode: 128, stdout: "", stderr: "auth failed" },
+    ]);
+
+    await expect(ensureAuraTools(sandbox, auraToolsEnvs)).resolves.toBeUndefined();
+
+    expect(logger.warn).toHaveBeenCalledWith("Failed to bootstrap aura-tools in sandbox", {
+      sandboxId: "sandbox-failure",
+      action: "clone",
+      exitCode: 128,
+      stderr: "auth failed",
+    });
   });
 });

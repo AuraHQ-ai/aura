@@ -42,6 +42,7 @@ export function clearCachedSandbox(): void {
     cachedSandboxUserId = undefined;
   }
   userHomeReady.clear();
+  auraToolsReady.clear();
 }
 
 /**
@@ -220,59 +221,125 @@ export async function getSandboxEnvNames(userId?: string): Promise<string[]> {
   return [...new Set(rows.map(resolveSandboxEnvName))].sort();
 }
 
+const auraToolsReady = new Set<string>();
+
+export async function ensureAuraTools(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<void> {
+  const sandboxId = sandbox.sandboxId as string | undefined;
+  if (sandboxId && auraToolsReady.has(sandboxId)) {
+    return;
+  }
+
+  try {
+    const gitCheck = await sandbox.commands.run(
+      "[ -d /home/user/aura-tools/.git ]",
+      { timeoutMs: 5_000, envs },
+    );
+    const auraToolsExists = gitCheck.exitCode === 0;
+
+    const result = auraToolsExists
+      ? await sandbox.commands.run(
+          "git -C /home/user/aura-tools pull --quiet --ff-only origin main",
+          { timeoutMs: 30_000, envs },
+        )
+      : await sandbox.commands.run(
+          "git clone --depth=1 https://x-access-token:$GITHUB_TOKEN@github.com/realadvisor/aura-tools.git /home/user/aura-tools",
+          { timeoutMs: 60_000, envs },
+        );
+
+    if (result.exitCode !== 0) {
+      logger.warn("Failed to bootstrap aura-tools in sandbox", {
+        sandboxId,
+        action: auraToolsExists ? "pull" : "clone",
+        exitCode: result.exitCode,
+        stderr: result.stderr,
+      });
+      return;
+    }
+
+    if (sandboxId) {
+      auraToolsReady.add(sandboxId);
+    }
+    logger.info("aura-tools ready in sandbox", {
+      sandboxId,
+      action: auraToolsExists ? "pull" : "clone",
+    });
+  } catch (error: any) {
+    logger.warn("Failed to bootstrap aura-tools in sandbox", {
+      sandboxId,
+      error: error.message,
+    });
+  }
+}
+
 /**
  * Mount the GCS bucket `gs://aura-files` at `/mnt/aura-files`.
  * Installs gcsfuse if needed and uses the base64-encoded SA key from envs.
  * Non-fatal -- sandbox works fine without the mount.
  */
+async function mountGcsFilesystem(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<void> {
+  const mountCheck = await sandbox.commands.run(
+    "mountpoint -q /mnt/aura-files && echo mounted || echo not",
+    { timeoutMs: 5_000, envs },
+  );
+  if (mountCheck.stdout?.trim() === "mounted") return;
+
+  if (!envs.GOOGLE_SA_KEY_B64) {
+    logger.info("Skipping GCS mount — GOOGLE_SA_KEY_B64 not available");
+    return;
+  }
+
+  const gcsfuseCheck = await sandbox.commands.run("which gcsfuse", {
+    timeoutMs: 5_000,
+  });
+  if (gcsfuseCheck.exitCode !== 0) {
+    const distro = "bookworm";
+    const installResult = await sandbox.commands.run(
+      `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse && { grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | sudo tee -a /etc/fuse.conf > /dev/null; }`,
+      { timeoutMs: 60_000, envs },
+    );
+    if (installResult.exitCode !== 0) {
+      logger.warn("gcsfuse install failed", {
+        exitCode: installResult.exitCode,
+        stderr: installResult.stderr,
+      });
+      return;
+    }
+  }
+
+  const mountResult = await sandbox.commands.run(
+    `touch /tmp/gcs-sa-key.json && chmod 600 /tmp/gcs-sa-key.json && echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && sudo chown 1000:1000 /mnt/aura-files && sudo gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs --uid=1000 --gid=1000 -o allow_other aura-files /mnt/aura-files; EXIT=$?; rm -f /tmp/gcs-sa-key.json; exit $EXIT`,
+    { timeoutMs: 30_000, envs },
+  );
+  if (mountResult.exitCode !== 0) {
+    logger.warn("gcsfuse mount failed", {
+      exitCode: mountResult.exitCode,
+      stderr: mountResult.stderr,
+    });
+    return;
+  }
+  logger.info("GCS bucket mounted at /mnt/aura-files");
+}
+
 async function setupSandboxFilesystem(
   sandbox: any,
   envs: Record<string, string>,
 ): Promise<void> {
   try {
-    const mountCheck = await sandbox.commands.run(
-      "mountpoint -q /mnt/aura-files && echo mounted || echo not",
-      { timeoutMs: 5_000, envs },
-    );
-    if (mountCheck.stdout?.trim() === "mounted") return;
-
-    if (!envs.GOOGLE_SA_KEY_B64) {
-      logger.info("Skipping GCS mount — GOOGLE_SA_KEY_B64 not available");
-      return;
-    }
-
-    const gcsfuseCheck = await sandbox.commands.run("which gcsfuse", {
-      timeoutMs: 5_000,
-    });
-    if (gcsfuseCheck.exitCode !== 0) {
-      const distro = "bookworm";
-      const installResult = await sandbox.commands.run(
-        `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse && { grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | sudo tee -a /etc/fuse.conf > /dev/null; }`,
-        { timeoutMs: 60_000, envs },
-      );
-      if (installResult.exitCode !== 0) {
-        logger.warn("gcsfuse install failed", {
-          exitCode: installResult.exitCode,
-          stderr: installResult.stderr,
-        });
-        return;
-      }
-    }
-
-    const mountResult = await sandbox.commands.run(
-      `touch /tmp/gcs-sa-key.json && chmod 600 /tmp/gcs-sa-key.json && echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && sudo chown 1000:1000 /mnt/aura-files && sudo gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs --uid=1000 --gid=1000 -o allow_other aura-files /mnt/aura-files; EXIT=$?; rm -f /tmp/gcs-sa-key.json; exit $EXIT`,
-      { timeoutMs: 30_000, envs },
-    );
-    if (mountResult.exitCode !== 0) {
-      logger.warn("gcsfuse mount failed", {
-        exitCode: mountResult.exitCode,
-        stderr: mountResult.stderr,
-      });
-      return;
-    }
-    logger.info("GCS bucket mounted at /mnt/aura-files");
+    await mountGcsFilesystem(sandbox, envs);
   } catch (error: any) {
     logger.warn("Failed to mount GCS bucket", { error: error.message });
+  }
+
+  try {
+    await ensureAuraTools(sandbox, envs);
+  } catch (error: any) {
+    logger.warn("Failed to ensure aura-tools in sandbox", { error: error.message });
   }
 }
 
