@@ -12,43 +12,35 @@ export function truncateJobFailureText(value: string | null | undefined, maxChar
   return `${text.slice(0, maxChars - 3)}...`;
 }
 
-function firstAdminUserId(): string | null {
-  return (
-    (process.env.AURA_ADMIN_USER_IDS || "")
-      .split(",")
-      .map((id) => id.trim())
-      .find(Boolean) ?? null
-  );
-}
-
 export function resolveJobFailureDmTarget(
   requestedBy: string | null | undefined,
-  { fallbackToAdmin = true }: { fallbackToAdmin?: boolean } = {},
 ): string | null {
   const requester = requestedBy?.trim();
   if (requester && requester !== "aura") return requester;
-  if (!fallbackToAdmin) return null;
-
-  return process.env.FOUNDER_USER_ID?.trim() || firstAdminUserId();
+  return null;
 }
 
 export async function sendJobFailureDm({
   jobId,
   requestedBy,
   text,
-  fallbackToAdmin = true,
   logContext = {},
 }: {
   jobId: string;
   requestedBy: string | null | undefined;
   text: string;
-  fallbackToAdmin?: boolean;
   logContext?: Record<string, unknown>;
 }): Promise<boolean> {
-  const target = resolveJobFailureDmTarget(requestedBy, { fallbackToAdmin });
+  const target = resolveJobFailureDmTarget(requestedBy);
 
   if (!target) {
-    logger.warn("Job failure DM skipped: no target", { jobId, ...logContext });
+    const requester = requestedBy?.trim();
+    logger.warn(
+      requester === "aura"
+        ? "job_failure_dm_skipped_system_owned"
+        : "job_failure_dm_skipped_no_target",
+      { jobId, requestedBy, ...logContext },
+    );
     return false;
   }
 
