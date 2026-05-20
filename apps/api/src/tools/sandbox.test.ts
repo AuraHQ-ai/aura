@@ -1,10 +1,24 @@
+import { execFile } from "node:child_process";
+import { createServer } from "node:http";
+import { promisify } from "node:util";
+import crypto from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const execFileAsync = promisify(execFile);
 
 const sandboxMocks = vi.hoisted(() => ({
   commandRun: vi.fn(),
   getOrCreateSandbox: vi.fn(),
   getSandboxEnvs: vi.fn(),
   ensureUserHome: vi.fn(),
+}));
+
+const dbMocks = vi.hoisted(() => ({
+  insertValues: vi.fn(),
+  insertOnConflictDoUpdate: vi.fn(),
+  selectRows: vi.fn(),
+  updateSet: vi.fn(),
+  updateWhere: vi.fn(),
 }));
 
 vi.mock("../lib/sandbox.js", () => ({
@@ -27,7 +41,29 @@ vi.mock("../lib/tool.js", () => ({
   defineTool: (config: any) => config,
 }));
 
-import { createSandboxTools } from "./sandbox.js";
+vi.mock("../db/client.js", () => ({
+  db: {
+    insert: vi.fn(() => ({
+      values: dbMocks.insertValues.mockImplementation(() => ({
+        onConflictDoUpdate: dbMocks.insertOnConflictDoUpdate,
+      })),
+    })),
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: dbMocks.selectRows,
+        })),
+      })),
+    })),
+    update: vi.fn(() => ({
+      set: dbMocks.updateSet.mockImplementation(() => ({
+        where: dbMocks.updateWhere,
+      })),
+    })),
+  },
+}));
+
+import { buildDetachedScript, createSandboxTools } from "./sandbox.js";
 
 function mockCommandLifecycle(options: {
   waitStatus?: "exited" | "not_running" | "timeout";
@@ -96,6 +132,12 @@ describe("sandbox command tools", () => {
     });
     sandboxMocks.getSandboxEnvs.mockResolvedValue({});
     sandboxMocks.ensureUserHome.mockResolvedValue("/home/user");
+    dbMocks.insertValues.mockClear();
+    dbMocks.insertOnConflictDoUpdate.mockResolvedValue(undefined);
+    dbMocks.selectRows.mockResolvedValue([]);
+    dbMocks.updateWhere.mockResolvedValue(undefined);
+    process.env.AURA_PUBLIC_URL = "https://aura.test";
+    process.env.SANDBOX_WEBHOOK_SECRET = "test-secret";
   });
 
   it("defaults timeout_seconds to 90 seconds", async () => {
@@ -176,9 +218,22 @@ describe("sandbox command tools", () => {
       expect.objectContaining({
         cwd: "/home/user/repo",
         background: true,
-        envs: expect.objectContaining({ FOO: "bar", SLACK_USER_ID: "U123" }),
+        envs: expect.objectContaining({
+          FOO: "bar",
+          SLACK_USER_ID: "U123",
+          AURA_PUBLIC_URL: "https://aura.test",
+          SANDBOX_WEBHOOK_SECRET: "test-secret",
+        }),
       }),
     );
+    expect(dbMocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      id: result.id,
+      pid: 4321,
+      command: "sleep 300",
+      status: "running",
+      requestedBy: "U123",
+      workspaceId: "default",
+    }));
   });
 
   it("checks detached command status with default tail lines", async () => {
@@ -212,5 +267,65 @@ describe("sandbox command tools", () => {
         }),
       }),
     );
+  });
+});
+
+describe("detached command wrapper callback", () => {
+  it("posts signed completion payload with stdout and stderr tails", async () => {
+    const secret = "wrapper-secret";
+    const received: Array<{ body: string; signature: string }> = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        received.push({
+          body,
+          signature: req.headers["x-webhook-signature"] as string,
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      throw new Error("server did not bind to a TCP port");
+    }
+
+    const oldPublicUrl = process.env.AURA_PUBLIC_URL;
+    process.env.AURA_PUBLIC_URL = `http://127.0.0.1:${address.port}`;
+    const script = buildDetachedScript("deadbeef", "printf 'hello'; printf 'warn' >&2", 1);
+
+    try {
+      await execFileAsync("bash", ["-c", script], {
+        env: {
+          ...process.env,
+          AURA_PUBLIC_URL: process.env.AURA_PUBLIC_URL,
+          SANDBOX_WEBHOOK_SECRET: secret,
+        },
+        timeout: 10_000,
+      });
+    } finally {
+      process.env.AURA_PUBLIC_URL = oldPublicUrl;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+
+    expect(received).toHaveLength(1);
+    const [request] = received;
+    const expectedSignature =
+      "sha256=" +
+      crypto.createHmac("sha256", secret).update(request.body, "utf8").digest("hex");
+    expect(request.signature).toBe(expectedSignature);
+    expect(JSON.parse(request.body)).toEqual({
+      id: "deadbeef",
+      exit_code: 0,
+      stdout_tail: "hello",
+      stderr_tail: "warn",
+    });
   });
 });

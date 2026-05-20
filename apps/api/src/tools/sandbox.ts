@@ -8,9 +8,12 @@ import {
 } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
 import { defineTool } from "../lib/tool.js";
-import type { ScheduleContext } from "@aura/db/schema";
+import { detachedCommands, type DetachedCommand, type ScheduleContext } from "@aura/db/schema";
+import { eq } from "drizzle-orm";
 
 const BACKGROUND_COMMAND_DIR = "/tmp/aura-bg";
+const CALLBACK_TAIL_BYTES = 16 * 1024;
+const DEFAULT_PUBLIC_URL = "https://aura-alpha-five.vercel.app";
 
 type Sandbox = Awaited<ReturnType<typeof getOrCreateSandbox>>;
 type CommandEnv = Record<string, string>;
@@ -29,6 +32,8 @@ interface DetachedCommandStatus {
   runtime_s: number;
 }
 
+type DetachedCommandDbStatus = "running" | "completed" | "failed" | "killed";
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
@@ -37,22 +42,181 @@ function backgroundPath(id: string, suffix: "out" | "err" | "pid" | "status" | "
   return `${BACKGROUND_COMMAND_DIR}/${id}.${suffix}`;
 }
 
-function buildDetachedScript(id: string, command: string, startedAtEpoch: number): string {
+function getPublicUrl(): string {
+  if (process.env.AURA_PUBLIC_URL) {
+    return process.env.AURA_PUBLIC_URL.replace(/\/+$/, "");
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`.replace(/\/+$/, "");
+  }
+  return DEFAULT_PUBLIC_URL;
+}
+
+function getWorkspaceId(context?: ScheduleContext): string {
+  return context?.workspaceId || process.env.DEFAULT_WORKSPACE_ID || "default";
+}
+
+function tailLines(value: string | null | undefined, lines: number): string {
+  if (!value) return "";
+  const split = value.split("\n");
+  return split.length <= lines ? value : split.slice(-lines).join("\n");
+}
+
+function getRuntimeSeconds(startedAt: Date, completedAt?: Date | null): number {
+  const end = completedAt?.getTime() ?? Date.now();
+  return Math.max(0, Math.floor((end - startedAt.getTime()) / 1000));
+}
+
+function mapDbStatus(status: string): "running" | "exited" | "not_found" {
+  if (status === "running") return "running";
+  if (status === "completed" || status === "failed" || status === "killed") return "exited";
+  return "not_found";
+}
+
+function statusFromExitCode(exitCode: number | undefined): DetachedCommandDbStatus {
+  return exitCode === 0 ? "completed" : "failed";
+}
+
+async function getDb() {
+  const { db } = await import("../db/client.js");
+  return db;
+}
+
+async function insertDetachedCommandRow(input: {
+  id: string;
+  pid: number;
+  command: string;
+  context?: ScheduleContext;
+  userId: string;
+}) {
+  const db = await getDb();
+  await db
+    .insert(detachedCommands)
+    .values({
+      id: input.id,
+      pid: input.pid,
+      command: input.command,
+      status: "running",
+      requestedBy: input.context?.userId || input.userId,
+      channelId: input.context?.channelId || null,
+      threadTs: input.context?.threadTs || null,
+      workspaceId: getWorkspaceId(input.context),
+    })
+    .onConflictDoUpdate({
+      target: detachedCommands.id,
+      set: {
+        pid: input.pid,
+        command: input.command,
+        status: "running",
+        exitCode: null,
+        requestedBy: input.context?.userId || input.userId,
+        channelId: input.context?.channelId || null,
+        threadTs: input.context?.threadTs || null,
+        workspaceId: getWorkspaceId(input.context),
+        startedAt: new Date(),
+        completedAt: null,
+        stdoutTail: null,
+        stderrTail: null,
+      },
+    });
+}
+
+async function getDetachedCommandRow(id: string): Promise<DetachedCommand | undefined> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(detachedCommands)
+    .where(eq(detachedCommands.id, id))
+    .limit(1);
+  return rows[0];
+}
+
+async function updateDetachedCommandRowFromStatus(
+  id: string,
+  status: DetachedCommandDbStatus,
+  snapshot: DetachedCommandStatus,
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(detachedCommands)
+    .set({
+      status,
+      exitCode: snapshot.exit_code ?? null,
+      completedAt: new Date(),
+      stdoutTail: truncateOutput(snapshot.stdout_tail || "", CALLBACK_TAIL_BYTES),
+      stderrTail: truncateOutput(snapshot.stderr_tail || "", CALLBACK_TAIL_BYTES),
+    })
+    .where(eq(detachedCommands.id, id));
+}
+
+function statusFromDbRow(row: DetachedCommand, tailLineCount: number): DetachedCommandStatus {
+  return {
+    status: mapDbStatus(row.status),
+    exit_code: row.exitCode ?? undefined,
+    stdout_tail: tailLines(row.stdoutTail, tailLineCount),
+    stderr_tail: tailLines(row.stderrTail, tailLineCount),
+    runtime_s: getRuntimeSeconds(row.startedAt, row.completedAt),
+  };
+}
+
+export function buildDetachedScript(id: string, command: string, startedAtEpoch: number): string {
   const stdoutPath = backgroundPath(id, "out");
   const stderrPath = backgroundPath(id, "err");
   const pidPath = backgroundPath(id, "pid");
   const statusPath = backgroundPath(id, "status");
   const startedAtPath = backgroundPath(id, "started_at");
+  const payloadPath = `${BACKGROUND_COMMAND_DIR}/${id}.callback.json`;
+  const signaturePath = `${BACKGROUND_COMMAND_DIR}/${id}.callback.sig`;
+  const callbackUrl = `${getPublicUrl()}/api/webhook/sandbox-command`;
 
   return [
     `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)}`,
-    `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)}`,
+    `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)}`,
     `printf '%s\\n' ${shellQuote(String(startedAtEpoch))} > ${shellQuote(startedAtPath)}`,
     `nohup bash -c ${shellQuote(command)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
     "pid=$!",
     `printf '%s\\n' "$pid" > ${shellQuote(pidPath)}`,
     "wait \"$pid\"",
-    `printf '%s\\n' "$?" > ${shellQuote(statusPath)}`,
+    "exit_code=$?",
+    `printf '%s\\n' "$exit_code" > ${shellQuote(statusPath)}`,
+    `if [ -n "\${AURA_PUBLIC_URL:-}" ] && [ -n "\${SANDBOX_WEBHOOK_SECRET:-}" ]; then`,
+    `  AURA_COMMAND_ID=${shellQuote(id)} AURA_EXIT_CODE="$exit_code" AURA_STDOUT_PATH=${shellQuote(stdoutPath)} AURA_STDERR_PATH=${shellQuote(stderrPath)} AURA_PAYLOAD_PATH=${shellQuote(payloadPath)} AURA_SIGNATURE_PATH=${shellQuote(signaturePath)} python3 - <<'PY'`,
+    "import hashlib",
+    "import hmac",
+    "import json",
+    "import os",
+    "",
+    `tail_bytes = ${CALLBACK_TAIL_BYTES}`,
+    "",
+    "def read_tail(path):",
+    "    try:",
+    "        with open(path, 'rb') as file:",
+    "            file.seek(0, os.SEEK_END)",
+    "            size = file.tell()",
+    "            file.seek(max(0, size - tail_bytes), os.SEEK_SET)",
+    "            return file.read().decode('utf-8', errors='replace')",
+    "    except OSError:",
+    "        return ''",
+    "",
+    "payload = {",
+    "    'id': os.environ['AURA_COMMAND_ID'],",
+    "    'exit_code': int(os.environ['AURA_EXIT_CODE']),",
+    "    'stdout_tail': read_tail(os.environ['AURA_STDOUT_PATH']),",
+    "    'stderr_tail': read_tail(os.environ['AURA_STDERR_PATH']),",
+    "}",
+    "raw = json.dumps(payload, separators=(',', ':')).encode('utf-8')",
+    "signature = 'sha256=' + hmac.new(",
+    "    os.environ['SANDBOX_WEBHOOK_SECRET'].encode('utf-8'),",
+    "    raw,",
+    "    hashlib.sha256,",
+    ").hexdigest()",
+    "with open(os.environ['AURA_PAYLOAD_PATH'], 'wb') as file:",
+    "    file.write(raw)",
+    "with open(os.environ['AURA_SIGNATURE_PATH'], 'w', encoding='utf-8') as file:",
+    "    file.write(signature)",
+    "PY",
+    `  curl -sS --max-time 30 --retry 3 --retry-delay 5 -X POST ${shellQuote(callbackUrl)} -H 'Content-Type: application/json' -H "x-webhook-signature: $(cat ${shellQuote(signaturePath)})" --data-binary @${shellQuote(payloadPath)} >/dev/null || true`,
+    "fi",
   ].join("\n");
 }
 
@@ -341,6 +505,8 @@ export function createSandboxTools(context?: ScheduleContext) {
             USER_HOME: userHome,
             PERSISTENT_HOME: userHome,
             SLACK_USER_ID: userId,
+            AURA_PUBLIC_URL: getPublicUrl(),
+            SANDBOX_WEBHOOK_SECRET: process.env.SANDBOX_WEBHOOK_SECRET || "",
           };
 
           logger.info("run_command tool: executing", {
@@ -471,6 +637,8 @@ export function createSandboxTools(context?: ScheduleContext) {
             USER_HOME: userHome,
             PERSISTENT_HOME: userHome,
             SLACK_USER_ID: userId,
+            AURA_PUBLIC_URL: getPublicUrl(),
+            SANDBOX_WEBHOOK_SECRET: process.env.SANDBOX_WEBHOOK_SECRET || "",
           };
 
           logger.info("run_command_detached tool: starting", {
@@ -483,6 +651,14 @@ export function createSandboxTools(context?: ScheduleContext) {
             command,
             cwd: workdir || userHome,
             envs: commandEnv,
+          });
+
+          await insertDetachedCommandRow({
+            id: detached.id,
+            pid: detached.pid,
+            command,
+            context,
+            userId,
           });
 
           logger.info("run_command_detached tool: started", {
@@ -538,6 +714,19 @@ export function createSandboxTools(context?: ScheduleContext) {
       execute: async ({ id, tail_lines }) => {
         const userId = context?.userId || "aura";
         try {
+          let dbRow: DetachedCommand | undefined;
+          try {
+            dbRow = await getDetachedCommandRow(id);
+            if (dbRow && dbRow.status !== "running") {
+              return statusFromDbRow(dbRow, tail_lines);
+            }
+          } catch (dbError: any) {
+            logger.warn("check_command: detached_commands lookup failed, falling back to sandbox files", {
+              id,
+              error: dbError.message,
+            });
+          }
+
           const sandbox = await getOrCreateSandbox(userId);
           const envs = await getSandboxEnvs(userId);
           const userHome = "/home/user";
@@ -546,9 +735,27 @@ export function createSandboxTools(context?: ScheduleContext) {
             USER_HOME: userHome,
             PERSISTENT_HOME: userHome,
             SLACK_USER_ID: userId,
+            AURA_PUBLIC_URL: getPublicUrl(),
+            SANDBOX_WEBHOOK_SECRET: process.env.SANDBOX_WEBHOOK_SECRET || "",
           };
 
-          return await inspectDetachedCommand(sandbox, id, tail_lines, commandEnv);
+          const fileStatus = await inspectDetachedCommand(sandbox, id, tail_lines, commandEnv);
+          if (dbRow?.status === "running" && fileStatus.status === "exited") {
+            try {
+              await updateDetachedCommandRowFromStatus(
+                id,
+                fileStatus.exit_code === undefined ? "killed" : statusFromExitCode(fileStatus.exit_code),
+                fileStatus,
+              );
+            } catch (dbError: any) {
+              logger.warn("check_command: failed to persist terminal file status", {
+                id,
+                error: dbError.message,
+              });
+            }
+          }
+
+          return fileStatus;
         } catch (error: any) {
           logger.error("check_command tool failed", {
             id,

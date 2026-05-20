@@ -456,6 +456,13 @@
       "when": 1779222720000,
       "tag": "0064_enforce_credential_scope_check",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1779283871000,
+      "tag": "0065_detached_commands",
+      "breakpoints": true
     }
   ]
 }

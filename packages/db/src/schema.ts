@@ -589,6 +589,34 @@ export const jobExecutions = pgTable(
   ],
 );
 
+// ── Detached Sandbox Commands ────────────────────────────────────────────────
+
+export const detachedCommands = pgTable(
+  "detached_commands",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    pid: integer("pid"),
+    command: text("command").notNull(),
+    status: text("status").notNull().default("running"),
+    exitCode: integer("exit_code"),
+    requestedBy: text("requested_by").notNull(),
+    channelId: text("channel_id"),
+    threadTs: text("thread_ts"),
+    startedAt: timestamptz("started_at").notNull().defaultNow(),
+    completedAt: timestamptz("completed_at"),
+    stdoutTail: text("stdout_tail"),
+    stderrTail: text("stderr_tail"),
+  },
+  (table) => [
+    index("detached_commands_status_started_at_idx").on(table.status, table.startedAt),
+    check(
+      "detached_commands_status_check",
+      sql`${table.status} IN ('running', 'completed', 'failed', 'killed')`,
+    ),
+  ],
+);
+
 // ── Token usage types ────────────────────────────────────────────────────────
 
 export interface DetailedTokenUsage {
@@ -958,6 +986,8 @@ export type NewChannel = typeof channels.$inferInsert;
 export type Setting = typeof settings.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
+export type DetachedCommand = typeof detachedCommands.$inferSelect;
+export type NewDetachedCommand = typeof detachedCommands.$inferInsert;
 export type Note = typeof notes.$inferSelect;
 export type Resource = typeof resources.$inferSelect;
 export type NewResource = typeof resources.$inferInsert;
@@ -985,6 +1015,7 @@ export interface ScheduleContext {
   userId?: string;
   channelId?: string;
   threadTs?: string;
+  workspaceId?: string;
   timezone?: string;
 }
 // ── Feedback ────────────────────────────────────────────────────────────────

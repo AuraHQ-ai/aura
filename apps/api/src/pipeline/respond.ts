@@ -141,7 +141,7 @@ interface RespondOptions {
   dynamicContext?: string;
   userMessage: string;
   slackClient: WebClient;
-  context?: { userId?: string; channelId?: string; threadTs?: string; timezone?: string };
+  context?: { userId?: string; channelId?: string; threadTs?: string; workspaceId?: string; timezone?: string };
   files?: FileContentPart[];
   channelId: string;
   threadTs?: string;
