@@ -57,3 +57,30 @@ You have these credentials/API keys available in your sandbox env (run_command, 
     expect(buildDynamicContext({})).not.toContain("<capabilities>");
   });
 });
+
+describe("buildDynamicContext storage block", () => {
+  it("includes the MongoDB storage block when MONGODB_ATLAS_URI is in env names", () => {
+    const prompt = buildDynamicContext({
+      sandboxEnvNames: ["MONGODB_ATLAS_URI", "GITHUB_TOKEN"],
+    });
+    expect(prompt).toContain("<storage>");
+    expect(prompt).toContain("MongoDB Atlas");
+    expect(prompt).toContain("fb_comments");
+    expect(prompt).toContain("DATABASE_URL");
+  });
+
+  it("omits the storage block when MONGODB_ATLAS_URI is not present", () => {
+    const prompt = buildDynamicContext({
+      sandboxEnvNames: ["GITHUB_TOKEN", "NOTION_API_KEY"],
+    });
+    expect(prompt).not.toContain("<storage>");
+    expect(prompt).not.toContain("MongoDB Atlas");
+  });
+
+  it("omits the storage block when sandboxEnvNames is empty", () => {
+    expect(buildDynamicContext({ sandboxEnvNames: [] })).not.toContain(
+      "<storage>",
+    );
+    expect(buildDynamicContext({})).not.toContain("<storage>");
+  });
+});

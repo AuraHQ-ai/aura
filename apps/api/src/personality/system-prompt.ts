@@ -388,6 +388,32 @@ function formatConversations(conversations: ConversationThread[]): string {
   return `<related_threads>\n${threads}\n</related_threads>`;
 }
 
+function formatStorage(envNames: string[]): string {
+  const has = (name: string) => envNames.includes(name);
+  const lines: string[] = [];
+
+  if (has("MONGODB_ATLAS_URI")) {
+    lines.push(
+      "**MongoDB Atlas** is wired up as your scratch/staging storage layer. Use it whenever a job needs to persist or retrieve arbitrary structured data across sessions -- especially when you'd otherwise reinvent storage in the sandbox.",
+      "",
+      "When to reach for it (not exhaustive):",
+      "- Cross-session task state: e.g. moderating Facebook/Meta comments daily and tracking which IDs you've already seen and what action you took (`pending`, `approved`, `hidden`, `deleted`, `reported`).",
+      "- Staging area between two systems: e.g. dumping a Notion workspace, scraping listings, enriching contacts -- anything where fetch and load happen in different jobs.",
+      "- Per-task collections that don't deserve a Postgres schema and outlive a single sandbox session.",
+      "",
+      "Rules:",
+      "- The URI is in `MONGODB_ATLAS_URI` (sandbox env). The `mongodb` node driver and `mongosh` are pre-baked into the sandbox template.",
+      "- Schemaless by design -- create collections on demand, no migrations, no DDL approvals needed. Name them `<domain>_<purpose>` (e.g. `fb_comments`, `notion_dump_2026_05_20`).",
+      "- This is NOT a replacement for Postgres. Postgres (`DATABASE_URL`) is mission-critical, schema-managed core state (memories, messages, entities, jobs, notes) -- you do not write DDL or mutate it without Joan's approval. Mongo is your scratch space; Postgres is the system's spine.",
+      "- Prefer Mongo over SQLite-in-sandbox or GCS FUSE for anything that needs to survive sandbox resets or be queried later. SQLite can vanish on e2b pause/resume; GCS FUSE is slow and not query-shaped.",
+    );
+  }
+
+  if (lines.length === 0) return "";
+
+  return `<storage>\n${lines.join("\n")}\n</storage>`;
+}
+
 function formatCapabilities(envNames: string[]): string {
   const names = [...new Set(envNames)].sort();
   if (names.length === 0) return "";
@@ -589,5 +615,7 @@ export function buildDynamicContext(context: {
   s += "\n</runtime>";
   const capabilities = formatCapabilities(context.sandboxEnvNames ?? []);
   if (capabilities) s += `\n\n${capabilities}`;
+  const storage = formatStorage(context.sandboxEnvNames ?? []);
+  if (storage) s += `\n\n${storage}`;
   return s;
 }
