@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, and, lt, lte, gte, sql, isNull, or, inArray } from "drizzle-orm";
+import { eq, and, lt, lte, gte, gt, desc, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions } from "@aura/db/schema";
@@ -14,6 +14,9 @@ const MAX_JOBS_PER_SWEEP = 10;
 
 /** Threshold for recovering jobs stuck in "running" (15 minutes) */
 const STALE_RUNNING_THRESHOLD_MS = 15 * 60 * 1000;
+
+/** Consecutive failed recurring executions before owner escalation */
+const CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD = 5;
 
 // ── Job Eligibility (recurring jobs) ─────────────────────────────────────────
 
@@ -69,6 +72,141 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
   return true;
 }
 
+function consecutiveFailureMarkerTopic(jobId: string): string {
+  return `job-failure-streak:${jobId}`;
+}
+
+async function clearConsecutiveFailureMarker(job: typeof jobs.$inferSelect): Promise<void> {
+  await db
+    .delete(notes)
+    .where(
+      and(
+        eq(notes.workspaceId, job.workspaceId),
+        eq(notes.topic, consecutiveFailureMarkerTopic(job.id)),
+      ),
+    );
+}
+
+async function maybeEscalateConsecutiveRecurringFailures(
+  failedJobs: Array<typeof jobs.$inferSelect>,
+): Promise<number> {
+  let escalated = 0;
+
+  for (const job of failedJobs) {
+    const recentExecutions = await db
+      .select({
+        id: jobExecutions.id,
+        status: jobExecutions.status,
+        startedAt: jobExecutions.startedAt,
+        error: jobExecutions.error,
+      })
+      .from(jobExecutions)
+      .where(eq(jobExecutions.jobId, job.id))
+      .orderBy(desc(jobExecutions.startedAt))
+      .limit(CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD);
+
+    if (
+      recentExecutions.length < CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD ||
+      recentExecutions.some((execution) => execution.status !== "failed")
+    ) {
+      if (recentExecutions.some((execution) => execution.status === "completed")) {
+        await clearConsecutiveFailureMarker(job);
+      }
+      continue;
+    }
+
+    const markerTopic = consecutiveFailureMarkerTopic(job.id);
+    const [existingMarker] = await db
+      .select({ id: notes.id, updatedAt: notes.updatedAt })
+      .from(notes)
+      .where(and(eq(notes.workspaceId, job.workspaceId), eq(notes.topic, markerTopic)))
+      .limit(1);
+
+    if (existingMarker) {
+      const successfulExecutionsSinceMarker = await db
+        .select({ id: jobExecutions.id })
+        .from(jobExecutions)
+        .where(
+          and(
+            eq(jobExecutions.jobId, job.id),
+            eq(jobExecutions.status, "completed"),
+            gt(jobExecutions.startedAt, existingMarker.updatedAt),
+          ),
+        )
+        .limit(1);
+
+      if (successfulExecutionsSinceMarker.length === 0) {
+        logger.info("recurring_job_failure_streak_dm_deduped", {
+          jobId: job.id,
+          jobName: job.name,
+          threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
+        });
+        continue;
+      }
+
+      await clearConsecutiveFailureMarker(job);
+    }
+
+    const streakStart = recentExecutions[recentExecutions.length - 1];
+    const latestFailure = recentExecutions[0];
+    const lastError = truncateJobFailureText(latestFailure.error ?? job.lastResult);
+
+    const sent = await sendJobFailureDm({
+      jobId: job.id,
+      requestedBy: job.requestedBy,
+      text: `Your recurring job \`${job.name}\` has failed ${CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD} consecutive runs. Last error: ${lastError}. It's been broken since ${streakStart.startedAt.toISOString()}. Disable it with \`cancel_job\` if it's no longer needed, or fix it.`,
+      logContext: {
+        event: "recurring_job_consecutive_failures",
+        threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
+        streakStartedAt: streakStart.startedAt.toISOString(),
+      },
+    });
+
+    if (!sent) continue;
+
+    const now = new Date();
+    await db
+      .insert(notes)
+      .values({
+        workspaceId: job.workspaceId,
+        topic: markerTopic,
+        content: JSON.stringify({
+          jobId: job.id,
+          threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
+          latestFailureStartedAt: latestFailure.startedAt.toISOString(),
+          streakStartedAt: streakStart.startedAt.toISOString(),
+        }),
+        category: "job_failure_streak_marker",
+        injectInContext: false,
+        ownerId: job.requestedBy,
+        visibility: "private",
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [notes.workspaceId, notes.topic],
+        set: {
+          content: JSON.stringify({
+            jobId: job.id,
+            threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
+            latestFailureStartedAt: latestFailure.startedAt.toISOString(),
+            streakStartedAt: streakStart.startedAt.toISOString(),
+          }),
+          updatedAt: now,
+        },
+      });
+
+    escalated++;
+    logger.warn("recurring_job_consecutive_failures_escalated", {
+      jobId: job.id,
+      jobName: job.name,
+      threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
+      streakStartedAt: streakStart.startedAt.toISOString(),
+    });
+  }
+
+  return escalated;
+}
+
 // ── Heartbeat Cron App ───────────────────────────────────────────────────────
 
 export const heartbeatApp = new Hono();
@@ -90,6 +228,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let plansExpired = 0;
   let plansAbandoned = 0;
   let staleRunningRecovered = 0;
+  let consecutiveFailureEscalations = 0;
+  const recurringJobsWithFreshFailures = new Map<string, typeof jobs.$inferSelect>();
 
   try {
     const now = new Date();
@@ -150,6 +290,9 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             jobName: job.name,
             error: error.message,
           });
+          if (job.cronSchedule != null) {
+            recurringJobsWithFreshFailures.set(job.id, job);
+          }
           failed++;
         }
       }
@@ -338,6 +481,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
+    consecutiveFailureEscalations = await maybeEscalateConsecutiveRecurringFailures(
+      [...recurringJobsWithFreshFailures.values()],
+    );
+
     // ── Done ─────────────────────────────────────────────────────────────
 
     const duration = Date.now() - sweepStart;
@@ -347,9 +494,19 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       plansExpired,
       plansAbandoned,
       staleRunningRecovered,
+      consecutiveFailureEscalations,
     });
 
-    return c.json({ ok: true, executed, failed, plansExpired, plansAbandoned, staleRunningRecovered, duration });
+    return c.json({
+      ok: true,
+      executed,
+      failed,
+      plansExpired,
+      plansAbandoned,
+      staleRunningRecovered,
+      consecutiveFailureEscalations,
+      duration,
+    });
   } catch (error: any) {
     logger.error("Heartbeat failed", { error: error.message });
     return c.json({ error: "Heartbeat failed" }, 500);

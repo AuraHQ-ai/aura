@@ -487,7 +487,6 @@ export async function executeJob(
       await sendJobFailureDm({
         jobId,
         requestedBy: job.requestedBy,
-        fallbackToAdmin: false,
         text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
         logContext: { executionId },
       });

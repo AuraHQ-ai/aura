@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMock = vi.hoisted(() => {
   type Operation = {
-    kind: "select" | "update" | "delete";
+    kind: "select" | "update" | "delete" | "insert";
     setArg?: Record<string, unknown>;
+    valuesArg?: Record<string, unknown>;
   };
 
   const state = {
@@ -12,6 +13,7 @@ const dbMock = vi.hoisted(() => {
     select: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
+    insert: vi.fn(),
   };
 
   function nextResult() {
@@ -28,6 +30,12 @@ const dbMock = vi.hoisted(() => {
         operation.setArg = setArg;
         return query;
       }),
+      values: vi.fn((valuesArg: Record<string, unknown>) => {
+        operation.valuesArg = valuesArg;
+        return query;
+      }),
+      onConflictDoUpdate: vi.fn(() => query),
+      onConflictDoNothing: vi.fn(() => query),
       returning: vi.fn(() => {
         state.operations.push(operation);
         return Promise.resolve(nextResult());
@@ -44,6 +52,7 @@ const dbMock = vi.hoisted(() => {
   state.select.mockImplementation(() => createQuery({ kind: "select" }));
   state.update.mockImplementation(() => createQuery({ kind: "update" }));
   state.delete.mockImplementation(() => createQuery({ kind: "delete" }));
+  state.insert.mockImplementation(() => createQuery({ kind: "insert" }));
 
   return state;
 });
@@ -56,6 +65,7 @@ vi.mock("../db/client.js", () => ({
     select: dbMock.select,
     update: dbMock.update,
     delete: dbMock.delete,
+    insert: dbMock.insert,
   },
 }));
 
@@ -73,13 +83,13 @@ vi.mock("./execute-job.js", () => ({
   executeJob: executeJobMock,
 }));
 
-vi.mock("./job-notifications.js", () => ({
-  sendJobFailureDm: sendJobFailureDmMock,
-  truncateJobFailureText: (value: string | null | undefined, maxChars = 400) => {
-    const text = value?.trim() || "unknown";
-    return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
-  },
-}));
+vi.mock("./job-notifications.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./job-notifications.js")>();
+  return {
+    ...actual,
+    sendJobFailureDm: sendJobFailureDmMock,
+  };
+});
 
 function queueDbResults(...results: unknown[][]) {
   dbMock.results = [...results];
@@ -89,6 +99,12 @@ function updateSets() {
   return dbMock.operations
     .filter((operation) => operation.kind === "update")
     .map((operation) => operation.setArg ?? {});
+}
+
+function insertValues() {
+  return dbMock.operations
+    .filter((operation) => operation.kind === "insert")
+    .map((operation) => operation.valuesArg ?? {});
 }
 
 function baseJob(overrides: Record<string, unknown>) {
@@ -125,6 +141,8 @@ function baseJob(overrides: Record<string, unknown>) {
 
 describe("heartbeat stale running recovery", () => {
   const originalCronSecret = process.env.CRON_SECRET;
+  const originalFounderUserId = process.env.FOUNDER_USER_ID;
+  const originalAuraAdminUserIds = process.env.AURA_ADMIN_USER_IDS;
 
   beforeEach(() => {
     process.env.CRON_SECRET = "test-secret";
@@ -133,6 +151,7 @@ describe("heartbeat stale running recovery", () => {
     dbMock.results = [];
     dbMock.operations = [];
     vi.clearAllMocks();
+    sendJobFailureDmMock.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -141,6 +160,16 @@ describe("heartbeat stale running recovery", () => {
       delete process.env.CRON_SECRET;
     } else {
       process.env.CRON_SECRET = originalCronSecret;
+    }
+    if (originalFounderUserId === undefined) {
+      delete process.env.FOUNDER_USER_ID;
+    } else {
+      process.env.FOUNDER_USER_ID = originalFounderUserId;
+    }
+    if (originalAuraAdminUserIds === undefined) {
+      delete process.env.AURA_ADMIN_USER_IDS;
+    } else {
+      process.env.AURA_ADMIN_USER_IDS = originalAuraAdminUserIds;
     }
   });
 
@@ -254,5 +283,169 @@ describe("heartbeat stale running recovery", () => {
       ),
     ).toBe(false);
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to founder or admin env vars for system-owned jobs", async () => {
+    process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    process.env.AURA_ADMIN_USER_IDS = "U_ADMIN";
+
+    const { resolveJobFailureDmTarget } = await import("./job-notifications.js");
+
+    expect(resolveJobFailureDmTarget("aura")).toBeNull();
+    expect(resolveJobFailureDmTarget(null)).toBeNull();
+    expect(resolveJobFailureDmTarget(" U_OWNER ")).toBe("U_OWNER");
+  });
+
+  it("escalates after 5 consecutive failed recurring job executions", async () => {
+    const recurringJob = baseJob({
+      status: "pending",
+      cronSchedule: "* * * * *",
+      name: "sync-meta-comments-daily",
+      lastResult: "previous failure",
+    });
+    const recentFailures = [0, 1, 2, 3, 4].map((index) => ({
+      id: `exec-${index}`,
+      status: "failed",
+      startedAt: new Date(`2026-05-20T08:5${4 - index}:00.000Z`),
+      error: index === 0 ? "Meta API timeout" : "previous error",
+    }));
+
+    executeJobMock.mockRejectedValueOnce(new Error("Meta API timeout"));
+    queueDbResults(
+      [recurringJob], // pending jobs
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+      recentFailures, // recent job executions
+      [], // no existing marker
+      [], // marker insert
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(sendJobFailureDmMock).toHaveBeenCalledOnce();
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: "job-1",
+        requestedBy: "U_REQUESTER",
+        text: expect.stringContaining(
+          "Your recurring job `sync-meta-comments-daily` has failed 5 consecutive runs.",
+        ),
+      }),
+    );
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("It's been broken since 2026-05-20T08:50:00.000Z."),
+      }),
+    );
+    expect(insertValues()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          topic: "job-failure-streak:job-1",
+          category: "job_failure_streak_marker",
+          injectInContext: false,
+        }),
+      ]),
+    );
+  });
+
+  it("does not duplicate escalation on the 6th consecutive failure in the same streak", async () => {
+    const recurringJob = baseJob({
+      status: "pending",
+      cronSchedule: "* * * * *",
+      name: "sync-meta-comments-daily",
+    });
+    const recentFailures = [0, 1, 2, 3, 4].map((index) => ({
+      id: `exec-${index + 2}`,
+      status: "failed",
+      startedAt: new Date(`2026-05-20T08:5${5 - index}:00.000Z`),
+      error: "still failing",
+    }));
+
+    executeJobMock.mockRejectedValueOnce(new Error("still failing"));
+    queueDbResults(
+      [recurringJob],
+      [],
+      [],
+      [],
+      [],
+      recentFailures,
+      [{ id: "marker-1", updatedAt: new Date("2026-05-20T08:54:30.000Z") }],
+      [], // no successful executions since the marker
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+    expect(insertValues()).toEqual([]);
+  });
+
+  it("does not escalate immediately after a successful run resets the streak", async () => {
+    const recurringJob = baseJob({
+      status: "pending",
+      cronSchedule: "* * * * *",
+      name: "sync-meta-comments-daily",
+    });
+    const recentExecutions = [
+      {
+        id: "exec-latest",
+        status: "failed",
+        startedAt: new Date("2026-05-20T08:58:00.000Z"),
+        error: "new failure",
+      },
+      {
+        id: "exec-success",
+        status: "completed",
+        startedAt: new Date("2026-05-20T08:57:00.000Z"),
+        error: null,
+      },
+      {
+        id: "exec-old-1",
+        status: "failed",
+        startedAt: new Date("2026-05-20T08:56:00.000Z"),
+        error: "old failure",
+      },
+      {
+        id: "exec-old-2",
+        status: "failed",
+        startedAt: new Date("2026-05-20T08:55:00.000Z"),
+        error: "old failure",
+      },
+      {
+        id: "exec-old-3",
+        status: "failed",
+        startedAt: new Date("2026-05-20T08:54:00.000Z"),
+        error: "old failure",
+      },
+    ];
+
+    executeJobMock.mockRejectedValueOnce(new Error("new failure"));
+    queueDbResults(
+      [recurringJob],
+      [],
+      [],
+      [],
+      [],
+      recentExecutions,
+      [], // marker reset delete
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+    expect(insertValues()).toEqual([]);
   });
 });
