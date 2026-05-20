@@ -348,7 +348,7 @@ export function createJobTools(
 
     cancel_job: defineTool({
       description:
-        "Cancel a pending one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Accepts a job ID or name.",
+        "Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Accepts a job ID or name.",
       inputSchema: z.object({
         job_id: z
           .string()
@@ -394,8 +394,8 @@ export function createJobTools(
               message: `Recurring job "${job.name}" disabled. Use create_job with the same name to re-enable.`,
             };
           } else {
-            // One-shot: only cancel if still pending
-            if (job.status !== "pending") {
+            // One-shot: allow pending jobs and failed zombies to be cancelled.
+            if (job.status !== "pending" && job.status !== "failed") {
               return {
                 ok: false,
                 error: `Job "${job.name}" is already ${job.status} and cannot be cancelled.`,
