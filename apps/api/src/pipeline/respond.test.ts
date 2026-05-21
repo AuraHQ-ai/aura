@@ -616,7 +616,7 @@ describe("generateResponse Slack stream handling", () => {
     }));
   });
 
-  it("does not relaunch superseded empty completions", async () => {
+  it("does not error-log or relaunch superseded empty completions", async () => {
     const stream = {
       append: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
@@ -665,6 +665,15 @@ describe("generateResponse Slack stream handling", () => {
     expect(vi.mocked(logError).mock.calls.some(
       ([entry]) => entry.errorCode === "empty_completion_after_tools",
     )).toBe(false);
+    expect(vi.mocked(logError).mock.calls.some(
+      ([entry]) => entry.errorCode === "stream_on_error_callback",
+    )).toBe(false);
+    expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      "Stream onError ignored — invocation superseded",
+      expect.objectContaining({
+        channelId: "C123",
+      }),
+    );
   });
 
   it("logs empty completions for tool-error-only continuation segments", async () => {
