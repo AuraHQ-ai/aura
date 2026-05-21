@@ -203,9 +203,6 @@ const STREAM_THRESHOLD_WHITESPACE = 9_000;
 const STREAM_HARD_LIMIT = 9_500;
 const MAX_CONTINUATIONS = 5;
 const LONG_TOOL_SPLIT_MS = 75_000;
-const STREAM_KEEPALIVE_MS = 20_000;
-const STATUS_KEEPALIVE_MS = 90_000;
-const STATUS_REFRESH_DEBOUNCE_MS = 1_000;
 const STREAM_CONTINUATION_TOMBSTONE = "_(continuing in a new message...)_";
 const TOOL_CONTINUATION_OUTPUT = "continuing in a new message...";
 const EMPTY_COMPLETION_RELAUNCH_PROMPT = "(continue - you ended without responding. Summarize what you found.)";
@@ -565,11 +562,8 @@ export async function generateResponse(
   // Keepalive interval during long tool calls (e.g. Claude Code via run_command)
   let toolKeepAlive: ReturnType<typeof setInterval> | null = null;
 
-  // Slack stream keepalive — sends a minimal payload only after prolonged quiet.
-  let streamKeepAlive: ReturnType<typeof setTimeout> | null = null;
-  let statusKeepAlive: ReturnType<typeof setInterval> | null = null;
-  let lastStatusRefreshAt = 0;
-  let currentStatusText = "Working on it…";
+  // Slack stream keepalive — sends minimal payload to prevent ~30s idle timeout
+  let streamKeepAlive: ReturnType<typeof setInterval> | null = null;
   let longToolSplitTimer: ReturnType<typeof setTimeout> | null = null;
   let longToolSplitInFlight = false;
 
@@ -977,8 +971,6 @@ export async function generateResponse(
       currentSegmentTextLength = 0;
       currentSegmentToolRecordStart = toolCallRecords.length;
       currentSegmentContinuationReason = reason;
-      resetStreamKeepAlive();
-      refreshAssistantStatus("Continuing…", { force: true });
       return true;
     } catch (startErr: any) {
       logger.warn(
@@ -996,68 +988,6 @@ export async function generateResponse(
       longToolSplitTimer = null;
       void splitLongRunningToolStream();
     }, LONG_TOOL_SPLIT_MS);
-  }
-
-  function clearStreamKeepAlive() {
-    if (streamKeepAlive) {
-      clearTimeout(streamKeepAlive);
-      streamKeepAlive = null;
-    }
-  }
-
-  function resetStreamKeepAlive() {
-    clearStreamKeepAlive();
-    if (streamingFailed || !streamer) return;
-    streamKeepAlive = setTimeout(() => {
-      streamKeepAlive = null;
-      if (streamingFailed || !streamer) return;
-      void (async () => {
-        try {
-          await tryStreamAppend(asAppendPayload({ markdown_text: " " }));
-        } finally {
-          resetStreamKeepAlive();
-        }
-      })();
-    }, STREAM_KEEPALIVE_MS);
-  }
-
-  function clearStatusKeepAlive() {
-    if (statusKeepAlive) {
-      clearInterval(statusKeepAlive);
-      statusKeepAlive = null;
-    }
-  }
-
-  function startStatusKeepAlive() {
-    if (statusKeepAlive) return;
-    statusKeepAlive = setInterval(() => {
-      refreshAssistantStatus(currentStatusText || "Working on it…", { force: true });
-    }, STATUS_KEEPALIVE_MS);
-  }
-
-  function refreshAssistantStatus(status: string, options: { force?: boolean } = {}) {
-    currentStatusText = status || "Working on it…";
-    const now = Date.now();
-    if (!options.force && now - lastStatusRefreshAt < STATUS_REFRESH_DEBOUNCE_MS) {
-      return;
-    }
-    lastStatusRefreshAt = now;
-    const statusText = currentStatusText;
-    void (async () => {
-      try {
-        await trySetAssistantThreadStatus({
-          client: slackClient,
-          channelId,
-          threadTs,
-          status: statusText,
-        });
-      } catch (statusError: any) {
-        logger.warn("assistant.threads.setStatus refresh failed", {
-          channelId,
-          error: statusError?.message || String(statusError),
-        });
-      }
-    })();
   }
 
   async function splitLongRunningToolStream(): Promise<void> {
@@ -1125,23 +1055,12 @@ export async function generateResponse(
 
   try {
     // Signal extended thinking phase to the user via Slack thread status
-    try {
-      await trySetAssistantThreadStatus({
-        client: slackClient,
-        channelId,
-        threadTs,
-        status: "Thinking…",
-      });
-    } catch (statusError: any) {
-      logger.warn("assistant.threads.setStatus initial refresh failed", {
-        channelId,
-        error: statusError?.message || String(statusError),
-      });
-    }
-    currentStatusText = "Thinking…";
-    lastStatusRefreshAt = Date.now();
-    startStatusKeepAlive();
-    resetStreamKeepAlive();
+    await trySetAssistantThreadStatus({
+      client: slackClient,
+      channelId,
+      threadTs,
+      status: "Thinking deeply...",
+    });
 
     let currentStreamCallOptions = streamCallOptions;
     while (true) {
@@ -1152,55 +1071,14 @@ export async function generateResponse(
 
       for await (const chunk of result.fullStream) {
         resetTimer();
-        resetStreamKeepAlive();
 
         switch (chunk.type) {
-        case "reasoning-start":
-        case "reasoning-delta":
-        case "reasoning-end": {
-          refreshAssistantStatus("Thinking…");
-          break;
-        }
-
         case "text-delta": {
           await appendTextDelta(chunk.text);
           break;
         }
 
-        case "tool-input-start": {
-          const toolName = (chunk as any).toolName;
-          const toolCallId = (chunk as any).toolCallId;
-          refreshAssistantStatus(`Calling \`${toolName || "tool"}\`…`);
-
-          if (!toolName || !toolCallId) break;
-          const slackMeta = getSlackMeta(tools[toolName]);
-          const title = slackMeta?.status ?? `Calling ${toolName}…`;
-          const toolInputStartPayload = asAppendPayload({
-            chunks: [toTaskUpdateChunk({
-              id: toolCallId,
-              title,
-              status: "in_progress",
-            })],
-          });
-          currentStreamLength += estimateAppendSize(toolInputStartPayload);
-          if (!streamingFailed) {
-            await tryStreamAppend(toolInputStartPayload);
-            if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length;
-            }
-          }
-          break;
-        }
-
-        case "tool-input-delta": {
-          const toolName = (chunk as any).toolName;
-          refreshAssistantStatus(`Calling \`${toolName || "tool"}\`…`);
-          break;
-        }
-
         case "tool-call": {
-          refreshAssistantStatus(`Calling \`${chunk.toolName}\`…`);
-
           // Flush any pending table buffer before tool cards
           if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
             const preToolFlush = flushRemainingTableBuffer();
@@ -1246,12 +1124,21 @@ export async function generateResponse(
           if (toolKeepAlive) clearInterval(toolKeepAlive);
           toolKeepAlive = setInterval(() => resetTimer(), 60_000);
 
+          // Keep Slack stream alive during long tool execution (~30s idle timeout)
+          if (!streamingFailed && streamKeepAlive == null) {
+            streamKeepAlive = setInterval(async () => {
+              if (streamingFailed) {
+                clearInterval(streamKeepAlive!);
+                streamKeepAlive = null;
+                return;
+              }
+              await tryStreamAppend(asAppendPayload({ markdown_text: " " }));
+            }, 20_000);
+          }
           break;
         }
 
         case "tool-result": {
-          refreshAssistantStatus("Processing results…");
-
           const resultSlackMeta = getSlackMeta(tools[chunk.toolName]);
           const title = resultSlackMeta?.status ?? "Done";
           const output = chunk.output;
@@ -1305,6 +1192,7 @@ export async function generateResponse(
           pendingToolInputs.delete(chunk.toolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+          if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
           if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
           resetTimer();
 
@@ -1349,6 +1237,7 @@ export async function generateResponse(
           pendingToolInputs.delete(errToolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
+          if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
           if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
           resetTimer();
 
@@ -1469,8 +1358,7 @@ export async function generateResponse(
     // ── Finalize ──────────────────────────────────────────────────────────
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
-    clearStreamKeepAlive();
-    clearStatusKeepAlive();
+    if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
     clearLongToolSplitTimer();
 
     const llmMs = Date.now() - start;
@@ -1713,8 +1601,7 @@ export async function generateResponse(
   } catch (error: any) {
     clearTimeout(inactivityTimer);
     if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
-    clearStreamKeepAlive();
-    clearStatusKeepAlive();
+    if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
     clearLongToolSplitTimer();
 
     if (error instanceof InvocationSupersededError) {
