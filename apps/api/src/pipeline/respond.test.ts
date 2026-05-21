@@ -59,6 +59,7 @@ vi.mock("./prepare-step.js", () => ({
 import { generateResponse } from "./respond.js";
 import { logError } from "../lib/error-logger.js";
 import { logger } from "../lib/logger.js";
+import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -116,6 +117,7 @@ function mockAgentStreams(results: any[]) {
       run_command: {
         slack: {
           status: "Running a command in the sandbox...",
+          detail: (input: any) => input?.command ? `Command: ${input.command}` : undefined,
         },
       },
     },
@@ -152,6 +154,116 @@ describe("generateResponse Slack stream handling", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("emits an early tool card on tool-input-start and updates it on tool-call", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-input-start",
+        toolCallId: "call-1",
+        toolName: "run_command",
+      };
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "true" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+      };
+      yield { type: "text-delta", text: "Done." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    const taskUpdateCalls = stream.append.mock.calls
+      .map(([payload]) => payload?.chunks?.[0])
+      .filter((chunk) => chunk?.type === "task_update");
+
+    expect(taskUpdateCalls).toHaveLength(3);
+    expect(taskUpdateCalls[0]).toMatchObject({
+      id: "call-1",
+      status: "in_progress",
+      title: "Running a command in the sandbox...",
+    });
+    expect(taskUpdateCalls[0]).not.toHaveProperty("details");
+    expect(taskUpdateCalls[1]).toMatchObject({
+      id: "call-1",
+      status: "in_progress",
+      details: "Command: true",
+    });
+    expect(taskUpdateCalls[2]).toMatchObject({
+      id: "call-1",
+      status: "complete",
+    });
+    expect(new Set(taskUpdateCalls.map((chunk) => chunk.id))).toEqual(new Set(["call-1"]));
+  });
+
+  it("does not propagate setStatus failures from stream refreshes", async () => {
+    vi.mocked(trySetAssistantThreadStatus).mockRejectedValueOnce(new Error("setStatus unavailable"));
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "reasoning-delta", text: "hidden reasoning" };
+      yield { type: "text-delta", text: "Still alive." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Still alive.",
+      alreadyPosted: true,
+    });
+    expect(trySetAssistantThreadStatus).toHaveBeenCalled();
+  });
+
+  it("uses reasoning deltas to reset the Slack stream keepalive timer", async () => {
+    vi.useFakeTimers();
+    const sendReasoningDelta = deferred<void>();
+    const finish = deferred<void>();
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "reasoning-start" };
+      await sendReasoningDelta.promise;
+      yield { type: "reasoning-delta", text: "hidden reasoning" };
+      await finish.promise;
+      yield { type: "text-delta", text: "Done." };
+    })());
+
+    const responsePromise = generateResponse(baseOptions(slackClient));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(19_000);
+
+    sendReasoningDelta.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(999);
+
+    expect(stream.append).not.toHaveBeenCalledWith({ chunks: [{ type: "markdown_text", text: " " }] });
+    expect(stream.append).not.toHaveBeenCalledWith({ markdown_text: " " });
+
+    finish.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(responsePromise).resolves.toMatchObject({
+      raw: "Done.",
+      alreadyPosted: true,
+    });
   });
 
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {
