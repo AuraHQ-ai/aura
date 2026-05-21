@@ -116,6 +116,7 @@ function mockAgentStreams(results: any[]) {
       run_command: {
         slack: {
           status: "Running a command in the sandbox...",
+          detail: (input: any) => input.command,
         },
       },
     },
@@ -226,6 +227,106 @@ describe("generateResponse Slack stream handling", () => {
         id: "call-1",
         status: "complete",
       })],
+    });
+  });
+
+  it("emits an optimistic tool card on tool-input-start and updates it on tool-call", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-input-start",
+        toolCallId: "call-1",
+        toolName: "run_command",
+      };
+      yield {
+        type: "tool-input-delta",
+        toolCallId: "call-1",
+        inputTextDelta: "{\"command\":\"echo",
+      };
+      yield {
+        type: "tool-input-delta",
+        toolCallId: "call-1",
+        inputTextDelta: " ok\"}",
+      };
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "echo ok" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+      };
+      yield { type: "text-delta", text: "Done." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    const taskUpdates = stream.append.mock.calls
+      .flatMap(([payload]) => payload.chunks ?? [])
+      .filter((chunk) => chunk.type === "task_update" && chunk.id === "call-1");
+    const inProgressUpdates = taskUpdates.filter((chunk) => chunk.status === "in_progress");
+
+    expect(new Set(inProgressUpdates.map((chunk) => chunk.id))).toEqual(new Set(["call-1"]));
+    expect(inProgressUpdates).toHaveLength(2);
+    expect(inProgressUpdates[0]).toMatchObject({
+      type: "task_update",
+      id: "call-1",
+      title: "Running a command in the sandbox...",
+      status: "in_progress",
+    });
+    expect(inProgressUpdates[0]).not.toHaveProperty("details");
+    expect(inProgressUpdates[1]).toMatchObject({
+      type: "task_update",
+      id: "call-1",
+      title: "Running a command in the sandbox...",
+      status: "in_progress",
+      details: "echo ok",
+    });
+  });
+
+  it("terminates an optimistic tool card if the stream errors before tool-call", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-input-start",
+        toolCallId: "call-1",
+        toolName: "run_command",
+      };
+      throw new Error("tool input failed");
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).rejects.toThrow("tool input failed");
+
+    expect(stream.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "task_update",
+        id: "call-1",
+        status: "in_progress",
+      })],
+    });
+    expect(stream.stop).toHaveBeenCalledWith({
+      chunks: expect.arrayContaining([
+        expect.objectContaining({
+          type: "task_update",
+          id: "call-1",
+          status: "error",
+          output: "tool input failed",
+        }),
+      ]),
     });
   });
 
