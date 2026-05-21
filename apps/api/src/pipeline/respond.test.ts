@@ -83,15 +83,34 @@ function createSlackClient(streamers: Array<{ append: any; stop: any }>) {
   };
 }
 
-function mockAgentStream(fullStream: AsyncIterable<any>) {
+function createAgentStreamResult(
+  fullStream: AsyncIterable<any>,
+  options: {
+    text?: string;
+    finishReason?: string;
+    responseMessages?: any[];
+    usage?: any;
+    steps?: any[];
+  } = {},
+) {
+  return {
+    fullStream,
+    usage: Promise.resolve(options.usage ?? { inputTokens: 1, outputTokens: 1 }),
+    finishReason: Promise.resolve(options.finishReason ?? "stop"),
+    text: Promise.resolve(options.text ?? ""),
+    response: Promise.resolve({ messages: options.responseMessages ?? [] }),
+    steps: Promise.resolve(options.steps ?? []),
+  };
+}
+
+function mockAgentStreams(results: any[]) {
+  const stream = vi.fn();
+  for (const result of results) {
+    stream.mockResolvedValueOnce(result);
+  }
   agentMocks.createInteractiveAgent.mockResolvedValue({
     agent: {
-      stream: vi.fn().mockResolvedValue({
-        fullStream,
-        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1 }),
-        finishReason: Promise.resolve("stop"),
-        steps: Promise.resolve([]),
-      }),
+      stream,
     },
     tools: {
       run_command: {
@@ -103,6 +122,14 @@ function mockAgentStream(fullStream: AsyncIterable<any>) {
     modelId: "test-model",
     getStepModelIds: () => ["test-model"],
   });
+  return stream;
+}
+
+function mockAgentStream(
+  fullStream: AsyncIterable<any>,
+  options: Parameters<typeof createAgentStreamResult>[1] = {},
+) {
+  return mockAgentStreams([createAgentStreamResult(fullStream, options)]);
 }
 
 function baseOptions(slackClient: any) {
@@ -339,6 +366,204 @@ describe("generateResponse Slack stream handling", () => {
       thread_ts: "1710000000.000000",
       text: "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_",
     }));
+  });
+
+  it("recovers output from final result.text when streamed text deltas are missing", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "true" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+      };
+    })(), { text: "Recovered summary." });
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Recovered summary.",
+      alreadyPosted: true,
+    });
+
+    expect(stream.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: "Recovered summary.",
+      })],
+    });
+    expect(vi.mocked(logError).mock.calls.some(
+      ([entry]) => entry.errorCode === "empty_completion_after_tools",
+    )).toBe(false);
+    expect(vi.mocked(logError).mock.calls.some(
+      ([entry]) => entry.errorCode === "empty_completion_relaunched",
+    )).toBe(false);
+  });
+
+  it("relaunches once with a synthetic user message after useful tool results produce no text", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const responseMessages = [
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call-1", toolName: "run_command", input: { command: "true" } }],
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: "call-1", toolName: "run_command", output: { ok: true } }],
+      },
+    ];
+    const streamMock = mockAgentStreams([
+      createAgentStreamResult((async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "true" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+        };
+      })(), { responseMessages }),
+      createAgentStreamResult((async function* () {
+        yield { type: "text-delta", text: "The command succeeded." };
+      })()),
+    ]);
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "The command succeeded.",
+      alreadyPosted: true,
+    });
+
+    expect(streamMock).toHaveBeenCalledTimes(2);
+    expect(streamMock.mock.calls[1]?.[0]).toMatchObject({
+      messages: [
+        { role: "user", content: "run a slow command" },
+        ...responseMessages,
+        { role: "user", content: "(continue - you ended without responding. Summarize what you found.)" },
+      ],
+    });
+    const relaunchLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "empty_completion_relaunched",
+    );
+    expect(relaunchLogs).toHaveLength(1);
+    expect(relaunchLogs[0]?.[0]).toMatchObject({
+      errorName: "EmptyCompletionRelaunched",
+      channelId: "C123",
+      context: {
+        toolCallCount: 1,
+        toolErrorCount: 0,
+        finishReason: "stop",
+        relaunchCount: 1,
+      },
+    });
+  });
+
+  it("bounds empty-completion relaunches to one attempt", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const streamMock = mockAgentStreams([
+      createAgentStreamResult((async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "true" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+        };
+      })()),
+      createAgentStreamResult((async function* () {
+        // Empty second attempt.
+      })()),
+    ]);
+
+    await generateResponse(baseOptions(slackClient));
+
+    expect(streamMock).toHaveBeenCalledTimes(2);
+    const logErrorMock = vi.mocked(logError);
+    expect(logErrorMock.mock.calls.filter(
+      ([entry]) => entry.errorCode === "empty_completion_relaunched",
+    )).toHaveLength(1);
+    expect(logErrorMock.mock.calls.filter(
+      ([entry]) => entry.errorCode === "empty_completion_after_tools",
+    )).toHaveLength(1);
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_",
+    }));
+  });
+
+  it("does not relaunch superseded empty completions", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const supersededError = Object.assign(
+      new Error("Invocation test-invocation was superseded by a newer message"),
+      { name: "InvocationSupersededError", invocationId: "test-invocation" },
+    );
+    const streamMock = vi.fn().mockImplementation(async (callOptions: any) => createAgentStreamResult((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "true" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+      };
+      callOptions.onError?.({ error: supersededError });
+    })()));
+    agentMocks.createInteractiveAgent.mockResolvedValue({
+      agent: { stream: streamMock },
+      tools: {
+        run_command: {
+          slack: {
+            status: "Running a command in the sandbox...",
+          },
+        },
+      },
+      modelId: "test-model",
+      getStepModelIds: () => ["test-model"],
+    });
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      interrupted: true,
+    });
+
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logError).mock.calls.some(
+      ([entry]) => entry.errorCode === "empty_completion_relaunched",
+    )).toBe(false);
+    expect(vi.mocked(logError).mock.calls.some(
+      ([entry]) => entry.errorCode === "empty_completion_after_tools",
+    )).toBe(false);
   });
 
   it("logs empty completions for tool-error-only continuation segments", async () => {
