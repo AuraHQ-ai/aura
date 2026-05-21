@@ -418,6 +418,36 @@ describe("generateResponse Slack stream handling", () => {
     }));
   });
 
+  it("does not record an error event when channel_type_not_supported fallback succeeds", async () => {
+    const stream = {
+      append: vi.fn().mockRejectedValueOnce(Object.assign(new Error("channel_type_not_supported"), {
+        data: { error: "channel_type_not_supported" },
+      })),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Fallback delivered." };
+    })());
+
+    await generateResponse({
+      ...baseOptions(slackClient),
+      channelId: "C_UNSUPPORTED_995",
+    });
+
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C_UNSUPPORTED_995",
+      thread_ts: "1710000000.000000",
+      text: expect.stringContaining("Fallback delivered."),
+    }));
+
+    const channelTypeLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "channel_type_not_supported",
+    );
+    expect(channelTypeLogs).toHaveLength(0);
+  });
+
   it("logs empty completions after tool errors without recording unexpected stream errors", async () => {
     const stream = {
       append: vi.fn().mockResolvedValue(undefined),

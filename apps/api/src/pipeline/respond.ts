@@ -403,6 +403,29 @@ export async function generateResponse(
   let streamingFailed = skipStreaming;
   let streamTombstoneSent = false;
   let pendingMessageNotInStreamingStateError: Parameters<typeof logError>[0] | null = null;
+  let pendingChannelTypeUnsupportedFallback: { errorMessage: string } | null = null;
+
+  function logChannelTypeUnsupportedFallbackFailure(
+    fallbackFailure: string,
+    deliveryError?: any,
+  ): void {
+    if (!pendingChannelTypeUnsupportedFallback) return;
+    logError({
+      errorName: "StreamingUnsupported",
+      errorMessage: pendingChannelTypeUnsupportedFallback.errorMessage,
+      errorCode: "channel_type_not_supported",
+      channelId,
+      context: {
+        fallback: "postMessage",
+        fallbackFailure,
+        ...(deliveryError && {
+          deliveryError: deliveryError?.message || String(deliveryError),
+          slackError: deliveryError?.data?.error,
+        }),
+      },
+    });
+    pendingChannelTypeUnsupportedFallback = null;
+  }
 
   async function tryStreamAppend(
     payload: Omit<ChatAppendStreamArguments, "channel" | "ts">,
@@ -419,13 +442,9 @@ export async function generateResponse(
           "chatStream not supported for this channel, falling back to postMessage",
           { channelId },
         );
-        logError({
-          errorName: "StreamingUnsupported",
+        pendingChannelTypeUnsupportedFallback = {
           errorMessage: err?.message || "channel_type_not_supported",
-          errorCode: "channel_type_not_supported",
-          channelId,
-          context: { fallback: "postMessage" },
-        });
+        };
       } else if (isInvalidChunks(err) || isInvalidArguments(err)) {
         // Non-fatal: some chunk shapes (e.g. the 2026 `plan` / `url_source` /
         // `blocks` chunk types) may be rejected by the Slack API with either
@@ -1472,7 +1491,9 @@ export async function generateResponse(
             rawLength: finalText.length,
             usage: { inputTokens, outputTokens, totalTokens },
           });
+          logChannelTypeUnsupportedFallbackFailure("safePostMessage_returned_not_ok");
         } else {
+          pendingChannelTypeUnsupportedFallback = null;
           logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
             rawLength: finalText.length,
             channelId,
@@ -1494,8 +1515,14 @@ export async function generateResponse(
             text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
             thread_ts: threadTs,
           });
-        } catch {
-          logger.error("All message delivery paths failed", { channelId });
+          pendingChannelTypeUnsupportedFallback = null;
+        } catch (plainPostErr: any) {
+          logChannelTypeUnsupportedFallbackFailure("plain_post_failed", plainPostErr);
+          logger.error("All message delivery paths failed", {
+            channelId,
+            error: plainPostErr?.message || String(plainPostErr),
+            slackError: plainPostErr?.data?.error,
+          });
         }
       }
     } else {
@@ -1590,12 +1617,6 @@ export async function generateResponse(
         } else if (isChannelTypeNotSupported(stopErr)) {
           streamingUnsupportedChannels.add(channelId);
           logger.warn("streamer.stop() hit channel_type_not_supported, finalizing without payload", {
-            channelId,
-          });
-          logError({
-            errorName: "StreamStopChannelTypeNotSupported",
-            errorMessage: stopErr?.message || "channel_type_not_supported on streamer.stop()",
-            errorCode: "channel_type_not_supported",
             channelId,
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
