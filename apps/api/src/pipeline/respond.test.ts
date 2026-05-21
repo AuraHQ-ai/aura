@@ -182,6 +182,7 @@ describe("generateResponse Slack stream handling", () => {
 
     expect(events[0]).toBe("status:Thinking…");
     expect(events.indexOf("status:Thinking…")).toBeLessThan(events.indexOf("append"));
+    expect(statusCallValues()).toEqual(["Thinking…", "", ""]);
   });
 
   it("clears status exactly once on successful completion without visible text", async () => {
@@ -236,6 +237,72 @@ describe("generateResponse Slack stream handling", () => {
     await generateResponse(baseOptions(slackClient));
 
     expect(events.slice(0, 3)).toEqual(["status:Thinking…", "status:", "append"]);
+  });
+
+  it("toggles status back to Thinking during reasoning gaps between text deltas", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "First visible text." };
+      yield { type: "reasoning-delta", text: "private reasoning" };
+      yield { type: "text-delta", text: " More visible text." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    expect(statusCallValues()).toEqual(["Thinking…", "", "Thinking…", "", ""]);
+  });
+
+  it("suspends the sub-status controller during tool input and tool execution", async () => {
+    const events: string[] = [];
+    vi.mocked(trySetAssistantThreadStatus).mockImplementation(async ({ status }: any) => {
+      events.push(`status:${status}`);
+    });
+    const stream = {
+      append: vi.fn().mockImplementation(async (payload: any) => {
+        const firstChunk = payload.chunks?.[0];
+        events.push(firstChunk?.type === "task_update"
+          ? `append:task:${firstChunk.status}`
+          : "append:text");
+      }),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Before tool." };
+      events.push("event:tool-input-start");
+      yield { type: "tool-input-start", toolCallId: "call-1", toolName: "run_command" };
+      events.push("event:tool-call");
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "true" },
+      };
+      events.push("event:tool-result");
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+      };
+      yield { type: "text-delta", text: " After tool." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    expect(statusCallValues()).toEqual(["Thinking…", "", "Thinking…", "", ""]);
+
+    const toolInputStartIdx = events.indexOf("event:tool-input-start");
+    const toolResultAppendIdx = events.indexOf("append:task:complete");
+    const statusDuringTool = events.slice(toolInputStartIdx + 1, toolResultAppendIdx)
+      .filter((event) => event.startsWith("status:"));
+    expect(statusDuringTool).toEqual([]);
   });
 
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {
