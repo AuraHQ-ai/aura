@@ -1029,6 +1029,36 @@ export async function generateResponse(
     }
   }
 
+  let thinkingStatusNeedsTextClear = false;
+
+  async function setThreadStatus(status: string): Promise<void> {
+    try {
+      await trySetAssistantThreadStatus({
+        client: slackClient,
+        channelId,
+        threadTs,
+        status,
+      });
+    } catch (error: any) {
+      logger.warn("assistant.threads.setStatus failed in stream pipeline", {
+        channelId,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  async function setThinkingStatus(): Promise<void> {
+    if (thinkingStatusNeedsTextClear) return;
+    await setThreadStatus("Thinking…");
+    thinkingStatusNeedsTextClear = true;
+  }
+
+  async function clearStatusOnFirstTextDelta(): Promise<void> {
+    if (!thinkingStatusNeedsTextClear) return;
+    await setThreadStatus("");
+    thinkingStatusNeedsTextClear = false;
+  }
+
   async function buildRelaunchCallOptions(
     result: Awaited<ReturnType<typeof agent.stream>>,
   ): Promise<Record<string, any>> {
@@ -1054,17 +1084,10 @@ export async function generateResponse(
   }
 
   try {
-    // Signal extended thinking phase to the user via Slack thread status
-    await trySetAssistantThreadStatus({
-      client: slackClient,
-      channelId,
-      threadTs,
-      status: "Thinking deeply...",
-    });
-
     let currentStreamCallOptions = streamCallOptions;
     while (true) {
       supersededDuringStream = false;
+      await setThinkingStatus();
       const result = await agent.stream(currentStreamCallOptions as any);
       latestResult = result;
       stepsPromises.push(result.steps);
@@ -1073,12 +1096,19 @@ export async function generateResponse(
         resetTimer();
 
         switch (chunk.type) {
+        case "start-step": {
+          await setThinkingStatus();
+          break;
+        }
+
         case "text-delta": {
+          await clearStatusOnFirstTextDelta();
           await appendTextDelta(chunk.text);
           break;
         }
 
         case "tool-call": {
+          thinkingStatusNeedsTextClear = false;
           // Flush any pending table buffer before tool cards
           if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
             const preToolFlush = flushRemainingTableBuffer();
@@ -1822,6 +1852,8 @@ export async function generateResponse(
 
     throw error;
   } finally {
+    await setThreadStatus("");
+    thinkingStatusNeedsTextClear = false;
     cleanupScratchpad(invocationId);
   }
 }

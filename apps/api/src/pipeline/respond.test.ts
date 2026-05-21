@@ -59,6 +59,7 @@ vi.mock("./prepare-step.js", () => ({
 import { generateResponse } from "./respond.js";
 import { logError } from "../lib/error-logger.js";
 import { logger } from "../lib/logger.js";
+import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -145,6 +146,12 @@ function baseOptions(slackClient: any) {
   };
 }
 
+function statusCallValues(): string[] {
+  return vi.mocked(trySetAssistantThreadStatus).mock.calls.map(
+    ([params]) => (params as any).status,
+  );
+}
+
 describe("generateResponse Slack stream handling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -152,6 +159,83 @@ describe("generateResponse Slack stream handling", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("sets Thinking status on stream start before text is emitted", async () => {
+    const events: string[] = [];
+    vi.mocked(trySetAssistantThreadStatus).mockImplementation(async ({ status }: any) => {
+      events.push(`status:${status}`);
+    });
+    const stream = {
+      append: vi.fn().mockImplementation(async () => {
+        events.push("append");
+      }),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Hello." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    expect(events[0]).toBe("status:Thinking…");
+    expect(events.indexOf("status:Thinking…")).toBeLessThan(events.indexOf("append"));
+  });
+
+  it("clears status exactly once on successful completion without visible text", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "start-step" };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    expect(statusCallValues()).toEqual(["Thinking…", ""]);
+  });
+
+  it("clears status exactly once after a thrown stream error", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      throw new Error("stream exploded");
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).rejects.toThrow("stream exploded");
+
+    expect(statusCallValues().filter((status) => status === "")).toHaveLength(1);
+  });
+
+  it("clears status when the first text delta arrives", async () => {
+    const events: string[] = [];
+    vi.mocked(trySetAssistantThreadStatus).mockImplementation(async ({ status }: any) => {
+      events.push(`status:${status}`);
+    });
+    const stream = {
+      append: vi.fn().mockImplementation(async () => {
+        events.push("append");
+      }),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Visible text." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    expect(events.slice(0, 3)).toEqual(["status:Thinking…", "status:", "append"]);
   });
 
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {
@@ -704,5 +788,6 @@ describe("generateResponse Slack stream handling", () => {
         text: expect.stringContaining("[stream aborted: inactivity]"),
       })],
     });
+    expect(statusCallValues().filter((status) => status === "")).toHaveLength(1);
   });
 });
