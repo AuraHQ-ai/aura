@@ -58,6 +58,7 @@ vi.mock("./prepare-step.js", () => ({
 
 import { generateResponse } from "./respond.js";
 import { logError } from "../lib/error-logger.js";
+import { logger } from "../lib/logger.js";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -248,6 +249,44 @@ describe("generateResponse Slack stream handling", () => {
       channel: "C123",
       thread_ts: "1710000000.000000",
       text: expect.stringContaining("Fallback text."),
+    }));
+  });
+
+  it("does not log message_not_in_streaming_state when postMessage fallback succeeds", async () => {
+    const stream = {
+      append: vi.fn().mockRejectedValueOnce(Object.assign(new Error("message_not_in_streaming_state"), {
+        data: { error: "message_not_in_streaming_state" },
+      })),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Recovered fallback text." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    expect(logError).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      "chatStream append left streaming state, falling back to postMessage",
+      expect.objectContaining({
+        channelId: "C123",
+        slackError: "message_not_in_streaming_state",
+      }),
+    );
+    expect(stream.stop).toHaveBeenCalledWith({
+      chunks: expect.arrayContaining([
+        expect.objectContaining({
+          type: "markdown_text",
+          text: expect.stringContaining("continuing in a new message"),
+        }),
+      ]),
+    });
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C123",
+      thread_ts: "1710000000.000000",
+      text: expect.stringContaining("Recovered fallback text."),
     }));
   });
 

@@ -400,6 +400,7 @@ export async function generateResponse(
   // and post the final result via chat.postMessage.
   let streamingFailed = skipStreaming;
   let streamTombstoneSent = false;
+  let pendingMessageNotInStreamingStateError: Parameters<typeof logError>[0] | null = null;
 
   async function tryStreamAppend(
     payload: Omit<ChatAppendStreamArguments, "channel" | "ts">,
@@ -502,12 +503,7 @@ export async function generateResponse(
       } else {
         // Unknown streaming error — don't kill the response, fall back gracefully
         streamingFailed = true;
-        logger.error("chatStream append got unexpected error, falling back to postMessage", {
-          channelId,
-          slackError: err?.data?.error,
-          message: err?.message,
-        });
-        logError({
+        const errorLog = {
           errorName: "UnexpectedStreamError",
           errorMessage: err?.message || "unexpected error on stream append",
           errorCode: err?.data?.error || "unknown",
@@ -518,7 +514,23 @@ export async function generateResponse(
               isFallbackRecovery: true,
             }),
           },
-        });
+        };
+
+        if (err?.data?.error === "message_not_in_streaming_state") {
+          pendingMessageNotInStreamingStateError = errorLog;
+          logger.warn("chatStream append left streaming state, falling back to postMessage", {
+            channelId,
+            slackError: err?.data?.error,
+            message: err?.message,
+          });
+        } else {
+          logger.error("chatStream append got unexpected error, falling back to postMessage", {
+            channelId,
+            slackError: err?.data?.error,
+            message: err?.message,
+          });
+          logError(errorLog);
+        }
       }
       if (streamingFailed) {
         await stopFrozenStreamWithTombstone();
@@ -1249,6 +1261,9 @@ export async function generateResponse(
         });
 
         if (!fallbackResult.ok) {
+          if (pendingMessageNotInStreamingStateError) {
+            logError(pendingMessageNotInStreamingStateError);
+          }
           logger.warn("LLM response lost — channel does not support posting", {
             channelId,
             rawLength: finalText.length,
@@ -1262,6 +1277,9 @@ export async function generateResponse(
           });
         }
       } catch (fallbackErr: any) {
+        if (pendingMessageNotInStreamingStateError) {
+          logError(pendingMessageNotInStreamingStateError);
+        }
         logger.error("Fallback safePostMessage also failed — posting plain text", {
           channelId,
           error: fallbackErr?.message || String(fallbackErr),
