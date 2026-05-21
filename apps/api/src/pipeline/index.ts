@@ -284,24 +284,17 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // Set assistant thread status — triggers the shimmer animation on
     // Aura's name and shows a loading indicator while processing.
     // Status auto-clears on reply.
-    try {
-      await trySetAssistantThreadStatus({
-        client,
-        channelId: context.channelId,
-        threadTs: replyThreadTs,
-        status: "Thinking…",
-        loadingMessages: [
-          "Gathering context...",
-          "Searching memories...",
-          "Pulling it together...",
-        ],
-      });
-    } catch (statusError: any) {
-      logger.warn("assistant.threads.setStatus initial pipeline call failed", {
-        channelId: context.channelId,
-        error: statusError?.message || String(statusError),
-      });
-    }
+    await trySetAssistantThreadStatus({
+      client,
+      channelId: context.channelId,
+      threadTs: replyThreadTs,
+      status: "Thinking...",
+      loadingMessages: [
+        "Gathering context...",
+        "Searching memories...",
+        "Pulling it together...",
+      ],
+    });
 
     // ── Edge case: extremely long message ────────────────────────────────
     let messageText = context.text || (hasFiles ? "What can you tell me about this file?" : "");
