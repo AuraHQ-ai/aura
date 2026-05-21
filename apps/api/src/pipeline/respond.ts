@@ -1041,6 +1041,53 @@ export async function generateResponse(
     }
   }
 
+  async function setThreadStatus(status: string): Promise<void> {
+    try {
+      await trySetAssistantThreadStatus({
+        client: slackClient,
+        channelId,
+        threadTs,
+        status,
+      });
+    } catch (error: any) {
+      logger.warn("assistant.threads.setStatus failed in stream pipeline", {
+        channelId,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  type SubStatusState = "thinking" | "streaming_text" | "tool_suspended";
+  const subStatusController = (() => {
+    let state: SubStatusState | null = null;
+
+    return {
+      async enterThinking(): Promise<void> {
+        if (state === "thinking" || state === "tool_suspended") return;
+        await setThreadStatus("Thinking…");
+        state = "thinking";
+      },
+      async enterStreaming(): Promise<void> {
+        if (state === "streaming_text" || state === "tool_suspended") return;
+        await setThreadStatus("");
+        state = "streaming_text";
+      },
+      suspendForTool(): void {
+        state = "tool_suspended";
+      },
+      async resumeAfterTool(): Promise<void> {
+        if (state === "tool_suspended") {
+          state = null;
+        }
+        await this.enterThinking();
+      },
+      async clearStatus(): Promise<void> {
+        await setThreadStatus("");
+        state = null;
+      },
+    };
+  })();
+
   async function buildRelaunchCallOptions(
     result: Awaited<ReturnType<typeof agent.stream>>,
   ): Promise<Record<string, any>> {
@@ -1066,17 +1113,10 @@ export async function generateResponse(
   }
 
   try {
-    // Signal extended thinking phase to the user via Slack thread status
-    await trySetAssistantThreadStatus({
-      client: slackClient,
-      channelId,
-      threadTs,
-      status: "Thinking deeply...",
-    });
-
     let currentStreamCallOptions = streamCallOptions;
     while (true) {
       supersededDuringStream = false;
+      await subStatusController.enterThinking();
       const result = await agent.stream(currentStreamCallOptions as any);
       latestResult = result;
       stepsPromises.push(result.steps);
@@ -1085,7 +1125,24 @@ export async function generateResponse(
         resetTimer();
 
         switch (chunk.type) {
+        case "start-step": {
+          await subStatusController.enterThinking();
+          break;
+        }
+
+        case "reasoning-start":
+        case "reasoning-delta": {
+          await subStatusController.enterThinking();
+          break;
+        }
+
+        case "tool-input-start": {
+          subStatusController.suspendForTool();
+          break;
+        }
+
         case "text-delta": {
+          await subStatusController.enterStreaming();
           await appendTextDelta(chunk.text);
           break;
         }
@@ -1121,6 +1178,7 @@ export async function generateResponse(
         }
 
         case "tool-call": {
+          subStatusController.suspendForTool();
           // Flush any pending table buffer before tool cards
           if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
             const preToolFlush = flushRemainingTableBuffer();
@@ -1240,6 +1298,10 @@ export async function generateResponse(
           if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
           resetTimer();
 
+          if (pendingToolInputs.size === 0) {
+            await subStatusController.resumeAfterTool();
+          }
+
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
             if (!await splitToNewStream() && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
@@ -1285,6 +1347,10 @@ export async function generateResponse(
           if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
           if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
           resetTimer();
+
+          if (pendingToolInputs.size === 0) {
+            await subStatusController.resumeAfterTool();
+          }
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
             if (!await splitToNewStream() && streamingFailed) {
@@ -1883,6 +1949,7 @@ export async function generateResponse(
 
     throw error;
   } finally {
+    await subStatusController.clearStatus();
     cleanupScratchpad(invocationId);
   }
 }
