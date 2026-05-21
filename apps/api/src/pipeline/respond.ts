@@ -659,6 +659,7 @@ export async function generateResponse(
   let pendingTableBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
+  const optimisticToolCards = new Map<string, { title: string }>();
   let continuationCount = 0;
   let currentSegmentIndex = 0;
   let currentSegmentTextLength = 0;
@@ -736,6 +737,17 @@ export async function generateResponse(
     }
     chunks.push(toChunkMarkdownText(`\n${STREAM_CONTINUATION_TOMBSTONE}\n`));
     return chunks;
+  }
+
+  function buildOptimisticToolErrorChunks(errorMessage: string): SlackStreamChunk[] {
+    return Array.from(optimisticToolCards.entries()).map(([toolCallId, card]) =>
+      toTaskUpdateChunk({
+        id: toolCallId,
+        title: card.title,
+        status: "error",
+        output: truncate(errorMessage, 200),
+      }),
+    );
   }
 
   async function appendStreamTombstone(): Promise<void> {
@@ -1078,6 +1090,36 @@ export async function generateResponse(
           break;
         }
 
+        case "tool-input-start": {
+          const toolCallId = (chunk as any).toolCallId;
+          const toolName = (chunk as any).toolName;
+          if (typeof toolCallId !== "string" || typeof toolName !== "string") {
+            break;
+          }
+          if (optimisticToolCards.has(toolCallId)) {
+            break;
+          }
+
+          const slackMeta = getSlackMeta(tools[toolName]);
+          const title = slackMeta?.status ?? "Working on it...";
+          optimisticToolCards.set(toolCallId, { title });
+          const toolInputStartPayload = asAppendPayload({
+            chunks: [toTaskUpdateChunk({
+              id: toolCallId,
+              title,
+              status: "in_progress",
+            })],
+          });
+          currentStreamLength += estimateAppendSize(toolInputStartPayload);
+          if (!streamingFailed) {
+            await tryStreamAppend(toolInputStartPayload);
+            if (streamingFailed) {
+              fallbackStartIdx = accumulatedText.length;
+            }
+          }
+          break;
+        }
+
         case "tool-call": {
           // Flush any pending table buffer before tool cards
           if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
@@ -1118,6 +1160,7 @@ export async function generateResponse(
             name: chunk.toolName,
             input: truncateToBytes(JSON.stringify(inputArgs), 1500),
           });
+          optimisticToolCards.delete(chunk.toolCallId);
           startLongToolSplitTimer();
 
           // Keep resetting inactivity timer during long tool execution
@@ -1190,6 +1233,7 @@ export async function generateResponse(
             rawOutput: output,
           });
           pendingToolInputs.delete(chunk.toolCallId);
+          optimisticToolCards.delete(chunk.toolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
@@ -1235,6 +1279,7 @@ export async function generateResponse(
             is_error: true,
           });
           pendingToolInputs.delete(errToolCallId);
+          optimisticToolCards.delete(errToolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
@@ -1613,8 +1658,12 @@ export async function generateResponse(
       if (streamer && !streamingFailed) {
         try {
           await streamer.stop({
-            chunks: [toChunkMarkdownText("\n\n_[interrupted — new message received]_")],
+            chunks: [
+              ...buildOptimisticToolErrorChunks("Interrupted by a newer message"),
+              toChunkMarkdownText("\n\n_[interrupted — new message received]_"),
+            ],
           });
+          optimisticToolCards.clear();
         } catch {
           // Stream may already be closed
         }
@@ -1747,7 +1796,13 @@ export async function generateResponse(
 
       if (streamer && !streamingFailed) {
         try {
-          await streamer.stop({ chunks: [toChunkMarkdownText(`\n\n${tombstone}`)] });
+          await streamer.stop({
+            chunks: [
+              ...buildOptimisticToolErrorChunks(tombstone),
+              toChunkMarkdownText(`\n\n${tombstone}`),
+            ],
+          });
+          optimisticToolCards.clear();
         } catch {
           try {
             await safePostMessage(slackClient, {
@@ -1790,7 +1845,13 @@ export async function generateResponse(
           ? "\n\n_...interrupted. Something went wrong._"
           : "_Sorry, I got interrupted before I could finish. Try again?_";
 
-        await streamer.stop({ chunks: [toChunkMarkdownText(errorText)] });
+        await streamer.stop({
+          chunks: [
+            ...buildOptimisticToolErrorChunks(error?.message || String(error)),
+            toChunkMarkdownText(errorText),
+          ],
+        });
+        optimisticToolCards.clear();
       } catch {
         // Stream may already be closed — nothing we can do
       }
