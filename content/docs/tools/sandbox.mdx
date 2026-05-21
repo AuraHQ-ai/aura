@@ -118,7 +118,7 @@ See [Credentials](/tools/credentials) for full access control details.
 
 ## File system
 
-The sandbox persists between messages **within a session** — files and state are preserved across tool calls in the same conversation. The sandbox may auto-pause between sessions; check `/home/user/` to verify state is intact before assuming files exist.
+Each Slack user gets their own long-lived sandbox (`autoPause: true`, 1 hour inactivity timeout). E2B pauses the sandbox after inactivity and `Sandbox.connect()` transparently resumes it on the next command, preserving filesystem state (including `/home/user/`) and running processes across the resume. Per-user sandboxes are isolated -- one user's repo checkout or in-progress work cannot collide with another's.
 
 Common paths:
 - `/home/user/` — working directory
@@ -137,7 +137,7 @@ Clone or pull failures are logged as warnings and do not block sandbox startup. 
 
 ## Persistent storage
 
-Each user gets a persistent home directory backed by Google Cloud Storage (GCS) via gcsfuse. Files written to `/mnt/aura-files/<user_id>/` survive across sandbox sessions — unlike `/home/user/`, which resets when the sandbox pauses.
+In addition to the per-user sandbox filesystem, each user gets a GCS-backed persistent mount via gcsfuse at `/mnt/aura-files/<user_id>/`. The GCS mount survives even if the sandbox itself is destroyed (template upgrade, manual reset, or E2B-side eviction), so it's the right place for anything that must outlive the sandbox lifecycle.
 
 Use persistent storage for:
 - Long-running work that spans multiple conversations (large datasets, intermediate results)
@@ -180,9 +180,9 @@ The sandbox is isolated from the Vercel runtime. It **cannot** directly access:
 
 This isolation is intentional — Aura can run untrusted code without risk to the production system.
 
-<Warning>
-The sandbox is currently a single shared instance across all users and threads. While credential injection is user-specific per command, the filesystem and running processes are shared. Per-user sandbox isolation is planned.
-</Warning>
+<Note>
+Sandboxes are per-user. Credential injection is also user-scoped: each command runs with only the credentials the calling user is allowed to see. See [Credentials](/tools/credentials) for the scoping rules.
+</Note>
 
 ---
 
