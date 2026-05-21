@@ -1,5 +1,6 @@
 import { streamText } from "ai";
 import type { ChatAppendStreamArguments, WebClient } from "@slack/web-api";
+import type { ModelMessage } from "ai";
 import type { FileContentPart } from "../lib/files.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
@@ -204,6 +205,7 @@ const MAX_CONTINUATIONS = 5;
 const LONG_TOOL_SPLIT_MS = 75_000;
 const STREAM_CONTINUATION_TOMBSTONE = "_(continuing in a new message...)_";
 const TOOL_CONTINUATION_OUTPUT = "continuing in a new message...";
+const EMPTY_COMPLETION_RELAUNCH_PROMPT = "(continue - you ended without responding. Summarize what you found.)";
 
 /**
  * Find the best split index in a text delta for stream continuation.
@@ -574,9 +576,28 @@ export async function generateResponse(
     streamer = slackClient.chatStream(streamParams as any);
   }
 
-  const streamCallOptions: Record<string, any> = {
+  let supersededDuringStream = false;
+  const isSupersededError = (error: unknown): error is InvocationSupersededError => (
+    error instanceof InvocationSupersededError ||
+    (
+      error instanceof Error &&
+      (error.name === "InvocationSupersededError" ||
+        error.message.includes("was superseded by a newer message"))
+    )
+  );
+
+  const baseStreamCallOptions: Record<string, any> = {
     abortSignal: abortController.signal,
     onError: ({ error }: { error: unknown }) => {
+      if (isSupersededError(error)) {
+        supersededDuringStream = true;
+        logger.info("Stream onError ignored — invocation superseded", {
+          invocationId,
+          channelId,
+        });
+        return;
+      }
+
       const streamError = error instanceof Error ? error : undefined;
       const errorLike = error && typeof error === "object"
         ? error as { name?: string; message?: string; stack?: string }
@@ -592,12 +613,21 @@ export async function generateResponse(
     },
   };
 
+  function buildInitialUserMessage(): ModelMessage {
+    if (hasFiles) {
+      const content: any[] = [
+        { type: "text", text: options.userMessage },
+        ...options.files!,
+      ];
+      return { role: "user", content };
+    }
+    return { role: "user", content: options.userMessage };
+  }
+
+  const initialUserMessage = buildInitialUserMessage();
+  const streamCallOptions: Record<string, any> = { ...baseStreamCallOptions };
   if (hasFiles) {
-    const content: any[] = [
-      { type: "text", text: options.userMessage },
-      ...options.files!,
-    ];
-    streamCallOptions.messages = [{ role: "user", content }];
+    streamCallOptions.messages = [initialUserMessage];
   } else {
     streamCallOptions.prompt = options.userMessage;
   }
@@ -626,6 +656,14 @@ export async function generateResponse(
   let tableBuffer: string[] = [];
   let lineCarry = "";
   let emptyCompletionDetected = false;
+  let emptyCompletionRelaunchCount = 0;
+  let latestResult: Awaited<ReturnType<typeof agent.stream>> | null = null;
+  const stepsPromises: Array<PromiseLike<any[]>> = [];
+  const aggregateUsage: DetailedTokenUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
   const emptyCompletionFallbackText = "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_";
 
   async function logEmptyContinuationSegmentIfNeeded(params: {
@@ -789,6 +827,98 @@ export async function generateResponse(
     return output;
   }
 
+  function addUsage(usage: any) {
+    const inputTokens = usage?.inputTokens ?? 0;
+    const outputTokens = usage?.outputTokens ?? 0;
+    aggregateUsage.inputTokens += inputTokens;
+    aggregateUsage.outputTokens += outputTokens;
+    aggregateUsage.totalTokens += inputTokens + outputTokens;
+
+    if (usage?.inputTokenDetails) {
+      aggregateUsage.inputTokenDetails ??= {};
+      aggregateUsage.inputTokenDetails.noCacheTokens =
+        (aggregateUsage.inputTokenDetails.noCacheTokens ?? 0) + (usage.inputTokenDetails.noCacheTokens ?? 0);
+      aggregateUsage.inputTokenDetails.cacheReadTokens =
+        (aggregateUsage.inputTokenDetails.cacheReadTokens ?? 0) + (usage.inputTokenDetails.cacheReadTokens ?? 0);
+      aggregateUsage.inputTokenDetails.cacheWriteTokens =
+        (aggregateUsage.inputTokenDetails.cacheWriteTokens ?? 0) + (usage.inputTokenDetails.cacheWriteTokens ?? 0);
+    }
+
+    if (usage?.outputTokenDetails) {
+      aggregateUsage.outputTokenDetails ??= {};
+      aggregateUsage.outputTokenDetails.textTokens =
+        (aggregateUsage.outputTokenDetails.textTokens ?? 0) + (usage.outputTokenDetails.textTokens ?? 0);
+      aggregateUsage.outputTokenDetails.reasoningTokens =
+        (aggregateUsage.outputTokenDetails.reasoningTokens ?? 0) + (usage.outputTokenDetails.reasoningTokens ?? 0);
+    }
+  }
+
+  async function appendTextDelta(text: string): Promise<void> {
+    if (!text) return;
+    accumulatedText += text;
+    currentSegmentTextLength += text.length;
+    let remaining = processChunkForTables(text);
+    if (!remaining) return;
+
+    while (remaining) {
+      if (streamingFailed) break;
+
+      if (continuationCount >= MAX_CONTINUATIONS) {
+        currentStreamLength += remaining.length;
+        await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
+        if (streamingFailed) {
+          fallbackStartIdx = streamedRawIdx;
+        }
+        break;
+      }
+
+      const breakIdx = findContinuationBreak(remaining, currentStreamLength);
+
+      if (breakIdx < 0) {
+        currentStreamLength += remaining.length;
+        await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
+        if (streamingFailed) {
+          fallbackStartIdx = streamedRawIdx;
+        }
+        break;
+      }
+
+      const before = remaining.slice(0, breakIdx);
+      remaining = remaining.slice(breakIdx);
+
+      if (before) {
+        currentStreamLength += before.length;
+        await tryStreamAppend(asAppendPayload({ markdown_text: before }));
+      }
+
+      if (streamingFailed) {
+        fallbackStartIdx = streamedRawIdx;
+        break;
+      }
+
+      if (!remaining) break;
+
+      if (await splitToNewStream()) {
+        // Split succeeded, currentStreamLength reset, loop continues.
+      } else if (streamingFailed) {
+        fallbackStartIdx = streamedRawIdx;
+        break;
+      } else {
+        // Max continuations reached, stream still active — flush remaining.
+        currentStreamLength += remaining.length;
+        await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
+        if (streamingFailed) {
+          fallbackStartIdx = streamedRawIdx;
+        }
+        break;
+      }
+    }
+
+    if (!streamingFailed) {
+      streamedRawIdx = accumulatedText.length;
+    }
+  }
+
   async function splitToNewStream(reason: ContinuationReason = "length"): Promise<boolean> {
     if (streamingFailed || continuationCount >= MAX_CONTINUATIONS) {
       if (continuationCount >= MAX_CONTINUATIONS) {
@@ -868,6 +998,49 @@ export async function generateResponse(
     }
   }
 
+  async function getFinishReason(result: Awaited<ReturnType<typeof agent.stream>>): Promise<unknown> {
+    try {
+      return (result as any).finishReason
+        ? await (result as any).finishReason
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function getFinalResultText(result: Awaited<ReturnType<typeof agent.stream>>): Promise<string> {
+    try {
+      const text = (result as any).text ? await (result as any).text : "";
+      return typeof text === "string" ? text : "";
+    } catch {
+      return "";
+    }
+  }
+
+  async function buildRelaunchCallOptions(
+    result: Awaited<ReturnType<typeof agent.stream>>,
+  ): Promise<Record<string, any>> {
+    let responseMessages: ModelMessage[] = [];
+    try {
+      const response = await result.response;
+      if (Array.isArray(response?.messages)) {
+        responseMessages = response.messages as ModelMessage[];
+      }
+    } catch {
+      // If response messages are unavailable, relaunch with the user turn and
+      // the synthetic continuation rather than dropping the recovery entirely.
+    }
+
+    return {
+      ...baseStreamCallOptions,
+      messages: [
+        initialUserMessage,
+        ...responseMessages,
+        { role: "user", content: EMPTY_COMPLETION_RELAUNCH_PROMPT } satisfies ModelMessage,
+      ],
+    };
+  }
+
   try {
     // Signal extended thinking phase to the user via Slack thread status
     await trySetAssistantThreadStatus({
@@ -877,75 +1050,19 @@ export async function generateResponse(
       status: "Thinking deeply...",
     });
 
-    const result = await agent.stream(streamCallOptions as any);
+    let currentStreamCallOptions = streamCallOptions;
+    while (true) {
+      supersededDuringStream = false;
+      const result = await agent.stream(currentStreamCallOptions as any);
+      latestResult = result;
+      stepsPromises.push(result.steps);
 
-    for await (const chunk of result.fullStream) {
-      resetTimer();
+      for await (const chunk of result.fullStream) {
+        resetTimer();
 
-      switch (chunk.type) {
+        switch (chunk.type) {
         case "text-delta": {
-          accumulatedText += chunk.text;
-          currentSegmentTextLength += chunk.text.length;
-          let remaining = processChunkForTables(chunk.text);
-          if (!remaining) break;
-
-          while (remaining) {
-            if (streamingFailed) break;
-
-            if (continuationCount >= MAX_CONTINUATIONS) {
-              currentStreamLength += remaining.length;
-              await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
-              if (streamingFailed) {
-                fallbackStartIdx = streamedRawIdx;
-              }
-              break;
-            }
-
-            const breakIdx = findContinuationBreak(remaining, currentStreamLength);
-
-            if (breakIdx < 0) {
-              currentStreamLength += remaining.length;
-              await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
-              if (streamingFailed) {
-                fallbackStartIdx = streamedRawIdx;
-              }
-              break;
-            }
-
-            const before = remaining.slice(0, breakIdx);
-            remaining = remaining.slice(breakIdx);
-
-            if (before) {
-              currentStreamLength += before.length;
-              await tryStreamAppend(asAppendPayload({ markdown_text: before }));
-            }
-
-            if (streamingFailed) {
-              fallbackStartIdx = streamedRawIdx;
-              break;
-            }
-
-            if (!remaining) break;
-
-            if (await splitToNewStream()) {
-              // Split succeeded, currentStreamLength reset, loop continues
-            } else if (streamingFailed) {
-              fallbackStartIdx = streamedRawIdx;
-              break;
-            } else {
-              // Max continuations reached, stream still active — flush remaining
-              currentStreamLength += remaining.length;
-              await tryStreamAppend(asAppendPayload({ markdown_text: remaining }));
-              if (streamingFailed) {
-                fallbackStartIdx = streamedRawIdx;
-              }
-              break;
-            }
-          }
-
-          if (!streamingFailed) {
-            streamedRawIdx = accumulatedText.length;
-          }
+          await appendTextDelta(chunk.text);
           break;
         }
 
@@ -1119,67 +1236,111 @@ export async function generateResponse(
           }
           break;
         }
-      }
-    }
-
-    // Flush any remaining table buffer content before finalizing
-    const finalTableFlush = flushRemainingTableBuffer();
-    if (finalTableFlush && !streamingFailed) {
-      currentStreamLength += finalTableFlush.length;
-      await tryStreamAppend(asAppendPayload({ markdown_text: finalTableFlush }));
-      if (streamingFailed) {
-        fallbackStartIdx = streamedRawIdx;
-      }
-    }
-
-    let continuationFinishReason: unknown;
-    try {
-      continuationFinishReason = (result as any).finishReason
-        ? await (result as any).finishReason
-        : undefined;
-    } catch {
-      continuationFinishReason = undefined;
-    }
-
-    await logEmptyContinuationSegmentIfNeeded({
-      segmentEnd: "final",
-      finishReason: continuationFinishReason,
-    });
-
-    if (accumulatedText.length === 0 && toolCallRecords.length > 0) {
-      let finishReason: unknown;
-      try {
-        finishReason = (result as any).finishReason
-          ? await (result as any).finishReason
-          : undefined;
-      } catch {
-        finishReason = undefined;
-      }
-
-      logError({
-        errorName: "EmptyCompletion",
-        errorMessage: "Stream completed without usable output after tool calls",
-        errorCode: "empty_completion_after_tools",
-        channelId,
-        context: {
-          toolCallCount: toolCallRecords.length,
-          toolErrorCount: toolCallRecords.filter((record) => record.is_error).length,
-          finishReason,
-        },
-      });
-
-      streamingFailed = true;
-      emptyCompletionDetected = true;
-
-      if (streamer) {
-        try {
-          await streamer.stop({
-            chunks: [toChunkMarkdownText("\n\n_...(no output generated — see Aura logs)_")],
-          });
-        } catch {
-          // Stream may already be unrecoverable.
         }
       }
+
+      // Flush any remaining table buffer content before deciding whether the
+      // completed attempt produced user-visible text.
+      const finalTableFlush = flushRemainingTableBuffer();
+      if (finalTableFlush && !streamingFailed) {
+        currentStreamLength += finalTableFlush.length;
+        await tryStreamAppend(asAppendPayload({ markdown_text: finalTableFlush }));
+        if (streamingFailed) {
+          fallbackStartIdx = streamedRawIdx;
+        }
+      }
+
+      const finishReason = await getFinishReason(result);
+
+      await logEmptyContinuationSegmentIfNeeded({
+        segmentEnd: "final",
+        finishReason,
+      });
+
+      if (supersededDuringStream) {
+        throw new InvocationSupersededError(invocationId);
+      }
+
+      if (accumulatedText.length === 0) {
+        const finalResultText = await getFinalResultText(result);
+        if (finalResultText.length > 0) {
+          logger.warn("Recovered empty streamed response from final result.text", {
+            channelId,
+            recoveredLength: finalResultText.length,
+            finishReason,
+          });
+          await appendTextDelta(finalResultText);
+          const recoveredTableFlush = flushRemainingTableBuffer();
+          if (recoveredTableFlush && !streamingFailed) {
+            currentStreamLength += recoveredTableFlush.length;
+            await tryStreamAppend(asAppendPayload({ markdown_text: recoveredTableFlush }));
+            if (streamingFailed) {
+              fallbackStartIdx = streamedRawIdx;
+            }
+          }
+        }
+      }
+
+      try {
+        addUsage(await result.usage);
+      } catch {
+        // Preserve the response path even if usage metadata is unavailable.
+      }
+
+      if (accumulatedText.length === 0 && toolCallRecords.length > 0) {
+        const toolErrorCount = toolCallRecords.filter((record) => record.is_error).length;
+        const hasUsefulToolResults = toolCallRecords.some((record) => !record.is_error);
+        const canRelaunch =
+          hasUsefulToolResults &&
+          finishReason !== "tool-calls" &&
+          emptyCompletionRelaunchCount < 1;
+
+        if (canRelaunch) {
+          emptyCompletionRelaunchCount++;
+          logError({
+            errorName: "EmptyCompletionRelaunched",
+            errorMessage: "Stream completed without output after useful tool calls; relaunching once",
+            errorCode: "empty_completion_relaunched",
+            channelId,
+            context: {
+              toolCallCount: toolCallRecords.length,
+              toolErrorCount,
+              finishReason,
+              relaunchCount: emptyCompletionRelaunchCount,
+            },
+          });
+          currentStreamCallOptions = await buildRelaunchCallOptions(result);
+          continue;
+        }
+
+        logError({
+          errorName: "EmptyCompletion",
+          errorMessage: "Stream completed without usable output after tool calls",
+          errorCode: "empty_completion_after_tools",
+          channelId,
+          context: {
+            toolCallCount: toolCallRecords.length,
+            toolErrorCount,
+            finishReason,
+            relaunchCount: emptyCompletionRelaunchCount,
+          },
+        });
+
+        streamingFailed = true;
+        emptyCompletionDetected = true;
+
+        if (streamer) {
+          try {
+            await streamer.stop({
+              chunks: [toChunkMarkdownText("\n\n_...(no output generated — see Aura logs)_")],
+            });
+          } catch {
+            // Stream may already be unrecoverable.
+          }
+        }
+      }
+
+      break;
     }
 
     // ── Finalize ──────────────────────────────────────────────────────────
@@ -1189,13 +1350,10 @@ export async function generateResponse(
     clearLongToolSplitTimer();
 
     const llmMs = Date.now() - start;
-    const usage = await result.usage;
-
     const finalText = accumulatedText;
-
-    const inputTokens = usage.inputTokens ?? 0;
-    const outputTokens = usage.outputTokens ?? 0;
-    const totalTokens = inputTokens + outputTokens;
+    const inputTokens = aggregateUsage.inputTokens;
+    const outputTokens = aggregateUsage.outputTokens;
+    const totalTokens = aggregateUsage.totalTokens;
 
     if (streamingFailed) {
       // Stop the current streamer to avoid leaving an orphaned stream on Slack
@@ -1408,10 +1566,18 @@ export async function generateResponse(
     return {
       raw: finalText,
       alreadyPosted: true,
-      usage: { inputTokens, outputTokens, totalTokens, inputTokenDetails: usage.inputTokenDetails, outputTokenDetails: usage.outputTokenDetails },
+      usage: {
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        inputTokenDetails: aggregateUsage.inputTokenDetails,
+        outputTokenDetails: aggregateUsage.outputTokenDetails,
+      },
       toolCalls: toolCallRecords,
       modelId,
-      stepsPromise: result.steps,
+      stepsPromise: stepsPromises.length > 1
+        ? Promise.all(stepsPromises).then((steps) => steps.flat())
+        : latestResult?.steps,
       stepModelIds: getStepModelIds(),
     };
   } catch (error: any) {
