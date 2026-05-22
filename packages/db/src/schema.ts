@@ -589,6 +589,41 @@ export const jobExecutions = pgTable(
   ],
 );
 
+export type JobOutcomeStatus = "completed" | "errored" | "process_died" | "script_failed";
+
+export const jobOutcomes = pgTable(
+  "job_outcomes",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id),
+    executionId: uuid("execution_id").references(() => jobExecutions.id),
+    status: text("status").$type<JobOutcomeStatus>().notNull(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    error: jsonb("error").$type<Record<string, unknown>>(),
+    toolTrace: jsonb("tool_trace").$type<Array<Record<string, unknown>>>(),
+    supervisorDecision: text("supervisor_decision"),
+    supervisorReasoning: text("supervisor_reasoning"),
+    supervisorDmTs: text("supervisor_dm_ts"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    supervisedAt: timestamptz("supervised_at"),
+  },
+  (table) => [
+    index("job_outcomes_job_created_idx").on(table.jobId, table.createdAt),
+    uniqueIndex("job_outcomes_execution_id_idx")
+      .on(table.executionId)
+      .where(sql`execution_id IS NOT NULL`),
+    check(
+      "job_outcomes_status_check",
+      sql`${table.status} IN ('completed', 'errored', 'process_died', 'script_failed')`,
+    ),
+  ],
+);
+
 // ── Detached Sandbox Commands ────────────────────────────────────────────────
 
 export const detachedCommands = pgTable(
