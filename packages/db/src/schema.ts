@@ -589,7 +589,15 @@ export const jobExecutions = pgTable(
   ],
 );
 
-export type JobOutcomeStatus = "completed" | "errored" | "process_died" | "script_failed";
+export type JobOutcomeStatus = "succeeded" | "errored" | "interrupted";
+export type JobOutcomeSupervisorStatus = "pending_review" | "in_progress" | "resolved" | "skipped";
+export type JobOutcomeSupervisorDecision =
+  | "retry_as_is"
+  | "retry_with_fix"
+  | "report_success"
+  | "report_failure"
+  | "escalate"
+  | "disable_job";
 
 export const jobOutcomes = pgTable(
   "job_outcomes",
@@ -601,25 +609,43 @@ export const jobOutcomes = pgTable(
     jobId: uuid("job_id")
       .notNull()
       .references(() => jobs.id),
-    executionId: uuid("execution_id").references(() => jobExecutions.id),
-    status: text("status").$type<JobOutcomeStatus>().notNull(),
+    jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
+    outcomeStatus: text("outcome_status").$type<JobOutcomeStatus>().notNull(),
     output: jsonb("output").$type<Record<string, unknown>>(),
-    error: jsonb("error").$type<Record<string, unknown>>(),
-    toolTrace: jsonb("tool_trace").$type<Array<Record<string, unknown>>>(),
-    supervisorDecision: text("supervisor_decision"),
+    error: text("error"),
+    lastNSteps: jsonb("last_n_steps").$type<Array<Record<string, unknown>>>(),
+    supervisorStatus: text("supervisor_status")
+      .$type<JobOutcomeSupervisorStatus>()
+      .notNull()
+      .default("pending_review"),
+    supervisorInvocationId: text("supervisor_invocation_id"),
+    supervisorStartedAt: timestamptz("supervisor_started_at"),
+    supervisorDecision: text("supervisor_decision").$type<JobOutcomeSupervisorDecision>(),
     supervisorReasoning: text("supervisor_reasoning"),
-    supervisorDmTs: text("supervisor_dm_ts"),
+    supervisorAttempts: integer("supervisor_attempts").notNull().default(0),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
-    supervisedAt: timestamptz("supervised_at"),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
     index("job_outcomes_job_created_idx").on(table.jobId, table.createdAt),
-    uniqueIndex("job_outcomes_execution_id_idx")
-      .on(table.executionId)
-      .where(sql`execution_id IS NOT NULL`),
+    index("job_outcomes_supervisor_status_started_idx").on(
+      table.supervisorStatus,
+      table.supervisorStartedAt,
+    ),
+    uniqueIndex("job_outcomes_job_execution_id_idx")
+      .on(table.jobExecutionId)
+      .where(sql`job_execution_id IS NOT NULL`),
     check(
-      "job_outcomes_status_check",
-      sql`${table.status} IN ('completed', 'errored', 'process_died', 'script_failed')`,
+      "job_outcomes_outcome_status_check",
+      sql`${table.outcomeStatus} IN ('succeeded', 'errored', 'interrupted')`,
+    ),
+    check(
+      "job_outcomes_supervisor_status_check",
+      sql`${table.supervisorStatus} IN ('pending_review', 'in_progress', 'resolved', 'skipped')`,
+    ),
+    check(
+      "job_outcomes_supervisor_decision_check",
+      sql`${table.supervisorDecision} IS NULL OR ${table.supervisorDecision} IN ('retry_as_is', 'retry_with_fix', 'report_success', 'report_failure', 'escalate', 'disable_job')`,
     ),
   ],
 );

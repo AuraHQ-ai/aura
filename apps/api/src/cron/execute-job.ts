@@ -21,7 +21,7 @@ import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 import { sendJobFailureDm } from "./job-notifications.js";
-import { extractToolTrace, persistJobOutcome, serializeJobError } from "./job-outcomes.js";
+import { extractLastNSteps, persistJobOutcome, serializeJobError } from "./job-outcomes.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -101,7 +101,7 @@ export async function executeJob(
   let conversationId: string | undefined;
   let executionId: string | null = null;
   const invocationId = crypto.randomUUID();
-  let latestToolTrace: Array<Record<string, unknown>> = [];
+  let lastNSteps: Array<Record<string, unknown>> = [];
   let scriptExecutionOutput: ScriptExecutionOutput | null = null;
 
   try {
@@ -306,8 +306,8 @@ export async function executeJob(
             await persistJobOutcome({
               workspaceId: job.workspaceId,
               jobId,
-              executionId,
-              status: "completed",
+              jobExecutionId: executionId,
+              outcomeStatus: "succeeded",
               output: {
                 type: "script",
                 script: scriptExecutionOutput ?? {
@@ -316,7 +316,7 @@ export async function executeJob(
                   exit_code: 0,
                 },
               },
-              toolTrace: [],
+              lastNSteps: [],
             });
 
             logger.info("executeJob: script-only job completed", { jobId, jobName: job.name });
@@ -407,7 +407,7 @@ export async function executeJob(
         output: tr.output,
       })),
     }));
-    latestToolTrace = extractToolTrace(steps);
+    lastNSteps = extractLastNSteps(steps);
 
     const tokenUsage: DetailedTokenUsage = {
       inputTokens: usage.inputTokens ?? 0,
@@ -492,15 +492,15 @@ export async function executeJob(
     await persistJobOutcome({
       workspaceId: job.workspaceId,
       jobId,
-      executionId,
-      status: "completed",
+      jobExecutionId: executionId,
+      outcomeStatus: "succeeded",
       output: {
         type: "llm",
-        finalMessage: text || null,
+        final_message: text || null,
         scratchpad: scratchpadContents ?? null,
         ...(scriptExecutionOutput ? { script: scriptExecutionOutput } : {}),
       },
-      toolTrace: latestToolTrace,
+      lastNSteps,
     });
 
     return true;
@@ -538,17 +538,16 @@ export async function executeJob(
     await persistJobOutcome({
       workspaceId: job.workspaceId,
       jobId,
-      executionId,
-      status: error instanceof ScriptJobError ? "script_failed" : "errored",
+      jobExecutionId: executionId,
+      outcomeStatus: "errored",
       output: {
         ...(scriptExecutionOutput ? { script: scriptExecutionOutput } : {}),
         ...(scratchpadContents ? { scratchpad: scratchpadContents } : {}),
-      },
-      error: serializeJobError(error, {
         retries: newRetries,
-        retryExhausted,
-      }),
-      toolTrace: latestToolTrace,
+        retry_exhausted: retryExhausted,
+      },
+      error: serializeJobError(error),
+      lastNSteps,
     });
 
     if (!executionId) {

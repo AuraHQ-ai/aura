@@ -179,7 +179,7 @@ describe("executeJob outcome persistence", () => {
     vi.useRealTimers();
   });
 
-  it("writes a completed outcome for script-only success", async () => {
+  it("writes a pending-review succeeded outcome for script-only success", async () => {
     sandboxMock.commandRun.mockResolvedValue({
       exitCode: 0,
       stdout: "{\"ok\":true,\"summary\":\"done\"}",
@@ -198,8 +198,8 @@ describe("executeJob outcome persistence", () => {
         expect.objectContaining({
           workspaceId: "default",
           jobId: "job-1",
-          executionId: "exec-1",
-          status: "completed",
+          jobExecutionId: "exec-1",
+          outcomeStatus: "succeeded",
           output: expect.objectContaining({
             type: "script",
             script: expect.objectContaining({
@@ -208,13 +208,15 @@ describe("executeJob outcome persistence", () => {
               exit_code: 0,
             }),
           }),
-          toolTrace: [],
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
+          supervisorAttempts: 0,
         }),
       ]),
     );
   });
 
-  it("writes a script_failed outcome when retries are exhausted", async () => {
+  it("writes a pending-review errored outcome when retries are exhausted", async () => {
     sandboxMock.commandRun.mockResolvedValue({
       exitCode: 2,
       stdout: "partial output",
@@ -235,20 +237,19 @@ describe("executeJob outcome persistence", () => {
         expect.objectContaining({
           workspaceId: "default",
           jobId: "job-1",
-          executionId: "exec-1",
-          status: "script_failed",
+          jobExecutionId: "exec-1",
+          outcomeStatus: "errored",
           output: expect.objectContaining({
             script: expect.objectContaining({
               stdout: "partial output",
               stderr: "boom",
               exit_code: 2,
             }),
+            retry_exhausted: true,
           }),
-          error: expect.objectContaining({
-            message: expect.stringContaining("Script exited with code 2"),
-            retryExhausted: true,
-          }),
-          toolTrace: [],
+          error: expect.stringContaining("Script exited with code 2"),
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
         }),
       ]),
     );
@@ -272,13 +273,14 @@ describe("executeJob outcome persistence", () => {
         expect.objectContaining({
           workspaceId: "default",
           jobId: "job-1",
-          executionId: "exec-1",
-          status: "errored",
-          error: expect.objectContaining({
-            message: "model unavailable",
-            retryExhausted: false,
+          jobExecutionId: "exec-1",
+          outcomeStatus: "errored",
+          output: expect.objectContaining({
+            retry_exhausted: false,
           }),
-          toolTrace: [],
+          error: "model unavailable",
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
         }),
       ]),
     );

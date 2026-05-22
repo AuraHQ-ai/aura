@@ -285,7 +285,7 @@ describe("heartbeat stale running recovery", () => {
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
-  it("writes a process_died outcome for stale running recovery", async () => {
+  it("writes a pending-review interrupted outcome for stale running recovery", async () => {
     queueDbResults(
       [],
       [],
@@ -306,16 +306,15 @@ describe("heartbeat stale running recovery", () => {
         expect.objectContaining({
           workspaceId: "default",
           jobId: "job-stale",
-          executionId: "exec-stale",
-          status: "process_died",
+          jobExecutionId: "exec-stale",
+          outcomeStatus: "interrupted",
           output: expect.objectContaining({
             type: "stale_recovery",
-            recoveredBy: "heartbeat",
+            recovered_by: "heartbeat",
           }),
-          error: expect.objectContaining({
-            message: "Execution interrupted: recovered by stale detection",
-          }),
-          toolTrace: [],
+          error: "Execution interrupted: recovered by stale detection",
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
         }),
       ]),
     );

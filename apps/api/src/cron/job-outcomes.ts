@@ -2,7 +2,8 @@ import { db } from "../db/client.js";
 import { logger } from "../lib/logger.js";
 import { jobOutcomes, type JobOutcomeStatus } from "@aura/db/schema";
 
-const MAX_TOOL_TRACE_ITEMS = 10;
+const MAX_LAST_STEPS = 3;
+const MAX_STEP_TEXT_CHARS = 4_000;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -10,88 +11,95 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function serializeJobError(error: unknown, extra?: JsonRecord): JsonRecord {
+export function serializeJobError(error: unknown): string {
   if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-      ...extra,
-    };
+    return error.message;
   }
 
-  return {
-    message: String(error),
-    ...extra,
-  };
+  return String(error);
 }
 
-export function extractToolTrace(steps: unknown, maxItems = MAX_TOOL_TRACE_ITEMS): JsonRecord[] {
+function truncateText(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  if (value.length <= MAX_STEP_TEXT_CHARS) return value;
+  return `${value.slice(0, MAX_STEP_TEXT_CHARS)}...`;
+}
+
+export function extractLastNSteps(steps: unknown, maxSteps = MAX_LAST_STEPS): JsonRecord[] {
   if (!Array.isArray(steps)) return [];
 
-  const trace: JsonRecord[] = [];
+  const firstStepIndex = steps.length - Math.min(maxSteps, steps.length);
 
-  steps.forEach((step, stepIndex) => {
-    if (!isRecord(step)) return;
+  return steps.slice(-maxSteps).map((step, index) => {
+    if (!isRecord(step)) {
+      return { index: firstStepIndex + index, value: step };
+    }
 
-    const toolCalls = Array.isArray(step.toolCalls) ? step.toolCalls : [];
-    const toolResults = Array.isArray(step.toolResults) ? step.toolResults : [];
-
-    toolCalls.forEach((toolCall, callIndex) => {
-      if (!isRecord(toolCall)) return;
-
-      const toolCallId = typeof toolCall.toolCallId === "string" ? toolCall.toolCallId : undefined;
-      const matchingResult = toolResults.find((result, resultIndex) => {
-        if (!isRecord(result)) return false;
-        if (toolCallId && result.toolCallId === toolCallId) return true;
-        return resultIndex === callIndex;
-      });
-
-      trace.push({
-        stepIndex,
-        toolCallId,
-        toolName: toolCall.toolName,
-        input: toolCall.input,
-        output: isRecord(matchingResult) ? matchingResult.output : undefined,
-      });
-    });
+    return {
+      index: firstStepIndex + index,
+      finishReason: step.finishReason,
+      text: truncateText(step.text),
+      toolCalls: Array.isArray(step.toolCalls)
+        ? step.toolCalls.map((toolCall) =>
+            isRecord(toolCall)
+              ? {
+                  toolCallId: toolCall.toolCallId,
+                  toolName: toolCall.toolName,
+                  input: toolCall.input,
+                }
+              : toolCall,
+          )
+        : undefined,
+      toolResults: Array.isArray(step.toolResults)
+        ? step.toolResults.map((toolResult) =>
+            isRecord(toolResult)
+              ? {
+                  toolCallId: toolResult.toolCallId,
+                  toolName: toolResult.toolName,
+                  output: toolResult.output,
+                }
+              : toolResult,
+          )
+        : undefined,
+    };
   });
-
-  return trace.slice(-maxItems);
 }
 
 export async function persistJobOutcome({
   workspaceId,
   jobId,
-  executionId,
-  status,
+  jobExecutionId,
+  outcomeStatus,
   output,
   error,
-  toolTrace,
+  lastNSteps,
 }: {
   workspaceId?: string | null;
   jobId: string;
-  executionId?: string | null;
-  status: JobOutcomeStatus;
+  jobExecutionId?: string | null;
+  outcomeStatus: JobOutcomeStatus;
   output?: JsonRecord;
-  error?: JsonRecord;
-  toolTrace?: JsonRecord[];
+  error?: string | null;
+  lastNSteps?: JsonRecord[];
 }): Promise<void> {
   try {
     await db.insert(jobOutcomes).values({
       workspaceId: workspaceId ?? "default",
       jobId,
-      executionId: executionId ?? null,
-      status,
+      jobExecutionId: jobExecutionId ?? null,
+      outcomeStatus,
       output,
       error,
-      toolTrace,
+      lastNSteps,
+      supervisorStatus: "pending_review",
+      supervisorAttempts: 0,
+      updatedAt: new Date(),
     });
   } catch (insertError: any) {
     logger.error("persistJobOutcome: failed to insert outcome row", {
       jobId,
-      executionId,
-      status,
+      jobExecutionId,
+      outcomeStatus,
       error: insertError?.message,
     });
   }

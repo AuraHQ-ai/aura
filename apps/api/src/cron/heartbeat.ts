@@ -493,17 +493,15 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
         await persistJobOutcome({
           workspaceId: job.workspaceId,
           jobId: job.id,
-          executionId: execution.id,
-          status: "process_died",
+          jobExecutionId: execution.id,
+          outcomeStatus: "interrupted",
           output: {
             type: "stale_recovery",
-            recoveredBy: "heartbeat",
-            staleRunningThresholdMs: STALE_RUNNING_THRESHOLD_MS,
+            recovered_by: "heartbeat",
+            stale_running_threshold_ms: STALE_RUNNING_THRESHOLD_MS,
           },
-          error: {
-            message: "Execution interrupted: recovered by stale detection",
-          },
-          toolTrace: [],
+          error: "Execution interrupted: recovered by stale detection",
+          lastNSteps: [],
         });
       }
 
@@ -513,17 +511,15 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
         await persistJobOutcome({
           workspaceId: job.workspaceId,
           jobId: job.id,
-          executionId: null,
-          status: "process_died",
+          jobExecutionId: null,
+          outcomeStatus: "interrupted",
           output: {
             type: "stale_recovery",
-            recoveredBy: "heartbeat",
-            staleRunningThresholdMs: STALE_RUNNING_THRESHOLD_MS,
+            recovered_by: "heartbeat",
+            stale_running_threshold_ms: STALE_RUNNING_THRESHOLD_MS,
           },
-          error: {
-            message: "Execution interrupted: recovered by stale detection",
-          },
-          toolTrace: [],
+          error: "Execution interrupted: recovered by stale detection",
+          lastNSteps: [],
         });
       }
     }
