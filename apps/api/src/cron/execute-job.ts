@@ -21,6 +21,7 @@ import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 import { sendJobFailureDm } from "./job-notifications.js";
+import { extractLastNSteps, persistJobOutcome, serializeJobError } from "./job-outcomes.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -30,6 +31,23 @@ export const MAX_RETRIES = 3;
 
 /** Retry delay in ms (30 minutes — matches heartbeat cron interval) */
 const RETRY_DELAY_MS = 30 * 60 * 1000;
+
+type ScriptExecutionOutput = {
+  stdout: string;
+  stderr: string;
+  exit_code: number | null;
+  detected_error?: string;
+};
+
+class ScriptJobError extends Error {
+  readonly scriptOutput: ScriptExecutionOutput | null;
+
+  constructor(message: string, scriptOutput: ScriptExecutionOutput | null) {
+    super(message);
+    this.name = "ScriptJobError";
+    this.scriptOutput = scriptOutput;
+  }
+}
 
 // ── Job-specific additive instructions ───────────────────────────────────────
 
@@ -77,40 +95,47 @@ export async function executeJob(
 ): Promise<boolean> {
   const jobId = job.id;
 
-  // Atomically claim the job to prevent duplicate execution.
-  // If another process already claimed it, this updates 0 rows.
-  const claimed = await db
-    .update(jobs)
-    .set({ status: "running", updatedAt: new Date() })
-    .where(and(eq(jobs.id, jobId), eq(jobs.status, "pending"), eq(jobs.enabled, 1)))
-    .returning({ id: jobs.id });
-
-  if (claimed.length === 0) {
-    logger.info("executeJob: job already claimed or disabled, skipping", { jobId, jobName: job.name });
-    return false;
-  }
-
-  // Insert execution trace row
-  const [execution] = await db
-    .insert(jobExecutions)
-    .values({
-      jobId,
-      status: "running",
-      trigger,
-      callbackChannel: job.channelId || null,
-      callbackThreadTs: job.threadTs || null,
-    })
-    .returning({ id: jobExecutions.id });
-
-  const executionId = execution.id;
-
   // Tracks next message order_index; set by persistConversationInputs,
   // used by error handler if generate throws.
   let conversationOrderIndex = 0;
   let conversationId: string | undefined;
+  let executionId: string | null = null;
   const invocationId = crypto.randomUUID();
+  let lastNSteps: Array<Record<string, unknown>> = [];
+  let scriptExecutionOutput: ScriptExecutionOutput | null = null;
 
   try {
+    // Atomically claim the job to prevent duplicate execution.
+    // If another process already claimed it, this updates 0 rows.
+    const claimed = await db
+      .update(jobs)
+      .set({ status: "running", updatedAt: new Date() })
+      .where(and(eq(jobs.id, jobId), eq(jobs.status, "pending"), eq(jobs.enabled, 1)))
+      .returning({ id: jobs.id });
+
+    if (claimed.length === 0) {
+      logger.info("executeJob: job already claimed or disabled, skipping", { jobId, jobName: job.name });
+      return false;
+    }
+
+    // Insert execution trace row.
+    const [execution] = await db
+      .insert(jobExecutions)
+      .values({
+        workspaceId: job.workspaceId,
+        jobId,
+        status: "running",
+        trigger,
+        callbackChannel: job.channelId || null,
+        callbackThreadTs: job.threadTs || null,
+      })
+      .returning({ id: jobExecutions.id });
+
+    executionId = execution.id;
+    if (!executionId) {
+      throw new Error("Failed to create job execution trace");
+    }
+
     const planTopic = parseContinuationTag(job.description);
     const isContinuation = planTopic !== null;
     const isRecurring = !!job.cronSchedule || !!job.frequencyConfig;
@@ -199,6 +224,14 @@ export async function executeJob(
         const exitCode = scriptResult.exitCode;
         const stdout = scriptResult.stdout || "";
         const stderr = scriptResult.stderr || "";
+        const truncatedStdout = truncateOutput(stdout, 50_000);
+        const truncatedStderr = truncateOutput(stderr, 50_000);
+
+        scriptExecutionOutput = {
+          stdout: truncatedStdout,
+          stderr: truncatedStderr,
+          exit_code: exitCode,
+        };
 
         if (exitCode !== 0) {
           if (job.playbook) {
@@ -210,19 +243,24 @@ export async function executeJob(
             });
           } else {
             const outputTail = (stderr || stdout).slice(-2000);
-            throw new Error(
+            throw new ScriptJobError(
               `Script exited with code ${exitCode}:\n${outputTail}`,
+              scriptExecutionOutput,
             );
           }
         } else {
-          scriptOutput = truncateOutput(stdout, 50_000);
+          scriptOutput = truncatedStdout;
 
           const outputError = detectScriptOutputError(stdout);
+          if (outputError) {
+            scriptExecutionOutput.detected_error = outputError;
+          }
 
           if (outputError && !job.playbook) {
             const outputTail = stdout.slice(-2000);
-            throw new Error(
+            throw new ScriptJobError(
               `Script reported error: ${outputError}\n${outputTail}`,
+              scriptExecutionOutput,
             );
           }
 
@@ -265,6 +303,22 @@ export async function executeJob(
               summary: resultText.slice(0, 500),
             }).where(eq(jobExecutions.id, executionId));
 
+            await persistJobOutcome({
+              workspaceId: job.workspaceId,
+              jobId,
+              jobExecutionId: executionId,
+              outcomeStatus: "succeeded",
+              output: {
+                type: "script",
+                script: scriptExecutionOutput ?? {
+                  stdout: scriptOutput ?? "",
+                  stderr: "",
+                  exit_code: 0,
+                },
+              },
+              lastNSteps: [],
+            });
+
             logger.info("executeJob: script-only job completed", { jobId, jobName: job.name });
             return true;
           }
@@ -282,7 +336,9 @@ export async function executeJob(
           throw scriptErr;
         }
         if (!job.playbook) {
-          throw scriptErr;
+          throw scriptErr instanceof ScriptJobError
+            ? scriptErr
+            : new ScriptJobError(scriptErr?.message ?? String(scriptErr), scriptExecutionOutput);
         }
         logger.warn("executeJob: script execution error, falling through to LLM", {
           jobId,
@@ -296,7 +352,7 @@ export async function executeJob(
       prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`\n\n---\n\n${prompt}`;
     }
 
-  const { agent, modelId, getStepModelIds } = await createHeadlessAgent({
+    const { agent, modelId, getStepModelIds } = await createHeadlessAgent({
       slackClient,
       context: {
         userId: job.requestedBy,
@@ -351,6 +407,7 @@ export async function executeJob(
         output: tr.output,
       })),
     }));
+    lastNSteps = extractLastNSteps(steps);
 
     const tokenUsage: DetailedTokenUsage = {
       inputTokens: usage.inputTokens ?? 0,
@@ -432,6 +489,20 @@ export async function executeJob(
       });
     }
 
+    await persistJobOutcome({
+      workspaceId: job.workspaceId,
+      jobId,
+      jobExecutionId: executionId,
+      outcomeStatus: "succeeded",
+      output: {
+        type: "llm",
+        final_message: text || null,
+        scratchpad: scratchpadContents ?? null,
+        ...(scriptExecutionOutput ? { script: scriptExecutionOutput } : {}),
+      },
+      lastNSteps,
+    });
+
     return true;
   } catch (error: any) {
     // Persist the error in conversation history regardless of error type
@@ -440,25 +511,48 @@ export async function executeJob(
     }
 
     // Update execution trace with failure (protected so it can't break retry logic)
-    try {
-      await db
-        .update(jobExecutions)
-        .set({
-          status: "failed",
-          finishedAt: new Date(),
-          error: error.message,
-        })
-        .where(eq(jobExecutions.id, executionId));
-    } catch (traceErr: any) {
-      logger.error("executeJob: failed to update execution trace", {
-        jobId,
-        executionId,
-        error: traceErr.message,
-      });
+    if (executionId) {
+      try {
+        await db
+          .update(jobExecutions)
+          .set({
+            status: "failed",
+            finishedAt: new Date(),
+            error: error.message,
+          })
+          .where(eq(jobExecutions.id, executionId));
+      } catch (traceErr: any) {
+        logger.error("executeJob: failed to update execution trace", {
+          jobId,
+          executionId,
+          error: traceErr.message,
+        });
+      }
     }
 
     // Retry logic
     const newRetries = job.retries + 1;
+    const retryExhausted = newRetries >= MAX_RETRIES;
+    const scratchpadContents = getScratchpadContents(invocationId);
+
+    await persistJobOutcome({
+      workspaceId: job.workspaceId,
+      jobId,
+      jobExecutionId: executionId,
+      outcomeStatus: "errored",
+      output: {
+        ...(scriptExecutionOutput ? { script: scriptExecutionOutput } : {}),
+        ...(scratchpadContents ? { scratchpad: scratchpadContents } : {}),
+        retries: newRetries,
+        retry_exhausted: retryExhausted,
+      },
+      error: serializeJobError(error),
+      lastNSteps,
+    });
+
+    if (!executionId) {
+      throw error;
+    }
 
     if (newRetries < MAX_RETRIES) {
       const retryAt = new Date(Date.now() + RETRY_DELAY_MS);

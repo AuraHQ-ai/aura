@@ -1,6 +1,292 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { detectScriptOutputError } from "./script-output.js";
 
+const dbMock = vi.hoisted(() => {
+  type Operation = {
+    kind: "select" | "update" | "delete" | "insert";
+    setArg?: Record<string, unknown>;
+    valuesArg?: Record<string, unknown>;
+  };
+
+  const state = {
+    results: [] as unknown[][],
+    operations: [] as Operation[],
+    select: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    insert: vi.fn(),
+  };
+
+  function nextResult() {
+    return state.results.shift() ?? [];
+  }
+
+  function createQuery(operation: Operation) {
+    const query: any = {
+      from: vi.fn(() => query),
+      where: vi.fn(() => query),
+      orderBy: vi.fn(() => query),
+      limit: vi.fn(() => query),
+      set: vi.fn((setArg: Record<string, unknown>) => {
+        operation.setArg = setArg;
+        return query;
+      }),
+      values: vi.fn((valuesArg: Record<string, unknown>) => {
+        operation.valuesArg = valuesArg;
+        return query;
+      }),
+      returning: vi.fn(() => {
+        state.operations.push(operation);
+        return Promise.resolve(nextResult());
+      }),
+      then: (onFulfilled: any, onRejected: any) => {
+        state.operations.push(operation);
+        return Promise.resolve(nextResult()).then(onFulfilled, onRejected);
+      },
+    };
+
+    return query;
+  }
+
+  state.select.mockImplementation(() => createQuery({ kind: "select" }));
+  state.update.mockImplementation(() => createQuery({ kind: "update" }));
+  state.delete.mockImplementation(() => createQuery({ kind: "delete" }));
+  state.insert.mockImplementation(() => createQuery({ kind: "insert" }));
+
+  return state;
+});
+
+const sandboxMock = vi.hoisted(() => ({
+  commandRun: vi.fn(),
+  getOrCreateSandbox: vi.fn(),
+  getSandboxEnvs: vi.fn(),
+}));
+
+const createHeadlessAgentMock = vi.hoisted(() => vi.fn());
+const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../db/client.js", () => ({
+  db: {
+    select: dbMock.select,
+    update: dbMock.update,
+    delete: dbMock.delete,
+    insert: dbMock.insert,
+  },
+}));
+
+vi.mock("../lib/logger.js", () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
+vi.mock("../lib/sandbox.js", () => ({
+  getOrCreateSandbox: sandboxMock.getOrCreateSandbox,
+  getSandboxEnvs: sandboxMock.getSandboxEnvs,
+  truncateOutput: (value: string, maxChars: number) => value.slice(0, maxChars),
+}));
+
+vi.mock("../personality/system-prompt.js", () => ({
+  buildStablePrefix: vi.fn(async () => "system prompt"),
+}));
+
+vi.mock("../lib/temporal.js", () => ({
+  getCurrentTimeContext: vi.fn(() => "current time"),
+}));
+
+vi.mock("../lib/agents.js", () => ({
+  createHeadlessAgent: createHeadlessAgentMock,
+}));
+
+vi.mock("./persist-conversation.js", () => ({
+  createConversationTrace: vi.fn(),
+  persistConversationInputs: vi.fn(),
+  persistConversationSteps: vi.fn(),
+  persistConversationError: vi.fn(),
+  updateConversationTraceUsage: vi.fn(),
+  buildConversationSteps: vi.fn(),
+}));
+
+vi.mock("../tools/scratchpad.js", () => ({
+  getScratchpadContents: vi.fn(() => null),
+  cleanupScratchpad: vi.fn(),
+}));
+
+vi.mock("./job-notifications.js", () => ({
+  sendJobFailureDm: sendJobFailureDmMock,
+}));
+
+function queueDbResults(...results: unknown[][]) {
+  dbMock.results = [...results];
+}
+
+function insertValues() {
+  return dbMock.operations
+    .filter((operation) => operation.kind === "insert")
+    .map((operation) => operation.valuesArg ?? {});
+}
+
+function baseJob(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "job-1",
+    workspaceId: "default",
+    name: "test-job",
+    description: "do the thing",
+    playbook: null,
+    script: "node script.js",
+    cronSchedule: null,
+    frequencyConfig: null,
+    channelId: null,
+    threadTs: null,
+    executeAt: new Date("2026-05-20T09:00:00.000Z"),
+    requestedBy: "U_REQUESTER",
+    priority: "normal",
+    status: "pending",
+    timezone: "UTC",
+    result: null,
+    retries: 0,
+    lastExecutedAt: null,
+    lastResult: null,
+    executionCount: 0,
+    todayExecutions: 0,
+    lastExecutionDate: null,
+    enabled: 1,
+    requiredCredentialIds: [],
+    createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-05-20T08:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+describe("executeJob outcome persistence", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    dbMock.operations = [];
+    vi.clearAllMocks();
+    sandboxMock.getSandboxEnvs.mockResolvedValue({});
+    sandboxMock.getOrCreateSandbox.mockResolvedValue({
+      commands: {
+        run: sandboxMock.commandRun,
+      },
+    });
+    sendJobFailureDmMock.mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("writes a pending-review succeeded outcome for script-only success", async () => {
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 0,
+      stdout: "{\"ok\":true,\"summary\":\"done\"}",
+      stderr: "",
+    });
+    queueDbResults(
+      [{ id: "job-1" }],
+      [{ id: "exec-1" }],
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(executeJob(baseJob() as any, "heartbeat")).resolves.toBe(true);
+
+    expect(insertValues()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: "default",
+          jobId: "job-1",
+          jobExecutionId: "exec-1",
+          outcomeStatus: "succeeded",
+          output: expect.objectContaining({
+            type: "script",
+            script: expect.objectContaining({
+              stdout: "{\"ok\":true,\"summary\":\"done\"}",
+              stderr: "",
+              exit_code: 0,
+            }),
+          }),
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
+          supervisorAttempts: 0,
+        }),
+      ]),
+    );
+  });
+
+  it("writes a pending-review errored outcome when retries are exhausted", async () => {
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 2,
+      stdout: "partial output",
+      stderr: "boom",
+    });
+    queueDbResults(
+      [{ id: "job-1" }],
+      [{ id: "exec-1" }],
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(baseJob({ retries: 2 }) as any, "heartbeat"),
+    ).rejects.toThrow("Script exited with code 2");
+
+    expect(insertValues()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: "default",
+          jobId: "job-1",
+          jobExecutionId: "exec-1",
+          outcomeStatus: "errored",
+          output: expect.objectContaining({
+            script: expect.objectContaining({
+              stdout: "partial output",
+              stderr: "boom",
+              exit_code: 2,
+            }),
+            retry_exhausted: true,
+          }),
+          error: expect.stringContaining("Script exited with code 2"),
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
+        }),
+      ]),
+    );
+    expect(sendJobFailureDmMock).toHaveBeenCalledOnce();
+  });
+
+  it("writes an errored outcome for caught non-script failures", async () => {
+    createHeadlessAgentMock.mockRejectedValue(new Error("model unavailable"));
+    queueDbResults(
+      [{ id: "job-1" }],
+      [{ id: "exec-1" }],
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(baseJob({ script: null }) as any, "heartbeat"),
+    ).rejects.toThrow("model unavailable");
+
+    expect(insertValues()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: "default",
+          jobId: "job-1",
+          jobExecutionId: "exec-1",
+          outcomeStatus: "errored",
+          output: expect.objectContaining({
+            retry_exhausted: false,
+          }),
+          error: "model unavailable",
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
+        }),
+      ]),
+    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+});
 describe("detectScriptOutputError", () => {
   it("returns null for clean stdout with no error envelope", () => {
     const output = '{"status": "ok", "count": 42}\nDone processing.';

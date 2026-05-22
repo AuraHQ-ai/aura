@@ -589,6 +589,67 @@ export const jobExecutions = pgTable(
   ],
 );
 
+export type JobOutcomeStatus = "succeeded" | "errored" | "interrupted";
+export type JobOutcomeSupervisorStatus = "pending_review" | "in_progress" | "resolved" | "skipped";
+export type JobOutcomeSupervisorDecision =
+  | "retry_as_is"
+  | "retry_with_fix"
+  | "report_success"
+  | "report_failure"
+  | "escalate"
+  | "disable_job";
+
+export const jobOutcomes = pgTable(
+  "job_outcomes",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id),
+    jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
+    outcomeStatus: text("outcome_status").$type<JobOutcomeStatus>().notNull(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    error: text("error"),
+    lastNSteps: jsonb("last_n_steps").$type<Array<Record<string, unknown>>>(),
+    supervisorStatus: text("supervisor_status")
+      .$type<JobOutcomeSupervisorStatus>()
+      .notNull()
+      .default("pending_review"),
+    supervisorInvocationId: text("supervisor_invocation_id"),
+    supervisorStartedAt: timestamptz("supervisor_started_at"),
+    supervisorDecision: text("supervisor_decision").$type<JobOutcomeSupervisorDecision>(),
+    supervisorReasoning: text("supervisor_reasoning"),
+    supervisorAttempts: integer("supervisor_attempts").notNull().default(0),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("job_outcomes_job_created_idx").on(table.jobId, table.createdAt),
+    index("job_outcomes_supervisor_status_started_idx").on(
+      table.supervisorStatus,
+      table.supervisorStartedAt,
+    ),
+    uniqueIndex("job_outcomes_job_execution_id_idx")
+      .on(table.jobExecutionId)
+      .where(sql`job_execution_id IS NOT NULL`),
+    check(
+      "job_outcomes_outcome_status_check",
+      sql`${table.outcomeStatus} IN ('succeeded', 'errored', 'interrupted')`,
+    ),
+    check(
+      "job_outcomes_supervisor_status_check",
+      sql`${table.supervisorStatus} IN ('pending_review', 'in_progress', 'resolved', 'skipped')`,
+    ),
+    check(
+      "job_outcomes_supervisor_decision_check",
+      sql`${table.supervisorDecision} IS NULL OR ${table.supervisorDecision} IN ('retry_as_is', 'retry_with_fix', 'report_success', 'report_failure', 'escalate', 'disable_job')`,
+    ),
+  ],
+);
+
 // ── Detached Sandbox Commands ────────────────────────────────────────────────
 
 export const detachedCommands = pgTable(

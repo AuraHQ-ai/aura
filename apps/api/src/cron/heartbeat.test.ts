@@ -285,6 +285,41 @@ describe("heartbeat stale running recovery", () => {
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
+  it("writes a pending-review interrupted outcome for stale running recovery", async () => {
+    queueDbResults(
+      [],
+      [],
+      [],
+      [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
+      [],
+      [{ id: "exec-stale", jobId: "job-stale" }],
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(insertValues()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: "default",
+          jobId: "job-stale",
+          jobExecutionId: "exec-stale",
+          outcomeStatus: "interrupted",
+          output: expect.objectContaining({
+            type: "stale_recovery",
+            recovered_by: "heartbeat",
+          }),
+          error: "Execution interrupted: recovered by stale detection",
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
+        }),
+      ]),
+    );
+  });
+
   it("does not fall back to founder or admin env vars for system-owned jobs", async () => {
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
     process.env.AURA_ADMIN_USER_IDS = "U_ADMIN";

@@ -8,6 +8,7 @@ import { logger } from "../lib/logger.js";
 import { executeJob, MAX_RETRIES } from "./execute-job.js";
 import { computeNextCronTick } from "./cron-utils.js";
 import { sendJobFailureDm, truncateJobFailureText } from "./job-notifications.js";
+import { persistJobOutcome } from "./job-outcomes.js";
 
 /** Max jobs to process per heartbeat sweep */
 const MAX_JOBS_PER_SWEEP = 10;
@@ -352,7 +353,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
           lt(jobs.retries, MAX_RETRIES),
         ),
       )
-      .returning({ id: jobs.id, name: jobs.name });
+      .returning({ id: jobs.id, name: jobs.name, workspaceId: jobs.workspaceId });
 
     const staleExhausted = await db
       .select()
@@ -452,8 +453,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       ...staleExhausted.map((j) => j.id),
     ];
 
+    let interruptedExecutions: Array<{ id: string; jobId: string | null }> = [];
+
     if (allStaleIds.length > 0) {
-      await db
+      interruptedExecutions = await db
         .update(jobExecutions)
         .set({
           status: "failed",
@@ -465,7 +468,60 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             inArray(jobExecutions.jobId, allStaleIds),
             eq(jobExecutions.status, "running"),
           ),
-        );
+        )
+        .returning({ id: jobExecutions.id, jobId: jobExecutions.jobId });
+    }
+
+    if (allStaleIds.length > 0) {
+      const staleJobs = [
+        ...staleRunning,
+        ...staleExhausted.map((job) => ({
+          id: job.id,
+          name: job.name,
+          workspaceId: job.workspaceId,
+        })),
+      ];
+      const jobIdsWithExecutionOutcomes = new Set<string>();
+
+      for (const execution of interruptedExecutions) {
+        if (!execution.jobId) continue;
+
+        const job = staleJobs.find((candidate) => candidate.id === execution.jobId);
+        if (!job) continue;
+
+        jobIdsWithExecutionOutcomes.add(job.id);
+        await persistJobOutcome({
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          jobExecutionId: execution.id,
+          outcomeStatus: "interrupted",
+          output: {
+            type: "stale_recovery",
+            recovered_by: "heartbeat",
+            stale_running_threshold_ms: STALE_RUNNING_THRESHOLD_MS,
+          },
+          error: "Execution interrupted: recovered by stale detection",
+          lastNSteps: [],
+        });
+      }
+
+      for (const job of staleJobs) {
+        if (jobIdsWithExecutionOutcomes.has(job.id)) continue;
+
+        await persistJobOutcome({
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          jobExecutionId: null,
+          outcomeStatus: "interrupted",
+          output: {
+            type: "stale_recovery",
+            recovered_by: "heartbeat",
+            stale_running_threshold_ms: STALE_RUNNING_THRESHOLD_MS,
+          },
+          error: "Execution interrupted: recovered by stale detection",
+          lastNSteps: [],
+        });
+      }
     }
 
     staleRunningRecovered = staleRunning.length;
