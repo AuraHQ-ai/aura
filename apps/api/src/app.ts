@@ -3,6 +3,7 @@ import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
+import { supervisorApp } from "./cron/supervisor.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { createSandboxCommandWebhookApp } from "./webhook/sandbox-command.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
@@ -143,6 +144,7 @@ app.get("/api/health", (c) => {
 // Mount cron routes
 app.route("/", cronApp);
 app.route("/", heartbeatApp);
+app.route("/", supervisorApp);
 
 // Mount ElevenLabs voice webhook routes
 app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);

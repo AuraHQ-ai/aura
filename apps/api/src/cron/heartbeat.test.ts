@@ -143,6 +143,7 @@ describe("heartbeat stale running recovery", () => {
   const originalCronSecret = process.env.CRON_SECRET;
   const originalFounderUserId = process.env.FOUNDER_USER_ID;
   const originalAuraAdminUserIds = process.env.AURA_ADMIN_USER_IDS;
+  const originalAuraPublicUrl = process.env.AURA_PUBLIC_URL;
 
   beforeEach(() => {
     process.env.CRON_SECRET = "test-secret";
@@ -156,6 +157,7 @@ describe("heartbeat stale running recovery", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     if (originalCronSecret === undefined) {
       delete process.env.CRON_SECRET;
     } else {
@@ -170,6 +172,11 @@ describe("heartbeat stale running recovery", () => {
       delete process.env.AURA_ADMIN_USER_IDS;
     } else {
       process.env.AURA_ADMIN_USER_IDS = originalAuraAdminUserIds;
+    }
+    if (originalAuraPublicUrl === undefined) {
+      delete process.env.AURA_PUBLIC_URL;
+    } else {
+      process.env.AURA_PUBLIC_URL = originalAuraPublicUrl;
     }
   });
 
@@ -318,6 +325,63 @@ describe("heartbeat stale running recovery", () => {
         }),
       ]),
     );
+  });
+
+  it("invokes the supervisor webhook after persisting a stale recovery outcome", async () => {
+    process.env.AURA_PUBLIC_URL = "https://aura.test";
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    queueDbResults(
+      [],
+      [],
+      [],
+      [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
+      [],
+      [{ id: "exec-stale", jobId: "job-stale" }],
+      [{ id: "00000000-0000-4000-8000-000000000001" }],
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://aura.test/api/cron/supervisor",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer test-secret",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({ outcomeId: "00000000-0000-4000-8000-000000000001" }),
+        keepalive: true,
+      }),
+    );
+  });
+
+  it("does not fail heartbeat when the supervisor webhook rejects", async () => {
+    process.env.AURA_PUBLIC_URL = "https://aura.test";
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("network down");
+    }));
+    queueDbResults(
+      [],
+      [],
+      [],
+      [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
+      [],
+      [{ id: "exec-stale", jobId: "job-stale" }],
+      [{ id: "00000000-0000-4000-8000-000000000001" }],
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
   });
 
   it("does not fall back to founder or admin env vars for system-owned jobs", async () => {
