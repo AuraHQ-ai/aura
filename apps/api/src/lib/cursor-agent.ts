@@ -46,6 +46,52 @@ export interface CursorAgentStatus {
   finishedAt?: string;
 }
 
+export interface ResolveCursorAgentPrUrlParams {
+  prUrl?: string;
+  branchName?: string;
+  repo: string;
+  githubToken?: string | null;
+  fetchImpl?: typeof fetch;
+}
+
+export async function resolveCursorAgentPrUrl({
+  prUrl,
+  branchName,
+  repo,
+  githubToken,
+  fetchImpl = fetch,
+}: ResolveCursorAgentPrUrlParams): Promise<string> {
+  if (prUrl) return prUrl;
+  if (!branchName) return "";
+
+  try {
+    const owner = repo.split("/")[0];
+    const headers: Record<string, string> = {
+      Accept: "application/vnd.github.v3+json",
+    };
+    if (githubToken) headers.Authorization = `token ${githubToken}`;
+
+    const lookupUrl = new URL(`https://api.github.com/repos/${repo}/pulls`);
+    lookupUrl.searchParams.set("head", `${owner}:${branchName}`);
+    lookupUrl.searchParams.set("state", "open");
+
+    const ghRes = await fetchImpl(lookupUrl.toString(), { headers });
+    if (!ghRes.ok) return "";
+
+    const pulls = (await ghRes.json()) as unknown;
+    if (Array.isArray(pulls)) {
+      const firstPrUrl = pulls[0]?.html_url;
+      if (typeof firstPrUrl === "string" && firstPrUrl) {
+        return firstPrUrl;
+      }
+    }
+
+    return `https://github.com/${repo}/tree/${branchName}`;
+  } catch {
+    return "";
+  }
+}
+
 export async function launchCursorAgent(
   params: LaunchCursorAgentParams,
 ): Promise<CursorAgentResponse> {

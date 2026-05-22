@@ -911,6 +911,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       let requester = "";
       let channelId = "";
       let threadTs = "";
+      let repo = process.env.AURA_REPO_DEFAULT || "AuraHQ-ai/aura";
 
       if (agentId) {
         const trackingRows = await db
@@ -926,11 +927,13 @@ app.post("/api/webhook/cursor-agent", async (c) => {
           );
           const channelMatch = content.match(/\*\*Channel\*\*:\s*(\S+)/);
           const threadMatch = content.match(/\*\*Thread\*\*:\s*(\S+)/);
+          const repoMatch = content.match(/\*\*Repo\*\*:\s*(\S+)/);
           if (requesterMatch && requesterMatch[1] !== "unknown")
             requester = requesterMatch[1];
           if (channelMatch) channelId = channelMatch[1];
           if (threadMatch && threadMatch[1] !== "none")
             threadTs = threadMatch[1];
+          if (repoMatch) repo = repoMatch[1];
         }
       }
 
@@ -952,16 +955,34 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         status.toLowerCase() === "error" ||
         status.toLowerCase() === "failed";
 
+      let resolvedPrUrl = prUrl;
+      if (isFinished && !resolvedPrUrl && branchName) {
+        try {
+          const { getCredential } = await import("./lib/credentials.js");
+          const { resolveCursorAgentPrUrl } = await import(
+            "./lib/cursor-agent.js"
+          );
+          const ghToken = await getCredential("github_token");
+          resolvedPrUrl = await resolveCursorAgentPrUrl({
+            branchName,
+            repo,
+            githubToken: ghToken,
+          });
+        } catch {
+          /* fall back to current behavior */
+        }
+      }
+
       let prTitle = "";
-      if (prUrl) {
-        const prMatch = prUrl.match(/\/pull\/(\d+)$/);
+      if (resolvedPrUrl) {
+        const prMatch = resolvedPrUrl.match(/\/pull\/(\d+)$/);
         if (prMatch) {
           try {
             const { getCredential } = await import("./lib/credentials.js");
             const ghToken = await getCredential("github_token");
             if (ghToken) {
               const prNumber = prMatch[1];
-              const repoMatch = prUrl.match(
+              const repoMatch = resolvedPrUrl.match(
                 /github\.com\/([^/]+\/[^/]+)\/pull/,
               );
               if (repoMatch) {
@@ -993,10 +1014,12 @@ app.post("/api/webhook/cursor-agent", async (c) => {
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;")
           .replace(/\|/g, "\u2758");
-        const prLine = prUrl
+        const isPullRequestUrl = /\/pull\/\d+$/.test(resolvedPrUrl);
+        const linkLabel = safePrTitle || (isPullRequestUrl ? "PR" : "branch");
+        const prLine = resolvedPrUrl
           ? safePrTitle
-            ? `\u2705 *<${prUrl}|${safePrTitle}>*`
-            : `\u2705 *<${prUrl}|PR>*`
+            ? `\u2705 *<${resolvedPrUrl}|${safePrTitle}>*`
+            : `\u2705 *<${resolvedPrUrl}|${linkLabel}>*`
           : "\u2705 Agent finished";
         const branchLine = branchName
           ? `\n_Branch:_ \`${branchName}\``
