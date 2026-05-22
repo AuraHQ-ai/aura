@@ -63,7 +63,6 @@ const sandboxMock = vi.hoisted(() => ({
 }));
 
 const createHeadlessAgentMock = vi.hoisted(() => vi.fn());
-const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../db/client.js", () => ({
   db: {
@@ -113,10 +112,6 @@ vi.mock("./persist-conversation.js", () => ({
 vi.mock("../tools/scratchpad.js", () => ({
   getScratchpadContents: vi.fn(() => null),
   cleanupScratchpad: vi.fn(),
-}));
-
-vi.mock("./job-notifications.js", () => ({
-  sendJobFailureDm: sendJobFailureDmMock,
 }));
 
 function queueDbResults(...results: unknown[][]) {
@@ -175,7 +170,6 @@ describe("executeJob outcome persistence", () => {
         run: sandboxMock.commandRun,
       },
     });
-    sendJobFailureDmMock.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -267,7 +261,6 @@ describe("executeJob outcome persistence", () => {
         }),
       ]),
     );
-    expect(sendJobFailureDmMock).toHaveBeenCalledOnce();
   });
 
   it("writes an errored outcome for caught non-script failures", async () => {
@@ -298,7 +291,6 @@ describe("executeJob outcome persistence", () => {
         }),
       ]),
     );
-    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
   it("invokes the supervisor webhook after persisting an outcome", async () => {

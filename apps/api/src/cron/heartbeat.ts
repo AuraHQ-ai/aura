@@ -1,14 +1,15 @@
 import { Hono } from "hono";
-import { eq, and, lt, lte, gte, gt, desc, sql, isNull, or, inArray } from "drizzle-orm";
+import { WebClient } from "@slack/web-api";
+import { eq, and, lt, lte, gte, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
-import { jobs, notes, jobExecutions } from "@aura/db/schema";
+import { jobs, notes, jobExecutions, jobOutcomes } from "@aura/db/schema";
 import type { FrequencyConfig } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { executeJob, MAX_RETRIES } from "./execute-job.js";
 import { computeNextCronTick } from "./cron-utils.js";
-import { sendJobFailureDm, truncateJobFailureText } from "./job-notifications.js";
 import { persistJobOutcome, triggerSupervisorReview } from "./job-outcomes.js";
+import { safePostMessage } from "../lib/slack-messaging.js";
 
 /** Max jobs to process per heartbeat sweep */
 const MAX_JOBS_PER_SWEEP = 10;
@@ -16,8 +17,13 @@ const MAX_JOBS_PER_SWEEP = 10;
 /** Threshold for recovering jobs stuck in "running" (15 minutes) */
 const STALE_RUNNING_THRESHOLD_MS = 15 * 60 * 1000;
 
-/** Consecutive failed recurring executions before owner escalation */
-const CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD = 5;
+const ORPHAN_SWEEP_BATCH_SIZE = 20;
+const PENDING_REVIEW_ORPHAN_THRESHOLD_MS = 5 * 60 * 1000;
+const IN_PROGRESS_ORPHAN_THRESHOLD_MS = 10 * 60 * 1000;
+const DEQUEUED_WITHOUT_EXECUTION_THRESHOLD_MS = 10 * 60 * 1000;
+const MAX_SUPERVISOR_ATTEMPTS = 3;
+
+const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN || "");
 
 // ── Job Eligibility (recurring jobs) ─────────────────────────────────────────
 
@@ -73,139 +79,205 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
   return true;
 }
 
-function consecutiveFailureMarkerTopic(jobId: string): string {
-  return `job-failure-streak:${jobId}`;
+type OrphanSweepResult = {
+  pendingReviewRefired: number;
+  inProgressReset: number;
+  inProgressSkipped: number;
+  dequeuedWithoutExecution: number;
+};
+
+async function notifySupervisorRetriesExhausted(job: Pick<typeof jobs.$inferSelect, "id" | "name" | "requestedBy">): Promise<void> {
+  if (!job.requestedBy) return;
+
+  const text = `Supervisor for job ${job.name} exhausted retries; manual intervention needed`;
+  try {
+    const result = await safePostMessage(slackClient, {
+      channel: job.requestedBy,
+      text,
+    });
+
+    if (!result.ok) {
+      logger.warn("orphan_sweep_supervisor_retry_exhausted_dm_failed", {
+        jobId: job.id,
+        requestedBy: job.requestedBy,
+      });
+    }
+  } catch (error: unknown) {
+    logger.warn("orphan_sweep_supervisor_retry_exhausted_dm_error", {
+      jobId: job.id,
+      requestedBy: job.requestedBy,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
-async function clearConsecutiveFailureMarker(job: typeof jobs.$inferSelect): Promise<void> {
-  await db
-    .delete(notes)
+export async function sweepOrphanedOutcomes(now = new Date()): Promise<OrphanSweepResult> {
+  const pendingReviewCutoff = new Date(now.getTime() - PENDING_REVIEW_ORPHAN_THRESHOLD_MS);
+  const inProgressCutoff = new Date(now.getTime() - IN_PROGRESS_ORPHAN_THRESHOLD_MS);
+  const dequeuedWithoutExecutionCutoff = new Date(
+    now.getTime() - DEQUEUED_WITHOUT_EXECUTION_THRESHOLD_MS,
+  );
+
+  let pendingReviewRefired = 0;
+  let inProgressReset = 0;
+  let inProgressSkipped = 0;
+  let dequeuedWithoutExecution = 0;
+
+  const pendingReviewOutcomes = await db
+    .select({ id: jobOutcomes.id })
+    .from(jobOutcomes)
     .where(
       and(
-        eq(notes.workspaceId, job.workspaceId),
-        eq(notes.topic, consecutiveFailureMarkerTopic(job.id)),
+        eq(jobOutcomes.supervisorStatus, "pending_review"),
+        lt(jobOutcomes.createdAt, pendingReviewCutoff),
       ),
-    );
-}
+    )
+    .orderBy(jobOutcomes.createdAt)
+    .limit(ORPHAN_SWEEP_BATCH_SIZE);
 
-async function maybeEscalateConsecutiveRecurringFailures(
-  failedJobs: Array<typeof jobs.$inferSelect>,
-): Promise<number> {
-  let escalated = 0;
+  for (const outcome of pendingReviewOutcomes) {
+    triggerSupervisorReview(outcome.id);
+  }
+  pendingReviewRefired = pendingReviewOutcomes.length;
 
-  for (const job of failedJobs) {
-    const recentExecutions = await db
-      .select({
-        id: jobExecutions.id,
-        status: jobExecutions.status,
-        startedAt: jobExecutions.startedAt,
-        error: jobExecutions.error,
-      })
-      .from(jobExecutions)
-      .where(eq(jobExecutions.jobId, job.id))
-      .orderBy(desc(jobExecutions.startedAt))
-      .limit(CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD);
+  const inProgressOutcomes = await db
+    .select({
+      id: jobOutcomes.id,
+      jobId: jobOutcomes.jobId,
+      supervisorAttempts: jobOutcomes.supervisorAttempts,
+    })
+    .from(jobOutcomes)
+    .where(
+      and(
+        eq(jobOutcomes.supervisorStatus, "in_progress"),
+        lt(jobOutcomes.supervisorStartedAt, inProgressCutoff),
+      ),
+    )
+    .orderBy(jobOutcomes.supervisorStartedAt)
+    .limit(ORPHAN_SWEEP_BATCH_SIZE);
 
-    if (
-      recentExecutions.length < CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD ||
-      recentExecutions.some((execution) => execution.status !== "failed")
-    ) {
-      if (recentExecutions.some((execution) => execution.status === "completed")) {
-        await clearConsecutiveFailureMarker(job);
+  for (const outcome of inProgressOutcomes) {
+    if (outcome.supervisorAttempts < MAX_SUPERVISOR_ATTEMPTS) {
+      const reset = await db
+        .update(jobOutcomes)
+        .set({
+          supervisorStatus: "pending_review",
+          supervisorInvocationId: null,
+          supervisorStartedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(jobOutcomes.id, outcome.id),
+            eq(jobOutcomes.supervisorStatus, "in_progress"),
+            lt(jobOutcomes.supervisorAttempts, MAX_SUPERVISOR_ATTEMPTS),
+          ),
+        )
+        .returning({ id: jobOutcomes.id });
+
+      if (reset.length > 0) {
+        inProgressReset++;
+        triggerSupervisorReview(outcome.id);
       }
       continue;
     }
 
-    const markerTopic = consecutiveFailureMarkerTopic(job.id);
-    const [existingMarker] = await db
-      .select({ id: notes.id, updatedAt: notes.updatedAt })
-      .from(notes)
-      .where(and(eq(notes.workspaceId, job.workspaceId), eq(notes.topic, markerTopic)))
+    const skipped = await db
+      .update(jobOutcomes)
+      .set({
+        supervisorStatus: "skipped",
+        supervisorReasoning: "max supervisor attempts exceeded",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(jobOutcomes.id, outcome.id),
+          eq(jobOutcomes.supervisorStatus, "in_progress"),
+          gte(jobOutcomes.supervisorAttempts, MAX_SUPERVISOR_ATTEMPTS),
+        ),
+      )
+      .returning({ id: jobOutcomes.id, jobId: jobOutcomes.jobId });
+
+    if (skipped.length === 0) continue;
+
+    inProgressSkipped++;
+    const [job] = await db
+      .select({ id: jobs.id, name: jobs.name, requestedBy: jobs.requestedBy })
+      .from(jobs)
+      .where(eq(jobs.id, outcome.jobId))
       .limit(1);
 
-    if (existingMarker) {
-      const successfulExecutionsSinceMarker = await db
-        .select({ id: jobExecutions.id })
-        .from(jobExecutions)
-        .where(
-          and(
-            eq(jobExecutions.jobId, job.id),
-            eq(jobExecutions.status, "completed"),
-            gt(jobExecutions.startedAt, existingMarker.updatedAt),
-          ),
-        )
-        .limit(1);
-
-      if (successfulExecutionsSinceMarker.length === 0) {
-        logger.info("recurring_job_failure_streak_dm_deduped", {
-          jobId: job.id,
-          jobName: job.name,
-          threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
-        });
-        continue;
-      }
-
-      await clearConsecutiveFailureMarker(job);
+    if (job) {
+      await notifySupervisorRetriesExhausted(job);
     }
-
-    const streakStart = recentExecutions[recentExecutions.length - 1];
-    const latestFailure = recentExecutions[0];
-    const lastError = truncateJobFailureText(latestFailure.error ?? job.lastResult);
-
-    const sent = await sendJobFailureDm({
-      jobId: job.id,
-      requestedBy: job.requestedBy,
-      text: `Your recurring job \`${job.name}\` has failed ${CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD} consecutive runs. Last error: ${lastError}. It's been broken since ${streakStart.startedAt.toISOString()}. Disable it with \`cancel_job\` if it's no longer needed, or fix it.`,
-      logContext: {
-        event: "recurring_job_consecutive_failures",
-        threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
-        streakStartedAt: streakStart.startedAt.toISOString(),
-      },
-    });
-
-    if (!sent) continue;
-
-    const now = new Date();
-    await db
-      .insert(notes)
-      .values({
-        workspaceId: job.workspaceId,
-        topic: markerTopic,
-        content: JSON.stringify({
-          jobId: job.id,
-          threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
-          latestFailureStartedAt: latestFailure.startedAt.toISOString(),
-          streakStartedAt: streakStart.startedAt.toISOString(),
-        }),
-        category: "job_failure_streak_marker",
-        injectInContext: false,
-        ownerId: job.requestedBy,
-        visibility: "private",
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [notes.workspaceId, notes.topic],
-        set: {
-          content: JSON.stringify({
-            jobId: job.id,
-            threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
-            latestFailureStartedAt: latestFailure.startedAt.toISOString(),
-            streakStartedAt: streakStart.startedAt.toISOString(),
-          }),
-          updatedAt: now,
-        },
-      });
-
-    escalated++;
-    logger.warn("recurring_job_consecutive_failures_escalated", {
-      jobId: job.id,
-      jobName: job.name,
-      threshold: CONSECUTIVE_FAILURE_ESCALATION_THRESHOLD,
-      streakStartedAt: streakStart.startedAt.toISOString(),
-    });
   }
 
-  return escalated;
+  const dequeuedJobs = await db
+    .select({
+      id: jobs.id,
+      workspaceId: jobs.workspaceId,
+      name: jobs.name,
+      executeAt: jobs.executeAt,
+      updatedAt: jobs.updatedAt,
+    })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.status, "running"),
+        or(isNull(jobs.lastExecutedAt), lt(jobs.lastExecutedAt, dequeuedWithoutExecutionCutoff)),
+        sql`NOT EXISTS (
+          SELECT 1
+          FROM ${jobExecutions}
+          WHERE ${jobExecutions.jobId} = ${jobs.id}
+            AND ${jobExecutions.startedAt} >= COALESCE(${jobs.executeAt}, ${jobs.updatedAt}) - interval '1 minute'
+        )`,
+      ),
+    )
+    .orderBy(jobs.updatedAt)
+    .limit(ORPHAN_SWEEP_BATCH_SIZE);
+
+  for (const job of dequeuedJobs) {
+    const outcomeId = await persistJobOutcome({
+      workspaceId: job.workspaceId,
+      jobId: job.id,
+      jobExecutionId: null,
+      outcomeStatus: "process_died_pre_execution",
+      output: {
+        type: "process_died_pre_execution",
+        recovered_by: "heartbeat",
+        execute_at: job.executeAt?.toISOString() ?? null,
+        dequeued_at: job.updatedAt.toISOString(),
+      },
+      error: "Job was dequeued but no execution row was created",
+      lastNSteps: [],
+    });
+
+    await db
+      .update(jobs)
+      .set({
+        status: "failed",
+        result: "Failed: worker died before creating a job execution row",
+        updatedAt: new Date(),
+      })
+      .where(and(eq(jobs.id, job.id), eq(jobs.status, "running")));
+
+    dequeuedWithoutExecution++;
+    triggerSupervisorReview(outcomeId);
+  }
+
+  logger.info("Heartbeat: orphaned outcome sweep completed", {
+    pendingReviewRefired,
+    inProgressReset,
+    inProgressSkipped,
+    dequeuedWithoutExecution,
+  });
+
+  return {
+    pendingReviewRefired,
+    inProgressReset,
+    inProgressSkipped,
+    dequeuedWithoutExecution,
+  };
 }
 
 // ── Heartbeat Cron App ───────────────────────────────────────────────────────
@@ -229,8 +301,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let plansExpired = 0;
   let plansAbandoned = 0;
   let staleRunningRecovered = 0;
-  let consecutiveFailureEscalations = 0;
-  const recurringJobsWithFreshFailures = new Map<string, typeof jobs.$inferSelect>();
+  let pendingReviewOutcomesRefired = 0;
+  let inProgressOutcomesReset = 0;
+  let inProgressOutcomesSkipped = 0;
+  let dequeuedWithoutExecutionRecovered = 0;
 
   try {
     const now = new Date();
@@ -291,9 +365,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             jobName: job.name,
             error: error.message,
           });
-          if (job.cronSchedule != null) {
-            recurringJobsWithFreshFailures.set(job.id, job);
-          }
           failed++;
         }
       }
@@ -336,6 +407,12 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
+    const orphanSweepResult = await sweepOrphanedOutcomes(now);
+    pendingReviewOutcomesRefired = orphanSweepResult.pendingReviewRefired;
+    inProgressOutcomesReset = orphanSweepResult.inProgressReset;
+    inProgressOutcomesSkipped = orphanSweepResult.inProgressSkipped;
+    dequeuedWithoutExecutionRecovered = orphanSweepResult.dequeuedWithoutExecution;
+
     // ── 5. Recover jobs stuck in "running" ─────────────────────────────
 
     const staleRunningCutoff = new Date(now.getTime() - STALE_RUNNING_THRESHOLD_MS);
@@ -370,8 +447,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     const failedExhaustedJobs: Array<{ id: string; name: string }> = [];
 
     for (const job of staleExhausted) {
-      const lastError = truncateJobFailureText(job.lastResult);
-
       if (job.cronSchedule != null) {
         try {
           const executeAt = computeNextCronTick(job.cronSchedule, job.timezone, now);
@@ -395,12 +470,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             executeAt: executeAt.toISOString(),
           });
 
-          await sendJobFailureDm({
-            jobId: job.id,
-            requestedBy: job.requestedBy,
-            text: `Recurring job \`${job.name}\` exhausted retries (last error: ${lastError}). Auto-recovered. Next attempt: ${executeAt.toISOString()}.`,
-            logContext: { event: "recurring_job_recovered_after_exhaustion" },
-          });
         } catch (error: any) {
           await db
             .update(jobs)
@@ -419,13 +488,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             timezone: job.timezone,
             error: error?.message,
           });
-
-          await sendJobFailureDm({
-            jobId: job.id,
-            requestedBy: job.requestedBy,
-            text: `Recurring job \`${job.name}\` exhausted retries but could not be auto-recovered. Last error: ${lastError}.`,
-            logContext: { event: "recurring_job_recovery_failed" },
-          });
         }
       } else {
         await db
@@ -438,13 +500,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
           .where(eq(jobs.id, job.id));
 
         failedExhaustedJobs.push({ id: job.id, name: job.name });
-
-        await sendJobFailureDm({
-          jobId: job.id,
-          requestedBy: job.requestedBy,
-          text: `Job ${job.name} exhausted retries. Last error: ${lastError}.`,
-          logContext: { event: "one_shot_job_exhausted_retries" },
-        });
       }
     }
 
@@ -539,32 +594,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
-    // Also escalate recurring jobs that are *already* in status=failed
-    // (parked from prior sweeps). Without this, jobs that died days ago
-    // never trigger a DM because they no longer enter the pending->due path
-    // and therefore don't land in `recurringJobsWithFreshFailures`.
-    // The marker-note dedupe inside maybeEscalateConsecutiveRecurringFailures
-    // ensures we only DM once per streak.
-    const stuckFailedRecurringJobs = await db
-      .select()
-      .from(jobs)
-      .where(
-        and(
-          eq(jobs.status, "failed"),
-          eq(jobs.enabled, 1),
-          sql`${jobs.cronSchedule} IS NOT NULL`,
-        ),
-      );
-
-    const escalationCandidates = new Map<string, typeof jobs.$inferSelect>(
-      recurringJobsWithFreshFailures,
-    );
-    for (const job of stuckFailedRecurringJobs) escalationCandidates.set(job.id, job);
-
-    consecutiveFailureEscalations = await maybeEscalateConsecutiveRecurringFailures(
-      [...escalationCandidates.values()],
-    );
-
     // ── Done ─────────────────────────────────────────────────────────────
 
     const duration = Date.now() - sweepStart;
@@ -574,7 +603,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       plansExpired,
       plansAbandoned,
       staleRunningRecovered,
-      consecutiveFailureEscalations,
+      pendingReviewOutcomesRefired,
+      inProgressOutcomesReset,
+      inProgressOutcomesSkipped,
+      dequeuedWithoutExecutionRecovered,
     });
 
     return c.json({
@@ -584,7 +616,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       plansExpired,
       plansAbandoned,
       staleRunningRecovered,
-      consecutiveFailureEscalations,
+      pendingReviewOutcomesRefired,
+      inProgressOutcomesReset,
+      inProgressOutcomesSkipped,
+      dequeuedWithoutExecutionRecovered,
       duration,
     });
   } catch (error: any) {

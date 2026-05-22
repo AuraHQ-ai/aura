@@ -589,7 +589,11 @@ export const jobExecutions = pgTable(
   ],
 );
 
-export type JobOutcomeStatus = "succeeded" | "errored" | "interrupted";
+export type JobOutcomeStatus =
+  | "succeeded"
+  | "errored"
+  | "interrupted"
+  | "process_died_pre_execution";
 export type JobOutcomeSupervisorStatus = "pending_review" | "in_progress" | "resolved" | "skipped";
 export type JobOutcomeSupervisorDecision =
   | "retry_as_is"
@@ -637,7 +641,7 @@ export const jobOutcomes = pgTable(
       .where(sql`job_execution_id IS NOT NULL`),
     check(
       "job_outcomes_outcome_status_check",
-      sql`${table.outcomeStatus} IN ('succeeded', 'errored', 'interrupted')`,
+      sql`${table.outcomeStatus} IN ('succeeded', 'errored', 'interrupted', 'process_died_pre_execution')`,
     ),
     check(
       "job_outcomes_supervisor_status_check",

@@ -20,7 +20,6 @@ import { detectScriptOutputError } from "./script-output.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
-import { sendJobFailureDm } from "./job-notifications.js";
 import {
   extractLastNSteps,
   persistJobOutcome,
@@ -585,13 +584,6 @@ export async function executeJob(
           updatedAt: new Date(),
         })
         .where(eq(jobs.id, jobId));
-
-      await sendJobFailureDm({
-        jobId,
-        requestedBy: job.requestedBy,
-        text: `I tried 3 times but couldn't complete this job: "${job.description}"\n\nError: ${error.message}`,
-        logContext: { executionId },
-      });
 
       logger.error("Heartbeat: job failed permanently", {
         jobName: job.name,

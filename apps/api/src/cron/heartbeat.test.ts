@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMock = vi.hoisted(() => {
@@ -59,6 +60,7 @@ const dbMock = vi.hoisted(() => {
 
 const executeJobMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
+const safePostMessageMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../db/client.js", () => ({
   db: {
@@ -90,6 +92,10 @@ vi.mock("./job-notifications.js", async (importOriginal) => {
     sendJobFailureDm: sendJobFailureDmMock,
   };
 });
+
+vi.mock("../lib/slack-messaging.js", () => ({
+  safePostMessage: safePostMessageMock,
+}));
 
 function queueDbResults(...results: unknown[][]) {
   dbMock.results = [...results];
@@ -153,6 +159,7 @@ describe("heartbeat stale running recovery", () => {
     dbMock.operations = [];
     vi.clearAllMocks();
     sendJobFailureDmMock.mockResolvedValue(true);
+    safePostMessageMock.mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -180,7 +187,7 @@ describe("heartbeat stale running recovery", () => {
     }
   });
 
-  it("auto-recovers stale exhausted recurring jobs and sends a DM", async () => {
+  it("auto-recovers stale exhausted recurring jobs without legacy DM escalation", async () => {
     const recurringJob = baseJob({
       cronSchedule: "0 10 * * *",
       name: "sync-meta-comments-daily",
@@ -191,6 +198,9 @@ describe("heartbeat stale running recovery", () => {
       [], // pending jobs
       [], // expired plan notes
       [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
       [], // stale running jobs below max retries
       [recurringJob], // stale exhausted jobs
       [], // recurring recovery update
@@ -213,17 +223,10 @@ describe("heartbeat stale running recovery", () => {
     expect((recoveredUpdate?.executeAt as Date).toISOString()).toBe(
       "2026-05-20T10:00:00.000Z",
     );
-    expect(sendJobFailureDmMock).toHaveBeenCalledOnce();
-    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        jobId: "job-1",
-        requestedBy: "U_REQUESTER",
-        text: expect.stringContaining("Auto-recovered. Next attempt: 2026-05-20T10:00:00.000Z."),
-      }),
-    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
-  it("fails stale exhausted one-shot jobs and sends a DM", async () => {
+  it("fails stale exhausted one-shot jobs without legacy DM escalation", async () => {
     const oneShotJob = baseJob({
       cronSchedule: null,
       name: "one-shot-followup",
@@ -231,6 +234,9 @@ describe("heartbeat stale running recovery", () => {
     });
 
     queueDbResults(
+      [],
+      [],
+      [],
       [],
       [],
       [],
@@ -251,18 +257,14 @@ describe("heartbeat stale running recovery", () => {
       status: "failed",
       result: "Failed: job stuck in running state and exceeded retry limit",
     });
-    expect(sendJobFailureDmMock).toHaveBeenCalledOnce();
-    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        jobId: "job-1",
-        requestedBy: "U_REQUESTER",
-        text: "Job one-shot-followup exhausted retries. Last error: tool failed.",
-      }),
-    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
   it("keeps healthy stale recovery for jobs below the retry limit", async () => {
     queueDbResults(
+      [],
+      [],
+      [],
       [],
       [],
       [],
@@ -294,6 +296,9 @@ describe("heartbeat stale running recovery", () => {
 
   it("writes a pending-review interrupted outcome for stale running recovery", async () => {
     queueDbResults(
+      [],
+      [],
+      [],
       [],
       [],
       [],
@@ -335,6 +340,9 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [],
+      [],
+      [],
       [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
       [],
       [{ id: "exec-stale", jobId: "job-stale" }],
@@ -370,6 +378,9 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [],
+      [],
+      [],
       [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
       [],
       [{ id: "exec-stale", jobId: "job-stale" }],
@@ -395,212 +406,159 @@ describe("heartbeat stale running recovery", () => {
     expect(resolveJobFailureDmTarget(" U_OWNER ")).toBe("U_OWNER");
   });
 
-  it("escalates after 5 consecutive failed recurring job executions", async () => {
-    const recurringJob = baseJob({
-      status: "pending",
-      cronSchedule: "* * * * *",
-      name: "sync-meta-comments-daily",
-      lastResult: "previous failure",
-    });
-    const recentFailures = [0, 1, 2, 3, 4].map((index) => ({
-      id: `exec-${index}`,
-      status: "failed",
-      startedAt: new Date(`2026-05-20T08:5${4 - index}:00.000Z`),
-      error: index === 0 ? "Meta API timeout" : "previous error",
-    }));
-
-    executeJobMock.mockRejectedValueOnce(new Error("Meta API timeout"));
+  it("sweep refires webhook for outcomes stuck in pending_review past 5min", async () => {
+    process.env.AURA_PUBLIC_URL = "https://aura.test";
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
     queueDbResults(
-      [recurringJob], // pending jobs
-      [], // expired plan notes
-      [], // stale plan notes
-      [], // stale running jobs below max retries
-      [], // stale exhausted jobs
-      [], // stuck failed recurring jobs (none)
-      recentFailures, // recent job executions
-      [], // no existing marker
-      [], // marker insert
+      [{ id: "00000000-0000-4000-8000-000000000101" }],
+      [],
+      [],
     );
 
-    const { heartbeatApp } = await import("./heartbeat.js");
-    const response = await heartbeatApp.request("/api/cron/heartbeat", {
-      headers: { authorization: "Bearer test-secret" },
-    });
+    const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
+    const result = await sweepOrphanedOutcomes();
 
-    expect(response.status).toBe(200);
-    expect(sendJobFailureDmMock).toHaveBeenCalledOnce();
-    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+    expect(result.pendingReviewRefired).toBe(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://aura.test/api/cron/supervisor",
       expect.objectContaining({
-        jobId: "job-1",
-        requestedBy: "U_REQUESTER",
-        text: expect.stringContaining(
-          "Your recurring job `sync-meta-comments-daily` has failed 5 consecutive runs.",
-        ),
+        method: "POST",
+        body: JSON.stringify({ outcomeId: "00000000-0000-4000-8000-000000000101" }),
+        keepalive: true,
       }),
     );
-    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("It's been broken since 2026-05-20T08:50:00.000Z."),
-      }),
+    expect(updateSets()).toEqual([]);
+  });
+
+  it("sweep resets in_progress outcomes past 10min back to pending_review when attempts < 3", async () => {
+    process.env.AURA_PUBLIC_URL = "https://aura.test";
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    queueDbResults(
+      [],
+      [{ id: "00000000-0000-4000-8000-000000000102", jobId: "job-1", supervisorAttempts: 2 }],
+      [{ id: "00000000-0000-4000-8000-000000000102" }],
+      [],
     );
-    expect(insertValues()).toEqual(
+
+    const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
+    const result = await sweepOrphanedOutcomes();
+
+    expect(result.inProgressReset).toBe(1);
+    expect(updateSets()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          topic: "job-failure-streak:job-1",
-          category: "job_failure_streak_marker",
-          injectInContext: false,
+          supervisorStatus: "pending_review",
+          supervisorInvocationId: null,
+          supervisorStartedAt: null,
         }),
       ]),
     );
-  });
-
-  it("does not duplicate escalation on the 6th consecutive failure in the same streak", async () => {
-    const recurringJob = baseJob({
-      status: "pending",
-      cronSchedule: "* * * * *",
-      name: "sync-meta-comments-daily",
-    });
-    const recentFailures = [0, 1, 2, 3, 4].map((index) => ({
-      id: `exec-${index + 2}`,
-      status: "failed",
-      startedAt: new Date(`2026-05-20T08:5${5 - index}:00.000Z`),
-      error: "still failing",
-    }));
-
-    executeJobMock.mockRejectedValueOnce(new Error("still failing"));
-    queueDbResults(
-      [recurringJob],
-      [],
-      [],
-      [],
-      [],
-      [], // stuck failed recurring jobs (none)
-      recentFailures,
-      [{ id: "marker-1", updatedAt: new Date("2026-05-20T08:54:30.000Z") }],
-      [], // no successful executions since the marker
-    );
-
-    const { heartbeatApp } = await import("./heartbeat.js");
-    const response = await heartbeatApp.request("/api/cron/heartbeat", {
-      headers: { authorization: "Bearer test-secret" },
-    });
-
-    expect(response.status).toBe(200);
-    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
-    expect(insertValues()).toEqual([]);
-  });
-
-  it("does not escalate immediately after a successful run resets the streak", async () => {
-    const recurringJob = baseJob({
-      status: "pending",
-      cronSchedule: "* * * * *",
-      name: "sync-meta-comments-daily",
-    });
-    const recentExecutions = [
-      {
-        id: "exec-latest",
-        status: "failed",
-        startedAt: new Date("2026-05-20T08:58:00.000Z"),
-        error: "new failure",
-      },
-      {
-        id: "exec-success",
-        status: "completed",
-        startedAt: new Date("2026-05-20T08:57:00.000Z"),
-        error: null,
-      },
-      {
-        id: "exec-old-1",
-        status: "failed",
-        startedAt: new Date("2026-05-20T08:56:00.000Z"),
-        error: "old failure",
-      },
-      {
-        id: "exec-old-2",
-        status: "failed",
-        startedAt: new Date("2026-05-20T08:55:00.000Z"),
-        error: "old failure",
-      },
-      {
-        id: "exec-old-3",
-        status: "failed",
-        startedAt: new Date("2026-05-20T08:54:00.000Z"),
-        error: "old failure",
-      },
-    ];
-
-    executeJobMock.mockRejectedValueOnce(new Error("new failure"));
-    queueDbResults(
-      [recurringJob],
-      [],
-      [],
-      [],
-      [],
-      [], // stuck failed recurring jobs (none)
-      recentExecutions,
-      [], // marker reset delete
-    );
-
-    const { heartbeatApp } = await import("./heartbeat.js");
-    const response = await heartbeatApp.request("/api/cron/heartbeat", {
-      headers: { authorization: "Bearer test-secret" },
-    });
-
-    expect(response.status).toBe(200);
-    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
-    expect(insertValues()).toEqual([]);
-  });
-
-  it("escalates a recurring job already parked in status=failed (stuck since prior sweep)", async () => {
-    const stuckJob = baseJob({
-      status: "failed",
-      cronSchedule: "0 * * * *",
-      name: "sync-meta-comments-daily",
-      lastResult: "Execution interrupted: recovered by stale detection",
-    });
-    const recentFailures = [0, 1, 2, 3, 4].map((index) => ({
-      id: `exec-${index}`,
-      status: "failed",
-      startedAt: new Date(`2026-05-09T0${4 - index}:00:00.000Z`),
-      error: "Execution interrupted: recovered by stale detection",
-    }));
-
-    queueDbResults(
-      [], // pending jobs (none — stuck job is in status=failed)
-      [], // expired plan notes
-      [], // stale plan notes
-      [], // stale running jobs below max retries
-      [], // stale exhausted jobs
-      [stuckJob], // stuck failed recurring jobs ← new query
-      recentFailures, // recent job executions
-      [], // no existing marker
-      [], // marker insert
-    );
-
-    const { heartbeatApp } = await import("./heartbeat.js");
-    const response = await heartbeatApp.request("/api/cron/heartbeat", {
-      headers: { authorization: "Bearer test-secret" },
-    });
-
-    expect(response.status).toBe(200);
-    expect(sendJobFailureDmMock).toHaveBeenCalledOnce();
-    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://aura.test/api/cron/supervisor",
       expect.objectContaining({
-        jobId: "job-1",
-        requestedBy: "U_REQUESTER",
-        text: expect.stringContaining(
-          "Your recurring job `sync-meta-comments-daily` has failed 5 consecutive runs.",
-        ),
+        body: JSON.stringify({ outcomeId: "00000000-0000-4000-8000-000000000102" }),
       }),
     );
-    expect(insertValues()).toEqual(
+  });
+
+  it("sweep marks in_progress outcomes as skipped + DMs when attempts >= 3", async () => {
+    queueDbResults(
+      [],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1", supervisorAttempts: 3 }],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1" }],
+      [{ id: "job-1", name: "stuck supervisor job", requestedBy: "U_REQUESTER" }],
+      [],
+    );
+
+    const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
+    const result = await sweepOrphanedOutcomes();
+
+    expect(result.inProgressSkipped).toBe(1);
+    expect(updateSets()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          topic: "job-failure-streak:job-1",
-          category: "job_failure_streak_marker",
+          supervisorStatus: "skipped",
+          supervisorReasoning: "max supervisor attempts exceeded",
         }),
       ]),
     );
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "U_REQUESTER",
+        text: "Supervisor for job stuck supervisor job exhausted retries; manual intervention needed",
+      }),
+    );
+  });
+
+  it("sweep writes process_died_pre_execution outcome for jobs dequeued without execution row", async () => {
+    process.env.AURA_PUBLIC_URL = "https://aura.test";
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    queueDbResults(
+      [],
+      [],
+      [
+        {
+          id: "job-lost",
+          workspaceId: "default",
+          name: "lost before execution",
+          executeAt: new Date("2026-05-20T08:45:00.000Z"),
+          updatedAt: new Date("2026-05-20T08:46:00.000Z"),
+        },
+      ],
+      [{ id: "00000000-0000-4000-8000-000000000104" }],
+      [],
+    );
+
+    const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
+    const result = await sweepOrphanedOutcomes();
+
+    expect(result.dequeuedWithoutExecution).toBe(1);
+    expect(insertValues()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: "default",
+          jobId: "job-lost",
+          jobExecutionId: null,
+          outcomeStatus: "process_died_pre_execution",
+          output: expect.objectContaining({
+            type: "process_died_pre_execution",
+            recovered_by: "heartbeat",
+            execute_at: "2026-05-20T08:45:00.000Z",
+            dequeued_at: "2026-05-20T08:46:00.000Z",
+          }),
+          error: "Job was dequeued but no execution row was created",
+          lastNSteps: [],
+          supervisorStatus: "pending_review",
+        }),
+      ]),
+    );
+    expect(updateSets()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "failed",
+          result: "Failed: worker died before creating a job execution row",
+        }),
+      ]),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://aura.test/api/cron/supervisor",
+      expect.objectContaining({
+        body: JSON.stringify({ outcomeId: "00000000-0000-4000-8000-000000000104" }),
+      }),
+    );
+  });
+
+  it("legacy escalation is no longer called", () => {
+    const source = readFileSync(new URL("./heartbeat.ts", import.meta.url), "utf8");
+    const legacyFunction = ["maybe", "Escalate", "Consecutive", "Recurring", "Failures"].join("");
+    const legacyMarkerTopic = ["job", "failure", "streak"].join("_");
+
+    expect(source).not.toContain(legacyFunction);
+    expect(source).not.toContain(legacyMarkerTopic);
   });
 
 });
