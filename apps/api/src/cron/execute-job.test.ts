@@ -162,6 +162,9 @@ function baseJob(overrides: Record<string, unknown> = {}) {
 }
 
 describe("executeJob outcome persistence", () => {
+  const originalCronSecret = process.env.CRON_SECRET;
+  const originalAuraPublicUrl = process.env.AURA_PUBLIC_URL;
+
   beforeEach(() => {
     dbMock.results = [];
     dbMock.operations = [];
@@ -177,6 +180,17 @@ describe("executeJob outcome persistence", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+    if (originalCronSecret === undefined) {
+      delete process.env.CRON_SECRET;
+    } else {
+      process.env.CRON_SECRET = originalCronSecret;
+    }
+    if (originalAuraPublicUrl === undefined) {
+      delete process.env.AURA_PUBLIC_URL;
+    } else {
+      process.env.AURA_PUBLIC_URL = originalAuraPublicUrl;
+    }
   });
 
   it("writes a pending-review succeeded outcome for script-only success", async () => {
@@ -285,6 +299,65 @@ describe("executeJob outcome persistence", () => {
       ]),
     );
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+
+  it("invokes the supervisor webhook after persisting an outcome", async () => {
+    process.env.CRON_SECRET = "test-secret";
+    process.env.AURA_PUBLIC_URL = "https://aura.test";
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 0,
+      stdout: "{\"ok\":true,\"summary\":\"done\"}",
+      stderr: "",
+    });
+    queueDbResults(
+      [{ id: "job-1" }],
+      [{ id: "exec-1" }],
+      [],
+      [],
+      [{ id: "00000000-0000-4000-8000-000000000001" }],
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(executeJob(baseJob() as any, "heartbeat")).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://aura.test/api/cron/supervisor",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer test-secret",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({ outcomeId: "00000000-0000-4000-8000-000000000001" }),
+        keepalive: true,
+      }),
+    );
+  });
+
+  it("does not fail the worker when the supervisor webhook rejects", async () => {
+    process.env.CRON_SECRET = "test-secret";
+    process.env.AURA_PUBLIC_URL = "https://aura.test";
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("network down");
+    }));
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 0,
+      stdout: "{\"ok\":true,\"summary\":\"done\"}",
+      stderr: "",
+    });
+    queueDbResults(
+      [{ id: "job-1" }],
+      [{ id: "exec-1" }],
+      [],
+      [],
+      [{ id: "00000000-0000-4000-8000-000000000001" }],
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+
+    await expect(executeJob(baseJob() as any, "heartbeat")).resolves.toBe(true);
   });
 });
 describe("detectScriptOutputError", () => {

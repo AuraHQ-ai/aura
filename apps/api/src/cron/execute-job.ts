@@ -21,7 +21,12 @@ import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 import { sendJobFailureDm } from "./job-notifications.js";
-import { extractLastNSteps, persistJobOutcome, serializeJobError } from "./job-outcomes.js";
+import {
+  extractLastNSteps,
+  persistJobOutcome,
+  serializeJobError,
+  triggerSupervisorReview,
+} from "./job-outcomes.js";
 
 const botToken = process.env.SLACK_BOT_TOKEN || "";
 const slackClient = new WebClient(botToken);
@@ -303,7 +308,7 @@ export async function executeJob(
               summary: resultText.slice(0, 500),
             }).where(eq(jobExecutions.id, executionId));
 
-            await persistJobOutcome({
+            const outcomeId = await persistJobOutcome({
               workspaceId: job.workspaceId,
               jobId,
               jobExecutionId: executionId,
@@ -318,6 +323,7 @@ export async function executeJob(
               },
               lastNSteps: [],
             });
+            triggerSupervisorReview(outcomeId);
 
             logger.info("executeJob: script-only job completed", { jobId, jobName: job.name });
             return true;
@@ -489,7 +495,7 @@ export async function executeJob(
       });
     }
 
-    await persistJobOutcome({
+    const outcomeId = await persistJobOutcome({
       workspaceId: job.workspaceId,
       jobId,
       jobExecutionId: executionId,
@@ -502,6 +508,7 @@ export async function executeJob(
       },
       lastNSteps,
     });
+    triggerSupervisorReview(outcomeId);
 
     return true;
   } catch (error: any) {
@@ -535,7 +542,7 @@ export async function executeJob(
     const retryExhausted = newRetries >= MAX_RETRIES;
     const scratchpadContents = getScratchpadContents(invocationId);
 
-    await persistJobOutcome({
+    const outcomeId = await persistJobOutcome({
       workspaceId: job.workspaceId,
       jobId,
       jobExecutionId: executionId,
@@ -549,6 +556,7 @@ export async function executeJob(
       error: serializeJobError(error),
       lastNSteps,
     });
+    triggerSupervisorReview(outcomeId);
 
     if (!executionId) {
       throw error;

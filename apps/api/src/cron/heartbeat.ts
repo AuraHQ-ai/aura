@@ -8,7 +8,7 @@ import { logger } from "../lib/logger.js";
 import { executeJob, MAX_RETRIES } from "./execute-job.js";
 import { computeNextCronTick } from "./cron-utils.js";
 import { sendJobFailureDm, truncateJobFailureText } from "./job-notifications.js";
-import { persistJobOutcome } from "./job-outcomes.js";
+import { persistJobOutcome, triggerSupervisorReview } from "./job-outcomes.js";
 
 /** Max jobs to process per heartbeat sweep */
 const MAX_JOBS_PER_SWEEP = 10;
@@ -490,7 +490,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
         if (!job) continue;
 
         jobIdsWithExecutionOutcomes.add(job.id);
-        await persistJobOutcome({
+        const outcomeId = await persistJobOutcome({
           workspaceId: job.workspaceId,
           jobId: job.id,
           jobExecutionId: execution.id,
@@ -503,12 +503,13 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
           error: "Execution interrupted: recovered by stale detection",
           lastNSteps: [],
         });
+        triggerSupervisorReview(outcomeId);
       }
 
       for (const job of staleJobs) {
         if (jobIdsWithExecutionOutcomes.has(job.id)) continue;
 
-        await persistJobOutcome({
+        const outcomeId = await persistJobOutcome({
           workspaceId: job.workspaceId,
           jobId: job.id,
           jobExecutionId: null,
@@ -521,6 +522,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
           error: "Execution interrupted: recovered by stale detection",
           lastNSteps: [],
         });
+        triggerSupervisorReview(outcomeId);
       }
     }
 

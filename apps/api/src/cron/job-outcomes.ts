@@ -4,6 +4,7 @@ import { jobOutcomes, type JobOutcomeStatus } from "@aura/db/schema";
 
 const MAX_LAST_STEPS = 3;
 const MAX_STEP_TEXT_CHARS = 4_000;
+const DEFAULT_PUBLIC_URL = "https://aura-alpha-five.vercel.app";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -81,26 +82,72 @@ export async function persistJobOutcome({
   output?: JsonRecord;
   error?: string | null;
   lastNSteps?: JsonRecord[];
-}): Promise<void> {
+}): Promise<string | null> {
   try {
-    await db.insert(jobOutcomes).values({
-      workspaceId: workspaceId ?? "default",
-      jobId,
-      jobExecutionId: jobExecutionId ?? null,
-      outcomeStatus,
-      output,
-      error,
-      lastNSteps,
-      supervisorStatus: "pending_review",
-      supervisorAttempts: 0,
-      updatedAt: new Date(),
-    });
-  } catch (insertError: any) {
+    const [outcome] = await db
+      .insert(jobOutcomes)
+      .values({
+        workspaceId: workspaceId ?? "default",
+        jobId,
+        jobExecutionId: jobExecutionId ?? null,
+        outcomeStatus,
+        output,
+        error,
+        lastNSteps,
+        supervisorStatus: "pending_review",
+        supervisorAttempts: 0,
+        updatedAt: new Date(),
+      })
+      .returning({ id: jobOutcomes.id });
+
+    return outcome?.id ?? null;
+  } catch (insertError: unknown) {
     logger.error("persistJobOutcome: failed to insert outcome row", {
       jobId,
       jobExecutionId,
       outcomeStatus,
-      error: insertError?.message,
+      error: insertError instanceof Error ? insertError.message : String(insertError),
     });
+    return null;
   }
+}
+
+function getSupervisorWebhookUrl(): string {
+  if (process.env.AURA_PUBLIC_URL) {
+    return `${process.env.AURA_PUBLIC_URL.replace(/\/+$/, "")}/api/cron/supervisor`;
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/api/cron/supervisor`;
+  }
+  if (process.env.VERCEL_URL) {
+    const host = process.env.VERCEL_URL;
+    const protocol = host.includes("localhost") ? "http" : "https";
+    return `${protocol}://${host}/api/cron/supervisor`;
+  }
+  return `${DEFAULT_PUBLIC_URL}/api/cron/supervisor`;
+}
+
+export function triggerSupervisorReview(outcomeId: string | null | undefined): void {
+  if (!outcomeId) return;
+
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    logger.warn("triggerSupervisorReview: CRON_SECRET not configured", { outcomeId });
+    return;
+  }
+
+  void fetch(getSupervisorWebhookUrl(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cronSecret}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ outcomeId }),
+    keepalive: true,
+  }).catch((error: unknown) => {
+    logger.warn("triggerSupervisorReview: supervisor webhook failed", {
+      outcomeId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
