@@ -481,8 +481,30 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
+    // Also escalate recurring jobs that are *already* in status=failed
+    // (parked from prior sweeps). Without this, jobs that died days ago
+    // never trigger a DM because they no longer enter the pending->due path
+    // and therefore don't land in `recurringJobsWithFreshFailures`.
+    // The marker-note dedupe inside maybeEscalateConsecutiveRecurringFailures
+    // ensures we only DM once per streak.
+    const stuckFailedRecurringJobs = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.status, "failed"),
+          eq(jobs.enabled, 1),
+          sql`${jobs.cronSchedule} IS NOT NULL`,
+        ),
+      );
+
+    const escalationCandidates = new Map<string, typeof jobs.$inferSelect>(
+      recurringJobsWithFreshFailures,
+    );
+    for (const job of stuckFailedRecurringJobs) escalationCandidates.set(job.id, job);
+
     consecutiveFailureEscalations = await maybeEscalateConsecutiveRecurringFailures(
-      [...recurringJobsWithFreshFailures.values()],
+      [...escalationCandidates.values()],
     );
 
     // ── Done ─────────────────────────────────────────────────────────────
