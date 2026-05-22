@@ -317,6 +317,7 @@ describe("heartbeat stale running recovery", () => {
       [], // stale plan notes
       [], // stale running jobs below max retries
       [], // stale exhausted jobs
+      [], // stuck failed recurring jobs (none)
       recentFailures, // recent job executions
       [], // no existing marker
       [], // marker insert
@@ -374,6 +375,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck failed recurring jobs (none)
       recentFailures,
       [{ id: "marker-1", updatedAt: new Date("2026-05-20T08:54:30.000Z") }],
       [], // no successful executions since the marker
@@ -435,6 +437,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck failed recurring jobs (none)
       recentExecutions,
       [], // marker reset delete
     );
@@ -448,4 +451,57 @@ describe("heartbeat stale running recovery", () => {
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
     expect(insertValues()).toEqual([]);
   });
+
+  it("escalates a recurring job already parked in status=failed (stuck since prior sweep)", async () => {
+    const stuckJob = baseJob({
+      status: "failed",
+      cronSchedule: "0 * * * *",
+      name: "sync-meta-comments-daily",
+      lastResult: "Execution interrupted: recovered by stale detection",
+    });
+    const recentFailures = [0, 1, 2, 3, 4].map((index) => ({
+      id: `exec-${index}`,
+      status: "failed",
+      startedAt: new Date(`2026-05-09T0${4 - index}:00:00.000Z`),
+      error: "Execution interrupted: recovered by stale detection",
+    }));
+
+    queueDbResults(
+      [], // pending jobs (none — stuck job is in status=failed)
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+      [stuckJob], // stuck failed recurring jobs ← new query
+      recentFailures, // recent job executions
+      [], // no existing marker
+      [], // marker insert
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(sendJobFailureDmMock).toHaveBeenCalledOnce();
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: "job-1",
+        requestedBy: "U_REQUESTER",
+        text: expect.stringContaining(
+          "Your recurring job `sync-meta-comments-daily` has failed 5 consecutive runs.",
+        ),
+      }),
+    );
+    expect(insertValues()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          topic: "job-failure-streak:job-1",
+          category: "job_failure_streak_marker",
+        }),
+      ]),
+    );
+  });
+
 });
