@@ -11,6 +11,43 @@ Aura must **join a channel** before she can read or post. `list_channels` only s
 
 ---
 
+## When Aura responds in channels
+
+Aura's response decision happens in `apps/api/src/pipeline/index.ts` before any LLM call. The order is:
+
+1. **DM** -- always responds.
+2. **Explicit `@Aura` mention** -- always responds.
+3. **Addressed by name** -- always responds.
+4. **LLM gate (thread participant, recent channel activity, or cold observation)** -- a fast model decides whether a response would add value. Fail-closed when in doubt.
+
+Two workspace settings (in the `settings` table, editable via SQL with no redeploy) override these tiers:
+
+### `gated_channels`
+
+A JSON array of channel IDs. Channels in this list **require an explicit `@Aura` mention** to trigger any pipeline processing. The LLM gate is bypassed -- nothing runs without a mention. The raw user message is still stored for memory and search, but no conversation fetch, lock, or LLM call happens.
+
+This is a hard, code-level gate (shipped in PR #921) -- it cannot be overridden by prompt instructions or the LLM gate.
+
+Typical use: noisy channels like `#bugs` where Aura should observe but never speak unless directly asked.
+
+```sql
+INSERT INTO settings (workspace_id, key, value, updated_at)
+VALUES ('<workspace_id>', 'gated_channels', '["C019605SSNN"]', now())
+ON CONFLICT (workspace_id, key)
+DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+```
+
+### `always_process_channels`
+
+A JSON array of channel IDs that **bypass the LLM gate** (Tier 4). Aura still runs the pipeline and the LLM decides whether to send a reply, but the cheap fast-model gate that normally suppresses cold-observation responses is skipped.
+
+Typical use: small high-signal channels where every message is worth full processing.
+
+The two settings are not mutually exclusive but pull in opposite directions -- `gated_channels` closes the gate, `always_process_channels` opens it. If a channel is in both, `gated_channels` wins (the mention check runs first).
+
+---
+
+
 ## Channels
 
 ### `list_channels`
