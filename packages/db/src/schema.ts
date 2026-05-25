@@ -535,6 +535,7 @@ export const jobs = pgTable(
     playbook: text("playbook"),
     script: text("script"),
     cronSchedule: text("cron_schedule"),
+    notifyOnSuccess: boolean("notify_on_success").notNull().default(false),
     frequencyConfig: jsonb("frequency_config").$type<FrequencyConfig>(),
     channelId: text("channel_id"),
     threadTs: text("thread_ts"),
@@ -598,6 +599,7 @@ export type JobOutcomeSupervisorStatus = "pending_review" | "in_progress" | "res
 export type JobOutcomeSupervisorDecision =
   | "retry_as_is"
   | "retry_with_fix"
+  | "silent_success"
   | "report_success"
   | "report_failure"
   | "escalate"
@@ -649,7 +651,7 @@ export const jobOutcomes = pgTable(
     ),
     check(
       "job_outcomes_supervisor_decision_check",
-      sql`${table.supervisorDecision} IS NULL OR ${table.supervisorDecision} IN ('retry_as_is', 'retry_with_fix', 'report_success', 'report_failure', 'escalate', 'disable_job')`,
+      sql`${table.supervisorDecision} IS NULL OR ${table.supervisorDecision} IN ('retry_as_is', 'retry_with_fix', 'silent_success', 'report_success', 'report_failure', 'escalate', 'disable_job')`,
     ),
   ],
 );
