@@ -143,6 +143,7 @@ function baseJob(overrides: Record<string, unknown> = {}) {
     playbook: null,
     script: null,
     cronSchedule: null,
+    notifyOnSuccess: false,
     frequencyConfig: null,
     channelId: null,
     threadTs: null,
@@ -183,6 +184,39 @@ function baseExecution(overrides: Record<string, unknown> = {}) {
     error: "model stream dropped",
     ...overrides,
   };
+}
+
+function promptContextFromGenerateCall() {
+  const prompt = String(generateObjectMock.mock.calls.at(-1)?.[0]?.prompt ?? "");
+  const contextJson = prompt.match(/Context:\n([\s\S]*)$/)?.[1];
+  if (!contextJson) throw new Error("Supervisor prompt did not include JSON context");
+  return JSON.parse(contextJson) as {
+    job: { cron_schedule: string | null; notify_on_success: boolean };
+    last_5_executions: Array<{ status: string; error: string | null }>;
+  };
+}
+
+function mockCleanSuccessDecisionPolicy() {
+  generateObjectMock.mockImplementation(async (args: { prompt: string }) => {
+    const contextJson = args.prompt.match(/Context:\n([\s\S]*)$/)?.[1];
+    if (!contextJson) throw new Error("Supervisor prompt did not include JSON context");
+    const context = JSON.parse(contextJson) as {
+      job: { cron_schedule: string | null; notify_on_success: boolean };
+      last_5_executions: Array<{ status: string; error: string | null }>;
+    };
+    const recoveredFromFailure = context.last_5_executions.some(
+      (execution) => execution.status === "failed" || execution.error,
+    );
+    const shouldReport =
+      context.job.notify_on_success || context.job.cron_schedule === null || recoveredFromFailure;
+
+    return {
+      object: {
+        decision: shouldReport ? "report_success" : "silent_success",
+        reasoning: shouldReport ? "Success should be reported." : "Routine recurring success.",
+      },
+    };
+  });
 }
 
 async function invokeSupervisor() {
@@ -282,6 +316,7 @@ describe("supervisor cron", () => {
   });
 
   it.each([
+    ["silent_success", { outcomeStatus: "succeeded", error: null }, { dmCount: 0 }],
     ["report_success", { outcomeStatus: "succeeded", error: null }, { dmCount: 1 }],
     ["report_failure", {}, { dmCount: 1 }],
     ["retry_as_is", {}, { dmCount: 1, jobUpdate: { status: "pending", retries: 0 } }],
@@ -339,6 +374,71 @@ describe("supervisor cron", () => {
       });
     },
   );
+
+  it.each([
+    {
+      name: "recurring clean success silently resolves",
+      job: baseJob({ cronSchedule: "50 8 * * 1-5", notifyOnSuccess: false }),
+      executions: [baseExecution({ status: "succeeded", error: null, summary: "No changes needed" })],
+      expectedDecision: "silent_success",
+      expectedDmCount: 0,
+    },
+    {
+      name: "one-shot clean success reports completion",
+      job: baseJob({ cronSchedule: null, notifyOnSuccess: false }),
+      executions: [baseExecution({ status: "succeeded", error: null, summary: "Task completed" })],
+      expectedDecision: "report_success",
+      expectedDmCount: 1,
+    },
+    {
+      name: "recurring clean success with notify_on_success reports completion",
+      job: baseJob({ cronSchedule: "0 9 * * *", notifyOnSuccess: true }),
+      executions: [baseExecution({ status: "succeeded", error: null, summary: "Task completed" })],
+      expectedDecision: "report_success",
+      expectedDmCount: 1,
+    },
+    {
+      name: "recovered clean success reports completion",
+      job: baseJob({ cronSchedule: "0 9 * * *", notifyOnSuccess: false }),
+      executions: [
+        baseExecution({ status: "succeeded", error: null, summary: "Recovered" }),
+        baseExecution({
+          id: "00000000-0000-4000-8000-000000000021",
+          status: "failed",
+          error: "Previous run failed",
+        }),
+      ],
+      expectedDecision: "report_success",
+      expectedDmCount: 1,
+    },
+  ])("$name", async ({ job, executions, expectedDecision, expectedDmCount }) => {
+    mockCleanSuccessDecisionPolicy();
+    queueDbResults(
+      [baseOutcome({ outcomeStatus: "succeeded", error: null })],
+      [job],
+      executions,
+    );
+
+    const response = await invokeSupervisor();
+    const body = await response.json();
+    const prompt = String(generateObjectMock.mock.calls[0][0].prompt);
+    const promptContext = promptContextFromGenerateCall();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, decision: expectedDecision });
+    expect(prompt).toContain("silent_success");
+    expect(prompt).toContain("default for routine recurring runs");
+    expect(prompt).toContain("notify_on_success is true");
+    expect(promptContext.job).toMatchObject({
+      cron_schedule: job.cronSchedule,
+      notify_on_success: job.notifyOnSuccess,
+    });
+    expect(sendJobFailureDmMock).toHaveBeenCalledTimes(expectedDmCount);
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: expectedDecision,
+    });
+  });
 
   it("returns errored outcomes to pending_review when the LLM fails", async () => {
     generateObjectMock.mockRejectedValue(new Error("gateway unavailable"));

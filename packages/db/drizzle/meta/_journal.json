@@ -477,6 +477,13 @@
       "when": 1779440400000,
       "tag": "0067_process_died_pre_execution_outcome",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1779701400000,
+      "tag": "0068_supervisor_silent_success",
+      "breakpoints": true
     }
   ]
 }

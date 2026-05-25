@@ -23,6 +23,7 @@ const supervisorDecisionSchema = z.object({
   decision: z.enum([
     "retry_as_is",
     "retry_with_fix",
+    "silent_success",
     "report_success",
     "report_failure",
     "escalate",
@@ -143,7 +144,8 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
       prompt: truncateForPrompt(`Review this completed job outcome and decide the next action.
 
 Decision meanings:
-- report_success: outcome succeeded and the requester should be told.
+- silent_success: outcome succeeded cleanly and should be resolved with no DM. This is the default for routine recurring runs when cron_schedule is set and notify_on_success is false.
+- report_success: outcome succeeded and the requester should be told. Reserve this for noteworthy success: a job that had been failing recovered, the first successful run after a code change, or notify_on_success is true. One-shot jobs with no cron_schedule should usually report success.
 - report_failure: outcome failed in a way the requester should know about; do not retry.
 - retry_as_is: transient failure or likely timeout; retry immediately without changing the job.
 - retry_with_fix: likely Aura code/config bug; retry now and create an engineering issue.
@@ -171,6 +173,7 @@ ${jsonForPrompt({
     enabled: context.job.enabled,
     requested_by: context.job.requestedBy,
     cron_schedule: context.job.cronSchedule,
+    notify_on_success: context.job.notifyOnSuccess,
     frequency_config: context.job.frequencyConfig,
     last_result: context.job.lastResult,
   },
@@ -290,6 +293,10 @@ async function applySupervisorDecision(
   const link = jobLink(context.job.id);
 
   switch (decision.decision) {
+    case "silent_success": {
+      return;
+    }
+
     case "report_success": {
       await sendSupervisorDm(
         context.job,
