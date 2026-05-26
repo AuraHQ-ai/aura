@@ -104,7 +104,10 @@ A heartbeat runs every 30 minutes via Vercel Cron. It:
 2. Evaluates cron schedules and frequency limits
 3. Executes each job with full tool access (up to 350 tool calls per job)
 4. Logs execution traces for debugging
-5. Retries failed jobs (3x with 30-min backoff)
+5. Writes a row to `job_outcomes` after every execution (success, error, or interruption) and fires a webhook to the supervisor
+6. Reaps orphaned supervisor invocations and jobs that died pre-execution
+
+Every execution outcome is reviewed by the **supervisor** -- a separately invoked fast-model LLM at `POST /api/cron/supervisor` that picks one of seven fixed decisions (`silent_success`, `report_success`, `report_failure`, `retry_as_is`, `retry_with_fix`, `escalate`, `disable_job`). It replaces the older blind 3x backoff retry loop: retries are now LLM-decided, and `retry_with_fix` can open an `auto-supervisor-fix` issue on the repo. Each outcome is processed up to 3 times before being marked `skipped`. See [Jobs -- Supervisor pattern](/docs/tools/jobs#supervisor-pattern) for the full decision table and orphan-sweep thresholds.
 
 Additional cron jobs:
 - **Memory consolidation** — Daily at 4 AM UTC. Decays old memories, merges duplicates.
