@@ -13,6 +13,13 @@ const sandboxMocks = vi.hoisted(() => ({
   ensureUserHome: vi.fn(),
 }));
 
+const loggerMocks = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}));
+
 const dbMocks = vi.hoisted(() => ({
   insertValues: vi.fn(),
   insertOnConflictDoUpdate: vi.fn(),
@@ -29,12 +36,7 @@ vi.mock("../lib/sandbox.js", () => ({
 }));
 
 vi.mock("../lib/logger.js", () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
+  logger: loggerMocks,
 }));
 
 vi.mock("../lib/tool.js", () => ({
@@ -234,6 +236,37 @@ describe("sandbox command tools", () => {
       requestedBy: "U123",
       workspaceId: "default",
     }));
+  });
+
+  it("warns once when detached command webhook env vars are missing", async () => {
+    vi.resetModules();
+    delete process.env.AURA_PUBLIC_URL;
+    delete process.env.SANDBOX_WEBHOOK_SECRET;
+    const { createSandboxTools: createFreshSandboxTools } = await import("./sandbox.js");
+    const tool = createFreshSandboxTools({ userId: "U123" } as any).run_command_detached as any;
+
+    await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    await tool.execute(tool.inputSchema.parse({ command: "sleep 301" }));
+
+    expect(loggerMocks.warn).toHaveBeenCalledTimes(1);
+    expect(loggerMocks.warn).toHaveBeenCalledWith(
+      "run_command_detached: webhook callback disabled, env vars missing",
+      {
+        missing: ["AURA_PUBLIC_URL", "SANDBOX_WEBHOOK_SECRET"],
+        effect:
+          "detached commands will run, but completion webhooks will silently no-op; results only available via check_command polling",
+      },
+    );
+  });
+
+  it("does not warn when detached command webhook env vars are present", async () => {
+    vi.resetModules();
+    const { createSandboxTools: createFreshSandboxTools } = await import("./sandbox.js");
+    const tool = createFreshSandboxTools({ userId: "U123" } as any).run_command_detached as any;
+
+    await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+
+    expect(loggerMocks.warn).not.toHaveBeenCalled();
   });
 
   it("checks detached command status with default tail lines", async () => {

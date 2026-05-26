@@ -18,6 +18,8 @@ const DEFAULT_PUBLIC_URL = "https://aura-alpha-five.vercel.app";
 type Sandbox = Awaited<ReturnType<typeof getOrCreateSandbox>>;
 type CommandEnv = Record<string, string>;
 
+let warnedAboutWebhookEnv = false;
+
 interface DetachedCommandStart {
   id: string;
   pid: number;
@@ -50,6 +52,25 @@ function getPublicUrl(): string {
     return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`.replace(/\/+$/, "");
   }
   return DEFAULT_PUBLIC_URL;
+}
+
+function warnIfWebhookEnvMissing() {
+  if (warnedAboutWebhookEnv) return;
+
+  const missing: string[] = [];
+  if (!process.env.AURA_PUBLIC_URL) missing.push("AURA_PUBLIC_URL");
+  if (!process.env.SANDBOX_WEBHOOK_SECRET) missing.push("SANDBOX_WEBHOOK_SECRET");
+  if (missing.length === 0) return;
+
+  warnedAboutWebhookEnv = true;
+  logger.warn(
+    "run_command_detached: webhook callback disabled, env vars missing",
+    {
+      missing,
+      effect:
+        "detached commands will run, but completion webhooks will silently no-op; results only available via check_command polling",
+    },
+  );
 }
 
 function getWorkspaceId(context?: ScheduleContext): string {
@@ -645,6 +666,7 @@ export function createSandboxTools(context?: ScheduleContext) {
             command: command.substring(0, 100),
             workdir,
           });
+          warnIfWebhookEnvMissing();
 
           const detached = await startDetachedCommand({
             sandbox,
