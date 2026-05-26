@@ -5,6 +5,7 @@ import {
   storeToken,
   clearToken,
   decodeToken,
+  redirectToSlackLogin,
   type Session,
 } from "@/lib/auth";
 
@@ -24,6 +25,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : window.location.pathname;
       window.history.replaceState({}, "", cleanUrl);
       decodeToken(urlToken).then((s) => {
+        if (!s) {
+          clearToken();
+          redirectToSlackLogin("invalid_session");
+          return;
+        }
         setSession(s);
         setLoading(false);
       });
@@ -33,6 +39,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const token = getStoredToken();
     if (token) {
       decodeToken(token).then((s) => {
+        if (!s) {
+          clearToken();
+          setSession(null);
+          setLoading(false);
+          return;
+        }
         setSession(s);
         setLoading(false);
       });
@@ -44,6 +56,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback((token: string) => {
     storeToken(token);
     decodeToken(token).then((s) => {
+      if (!s) {
+        clearToken();
+        setSession(null);
+        return;
+      }
       setSession(s);
     });
   }, []);

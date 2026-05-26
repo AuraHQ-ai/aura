@@ -113,7 +113,7 @@ The dashboard uses Slack OAuth for login. Access requires at least the `power_us
 
 Authentication is handled directly by the Hono API via Slack's OpenID Connect flow. The API exposes `/login` and `/callback` routes that handle the full OAuth cycle -- no proxy or intermediate redirects needed.
 
-The callback issues a session JWT (HS256, 30-day expiry) stored as an HTTP-only cookie. For preview and branch deployments, an origin allowlist (restricted to trusted domain suffixes like `.aurahq.ai` and `localhost`) prevents token theft via crafted redirect URLs.
+The callback issues a session JWT (HS256, `DASHBOARD_SESSION_TTL` or `365d` by default) stored in the dashboard client. For preview and branch deployments, an origin allowlist (restricted to trusted domain suffixes like `.aurahq.ai` and `localhost`) prevents token theft via crafted redirect URLs.
 
 **Required env vars:** `DASHBOARD_SESSION_SECRET`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`.
 
