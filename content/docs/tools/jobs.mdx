@@ -16,6 +16,33 @@ The **heartbeat** runs every 30 minutes and evaluates all pending jobs. Scheduli
 
 If a recurring job is left in `running` past the stale threshold and has already exhausted retries, the heartbeat does not leave it in `failed` forever. It resets the job to `pending`, clears `retries`, computes the next cron tick in the job timezone, and DMs the requester with the last error and next attempt time. One-shot jobs that exhaust stale retries stay `failed` and also send a DM.
 
+
+## Supervisor pattern
+
+After every job execution finishes (success, error, or interruption), the heartbeat writes a row to the `job_outcomes` table and fires a webhook to `POST /api/cron/supervisor`. The supervisor is a separately invoked endpoint that runs a fast-model LLM (`generateObject`) over the outcome plus recent job context and picks exactly one decision:
+
+| Decision | What it does |
+|----------|--------------|
+| `silent_success` | Outcome succeeded cleanly; resolved with no DM. Default for routine recurring runs when `notify_on_success` is false. |
+| `report_success` | DMs the requester that the job succeeded. No retry. Used for noteworthy successes (recovery after failure, first run after a code change, or `notify_on_success=true`); one-shot jobs typically use this. |
+| `report_failure` | DMs the requester with the error. No retry. |
+| `retry_as_is` | Resets the job to `pending` with `retries=0`, sets `executeAt=now`, DMs the requester. |
+| `retry_with_fix` | Queues an immediate retry **and** opens a GitHub issue labelled `auto-supervisor-fix` on `AuraHQ-ai/aura`. |
+| `escalate` | DMs both the requester and the configured founder (`FOUNDER_USER_ID`) for human review. |
+| `disable_job` | Sets `enabled=0` on the job and DMs the requester with the reason. |
+
+Each outcome can be processed up to **3 times** (`MAX_SUPERVISOR_ATTEMPTS`). After that the outcome is marked `skipped` and the requester gets a fallback DM.
+
+### Orphan sweeps
+
+The heartbeat also reaps supervisor invocations that never completed:
+
+- `pending_review` outcomes older than 5 minutes are re-fired (webhook lost or never delivered).
+- `in_progress` outcomes older than 10 minutes with attempts left are reset to `pending_review`.
+- `in_progress` outcomes older than 10 minutes that have exhausted attempts are marked `skipped` and the requester is DM'd.
+- Jobs dequeued into `running` for which no execution row appears after 10 minutes get a `process_died_pre_execution` outcome written so the supervisor can still see and route them.
+
+
 ---
 
 ## `create_job`
@@ -34,6 +61,7 @@ Create a one-shot task, recurring job, or follow-up.
 | `priority` | enum | no | `high`, `normal` (default), or `low` |
 | `max_per_day` | number | no | Max executions per day (recurring jobs) |
 | `min_interval_hours` | number | no | Minimum hours between executions |
+| `notify_on_success` | boolean | no | If `true`, the supervisor reports successful runs via DM. Defaults to `false` -- routine recurring successes are silent. |
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
 
 ---
