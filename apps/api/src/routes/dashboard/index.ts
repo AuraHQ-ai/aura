@@ -14,7 +14,7 @@ import { dashboardSettingsApp } from "./settings.js";
 import { dashboardModelsApp } from "./models.js";
 import { dashboardEntitiesApp } from "./entities.js";
 import { createDashboardApp } from "./schemas.js";
-import { jwtVerify } from "jose";
+import { errors, jwtVerify } from "jose";
 
 export const dashboardApp = createDashboardApp();
 
@@ -52,7 +52,10 @@ dashboardApp.use("*", async (c, next) => {
       c.set("userId" as never, payload.slackUserId as never);
       c.set("userName" as never, payload.name as never);
       return next();
-    } catch {
+    } catch (error) {
+      if (error instanceof errors.JWTExpired) {
+        return c.json({ error: "Unauthorized", reason: "token_expired" }, 401);
+      }
       // JWT verification failed — fall through to 401
     }
   }

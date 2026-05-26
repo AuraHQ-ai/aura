@@ -16,10 +16,11 @@ function getSessionSecret(): Uint8Array {
 }
 
 export async function createSessionJwt(payload: { slackUserId: string; name: string; picture: string }): Promise<string> {
+  const sessionTtl = process.env.DASHBOARD_SESSION_TTL || "365d";
   return new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("7d")
+    .setExpirationTime(sessionTtl)
     .sign(getSessionSecret());
 }
 

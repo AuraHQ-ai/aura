@@ -1,4 +1,5 @@
 import createClient from "openapi-fetch";
+import { redirectToSlackLogin, type AuthRedirectReason } from "./auth";
 import type { paths } from "./api-types";
 
 function getAuthToken(): string | null {
@@ -26,6 +27,15 @@ function buildQueryString(searchParams?: Record<string, string | undefined>): st
   return s ? `?${s}` : "";
 }
 
+function getUnauthorizedReason(text: string): AuthRedirectReason {
+  try {
+    const payload = JSON.parse(text) as { reason?: unknown };
+    return payload.reason === "token_expired" ? "token_expired" : "unauthorized";
+  } catch {
+    return "unauthorized";
+  }
+}
+
 async function apiFetch<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api/dashboard${path}`, {
     method,
@@ -34,6 +44,9 @@ async function apiFetch<T>(method: string, path: string, body?: unknown): Promis
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "Unknown error");
+    if (res.status === 401) {
+      redirectToSlackLogin(getUnauthorizedReason(text));
+    }
     throw new Error(`API ${method} ${path} failed (${res.status}): ${text}`);
   }
   return res.json();
