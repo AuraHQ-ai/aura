@@ -56,7 +56,13 @@ export function createHttpRequestTool(context?: ScheduleContext) {
             },
           )
           .describe("Additional headers (auth headers not allowed -- use credential_name)"),
-        body: z.unknown().optional().describe("Request body (will be JSON-serialized)"),
+        body: z
+          .unknown()
+          .optional()
+          .describe(
+            "Request body. Pass a JSON object/array -- it will be serialized automatically. " +
+              "If you pass a string it is sent verbatim (e.g. for form-encoded or pre-serialized payloads).",
+          ),
         timeout_ms: z
           .number()
           .default(30_000)
@@ -76,6 +82,13 @@ export function createHttpRequestTool(context?: ScheduleContext) {
           }
 
           const headers: Record<string, string> = { ...input.headers };
+          let serializedBody: string | undefined;
+          if (input.body !== undefined && input.body !== null) {
+            serializedBody =
+              typeof input.body === "string"
+                ? input.body
+                : JSON.stringify(input.body);
+          }
 
           if (input.credential_name) {
             const owner = input.credential_owner ?? context?.userId;
@@ -106,7 +119,8 @@ export function createHttpRequestTool(context?: ScheduleContext) {
           }
 
           if (
-            input.body &&
+            serializedBody !== undefined &&
+            typeof input.body !== "string" &&
             !Object.keys(headers).some(
               (k) => k.toLowerCase() === "content-type",
             )
@@ -123,7 +137,7 @@ export function createHttpRequestTool(context?: ScheduleContext) {
           const response = await fetch(input.url, {
             method: input.method,
             headers,
-            body: input.body ? JSON.stringify(input.body) : undefined,
+            body: serializedBody,
             redirect: "manual",
             signal: AbortSignal.timeout(input.timeout_ms),
           });
