@@ -80,7 +80,7 @@ function MemoryDetailPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/memories" search={{ search: undefined, type: undefined, page: undefined }}><ArrowLeft className="h-4 w-4" /></Link>
+          <Link to="/memories" search={{ search: undefined, type: undefined, scope: undefined, page: undefined }}><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
         <div className="flex-1 flex items-center gap-2">
           <Badge variant="secondary">{memory.type}</Badge>

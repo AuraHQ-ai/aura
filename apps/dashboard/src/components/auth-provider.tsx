@@ -8,6 +8,32 @@ import {
   type Session,
 } from "@/lib/auth";
 
+async function hydrateSessionRole(session: Session | null, token: string): Promise<Session | null> {
+  if (!session) return null;
+
+  try {
+    const res = await fetch("/api/dashboard/auth/check-role", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        slackUserId: session.slackUserId,
+        name: session.name,
+        picture: session.picture,
+      }),
+    });
+
+    if (!res.ok) return null;
+    const roleResult = await res.json() as { allowed?: boolean; role?: string };
+    if (!roleResult.allowed) return null;
+    return { ...session, role: roleResult.role };
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,7 +49,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ? `${window.location.pathname}?${params.toString()}`
         : window.location.pathname;
       window.history.replaceState({}, "", cleanUrl);
-      decodeToken(urlToken).then((s) => {
+      decodeToken(urlToken).then((s) => hydrateSessionRole(s, urlToken)).then((s) => {
+        if (!s) clearToken();
         setSession(s);
         setLoading(false);
       });
@@ -32,7 +59,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const token = getStoredToken();
     if (token) {
-      decodeToken(token).then((s) => {
+      decodeToken(token).then((s) => hydrateSessionRole(s, token)).then((s) => {
+        if (!s) clearToken();
         setSession(s);
         setLoading(false);
       });
@@ -43,8 +71,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback((token: string) => {
     storeToken(token);
-    decodeToken(token).then((s) => {
+    setLoading(true);
+    decodeToken(token).then((s) => hydrateSessionRole(s, token)).then((s) => {
+      if (!s) clearToken();
       setSession(s);
+      setLoading(false);
     });
   }, []);
 

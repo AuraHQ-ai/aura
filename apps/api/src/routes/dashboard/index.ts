@@ -14,12 +14,17 @@ import { dashboardSettingsApp } from "./settings.js";
 import { dashboardModelsApp } from "./models.js";
 import { dashboardEntitiesApp } from "./entities.js";
 import { createDashboardApp } from "./schemas.js";
+import { setDashboardPrincipal } from "./principal.js";
 import { jwtVerify } from "jose";
+import { eq } from "drizzle-orm";
+import { users } from "@aura/db/schema";
+import { db } from "../../db/client.js";
 
 export const dashboardApp = createDashboardApp();
 
 const PUBLIC_PREFIX_PATHS = ["/auth/login", "/auth/callback"];
 const PUBLIC_EXACT_PATHS = ["/openapi.json"];
+const ALLOWED_ROLES = new Set(["admin", "power_user"]);
 
 dashboardApp.use("*", async (c, next) => {
   const path = new URL(c.req.url).pathname.replace("/api/dashboard", "");
@@ -37,6 +42,7 @@ dashboardApp.use("*", async (c, next) => {
   // Accept static DASHBOARD_API_SECRET (Next.js dashboard server-side calls)
   const apiSecret = process.env.DASHBOARD_API_SECRET;
   if (apiSecret && candidate === apiSecret) {
+    setDashboardPrincipal(c, { authType: "service", role: "admin" });
     return next();
   }
 
@@ -49,7 +55,27 @@ dashboardApp.use("*", async (c, next) => {
         new TextEncoder().encode(sessionSecret),
       );
       if (payload.purpose) throw new Error("Invalid token type");
-      c.set("userId" as never, payload.slackUserId as never);
+      const slackUserId = payload.slackUserId;
+      if (typeof slackUserId !== "string" || !slackUserId) {
+        throw new Error("Missing Slack user ID");
+      }
+
+      const [user] = await db
+        .select({ role: users.role })
+        .from(users)
+        .where(eq(users.slackUserId, slackUserId))
+        .limit(1);
+
+      if (!user || !ALLOWED_ROLES.has(user.role)) {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+
+      setDashboardPrincipal(c, {
+        authType: "jwt",
+        slackUserId,
+        role: user.role,
+      });
+      c.set("userId" as never, slackUserId as never);
       c.set("userName" as never, payload.name as never);
       return next();
     } catch {

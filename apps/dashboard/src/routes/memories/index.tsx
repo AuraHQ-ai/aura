@@ -10,6 +10,7 @@ import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { RouteTabs } from "@/components/route-tabs";
 import { cn, formatDate, truncate } from "@/lib/utils";
+import { useAuth } from "@/lib/auth";
 import { useEffect, useState } from "react";
 import { Search, Trash2, Brain, Network } from "lucide-react";
 
@@ -28,14 +29,23 @@ interface Memory {
 const PAGE_SIZE = 100;
 const MEMORY_TYPES = ["fact", "decision", "preference", "event", "open_thread"] as const;
 
-type MemoriesSearch = { search?: string; type?: string; page?: number };
+type MemoryScope = "mine" | "all";
+type MemoriesSearch = { search?: string; type?: string; scope?: MemoryScope; page?: number };
+
+function isMemoryScope(value: unknown): value is MemoryScope {
+  return value === "mine" || value === "all";
+}
 
 function MemoriesPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate({ from: Route.fullPath });
-  const { search, type, page } = Route.useSearch();
+  const { search, type, scope, page } = Route.useSearch();
+  const { session } = useAuth();
   const [searchInput, setSearchInput] = useState(search ?? "");
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const isAdmin = session?.role === "admin";
+  const requestedScope: MemoryScope | undefined = isMemoryScope(scope) ? scope : undefined;
+  const effectiveScope: MemoryScope = isAdmin ? (requestedScope ?? "all") : "mine";
 
   useEffect(() => {
     setSearchInput(search ?? "");
@@ -46,11 +56,12 @@ function MemoriesPage() {
   };
 
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ["memories", search, type, page],
+    queryKey: ["memories", search, type, effectiveScope, page],
     queryFn: () => {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
       if (type) params.set("type", type);
+      params.set("scope", effectiveScope);
       params.set("page", String(page ?? 1));
       params.set("limit", String(PAGE_SIZE));
       return apiGet<{ items: Memory[]; total: number }>(`/memories?${params}`);
@@ -106,6 +117,23 @@ function MemoriesPage() {
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+        {isAdmin ? (
+          <select
+            value={effectiveScope}
+            onChange={(e) => setParams({
+              scope: e.target.value === "mine" ? "mine" : undefined,
+              page: undefined,
+            })}
+            className="h-8 rounded-md border border-input bg-transparent px-2.5 text-[13px]"
+          >
+            <option value="all">All memories</option>
+            <option value="mine">Mine</option>
+          </select>
+        ) : (
+          <span className="text-sm text-muted-foreground">
+            Showing memories related to you.
+          </span>
+        )}
       </div>
 
       <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
@@ -132,7 +160,12 @@ function MemoriesPage() {
               memories.map((memory) => (
                 <TableRow key={memory.id}>
                   <TableCell>
-                    <Link to="/memories/$id" params={{ id: memory.id }} className="hover:underline">
+                    <Link
+                      to="/memories/$id"
+                      params={{ id: memory.id }}
+                      search={{ scope: isAdmin && effectiveScope === "mine" ? "mine" : undefined }}
+                      className="hover:underline"
+                    >
                       {truncate(memory.content, 80)}
                     </Link>
                   </TableCell>
@@ -182,6 +215,7 @@ export const Route = createFileRoute("/memories/")({
   validateSearch: (raw: Record<string, unknown>) => ({
     search: typeof raw.search === "string" ? raw.search : undefined,
     type: typeof raw.type === "string" ? raw.type : undefined,
+    scope: isMemoryScope(raw.scope) ? raw.scope : undefined,
     page: typeof raw.page === "number" ? raw.page : typeof raw.page === "string" ? Number(raw.page) || undefined : undefined,
   }),
 });
