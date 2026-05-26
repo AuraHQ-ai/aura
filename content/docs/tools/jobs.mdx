@@ -23,7 +23,8 @@ After every job execution finishes (success, error, or interruption), the heartb
 
 | Decision | What it does |
 |----------|--------------|
-| `report_success` | DMs the requester that the job succeeded. No retry. |
+| `silent_success` | Outcome succeeded cleanly; resolved with no DM. Default for routine recurring runs when `notify_on_success` is false. |
+| `report_success` | DMs the requester that the job succeeded. No retry. Used for noteworthy successes (recovery after failure, first run after a code change, or `notify_on_success=true`); one-shot jobs typically use this. |
 | `report_failure` | DMs the requester with the error. No retry. |
 | `retry_as_is` | Resets the job to `pending` with `retries=0`, sets `executeAt=now`, DMs the requester. |
 | `retry_with_fix` | Queues an immediate retry **and** opens a GitHub issue labelled `auto-supervisor-fix` on `AuraHQ-ai/aura`. |
@@ -60,6 +61,7 @@ Create a one-shot task, recurring job, or follow-up.
 | `priority` | enum | no | `high`, `normal` (default), or `low` |
 | `max_per_day` | number | no | Max executions per day (recurring jobs) |
 | `min_interval_hours` | number | no | Minimum hours between executions |
+| `notify_on_success` | boolean | no | If `true`, the supervisor reports successful runs via DM. Defaults to `false` -- routine recurring successes are silent. |
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
 
 ---
