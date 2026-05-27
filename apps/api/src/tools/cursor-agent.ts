@@ -7,6 +7,17 @@ import type { ScheduleContext } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { getConfig } from "../lib/settings.js";
 
+function resolveCursorAgentModel(model?: string): string | undefined {
+  const explicitModel = model?.trim();
+  if (explicitModel) {
+    return explicitModel.toLowerCase() === "auto" ? undefined : explicitModel;
+  }
+
+  const defaultModel = process.env.CURSOR_DEFAULT_MODEL?.trim();
+  if (!defaultModel || defaultModel.toLowerCase() === "auto") return undefined;
+  return defaultModel;
+}
+
 /**
  * Create Cursor Cloud Agent tools for the AI SDK.
  * Provides async dispatch of Cursor agents for complex multi-file code tasks.
@@ -51,8 +62,23 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe(
             "GitHub repository in owner/repo format, e.g. 'org/repo'. Defaults to 'AuraHQ-ai/aura'",
           ),
+        model: z
+          .string()
+          .optional()
+          .describe(
+            "Cursor model to use, e.g. 'claude-sonnet-4.5', 'gpt-5', 'composer-1.5'. " +
+              "Omit or leave empty to use Cursor's default auto-selection. " +
+              "Defaults to env CURSOR_DEFAULT_MODEL if set.",
+          ),
       }),
-      execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {
+      execute: async ({
+        issue_description,
+        branch_prefix,
+        ref,
+        key_files,
+        repository,
+        model,
+      }) => {
         try {
           const { launchCursorAgent } = await import(
             "../lib/cursor-agent.js"
@@ -100,11 +126,13 @@ export function createCursorAgentTools(context?: ScheduleContext) {
               "https://aura-alpha-five.vercel.app/api/webhook/cursor-agent";
 
           const webhookSecret = process.env.CURSOR_WEBHOOK_SECRET;
+          const resolvedModel = resolveCursorAgentModel(model);
 
           const result = await launchCursorAgent({
             prompt,
             repository: repoUrl,
             ref: ref || "main",
+            model: resolvedModel,
             branchName,
             autoCreatePr: true,
             webhookUrl,
@@ -116,6 +144,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             `- **Agent ID**: ${result.id}`,
             `- **Branch**: ${branchName}`,
             `- **Repo**: ${repo}`,
+            `- **Model**: ${resolvedModel || "Cursor auto"}`,
             `- **Requester**: ${context?.userId || "unknown"}`,
             `- **Channel**: ${context?.channelId || "unknown"}`,
             `- **Thread**: ${context?.threadTs || "none"}`,
@@ -148,6 +177,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           logger.info("dispatch_cursor_agent: launched", {
             agentId: result.id,
             branch: branchName,
+            model: resolvedModel,
             userId: context?.userId,
           });
 

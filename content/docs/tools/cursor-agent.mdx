@@ -25,6 +25,11 @@ Dispatch an async agent to work on a code task. Returns immediately with an agen
 | `key_files` | string[] | no | Key files for the agent to focus on |
 | `cursor_rules` | string | no | Additional `.cursor/rules` content injected for this task |
 | `repo` | string | no | GitHub repo (default: `AuraHQ-ai/aura`) |
+| `model` | string | no | Cursor model to use, e.g. `claude-sonnet-4.5`, `gpt-5`, or `composer-1.5` |
+
+### Model selection
+
+Pass `model` to pin a dispatch to a specific Cursor model. If `model` is omitted or empty, Aura uses `CURSOR_DEFAULT_MODEL` when that env var is set to a non-empty value; otherwise the `model` field is omitted and Cursor uses its default auto-selection. Do not pass `auto` as a model value — auto-selection is represented by omitting the field.
 
 **Best practices:**
 - Always specify `key_files` to reduce agent wandering

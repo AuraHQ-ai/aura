@@ -1,8 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATABASE_URL ??= "postgresql://user:pass@example.com/db";
 
-const { resolveCursorAgentPrUrl } = await import("./cursor-agent.js");
+const resolveCredentialValueMock = vi.hoisted(() =>
+  vi.fn(async () => "cursor-api-key"),
+);
+
+vi.mock("./credentials.js", () => ({
+  resolveCredentialValue: resolveCredentialValueMock,
+}));
+
+const { launchCursorAgent, resolveCursorAgentPrUrl } = await import(
+  "./cursor-agent.js"
+);
 
 function jsonResponse(data: unknown): Response {
   return {
@@ -10,6 +20,27 @@ function jsonResponse(data: unknown): Response {
     json: vi.fn(async () => data),
   } as unknown as Response;
 }
+
+function textResponse(data: unknown): Response {
+  return {
+    ok: true,
+    json: vi.fn(async () => data),
+    text: vi.fn(async () => JSON.stringify(data)),
+  } as unknown as Response;
+}
+
+function getFetchRequestBody(
+  fetchMock: ReturnType<typeof vi.fn>,
+): Record<string, unknown> {
+  const call = fetchMock.mock.calls[0] as [unknown, RequestInit] | undefined;
+  expect(call).toBeDefined();
+  return JSON.parse(call![1].body as string) as Record<string, unknown>;
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  resolveCredentialValueMock.mockClear();
+});
 
 describe("resolveCursorAgentPrUrl", () => {
   it("passes through the payload PR URL when present", async () => {
@@ -76,5 +107,48 @@ describe("resolveCursorAgentPrUrl", () => {
     });
 
     expect(result).toBe("");
+  });
+});
+
+describe("launchCursorAgent", () => {
+  it("sends model in the request body when provided", async () => {
+    const fetchMock = vi.fn(async () => textResponse({ id: "agent-123" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await launchCursorAgent({
+      prompt: "Fix the issue",
+      repository: "https://github.com/AuraHQ-ai/aura",
+      model: " claude-sonnet-4.5 ",
+    });
+
+    const body = getFetchRequestBody(fetchMock);
+    expect(body.model).toBe("claude-sonnet-4.5");
+  });
+
+  it("omits model from the request body when absent", async () => {
+    const fetchMock = vi.fn(async () => textResponse({ id: "agent-123" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await launchCursorAgent({
+      prompt: "Fix the issue",
+      repository: "https://github.com/AuraHQ-ai/aura",
+    });
+
+    const body = getFetchRequestBody(fetchMock);
+    expect(body).not.toHaveProperty("model");
+  });
+
+  it("omits model from the request body when empty", async () => {
+    const fetchMock = vi.fn(async () => textResponse({ id: "agent-123" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await launchCursorAgent({
+      prompt: "Fix the issue",
+      repository: "https://github.com/AuraHQ-ai/aura",
+      model: "   ",
+    });
+
+    const body = getFetchRequestBody(fetchMock);
+    expect(body).not.toHaveProperty("model");
   });
 });
