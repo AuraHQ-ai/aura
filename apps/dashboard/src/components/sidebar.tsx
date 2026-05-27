@@ -11,6 +11,7 @@ import {
   Settings,
   KeyRound,
   BarChart3,
+  TrendingUp,
   Menu,
   X,
   LogOut,
@@ -49,6 +50,7 @@ const navItems = [
   { href: "/errors", label: "Errors", icon: AlertTriangle },
   { href: "/resources", label: "Resources", icon: FileText },
   { href: "/consumption", label: "Consumption", icon: BarChart3 },
+  { href: "/adoption", label: "Adoption", icon: TrendingUp },
   { href: "/credentials", label: "Credentials", icon: KeyRound },
 ] as const;
 

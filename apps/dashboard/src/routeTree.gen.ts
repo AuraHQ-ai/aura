@@ -22,6 +22,7 @@ import { Route as ErrorsIndexRouteImport } from "./routes/errors/index"
 import { Route as CredentialsIndexRouteImport } from "./routes/credentials/index"
 import { Route as ConversationsIndexRouteImport } from "./routes/conversations/index"
 import { Route as ConsumptionIndexRouteImport } from "./routes/consumption/index"
+import { Route as AdoptionIndexRouteImport } from "./routes/adoption/index"
 import { Route as UsersSlackUserIdRouteImport } from "./routes/users/$slackUserId"
 import { Route as ResourcesIdRouteImport } from "./routes/resources/$id"
 import { Route as NotesIdRouteImport } from "./routes/notes/$id"
@@ -98,6 +99,11 @@ const ConversationsIndexRoute = ConversationsIndexRouteImport.update({
 const ConsumptionIndexRoute = ConsumptionIndexRouteImport.update({
   id: "/consumption/",
   path: "/consumption/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdoptionIndexRoute = AdoptionIndexRouteImport.update({
+  id: "/adoption/",
+  path: "/adoption/",
   getParentRoute: () => rootRouteImport,
 } as any)
 const UsersSlackUserIdRoute = UsersSlackUserIdRouteImport.update({
@@ -177,6 +183,7 @@ export interface FileRoutesByFullPath {
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
+  "/adoption/": typeof AdoptionIndexRoute
   "/consumption/": typeof ConsumptionIndexRoute
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
@@ -204,6 +211,7 @@ export interface FileRoutesByTo {
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
+  "/adoption": typeof AdoptionIndexRoute
   "/consumption": typeof ConsumptionIndexRoute
   "/conversations": typeof ConversationsIndexRoute
   "/credentials": typeof CredentialsIndexRoute
@@ -232,6 +240,7 @@ export interface FileRoutesById {
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
+  "/adoption/": typeof AdoptionIndexRoute
   "/consumption/": typeof ConsumptionIndexRoute
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
@@ -261,6 +270,7 @@ export interface FileRouteTypes {
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
+    | "/adoption/"
     | "/consumption/"
     | "/conversations/"
     | "/credentials/"
@@ -288,6 +298,7 @@ export interface FileRouteTypes {
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
+    | "/adoption"
     | "/consumption"
     | "/conversations"
     | "/credentials"
@@ -315,6 +326,7 @@ export interface FileRouteTypes {
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
+    | "/adoption/"
     | "/consumption/"
     | "/conversations/"
     | "/credentials/"
@@ -343,6 +355,7 @@ export interface RootRouteChildren {
   NotesIdRoute: typeof NotesIdRoute
   ResourcesIdRoute: typeof ResourcesIdRoute
   UsersSlackUserIdRoute: typeof UsersSlackUserIdRoute
+  AdoptionIndexRoute: typeof AdoptionIndexRoute
   ConsumptionIndexRoute: typeof ConsumptionIndexRoute
   ConversationsIndexRoute: typeof ConversationsIndexRoute
   CredentialsIndexRoute: typeof CredentialsIndexRoute
@@ -450,6 +463,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ConsumptionIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/adoption/": {
+      id: "/adoption/"
+      path: "/adoption"
+      fullPath: "/adoption/"
+      preLoaderRoute: typeof AdoptionIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/users/$slackUserId": {
       id: "/users/$slackUserId"
       path: "/users/$slackUserId"
@@ -551,6 +571,7 @@ const rootRouteChildren: RootRouteChildren = {
   NotesIdRoute: NotesIdRoute,
   ResourcesIdRoute: ResourcesIdRoute,
   UsersSlackUserIdRoute: UsersSlackUserIdRoute,
+  AdoptionIndexRoute: AdoptionIndexRoute,
   ConsumptionIndexRoute: ConsumptionIndexRoute,
   ConversationsIndexRoute: ConversationsIndexRoute,
   CredentialsIndexRoute: CredentialsIndexRoute,
