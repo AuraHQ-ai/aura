@@ -6,20 +6,20 @@ Small committed files only. Full benchmark data is **downloaded on demand** into
 
 | File | Purpose |
 |------|---------|
-| `toy-corpus.json` | 3-case smoke test (`--dataset=toy`) |
-| `manifest.json` | Subset seed, per-category counts, oracle URL |
+| `toy.json` | 3-case smoke test (`--dataset=toy`) |
+| `manifest.json` | Dataset URLs and cache paths |
 
 ## On demand (not in git)
 
 | File | How |
 |------|-----|
-| `cache/longmemeval_oracle.json` | `curl` from Hugging Face (see manifest) |
-| `cache/longmemeval-subset.json` | Built by `build-longmemeval-subset.mjs` (100 Q, seed 1043) |
-| `cache/locomo-subset.json` | Future: build script when LoCoMo is wired up |
+| `cache/longmemeval_oracle.json` | `pnpm bench:fetch-corpus` (Hugging Face) |
+| `cache/locomo10.json` | `pnpm bench:fetch-corpus` (snap-research/locomo) |
+| `cache/longmemeval-subset.json` | Optional: `build-longmemeval-subset.mjs` for fixed 100-Q slice |
 
-First `pnpm bench:memory -- --dataset=lme` downloads the oracle (~50MB) once, then builds the subset.
+Subset tiers (`fast` / `medium` / `full`) are applied at runtime via stratified sampling in `fixtures.ts`.
 
-## Refresh subset
+## Refresh optional fixed subset
 
 ```bash
 node apps/api/src/bench/scripts/build-longmemeval-subset.mjs apps/api/src/bench/corpus/cache/longmemeval_oracle.json

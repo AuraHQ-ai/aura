@@ -3,6 +3,8 @@ import type { BenchModels } from "./models.js";
 
 export type BenchSource = "locomo" | "longmemeval" | "toy";
 
+export type DatasetId = "toy" | "longmemeval" | "locomo";
+
 export type BenchSubset = "fast" | "medium" | "full";
 
 export type BenchDataset = "locomo" | "lme" | "both" | "toy";
@@ -32,6 +34,8 @@ export type BenchRunConfig = {
   dataset: BenchDataset;
   subset: BenchSubset;
   categoryFilter?: string;
+  /** Normalized BenchCase[] JSON for ad-hoc experiments */
+  corpusFile?: string;
   skipIngest: boolean;
   dryRun: boolean;
   /** false = skip QA judge; string = judge model id */

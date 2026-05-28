@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { loadCases, loadManifest, corpusHashForCases } from "./fixtures.js";
+import { loadBenchCases, computeCorpusHash } from "./fixtures.js";
 import { benchWorkspaceId, makeRunId } from "./workspace-id.js";
 import {
   createBenchWorkspace,
@@ -34,10 +34,16 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
   const workspaceId = benchWorkspaceId(runId);
   const models = resolveBenchModels(config.models ?? {});
 
-  const cases = loadCases({
+  const cases = await loadBenchCases({
     dataset: config.dataset,
     subset: config.subset,
     category: config.categoryFilter,
+    corpusFile: config.corpusFile,
+  });
+
+  const corpusHash = await computeCorpusHash({
+    dataset: config.dataset,
+    corpusFile: config.corpusFile,
   });
 
   if (cases.length === 0) {
@@ -55,9 +61,6 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
       error: "No cases loaded — run pnpm --filter aura-api bench:fetch-corpus",
     };
   }
-
-  const manifest = loadManifest();
-  const corpusHash = corpusHashForCases(cases) || manifest.corpus_hash || "unknown";
 
   if (config.dryRun) {
     return {

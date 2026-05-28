@@ -1,7 +1,7 @@
 name: Memory benchmark
 
 # Path-triggered only — no nightly schedule. Manual: workflow_dispatch.
-# Uses ephemeral Neon branch + cached corpora. Warn-only regression gate.
+# PR defaults: medium subset + both datasets (~330 Qs). Warn-only regression gate.
 
 on:
   workflow_dispatch:
@@ -10,12 +10,12 @@ on:
         description: "fast | medium | full"
         type: choice
         options: [fast, medium, full]
-        default: full
+        default: medium
       dataset:
         description: "toy | lme | locomo | both"
         type: choice
         options: [toy, lme, locomo, both]
-        default: lme
+        default: both
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
@@ -69,6 +69,8 @@ jobs:
         with:
           path: apps/api/src/bench/corpus/cache
           key: bench-corpus-${{ hashFiles('apps/api/src/bench/corpus/manifest.json') }}
+          restore-keys: |
+            bench-corpus-
 
       - name: Fetch corpora
         if: steps.corpus-cache.outputs.cache-hit != 'true'
@@ -92,11 +94,11 @@ jobs:
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           DEFAULT_WORKSPACE_ID: default
           ELEVENLABS_API_KEY: placeholder
+          SUBSET: ${{ github.event.inputs.subset || 'medium' }}
+          DATASET: ${{ github.event.inputs.dataset || 'both' }}
         run: |
           pnpm --filter @aura/db build
           pnpm --filter @aura/db db:migrate
-          SUBSET="${{ github.event.inputs.subset || 'full' }}"
-          DATASET="${{ github.event.inputs.dataset || 'lme' }}"
           mkdir -p /tmp/bench
           set -o pipefail
           pnpm --filter aura-api bench:memory -- \
@@ -109,13 +111,24 @@ jobs:
           node -e "
             const fs = require('fs');
             const r = JSON.parse(fs.readFileSync('/tmp/bench/result.json','utf8'));
-            const lines = ['Run ' + r.runId + ' models=' + JSON.stringify(r.models)];
-            for (const s of (r.scores || [])) {
+            const rows = (r.scores || []).map(s => {
               const d = s.deltaPp != null ? ' (' + (s.deltaPp >= 0 ? '+' : '') + s.deltaPp + 'pp)' : '';
-              lines.push('  ' + s.dataset + ' / ' + s.category + ' / ' + s.scoreType + ': ' + Math.round(s.score * 100) + '% (' + s.nCorrect + '/' + s.n + ')' + d);
-            }
-            if (!r.ok) lines.push('ERROR: ' + (r.error || 'failed'));
-            fs.writeFileSync('/tmp/bench/output.txt', lines.join('\n'));
+              return '| ' + s.dataset + ' | ' + s.category + ' | ' + s.scoreType + ' | ' + Math.round(s.score * 100) + '% | ' + s.nCorrect + '/' + s.n + ' |' + d;
+            });
+            const md = [
+              '### Memory benchmark (\`' + process.env.SUBSET + '\` / \`' + process.env.DATASET + '\`)',
+              '',
+              'Run \`' + r.runId + '\` · corpus \`' + (r.corpusHash || '').slice(0, 12) + '\`',
+              'Models: ' + JSON.stringify(r.models),
+              '',
+              '| Dataset | Category | Metric | Score | N |',
+              '|---|---|---|---:|---:|',
+              ...(rows.length ? rows : ['| - | - | - | - | - |']),
+              '',
+              '_Path-triggered; Sonnet extract/answer + Opus judge. Not scheduled nightly._',
+            ].join('\n');
+            fs.writeFileSync('/tmp/bench/comment.md', md);
+            fs.writeFileSync('/tmp/bench/output.txt', rows.length ? rows.join('\n') : 'No scores');
           "
 
       - name: Upload artefacts
@@ -127,30 +140,40 @@ jobs:
           retention-days: 14
         continue-on-error: true
 
-      - name: Build PR comment
-        if: github.event_name == 'pull_request'
-        id: comment
-        run: |
-          {
-            echo "body<<EOF"
-            echo "### Memory benchmark (\`${{ github.event.inputs.subset || 'full' }}\` / \`${{ github.event.inputs.dataset || 'lme' }}\`)"
-            echo ""
-            echo "_Path-triggered; Sonnet extract/answer + Opus judge. Not scheduled nightly._"
-            echo ""
-            echo '```'
-            cat /tmp/bench/output.txt 2>/dev/null || echo "No output"
-            echo '```'
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-        continue-on-error: true
-
       - name: Sticky PR comment
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: memory-bench
-          message: ${{ steps.comment.outputs.body }}
+          path: /tmp/bench/comment.md
         continue-on-error: true
+
+      - name: Enforce regression gate
+        if: >-
+          env.STRICT_REGRESSION_GATE == 'true' &&
+          github.event_name == 'pull_request' &&
+          !contains(github.event.pull_request.labels.*.name, 'override-bench')
+        env:
+          THRESHOLD_PP: ${{ env.REGRESSION_THRESHOLD_PP }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            if (!fs.existsSync('/tmp/bench/result.json')) {
+              console.log('No result.json — failing closed.');
+              process.exit(1);
+            }
+            const r = JSON.parse(fs.readFileSync('/tmp/bench/result.json', 'utf8'));
+            const threshold = -Number(process.env.THRESHOLD_PP);
+            const regressions = (r.scores || []).filter(s => s.deltaPp != null && s.deltaPp <= threshold);
+            if (regressions.length > 0) {
+              console.log('Regressions > ' + process.env.THRESHOLD_PP + 'pp:');
+              for (const s of regressions) {
+                console.log('  ' + s.dataset + '/' + s.category + '/' + s.scoreType + ': ' + s.deltaPp + 'pp');
+              }
+              process.exit(1);
+            }
+            console.log('No regressions exceeded threshold.');
+          "
 
       - name: Delete Neon branch
         if: always() && steps.neon.outputs.branch_id != ''

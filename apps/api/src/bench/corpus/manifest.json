@@ -1,25 +1,26 @@
 {
   "version": 2,
-  "subset_seed": 1043,
-  "subset_targets": {
-    "temporal-reasoning": 40,
-    "knowledge-update": 25,
-    "multi-session": 35
-  },
+  "description": "Manifest for the memory bench corpus. Toy is vendored; LongMemEval + LoCoMo fetch into gitignored cache/ via pnpm bench:fetch-corpus.",
   "datasets": {
     "toy": {
-      "file": "toy-corpus.json",
-      "vendored": true
+      "file": "toy.json",
+      "vendored": true,
+      "source": "internal",
+      "questions": 3
     },
-    "longmemeval_oracle": {
+    "longmemeval": {
       "file": "cache/longmemeval_oracle.json",
       "vendored": false,
-      "fetchUrl": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json"
+      "source": "https://github.com/xiaowu0162/longmemeval",
+      "fetchUrl": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json",
+      "questions": 500
     },
     "locomo": {
       "file": "cache/locomo10.json",
       "vendored": false,
-      "fetchUrl": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
+      "source": "https://github.com/snap-research/locomo",
+      "fetchUrl": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json",
+      "questions": 1540
     }
   }
 }

@@ -89,5 +89,7 @@ describe("resolveBenchModels", () => {
 describe("SUBSET_PER_CATEGORY", () => {
   it("fast < medium < full", () => {
     expect(SUBSET_PER_CATEGORY.fast).toBeLessThan(SUBSET_PER_CATEGORY.medium);
+    expect(SUBSET_PER_CATEGORY.medium).toBe(30);
+    expect(SUBSET_PER_CATEGORY.fast).toBe(4);
   });
 });

@@ -23,6 +23,7 @@ function parseConfig(): BenchRunConfig {
     dataset: (argValue("dataset") ?? "lme") as BenchDataset,
     subset: (argValue("subset") ?? "full") as BenchSubset,
     categoryFilter: argValue("category"),
+    corpusFile: argValue("corpus-file"),
     skipIngest: hasFlag("skip-ingest"),
     dryRun: hasFlag("dry-run"),
     postSlack: hasFlag("post-slack"),
