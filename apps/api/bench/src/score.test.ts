@@ -9,7 +9,8 @@ vi.mock("../../src/db/client.js", () => ({ db: {} }));
 import { aggregateScores } from "./score.js";
 import type { PerCaseResult } from "./types.js";
 import { formatMemoriesForPrompt } from "./eval-qa.js";
-import { sampleFast } from "./fixtures.js";
+import { loadToyCorpus, stratifiedSample, SUBSET_PER_CATEGORY } from "./fixtures.js";
+import { resolveBenchModels, DEFAULT_JUDGE_MODEL, DEFAULT_EXTRACTION_MODEL } from "./models.js";
 import type { BenchCase } from "./types.js";
 
 function makeResult(overrides: Partial<PerCaseResult>): PerCaseResult {
@@ -121,7 +122,7 @@ describe("formatMemoriesForPrompt", () => {
   });
 });
 
-describe("sampleFast", () => {
+describe("stratifiedSample", () => {
   function makeCase(category: string, id: string): BenchCase {
     return {
       id,
@@ -140,22 +141,61 @@ describe("sampleFast", () => {
     for (let i = 0; i < 10; i++) cases.push(makeCase("b", `b${i}`));
     for (let i = 0; i < 2; i++) cases.push(makeCase("c", `c${i}`));
 
-    const first = sampleFast(cases, 3, 4711);
-    const second = sampleFast(cases, 3, 4711);
+    const first = stratifiedSample(cases, 3, 4711);
+    const second = stratifiedSample(cases, 3, 4711);
     expect(first.map((c) => c.id)).toEqual(second.map((c) => c.id));
 
     const counts = new Map<string, number>();
     for (const c of first) counts.set(c.category, (counts.get(c.category) ?? 0) + 1);
     expect(counts.get("a")).toBe(3);
     expect(counts.get("b")).toBe(3);
-    expect(counts.get("c")).toBe(2); // capped by what's available
+    expect(counts.get("c")).toBe(2);
   });
 
   it("differs across seeds", () => {
     const cases: BenchCase[] = [];
     for (let i = 0; i < 20; i++) cases.push(makeCase("a", `a${i}`));
-    const a = sampleFast(cases, 5, 1).map((c) => c.id).sort();
-    const b = sampleFast(cases, 5, 2).map((c) => c.id).sort();
+    const a = stratifiedSample(cases, 5, 1).map((c) => c.id).sort();
+    const b = stratifiedSample(cases, 5, 2).map((c) => c.id).sort();
     expect(a).not.toEqual(b);
+  });
+
+  it("subset table defines fast < medium < full", () => {
+    expect(SUBSET_PER_CATEGORY.fast).toBeLessThan(SUBSET_PER_CATEGORY.medium);
+    expect(SUBSET_PER_CATEGORY.medium).toBeLessThan(SUBSET_PER_CATEGORY.full);
+  });
+});
+
+describe("loadToyCorpus", () => {
+  it("loads the vendored toy fixture with parsed evidence", async () => {
+    const cases = await loadToyCorpus();
+    expect(cases.length).toBe(3);
+    const categories = cases.map((c) => c.category).sort();
+    expect(categories).toEqual(["abstention", "single_hop", "temporal"]);
+    const abstention = cases.find((c) => c.abstention)!;
+    expect(abstention.category).toBe("abstention");
+    const singleHop = cases.find((c) => c.category === "single_hop")!;
+    expect(singleHop.evidenceDiaIds).toContain("S1:2");
+    expect(singleHop.sessions[0].turns.length).toBe(3);
+  });
+});
+
+describe("resolveBenchModels", () => {
+  it("falls back to Sonnet/Sonnet/Opus by default", () => {
+    delete process.env.BENCH_EXTRACTION_MODEL;
+    delete process.env.BENCH_ANSWERER_MODEL;
+    delete process.env.BENCH_JUDGE_MODEL;
+    const m = resolveBenchModels();
+    expect(m.extraction).toBe(DEFAULT_EXTRACTION_MODEL);
+    expect(m.judge).toBe(DEFAULT_JUDGE_MODEL);
+    expect(m.extraction).toContain("sonnet");
+    expect(m.judge).toContain("opus");
+  });
+
+  it("CLI overrides win over env vars", () => {
+    process.env.BENCH_EXTRACTION_MODEL = "anthropic/claude-haiku-4.5";
+    const m = resolveBenchModels({ extraction: "anthropic/claude-opus-4.6" });
+    expect(m.extraction).toBe("anthropic/claude-opus-4.6");
+    delete process.env.BENCH_EXTRACTION_MODEL;
   });
 });

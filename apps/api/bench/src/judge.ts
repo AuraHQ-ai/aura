@@ -17,7 +17,7 @@ import { z } from "zod";
 import { generateObject } from "ai";
 import { gateway } from "@ai-sdk/gateway";
 import type { BenchCase } from "./types.js";
-import { getMainModelId } from "../../src/lib/ai.js";
+import { DEFAULT_JUDGE_MODEL } from "./models.js";
 
 export const judgeSchema = z.object({
   verdict: z
@@ -98,7 +98,7 @@ export async function judgeAnswer(
   modelAnswer: string,
   config: JudgeConfig = {},
 ): Promise<JudgeResult> {
-  const modelId = config.modelId ?? (await getMainModelId());
+  const modelId = config.modelId ?? DEFAULT_JUDGE_MODEL;
   const gold = Array.isArray(benchCase.goldAnswer)
     ? benchCase.goldAnswer.join(" | ")
     : benchCase.goldAnswer;

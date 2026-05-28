@@ -1,28 +1,56 @@
-name: Memory PR bench
+name: Memory bench
 
-# Triggered when a PR is labelled `memory` (or already had the label and
-# new commits land). Runs the fast bench subset against a Neon branch so
-# production data is never touched, then posts a sticky comment with
-# before/after numbers.
+# Runs the memory benchmark harness (#1043).
 #
-# Initial deployment is WARN-ONLY: any regression posts a comment but does
-# not fail the job. Once we have a stable noise floor, flip
-# `STRICT_REGRESSION_GATE` to "true" in the env block below — that turns
-# >2pp regressions into a job failure (per the acceptance criteria in
-# #1043). An `override-bench` label on the PR bypasses the hard gate.
+# Triggers:
+#   - workflow_dispatch     manual, with optional subset + dataset inputs
+#   - pull_request          ONLY when memory-relevant paths change:
+#                             apps/api/src/memory/**
+#                             apps/api/bench/**
+#                             apps/api/src/personality/system-prompt.ts
+#                             apps/api/src/pipeline/core-prompt.ts
+#                             packages/db/src/schema.ts
+#                             packages/db/drizzle/**
+#                           Skipping unrelated PRs keeps the bill predictable.
+#
+# Defaults: --subset=medium, --dataset=both. Models default to Sonnet for
+# extraction + answerer and Opus for the judge (see apps/api/bench/src/models.ts).
+#
+# Costs: ~$3–7 per run on the medium subset (≈300 questions), Opus judge.
 #
 # Required secrets:
-#   - NEON_API_KEY            — for creating an ephemeral Neon branch
-#   - NEON_PROJECT_ID         — the Aura project on Neon
-#   - AI_GATEWAY_API_KEY      — for the constrained answerer + judge
-#   - COHERE_API_KEY          — reranker, optional but recommended
-#   - DASHBOARD_API_SECRET    — unused at runtime, satisfies env validation
+#   - NEON_API_KEY            ephemeral Neon branch for DB isolation
+#   - NEON_PROJECT_ID         the Aura project on Neon
+#   - AI_GATEWAY_API_KEY      Sonnet/Opus calls via Vercel AI Gateway
+#   - COHERE_API_KEY          reranker (optional but recommended)
 #
-# These should be set up under repo Settings → Secrets and variables → Actions.
+# Initial deployment is WARN-ONLY: regressions surface in the PR comment
+# but don't fail the check. Flip STRICT_REGRESSION_GATE to "true" below
+# once a noise floor is known. The `override-bench` label lets a PR merge
+# through a justified regression.
 
 on:
+  workflow_dispatch:
+    inputs:
+      subset:
+        description: "Subset size (fast | medium | full)"
+        type: choice
+        options: [fast, medium, full]
+        default: medium
+      dataset:
+        description: "Dataset (toy | lme | locomo | both)"
+        type: choice
+        options: [toy, lme, locomo, both]
+        default: both
   pull_request:
-    types: [labeled, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/api/src/memory/**"
+      - "apps/api/bench/**"
+      - "apps/api/src/personality/system-prompt.ts"
+      - "apps/api/src/pipeline/core-prompt.ts"
+      - "packages/db/src/schema.ts"
+      - "packages/db/drizzle/**"
 
 permissions:
   contents: read
@@ -34,10 +62,9 @@ env:
 
 jobs:
   bench:
-    # Only run for PRs that carry the `memory` label and are not draft.
-    if: contains(github.event.pull_request.labels.*.name, 'memory') && github.event.pull_request.draft == false
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,6 +82,19 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Cache corpus
+        uses: actions/cache@v4
+        with:
+          path: apps/api/bench/corpus/cache
+          # Bust the cache when the manifest changes — that's our source of
+          # truth for which URLs to fetch.
+          key: bench-corpus-${{ hashFiles('apps/api/bench/corpus/manifest.json') }}
+          restore-keys: |
+            bench-corpus-
+
+      - name: Fetch corpus (cached)
+        run: pnpm --filter aura-api bench:fetch-corpus
+
       - name: Create ephemeral Neon branch
         id: neon
         env:
@@ -67,9 +107,7 @@ jobs:
             echo "::warning::NEON_API_KEY or NEON_PROJECT_ID missing — bench will skip."
             exit 0
           fi
-          BRANCH="pr-${{ github.event.pull_request.number }}-${{ github.run_id }}"
-          # Create a branch from main with a connection_uri response so we can
-          # read DATABASE_URL straight from the API.
+          BRANCH="bench-${{ github.event.pull_request.number || github.run_id }}"
           RESPONSE=$(curl -sS -X POST \
             "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches" \
             -H "Authorization: Bearer ${NEON_API_KEY}" \
@@ -92,33 +130,47 @@ jobs:
           echo "Skipping bench — no Neon credentials." >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-      - name: Run migrations on the Neon branch
+      - name: Migrate the Neon branch
         if: steps.neon.outputs.neon-skip != 'true'
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db-url }}
         run: pnpm --filter @aura/db db:migrate
 
-      - name: Run bench (fast subset, warn-only)
+      - name: Run bench
         if: steps.neon.outputs.neon-skip != 'true'
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db-url }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           ELEVENLABS_API_KEY: placeholder
-          DEFAULT_WORKSPACE_ID: bench-pr
+          DEFAULT_WORKSPACE_ID: bench-ci
           DASHBOARD_API_SECRET: placeholder
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Default to the full medium subset across both datasets. Manual
+          # runs override these via workflow_dispatch inputs.
+          SUBSET: ${{ github.event.inputs.subset || 'medium' }}
+          DATASET: ${{ github.event.inputs.dataset || 'both' }}
         run: |
           mkdir -p /tmp/bench
           pnpm --filter aura-api bench:memory \
-            --dataset=both \
-            --subset=fast \
+            --dataset=${DATASET} \
+            --subset=${SUBSET} \
             --json=/tmp/bench/result.json \
             | tee /tmp/bench/output.txt
         continue-on-error: true
 
-      - name: Build sticky PR comment
+      - name: Upload bench artefacts
         if: steps.neon.outputs.neon-skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-bench-${{ github.run_id }}
+          path: |
+            /tmp/bench/result.json
+            /tmp/bench/output.txt
+          retention-days: 30
+
+      - name: Build sticky PR comment
+        if: steps.neon.outputs.neon-skip != 'true' && github.event_name == 'pull_request'
         id: comment
         run: |
           if [ ! -f /tmp/bench/output.txt ]; then
@@ -126,9 +178,7 @@ jobs:
           fi
           {
             echo "body<<EOF"
-            echo "### Memory bench (fast subset)"
-            echo ""
-            echo "<!-- memory-bench-sticky -->"
+            echo "### Memory bench (\`${SUBSET}\` subset, \`${DATASET}\`)"
             echo ""
             echo "Run: \`${{ github.run_id }}\` · commit \`${GITHUB_SHA::7}\`"
             echo ""
@@ -136,23 +186,26 @@ jobs:
             cat /tmp/bench/output.txt
             echo '```'
             echo ""
-            if [ -n "${{ env.STRICT_REGRESSION_GATE }}" ] && [ "${{ env.STRICT_REGRESSION_GATE }}" = "true" ]; then
-              echo "_Hard-fail gate is ON — regressions >${{ env.REGRESSION_THRESHOLD_PP }}pp will fail this check. Apply the \`override-bench\` label to merge anyway._"
+            if [ "${STRICT_REGRESSION_GATE}" = "true" ]; then
+              echo "_Hard-fail gate is ON — regressions >${REGRESSION_THRESHOLD_PP}pp will fail this check. Apply the \`override-bench\` label to merge anyway._"
             else
-              echo "_Warn-only mode — regressions are surfaced but don't fail the check. Ship #1043e to flip on the hard gate._"
+              echo "_Warn-only mode — regressions surface but don't fail the check._"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+        env:
+          SUBSET: ${{ github.event.inputs.subset || 'medium' }}
+          DATASET: ${{ github.event.inputs.dataset || 'both' }}
 
       - name: Post / update PR comment
-        if: steps.neon.outputs.neon-skip != 'true'
+        if: steps.neon.outputs.neon-skip != 'true' && github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: memory-bench
           message: ${{ steps.comment.outputs.body }}
 
       - name: Enforce regression gate
-        if: env.STRICT_REGRESSION_GATE == 'true' && steps.neon.outputs.neon-skip != 'true' && !contains(github.event.pull_request.labels.*.name, 'override-bench')
+        if: env.STRICT_REGRESSION_GATE == 'true' && steps.neon.outputs.neon-skip != 'true' && github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'override-bench')
         env:
           THRESHOLD_PP: ${{ env.REGRESSION_THRESHOLD_PP }}
         run: |

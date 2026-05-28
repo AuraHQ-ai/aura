@@ -1,51 +1,47 @@
 # Memory bench corpora
 
-Falsifiable scoring depends on the corpus being honest and reproducible. This directory holds the inputs the harness replays through Aura's real extract → retrieve → answer pipeline.
+Falsifiable scoring depends on the corpus being honest, reproducible, and not bloating the repo. This directory holds **only** the manifest and a tiny vendored fixture; the real corpora are fetched on demand into a gitignored cache.
 
-## What ships in this folder
+## Layout
 
-| File | License | Vendored? | Used for |
-|---|---|---|---|
-| `toy.json` | internal | always | smoke-test, CI sanity check, `--dataset=toy` |
-| `longmemeval-subset.json` | MIT | when fetched | `--dataset=lme` (temporal, knowledge-update, abstention) |
-| `locomo-subset.json` | CC-BY-NC-4.0 | **pending legal check** | `--dataset=locomo` (single_hop, multi_hop, temporal, open_domain, adversarial) |
-| `manifest.json` | — | always | source-of-truth metadata + corpus hash |
-
-The runner reads `manifest.json` to discover which files exist on disk. Missing files are skipped with a warning, so the bench still produces a partial score when only `toy.json` is present.
-
-## LongMemEval — MIT (safe to vendor)
-
-Source: <https://github.com/xiaowu0162/LongMemEval>. The MIT license permits vendoring with attribution. We pin a stratified 100-question subset from `longmemeval_oracle.json` (the oracle variant ships only the evidence sessions, which is the cheapest replay).
-
-To refresh:
-
-```bash
-pnpm --filter aura-api tsx bench/scripts/fetch-longmemeval.ts \
-  --out apps/api/bench/corpus/longmemeval-subset.json \
-  --seed 4711
+```
+corpus/
+  manifest.json              # checked in — source of truth
+  README.md                  # this file
+  toy.json                   # checked in — 3-question smoke fixture
+  cache/                     # GITIGNORED — populated by bench:fetch-corpus
+    longmemeval_oracle.json  # ~50 MB once fetched
+    locomo10_rag.json        # ~12 MB once fetched
 ```
 
-The script is hermetic — deterministic for a given seed. The first vendored copy was generated with `seed=4711`.
+## Fetching the real corpora
 
-## LoCoMo — CC-BY-NC-4.0 (decision required)
+```bash
+pnpm bench:fetch-corpus              # idempotent; skips files already cached
+pnpm bench:fetch-corpus -- --force   # redownload everything
+```
 
-Source: <https://github.com/snap-research/locomo>. The license is non-commercial. Vendoring it into a commercial repo needs an explicit decision; see "Open questions" in #1043.
+The script reads `manifest.json`, downloads each non-vendored entry to its target path, and prints a sha256 of every file. Re-running with the cache populated is a no-op (it just reprints the hashes).
 
-Until then, the harness:
+In CI the `apps/api/bench/corpus/cache/` directory is cached by `actions/cache@v4` keyed on `manifest.json`, so subsequent runs don't hit the network.
 
-1. **Does not** include `locomo-subset.json` in the repo.
-2. Logs a `Skipping dataset=locomo: file missing` warning and continues.
-3. Scores everything that *is* present.
+## What's actually pinned
 
-If you have a local copy (e.g. for ad-hoc evaluation), drop it at `apps/api/bench/corpus/locomo-subset.json` and run with `--dataset=locomo`. Do **not** commit the file.
+| Dataset | Source | Vendored? | Questions |
+|---|---|---|---|
+| `toy` | hand-written | always | 3 |
+| `longmemeval` | [xiaowu0162/LongMemEval](https://github.com/xiaowu0162/LongMemEval) (MIT) | fetched | 500 |
+| `locomo` | [snap-research/locomo](https://github.com/snap-research/locomo) | fetched | 1,540 |
 
-## Manifest hashing
+Both projects are public research releases. The harness records the sha256 of every loaded file in `bench_runs.corpus_hash`, so deltas are honest: if a corpus changes upstream the chart will not silently lie — different hash, different baseline.
 
-`manifest.json` is read at run start. The harness hashes every file it actually loads and stores the SHA-256 alongside the run in `bench_runs.corpus_hash`. This means delta plots are safe: if you change the corpus mid-quarter the chart will not silently lie — different hash, different baseline.
+## Why not vendor the JSON?
+
+LongMemEval is ~50 MB and LoCoMo is ~12 MB. Committing them bloats clones for everyone, slows CI, and noises up diffs whenever upstream republishes. The fetch-and-cache pattern keeps the repo small and the bench reproducible.
 
 ## Adding a new corpus
 
-1. Pick an MIT/Apache-licensed source (or get clearance for CC-BY-NC, see above).
-2. Add a loader to `bench/src/fixtures.ts` that returns `BenchCase[]`.
-3. Append an entry to `manifest.json`.
+1. Pick a public, stable URL.
+2. Add a `datasets` entry to `manifest.json` with `vendored: false` and a `fetchUrl`.
+3. Write a loader in `bench/src/fixtures.ts` that returns `BenchCase[]`.
 4. Update this README.

@@ -1,10 +1,16 @@
 /**
  * CLI entry point for the memory benchmark harness.
  *
- *   pnpm bench:memory                          # toy corpus, full subset
- *   pnpm bench:memory --dataset=lme            # LongMemEval (if vendored)
- *   pnpm bench:memory --dataset=both --subset=fast --post-slack
- *   pnpm bench:memory --dry-run                # no DB writes, no LLM calls
+ *   pnpm bench:memory                                # toy corpus, medium subset
+ *   pnpm bench:memory --dataset=lme                  # LongMemEval (cached corpus)
+ *   pnpm bench:memory --dataset=both --subset=full   # ~2,000 questions
+ *   pnpm bench:memory --dataset=both --subset=fast   # ~40 questions, PR speed
+ *   pnpm bench:memory --dry-run                      # no DB writes, no LLM calls
+ *
+ * Model overrides (Sonnet for extraction + answerer, Opus for judge by default):
+ *   --extraction-model=anthropic/claude-sonnet-4.6
+ *   --answerer-model=anthropic/claude-sonnet-4.6
+ *   --judge-model=anthropic/claude-opus-4.6
  *
  * Mirrors the pattern of `backfill-memories.ts`: dotenv at the top, `--prod`
  * to switch to `.env.production`.
@@ -47,9 +53,11 @@ const datasets =
         ? (["toy", "longmemeval", "locomo"] as const)
         : ([datasetArg] as any);
 
-const subsetArg = (getFlag("subset") ?? "full") as "fast" | "full";
+const subsetArg = (getFlag("subset") ?? "medium") as "fast" | "medium" | "full";
 const category = getFlag("category");
-const judgeModel = getFlag("judge");
+const judgeModel = getFlag("judge-model") ?? getFlag("judge");
+const extractionModel = getFlag("extraction-model");
+const answererModel = getFlag("answerer-model");
 const jsonOut = getFlag("json");
 
 const cfg = {
@@ -59,6 +67,8 @@ const cfg = {
   skipIngest: hasFlag("skip-ingest"),
   dryRun: hasFlag("dry-run"),
   postSlack: hasFlag("post-slack"),
+  extractionModel,
+  answererModel,
   judgeModel,
 };
 

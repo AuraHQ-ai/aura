@@ -67,8 +67,14 @@ export interface BenchRunConfig {
   runId: string;
   /** Datasets to load and score. */
   datasets: DatasetId[];
-  /** "fast" = ~40 Qs for PR gate; "full" = whole vendored subset. */
-  subset: "fast" | "full";
+  /**
+   * Subset selector:
+   *  - "fast"   ≈ 40 Qs, stratified per category. Used by ad-hoc local runs.
+   *  - "medium" ≈ 300 Qs, the standard PR / scheduled-CI budget.
+   *  - "full"   = the entire vendored corpus (~1,500 LoCoMo + 500 LongMemEval).
+   *               Manual runs only — costly.
+   */
+  subset: "fast" | "medium" | "full";
   /** Optional category filter (e.g. only "temporal"). */
   category?: string;
   /** Skip ingestion (assumes memories already populated for this runId). */
@@ -77,7 +83,11 @@ export interface BenchRunConfig {
   dryRun: boolean;
   /** Post a Block Kit report to Slack channel MEMORY_BENCH_SLACK_CHANNEL. */
   postSlack: boolean;
-  /** Override the LLM-judge model id. Default: same as main model. */
+  /** Override the extraction model (default Sonnet via models.ts). */
+  extractionModel?: string;
+  /** Override the constrained-answerer model (default Sonnet via models.ts). */
+  answererModel?: string;
+  /** Override the LLM-judge model (default Opus via models.ts). */
   judgeModel?: string;
   /** PR number (CI populates this; nightly leaves it null). */
   prNumber?: number;

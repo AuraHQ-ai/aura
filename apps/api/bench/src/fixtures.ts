@@ -23,15 +23,12 @@ const CORPUS_DIR = resolve(__dirname, "../corpus");
 
 interface ManifestEntry {
   file: string;
-  license: string;
-  source: string | null;
-  license_url: string | null;
-  questions: number;
   vendored?: boolean;
+  source?: string;
+  fetchUrl?: string;
+  fallbackUrl?: string;
+  questions?: number;
   notes?: string;
-  subset_seed?: number;
-  subset_axes?: string[];
-  subset_categories?: string[];
 }
 
 interface Manifest {
@@ -47,13 +44,19 @@ async function loadManifest(): Promise<Manifest> {
   return cachedManifest;
 }
 
-/** Resolve the on-disk path for a corpus file, or null if it isn't vendored. */
+/** Resolve the on-disk path for a corpus file, or null if it isn't available. */
 async function corpusPath(datasetId: string): Promise<string | null> {
   const manifest = await loadManifest();
   const entry = manifest.datasets[datasetId];
   if (!entry) return null;
   const fullPath = resolve(CORPUS_DIR, entry.file);
-  return existsSync(fullPath) ? fullPath : null;
+  if (existsSync(fullPath)) return fullPath;
+  if (entry.vendored === false && entry.fetchUrl) {
+    logger.warn(
+      `bench: ${datasetId} not in cache — run 'pnpm bench:fetch-corpus' first. (Source: ${entry.source ?? entry.fetchUrl})`,
+    );
+  }
+  return null;
 }
 
 /**
@@ -215,83 +218,128 @@ export async function loadLongMemEval(): Promise<BenchCase[]> {
 
 // ── LoCoMo loader ──────────────────────────────────────────────────────────
 //
-// LoCoMo ships a per-conversation JSON with multi-session arrays and
-// question objects that reference evidence by `dia_id` like "D1:3".
-// Format reference: https://github.com/snap-research/locomo
+// LoCoMo's locomo10.json is a top-level array of 10 conversations. Each
+// conversation looks like:
 //
-// File on disk is OPTIONAL — see corpus/README.md for the licensing caveat.
+//   {
+//     "sample_id": "conv-26",
+//     "qa": [
+//       { "question": "...", "answer": "...", "evidence": ["D1:3"], "category": 2 },
+//       ...
+//     ],
+//     "conversation": {
+//       "speaker_a": "Caroline",
+//       "speaker_b": "Melanie",
+//       "session_1_date_time": "1:56 pm on 8 May, 2023",
+//       "session_1": [ { "speaker": "Caroline", "dia_id": "D1:1", "text": "..." }, ... ],
+//       "session_2_date_time": "...",
+//       "session_2": [ ... ],
+//       ...
+//     }
+//   }
+//
+// `dia_id` is shaped "D{session_number}:{turn_number}". Evidence pointers
+// in the qa entries use the same convention. We map session_N → ID "DN"
+// so the evidence pointers and `evidenceSessionIds` align.
 
-interface LoCoMoQuestion {
+interface LoCoMoTurn {
+  speaker: string;
+  dia_id: string;
+  text: string;
+}
+
+interface LoCoMoQA {
   question: string;
-  answer?: string | string[];
+  answer?: string | string[] | null;
   category?: number | string;
   evidence?: string[];
   adversarial_answer?: string | null;
 }
 
 interface LoCoMoConversation {
-  conversation_id?: string;
-  speaker_a?: string;
-  speaker_b?: string;
-  sessions: Record<
-    string,
-    Array<{ dia_id?: string; speaker: string; text: string; timestamp?: string }>
-  > & { dates?: Record<string, string> };
-  questions: LoCoMoQuestion[];
+  sample_id?: string;
+  qa?: LoCoMoQA[];
+  conversation?: Record<string, unknown> & {
+    speaker_a?: string;
+    speaker_b?: string;
+  };
 }
 
-// LoCoMo's numeric category codes mapped to readable names. Source:
+// LoCoMo numeric category codes → readable names. Source:
 // snap-research/locomo task_eval/eval_qa.py.
 const LOCOMO_CATEGORY_NAMES: Record<string, string> = {
-  "1": "single_hop",
-  "2": "multi_hop",
+  "1": "multi_hop",
+  "2": "single_hop",
   "3": "temporal",
   "4": "open_domain",
   "5": "adversarial",
 };
 
+/**
+ * Parse LoCoMo's free-form session dates ("1:56 pm on 8 May, 2023") into
+ * an ISO 8601 timestamp. JavaScript's Date constructor handles most
+ * variants; we strip the leading "X:XX am/pm on " when present, then fall
+ * back to a midnight ISO if parsing fails.
+ */
+function parseLocomoDate(raw: string | undefined, fallbackIdx: number): string {
+  if (raw) {
+    const cleaned = raw.replace(/\s+on\s+/i, " ").trim();
+    const d = new Date(cleaned);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return new Date(Date.UTC(2024, 0, 1 + fallbackIdx)).toISOString();
+}
+
 export async function loadLoCoMo(): Promise<BenchCase[]> {
   const path = await corpusPath("locomo");
-  if (!path) {
-    logger.info("LoCoMo subset not vendored (license decision pending). Skipping.");
-    return [];
-  }
+  if (!path) return [];
 
   const raw = JSON.parse(await readFile(path, "utf8"));
   const conversations: LoCoMoConversation[] = Array.isArray(raw) ? raw : [raw];
 
   const cases: BenchCase[] = [];
   for (const conv of conversations) {
-    const conversationId = conv.conversation_id ?? "conv";
-    const sessionEntries = Object.entries(conv.sessions).filter(
-      ([k]) => k !== "dates",
-    ) as [string, Array<{ dia_id?: string; speaker: string; text: string }>][];
+    const conversation = conv.conversation;
+    if (!conversation) continue;
 
-    // Map a → user, b → assistant. Two-humans-as-users is feasible but
-    // would require touching the extractor (see #1043 §3).
-    const speakerA = conv.speaker_a ?? "A";
-    const speakerB = conv.speaker_b ?? "B";
+    const conversationId = conv.sample_id ?? "conv";
+    const speakerA = conversation.speaker_a ?? "A";
 
-    const sessions = sessionEntries.map(([id, turns], idx) => ({
-      id,
-      timestamp:
-        (conv.sessions as any).dates?.[id] ??
-        new Date(2024, 0, 1 + idx).toISOString(),
-      turns: turns.map((t, i) => ({
-        diaId: t.dia_id ?? `${id}:${i + 1}`,
-        role:
-          t.speaker === speakerA ? ("user" as const) : ("assistant" as const),
-        speaker: t.speaker,
-        content: t.text,
-      })),
-    }));
+    // Pair every "session_N" array with its "session_N_date_time" sibling.
+    const sessionKeys = Object.keys(conversation)
+      .filter((k) => /^session_\d+$/.test(k))
+      .sort((a, b) => Number(a.slice(8)) - Number(b.slice(8)));
 
-    for (const [qIdx, q] of conv.questions.entries()) {
+    const sessions = sessionKeys.map((sessionKey, idx) => {
+      const sessionNumber = Number(sessionKey.slice("session_".length));
+      const turns = conversation[sessionKey] as LoCoMoTurn[] | undefined;
+      const dateRaw = conversation[`${sessionKey}_date_time`] as string | undefined;
+      return {
+        // Map session_3 → "D3" so evidence dia_ids like "D3:5" match.
+        id: `D${sessionNumber}`,
+        timestamp: parseLocomoDate(dateRaw, idx),
+        turns: (turns ?? []).map((t, i) => ({
+          diaId: t.dia_id ?? `D${sessionNumber}:${i + 1}`,
+          role:
+            t.speaker === speakerA ? ("user" as const) : ("assistant" as const),
+          speaker: t.speaker,
+          content: t.text,
+        })),
+      };
+    });
+
+    for (const [qIdx, q] of (conv.qa ?? []).entries()) {
       const categoryKey = String(q.category ?? "");
-      const category = LOCOMO_CATEGORY_NAMES[categoryKey] ?? `cat_${categoryKey}`;
-      const goldAnswer = q.answer ?? q.adversarial_answer ?? "";
+      const category =
+        LOCOMO_CATEGORY_NAMES[categoryKey] ?? `cat_${categoryKey}`;
+      // Category 5 ("adversarial") often has answer = "" / null when the
+      // correct behaviour is to refuse. Treat that as an abstention case.
+      const goldAnswer =
+        q.answer ?? (q as any).adversarial_answer ?? "";
       const abstention =
-        category === "adversarial" && (goldAnswer === null || goldAnswer === "");
+        category === "adversarial" &&
+        (goldAnswer === null || goldAnswer === "" ||
+          (Array.isArray(goldAnswer) && goldAnswer.length === 0));
       const evidenceDiaIds = q.evidence ?? [];
       const evidenceSessionIds = [
         ...new Set(evidenceDiaIds.map((d) => d.split(":")[0])),
@@ -302,7 +350,7 @@ export async function loadLoCoMo(): Promise<BenchCase[]> {
         source: "locomo",
         category,
         question: q.question,
-        goldAnswer,
+        goldAnswer: goldAnswer ?? "",
         abstention,
         sessions,
         evidenceSessionIds,
@@ -326,8 +374,19 @@ export async function loadDataset(id: DatasetId): Promise<BenchCase[]> {
   }
 }
 
-/** Deterministic stratified sampler used by --subset=fast. */
-export function sampleFast(cases: BenchCase[], targetPerCategory: number, seed = 4711): BenchCase[] {
+/**
+ * Deterministic stratified sampler.
+ *
+ * Caps each category at `targetPerCategory` and applies a stable shuffle
+ * via the seeded RNG. Categories below the cap pass through untouched.
+ * Output ordering is stable per (cases, target, seed) so a re-run with
+ * the same inputs always picks the same questions.
+ */
+export function stratifiedSample(
+  cases: BenchCase[],
+  targetPerCategory: number,
+  seed = 4711,
+): BenchCase[] {
   const byCategory = new Map<string, BenchCase[]>();
   for (const c of cases) {
     if (!byCategory.has(c.category)) byCategory.set(c.category, []);
@@ -336,7 +395,6 @@ export function sampleFast(cases: BenchCase[], targetPerCategory: number, seed =
   const rng = mulberry32(seed);
   const out: BenchCase[] = [];
   for (const [, list] of byCategory) {
-    // Shuffle deterministically then take the first N.
     const shuffled = [...list];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
@@ -346,6 +404,32 @@ export function sampleFast(cases: BenchCase[], targetPerCategory: number, seed =
   }
   return out;
 }
+
+/**
+ * Subset size table. Keep these in one place so the CLI, the GitHub
+ * Action, and any future runners agree on what each label means.
+ *
+ * Numbers reflect a per-category cap after stratified shuffling, so the
+ * actual question count depends on how many categories the dataset has.
+ * LongMemEval (cleaned) ships 6 categories; LoCoMo ships 5.
+ *
+ *   fast    4/category → ~44 Qs total. Iteration-speed for ad-hoc local runs.
+ *   medium  30/category → ~330 Qs total. PR-time / automation default.
+ *   full    no cap     → 2,486 Qs total. Manual deep-dive only — costs real money.
+ *
+ * The medium tier is sized so a PR-time bench with Sonnet for extraction
+ * + answerer and Opus as judge comes in around ~$15–25 per run, low enough
+ * to be acceptable for every memory-touching PR but still statistically
+ * meaningful (30 Qs/category gives roughly ±15pp at 95% confidence).
+ */
+export const SUBSET_PER_CATEGORY = {
+  fast: 4,
+  medium: 30,
+  full: Number.POSITIVE_INFINITY,
+} as const;
+
+/** Legacy export kept for backward compatibility with existing tests. */
+export const sampleFast = stratifiedSample;
 
 function mulberry32(seed: number): () => number {
   let state = seed >>> 0;

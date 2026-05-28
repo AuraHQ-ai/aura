@@ -35,10 +35,6 @@
     {
       "path": "/api/cron/heartbeat",
       "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/api/cron/bench-memory",
-      "schedule": "30 4 * * *"
     }
   ]
 }

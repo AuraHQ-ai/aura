@@ -9,6 +9,9 @@ dist/
 .vercel
 .env*.local
 
+# Memory bench corpus cache — fetched on demand, never committed.
+apps/api/bench/corpus/cache/
+
 # Landing page
 apps/web/.next/
 apps/web/next-env.d.ts

@@ -125,48 +125,63 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ## Memory PR checklist
 
-Every PR that touches the memory subsystem — extractor, retriever, dedup, schema, prompts that change how memories are formatted, anything in `apps/api/src/memory/**` or `apps/api/src/personality/system-prompt.ts` — must include a bench score in the description.
+The harness in `apps/api/bench/` makes memory PRs falsifiable. It replays vendored LoCoMo + LongMemEval corpora through Aura's real `extract → retrieve → answer` pipeline, scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
 
-### How to run it locally
+### When does it run?
+
+* **Automatically on PRs** when a memory-relevant path changes — `apps/api/src/memory/**`, `apps/api/bench/**`, `apps/api/src/personality/system-prompt.ts`, `apps/api/src/pipeline/core-prompt.ts`, `packages/db/src/schema.ts`, or `packages/db/drizzle/**`. Other PRs skip the bench entirely so we don't burn cycles on unrelated changes.
+* **Manually via `workflow_dispatch`** in the GitHub UI (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`) and dataset (`toy | lme | locomo | both`).
+* **Locally**, any time. Useful when iterating on a memory change before pushing.
+
+There is **no nightly cron** — the corpora and the codepath are both stable, so re-running the same bench every night would just spend money on identical numbers. PRs and manual runs are the right cadence.
+
+### Local workflow
 
 ```bash
-# Cheap smoke test (3 questions, ~$0, ~30s)
+# One-time: cache the real corpora locally (~62 MB, gitignored).
+pnpm bench:fetch-corpus
+
+# Cheap smoke test (3 questions, ~$0.05, ~30s)
 pnpm bench:memory --dataset=toy
 
-# Real evaluation on the vendored LongMemEval slice (~100 questions, ~$1)
-pnpm --filter aura-api tsx apps/api/bench/scripts/fetch-longmemeval.ts \
-  --out apps/api/bench/corpus/longmemeval-subset.json \
-  --seed 4711
-pnpm bench:memory --dataset=lme --subset=full
+# Standard run — Sonnet for extraction + answerer, Opus as judge.
+# ~300 questions across LoCoMo + LongMemEval, ~$3–7.
+pnpm bench:memory --dataset=both --subset=medium
 
-# Fast subset across whatever you have (~40 Qs, ~$0.50)
+# PR-speed iteration loop (~40 Qs, ~$0.50)
 pnpm bench:memory --dataset=both --subset=fast
 
-# Just the retrieval recall lane, no answerer/judge
-pnpm bench:memory --dataset=lme --dry-run        # validates the corpus loads
+# Full corpus — every question. Costs real money, only run when warranted.
+pnpm bench:memory --dataset=both --subset=full
+
+# Pin specific models (overrides Sonnet/Opus defaults from bench/src/models.ts)
+pnpm bench:memory --extraction-model=anthropic/claude-haiku-4.5 \
+                  --answerer-model=anthropic/claude-sonnet-4.6 \
+                  --judge-model=anthropic/claude-opus-4.6
 ```
 
-The harness creates a throwaway `bench-{runId}` workspace, replays the corpus through `extractMemoriesFromTranscript`, calls `retrieveMemories` for each question, then asks a constrained answerer + LLM judge for QA accuracy. Per-category scores land in `bench_runs`; the workspace is wiped at the end.
+`--prod` switches to `.env.production`. `--dry-run` validates corpora load without any DB writes or LLM calls. `--json=path` writes per-question detail.
 
 ### What to put in the PR description
 
-Run the bench **before** your change (on `main`), then **after**. Paste the relevant rows into a table — at minimum the categories your change is supposed to affect, plus the two it shouldn't:
+The CI bench posts a sticky comment automatically. For the description, paste at least the rows your change targets, plus two it shouldn't affect:
 
-| Dataset | Category | Score before | Score after | Δ |
+| Dataset | Category | Before | After | Δ |
 |---|---|---|---|---|
 | LongMemEval | temporal-reasoning | 39% | 46% | **+7pp** |
 | LongMemEval | knowledge-update | 31% | 33% | +2pp |
 | LongMemEval | abstention | 28% | 27% | -1pp |
-| Retrieval recall@15 | (overall) | 67% | 71% | +4pp |
-| Runtime / cost | | 8m02s / $4.18 | 8m11s / $4.31 | — |
+| LoCoMo | multi_hop | 41% | 40% | -1pp |
+| Retrieval recall@15 (overall) | — | 67% | 71% | +4pp |
+| Runtime / cost | — | 8m02s / $4.18 | 8m11s / $4.31 | — |
 
-If you regress more than **2pp** on any category, that is a blocker unless you justify the trade-off in the PR description. The PR-time CI gate (`.github/workflows/memory-pr-bench.yml`, triggered by the `memory` label) will surface this automatically. Apply the `override-bench` label to merge through a justified regression.
+Regressions > **2pp** on any category require explicit justification. The PR-time gate (`.github/workflows/memory-bench.yml`) surfaces them automatically; once we have a noise floor, flip `STRICT_REGRESSION_GATE: "true"` to turn warnings into hard fails. Apply the `override-bench` label to merge through a justified regression.
 
 ### Adding new evidence
 
-* New corpus → loader in `apps/api/bench/src/fixtures.ts` + entry in `apps/api/bench/corpus/manifest.json` (license must be MIT/Apache or already cleared for commercial use; see `apps/api/bench/corpus/README.md` for the LoCoMo caveat).
-* New scoring lane → new `ScoreType` value in `apps/api/bench/src/types.ts` + branch in `aggregateScores()`.
-* New judge prompt → drop it next to the existing ones in `apps/api/bench/src/judge.ts` and add the category-routing case to `pickPrompt()`.
+* **New corpus** → entry in `apps/api/bench/corpus/manifest.json` (set `vendored: false` + a `fetchUrl`; the file lands in the gitignored `cache/` dir), and a loader in `apps/api/bench/src/fixtures.ts` that returns `BenchCase[]`.
+* **New scoring lane** → new `ScoreType` in `apps/api/bench/src/types.ts` + branch in `aggregateScores()`.
+* **New judge prompt** → drop next to the existing ones in `apps/api/bench/src/judge.ts` and route via `pickPrompt()`.
 
 ---
 

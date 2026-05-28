@@ -25,21 +25,20 @@ import {
 import {
   computeCorpusHash,
   loadDataset,
-  sampleFast,
+  stratifiedSample,
+  SUBSET_PER_CATEGORY,
 } from "./fixtures.js";
 import { ingestCases } from "./ingest.js";
 import { evaluateRetrieval } from "./eval-retrieval.js";
 import { evaluateQA } from "./eval-qa.js";
+import { resolveBenchModels } from "./models.js";
 import {
   aggregateScores,
   computeDeltas,
   persistRun,
 } from "./score.js";
 import { buildTextSummary, postReport } from "./report.js";
-import {
-  getEmbeddingModel,
-  getMainModelId,
-} from "../../src/lib/ai.js";
+import { getEmbeddingModel } from "../../src/lib/ai.js";
 import { logger } from "../../src/lib/logger.js";
 import type {
   BenchCase,
@@ -60,8 +59,6 @@ export interface BenchRunOutput {
   slackTs: string | null;
 }
 
-const FAST_PER_CATEGORY = 4;
-
 function resolveGitSha(): string | undefined {
   try {
     return execSync("git rev-parse HEAD", {
@@ -76,16 +73,19 @@ function resolveGitSha(): string | undefined {
 
 async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
   const all: BenchCase[] = [];
+  const perCategory = SUBSET_PER_CATEGORY[config.subset];
   for (const dataset of config.datasets) {
     const cases = await loadDataset(dataset);
     const filtered = config.category
       ? cases.filter((c) => c.category === config.category)
       : cases;
-    const sized =
-      config.subset === "fast" ? sampleFast(filtered, FAST_PER_CATEGORY) : filtered;
+    const sized = Number.isFinite(perCategory)
+      ? stratifiedSample(filtered, perCategory)
+      : filtered;
     logger.info(`bench: loaded ${sized.length} case(s) from ${dataset}`, {
       requested: filtered.length,
       subset: config.subset,
+      perCategory,
     });
     all.push(...sized);
   }
@@ -103,15 +103,23 @@ export async function runBench(
   const config: BenchRunConfig = {
     runId,
     datasets: partialConfig.datasets ?? ["toy"],
-    subset: partialConfig.subset ?? "full",
+    subset: partialConfig.subset ?? "medium",
     category: partialConfig.category,
     skipIngest: partialConfig.skipIngest ?? false,
     dryRun: partialConfig.dryRun ?? false,
     postSlack: partialConfig.postSlack ?? false,
+    extractionModel: partialConfig.extractionModel,
+    answererModel: partialConfig.answererModel,
     judgeModel: partialConfig.judgeModel,
     prNumber: partialConfig.prNumber,
     gitSha: partialConfig.gitSha ?? resolveGitSha(),
   };
+
+  const models = resolveBenchModels({
+    extraction: config.extractionModel,
+    answerer: config.answererModel,
+    judge: config.judgeModel,
+  });
 
   const start = Date.now();
   logger.info(`bench: starting run ${runId}`, {
@@ -147,11 +155,16 @@ export async function runBench(
   const corpusHash = await computeCorpusHash(config.datasets);
 
   if (!config.skipIngest && !config.dryRun) {
-    const ing = await ingestCases(cases, workspaceId, (done, total) => {
-      if (done % 5 === 0 || done === total) {
-        logger.info(`bench: ingest progress`, { done, total });
-      }
-    });
+    const ing = await ingestCases(
+      cases,
+      workspaceId,
+      models.extraction,
+      (done, total) => {
+        if (done % 5 === 0 || done === total) {
+          logger.info(`bench: ingest progress`, { done, total });
+        }
+      },
+    );
     logger.info(`bench: ingest complete`, ing);
   }
 
@@ -170,7 +183,8 @@ export async function runBench(
       };
     } else {
       qa = await evaluateQA(benchCase, retrieval.retrieved, {
-        judgeModelId: config.judgeModel,
+        modelId: models.answerer,
+        judgeModelId: models.judge,
       });
     }
     results.push({
@@ -197,22 +211,21 @@ export async function runBench(
   const scores = aggregateScores(results);
   const deltas = await computeDeltas(scores, config).catch(() => new Map());
 
-  const generationModel = await getMainModelId();
   const embeddingModelObj: any = await getEmbeddingModel().catch(() => null);
   const embeddingModel =
     embeddingModelObj?.modelId ?? embeddingModelObj?.id ?? "unknown";
-  const judgeModel = config.judgeModel ?? generationModel;
 
   await persistRun(scores, config, {
     corpusHash,
-    generationModel,
-    judgeModel,
+    generationModel: models.answerer,
+    judgeModel: models.judge,
     embeddingModel,
     totalDurationMs,
     metadata: {
       subset: config.subset,
       category: config.category ?? null,
       cases: results.length,
+      extractionModel: models.extraction,
     },
   });
 

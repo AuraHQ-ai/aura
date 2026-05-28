@@ -1,6 +1,7 @@
 import { generateText, generateObject, Output } from "ai";
+import { gateway } from "@ai-sdk/gateway";
 import { z } from "zod";
-import { getFastModel } from "../lib/ai.js";
+import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
@@ -456,6 +457,31 @@ export interface ExtractionContext {
    * different workspaces from the same process (e.g. the memory benchmark harness).
    */
   workspaceId?: string;
+  /**
+   * Override the extraction LLM (defaults to getFastModel()). Used by the
+   * bench harness to pin extraction to a specific model (e.g. Sonnet) so
+   * runs are comparable across the codebase even if production swaps the
+   * fast-model default.
+   */
+  extractionModelId?: string;
+}
+
+/**
+ * Resolve the extraction model. Honours `context.extractionModelId` when
+ * the bench (or any caller) wants to pin a specific model; otherwise uses
+ * the catalog-resolved fast model. Anthropic fallback middleware is
+ * applied either way.
+ */
+async function resolveExtractionModel(
+  context: ExtractionContext,
+): Promise<WrappableModel> {
+  if (context.extractionModelId) {
+    return withAnthropicFallback(
+      gateway(context.extractionModelId),
+      context.extractionModelId,
+    );
+  }
+  return getFastModel();
 }
 
 /**
@@ -663,7 +689,7 @@ async function runReconciliationCore(
 
   const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", () => existingMemoriesText);
 
-  const model = await getFastModel();
+  const model = await resolveExtractionModel(context);
 
   const { output: result } = await generateText({
     model,
@@ -979,7 +1005,7 @@ async function extractSingleExchange(
     ? `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${strippedAssistant}`
     : `User (${context.displayName || context.userId}): ${context.userMessage}`;
 
-  const model = await getFastModel();
+  const model = await resolveExtractionModel(context);
 
   const { output: object } = await generateText({
     model,

@@ -68,6 +68,7 @@ async function stampProvenance(
 export async function ingestCase(
   benchCase: BenchCase,
   workspaceId: string,
+  extractionModelId: string,
 ): Promise<{ memoriesAdded: number; sessionsIngested: number }> {
   const channelId = `bench:${benchCase.id}`;
   let sessionsIngested = 0;
@@ -145,6 +146,7 @@ export async function ingestCase(
       channelId,
       threadTs,
       workspaceId,
+      extractionModelId,
       triggerRole: "user",
       // valid_from = session timestamp. Critical for temporal categories.
       createdAt: sessionDate,
@@ -179,6 +181,7 @@ export async function ingestCase(
 export async function ingestCases(
   cases: BenchCase[],
   workspaceId: string,
+  extractionModelId: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<{ totalMemories: number; totalSessions: number }> {
   let totalMemories = 0;
@@ -201,7 +204,7 @@ export async function ingestCases(
   );
 
   for (const [i, c] of unique.entries()) {
-    const r = await ingestCase(c, workspaceId);
+    const r = await ingestCase(c, workspaceId, extractionModelId);
     totalMemories += r.memoriesAdded;
     totalSessions += r.sessionsIngested;
     onProgress?.(i + 1, unique.length);

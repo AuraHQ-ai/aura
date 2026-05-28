@@ -17,7 +17,8 @@ import { generateText } from "ai";
 import { gateway } from "@ai-sdk/gateway";
 import type { Memory } from "@aura/db/schema";
 import type { BenchCase, PerCaseResult } from "./types.js";
-import { getMainModelId, withAnthropicFallback } from "../../src/lib/ai.js";
+import { withAnthropicFallback } from "../../src/lib/ai.js";
+import { DEFAULT_ANSWERER_MODEL } from "./models.js";
 import { judgeAnswer } from "./judge.js";
 
 /**
@@ -71,7 +72,7 @@ export async function evaluateQA(
   retrieved: Memory[],
   config: AnswerConfig = {},
 ): Promise<Pick<PerCaseResult, "modelAnswer" | "judgeVerdict" | "judgeConfidence" | "judgeRationale">> {
-  const modelId = config.modelId ?? (await getMainModelId());
+  const modelId = config.modelId ?? DEFAULT_ANSWERER_MODEL;
   const memoryBlock = formatMemoriesForPrompt(retrieved);
 
   const userPrompt = `Memories:\n${memoryBlock}\n\nQuestion: ${benchCase.question}\n\nAnswer:`;
