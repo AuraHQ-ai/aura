@@ -17,6 +17,7 @@ CREATE TABLE "bench_runs" (
 	"corpus_hash" text,
 	"git_sha" text,
 	"pr_number" integer,
+	"metadata" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );--> statement-breakpoint
 ALTER TABLE "bench_runs" ADD CONSTRAINT "bench_runs_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

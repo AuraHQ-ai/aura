@@ -1,7 +1,7 @@
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import type { Memory } from "@aura/db/schema";
-import { formatMemoriesForPrompt } from "../../src/personality/system-prompt.js";
+import { formatMemoriesForPrompt } from "../../src/memory/format-for-prompt.js";
 import { QA_ANSWER_SYSTEM, QA_JUDGE_SYSTEM } from "./judge.js";
 import type { BenchCase } from "./types.js";
 import { getBenchLanguageModel } from "./models.js";

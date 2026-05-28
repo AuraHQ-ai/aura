@@ -289,6 +289,8 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
+  const workspaceId = process.env.DEFAULT_WORKSPACE_ID ?? "default";
+
   const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity, sandboxEnvNames] =
     await Promise.all([
       queryEmbedding
@@ -297,6 +299,7 @@ export async function buildCorePrompt(
             queryEmbedding,
             currentUserId: session.userId,
             limit: 15,
+            workspaceId,
           }).catch(() => [] as Memory[])
         : Promise.resolve([] as Memory[]),
       queryEmbedding
@@ -307,6 +310,7 @@ export async function buildCorePrompt(
             matchLimit: 15,
             minSimilarity: 0.35,
             excludeThreadTs: session.threadId,
+            workspaceId,
           })
         : Promise.resolve([] as ConversationThread[]),
       session.userProfile !== undefined

@@ -1,22 +1,29 @@
 {
-  "corpusHash": "computed-at-runtime",
-  "generatedAt": "2026-05-28T00:00:00.000Z",
-  "datasets": [
-    {
-      "name": "longmemeval",
-      "file": "longmemeval-subset.json",
-      "license": "MIT",
-      "sourceUrl": "https://github.com/xiaowu0162/LongMemEval",
-      "cases": 5,
-      "included": true
+  "version": 2,
+  "description": "Memory bench corpus manifest. The toy fixture is committed; LongMemEval and LoCoMo are fetched into gitignored cache/ by pnpm --filter aura-api bench:fetch-corpus.",
+  "datasets": {
+    "toy": {
+      "file": "toy.json",
+      "vendored": true,
+      "source": "internal",
+      "questions": 5,
+      "notes": "Hand-written smoke fixture for wiring checks."
     },
-    {
-      "name": "locomo",
-      "file": "locomo-subset.json",
-      "license": "CC-BY-NC-4.0",
-      "sourceUrl": "https://snap.stanford.edu/locomo/",
-      "cases": 0,
-      "included": false
+    "longmemeval": {
+      "file": "cache/longmemeval_oracle.json",
+      "vendored": false,
+      "source": "https://github.com/xiaowu0162/longmemeval",
+      "fetchUrl": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json",
+      "questions": 500,
+      "notes": "Oracle variant with evidence sessions only. MIT licensed. Fetched on demand."
+    },
+    "locomo": {
+      "file": "cache/locomo10.json",
+      "vendored": false,
+      "source": "https://github.com/snap-research/locomo",
+      "fetchUrl": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json",
+      "questions": 1540,
+      "notes": "Full LoCoMo corpus. Fetched on demand into cache/."
     }
-  ]
+  }
 }

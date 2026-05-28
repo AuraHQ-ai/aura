@@ -20,6 +20,7 @@ function toThreadMessages(session: BenchSession): ThreadMessage[] {
 export async function ingestBenchCase(
   benchCase: BenchCase,
   workspaceId: string,
+  extractionModelId?: string,
 ): Promise<void> {
   for (const session of benchCase.sessions) {
     const messages = toThreadMessages(session);
@@ -45,6 +46,7 @@ export async function ingestBenchCase(
         diaIds,
         source: benchCase.source,
       },
+      extractionModelId,
     });
   }
 }
@@ -52,11 +54,12 @@ export async function ingestBenchCase(
 export async function ingestBenchCases(
   cases: BenchCase[],
   workspaceId: string,
+  extractionModelId?: string,
   onProgress?: (completed: number, total: number) => void,
 ): Promise<void> {
   let completed = 0;
   for (const benchCase of cases) {
-    await ingestBenchCase(benchCase, workspaceId);
+    await ingestBenchCase(benchCase, workspaceId, extractionModelId);
     completed += 1;
     onProgress?.(completed, cases.length);
   }

@@ -152,22 +152,25 @@ Memory PRs should include benchmark evidence from the real extract -> retrieve
 -> answer pipeline. For a quick smoke check against the small vendored corpus:
 
 ```bash
-pnpm bench:memory -- --dataset=lme --subset=fast --json
+pnpm bench:memory -- --dataset=toy --subset=fast --json
 ```
 
-For a review-grade run, point the harness at a larger normalized corpus file
-kept outside git and use higher-quality models:
+For a review-grade run, fetch the real corpora into the gitignored cache and use
+higher-quality models:
 
 ```bash
+pnpm --filter aura-api bench:fetch-corpus
 pnpm --filter aura-api bench:memory -- \
   --dataset=both \
-  --subset=full \
-  --corpus-file=/path/to/normalized-memory-bench.json \
+  --subset=medium \
   --extraction-model=anthropic/claude-sonnet-4.6 \
   --answer-model=anthropic/claude-sonnet-4.6 \
   --judge=anthropic/claude-opus-4.7 \
   --json
 ```
+
+Use `--subset=full` for manual deep dives, or `--corpus-file=/path/to/normalized-memory-bench.json`
+when you want to run against a separately prepared normalized file.
 
 Add a before/after table to the PR description:
 

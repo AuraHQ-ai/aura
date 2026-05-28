@@ -1,44 +1,31 @@
 # Memory benchmark corpus
 
-This directory contains the corpus files consumed by `pnpm bench:memory`.
+This directory contains a tiny committed `toy.json` smoke fixture and a manifest
+for fetching real benchmark data on demand.
 
-## Included now
-
-- `longmemeval-subset.json` is a small normalized smoke subset shaped after the
-  LongMemEval oracle format. LongMemEval is MIT-licensed:
-  <https://github.com/xiaowu0162/LongMemEval>.
-- `manifest.json` records the included datasets. The harness computes the
-  effective SHA-256 corpus hash at runtime from included files.
-
-The committed subset is intentionally small so the harness, database isolation,
-scoring, persistence, and PR workflow can be exercised cheaply without polluting
-the repo with large benchmark data files.
-
-## Full/review-grade corpora
-
-LoCoMo can be used for Aura, but do not vendor the full dataset or many derived
-files into this repo. Keep larger normalized subsets outside git and pass them
-explicitly:
+Large LoCoMo / LongMemEval files are intentionally **not** committed. Fetch them
+into the gitignored cache directory when you need a review-grade run:
 
 ```bash
-pnpm --filter aura-api bench:memory -- \
-  --dataset=both \
-  --subset=full \
-  --corpus-file=/path/to/normalized-memory-bench.json
+pnpm --filter aura-api bench:fetch-corpus
+pnpm --filter aura-api bench:memory -- --dataset=both --subset=medium
 ```
 
-The external file should contain enough conversations to be meaningful for
-temporal and multi-session categories. LoCoMo cases should populate
-`evidenceDiaIds` for deterministic retrieval recall@15.
+Use `--subset=full` for manual deep dives. The GitHub workflow defaults PR runs
+to `medium` for memory-path changes and lets manual dispatch choose `full`.
 
-## Normalized case shape
+## Data sources
 
-Each JSON file is an array of:
+- LongMemEval oracle: MIT, fetched from
+  `xiaowu0162/longmemeval-cleaned`.
+- LoCoMo: fetched from `snap-research/locomo`.
+
+Both are normalized at load time into:
 
 ```ts
 {
   id: string;
-  source: "locomo" | "longmemeval";
+  source: "toy" | "locomo" | "longmemeval";
   category: string;
   question: string;
   goldAnswer: string | string[];
@@ -46,9 +33,23 @@ Each JSON file is an array of:
   sessions: Array<{
     id: string;
     timestamp: string;
-    turns: Array<{ role: "user" | "assistant"; content: string; diaId?: string }>;
+    turns: Array<{
+      role: "user" | "assistant";
+      content: string;
+      diaId?: string;
+      speaker?: string;
+    }>;
   }>;
   evidenceSessionIds?: string[];
   evidenceDiaIds?: string[];
 }
+```
+
+You can also bypass the manifest/cache and pass a normalized external file:
+
+```bash
+pnpm --filter aura-api bench:memory -- \
+  --dataset=both \
+  --subset=full \
+  --corpus-file=/path/to/normalized-memory-bench.json
 ```

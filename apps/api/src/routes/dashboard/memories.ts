@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { eq, desc, count, inArray, sql } from "drizzle-orm";
+import { eq, desc, count, inArray, sql, and } from "drizzle-orm";
 import { memories, messages, users, memoryEntities, entities } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
@@ -71,6 +71,7 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
           currentUserId: "dashboard",
           limit,
           adminMode: true,
+          workspaceId: process.env.DEFAULT_WORKSPACE_ID ?? "default",
         });
 
         let items = results.map(({ embedding, searchVector, workspaceId, ...rest }) => rest);
@@ -83,7 +84,7 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
       }
     }
 
-    const conditions = [];
+    const conditions = [eq(memories.workspaceId, process.env.DEFAULT_WORKSPACE_ID ?? "default")];
     if (search) {
       conditions.push(
         sql`to_tsvector('english', coalesce(${memories.content}, '')) @@ plainto_tsquery('english', ${search})`,
@@ -91,11 +92,7 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
     }
     if (type) conditions.push(eq(memories.type, type as any));
 
-    const where = conditions.length > 0
-      ? conditions.length === 1
-        ? conditions[0]
-        : sql`${conditions[0]} AND ${conditions[1]}`
-      : undefined;
+    const where = and(...conditions);
 
     const [items, [totalRow]] = await Promise.all([
       db

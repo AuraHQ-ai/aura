@@ -19,16 +19,16 @@ function hasFlag(name: string): boolean {
 }
 
 function parseConfig(): BenchRunConfig {
-  const dataset = (argValue("dataset") ?? "lme") as BenchDataset;
+  const dataset = (argValue("dataset") ?? "toy") as BenchDataset;
   const subset = (argValue("subset") ?? "fast") as BenchSubset;
   const judgeArg = argValue("judge");
   const prNumber = argValue("pr-number");
 
-  if (!["lme", "locomo", "both"].includes(dataset)) {
-    throw new Error("--dataset must be one of lme, locomo, both");
+  if (!["toy", "lme", "longmemeval", "locomo", "both"].includes(dataset)) {
+    throw new Error("--dataset must be one of toy, lme, longmemeval, locomo, both");
   }
-  if (!["fast", "full"].includes(subset)) {
-    throw new Error("--subset must be one of fast, full");
+  if (!["fast", "medium", "full"].includes(subset)) {
+    throw new Error("--subset must be one of fast, medium, full");
   }
 
   return {

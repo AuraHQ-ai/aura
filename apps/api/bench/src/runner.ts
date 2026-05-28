@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { loadBenchCases, computeCorpusHash } from "./fixtures.js";
 import { benchWorkspaceId, makeRunId } from "./workspace-id.js";
+import { resolveBenchModels } from "./models.js";
 import type { BenchCaseResult, BenchRunConfig, BenchRunResult } from "./types.js";
 
 function currentGitSha(): string | undefined {
@@ -20,7 +21,10 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
   const runId = makeRunId();
   const workspaceId = benchWorkspaceId(runId);
   const gitSha = currentGitSha();
-  const corpusHash = await computeCorpusHash(config.corpusFile);
+  const corpusHash = await computeCorpusHash({
+    dataset: config.dataset,
+    corpusFile: config.corpusFile,
+  });
 
   try {
     const cases = await loadBenchCases({
@@ -53,15 +57,17 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
       persistAggregates,
     } = await import("./score.js");
 
+    const models = resolveBenchModels({
+      extraction: config.extractionModel,
+      answer: config.answerModel,
+      judge: typeof config.judge === "string" ? config.judge : undefined,
+    });
+
     await pruneOldBenchWorkspaces();
     await createBenchWorkspace(workspaceId);
 
-    if (config.extractionModel) {
-      process.env.MEMORY_BENCH_EXTRACTION_MODEL = config.extractionModel;
-    }
-
     if (!config.skipIngest) {
-      await ingestBenchCases(cases, workspaceId);
+      await ingestBenchCases(cases, workspaceId, models.extraction);
     }
 
     const caseResults: BenchCaseResult[] = [];
@@ -69,11 +75,11 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
       const { result, memories } = await evaluateRetrievalCase(benchCase, workspaceId, 15);
 
       if (config.judge !== false) {
-        const answer = await answerFromMemories(benchCase, memories, config.answerModel);
+        const answer = await answerFromMemories(benchCase, memories, models.answer);
         const judged = await judgeAnswer({
           benchCase,
           answer,
-          modelId: typeof config.judge === "string" ? config.judge : undefined,
+          modelId: models.judge,
         });
         caseResults.push({
           ...result,
@@ -100,14 +106,19 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
       corpusHash,
       gitSha,
       durationMs,
-      generationModel: config.answerModel ?? config.extractionModel ?? "configured-fast-model",
+      generationModel: models.answer,
       judgeModel: config.judge === false
         ? undefined
-        : typeof config.judge === "string"
-          ? config.judge
-          : "configured-fast-model",
+        : models.judge,
       embeddingModel: "configured",
       prNumber: config.prNumber,
+      metadata: {
+        subset: config.subset,
+        category: config.category ?? null,
+        caseCount: caseResults.length,
+        extractionModel: models.extraction,
+        corpusFile: config.corpusFile ?? null,
+      },
     });
 
     const result: BenchRunResult = {

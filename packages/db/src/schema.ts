@@ -685,6 +685,7 @@ export const benchRuns = pgTable(
     corpusHash: text("corpus_hash"),
     gitSha: text("git_sha"),
     prNumber: integer("pr_number"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [

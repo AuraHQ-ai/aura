@@ -9,37 +9,66 @@ export function aggregateScores(params: {
   cases: BenchCaseResult[];
   includeQa: boolean;
 }): BenchAggregateScore[] {
-  const groups = new Map<string, {
-    dataset: string;
-    category: string;
-    scoreType: BenchScoreType;
-    n: number;
-    nCorrect: number;
-  }>();
-
-  function add(dataset: string, category: string, scoreType: BenchScoreType, correct: boolean): void {
-    const key = `${dataset}:${category}:${scoreType}`;
-    const group = groups.get(key) ?? { dataset, category, scoreType, n: 0, nCorrect: 0 };
-    group.n += 1;
-    if (correct) group.nCorrect += 1;
-    groups.set(key, group);
-  }
-
+  const byDatasetCategory = new Map<string, BenchCaseResult[]>();
   for (const result of params.cases) {
-    if (result.retrievalHit !== null) {
-      add(result.dataset, result.category, "retrieval_recall_at_15", result.retrievalHit);
+    const key = `${result.dataset}:${result.category}`;
+    const group = byDatasetCategory.get(key) ?? [];
+    group.push(result);
+    byDatasetCategory.set(key, group);
+  }
+
+  const aggregates: BenchAggregateScore[] = [];
+  for (const [key, group] of byDatasetCategory) {
+    const [dataset, category] = key.split(":") as [BenchAggregateScore["dataset"], string];
+    const recallCases = group.filter((result) => result.retrievalHit !== null);
+    if (recallCases.length > 0) {
+      const nCorrect = recallCases.filter((result) => result.retrievalHit === true).length;
+      aggregates.push({
+        runId: params.runId,
+        dataset,
+        category,
+        scoreType: "retrieval_recall_at_15",
+        n: recallCases.length,
+        nCorrect,
+        score: nCorrect / recallCases.length,
+      });
     }
-    if (params.includeQa && result.qaCorrect !== undefined) {
-      add(result.dataset, result.category, "qa_accuracy", result.qaCorrect);
+
+    if (params.includeQa) {
+      const qaCases = group.filter((result) => result.verdict && result.verdict !== "skipped");
+      if (qaCases.length > 0) {
+        const nCorrect = qaCases.filter((result) =>
+          result.verdict === "correct" || result.verdict === "abstain_ok"
+        ).length;
+        const partialCredit = qaCases.filter((result) => result.verdict === "partial").length * 0.5;
+        aggregates.push({
+          runId: params.runId,
+          dataset,
+          category,
+          scoreType: "qa_accuracy",
+          n: qaCases.length,
+          nCorrect,
+          score: (nCorrect + partialCredit) / qaCases.length,
+        });
+      }
+
+      const abstentionCases = group.filter((result) => result.abstention && result.verdict);
+      if (abstentionCases.length > 0) {
+        const nCorrect = abstentionCases.filter((result) => result.verdict === "abstain_ok").length;
+        aggregates.push({
+          runId: params.runId,
+          dataset,
+          category: "abstention",
+          scoreType: "abstention_accuracy",
+          n: abstentionCases.length,
+          nCorrect,
+          score: nCorrect / abstentionCases.length,
+        });
+      }
     }
   }
 
-  return [...groups.values()]
-    .map((group) => ({
-      runId: params.runId,
-      ...group,
-      score: group.n === 0 ? 0 : group.nCorrect / group.n,
-    }))
+  return aggregates
     .sort((a, b) =>
       a.dataset.localeCompare(b.dataset) ||
       a.category.localeCompare(b.category) ||
@@ -85,6 +114,7 @@ export async function persistAggregates(params: {
   judgeModel?: string;
   embeddingModel?: string;
   prNumber?: number;
+  metadata?: Record<string, unknown>;
 }): Promise<void> {
   if (params.aggregates.length === 0) return;
   await ensureBenchMetaWorkspace();
@@ -105,5 +135,6 @@ export async function persistAggregates(params: {
     corpusHash: params.corpusHash,
     gitSha: params.gitSha,
     prNumber: params.prNumber,
+    metadata: params.metadata,
   })));
 }

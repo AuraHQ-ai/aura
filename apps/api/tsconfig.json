@@ -29,7 +29,8 @@
   },
   "include": [
     "src/**/*.ts",
-    "bench/src/**/*.ts"
+    "bench/src/**/*.ts",
+    "bench/scripts/**/*.ts"
   ],
   "exclude": [
     "node_modules",

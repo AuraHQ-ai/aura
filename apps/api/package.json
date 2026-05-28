@@ -14,7 +14,8 @@
     "bench:memory": "tsx src/scripts/bench-memory.ts",
     "content:index": "tsx scripts/index-content.ts",
     "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings",
-    "backfill:canonical-model-ids": "tsx scripts/backfill-canonical-model-ids.ts"
+    "backfill:canonical-model-ids": "tsx scripts/backfill-canonical-model-ids.ts",
+    "bench:fetch-corpus": "tsx bench/scripts/fetch-corpus.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.46",

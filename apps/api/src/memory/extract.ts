@@ -1,6 +1,7 @@
 import { generateText, generateObject, Output } from "ai";
+import { gateway } from "@ai-sdk/gateway";
 import { z } from "zod";
-import { getFastModel } from "../lib/ai.js";
+import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
@@ -459,6 +460,23 @@ export interface ExtractionContext {
     diaIds?: string[];
     source?: string;
   };
+  /**
+   * Optional model pin for benchmark runs. Production callers omit this and
+   * use the catalog-resolved fast model.
+   */
+  extractionModelId?: string;
+}
+
+async function resolveExtractionModel(
+  context: ExtractionContext,
+): Promise<WrappableModel> {
+  if (context.extractionModelId) {
+    return withAnthropicFallback(
+      gateway(context.extractionModelId),
+      context.extractionModelId,
+    );
+  }
+  return getFastModel();
 }
 
 /**
@@ -580,7 +598,7 @@ async function extractWithReconciliation(
 
   const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", () => existingMemoriesText);
 
-  const model = await getFastModel();
+  const model = await resolveExtractionModel(context);
 
   const { output: result } = await generateText({
     model,
@@ -897,7 +915,7 @@ async function extractSingleExchange(
     ? `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${strippedAssistant}`
     : `User (${context.displayName || context.userId}): ${context.userMessage}`;
 
-  const model = await getFastModel();
+  const model = await resolveExtractionModel(context);
 
   const { output: object } = await generateText({
     model,

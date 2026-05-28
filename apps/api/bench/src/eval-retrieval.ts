@@ -34,6 +34,7 @@ export async function evaluateRetrievalCase(
       category: benchCase.category,
       retrievedMemoryIds: memories.map((memory) => memory.id),
       retrievalHit,
+      abstention: benchCase.abstention,
     },
     memories,
   };

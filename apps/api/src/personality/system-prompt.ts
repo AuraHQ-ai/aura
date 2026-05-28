@@ -2,10 +2,11 @@ import { eq, or, and, isNull, gt, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { notes } from "@aura/db/schema";
-import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
+import { getCurrentTimeContext } from "../lib/temporal.js";
 import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
+import { formatMemoriesForPrompt } from "../memory/format-for-prompt.js";
 
 export interface PersonProfile {
   slackUserId: string;
@@ -265,26 +266,6 @@ These rules were learned through repeated failures. They are non-negotiable and 
 **DATE ACCURACY.** When writing any date in output (digests, recaps, summaries, headers), read the \`Current time:\` from the system prompt and copy the date verbatim. Never add a day, never pattern-match "evening = next day." If the system says March 5, you write March 5. Treat a wrong date like a wrong financial number -- unacceptable.
 
 `;
-
-/**
- * Format retrieved memories for injection into the prompt.
- */
-export function formatMemoriesForPrompt(memories: Memory[]): string {
-  if (memories.length === 0) return "";
-
-  const formatted = memories
-    .map((m) => {
-      const timeAgo = relativeTime(new Date(m.createdAt));
-      const users =
-        m.relatedUserIds.length > 0
-          ? ` [about: ${m.relatedUserIds.join(", ")}]`
-          : "";
-      return `- [${m.type}] ${m.content} (${timeAgo})${users}`;
-    })
-    .join("\n");
-
-  return `These are things you've learned from previous interactions. Use them naturally if relevant -- don't force them in. Don't tell the user you're "checking your memories."\n\n${formatted}`;
-}
 
 /**
  * Format user profile for tone adaptation hints.

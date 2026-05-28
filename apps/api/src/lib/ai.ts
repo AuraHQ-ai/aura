@@ -133,8 +133,7 @@ export function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: s
  * Priority: DB setting > catalog default.
  */
 export async function getFastModel() {
-  const gatewayId = process.env.MEMORY_BENCH_EXTRACTION_MODEL
-    || await resolveModelId("model_fast", "fast");
+  const gatewayId = await resolveModelId("model_fast", "fast");
   const gatewayModel = gateway(gatewayId);
   return withAnthropicFallback(gatewayModel, gatewayId);
 }
