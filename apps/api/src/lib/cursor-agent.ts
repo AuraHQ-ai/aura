@@ -21,6 +21,7 @@ export interface LaunchCursorAgentParams {
   /** Full GitHub URL, e.g. "https://github.com/owner/repo" */
   repository: string;
   ref?: string;
+  model?: string;
   branchName?: string;
   autoCreatePr?: boolean;
   webhookUrl?: string;
@@ -95,6 +96,7 @@ export async function resolveCursorAgentPrUrl({
 export async function launchCursorAgent(
   params: LaunchCursorAgentParams,
 ): Promise<CursorAgentResponse> {
+  const model = params.model?.trim();
   const body: Record<string, unknown> = {
     prompt: { text: params.prompt },
     source: {
@@ -102,6 +104,7 @@ export async function launchCursorAgent(
       ...(params.ref && { ref: params.ref }),
     },
   };
+  if (model && model.toLowerCase() !== "auto") body.model = model;
 
   const target: Record<string, unknown> = {};
   if (params.branchName) target.branchName = params.branchName;
@@ -118,6 +121,7 @@ export async function launchCursorAgent(
   logger.info("launchCursorAgent: dispatching", {
     repository: params.repository,
     branch: params.branchName,
+    model: body.model,
   });
 
   const res = await fetch(`${CURSOR_API_BASE}/agents`, {
