@@ -14,7 +14,7 @@ import {
   isInvalidChunks,
   isMsgTooLong,
 } from "../lib/slack-messaging.js";
-import { getSlackMeta } from "../lib/tool.js";
+import { getDetachedCommandSuspendState, getSlackMeta } from "../lib/tool.js";
 import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 import { InvocationSupersededError } from "./prepare-step.js";
@@ -689,6 +689,7 @@ export async function generateResponse(
   let lineCarry = "";
   let emptyCompletionDetected = false;
   let emptyCompletionRelaunchCount = 0;
+  let turnSuspendedByDetachedCommand = false;
   let latestResult: Awaited<ReturnType<typeof agent.stream>> | null = null;
   const stepsPromises: Array<PromiseLike<any[]>> = [];
   const aggregateUsage: DetailedTokenUsage = {
@@ -1251,6 +1252,13 @@ export async function generateResponse(
             is_error: !!isError,
             rawOutput: output,
           });
+          if (
+            chunk.toolName === "run_command_detached" &&
+            !isError &&
+            getDetachedCommandSuspendState()
+          ) {
+            turnSuspendedByDetachedCommand = true;
+          }
           pendingToolInputs.delete(chunk.toolCallId);
           optimisticToolCards.delete(chunk.toolCallId);
 
@@ -1368,6 +1376,7 @@ export async function generateResponse(
         const hasUsefulToolResults = toolCallRecords.some((record) => !record.is_error);
         const canRelaunch =
           hasUsefulToolResults &&
+          !turnSuspendedByDetachedCommand &&
           finishReason !== "tool-calls" &&
           emptyCompletionRelaunchCount < 1;
 
@@ -1389,29 +1398,39 @@ export async function generateResponse(
           continue;
         }
 
-        logError({
-          errorName: "EmptyCompletion",
-          errorMessage: "Stream completed without usable output after tool calls",
-          errorCode: "empty_completion_after_tools",
-          channelId,
-          context: {
+        if (turnSuspendedByDetachedCommand) {
+          const suspendFallbackText =
+            "Started the detached command. I'll continue when it finishes.";
+          logger.warn("Detached command suspend turn completed without text; adding fallback", {
+            channelId,
             toolCallCount: toolCallRecords.length,
-            toolErrorCount,
-            finishReason,
-            relaunchCount: emptyCompletionRelaunchCount,
-          },
-        });
+          });
+          await appendTextDelta(suspendFallbackText);
+        } else {
+          logError({
+            errorName: "EmptyCompletion",
+            errorMessage: "Stream completed without usable output after tool calls",
+            errorCode: "empty_completion_after_tools",
+            channelId,
+            context: {
+              toolCallCount: toolCallRecords.length,
+              toolErrorCount,
+              finishReason,
+              relaunchCount: emptyCompletionRelaunchCount,
+            },
+          });
 
-        streamingFailed = true;
-        emptyCompletionDetected = true;
+          streamingFailed = true;
+          emptyCompletionDetected = true;
 
-        if (streamer) {
-          try {
-            await streamer.stop({
-              chunks: [toChunkMarkdownText("\n\n_...(no output generated — see Aura logs)_")],
-            });
-          } catch {
-            // Stream may already be unrecoverable.
+          if (streamer) {
+            try {
+              await streamer.stop({
+                chunks: [toChunkMarkdownText("\n\n_...(no output generated — see Aura logs)_")],
+              });
+            } catch {
+              // Stream may already be unrecoverable.
+            }
           }
         }
       }

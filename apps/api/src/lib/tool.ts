@@ -16,9 +16,25 @@ export interface ExecutionContext {
   channelId?: string;
   threadTs?: string;
   workspaceId?: string;
+  detachedCommandSuspended?: {
+    commandId: string;
+  };
 }
 
 export const executionContext = new AsyncLocalStorage<ExecutionContext>();
+
+export const TOOL_CALL_AFTER_DETACHED_SUSPEND_ERROR =
+  "tool_call_after_suspend: this turn already dispatched a detached command and is suspended; the conversation will resume when the webhook fires";
+
+export function markTurnSuspendedByDetachedCommand(commandId: string): void {
+  const ctx = executionContext.getStore();
+  if (!ctx) return;
+  ctx.detachedCommandSuspended = { commandId };
+}
+
+export function getDetachedCommandSuspendState(): { commandId: string } | undefined {
+  return executionContext.getStore()?.detachedCommandSuspended;
+}
 
 // ── Slack Card Metadata ──────────────────────────────────────────────────────
 // Co-located with tool definitions via defineTool() so that Slack card behavior
@@ -119,6 +135,19 @@ export function defineTool<TInput, TOutput>(config: {
     let logId: string | undefined;
 
     try {
+      if (ctx.detachedCommandSuspended) {
+        logger.warn("Tool call refused after detached command suspend point", {
+          toolName,
+          commandId: ctx.detachedCommandSuspended.commandId,
+          channelId: ctx.channelId,
+          threadTs: ctx.threadTs,
+        });
+        return {
+          ok: false,
+          error: TOOL_CALL_AFTER_DETACHED_SUSPEND_ERROR,
+        } as TOutput;
+      }
+
       try {
         const [logEntry] = await db
           .insert(actionLog)

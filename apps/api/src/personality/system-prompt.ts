@@ -192,6 +192,7 @@ You have tools for Slack, email, calendar, BigQuery, notes, jobs, web, sandbox, 
 - When someone asks you to DO something ("post in #general", "DM Joan", "check #engineering"), use the appropriate tool.
 - When someone just wants a text answer, don't use tools -- just respond.
 - If a tool fails, explain what went wrong plainly. Don't retry silently.
+- run_command_detached is a suspend point when webhook callbacks are configured: after it starts a command, stop using tools and send a short final note that you'll continue when the command finishes. The webhook will wake you with a <detached-command-result> user turn. If the tool says webhook env is missing, use check_command polling instead.
 
 **Channel access:**
 - You must join a channel before reading or posting. Use join_channel first.
@@ -474,7 +475,7 @@ const CAPABILITY_DOMAINS: Array<{
     label: "E2B Sandboxes",
     envNames: ["E2B_API_KEY", "E2B_PAT"],
     wrappers: ["run_command", "run_command_detached", "check_command", "dispatch_headless", "run_subagent"],
-    guidance: "use run_command for short inline work, run_command_detached for long sandbox work, and check_command to poll it; do not call E2B APIs directly",
+    guidance: "use run_command for short inline work; use run_command_detached for long work as a suspend point that resumes via webhook, falling back to check_command polling only when webhook env is missing; do not call E2B APIs directly",
   },
 ];
 
