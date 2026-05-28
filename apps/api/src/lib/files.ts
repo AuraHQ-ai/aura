@@ -61,6 +61,11 @@ export type FileContentPart =
   | { type: "file"; data: Uint8Array; mediaType: string; filename: string }
   | { type: "text"; text: string };
 
+export interface DownloadedEventFiles {
+  parts: FileContentPart[];
+  transcripts: string[];
+}
+
 /**
  * Extract downloadable files from a Slack event.
  * Accepts all file types, filtering only by size and presence of a download URL.
@@ -122,26 +127,6 @@ async function toContentPart(
     return { type: "image", image: data, mediaType: mimeType };
   }
 
-  if (AUDIO_MIME_TYPES.has(mimeType)) {
-    try {
-      const transcription = await transcribeAudio(data, mimeType, name);
-      return {
-        type: "text",
-        text: `[Voice message transcription]: ${transcription}`,
-      };
-    } catch (error: any) {
-      logger.error("Audio transcription failed", {
-        name,
-        mimeType,
-        error: error.message,
-      });
-      return {
-        type: "text",
-        text: `[Voice message]: Audio transcription failed — ${error.message}`,
-      };
-    }
-  }
-
   if (SPREADSHEET_MIME_TYPES.has(mimeType)) {
     if (mimeType === "text/csv" || mimeType === "application/csv") {
       const text = new TextDecoder().decode(data);
@@ -194,19 +179,44 @@ async function toContentPart(
 
 /**
  * Download all files from a Slack event and convert to AI SDK content parts.
+ * Audio files are transcribed into message-body text by the pipeline, not
+ * returned as content parts, so models do not see the same transcript twice.
  */
 export async function downloadEventFiles(
   event: any,
   botToken: string,
-): Promise<FileContentPart[]> {
+): Promise<DownloadedEventFiles> {
   const files = getEventFiles(event);
-  if (files.length === 0) return [];
+  if (files.length === 0) return { parts: [], transcripts: [] };
 
   const parts: FileContentPart[] = [];
+  const transcripts: string[] = [];
 
   for (const file of files) {
     try {
       const data = await downloadSlackFile(file.url, botToken);
+      if (AUDIO_MIME_TYPES.has(file.mimetype)) {
+        try {
+          const transcription = await transcribeAudio(data, file.mimetype, file.name);
+          transcripts.push(transcription);
+          logger.info("Downloaded and transcribed Slack audio file", {
+            name: file.name,
+            size: data.length,
+            mimeType: file.mimetype,
+            transcriptionLength: transcription.length,
+          });
+        } catch (error: any) {
+          const reason = error?.message || String(error);
+          logger.error("Audio transcription failed", {
+            name: file.name,
+            mimeType: file.mimetype,
+            error: reason,
+          });
+          transcripts.push(`[transcription failed: ${reason}]`);
+        }
+        continue;
+      }
+
       const part = await toContentPart(data, file.mimetype, file.name);
       parts.push(part);
       logger.info("Downloaded Slack file", {
@@ -216,6 +226,10 @@ export async function downloadEventFiles(
         partType: part.type,
       });
     } catch (error: any) {
+      if (AUDIO_MIME_TYPES.has(file.mimetype)) {
+        const reason = error?.message || String(error);
+        transcripts.push(`[transcription failed: ${reason}]`);
+      }
       logger.error("Failed to download Slack file", {
         name: file.name,
         url: file.url,
@@ -224,5 +238,5 @@ export async function downloadEventFiles(
     }
   }
 
-  return parts;
+  return { parts, transcripts };
 }
