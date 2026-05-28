@@ -1,8 +1,6 @@
 import { config } from "dotenv";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runMemoryBench } from "../bench/runner.js";
-import type { BenchDataset, BenchSubset } from "../bench/types.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -11,16 +9,33 @@ const dryRun = process.argv.includes("--dry-run");
 const skipIngest = process.argv.includes("--skip-ingest");
 const postSlack = process.argv.includes("--post-slack");
 const jsonOut = process.argv.includes("--json");
+const useFastModels = process.argv.includes("--fast-models");
 const envFile = isProd ? ".env.production" : ".env.local";
 config({ path: resolve(repoRoot, envFile) });
 
+/** Bench quality defaults: Sonnet extraction/answer, Opus judge (override with --fast-models). */
+if (!useFastModels) {
+  process.env.AURA_BENCH_EXTRACTION ??= "main";
+  process.env.AURA_BENCH_ANSWER ??= "main";
+  process.env.AURA_BENCH_JUDGE ??= "escalation";
+}
+
 if (isProd) console.log("Using .env.production (--prod)");
 if (dryRun) console.log("DRY RUN — no DB writes");
+if (!useFastModels) {
+  console.log(
+    "Models: extraction=main answer=main judge=escalation (--fast-models for Haiku-tier)",
+  );
+}
 
 function argValue(prefix: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`${prefix}=`));
   return hit?.split("=")[1];
 }
+
+import type { BenchDataset, BenchSubset } from "../bench/types.js";
+
+const { runMemoryBench } = await import("../bench/runner.js");
 
 const dataset = (argValue("--dataset") ?? "lme") as BenchDataset;
 const subset = (argValue("--subset") ?? "full") as BenchSubset;
@@ -53,5 +68,7 @@ if (jsonOut) {
       `  ${s.dataset} / ${s.category} / ${s.scoreType}: ${pct}% (${s.nCorrect}/${s.n})`,
     );
   }
-  console.log(`\nRun ${result.runId} in ${Math.round(result.durationMs / 1000)}s`);
+  console.log(
+    `\nRun ${result.runId} in ${Math.round(result.durationMs / 1000)}s · extraction=${result.extractionModel} judge=${result.judgeModel ?? "—"}`,
+  );
 }

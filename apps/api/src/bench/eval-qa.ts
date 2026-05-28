@@ -3,7 +3,7 @@ import { z } from "zod";
 import { embedText } from "../lib/embeddings.js";
 import { retrieveMemories } from "../memory/retrieve.js";
 import { formatMemoriesForPrompt } from "../memory/format-for-prompt.js";
-import { getFastModel } from "../lib/ai.js";
+import { getBenchAnswerModel, getBenchJudgeModel } from "./models.js";
 import type { BenchCase } from "./types.js";
 import { buildJudgePrompt, QA_JUDGE_SYSTEM } from "./judge.js";
 
@@ -31,7 +31,7 @@ export async function answerFromMemories(
   });
 
   const memoryBlock = formatMemoriesForPrompt(retrieved);
-  const model = await getFastModel();
+  const model = await getBenchAnswerModel();
   void generationModelId;
 
   const { text } = await generateText({
@@ -66,7 +66,7 @@ export async function judgeAnswer(
     }
   }
 
-  const model = await getFastModel();
+  const model = await getBenchJudgeModel();
   const { object } = await generateObject({
     model,
     schema: verdictSchema,

@@ -1,12 +1,11 @@
 {
-  "corpus_hash": "967c7570742e6878",
-  "seed": 1043,
-  "counts": {
-    "temporal_reasoning": 40,
-    "knowledge_update": 25,
-    "multi_session": 35
+  "subset_seed": 1043,
+  "subset_targets": {
+    "temporal-reasoning": 40,
+    "knowledge-update": 25,
+    "multi-session": 35
   },
-  "total": 100,
-  "source": "longmemeval_oracle.json",
-  "license": "MIT"
+  "oracle_url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json",
+  "license": "MIT",
+  "notes": "Subset JSON is generated into corpus/cache/ (gitignored). Commit only toy-corpus.json + this manifest."
 }

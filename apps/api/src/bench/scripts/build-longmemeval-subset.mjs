@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Rebuild longmemeval-subset.json from longmemeval_oracle.json (MIT).
+ * Build longmemeval-subset.json into corpus/cache/ (gitignored).
  * Usage: node apps/api/src/bench/scripts/build-longmemeval-subset.mjs [/path/to/oracle.json]
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -8,14 +8,21 @@ import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SEED = 1043;
-const TARGETS = {
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const corpusDir = join(__dirname, "../corpus");
+const cacheDir = join(corpusDir, "cache");
+
+const manifest = JSON.parse(
+  readFileSync(join(corpusDir, "manifest.json"), "utf8"),
+);
+const SEED = manifest.subset_seed ?? 1043;
+const TARGETS = manifest.subset_targets ?? {
   "temporal-reasoning": 40,
   "knowledge-update": 25,
   "multi-session": 35,
 };
 
-const oraclePath = process.argv[2] ?? "/tmp/longmemeval_oracle.json";
+const oraclePath = process.argv[2] ?? join(cacheDir, "longmemeval_oracle.json");
 const data = JSON.parse(readFileSync(oraclePath, "utf8"));
 
 function seededPick(arr, n, seed) {
@@ -57,29 +64,8 @@ const norm = subset.map((q) => ({
   evidenceSessionIds: q.haystack_session_ids,
 }));
 
-const corpusDir = join(dirname(fileURLToPath(import.meta.url)), "../corpus");
-mkdirSync(corpusDir, { recursive: true });
+mkdirSync(cacheDir, { recursive: true });
 const json = JSON.stringify(norm, null, 2);
 const hash = createHash("sha256").update(json).digest("hex").slice(0, 16);
-writeFileSync(join(corpusDir, "longmemeval-subset.json"), json);
-writeFileSync(
-  join(corpusDir, "manifest.json"),
-  JSON.stringify(
-    {
-      corpus_hash: hash,
-      seed: SEED,
-      total: norm.length,
-      source: "longmemeval_oracle.json",
-      license: "MIT",
-      counts: Object.fromEntries(
-        [...new Set(norm.map((c) => c.category))].map((c) => [
-          c,
-          norm.filter((x) => x.category === c).length,
-        ]),
-      ),
-    },
-    null,
-    2,
-  ),
-);
-console.log(`Wrote ${norm.length} cases, corpus_hash=${hash}`);
+writeFileSync(join(cacheDir, "longmemeval-subset.json"), json);
+console.log(`Wrote ${norm.length} cases to cache/longmemeval-subset.json (hash ${hash})`);

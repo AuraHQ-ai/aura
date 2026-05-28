@@ -1,24 +1,31 @@
 # Memory benchmark corpus
 
-Vendored subsets for `pnpm bench:memory` (issue #1043). Runs use an isolated `bench-{runId}` workspace; production memories are never touched.
+Small committed files only. Full benchmark data is **downloaded on demand** into `cache/` (gitignored).
 
-## Files
+## Committed
 
-| File | License | Notes |
-|------|---------|--------|
-| `longmemeval-subset.json` | [MIT](https://github.com/xiaowu0162/LongMemEval) | 100 questions stratified from `longmemeval_oracle.json` (seed `1043`): temporal-reasoning, knowledge-update, multi-session |
-| `toy-corpus.json` | Aura (internal) | 3 cases for fast local smoke tests (`--dataset=toy`) |
-| `locomo-subset.json` | *Not vendored* | LoCoMo is CC-BY-NC 4.0 — confirm license before adding to this repo |
-| `manifest.json` | — | `corpus_hash` for skip-ingest caching |
+| File | Purpose |
+|------|---------|
+| `toy-corpus.json` | 3-case smoke test (`--dataset=toy`) |
+| `manifest.json` | Subset seed, per-category counts, oracle URL |
 
-## Refresh LongMemEval subset
+## On demand (not in git)
+
+| File | How |
+|------|-----|
+| `cache/longmemeval_oracle.json` | `curl` from Hugging Face (see manifest) |
+| `cache/longmemeval-subset.json` | Built by `build-longmemeval-subset.mjs` (100 Q, seed 1043) |
+| `cache/locomo-subset.json` | Future: build script when LoCoMo is wired up |
+
+First `pnpm bench:memory -- --dataset=lme` downloads the oracle (~50MB) once, then builds the subset.
+
+## Refresh subset
 
 ```bash
-curl -sL -o /tmp/longmemeval_oracle.json \
-  'https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json'
-node apps/api/src/bench/scripts/build-longmemeval-subset.mjs
+node apps/api/src/bench/scripts/build-longmemeval-subset.mjs apps/api/src/bench/corpus/cache/longmemeval_oracle.json
 ```
 
-## Normalized shape
+## Licenses
 
-See `apps/api/src/bench/types.ts` (`BenchCase`). Session `id` values are stored as `source_thread_ts` on extracted memories for retrieval recall@K.
+- **LongMemEval**: MIT ([repo](https://github.com/xiaowu0162/LongMemEval))
+- **LoCoMo**: CC-BY-NC 4.0 — OK to use; keep out of git, download in CI cache

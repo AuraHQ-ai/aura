@@ -5,8 +5,8 @@ import { logger } from "../lib/logger.js";
 export const benchMemoryCronApp = new Hono();
 
 /**
- * Nightly memory benchmark (vercel.json: 30 4 * * *).
- * Runs LongMemEval subset with QA judge + Slack report.
+ * Optional manual memory benchmark (NOT scheduled — invoke with CRON_SECRET).
+ * Prefer GitHub Actions on memory path changes or `pnpm bench:memory` locally.
  */
 benchMemoryCronApp.get("/api/cron/bench-memory", async (c) => {
   const authHeader = c.req.header("authorization");
@@ -21,6 +21,10 @@ benchMemoryCronApp.get("/api/cron/bench-memory", async (c) => {
   logger.info("Cron: Starting memory benchmark");
 
   try {
+    process.env.AURA_BENCH_EXTRACTION ??= "main";
+    process.env.AURA_BENCH_ANSWER ??= "main";
+    process.env.AURA_BENCH_JUDGE ??= "escalation";
+
     const result = await runMemoryBench({
       runId: "",
       workspaceId: "",
@@ -29,7 +33,7 @@ benchMemoryCronApp.get("/api/cron/bench-memory", async (c) => {
       skipIngest: false,
       dryRun: false,
       judge: true,
-      postSlack: true,
+      postSlack: process.env.MEMORY_BENCH_SLACK_CHANNEL != null,
       concurrency: 4,
     });
 

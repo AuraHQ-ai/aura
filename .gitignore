@@ -20,6 +20,10 @@ apps/dashboard/next-env.d.ts
 # API
 apps/api/dist/
 
+# Memory benchmark corpora (downloaded / generated)
+apps/api/src/bench/corpus/cache/
+apps/api/src/bench/corpus/longmemeval-subset.json
+
 # Additional env files (prevent accidental secret commits)
 .env.prod
 .env.staging

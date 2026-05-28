@@ -12,7 +12,7 @@ import { answerFromMemories, judgeAnswer } from "./eval-qa.js";
 import { aggregateScores, persistBenchRun, loadPriorScores } from "./score.js";
 import { postBenchSlackReport } from "./report.js";
 import type { BenchRunConfig, BenchRunResult } from "./types.js";
-import { getMainModelId } from "../lib/ai.js";
+import { resolveBenchRunModelIds } from "./models.js";
 import { logger } from "../lib/logger.js";
 
 function gitSha(): string {
@@ -38,7 +38,7 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
   }
 
   const manifest = loadManifest();
-  const corpusHash = corpusHashForCases(cases) || manifest.corpus_hash;
+  const corpusHash = corpusHashForCases(cases) || manifest.corpus_hash || "unknown";
   const runId = config.runId?.trim() ? config.runId.trim() : randomUUID().slice(0, 8);
   const workspaceId = await createBenchWorkspace(runId);
 
@@ -93,7 +93,7 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
     }
 
     const scores = aggregateScores(evalRows);
-    const genModel = await getMainModelId();
+    const modelIds = await resolveBenchRunModelIds();
     const embModel = process.env.MODEL_EMBEDDING ?? "openai/text-embedding-3-small";
 
     const result: BenchRunResult = {
@@ -103,9 +103,10 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
       scores,
       costUsd: 0,
       durationMs: Date.now() - start,
-      generationModel: genModel,
-      judgeModel: config.judge ? genModel : undefined,
+      generationModel: modelIds.answer,
+      judgeModel: config.judge ? modelIds.judge : undefined,
       embeddingModel: embModel,
+      extractionModel: modelIds.extraction,
     };
 
     if (!config.dryRun) {

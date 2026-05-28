@@ -1,36 +1,41 @@
 import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import type { BenchCase, BenchDataset, BenchSubset } from "./types.js";
+import {
+  CORPUS_DIR,
+  ensureLongMemEvalSubset,
+  readManifest,
+  subsetCorpusHash,
+} from "./corpus/ensure-corpus.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const CORPUS_DIR = join(__dirname, "corpus");
-
-const FAST_PER_CATEGORY = 3;
+const FAST_PER_CATEGORY = 5;
 const FAST_CATEGORIES = ["temporal_reasoning", "knowledge_update", "multi_session"];
 
-export function loadManifest(): { corpus_hash: string; total: number } {
-  const raw = readFileSync(join(CORPUS_DIR, "manifest.json"), "utf8");
-  return JSON.parse(raw) as { corpus_hash: string; total: number };
+export function loadManifest(): { corpus_hash: string | null; total: number } {
+  const manifest = readManifest();
+  const hash = subsetCorpusHash();
+  const total = Object.values(manifest.subset_targets).reduce((a, b) => a + b, 0);
+  return { corpus_hash: hash, total };
 }
 
-function loadJsonCases(filename: string): BenchCase[] {
-  const path = join(CORPUS_DIR, filename);
+function loadJsonCases(path: string): BenchCase[] {
   if (!existsSync(path)) return [];
   return JSON.parse(readFileSync(path, "utf8")) as BenchCase[];
 }
 
 export function loadToyCases(): BenchCase[] {
-  return loadJsonCases("toy-corpus.json");
+  return loadJsonCases(join(CORPUS_DIR, "toy-corpus.json"));
 }
 
 export function loadLongMemEvalCases(): BenchCase[] {
-  return loadJsonCases("longmemeval-subset.json");
+  const path = ensureLongMemEvalSubset();
+  return loadJsonCases(path);
 }
 
 export function loadLoCoMoCases(): BenchCase[] {
-  return loadJsonCases("locomo-subset.json");
+  const cached = join(CORPUS_DIR, "cache", "locomo-subset.json");
+  return loadJsonCases(cached);
 }
 
 function applySubset(cases: BenchCase[], subset: BenchSubset): BenchCase[] {
@@ -47,7 +52,7 @@ function applySubset(cases: BenchCase[], subset: BenchSubset): BenchCase[] {
     out.push(...list.slice(0, FAST_PER_CATEGORY));
   }
   if (out.length > 0) return out;
-  return cases.slice(0, 9);
+  return cases.slice(0, 15);
 }
 
 export function loadCases(options: {

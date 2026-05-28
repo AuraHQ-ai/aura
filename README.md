@@ -52,23 +52,26 @@ Slack event → Vercel serverless function → embed query → pgvector similari
 
 ### Memory PR checklist
 
-Memory-related PRs should be **labeled `memory`** so CI runs the fast benchmark subset (~9 LongMemEval questions) and posts a sticky PR comment.
+CI runs the benchmark **only when `apps/api/src/memory/**` or `apps/api/src/bench/**` change** (not on a schedule). You can also run it manually from the Actions tab (`workflow_dispatch`).
 
-1. Run locally before opening the PR:
+1. **Local run** (downloads corpus to `corpus/cache/` on first use; not committed):
    ```bash
-   pnpm bench:memory -- --dataset=toy          # smoke (3 cases, no API cost if --dry-run)
-   pnpm bench:memory -- --dataset=lme --subset=fast --judge
+   pnpm bench:memory -- --dataset=toy                    # 3-case smoke
+   pnpm bench:memory -- --dataset=lme --subset=full --judge   # 100 Q, Sonnet + Opus judge
+   pnpm bench:memory -- --dataset=lme --subset=fast --fast-models  # cheaper dev run
    ```
-2. Include a **before/after** table in the PR description:
+   Default models: **Sonnet** (`main`) for extraction + answer, **Opus** (`escalation`) for judge.
+
+2. Include a **before/after** table in the PR when scores matter:
 
    | Category | Metric | Before | After | Δ |
    |----------|--------|--------|-------|---|
    | temporal_reasoning | QA | 38% | 41% | +3pp |
    | temporal_reasoning | recall@15 | 62% | 65% | +3pp |
 
-3. **Regression policy:** a drop **>2pp** on any category vs. the last nightly baseline requires explanation in the PR, or add the `memory-bench-override` label to acknowledge the regression intentionally.
+3. **Regression policy:** >2pp drop on any category vs. your last recorded baseline should be explained in the PR.
 
-Nightly full subset runs via Vercel cron (`/api/cron/bench-memory`, 04:30 UTC) and posts to `MEMORY_BENCH_SLACK_CHANNEL` (default: configure in Vercel). Corpus lives under `apps/api/src/bench/corpus/` — see that README for licenses (LoCoMo is CC-BY-NC and not vendored yet).
+Corpus details: `apps/api/src/bench/corpus/README.md`. LoCoMo can be added via the same cache pattern when needed.
 
 **Sandbox:** Persistent E2B VM attached to each user. Survives across conversations within a session. Has git, psql, gcloud, the GitHub CLI, `mongosh`, the `mongodb` node driver, and more. `run_command_detached` is a suspend point when webhook callbacks are configured: the active Slack turn ends after dispatch, and `/api/webhook/sandbox-command` resumes the same thread with a synthetic `<detached-command-result>` user turn when the process exits. Build the custom template with `node sandbox/build-tsx.ts`.
 

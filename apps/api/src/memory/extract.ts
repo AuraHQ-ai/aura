@@ -1,6 +1,6 @@
 import { generateText, generateObject, Output } from "ai";
 import { z } from "zod";
-import { getFastModel } from "../lib/ai.js";
+import { getFastModel, getMainModel, getEscalationModel } from "../lib/ai.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
@@ -48,6 +48,15 @@ function stripInjectedContext(text: string): string {
 }
 
 const MIN_STRIPPED_LENGTH = 50;
+
+/** Production uses fast; bench sets AURA_BENCH_EXTRACTION=main|escalation|fast. */
+async function resolveExtractionModel() {
+  const tier = process.env.AURA_BENCH_EXTRACTION;
+  if (tier === "main") return (await getMainModel()).model;
+  if (tier === "escalation") return (await getEscalationModel()).model;
+  if (tier === "fast") return getFastModel();
+  return getFastModel();
+}
 
 // ── Thread Context Building ─────────────────────────────────────────────────
 
@@ -570,7 +579,7 @@ async function extractWithReconciliation(
 
   const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", () => existingMemoriesText);
 
-  const model = await getFastModel();
+  const model = await resolveExtractionModel();
 
   const { output: result } = await generateText({
     model,
@@ -886,7 +895,7 @@ async function extractSingleExchange(
     ? `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${strippedAssistant}`
     : `User (${context.displayName || context.userId}): ${context.userMessage}`;
 
-  const model = await getFastModel();
+  const model = await resolveExtractionModel();
 
   const { output: object } = await generateText({
     model,

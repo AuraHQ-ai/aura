@@ -51,6 +51,7 @@ export type BenchRunResult = {
   costUsd: number;
   durationMs: number;
   generationModel: string;
+  extractionModel?: string;
   judgeModel?: string;
   embeddingModel: string;
   prNumber?: number;
