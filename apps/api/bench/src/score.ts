@@ -3,7 +3,7 @@
  * the most recent prior run, and persist to `bench_runs`.
  */
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { db } from "../../src/db/client.js";
 import { benchRuns, type NewBenchRun } from "@aura/db/schema";
 import { logger } from "../../src/lib/logger.js";
@@ -146,8 +146,13 @@ export async function persistRun(
 
 /**
  * For each (dataset, category, scoreType) in `scores`, look up the most
- * recent prior run and return the delta (current - prior). Used by the
- * Slack reporter and PR comment.
+ * recent prior run and return the delta (current - prior).
+ *
+ * Implementation note: previous versions did one DB roundtrip per score
+ * row (O(scoreRows) queries). A medium-subset run produces ~30 score rows,
+ * which on Neon's serverless driver is 30 cold-ish roundtrips for what
+ * is essentially "give me the latest score per group". Now we issue one
+ * query, walk the result newest-first, and keep the first row per key.
  */
 export async function computeDeltas(
   scores: BenchScore[],
@@ -155,38 +160,57 @@ export async function computeDeltas(
 ): Promise<Map<string, { prior: number | null; delta: number | null; priorRunId: string | null }>> {
   const out = new Map<string, { prior: number | null; delta: number | null; priorRunId: string | null }>();
   for (const s of scores) {
-    const key = `${s.dataset}|${s.category}|${s.scoreType}`;
-    try {
-      const rows = await db
-        .select({
-          score: benchRuns.score,
-          runId: benchRuns.runId,
-        })
-        .from(benchRuns)
-        .where(
-          and(
-            eq(benchRuns.dataset, s.dataset),
-            eq(benchRuns.category, s.category),
-            eq(benchRuns.scoreType, s.scoreType),
-            sql`${benchRuns.runId} != ${config.runId}`,
-          ),
-        )
-        .orderBy(desc(benchRuns.createdAt))
-        .limit(1);
-      const prior = rows[0]?.score ?? null;
-      const priorRunId = rows[0]?.runId ?? null;
-      out.set(key, {
-        prior,
-        delta: prior === null ? null : s.score - prior,
-        priorRunId,
-      });
-    } catch (error) {
-      logger.warn("bench: delta lookup failed", {
-        key,
-        error: String(error).slice(0, 200),
-      });
-      out.set(key, { prior: null, delta: null, priorRunId: null });
-    }
+    out.set(`${s.dataset}|${s.category}|${s.scoreType}`, {
+      prior: null,
+      delta: null,
+      priorRunId: null,
+    });
   }
+
+  if (scores.length === 0) return out;
+
+  try {
+    // One scan, newest-first. We cap at 1000 to bound memory; with one row
+    // per (dataset, category, scoreType) per run, that's ~30 runs of
+    // history per call which is plenty for delta computation.
+    const rows = await db
+      .select({
+        dataset: benchRuns.dataset,
+        category: benchRuns.category,
+        scoreType: benchRuns.scoreType,
+        score: benchRuns.score,
+        runId: benchRuns.runId,
+      })
+      .from(benchRuns)
+      .where(sql`${benchRuns.runId} != ${config.runId}`)
+      .orderBy(desc(benchRuns.createdAt))
+      .limit(1000);
+
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const key = `${row.dataset}|${row.category}|${row.scoreType}`;
+      if (seen.has(key)) continue;
+      const current = out.get(key);
+      if (!current) continue; // not a key we care about this run
+      seen.add(key);
+
+      const matchingScore = scores.find(
+        (s) =>
+          s.dataset === row.dataset &&
+          s.category === row.category &&
+          s.scoreType === row.scoreType,
+      )!;
+      out.set(key, {
+        prior: row.score,
+        delta: matchingScore.score - row.score,
+        priorRunId: row.runId,
+      });
+    }
+  } catch (error) {
+    logger.warn("bench: delta lookup failed (continuing with no priors)", {
+      error: String(error).slice(0, 200),
+    });
+  }
+
   return out;
 }

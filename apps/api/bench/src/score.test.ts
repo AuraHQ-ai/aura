@@ -167,16 +167,20 @@ describe("stratifiedSample", () => {
 });
 
 describe("loadToyCorpus", () => {
-  it("loads the vendored toy fixture with parsed evidence", async () => {
+  it("loads the vendored toy fixture and covers every judge-prompt category", async () => {
     const cases = await loadToyCorpus();
-    expect(cases.length).toBe(3);
-    const categories = cases.map((c) => c.category).sort();
-    expect(categories).toEqual(["abstention", "single_hop", "temporal"]);
+    expect(cases.length).toBeGreaterThanOrEqual(5);
+    const categories = new Set(cases.map((c) => c.category));
+    // Each of these maps to a distinct branch in judge.ts pickPrompt().
+    for (const required of ["single_hop", "multi_hop", "temporal", "knowledge_update", "abstention"]) {
+      expect(categories.has(required)).toBe(true);
+    }
     const abstention = cases.find((c) => c.abstention)!;
     expect(abstention.category).toBe("abstention");
-    const singleHop = cases.find((c) => c.category === "single_hop")!;
-    expect(singleHop.evidenceDiaIds).toContain("S1:2");
-    expect(singleHop.sessions[0].turns.length).toBe(3);
+    const multiHop = cases.find((c) => c.category === "multi_hop")!;
+    // Multi-hop exercise: two sessions, both contributing evidence.
+    expect(multiHop.sessions.length).toBeGreaterThanOrEqual(2);
+    expect((multiHop.evidenceSessionIds ?? []).length).toBeGreaterThanOrEqual(2);
   });
 });
 

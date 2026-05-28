@@ -9,19 +9,23 @@ name: Memory bench
 #                             apps/api/bench/**
 #                             apps/api/src/personality/system-prompt.ts
 #                             apps/api/src/pipeline/core-prompt.ts
+#                             apps/api/src/scripts/bench-memory.ts
 #                             packages/db/src/schema.ts
 #                             packages/db/drizzle/**
 #                           Skipping unrelated PRs keeps the bill predictable.
 #
-# Defaults: --subset=medium, --dataset=both. Models default to Sonnet for
-# extraction + answerer and Opus for the judge (see apps/api/bench/src/models.ts).
+# Defaults: --subset=medium, --dataset=both. Models default to the catalog
+# tiers main (Sonnet-class) for extraction + answerer and escalation
+# (Opus-class) for the judge — see apps/api/bench/src/models.ts.
 #
-# Costs: ~$3–7 per run on the medium subset (≈300 questions), Opus judge.
+# Costs: ~$15–25 per run on the medium subset (~330 questions), Opus judge.
 #
 # Required secrets:
 #   - NEON_API_KEY            ephemeral Neon branch for DB isolation
 #   - NEON_PROJECT_ID         the Aura project on Neon
+#   - NEON_DATABASE_URL       fallback DB url if Neon-branch creation fails
 #   - AI_GATEWAY_API_KEY      Sonnet/Opus calls via Vercel AI Gateway
+#   - ANTHROPIC_API_KEY       direct fallback when the gateway is down
 #   - COHERE_API_KEY          reranker (optional but recommended)
 #
 # Initial deployment is WARN-ONLY: regressions surface in the PR comment
@@ -56,6 +60,12 @@ on:
 permissions:
   contents: read
   pull-requests: write
+
+# Cancel stale runs on the same ref when a new commit lands. Saves money
+# on PRs that force-push or get rebased while the bench is still warming up.
+concurrency:
+  group: memory-bench-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   STRICT_REGRESSION_GATE: "false"
@@ -98,49 +108,19 @@ jobs:
 
       - name: Create ephemeral Neon branch
         id: neon
-        env:
-          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
-        run: |
-          set -euo pipefail
-          if [ -z "${NEON_API_KEY:-}" ] || [ -z "${NEON_PROJECT_ID:-}" ]; then
-            echo "neon-skip=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::NEON_API_KEY or NEON_PROJECT_ID missing — bench will skip."
-            exit 0
-          fi
-          BRANCH="bench-${{ github.event.pull_request.number || github.run_id }}"
-          RESPONSE=$(curl -sS -X POST \
-            "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches" \
-            -H "Authorization: Bearer ${NEON_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"branch\":{\"name\":\"${BRANCH}\"},\"endpoints\":[{\"type\":\"read_write\"}]}")
-          DB_URL=$(echo "$RESPONSE" | jq -r '.connection_uris[0].connection_uri')
-          BRANCH_ID=$(echo "$RESPONSE" | jq -r '.branch.id')
-          if [ "$DB_URL" = "null" ] || [ -z "$DB_URL" ]; then
-            echo "Failed to create Neon branch. Response was:"
-            echo "$RESPONSE"
-            exit 1
-          fi
-          echo "::add-mask::$DB_URL"
-          echo "db-url=$DB_URL" >> "$GITHUB_OUTPUT"
-          echo "branch-id=$BRANCH_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Bail if Neon unavailable
-        if: steps.neon.outputs.neon-skip == 'true'
-        run: |
-          echo "Skipping bench — no Neon credentials." >> "$GITHUB_STEP_SUMMARY"
-          exit 0
-
-      - name: Migrate the Neon branch
-        if: steps.neon.outputs.neon-skip != 'true'
-        env:
-          DATABASE_URL: ${{ steps.neon.outputs.db-url }}
-        run: pnpm --filter @aura/db db:migrate
+        uses: neondatabase/create-branch-action@v6
+        continue-on-error: true
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          branch_name: memory-bench-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
 
       - name: Run bench
-        if: steps.neon.outputs.neon-skip != 'true'
         env:
-          DATABASE_URL: ${{ steps.neon.outputs.db-url }}
+          # Prefer the ephemeral branch URL; fall back to a long-lived bench
+          # database if the Neon API is down or the secret is missing. Either
+          # way the run is isolated by workspace_id='bench-{runId}'.
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_with_pooler || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
@@ -157,6 +137,7 @@ jobs:
           DATASET: ${{ github.event.inputs.dataset || 'both' }}
         run: |
           mkdir -p /tmp/bench
+          set -o pipefail
           pnpm --filter aura-api bench:memory \
             --dataset=${DATASET} \
             --subset=${SUBSET} \
@@ -166,7 +147,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload bench artefacts
-        if: steps.neon.outputs.neon-skip != 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: memory-bench-${{ github.run_id }}
@@ -174,44 +155,76 @@ jobs:
             /tmp/bench/result.json
             /tmp/bench/output.txt
           retention-days: 30
+        continue-on-error: true
 
-      - name: Build sticky PR comment
-        if: steps.neon.outputs.neon-skip != 'true' && github.event_name == 'pull_request'
-        id: comment
-        run: |
-          if [ ! -f /tmp/bench/output.txt ]; then
-            echo "No bench output produced." > /tmp/bench/output.txt
-          fi
-          {
-            echo "body<<EOF"
-            echo "### Memory bench (\`${SUBSET}\` subset, \`${DATASET}\`)"
-            echo ""
-            echo "Run: \`${{ github.run_id }}\` · commit \`${GITHUB_SHA::7}\`"
-            echo ""
-            echo '```'
-            cat /tmp/bench/output.txt
-            echo '```'
-            echo ""
-            if [ "${STRICT_REGRESSION_GATE}" = "true" ]; then
-              echo "_Hard-fail gate is ON — regressions >${REGRESSION_THRESHOLD_PP}pp will fail this check. Apply the \`override-bench\` label to merge anyway._"
-            else
-              echo "_Warn-only mode — regressions surface but don't fail the check._"
-            fi
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+      - name: Build PR comment table
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
         env:
           SUBSET: ${{ github.event.inputs.subset || 'medium' }}
           DATASET: ${{ github.event.inputs.dataset || 'both' }}
+          STRICT_GATE: ${{ env.STRICT_REGRESSION_GATE }}
+          THRESHOLD_PP: ${{ env.REGRESSION_THRESHOLD_PP }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '/tmp/bench/result.json';
+            const subset = process.env.SUBSET;
+            const dataset = process.env.DATASET;
+            const strict = process.env.STRICT_GATE === 'true';
+            const thr = Number(process.env.THRESHOLD_PP);
 
-      - name: Post / update PR comment
-        if: steps.neon.outputs.neon-skip != 'true' && github.event_name == 'pull_request'
+            const lines = [];
+            lines.push(`### Memory bench (\`${subset}\` / \`${dataset}\`)`);
+            lines.push('');
+
+            if (!fs.existsSync(path)) {
+              lines.push('Bench did not complete — see workflow logs.');
+              fs.writeFileSync('/tmp/bench/comment.md', lines.join('\n'));
+              return;
+            }
+
+            const r = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const sha = (context.payload.pull_request?.head?.sha ?? context.sha).slice(0, 7);
+            lines.push(`Run \`${r.runId}\` · commit \`${sha}\` · corpus \`${(r.corpusHash || '').slice(0, 12)}\``);
+            lines.push('');
+            lines.push('| Dataset | Category | Metric | Score | n | Δ vs prior |');
+            lines.push('|---|---|---|---:|---:|---:|');
+
+            const rows = (r.scores || []).slice().sort((a, b) =>
+              a.dataset.localeCompare(b.dataset) ||
+              a.category.localeCompare(b.category) ||
+              a.scoreType.localeCompare(b.scoreType)
+            );
+            const deltas = r.deltas || {};
+            for (const s of rows) {
+              const key = `${s.dataset}|${s.category}|${s.scoreType}`;
+              const d = deltas[key];
+              let dCell = '—';
+              if (d && d.delta != null) {
+                const pp = Math.round(d.delta * 100);
+                const flag = pp <= -thr ? ' ⚠' : '';
+                dCell = `${pp >= 0 ? '+' : ''}${pp}pp${flag}`;
+              }
+              const pct = Math.round((s.score || 0) * 100);
+              lines.push(`| ${s.dataset} | ${s.category} | ${s.scoreType} | ${pct}% | ${s.nCorrect}/${s.n} | ${dCell} |`);
+            }
+            lines.push('');
+            lines.push(strict
+              ? `_Hard-fail mode — regressions >${thr}pp will fail this check. Apply \`override-bench\` to merge anyway._`
+              : `_Warn-only mode — regressions surface but don't fail the check._`);
+
+            fs.writeFileSync('/tmp/bench/comment.md', lines.join('\n'));
+
+      - name: Post / update sticky PR comment
+        if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: memory-bench
-          message: ${{ steps.comment.outputs.body }}
+          path: /tmp/bench/comment.md
 
       - name: Enforce regression gate
-        if: env.STRICT_REGRESSION_GATE == 'true' && steps.neon.outputs.neon-skip != 'true' && github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'override-bench')
+        if: env.STRICT_REGRESSION_GATE == 'true' && github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'override-bench')
         env:
           THRESHOLD_PP: ${{ env.REGRESSION_THRESHOLD_PP }}
         run: |
@@ -233,13 +246,13 @@ jobs:
           "
 
       - name: Delete Neon branch
-        if: always() && steps.neon.outputs.branch-id != ''
+        if: always() && steps.neon.outputs.branch_id != ''
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
-          BRANCH_ID: ${{ steps.neon.outputs.branch-id }}
+          BRANCH_ID: ${{ steps.neon.outputs.branch_id }}
         run: |
           curl -sS -X DELETE \
             "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${BRANCH_ID}" \
             -H "Authorization: Bearer ${NEON_API_KEY}" \
-            || echo "Failed to delete Neon branch (will be GC'd by Neon retention)."
+            || echo "Failed to delete Neon branch (will be GC'd by retention)."

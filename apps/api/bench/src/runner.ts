@@ -135,18 +135,6 @@ export async function runBench(
     gitSha: partialConfig.gitSha ?? resolveGitSha(),
   };
 
-  // Resolve the THREE bench slots through the live DB catalog. Each slot
-  // honours its CLI override first, then its env var, then its default
-  // tier. We carry the resolved gateway ids forward so bench_runs records
-  // exactly what was used — that's what makes cross-run deltas honest
-  // when tiers eventually point at a new model.
-  const models = await resolveBenchRunModelIds({
-    extraction: config.extractionModel,
-    answerer: config.answererModel,
-    judge: config.judgeModel,
-  });
-  logger.info(`bench: resolved models`, models);
-
   const start = Date.now();
   logger.info(`bench: starting run ${runId}`, {
     datasets: config.datasets,
@@ -154,24 +142,19 @@ export async function runBench(
     category: config.category ?? "(all)",
   });
 
-  // GC orphans from crashed prior runs (safe, idempotent).
-  await gcStaleBenchWorkspaces().catch(() => {});
-
   const workspaceId = benchWorkspaceId(runId);
-  if (!config.dryRun) {
-    await createBenchWorkspace(runId);
-  }
-
   const cases = await loadAllCases(config);
   if (cases.length === 0) {
-    logger.warn("bench: no cases loaded — bailing");
+    logger.warn("bench: no cases loaded — bailing", {
+      hint: "run `pnpm bench:fetch-corpus` to populate the cache directory",
+    });
     return {
       runId,
       workspaceId,
       scores: [],
       results: [],
       deltas: new Map(),
-      textSummary: "(no cases — corpus missing?)",
+      textSummary: "(no cases — corpus missing? Run `pnpm bench:fetch-corpus`.)",
       totalDurationMs: Date.now() - start,
       corpusHash: "empty",
       slackTs: null,
@@ -180,7 +163,46 @@ export async function runBench(
 
   const corpusHash = await computeCorpusHash(config.datasets, config.corpusFile);
 
-  if (!config.skipIngest && !config.dryRun) {
+  // Dry-run: print what we would do, no DB writes, no LLM calls, no
+  // catalog lookup, no expensive loop. CI can validate plumbing for $0.
+  if (config.dryRun) {
+    logger.info("bench: dry-run — skipping catalog, ingest, retrieval, QA, persist", {
+      cases: cases.length,
+      datasets: config.datasets,
+      subset: config.subset,
+      corpusHash,
+    });
+    return {
+      runId,
+      workspaceId,
+      scores: [],
+      results: [],
+      deltas: new Map(),
+      textSummary: `Dry run: ${cases.length} case(s) loaded across ${config.datasets.join(", ")} (subset=${config.subset}, corpus=${corpusHash.slice(0, 12)}).`,
+      totalDurationMs: Date.now() - start,
+      corpusHash,
+      slackTs: null,
+    };
+  }
+
+  // Past this point we touch Postgres and the AI Gateway. Resolve the
+  // three bench slots through the live model catalog (each honours its
+  // CLI override, then its env var, then its default tier). We persist
+  // the resolved ids so cross-run deltas stay honest if tiers eventually
+  // point at a different model.
+  const models = await resolveBenchRunModelIds({
+    extraction: config.extractionModel,
+    answerer: config.answererModel,
+    judge: config.judgeModel,
+  });
+  logger.info(`bench: resolved models`, models);
+
+  // GC orphans from crashed prior runs (safe, idempotent) and seed the
+  // workspace row before any inserts.
+  await gcStaleBenchWorkspaces().catch(() => {});
+  await createBenchWorkspace(runId);
+
+  if (!config.skipIngest) {
     const ing = await ingestCases(
       cases,
       workspaceId,
@@ -200,20 +222,12 @@ export async function runBench(
   for (const [i, benchCase] of cases.entries()) {
     const caseStart = Date.now();
     const retrieval = await evaluateRetrieval(benchCase, workspaceId);
-    let qa: Awaited<ReturnType<typeof evaluateQA>>;
-    if (config.dryRun) {
-      qa = {
-        modelAnswer: "(dry-run)",
-        judgeVerdict: "skipped",
-        judgeConfidence: 0,
-        judgeRationale: "dry-run",
-      };
-    } else {
-      qa = await evaluateQA(benchCase, retrieval.retrieved, {
-        modelId: models.answerer,
-        judgeModelId: models.judge,
-      });
-    }
+    // QA uses the memories returned by the recall lane so we don't pay
+    // for retrieval twice. evaluateRetrieval already invoked retrieveMemories.
+    const qa = await evaluateQA(benchCase, retrieval.retrieved, {
+      modelId: models.answerer,
+      judgeModelId: models.judge,
+    });
     void models.extraction; // recorded on the run row, not used at QA time
     results.push({
       caseId: benchCase.id,
@@ -280,7 +294,7 @@ export async function runBench(
     }
   }
 
-  if (!config.dryRun && !partialConfig.skipIngest) {
+  if (!partialConfig.skipIngest) {
     // GC this run's workspace — it's already aggregated. The bench-meta
     // workspace is preserved.
     try {

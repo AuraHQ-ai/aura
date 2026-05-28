@@ -1,16 +1,16 @@
 {
   "id": "toy",
   "license": "internal",
-  "description": "Minimal fixture used to validate the harness end-to-end. Three categories, each backed by a self-contained two-session conversation that mirrors the LoCoMo shape.",
+  "description": "Smoke-test fixture covering every category-routed judge prompt: single_hop, multi_hop, temporal, knowledge_update, and abstention. Always vendored. Three cases reuse one conversation to exercise multi-session reconciliation; the rest are self-contained.",
   "cases": [
     {
-      "id": "toy-fact-1",
+      "id": "toy-single-hop-1",
       "category": "single_hop",
       "question": "What is Alex's dog's name?",
       "goldAnswer": ["Pepper"],
       "abstention": false,
       "evidenceSessionIds": ["S1"],
-      "evidenceDiaIds": ["S1:2"],
+      "evidenceDiaIds": ["S1:3"],
       "sessions": [
         {
           "id": "S1",
@@ -20,14 +20,34 @@
             { "diaId": "S1:2", "role": "assistant", "speaker": "Aura", "content": "Tell me." },
             { "diaId": "S1:3", "role": "user", "speaker": "Alex", "content": "I just adopted a black Labrador. We named her Pepper because she's full of energy." }
           ]
+        }
+      ]
+    },
+    {
+      "id": "toy-multi-hop-1",
+      "category": "multi_hop",
+      "question": "Where does Alex's new colleague live?",
+      "goldAnswer": ["Berlin"],
+      "abstention": false,
+      "evidenceSessionIds": ["S1", "S2"],
+      "evidenceDiaIds": ["S1:3", "S2:3"],
+      "sessions": [
+        {
+          "id": "S1",
+          "timestamp": "2024-09-10T09:00:00Z",
+          "turns": [
+            { "diaId": "S1:1", "role": "user", "speaker": "Alex", "content": "I'm joining a new project at work." },
+            { "diaId": "S1:2", "role": "assistant", "speaker": "Aura", "content": "Who are you working with?" },
+            { "diaId": "S1:3", "role": "user", "speaker": "Alex", "content": "My new colleague is Maria. She's leading the data platform team." }
+          ]
         },
         {
           "id": "S2",
-          "timestamp": "2024-09-05T18:00:00Z",
+          "timestamp": "2024-09-20T18:00:00Z",
           "turns": [
-            { "diaId": "S2:1", "role": "user", "speaker": "Alex", "content": "Pepper had her first training class today." },
-            { "diaId": "S2:2", "role": "assistant", "speaker": "Aura", "content": "How did she do?" },
-            { "diaId": "S2:3", "role": "user", "speaker": "Alex", "content": "She's stubborn but smart. The trainer said she'll learn fast." }
+            { "diaId": "S2:1", "role": "user", "speaker": "Alex", "content": "Maria and I had a coffee chat this morning." },
+            { "diaId": "S2:2", "role": "assistant", "speaker": "Aura", "content": "Anything interesting?" },
+            { "diaId": "S2:3", "role": "user", "speaker": "Alex", "content": "She mentioned she's been working remotely from Berlin for two years." }
           ]
         }
       ]
@@ -48,6 +68,35 @@
             { "diaId": "S1:1", "role": "user", "speaker": "Alex", "content": "Big update on my side." },
             { "diaId": "S1:2", "role": "assistant", "speaker": "Aura", "content": "Go on." },
             { "diaId": "S1:3", "role": "user", "speaker": "Alex", "content": "I joined Stripe in March 2024. It's been a wild ride since." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "toy-knowledge-update-1",
+      "category": "knowledge_update",
+      "question": "Which database does the team use in production?",
+      "goldAnswer": ["Postgres", "PostgreSQL"],
+      "abstention": false,
+      "evidenceSessionIds": ["S2"],
+      "evidenceDiaIds": ["S2:3"],
+      "sessions": [
+        {
+          "id": "S1",
+          "timestamp": "2024-06-01T14:00:00Z",
+          "turns": [
+            { "diaId": "S1:1", "role": "user", "speaker": "Alex", "content": "We're prototyping the new service on MongoDB." },
+            { "diaId": "S1:2", "role": "assistant", "speaker": "Aura", "content": "Got it." },
+            { "diaId": "S1:3", "role": "user", "speaker": "Alex", "content": "Schema is flexible which helps while we iterate." }
+          ]
+        },
+        {
+          "id": "S2",
+          "timestamp": "2024-08-15T11:00:00Z",
+          "turns": [
+            { "diaId": "S2:1", "role": "user", "speaker": "Alex", "content": "Update on the database decision." },
+            { "diaId": "S2:2", "role": "assistant", "speaker": "Aura", "content": "What changed?" },
+            { "diaId": "S2:3", "role": "user", "speaker": "Alex", "content": "We migrated off MongoDB. Production runs on Postgres now — the relational model fit the data better." }
           ]
         }
       ]
