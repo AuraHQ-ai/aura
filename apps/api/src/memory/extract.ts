@@ -435,7 +435,7 @@ Aggressive scoring guidance:
 
 ${ENTITY_EXTRACTION_RULES}`;
 
-interface ExtractionContext {
+export interface ExtractionContext {
   userMessage: string;
   assistantResponse: string;
   userId: string;
@@ -450,6 +450,12 @@ interface ExtractionContext {
   threadTs?: string;
   /** Override createdAt on stored memories (for backfills) */
   createdAt?: Date;
+  /**
+   * Workspace ID for tenant isolation. Falls back to process.env.DEFAULT_WORKSPACE_ID
+   * then to "default". Pass an explicit value when running multiple extractions in
+   * different workspaces from the same process (e.g. the memory benchmark harness).
+   */
+  workspaceId?: string;
 }
 
 /**
@@ -465,7 +471,9 @@ type ExtractionSourceRole = "user" | "assistant" | "tool";
 
 export async function extractMemories(context: ExtractionContext): Promise<void> {
   const start = Date.now();
-  const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
+  const workspaceId = context.workspaceId
+    || process.env.DEFAULT_WORKSPACE_ID
+    || "default";
   const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
 
   try {
@@ -480,6 +488,58 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
     logger.error("Memory extraction failed", {
       error: String(error).slice(0, 200),
       userId: context.userId,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Adapter that runs the thread-scoped reconciliation pipeline against an
+ * arbitrary, in-memory transcript instead of fetching messages from Postgres.
+ *
+ * Production callers should use {@link extractMemories} — this entry point
+ * exists for replay harnesses (the memory benchmark) that already have the
+ * full conversation in hand and don't want to seed `messages` rows just to
+ * extract from them.
+ *
+ * The transcript MUST be in chronological order. `channelId` + `threadTs`
+ * must be supplied on the context so subsequent retrieval calls (during
+ * reconciliation) target the same workspace.
+ */
+export async function extractMemoriesFromTranscript(
+  threadMessages: ThreadMessage[],
+  context: ExtractionContext,
+): Promise<void> {
+  const start = Date.now();
+  const workspaceId = context.workspaceId
+    || process.env.DEFAULT_WORKSPACE_ID
+    || "default";
+  const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
+
+  if (!context.channelId || !context.threadTs) {
+    throw new Error(
+      "extractMemoriesFromTranscript requires context.channelId and context.threadTs",
+    );
+  }
+
+  if (threadMessages.length === 0) {
+    logger.debug("Empty transcript — nothing to extract");
+    return;
+  }
+
+  try {
+    await extractWithReconciliationFromTranscript(
+      threadMessages,
+      context,
+      workspaceId,
+      extractionSourceRole,
+      start,
+    );
+  } catch (error) {
+    logger.error("Transcript-based memory extraction failed", {
+      error: String(error).slice(0, 200),
+      userId: context.userId,
+      messageCount: threadMessages.length,
     });
     throw error;
   }
@@ -518,6 +578,67 @@ async function extractWithReconciliation(
     return extractSingleExchange(context, workspaceId, extractionSourceRole, start);
   }
 
+  return runReconciliationCore(
+    threadMessages,
+    existingMemories,
+    context,
+    workspaceId,
+    extractionSourceRole,
+    start,
+  );
+}
+
+/**
+ * Variant of {@link extractWithReconciliation} that uses a pre-supplied
+ * transcript instead of fetching messages from Postgres. Used by the bench
+ * harness — keeps the LLM call, dedup, supersession, and entity-linking
+ * logic identical to production.
+ */
+async function extractWithReconciliationFromTranscript(
+  threadMessages: ThreadMessage[],
+  context: ExtractionContext,
+  workspaceId: string,
+  extractionSourceRole: ExtractionSourceRole,
+  start: number,
+): Promise<void> {
+  let existingMemories: Memory[] = [];
+  try {
+    existingMemories = await retrieveMemories({
+      query: context.userMessage,
+      currentUserId: context.userId,
+      limit: 20,
+      workspaceId,
+      adminMode: true,
+    });
+  } catch (err) {
+    logger.warn("Memory retrieval failed during transcript reconciliation — proceeding with empty existing memories", {
+      error: String((err as any)?.message ?? err).slice(0, 200),
+    });
+  }
+
+  return runReconciliationCore(
+    threadMessages,
+    existingMemories,
+    context,
+    workspaceId,
+    extractionSourceRole,
+    start,
+  );
+}
+
+/**
+ * I/O-free middle of the reconciliation pipeline. Given a transcript and
+ * the existing memories that are semantically relevant, runs the LLM to
+ * produce CREATE/UPDATE/DELETE operations and applies them.
+ */
+async function runReconciliationCore(
+  threadMessages: ThreadMessage[],
+  existingMemories: Memory[],
+  context: ExtractionContext,
+  workspaceId: string,
+  extractionSourceRole: ExtractionSourceRole,
+  start: number,
+): Promise<void> {
   const userIds = [...new Set(threadMessages.map((m) => m.userId).filter(Boolean))];
   const displayNames = new Map<string, string>();
   if (userIds.length > 0) {
