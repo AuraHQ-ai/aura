@@ -28,6 +28,10 @@ const dbMocks = vi.hoisted(() => ({
   updateWhere: vi.fn(),
 }));
 
+const toolMocks = vi.hoisted(() => ({
+  markTurnSuspendedByDetachedCommand: vi.fn(),
+}));
+
 vi.mock("../lib/sandbox.js", () => ({
   getOrCreateSandbox: sandboxMocks.getOrCreateSandbox,
   getSandboxEnvs: sandboxMocks.getSandboxEnvs,
@@ -41,6 +45,7 @@ vi.mock("../lib/logger.js", () => ({
 
 vi.mock("../lib/tool.js", () => ({
   defineTool: (config: any) => config,
+  markTurnSuspendedByDetachedCommand: toolMocks.markTurnSuspendedByDetachedCommand,
 }));
 
 vi.mock("../db/client.js", () => ({
@@ -202,7 +207,11 @@ describe("sandbox command tools", () => {
   });
 
   it("starts detached commands and returns id, pid, and started_at", async () => {
-    const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
+    const tool = createSandboxTools({
+      userId: "U123",
+      channelId: "C123",
+      threadTs: "1710000000.000000",
+    } as any).run_command_detached as any;
 
     const result = await tool.execute(
       tool.inputSchema.parse({
@@ -236,6 +245,7 @@ describe("sandbox command tools", () => {
       requestedBy: "U123",
       workspaceId: "default",
     }));
+    expect(toolMocks.markTurnSuspendedByDetachedCommand).toHaveBeenCalledWith(result.id);
   });
 
   it("warns once when detached command webhook env vars are missing", async () => {
@@ -248,6 +258,7 @@ describe("sandbox command tools", () => {
     await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
     await tool.execute(tool.inputSchema.parse({ command: "sleep 301" }));
 
+    expect(toolMocks.markTurnSuspendedByDetachedCommand).not.toHaveBeenCalled();
     expect(loggerMocks.warn).toHaveBeenCalledTimes(1);
     expect(loggerMocks.warn).toHaveBeenCalledWith(
       "run_command_detached: webhook callback disabled, env vars missing",

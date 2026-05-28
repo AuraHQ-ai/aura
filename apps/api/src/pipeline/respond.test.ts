@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const agentMocks = vi.hoisted(() => ({
   createInteractiveAgent: vi.fn(),
 }));
+const toolStateMocks = vi.hoisted(() => ({
+  detachedSuspendState: undefined as { commandId: string } | undefined,
+}));
 
 vi.mock("ai", () => ({
   streamText: vi.fn(),
@@ -19,6 +22,7 @@ vi.mock("../lib/ai.js", () => ({
 
 vi.mock("../lib/tool.js", () => ({
   getSlackMeta: (tool: any) => tool?.slack,
+  getDetachedCommandSuspendState: () => toolStateMocks.detachedSuspendState,
 }));
 
 vi.mock("../lib/settings.js", () => ({
@@ -149,6 +153,7 @@ function baseOptions(slackClient: any) {
 describe("generateResponse Slack stream handling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    toolStateMocks.detachedSuspendState = undefined;
   });
 
   afterEach(() => {
@@ -602,6 +607,50 @@ describe("generateResponse Slack stream handling", () => {
         finishReason: "stop",
         relaunchCount: 1,
       },
+    });
+  });
+
+  it("does not relaunch after run_command_detached suspends the turn", async () => {
+    toolStateMocks.detachedSuspendState = { commandId: "abcdef12" };
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const streamMock = mockAgentStreams([
+      createAgentStreamResult((async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command_detached",
+          input: { command: "pnpm test" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command_detached",
+          output: { id: "abcdef12", pid: 4321, started_at: "2026-05-28T08:00:00.000Z" },
+        };
+      })()),
+    ]);
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Started the detached command. I'll continue when it finishes.",
+      alreadyPosted: true,
+    });
+
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logError).mock.calls.some(
+      ([entry]) => entry.errorCode === "empty_completion_relaunched",
+    )).toBe(false);
+    expect(vi.mocked(logError).mock.calls.some(
+      ([entry]) => entry.errorCode === "empty_completion_after_tools",
+    )).toBe(false);
+    expect(stream.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: "Started the detached command. I'll continue when it finishes.",
+      })],
     });
   });
 

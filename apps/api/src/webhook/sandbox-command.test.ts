@@ -1,15 +1,13 @@
 import crypto from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const safePostMessageMock = vi.hoisted(() => vi.fn());
 const recordErrorMock = vi.hoisted(() => vi.fn());
+const runPipelineMock = vi.hoisted(() => vi.fn());
+const getConfigMock = vi.hoisted(() => vi.fn());
+const executionContextRunMock = vi.hoisted(() => vi.fn((_context, fn) => fn()));
 
 vi.mock("../db/client.js", () => ({
   db: {},
-}));
-
-vi.mock("../lib/slack-messaging.js", () => ({
-  safePostMessage: safePostMessageMock,
 }));
 
 vi.mock("../lib/logger.js", () => ({
@@ -25,7 +23,22 @@ vi.mock("../lib/metrics.js", () => ({
   recordError: recordErrorMock,
 }));
 
+vi.mock("../lib/settings.js", () => ({
+  getConfig: getConfigMock,
+}));
+
+vi.mock("../lib/tool.js", () => ({
+  executionContext: {
+    run: executionContextRunMock,
+  },
+}));
+
+vi.mock("../pipeline/index.js", () => ({
+  runPipeline: runPipelineMock,
+}));
+
 import {
+  buildDetachedCommandResultMessage,
   createSandboxCommandWebhookApp,
   verifySandboxWebhookSignature,
 } from "./sandbox-command.js";
@@ -59,7 +72,9 @@ describe("sandbox command webhook", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SANDBOX_WEBHOOK_SECRET = "sandbox-secret";
-    safePostMessageMock.mockResolvedValue({ ok: true });
+    runPipelineMock.mockResolvedValue(undefined);
+    getConfigMock.mockResolvedValue("U_AURA");
+    executionContextRunMock.mockImplementation((_context, fn) => fn());
   });
 
   it("verifies HMAC signatures", () => {
@@ -86,7 +101,39 @@ describe("sandbox command webhook", () => {
     expect(response.status).toBe(401);
   });
 
-  it("updates the detached command row and posts a Slack notification", async () => {
+  it("formats detached command results as a synthetic user turn payload", () => {
+    const startedAt = new Date("2026-05-28T08:00:00Z");
+    const completedAt = new Date("2026-05-28T08:00:42Z");
+    const message = buildDetachedCommandResultMessage(
+      {
+        id: "abcdef12",
+        workspaceId: "default",
+        pid: 4321,
+        command: "pnpm test",
+        status: "completed",
+        exitCode: 0,
+        requestedBy: "U123",
+        channelId: "C123",
+        threadTs: "1710000000.000000",
+        startedAt,
+        completedAt,
+        stdoutTail: null,
+        stderrTail: null,
+      },
+      0,
+      "last stdout",
+      "",
+      completedAt,
+    );
+
+    expect(message).toContain('<detached-command-result id="abcdef12" exit_code=0 runtime_s=42>');
+    expect(message).toContain("_Command:_ `pnpm test`");
+    expect(message).toContain("*stdout tail:*");
+    expect(message).toContain("last stdout");
+    expect(message).toContain("</detached-command-result>");
+  });
+
+  it("updates the detached command row and enqueues a synthetic resume", async () => {
     const startedAt = new Date(Date.now() - 2_000);
     const row = {
       id: "abcdef12",
@@ -104,7 +151,12 @@ describe("sandbox command webhook", () => {
       stderrTail: null,
     };
     const { database, calls } = createDatabaseMock(row);
-    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database);
+    const resumeConversation = vi.fn().mockResolvedValue(undefined);
+    const enqueued: Promise<void>[] = [];
+    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database, {
+      resumeConversation,
+      enqueueResume: (promise) => enqueued.push(promise),
+    });
     const body = JSON.stringify({
       id: "abcdef12",
       exit_code: 1,
@@ -122,21 +174,97 @@ describe("sandbox command webhook", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, notified: true });
+    expect(await response.json()).toEqual({ ok: true, resumed: true });
     expect(calls.set).toHaveBeenCalledWith(expect.objectContaining({
       status: "failed",
       exitCode: 1,
       stdoutTail: "last stdout",
       stderrTail: "last stderr",
     }));
-    expect(safePostMessageMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      channel: "C123",
-      thread_ts: "1710000000.000000",
-      text: expect.stringContaining("Detached command `abcdef12` failed with exit code 1"),
+    expect(resumeConversation).toHaveBeenCalledWith(expect.objectContaining({
+      row: expect.objectContaining({
+        id: "abcdef12",
+        channelId: "C123",
+        threadTs: "1710000000.000000",
+      }),
+      exitCode: 1,
+      stdoutTail: "last stdout",
+      stderrTail: "last stderr",
+      slackClient: expect.anything(),
     }));
+    expect(enqueued).toHaveLength(1);
   });
 
-  it("skips duplicate Slack notifications for curl retry payloads", async () => {
+  it("routes the default synthetic resume through runPipeline with the command result", async () => {
+    const startedAt = new Date(Date.now() - 1_000);
+    const row = {
+      id: "abcdef12",
+      workspaceId: "default",
+      pid: 4321,
+      command: "pnpm test",
+      status: "running",
+      exitCode: null,
+      requestedBy: "U123",
+      channelId: "C123",
+      threadTs: "1710000000.000000",
+      startedAt,
+      completedAt: null,
+      stdoutTail: null,
+      stderrTail: null,
+    };
+    const { database } = createDatabaseMock(row);
+    const enqueued: Promise<void>[] = [];
+    const slackClient = { chat: { postMessage: vi.fn() } } as any;
+    const app = createSandboxCommandWebhookApp(slackClient, database, {
+      enqueueResume: (promise) => enqueued.push(promise),
+    });
+    const body = JSON.stringify({
+      id: "abcdef12",
+      exit_code: 0,
+      stdout_tail: "ok",
+      stderr_tail: "",
+    });
+
+    const response = await app.request("/", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-webhook-signature": sign(body, "sandbox-secret"),
+      },
+      body,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, resumed: true });
+    expect(enqueued).toHaveLength(1);
+    await enqueued[0];
+
+    expect(executionContextRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        triggeredBy: "U123",
+        channelId: "C123",
+        threadTs: "1710000000.000000",
+        workspaceId: "default",
+      }),
+      expect.any(Function),
+    );
+    expect(runPipelineMock).toHaveBeenCalledWith(expect.objectContaining({
+      event: expect.objectContaining({
+        type: "app_mention",
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        user: "U123",
+        text: expect.stringContaining("<detached-command-result"),
+      }),
+      client: slackClient,
+      botUserId: "U_AURA",
+    }));
+    expect(runPipelineMock.mock.calls[0]?.[0].event.text).toContain("_Command:_ `pnpm test`");
+    expect(runPipelineMock.mock.calls[0]?.[0].event.text).toContain("*stdout tail:*");
+    expect(runPipelineMock.mock.calls[0]?.[0].event.text).toContain("ok");
+  });
+
+  it("skips duplicate synthetic resumes for curl retry payloads", async () => {
     const row = {
       id: "abcdef12",
       workspaceId: "default",
@@ -153,7 +281,11 @@ describe("sandbox command webhook", () => {
       stderrTail: null,
     };
     const { database } = createDatabaseMock(row);
-    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database);
+    const resumeConversation = vi.fn().mockResolvedValue(undefined);
+    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database, {
+      resumeConversation,
+      enqueueResume: () => undefined,
+    });
     const body = JSON.stringify({
       id: "abcdef12",
       exit_code: 0,
@@ -177,13 +309,56 @@ describe("sandbox command webhook", () => {
     });
 
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ ok: true, notified: true });
+    expect(await first.json()).toEqual({ ok: true, resumed: true });
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual({
       ok: true,
-      notified: false,
+      resumed: false,
       reason: "already_notified",
     });
-    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(resumeConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs and no-ops when the origin thread is missing", async () => {
+    const row = {
+      id: "abcdef12",
+      workspaceId: "default",
+      pid: 4321,
+      command: "sleep 1",
+      status: "running",
+      exitCode: null,
+      requestedBy: "U123",
+      channelId: null,
+      threadTs: null,
+      startedAt: new Date(Date.now() - 1_000),
+      completedAt: null,
+      stdoutTail: null,
+      stderrTail: null,
+    };
+    const { database } = createDatabaseMock(row);
+    const resumeConversation = vi.fn().mockResolvedValue(undefined);
+    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database, {
+      resumeConversation,
+      enqueueResume: () => undefined,
+    });
+    const body = JSON.stringify({
+      id: "abcdef12",
+      exit_code: 0,
+      stdout_tail: "done",
+      stderr_tail: "",
+    });
+
+    const response = await app.request("/", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-webhook-signature": sign(body, "sandbox-secret"),
+      },
+      body,
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, resumed: false });
+    expect(resumeConversation).not.toHaveBeenCalled();
   });
 });

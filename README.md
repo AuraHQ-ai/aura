@@ -50,7 +50,7 @@ Slack event → Vercel serverless function → embed query → pgvector similari
 
 **Memory:** Every exchange triggers a fast-model LLM call that extracts structured memories (facts, decisions, relationships, open threads). Each memory is a 1536-dimensional pgvector embedding. Top ~10 most similar memories are retrieved on each response. DM-sourced memories are private by default.
 
-**Sandbox:** Persistent E2B VM attached to each user. Survives across conversations within a session. Has git, psql, gcloud, the GitHub CLI, `mongosh`, the `mongodb` node driver, and more. Build the custom template with `node sandbox/build-tsx.ts`.
+**Sandbox:** Persistent E2B VM attached to each user. Survives across conversations within a session. Has git, psql, gcloud, the GitHub CLI, `mongosh`, the `mongodb` node driver, and more. `run_command_detached` is a suspend point when webhook callbacks are configured: the active Slack turn ends after dispatch, and `/api/webhook/sandbox-command` resumes the same thread with a synthetic `<detached-command-result>` user turn when the process exits. Build the custom template with `node sandbox/build-tsx.ts`.
 
 **Scratch storage:** When `MONGODB_ATLAS_URI` is set, Aura uses MongoDB Atlas as a schema-less scratch layer for arbitrary per-task collections (cross-session job state, dumps, staging). Postgres stays mission-critical and schema-managed; Mongo is the ad-hoc workspace. See `content/docs/tools/sandbox.mdx`.
 

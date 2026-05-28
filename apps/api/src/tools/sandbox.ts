@@ -7,7 +7,7 @@ import {
   ensureUserHome,
 } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
-import { defineTool } from "../lib/tool.js";
+import { defineTool, markTurnSuspendedByDetachedCommand } from "../lib/tool.js";
 import { detachedCommands, type DetachedCommand, type ScheduleContext } from "@aura/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -54,12 +54,25 @@ function getPublicUrl(): string {
   return DEFAULT_PUBLIC_URL;
 }
 
-function warnIfWebhookEnvMissing() {
-  if (warnedAboutWebhookEnv) return;
-
+function getMissingWebhookEnvVars(): string[] {
   const missing: string[] = [];
   if (!process.env.AURA_PUBLIC_URL) missing.push("AURA_PUBLIC_URL");
   if (!process.env.SANDBOX_WEBHOOK_SECRET) missing.push("SANDBOX_WEBHOOK_SECRET");
+  return missing;
+}
+
+function isDetachedCommandWebhookConfigured(): boolean {
+  return getMissingWebhookEnvVars().length === 0;
+}
+
+function canSuspendForDetachedCommand(context?: ScheduleContext): boolean {
+  return isDetachedCommandWebhookConfigured() && !!context?.channelId && !!context.threadTs;
+}
+
+function warnIfWebhookEnvMissing() {
+  if (warnedAboutWebhookEnv) return;
+
+  const missing = getMissingWebhookEnvVars();
   if (missing.length === 0) return;
 
   warnedAboutWebhookEnv = true;
@@ -625,7 +638,7 @@ export function createSandboxTools(context?: ScheduleContext) {
     }),
     run_command_detached: defineTool({
       description:
-        "Start a long-running shell command in the sandbox and return immediately with { id, pid, started_at }. Use this instead of run_command when work may exceed about 120s, has uncertain duration, or should keep running while you continue the conversation. The command writes stdout/stderr/status under /tmp/aura-bg/<id>.*. Poll progress with check_command({ id }); stop it with run_command({ command: 'kill <pid>' }) if needed.",
+        "Start a long-running shell command in the sandbox and return immediately with { id, pid, started_at }. Use this instead of run_command when work may exceed about 120s or has uncertain duration. When webhook env is configured (AURA_PUBLIC_URL and SANDBOX_WEBHOOK_SECRET) and this turn has a Slack thread to resume, this is a suspend point: after a successful dispatch, do not call any more tools in this turn; send a short final message like 'started <id>, I'll continue when it finishes.' The completion webhook will resume the conversation with the command result. If webhook env is missing, the turn does not suspend because no resume can arrive; poll progress with check_command({ id }) as before. The command writes stdout/stderr/status under /tmp/aura-bg/<id>.*. Stop it with run_command({ command: 'kill <pid>' }) if needed.",
       requiredCredentials: ["e2b_api_key"],
       inputSchema: z.object({
         command: z
@@ -688,6 +701,10 @@ export function createSandboxTools(context?: ScheduleContext) {
             id: detached.id,
             pid: detached.pid,
           });
+
+          if (canSuspendForDetachedCommand(context)) {
+            markTurnSuspendedByDetachedCommand(detached.id);
+          }
 
           return detached;
         } catch (error: any) {
