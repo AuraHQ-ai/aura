@@ -604,9 +604,12 @@ async function extractWithReconciliation(
     retrieveMemories({
       query: context.userMessage,
       currentUserId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
       limit: 20,
       workspaceId,
       adminMode: true,
+      prefilter: true,
     }).then((mems) => { existingMemories = mems; }).catch((err) => {
       logger.warn("Memory retrieval failed during reconciliation — proceeding with empty existing memories", {
         error: String(err?.message ?? err).slice(0, 200),
@@ -647,9 +650,12 @@ async function extractWithReconciliationFromTranscript(
     existingMemories = await retrieveMemories({
       query: context.userMessage,
       currentUserId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
       limit: 20,
       workspaceId,
       adminMode: true,
+      prefilter: true,
     });
   } catch (err) {
     logger.warn("Memory retrieval failed during transcript reconciliation — proceeding with empty existing memories", {

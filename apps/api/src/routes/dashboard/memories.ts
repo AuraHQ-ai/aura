@@ -69,8 +69,12 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
         const results = await retrieveMemories({
           query: search,
           currentUserId: "dashboard",
+          channelId: "dashboard",
+          channelType: "dashboard",
+          workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
           limit,
           adminMode: true,
+          prefilter: true,
         });
 
         let items = results.map(({ embedding, searchVector, workspaceId, ...rest }) => rest);
