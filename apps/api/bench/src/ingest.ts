@@ -18,6 +18,7 @@
  */
 
 import { sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { db } from "../../src/db/client.js";
 import { storeMessage } from "../../src/memory/store.js";
 import {
@@ -27,6 +28,21 @@ import {
 import type { ThreadMessage } from "../../src/memory/store.js";
 import { logger } from "../../src/lib/logger.js";
 import type { BenchCase } from "./types.js";
+
+/**
+ * Stable identity for the conversation a case carries, used to de-dupe
+ * ingestion. Derived from the source + the full session payload so that
+ * cases sharing one conversation (LoCoMo's many qa pairs) collapse, while
+ * cases that merely reuse session-id labels (toy "S1", LoCoMo "D1" across
+ * conversations) stay distinct.
+ */
+function conversationKey(benchCase: BenchCase): string {
+  return createHash("sha1")
+    .update(benchCase.source)
+    .update("\0")
+    .update(JSON.stringify(benchCase.sessions))
+    .digest("hex");
+}
 
 /**
  * Synthetic per-bench Slack user id for a corpus speaker. Deterministic so
@@ -181,10 +197,19 @@ export async function ingestCases(
   // De-dupe by conversation: LoCoMo packs many QA pairs per conversation,
   // and they all share one session set. Re-extracting N times would waste
   // money and produce duplicate memories.
+  //
+  // The key must be the conversation's *content*, not its session-id labels.
+  // Session ids are only unique within a conversation: the toy corpus reuses
+  // "S1"/"S2" across unrelated cases, and LoCoMo reuses "D1".."DN" across
+  // every conversation. Keying on the id list alone collapses genuinely
+  // distinct conversations into one and silently drops their memories from
+  // ingest (which then read as QA 0% for the dropped cases). Hashing the full
+  // session payload means only byte-identical conversations — LoCoMo's shared
+  // session set across its qa pairs — collapse together.
   const seen = new Set<string>();
   const unique: BenchCase[] = [];
   for (const c of cases) {
-    const key = `${c.source}:${JSON.stringify(c.sessions.map((s) => s.id))}`;
+    const key = conversationKey(c);
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(c);
