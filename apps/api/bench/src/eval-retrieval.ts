@@ -55,6 +55,7 @@ export async function evaluateRetrieval(
       limit: k,
       workspaceId,
       adminMode: true,
+      prefilter: true,
     });
   } catch (error) {
     logger.warn("bench: retrieval failed", {

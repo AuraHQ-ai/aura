@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { generateObject, rerank } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { memories, messages, type Memory } from "@aura/db/schema";
+import { messages, type Memory } from "@aura/db/schema";
 import type { EntityType } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
@@ -16,6 +16,10 @@ interface RetrievalOptions {
   queryEmbedding?: number[];
   /** The Slack user ID of the person asking */
   currentUserId: string;
+  /** Slack channel/conversation where the query is happening, used for DM privacy and channel weighting */
+  channelId?: string;
+  /** Slack channel type for the current query context */
+  channelType?: string;
   /** Maximum number of memories to return */
   limit?: number;
   /** Minimum relevance score threshold */
@@ -24,10 +28,13 @@ interface RetrievalOptions {
   adminMode?: boolean;
   /** Workspace ID for tenant isolation in entity queries */
   workspaceId?: string;
+  /** Restrict cosine/full-text candidates to resolved entities + a recent tail. Defaults on. */
+  prefilter?: boolean;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
 const PER_TERM_FULLTEXT_LIMIT = 25;
+const ENTITY_PREFILTER_RECENT_TAIL_LIMIT = 50;
 
 async function extractLexemes(
   query: string,
@@ -138,6 +145,65 @@ interface EntityMemoryResult {
   memoryEntityMap: Map<string, Set<string>>;
   /** Total number of distinct entities resolved */
   resolvedEntityCount: number;
+  /** Distinct resolved entity IDs, used to pre-filter the hybrid candidate pool */
+  resolvedEntityIds: string[];
+}
+
+interface MemoryVisibilityOptions {
+  adminMode: boolean;
+  currentUserId: string;
+  channelId?: string;
+}
+
+function memoryColumn(columnName: string, tableAlias?: string) {
+  return sql.raw(tableAlias ? `${tableAlias}.${columnName}` : columnName);
+}
+
+function buildMemoryVisibilityFilter(
+  options: MemoryVisibilityOptions,
+  tableAlias?: string,
+) {
+  if (options.adminMode) return sql`TRUE`;
+
+  const sourceChannelType = memoryColumn("source_channel_type", tableAlias);
+  const sourceChannelId = memoryColumn("source_channel_id", tableAlias);
+  const shareable = memoryColumn("shareable", tableAlias);
+  const relatedUserIds = memoryColumn("related_user_ids", tableAlias);
+  const sameDmPrivateMemory = options.channelId
+    ? sql`(
+        ${sourceChannelType} = 'dm'
+        AND ${sourceChannelId} = ${options.channelId}
+        AND ${relatedUserIds} @> ARRAY[${options.currentUserId}]::text[]
+      )`
+    : sql`FALSE`;
+
+  return sql`(
+    ${sourceChannelType} != 'dm'
+    OR ${shareable} = 1
+    OR ${sameDmPrivateMemory}
+  )`;
+}
+
+function buildMemoryBaseFilter(
+  minRelevanceScore: number,
+  workspaceId?: string,
+  tableAlias?: string,
+  requireEmbedding = true,
+) {
+  const embedding = memoryColumn("embedding", tableAlias);
+  const relevanceScore = memoryColumn("relevance_score", tableAlias);
+  const status = memoryColumn("status", tableAlias);
+  const workspace = memoryColumn("workspace_id", tableAlias);
+  const workspaceFilter = workspaceId
+    ? sql`${workspace} = ${workspaceId}`
+    : sql`TRUE`;
+
+  const embeddingFilter = requireEmbedding ? sql`${embedding} IS NOT NULL` : sql`TRUE`;
+
+  return sql`${embeddingFilter}
+    AND ${relevanceScore} >= ${minRelevanceScore}
+    AND ${status} IN ('current', 'disputed')
+    AND ${workspaceFilter}`;
 }
 
 /**
@@ -147,10 +213,15 @@ interface EntityMemoryResult {
 async function fetchEntityMatchedMemories(
   query: string,
   minRelevanceScore: number,
-  currentUserId?: string,
+  visibility: MemoryVisibilityOptions,
   workspaceId?: string,
 ): Promise<EntityMemoryResult> {
-  const emptyResult: EntityMemoryResult = { memories: [], memoryEntityMap: new Map(), resolvedEntityCount: 0 };
+  const emptyResult: EntityMemoryResult = {
+    memories: [],
+    memoryEntityMap: new Map(),
+    resolvedEntityCount: 0,
+    resolvedEntityIds: [],
+  };
 
   try {
     // Step 1: Extract entities via LLM
@@ -200,15 +271,8 @@ async function fetchEntityMatchedMemories(
     });
 
     // Step 4: Fetch memories linked to resolved entities, tracking which entity each memory came from
-    const privacyFilter = currentUserId
-      ? sql`AND (
-          m.source_channel_type != 'dm'
-          OR m.shareable = 1
-          OR m.related_user_ids @> ARRAY[${currentUserId}]::text[]
-        )`
-      : sql``;
-
-    const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
+    const visibilityFilter = buildMemoryVisibilityFilter(visibility, "m");
+    const memoryBaseFilter = buildMemoryBaseFilter(minRelevanceScore, workspaceId, "m", false);
 
     const entityIdList = sql.join(entityIds.map(id => sql`${id}`), sql`, `);
 
@@ -217,10 +281,8 @@ async function fetchEntityMatchedMemories(
       FROM memories m
       JOIN memory_entities me ON m.id = me.memory_id
       WHERE me.entity_id IN (${entityIdList})
-        AND m.relevance_score >= ${minRelevanceScore}
-        AND m.status IN ('current', 'disputed')
-        ${privacyFilter}
-        ${workspaceMemoryFilter}
+        AND ${memoryBaseFilter}
+        AND ${visibilityFilter}
       ORDER BY m.relevance_score DESC, m.created_at DESC
       LIMIT 50
     `);
@@ -279,6 +341,7 @@ async function fetchEntityMatchedMemories(
       memories: memoriesList,
       memoryEntityMap,
       resolvedEntityCount: entityIds.length,
+      resolvedEntityIds: entityIds,
     };
   } catch (error) {
     logger.warn("Entity-first retrieval failed, falling back to hybrid search only", {
@@ -305,16 +368,28 @@ async function fetchEntityMatchedMemories(
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId } = options;
+  const {
+    query,
+    queryEmbedding: precomputed,
+    currentUserId,
+    channelId,
+    channelType,
+    limit = 20,
+    minRelevanceScore = 0.1,
+    adminMode = false,
+    workspaceId,
+    prefilter = true,
+  } = options;
   const start = Date.now();
+  const visibility = { adminMode, currentUserId, channelId };
 
   try {
     const [queryEmbedding, lexemes, entityResult] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
       extractLexemes(query),
-      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId),
+      fetchEntityMatchedMemories(query, minRelevanceScore, visibility, workspaceId),
     ]);
-    const { memories: entityMemories, memoryEntityMap, resolvedEntityCount } = entityResult;
+    const { memories: entityMemories, memoryEntityMap, resolvedEntityCount, resolvedEntityIds } = entityResult;
 
     const CANDIDATE_POOL_SIZE = Math.max(25, limit);
     // Embed vector as a raw SQL literal instead of a parameterized value.
@@ -323,27 +398,46 @@ export async function retrieveMemories(
     // values are finite numbers.
     const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
-    const privacyFilter = adminMode
-      ? sql`TRUE`
-      : sql`(
-        ${memories.sourceChannelType} != 'dm'
-        OR ${memories.shareable} = 1
-        OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
-      )`;
-
-    const statusFilter = sql`${memories.status} IN ('current', 'disputed')`;
-    // Multi-tenancy: scope the hybrid SQL lane to the workspace when one is
-    // supplied. Without this, the vector + full-text RRF query would see
-    // every workspace's memories. The entity-first lane already filters by
-    // workspace_id; this brings the hybrid lane in line.
-    const workspaceFilter = workspaceId
-      ? sql`${memories.workspaceId} = ${workspaceId}`
-      : sql`TRUE`;
-    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter} AND ${workspaceFilter}`;
+    const privacyFilter = buildMemoryVisibilityFilter(visibility);
+    const baseFilter = buildMemoryBaseFilter(minRelevanceScore, workspaceId);
+    const shouldPrefilterByEntity = prefilter && resolvedEntityIds.length > 0;
+    const entityPrefilterIds = shouldPrefilterByEntity
+      ? sql.join(resolvedEntityIds.map(id => sql`${id}`), sql`, `)
+      : sql``;
+    const candidatePoolCte = shouldPrefilterByEntity
+      ? sql`
+        candidate_pool AS (
+          SELECT DISTINCT me.memory_id AS id
+          FROM memory_entities me
+          JOIN memories m ON m.id = me.memory_id
+          WHERE me.entity_id IN (${entityPrefilterIds})
+            AND ${buildMemoryBaseFilter(minRelevanceScore, workspaceId, "m")}
+            AND ${buildMemoryVisibilityFilter(visibility, "m")}
+          UNION
+          SELECT id
+          FROM (
+            SELECT id
+            FROM memories
+            WHERE ${baseFilter} AND ${privacyFilter}
+            ORDER BY created_at DESC
+            LIMIT ${ENTITY_PREFILTER_RECENT_TAIL_LIMIT}
+          ) recent_global_memories
+        ),
+      `
+      : sql``;
+    const candidatePoolFilter = shouldPrefilterByEntity
+      ? sql`AND id IN (SELECT id FROM candidate_pool)`
+      : sql``;
+    const channelBoostSql = channelId
+      ? sql`CASE WHEN m.source_channel_id = ${channelId} THEN 1.0 ELSE 0.0 END`
+      : sql`0.0`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
       query: query.substring(0, 100),
+      prefilter: shouldPrefilterByEntity,
+      resolvedEntityCount,
+      channelType,
     });
 
     const fulltextSearchCte = lexemes.length === 0
@@ -365,6 +459,7 @@ export async function retrieveMemories(
               WHERE search_vector @@ to_tsquery('english', ${lexeme})
                 AND ${baseFilter}
                 AND ${privacyFilter}
+                ${candidatePoolFilter}
               ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
               LIMIT ${PER_TERM_FULLTEXT_LIMIT}
             )
@@ -391,10 +486,11 @@ export async function retrieveMemories(
       })();
 
     const hybridQuery = sql`
-      WITH vector_search AS (
+      WITH ${candidatePoolCte}
+      vector_search AS (
         SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${vectorSql}) AS rank
         FROM memories
-        WHERE ${baseFilter} AND ${privacyFilter}
+        WHERE ${baseFilter} AND ${privacyFilter} ${candidatePoolFilter}
         ORDER BY embedding <=> ${vectorSql}
         LIMIT ${CANDIDATE_POOL_SIZE}
       ),
@@ -402,7 +498,8 @@ export async function retrieveMemories(
       SELECT
         m.*,
         COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
-        (1 - (m.embedding <=> ${vectorSql})) AS similarity
+        (1 - (m.embedding <=> ${vectorSql})) AS similarity,
+        ${channelBoostSql} AS channel_boost
       FROM (
         SELECT COALESCE(v.id, f.id) AS id, v.rank AS vector_rank, f.rank AS fulltext_rank
         FROM vector_search v
@@ -451,6 +548,7 @@ export async function retrieveMemories(
       } as Memory,
       similarity: Number(row.similarity ?? 0),
       rrfScore: Number(row.rrf_score ?? 0),
+      channelBoost: Number(row.channel_boost ?? 0),
     }));
 
     // Merge entity-matched memories; track entity boost as a separate signal
@@ -472,6 +570,7 @@ export async function retrieveMemories(
         similarity: 0,
         rrfScore: ENTITY_RRF_BOOST,
         entityBoost: entityBoostScore(m.id),
+        channelBoost: channelId && m.sourceChannelId === channelId ? 1 : 0,
       }));
 
     const results = hybridResults.map((r) => ({
@@ -483,6 +582,7 @@ export async function retrieveMemories(
     if (entityMemories.length > 0) {
       logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
         resolvedEntities: resolvedEntityCount,
+        prefilter: shouldPrefilterByEntity,
         query: query.substring(0, 100),
       });
     }
@@ -502,6 +602,7 @@ export async function retrieveMemories(
       });
 
       const ENTITY_WEIGHT = 0.1;
+      const CHANNEL_WEIGHT = channelId ? 0.05 : 0;
       const scored = ranking.map((item) => {
         const result = results[item.originalIndex];
         const memory = result.memory;
@@ -509,7 +610,11 @@ export async function retrieveMemories(
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
-        const score = item.score * (0.8 - ENTITY_WEIGHT / 2) + recencyBoost * (0.2 - ENTITY_WEIGHT / 2) + result.entityBoost * ENTITY_WEIGHT;
+        const score =
+          item.score * (0.8 - ENTITY_WEIGHT / 2 - CHANNEL_WEIGHT / 2) +
+          recencyBoost * (0.2 - ENTITY_WEIGHT / 2 - CHANNEL_WEIGHT / 2) +
+          result.entityBoost * ENTITY_WEIGHT +
+          result.channelBoost * CHANNEL_WEIGHT;
         return { memory, score, originalIndex: item.originalIndex, cohereScore: item.score };
       });
 
@@ -522,6 +627,8 @@ export async function retrieveMemories(
           query: query.substring(0, 100),
           totalCandidates: results.length,
           lexemeCount: lexemes.length,
+          prefilter: shouldPrefilterByEntity,
+          channelId,
           method: "hybrid-rrf+cohere-rerank",
         },
       );
@@ -533,18 +640,20 @@ export async function retrieveMemories(
       const RRF_K = 60;
       const maxRrfScore = 2 / (1 + RRF_K);
 
-      const scored = results.map(({ memory, similarity, rrfScore, entityBoost }) => {
+      const CHANNEL_WEIGHT = channelId ? 0.1 : 0;
+      const scored = results.map(({ memory, similarity, rrfScore, entityBoost, channelBoost }) => {
         const ageMs = now - new Date(memory.createdAt).getTime();
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
         const normalizedRrf = maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
         const score =
-          normalizedRrf * 0.4 +
+          normalizedRrf * (0.4 - CHANNEL_WEIGHT / 2) +
           similarity * 0.2 +
           memory.relevanceScore * 0.1 +
           recencyBoost * 0.1 +
-          entityBoost * 0.2;
+          entityBoost * (0.2 - CHANNEL_WEIGHT / 2) +
+          channelBoost * CHANNEL_WEIGHT;
 
         return { memory, score };
       });
@@ -558,6 +667,8 @@ export async function retrieveMemories(
           query: query.substring(0, 100),
           totalCandidates: results.length,
           lexemeCount: lexemes.length,
+          prefilter: shouldPrefilterByEntity,
+          channelId,
           method: "hybrid-rrf+legacy",
         },
       );

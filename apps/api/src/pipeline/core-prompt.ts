@@ -38,6 +38,8 @@ export interface ChannelSession {
   isDirectMessage: boolean;
   /** Specific channel type — when omitted, derived from isDirectMessage (dm vs public_channel). */
   channelType?: ChannelType;
+  /** Workspace ID for tenant-scoped memory retrieval. */
+  workspaceId?: string;
   userTimezone?: string;
   /** Human-readable channel name (e.g. "#dev (C0BNVKS77)"). Falls back to conversationId. */
   channelDisplayName?: string;
@@ -296,6 +298,10 @@ export async function buildCorePrompt(
             query: session.messageText,
             queryEmbedding,
             currentUserId: session.userId,
+            channelId: session.conversationId,
+            channelType: session.channelType,
+            workspaceId: session.workspaceId ?? process.env.DEFAULT_WORKSPACE_ID ?? "default",
+            prefilter: true,
             limit: 15,
           }).catch(() => [] as Memory[])
         : Promise.resolve([] as Memory[]),
@@ -307,6 +313,7 @@ export async function buildCorePrompt(
             matchLimit: 15,
             minSimilarity: 0.35,
             excludeThreadTs: session.threadId,
+            workspaceId: session.workspaceId ?? process.env.DEFAULT_WORKSPACE_ID ?? "default",
           })
         : Promise.resolve([] as ConversationThread[]),
       session.userProfile !== undefined
