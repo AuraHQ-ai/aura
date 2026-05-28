@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "datasets": {
+    "toy": {
+      "file": "toy.json",
+      "license": "internal",
+      "source": "hand-written",
+      "license_url": null,
+      "questions": 3,
+      "notes": "Internal smoke-test fixture. Always vendored; safe to run anywhere."
+    },
+    "longmemeval": {
+      "file": "longmemeval-subset.json",
+      "license": "MIT",
+      "source": "https://github.com/xiaowu0162/LongMemEval",
+      "license_url": "https://github.com/xiaowu0162/LongMemEval/blob/main/LICENSE",
+      "questions": 100,
+      "subset_seed": 4711,
+      "subset_axes": ["temporal-reasoning", "knowledge-update", "abstention"],
+      "vendored": false,
+      "notes": "Fetched via bench/scripts/fetch-longmemeval.ts. MIT licence: safe to vendor with attribution. The vendored slice is a stratified sample (seed=4711) across the three axes most relevant to epic #1042."
+    },
+    "locomo": {
+      "file": "locomo-subset.json",
+      "license": "CC-BY-NC-4.0",
+      "source": "https://github.com/snap-research/locomo",
+      "license_url": "https://github.com/snap-research/locomo/blob/main/LICENSE",
+      "questions": 200,
+      "subset_seed": 4711,
+      "subset_categories": ["single_hop", "multi_hop", "temporal", "open_domain", "adversarial"],
+      "vendored": false,
+      "notes": "CC-BY-NC-4.0 (non-commercial). NOT vendored by default — see corpus/README.md for the legal-check checklist before enabling. The harness skips this dataset gracefully when the file is absent."
+    }
+  }
+}

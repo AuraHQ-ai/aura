@@ -9,7 +9,7 @@
       "DOM.Iterable"
     ],
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -28,7 +28,8 @@
     "incremental": true
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "bench/**/*.ts"
   ],
   "exclude": [
     "node_modules",
