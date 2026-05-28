@@ -3,14 +3,20 @@
  *
  *   pnpm bench:memory                                # toy corpus, medium subset
  *   pnpm bench:memory --dataset=lme                  # LongMemEval (cached corpus)
- *   pnpm bench:memory --dataset=both --subset=full   # ~2,000 questions
+ *   pnpm bench:memory --dataset=both --subset=full   # ~2,500 questions
  *   pnpm bench:memory --dataset=both --subset=fast   # ~40 questions, PR speed
+ *   pnpm bench:memory --concurrency=4                # parallel ingest workers
+ *   pnpm bench:memory --corpus-file=/path/data.json  # bring-your-own normalized corpus
  *   pnpm bench:memory --dry-run                      # no DB writes, no LLM calls
  *
- * Model overrides (Sonnet for extraction + answerer, Opus for judge by default):
- *   --extraction-model=anthropic/claude-sonnet-4.6
- *   --answerer-model=anthropic/claude-sonnet-4.6
- *   --judge-model=anthropic/claude-opus-4.6
+ * Model overrides accept either a gateway model id or a catalog tier name:
+ *   --extraction-model=anthropic/claude-sonnet-4.6   # explicit pin
+ *   --extraction-model=main                          # tier (resolves via DB catalog)
+ *   --judge-model=escalation                         # default; Opus-class today
+ *
+ * Defaults: extraction=main, answerer=main, judge=escalation. The exact
+ * model id used is persisted on bench_runs so cross-run deltas stay
+ * honest when the catalog gets updated.
  *
  * Mirrors the pattern of `backfill-memories.ts`: dotenv at the top, `--prod`
  * to switch to `.env.production`.
@@ -58,6 +64,8 @@ const category = getFlag("category");
 const judgeModel = getFlag("judge-model") ?? getFlag("judge");
 const extractionModel = getFlag("extraction-model");
 const answererModel = getFlag("answerer-model");
+const concurrency = getFlag("concurrency") ? Number(getFlag("concurrency")) : undefined;
+const corpusFile = getFlag("corpus-file");
 const jsonOut = getFlag("json");
 
 const cfg = {
@@ -70,6 +78,8 @@ const cfg = {
   extractionModel,
   answererModel,
   judgeModel,
+  concurrency,
+  corpusFile,
 };
 
 if (cfg.dryRun) console.log("DRY RUN — no DB writes, no LLM calls");

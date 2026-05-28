@@ -2,16 +2,23 @@
  * Ingest a BenchCase's conversation history into the real extractor →
  * memory pipeline, scoped to a single bench workspace.
  *
- * We mint synthetic Slack identifiers (`bench:{conv_id}` channels,
- * `{sessionEpoch}.000000` thread ts, `bench:{speaker}` user IDs) so the
- * harness never collides with real Slack data. Importantly we set
- * `created_at` on the inserted messages and `valid_from` on the memories
- * to the corpus timestamp — critical for temporal-reasoning categories.
+ * Two important invariants:
+ *
+ *   1. The `sourceThreadTs` written on each message AND on every memory
+ *      extracted from that session equals the corpus `session.id`. This
+ *      makes deterministic retrieval-recall@K a one-liner: hit ⇔ any
+ *      retrieved memory has `sourceThreadTs ∈ evidenceSessionIds`.
+ *   2. The extractor stamps every memory's `bench_provenance` column with
+ *      caseId / sessionId / diaIds, atomically at insert time, via the
+ *      benchProvenance field on ExtractionContext. No separate UPDATE pass.
+ *
+ * `created_at` on messages and `valid_from` on memories come from the
+ * corpus session timestamp — critical for temporal-reasoning categories
+ * and the future bi-temporal work (#1040).
  */
 
 import { sql } from "drizzle-orm";
 import { db } from "../../src/db/client.js";
-import { memories } from "@aura/db/schema";
 import { storeMessage } from "../../src/memory/store.js";
 import {
   extractMemoriesFromTranscript,
@@ -22,47 +29,19 @@ import { logger } from "../../src/lib/logger.js";
 import type { BenchCase } from "./types.js";
 
 /**
- * Stamp every memory just created for this case with its provenance.
- *
- * The extractor stores memories without our bench fields (it has no idea
- * the harness is running). After each extraction call we backfill
- * `bench_provenance` on the freshly-inserted rows by looking up memories
- * with the same workspace + sourceThreadTs.
+ * Synthetic per-bench Slack user id for a corpus speaker. Deterministic so
+ * thread participants stay stable across runs.
  */
-async function stampProvenance(
-  workspaceId: string,
-  threadTs: string,
-  benchCase: BenchCase,
-  sessionId: string,
-): Promise<void> {
-  try {
-    await db.execute(sql`
-      UPDATE memories
-      SET bench_provenance = ${JSON.stringify({
-        datasetId: benchCase.source,
-        conversationId: benchCase.id,
-        sessionIds: [sessionId],
-        diaIds: benchCase.evidenceDiaIds ?? [],
-      })}::jsonb
-      WHERE workspace_id = ${workspaceId}
-        AND source_thread_ts = ${threadTs}
-        AND bench_provenance IS NULL
-    `);
-  } catch (error) {
-    logger.warn("bench: failed to stamp provenance (continuing)", {
-      workspaceId,
-      threadTs,
-      error: String(error).slice(0, 200),
-    });
-  }
+function speakerToUserId(caseId: string, speaker: string | undefined): string {
+  if (!speaker) return `bench:${caseId}:user`;
+  const slug = speaker.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return `bench:${caseId}:${slug || "user"}`;
 }
 
 /**
- * Ingest a single BenchCase into the workspace.
- *
- * One session = one thread = one extraction call. This mirrors how
- * production extraction sees a Slack thread, so we exercise the same
- * reconciliation code path (CREATE / UPDATE / DELETE ops over existing
+ * Ingest a single BenchCase into the workspace. Per-session extraction
+ * mirrors how production sees a Slack thread, so we exercise the same
+ * reconciliation path (CREATE / UPDATE / DELETE ops over existing
  * memories from earlier sessions in the same case).
  */
 export async function ingestCase(
@@ -73,46 +52,45 @@ export async function ingestCase(
   const channelId = `bench:${benchCase.id}`;
   let sessionsIngested = 0;
 
-  // Snapshot of memory count at the start so we can report a delta.
   const beforeRows = (await db.execute(sql`
     SELECT count(*)::int AS n FROM memories WHERE workspace_id = ${workspaceId}
   `)) as any;
-  const before = Number(
-    (beforeRows.rows ?? beforeRows)[0]?.n ?? 0,
-  );
+  const before = Number((beforeRows.rows ?? beforeRows)[0]?.n ?? 0);
 
   for (const session of benchCase.sessions) {
-    // Synthetic thread_ts that encodes the session timestamp.
-    const epochSec = Math.floor(new Date(session.timestamp).getTime() / 1000);
-    const threadTs = `${epochSec}.000000`;
+    // Use the raw corpus session id as the thread key. This is what makes
+    // retrieval-recall scoring a simple set membership check —
+    // m.sourceThreadTs ∈ evidenceSessionIds.
+    const threadTs = session.id;
     const sessionDate = new Date(session.timestamp);
 
     const threadMessages: ThreadMessage[] = [];
+    const diaIds: string[] = [];
 
     for (const [turnIdx, turn] of session.turns.entries()) {
-      const userId = turn.speaker
-        ? `bench:${turn.speaker.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
-        : `bench:user`;
-      // Distinct per-turn timestamp so retrieval ordering is well-defined.
-      // Add 60 seconds per turn — keeps sub-minute granularity for the
-      // temporal-reasoning checks while staying inside the session window.
+      const userId = speakerToUserId(benchCase.id, turn.speaker);
+      // Per-turn timestamp inside the session window so retrieval ordering
+      // is well-defined when categories are temporal.
       const turnTs = new Date(sessionDate.getTime() + turnIdx * 60_000);
 
-      const externalId = `${channelId}:${session.id}:${turn.diaId ?? turnIdx}`;
-      const role = turn.role;
-      const content = turn.content;
+      const diaId = turn.diaId ?? `${session.id}:${turnIdx + 1}`;
+      diaIds.push(diaId);
 
+      const externalId = `${channelId}:${session.id}:${diaId}`;
       try {
         await storeMessage({
           externalId,
           workspaceId,
-          slackTs: `${epochSec + turnIdx}.000000`,
+          // slackTs deliberately encodes the session epoch so messages
+          // inside one session sort together; bench workspaces aren't
+          // expected to interop with the real Slack ts space.
+          slackTs: `${Math.floor(turnTs.getTime() / 1000)}.${String(turnIdx).padStart(6, "0")}`,
           slackThreadTs: threadTs,
           channelId,
           channelType: "public_channel",
           userId,
-          role,
-          content,
+          role: turn.role,
+          content: turn.content,
           createdAt: turnTs,
         } as any);
       } catch (error) {
@@ -123,24 +101,25 @@ export async function ingestCase(
       }
 
       threadMessages.push({
-        role,
+        role: turn.role,
         userId,
-        content,
+        content: turn.content,
         createdAt: turnTs,
       });
     }
 
     if (threadMessages.length === 0) continue;
 
-    // The "last user message" is what the extractor uses to retrieve
-    // existing memories during reconciliation.
     const lastUser =
       [...threadMessages].reverse().find((m) => m.role === "user") ??
       threadMessages[threadMessages.length - 1];
+    const lastAssistant = [...threadMessages]
+      .reverse()
+      .find((m) => m.role === "assistant");
 
     const ctx: ExtractionContext = {
       userMessage: lastUser.content,
-      assistantResponse: "",
+      assistantResponse: lastAssistant?.content ?? "",
       userId: lastUser.userId,
       channelType: "public_channel",
       channelId,
@@ -151,11 +130,19 @@ export async function ingestCase(
       // valid_from = session timestamp. Critical for temporal categories.
       createdAt: sessionDate,
       displayName: lastUser.userId.replace(/^bench:/, ""),
+      // Stamped atomically with the memory inserts — no follow-up UPDATE.
+      benchProvenance: {
+        datasetId: benchCase.source,
+        caseId: benchCase.id,
+        conversationId: benchCase.id,
+        sessionId: session.id,
+        sessionIds: [session.id],
+        diaIds,
+      },
     };
 
     try {
       await extractMemoriesFromTranscript(threadMessages, ctx);
-      await stampProvenance(workspaceId, threadTs, benchCase, session.id);
       sessionsIngested++;
     } catch (error) {
       logger.warn("bench: extraction failed for session", {
@@ -177,19 +164,23 @@ export async function ingestCase(
   };
 }
 
-/** Ingest all unique session-sets across a list of cases. */
+/**
+ * Ingest a list of cases, optionally in parallel.
+ *
+ * Concurrency >1 speeds up the full-corpus run substantially: extraction
+ * is dominated by LLM latency, not DB throughput. The pool pattern keeps
+ * memory bounded — at most `concurrency` extractions in flight at once.
+ */
 export async function ingestCases(
   cases: BenchCase[],
   workspaceId: string,
   extractionModelId: string,
+  concurrency = 2,
   onProgress?: (done: number, total: number) => void,
 ): Promise<{ totalMemories: number; totalSessions: number }> {
-  let totalMemories = 0;
-  let totalSessions = 0;
-
-  // De-dupe by conversation: many LoCoMo cases share the same session set.
-  // We key on the JSON-serialised session list to avoid re-extracting the
-  // same transcripts N times.
+  // De-dupe by conversation: LoCoMo packs many QA pairs per conversation,
+  // and they all share one session set. Re-extracting N times would waste
+  // money and produce duplicate memories.
   const seen = new Set<string>();
   const unique: BenchCase[] = [];
   for (const c of cases) {
@@ -200,19 +191,31 @@ export async function ingestCases(
   }
   logger.info(
     `bench: ingesting ${unique.length} unique conversation(s) from ${cases.length} case(s)`,
-    { workspaceId },
+    { workspaceId, concurrency },
   );
 
-  for (const [i, c] of unique.entries()) {
-    const r = await ingestCase(c, workspaceId, extractionModelId);
-    totalMemories += r.memoriesAdded;
-    totalSessions += r.sessionsIngested;
-    onProgress?.(i + 1, unique.length);
-  }
+  let totalMemories = 0;
+  let totalSessions = 0;
+  let done = 0;
+  let idx = 0;
+
+  const worker = async () => {
+    while (true) {
+      const i = idx++;
+      if (i >= unique.length) return;
+      const r = await ingestCase(unique[i], workspaceId, extractionModelId);
+      totalMemories += r.memoriesAdded;
+      totalSessions += r.sessionsIngested;
+      done += 1;
+      onProgress?.(done, unique.length);
+    }
+  };
+
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(concurrency, unique.length)) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+
   return { totalMemories, totalSessions };
 }
-
-// We import the memories table only to make sure tsc keeps the reference alive
-// (and so future contributors can extend `stampProvenance` with Drizzle's
-// type-safe update helpers without retyping the import).
-void memories;

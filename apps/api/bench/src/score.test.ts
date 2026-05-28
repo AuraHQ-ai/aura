@@ -2,15 +2,15 @@ process.env.DATABASE_URL ??= "postgresql://user:pass@example.com/db";
 
 import { describe, expect, it, vi } from "vitest";
 
-// Mock both the db client and the logger so the test stays hermetic — the
-// pure functions under test never actually touch Postgres.
+// Mock the db client so the test stays hermetic — the pure functions under
+// test never actually touch Postgres.
 vi.mock("../../src/db/client.js", () => ({ db: {} }));
 
 import { aggregateScores } from "./score.js";
 import type { PerCaseResult } from "./types.js";
-import { formatMemoriesForPrompt } from "./eval-qa.js";
 import { loadToyCorpus, stratifiedSample, SUBSET_PER_CATEGORY } from "./fixtures.js";
-import { resolveBenchModels, DEFAULT_JUDGE_MODEL, DEFAULT_EXTRACTION_MODEL } from "./models.js";
+import { formatMemoriesForPrompt } from "../../src/memory/format-for-prompt.js";
+import { DEFAULT_TIERS } from "./models.js";
 import type { BenchCase } from "./types.js";
 
 function makeResult(overrides: Partial<PerCaseResult>): PerCaseResult {
@@ -98,27 +98,27 @@ describe("aggregateScores", () => {
   });
 });
 
-describe("formatMemoriesForPrompt", () => {
-  it("returns a no-memories sentinel when empty", () => {
-    expect(formatMemoriesForPrompt([])).toContain("no memories");
+describe("formatMemoriesForPrompt (shared with production)", () => {
+  it("returns empty string for no memories so the system prompt can elide the block", () => {
+    expect(formatMemoriesForPrompt([])).toBe("");
   });
 
-  it("renders one bullet per memory with type tag", () => {
+  it("emits one bulleted line per memory with type tag and about-clause", () => {
     const mem = {
       id: "m1",
       type: "fact",
       content: "Alex adopted a dog named Pepper",
       relatedUserIds: ["alex"],
-      createdAt: new Date("2024-09-01T10:00:00Z"),
-      validFrom: new Date("2024-09-01T10:00:00Z"),
+      createdAt: new Date(),
+      validFrom: new Date(),
     } as any;
     const out = formatMemoriesForPrompt([mem, mem]);
-    const lines = out.split("\n");
-    expect(lines.length).toBe(2);
-    expect(lines[0]).toContain("[fact]");
-    expect(lines[0]).toContain("Pepper");
-    expect(lines[0]).toContain("recorded 2024-09-01");
-    expect(lines[0]).toContain("[about: alex]");
+    expect(out).toContain("These are things you've learned");
+    const bullets = out.split("\n").filter((l) => l.startsWith("- "));
+    expect(bullets.length).toBe(2);
+    expect(bullets[0]).toContain("[fact]");
+    expect(bullets[0]).toContain("Pepper");
+    expect(bullets[0]).toContain("[about: alex]");
   });
 });
 
@@ -180,22 +180,13 @@ describe("loadToyCorpus", () => {
   });
 });
 
-describe("resolveBenchModels", () => {
-  it("falls back to Sonnet/Sonnet/Opus by default", () => {
-    delete process.env.BENCH_EXTRACTION_MODEL;
-    delete process.env.BENCH_ANSWERER_MODEL;
-    delete process.env.BENCH_JUDGE_MODEL;
-    const m = resolveBenchModels();
-    expect(m.extraction).toBe(DEFAULT_EXTRACTION_MODEL);
-    expect(m.judge).toBe(DEFAULT_JUDGE_MODEL);
-    expect(m.extraction).toContain("sonnet");
-    expect(m.judge).toContain("opus");
-  });
-
-  it("CLI overrides win over env vars", () => {
-    process.env.BENCH_EXTRACTION_MODEL = "anthropic/claude-haiku-4.5";
-    const m = resolveBenchModels({ extraction: "anthropic/claude-opus-4.6" });
-    expect(m.extraction).toBe("anthropic/claude-opus-4.6");
-    delete process.env.BENCH_EXTRACTION_MODEL;
+describe("bench tier defaults", () => {
+  it("pins extraction + answerer to main and judge to escalation", () => {
+    // Tiers are declarative knobs that map onto whatever's in the live
+    // model catalog. The exact gateway ids resolved at runtime are
+    // captured in bench_runs so cross-run deltas stay honest.
+    expect(DEFAULT_TIERS.extraction).toBe("main");
+    expect(DEFAULT_TIERS.answerer).toBe("main");
+    expect(DEFAULT_TIERS.judge).toBe("escalation");
   });
 });

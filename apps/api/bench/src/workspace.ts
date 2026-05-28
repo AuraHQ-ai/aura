@@ -64,16 +64,34 @@ export async function wipeBenchWorkspace(workspaceId: string): Promise<void> {
 
   logger.info("Wiping bench workspace", { workspaceId });
 
-  // Use raw SQL so we don't have to import every leaf table here. Each
-  // statement is independent; failures on one shouldn't abort the rest.
-  const tables = [
-    "memory_entities",
-    "memories",
-    "messages",
-    "entity_aliases",
-    "entities",
-  ];
-  for (const table of tables) {
+  // Order: junctions first, then their parents. entity_aliases joins to
+  // entities by entity_id (no workspace_id of its own), so it gets a
+  // subquery rather than a direct workspace filter.
+  try {
+    await db.execute(sql`
+      DELETE FROM memory_entities
+      WHERE memory_id IN (SELECT id FROM memories WHERE workspace_id = ${workspaceId})
+    `);
+  } catch (error) {
+    logger.warn("wipeBenchWorkspace: memory_entities delete failed (continuing)", {
+      workspaceId,
+      error: String(error).slice(0, 200),
+    });
+  }
+  try {
+    await db.execute(sql`
+      DELETE FROM entity_aliases
+      WHERE entity_id IN (SELECT id FROM entities WHERE workspace_id = ${workspaceId})
+    `);
+  } catch (error) {
+    logger.warn("wipeBenchWorkspace: entity_aliases delete failed (continuing)", {
+      workspaceId,
+      error: String(error).slice(0, 200),
+    });
+  }
+
+  const remainingTables = ["memories", "messages", "entities"];
+  for (const table of remainingTables) {
     try {
       await db.execute(
         sql`DELETE FROM ${sql.identifier(table)} WHERE workspace_id = ${workspaceId}`,

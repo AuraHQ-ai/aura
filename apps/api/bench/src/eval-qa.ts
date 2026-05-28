@@ -14,38 +14,16 @@
  */
 
 import { generateText } from "ai";
-import { gateway } from "@ai-sdk/gateway";
 import type { Memory } from "@aura/db/schema";
 import type { BenchCase, PerCaseResult } from "./types.js";
-import { withAnthropicFallback } from "../../src/lib/ai.js";
-import { DEFAULT_ANSWERER_MODEL } from "./models.js";
+// The bench MUST format memories exactly the way production does, otherwise
+// the QA score measures the formatting difference rather than the memory
+// pipeline. We import the same helper buildSystemPrompt() uses.
+import { formatMemoriesForPrompt } from "../../src/memory/format-for-prompt.js";
+import { resolveBenchAnswererModel } from "./models.js";
 import { judgeAnswer } from "./judge.js";
 
-/**
- * Formatter that mirrors the production memory-injection format.
- *
- * Production uses `formatMemories()` in `apps/api/src/personality/system-prompt.ts`.
- * We re-implement the same shape here (newest-first bullet list with type
- * tag and relative time) rather than importing it to keep this module
- * decoupled from the system-prompt module's other dependencies.
- */
-export function formatMemoriesForPrompt(memories: Memory[]): string {
-  if (memories.length === 0) {
-    return "(no memories available)";
-  }
-  return memories
-    .map((m) => {
-      const validFromIso = m.validFrom
-        ? new Date(m.validFrom).toISOString().slice(0, 10)
-        : new Date(m.createdAt).toISOString().slice(0, 10);
-      const users =
-        m.relatedUserIds.length > 0
-          ? ` [about: ${m.relatedUserIds.join(", ")}]`
-          : "";
-      return `- [${m.type}] ${m.content} (recorded ${validFromIso})${users}`;
-    })
-    .join("\n");
-}
+export { formatMemoriesForPrompt };
 
 const ANSWERER_SYSTEM = `You are a strict grounded question-answerer.
 
@@ -72,15 +50,16 @@ export async function evaluateQA(
   retrieved: Memory[],
   config: AnswerConfig = {},
 ): Promise<Pick<PerCaseResult, "modelAnswer" | "judgeVerdict" | "judgeConfidence" | "judgeRationale">> {
-  const modelId = config.modelId ?? DEFAULT_ANSWERER_MODEL;
   const memoryBlock = formatMemoriesForPrompt(retrieved);
+  const userPrompt = `Memories:\n${memoryBlock || "(no memories available)"}\n\nQuestion: ${benchCase.question}\n\nAnswer:`;
 
-  const userPrompt = `Memories:\n${memoryBlock}\n\nQuestion: ${benchCase.question}\n\nAnswer:`;
+  const { model, modelId } = await resolveBenchAnswererModel(config.modelId);
+  void modelId; // recorded on the run row by the orchestrator
 
   let modelAnswer = "";
   try {
     const result = await generateText({
-      model: withAnthropicFallback(gateway(modelId), modelId),
+      model,
       system: ANSWERER_SYSTEM,
       prompt: userPrompt,
       temperature: 0,

@@ -64,8 +64,18 @@ async function corpusPath(datasetId: string): Promise<string | null> {
  * the manifest. Two runs see the same hash iff they replayed identical inputs.
  * Stored on `bench_runs.corpus_hash` so deltas are honest.
  */
-export async function computeCorpusHash(datasetIds: DatasetId[]): Promise<string> {
+export async function computeCorpusHash(
+  datasetIds: DatasetId[],
+  corpusFile?: string,
+): Promise<string> {
   const hash = createHash("sha256");
+  if (corpusFile) {
+    hash.update("file:");
+    hash.update(resolve(corpusFile));
+    hash.update("\n");
+    hash.update(await readFile(resolve(corpusFile)));
+    return hash.digest("hex").slice(0, 16);
+  }
   const manifestText = await readFile(resolve(CORPUS_DIR, "manifest.json"), "utf8");
   hash.update("manifest:");
   hash.update(manifestText);
@@ -372,6 +382,23 @@ export async function loadDataset(id: DatasetId): Promise<BenchCase[]> {
     case "locomo":
       return loadLoCoMo();
   }
+}
+
+/**
+ * Load BenchCase[] from an arbitrary normalized JSON file outside the corpus
+ * directory. Useful for ad-hoc experiments where you don't want to fetch or
+ * commit anything. The file must already be in normalized BenchCase shape.
+ */
+export async function loadExternalCorpus(filePath: string): Promise<BenchCase[]> {
+  const abs = resolve(filePath);
+  const raw = await readFile(abs, "utf8");
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      `--corpus-file expects an array of BenchCase, got ${typeof parsed} at ${abs}`,
+    );
+  }
+  return parsed as BenchCase[];
 }
 
 /**

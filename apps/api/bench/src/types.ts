@@ -83,12 +83,34 @@ export interface BenchRunConfig {
   dryRun: boolean;
   /** Post a Block Kit report to Slack channel MEMORY_BENCH_SLACK_CHANNEL. */
   postSlack: boolean;
-  /** Override the extraction model (default Sonnet via models.ts). */
+  /**
+   * Override the extraction-stage LLM. Accepts a gateway id
+   * (e.g. anthropic/claude-sonnet-4.6) or a tier name (fast | main |
+   * escalation). Default tier: main.
+   */
   extractionModel?: string;
-  /** Override the constrained-answerer model (default Sonnet via models.ts). */
+  /**
+   * Override the constrained-answerer LLM. Same format as extractionModel.
+   * Default tier: main.
+   */
   answererModel?: string;
-  /** Override the LLM-judge model (default Opus via models.ts). */
+  /**
+   * Override the LLM-judge model. Same format as extractionModel.
+   * Default tier: escalation.
+   */
   judgeModel?: string;
+  /**
+   * Number of parallel ingest workers. Memory is bounded — at most this
+   * many extraction LLM calls in flight. Defaults to 2.
+   */
+  concurrency?: number;
+  /**
+   * Optional path to an external normalized corpus JSON. When set, the
+   * runner skips the cache+manifest lookup and loads BenchCase[] directly
+   * from this file. Useful for one-off experiments without committing or
+   * fetching anything.
+   */
+  corpusFile?: string;
   /** PR number (CI populates this; nightly leaves it null). */
   prNumber?: number;
   /** Git SHA of HEAD at run time. */

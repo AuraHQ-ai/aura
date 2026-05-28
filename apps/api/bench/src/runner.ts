@@ -25,13 +25,14 @@ import {
 import {
   computeCorpusHash,
   loadDataset,
+  loadExternalCorpus,
   stratifiedSample,
   SUBSET_PER_CATEGORY,
 } from "./fixtures.js";
 import { ingestCases } from "./ingest.js";
 import { evaluateRetrieval } from "./eval-retrieval.js";
 import { evaluateQA } from "./eval-qa.js";
-import { resolveBenchModels } from "./models.js";
+import { resolveBenchRunModelIds } from "./models.js";
 import {
   aggregateScores,
   computeDeltas,
@@ -72,8 +73,25 @@ function resolveGitSha(): string | undefined {
 }
 
 async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
-  const all: BenchCase[] = [];
   const perCategory = SUBSET_PER_CATEGORY[config.subset];
+
+  if (config.corpusFile) {
+    const cases = await loadExternalCorpus(config.corpusFile);
+    const filtered = config.category
+      ? cases.filter((c) => c.category === config.category)
+      : cases;
+    const sized = Number.isFinite(perCategory)
+      ? stratifiedSample(filtered, perCategory)
+      : filtered;
+    logger.info(`bench: loaded ${sized.length} case(s) from --corpus-file`, {
+      file: config.corpusFile,
+      requested: filtered.length,
+      subset: config.subset,
+    });
+    return sized;
+  }
+
+  const all: BenchCase[] = [];
   for (const dataset of config.datasets) {
     const cases = await loadDataset(dataset);
     const filtered = config.category
@@ -111,15 +129,23 @@ export async function runBench(
     extractionModel: partialConfig.extractionModel,
     answererModel: partialConfig.answererModel,
     judgeModel: partialConfig.judgeModel,
+    concurrency: partialConfig.concurrency ?? 2,
+    corpusFile: partialConfig.corpusFile,
     prNumber: partialConfig.prNumber,
     gitSha: partialConfig.gitSha ?? resolveGitSha(),
   };
 
-  const models = resolveBenchModels({
+  // Resolve the THREE bench slots through the live DB catalog. Each slot
+  // honours its CLI override first, then its env var, then its default
+  // tier. We carry the resolved gateway ids forward so bench_runs records
+  // exactly what was used — that's what makes cross-run deltas honest
+  // when tiers eventually point at a new model.
+  const models = await resolveBenchRunModelIds({
     extraction: config.extractionModel,
     answerer: config.answererModel,
     judge: config.judgeModel,
   });
+  logger.info(`bench: resolved models`, models);
 
   const start = Date.now();
   logger.info(`bench: starting run ${runId}`, {
@@ -152,13 +178,14 @@ export async function runBench(
     };
   }
 
-  const corpusHash = await computeCorpusHash(config.datasets);
+  const corpusHash = await computeCorpusHash(config.datasets, config.corpusFile);
 
   if (!config.skipIngest && !config.dryRun) {
     const ing = await ingestCases(
       cases,
       workspaceId,
       models.extraction,
+      config.concurrency ?? 2,
       (done, total) => {
         if (done % 5 === 0 || done === total) {
           logger.info(`bench: ingest progress`, { done, total });
@@ -187,6 +214,7 @@ export async function runBench(
         judgeModelId: models.judge,
       });
     }
+    void models.extraction; // recorded on the run row, not used at QA time
     results.push({
       caseId: benchCase.id,
       dataset: benchCase.source,

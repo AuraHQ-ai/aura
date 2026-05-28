@@ -49,6 +49,7 @@ on:
       - "apps/api/bench/**"
       - "apps/api/src/personality/system-prompt.ts"
       - "apps/api/src/pipeline/core-prompt.ts"
+      - "apps/api/src/scripts/bench-memory.ts"
       - "packages/db/src/schema.ts"
       - "packages/db/drizzle/**"
 
@@ -141,13 +142,17 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db-url }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           ELEVENLABS_API_KEY: placeholder
           DEFAULT_WORKSPACE_ID: bench-ci
           DASHBOARD_API_SECRET: placeholder
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          # Default to the full medium subset across both datasets. Manual
-          # runs override these via workflow_dispatch inputs.
+          # Model tiers — read by the bench at runtime via the live model
+          # catalog. main = Sonnet-class today, escalation = Opus-class.
+          AURA_BENCH_EXTRACTION: main
+          AURA_BENCH_ANSWERER: main
+          AURA_BENCH_JUDGE: escalation
           SUBSET: ${{ github.event.inputs.subset || 'medium' }}
           DATASET: ${{ github.event.inputs.dataset || 'both' }}
         run: |
@@ -155,6 +160,7 @@ jobs:
           pnpm --filter aura-api bench:memory \
             --dataset=${DATASET} \
             --subset=${SUBSET} \
+            --concurrency=4 \
             --json=/tmp/bench/result.json \
             | tee /tmp/bench/output.txt
         continue-on-error: true

@@ -15,9 +15,8 @@
 
 import { z } from "zod";
 import { generateObject } from "ai";
-import { gateway } from "@ai-sdk/gateway";
 import type { BenchCase } from "./types.js";
-import { DEFAULT_JUDGE_MODEL } from "./models.js";
+import { resolveBenchJudgeModel } from "./models.js";
 
 export const judgeSchema = z.object({
   verdict: z
@@ -98,7 +97,7 @@ export async function judgeAnswer(
   modelAnswer: string,
   config: JudgeConfig = {},
 ): Promise<JudgeResult> {
-  const modelId = config.modelId ?? DEFAULT_JUDGE_MODEL;
+  const { model } = await resolveBenchJudgeModel(config.modelId);
   const gold = Array.isArray(benchCase.goldAnswer)
     ? benchCase.goldAnswer.join(" | ")
     : benchCase.goldAnswer;
@@ -113,7 +112,7 @@ Model answer: ${modelAnswer || "(empty)"}
 Grade the model answer per the rules above.`;
 
   const { object } = await generateObject({
-    model: gateway(modelId),
+    model,
     schema: judgeSchema,
     system,
     prompt,

@@ -27,12 +27,20 @@ export interface RetrievalEvalResult {
 
 /**
  * Score retrieval recall for one case. Returns `hit=null` when the case
- * has no evidence pointers — those questions are scored on QA accuracy only.
+ * has no evidence pointers — those questions are scored on QA accuracy
+ * only.
  *
- * Hit semantics: a hit means at least one retrieved memory has provenance
- * that overlaps with the case's evidence. We accept either dia_id OR
- * session_id overlap, since LongMemEval has session-level evidence but
- * LoCoMo has turn-level.
+ * Hit semantics: a hit means at least one retrieved memory came from a
+ * session the gold answer cites. We check two channels and take the
+ * union so the scorer works for both corpora:
+ *
+ *   1. sourceThreadTs ∈ evidenceSessionIds.
+ *      Cheap. Works because bench ingest sets sourceThreadTs = session.id.
+ *      Covers LongMemEval where evidence is session-level.
+ *   2. bench_provenance.diaIds ∩ evidenceDiaIds ≠ ∅, or
+ *      bench_provenance.sessionIds ∩ evidenceSessionIds ≠ ∅.
+ *      Fallback for cases where (1) misses — and the route to
+ *      dia_id-granular recall once we want it.
  */
 export async function evaluateRetrieval(
   benchCase: BenchCase,
@@ -56,30 +64,35 @@ export async function evaluateRetrieval(
   }
 
   const retrievedMemoryIds = retrieved.map((m) => m.id);
-  const hasEvidence =
-    (benchCase.evidenceDiaIds?.length ?? 0) > 0 ||
-    (benchCase.evidenceSessionIds?.length ?? 0) > 0;
+  const wantDia = new Set(benchCase.evidenceDiaIds ?? []);
+  const wantSession = new Set(benchCase.evidenceSessionIds ?? []);
+  const hasEvidence = wantDia.size > 0 || wantSession.size > 0;
 
   if (benchCase.abstention) {
     // For abstention cases, recall is unusual: "no relevant memory" is
     // actually the right answer. Score abstention via QA, not recall.
     return { retrievedMemoryIds, retrieved, hit: null };
   }
-
   if (!hasEvidence) {
     return { retrievedMemoryIds, retrieved, hit: null };
   }
 
-  const wantDia = new Set(benchCase.evidenceDiaIds ?? []);
-  const wantSession = new Set(benchCase.evidenceSessionIds ?? []);
+  // Channel 1 — sourceThreadTs (the simple session-level check)
+  if (wantSession.size > 0) {
+    for (const mem of retrieved) {
+      if (mem.sourceThreadTs && wantSession.has(mem.sourceThreadTs)) {
+        return { retrievedMemoryIds, retrieved, hit: true };
+      }
+    }
+  }
 
+  // Channel 2 — bench_provenance for fine-grained matching
   for (const mem of retrieved) {
     const prov = (mem as any).benchProvenance as
       | { diaIds?: string[]; sessionIds?: string[] }
       | null
       | undefined;
     if (!prov) continue;
-
     if (prov.diaIds?.some((d) => wantDia.has(d))) {
       return { retrievedMemoryIds, retrieved, hit: true };
     }

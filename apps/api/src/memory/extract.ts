@@ -464,6 +464,21 @@ export interface ExtractionContext {
    * fast-model default.
    */
   extractionModelId?: string;
+  /**
+   * Benchmark-only provenance. When set, every memory created from this
+   * extraction call is stamped with this JSON in the `bench_provenance`
+   * column at insert time. Powers deterministic retrieval-recall scoring
+   * by linking memories back to the source turns they came from.
+   * Always NULL in production.
+   */
+  benchProvenance?: {
+    datasetId?: string;
+    caseId?: string;
+    conversationId?: string;
+    sessionId?: string;
+    sessionIds?: string[];
+    diaIds?: string[];
+  };
 }
 
 /**
@@ -934,6 +949,7 @@ async function processCreateOperations(
     importance: normalizedMemories[i].importance,
     relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
     extractionSourceRole,
+    ...(context.benchProvenance && { benchProvenance: context.benchProvenance }),
     ...(context.createdAt && { createdAt: context.createdAt, updatedAt: context.createdAt }),
   }));
 

@@ -138,26 +138,36 @@ There is **no nightly cron** — the corpora and the codepath are both stable, s
 ### Local workflow
 
 ```bash
-# One-time: cache the real corpora locally (~62 MB, gitignored).
+# One-time: cache the real corpora locally (~18 MB, gitignored).
 pnpm bench:fetch-corpus
 
-# Cheap smoke test (3 questions, ~$0.05, ~30s)
+# Cheap smoke test (3 questions, ~$0.05, ~30s).
 pnpm bench:memory --dataset=toy
 
-# Standard run — Sonnet for extraction + answerer, Opus as judge.
-# ~300 questions across LoCoMo + LongMemEval, ~$3–7.
+# Standard run — main-tier extraction + answerer, escalation-tier judge.
+# ~330 questions across LoCoMo + LongMemEval, ~$15–25.
 pnpm bench:memory --dataset=both --subset=medium
 
-# PR-speed iteration loop (~40 Qs, ~$0.50)
+# PR-speed iteration loop (~40 Qs, ~$2).
 pnpm bench:memory --dataset=both --subset=fast
 
 # Full corpus — every question. Costs real money, only run when warranted.
-pnpm bench:memory --dataset=both --subset=full
+pnpm bench:memory --dataset=both --subset=full --concurrency=4
 
-# Pin specific models (overrides Sonnet/Opus defaults from bench/src/models.ts)
-pnpm bench:memory --extraction-model=anthropic/claude-haiku-4.5 \
-                  --answerer-model=anthropic/claude-sonnet-4.6 \
-                  --judge-model=anthropic/claude-opus-4.6
+# Bring-your-own normalized corpus, skipping fetch-corpus entirely.
+pnpm bench:memory --corpus-file=/tmp/my-cases.json --subset=full
+```
+
+Models are slotted onto three catalog **tiers** (`fast`, `main`, `escalation`). Defaults: `extraction=main`, `answerer=main`, `judge=escalation`. When the team updates "main" to point at the next-gen Sonnet, the bench picks it up automatically. The resolved gateway id is persisted on every `bench_runs` row so cross-run deltas stay honest.
+
+Override per-slot via either a tier name or an explicit gateway id:
+
+```bash
+# Override one slot to Haiku-tier via the catalog
+pnpm bench:memory --extraction-model=fast
+
+# Or pin an exact id
+pnpm bench:memory --judge-model=anthropic/claude-opus-4.6
 ```
 
 `--prod` switches to `.env.production`. `--dry-run` validates corpora load without any DB writes or LLM calls. `--json=path` writes per-question detail.
