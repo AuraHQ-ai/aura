@@ -122,7 +122,7 @@ jobs:
         # to bench_runs. Run the migrator directly against the branch URL
         # (the root db:migrate wrapper needs a .env.local that CI doesn't have).
         env:
-          DATABASE_URL: ${{ steps.neon.outputs.db_url_with_pooler || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
         run: pnpm --filter @aura/db db:migrate
 
       - name: Run bench
@@ -130,7 +130,7 @@ jobs:
           # Prefer the ephemeral branch URL; fall back to a long-lived bench
           # database if the Neon API is down or the secret is missing. Either
           # way the run is isolated by workspace_id='bench-{runId}'.
-          DATABASE_URL: ${{ steps.neon.outputs.db_url_with_pooler || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
