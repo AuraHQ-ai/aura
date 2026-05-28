@@ -67,7 +67,7 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
     await createBenchWorkspace(workspaceId);
 
     if (!config.skipIngest) {
-      await ingestBenchCases(cases, workspaceId, models.extraction);
+      await ingestBenchCases(cases, workspaceId, models.extraction, config.concurrency ?? 2);
     }
 
     const caseResults: BenchCaseResult[] = [];
@@ -117,6 +117,7 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
         category: config.category ?? null,
         caseCount: caseResults.length,
         extractionModel: models.extraction,
+        concurrency: config.concurrency ?? 2,
         corpusFile: config.corpusFile ?? null,
       },
     });

@@ -15,14 +15,17 @@ export function resolveBenchModels(overrides: Partial<BenchModels> = {}): BenchM
     extraction:
       overrides.extraction ??
       process.env.MEMORY_BENCH_EXTRACTION_MODEL ??
+      process.env.AURA_BENCH_EXTRACTION ??
       DEFAULT_EXTRACTION_MODEL,
     answer:
       overrides.answer ??
       process.env.MEMORY_BENCH_ANSWER_MODEL ??
+      process.env.AURA_BENCH_ANSWERER ??
       DEFAULT_ANSWER_MODEL,
     judge:
       overrides.judge ??
       process.env.MEMORY_BENCH_JUDGE_MODEL ??
+      process.env.AURA_BENCH_JUDGE ??
       DEFAULT_JUDGE_MODEL,
   };
 }

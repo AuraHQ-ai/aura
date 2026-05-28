@@ -43,6 +43,7 @@ export interface BenchRunConfig {
   extractionModel?: string;
   answerModel?: string;
   corpusFile?: string;
+  concurrency?: number;
   prNumber?: number;
 }
 

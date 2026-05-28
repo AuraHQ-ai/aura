@@ -81,7 +81,7 @@ jobs:
           if [ -z "$CORPUS_ARG" ]; then pnpm --filter aura-api bench:fetch-corpus; fi
           PR_ARG=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then PR_ARG="--pr-number=${{ github.event.pull_request.number }}"; fi
-          pnpm --silent --filter aura-api bench:memory -- --dataset=both --subset="$SUBSET" --json "$JUDGE_ARG" --extraction-model="$MEMORY_BENCH_EXTRACTION_MODEL" --answer-model="$MEMORY_BENCH_ANSWER_MODEL" $CORPUS_ARG $PR_ARG > memory-bench.json
+          pnpm --silent --filter aura-api bench:memory -- --dataset=both --subset="$SUBSET" --json "$JUDGE_ARG" --extraction-model="$MEMORY_BENCH_EXTRACTION_MODEL" --answer-model="$MEMORY_BENCH_ANSWER_MODEL" --concurrency=2 $CORPUS_ARG $PR_ARG > memory-bench.json
           node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('memory-bench.json','utf8')); const rows=r.aggregates.map(a=>`| ${a.dataset} | ${a.category} | ${a.scoreType} | ${(a.score*100).toFixed(1)}% | ${a.nCorrect}/${a.n} |`).join('\n'); fs.writeFileSync('memory-bench.md', ['<!-- memory-bench-comment -->','## Memory benchmark (warn-only)','', `Run: \`${r.runId}\``, `Corpus: \`${r.corpusHash.slice(0,12)}\``, '', '| Dataset | Category | Metric | Score | N |','|---|---|---|---:|---:|', rows || '| - | - | - | - | - |','', '> Runs only for memory-path PRs or manual dispatch. Add the `memory-bench-override` label to skip urgent changes.'].join('\n'))"
 
       - name: Sticky PR comment

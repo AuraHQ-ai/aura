@@ -456,7 +456,9 @@ export interface ExtractionContext {
   /** Benchmark-only source mapping used for deterministic retrieval recall. */
   benchProvenance?: {
     caseId?: string;
+    conversationId?: string;
     sessionId?: string;
+    sessionIds?: string[];
     diaIds?: string[];
     source?: string;
   };

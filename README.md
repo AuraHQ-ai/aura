@@ -166,6 +166,7 @@ pnpm --filter aura-api bench:memory -- \
   --extraction-model=anthropic/claude-sonnet-4.6 \
   --answer-model=anthropic/claude-sonnet-4.6 \
   --judge=anthropic/claude-opus-4.7 \
+  --concurrency=2 \
   --json
 ```
 

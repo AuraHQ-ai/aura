@@ -163,7 +163,9 @@ export const memories = pgTable(
     searchVector: text("search_vector"),
     benchProvenance: jsonb("bench_provenance").$type<{
       caseId?: string;
+      conversationId?: string;
       sessionId?: string;
+      sessionIds?: string[];
       diaIds?: string[];
       source?: string;
     }>(),

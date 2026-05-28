@@ -23,6 +23,7 @@ function parseConfig(): BenchRunConfig {
   const subset = (argValue("subset") ?? "fast") as BenchSubset;
   const judgeArg = argValue("judge");
   const prNumber = argValue("pr-number");
+  const concurrency = argValue("concurrency");
 
   if (!["toy", "lme", "longmemeval", "locomo", "both"].includes(dataset)) {
     throw new Error("--dataset must be one of toy, lme, longmemeval, locomo, both");
@@ -39,12 +40,13 @@ function parseConfig(): BenchRunConfig {
     dryRun: hasFlag("dry-run"),
     json: hasFlag("json"),
     postSlack: hasFlag("post-slack"),
+    answerModel: argValue("answer-model") ?? argValue("answerer-model") ?? process.env.MEMORY_BENCH_ANSWER_MODEL ?? process.env.AURA_BENCH_ANSWERER,
+    extractionModel: argValue("extraction-model") ?? process.env.MEMORY_BENCH_EXTRACTION_MODEL ?? process.env.AURA_BENCH_EXTRACTION,
     judge: judgeArg === "false" || judgeArg === "off"
       ? false
-      : judgeArg ?? process.env.MEMORY_BENCH_JUDGE_MODEL,
-    extractionModel: argValue("extraction-model") ?? process.env.MEMORY_BENCH_EXTRACTION_MODEL,
-    answerModel: argValue("answer-model") ?? process.env.MEMORY_BENCH_ANSWER_MODEL,
+      : judgeArg ?? process.env.MEMORY_BENCH_JUDGE_MODEL ?? process.env.AURA_BENCH_JUDGE,
     corpusFile: argValue("corpus-file") ?? process.env.MEMORY_BENCH_CORPUS_FILE,
+    concurrency: concurrency ? Number(concurrency) : undefined,
     prNumber: prNumber ? Number(prNumber) : undefined,
   };
 }
