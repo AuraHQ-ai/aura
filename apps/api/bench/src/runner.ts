@@ -1,20 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { loadBenchCases, computeCorpusHash } from "./fixtures.js";
-import { ingestBenchCases } from "./ingest.js";
-import { evaluateRetrievalCase } from "./eval-retrieval.js";
-import { answerFromMemories, judgeAnswer } from "./eval-qa.js";
-import { postBenchReport } from "./report.js";
-import {
-  aggregateScores,
-  attachPriorDeltas,
-  persistAggregates,
-} from "./score.js";
-import {
-  benchWorkspaceId,
-  createBenchWorkspace,
-  makeRunId,
-  pruneOldBenchWorkspaces,
-} from "./workspace.js";
+import { benchWorkspaceId, makeRunId } from "./workspace-id.js";
 import type { BenchCaseResult, BenchRunConfig, BenchRunResult } from "./types.js";
 
 function currentGitSha(): string | undefined {
@@ -55,6 +41,16 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
         cases: [],
       };
     }
+
+    const { createBenchWorkspace, pruneOldBenchWorkspaces } = await import("./workspace.js");
+    const { ingestBenchCases } = await import("./ingest.js");
+    const { evaluateRetrievalCase } = await import("./eval-retrieval.js");
+    const { answerFromMemories, judgeAnswer } = await import("./eval-qa.js");
+    const {
+      aggregateScores,
+      attachPriorDeltas,
+      persistAggregates,
+    } = await import("./score.js");
 
     await pruneOldBenchWorkspaces();
     await createBenchWorkspace(workspaceId);
@@ -113,6 +109,7 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
     };
 
     if (config.postSlack) {
+      const { postBenchReport } = await import("./report.js");
       await postBenchReport(result);
     }
 

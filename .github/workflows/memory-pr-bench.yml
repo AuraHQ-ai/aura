@@ -50,7 +50,7 @@ jobs:
         run: |
           pnpm --filter @aura/db build
           pnpm --filter @aura/db db:migrate
-          pnpm bench:memory -- --dataset=lme --subset=fast --json --judge=false --pr-number=${{ github.event.pull_request.number }} > memory-bench.json
+          pnpm --silent --filter aura-api bench:memory -- --dataset=lme --subset=fast --json --judge=false --pr-number=${{ github.event.pull_request.number }} > memory-bench.json
           node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('memory-bench.json','utf8')); const rows=r.aggregates.map(a=>`| ${a.dataset} | ${a.category} | ${a.scoreType} | ${(a.score*100).toFixed(1)}% | ${a.nCorrect}/${a.n} |`).join('\n'); fs.writeFileSync('memory-bench.md', ['<!-- memory-bench-comment -->','## Memory benchmark (warn-only)','', '| Dataset | Category | Metric | Score | N |','|---|---|---|---:|---:|', rows || '| - | - | - | - | - |','', '> Regression checks are warn-only while the baseline stabilizes. Add the `memory-bench-override` label to skip this workflow for urgent non-memory changes.'].join('\n'))"
 
       - name: Sticky PR comment

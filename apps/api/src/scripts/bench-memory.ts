@@ -7,7 +7,7 @@ const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
 const isProd = process.argv.includes("--prod");
 const envFile = isProd ? ".env.production" : ".env.local";
-loadDotenv({ path: resolve(repoRoot, envFile) });
+loadDotenv({ path: resolve(repoRoot, envFile), quiet: true });
 
 function argValue(name: string): string | undefined {
   const prefix = `--${name}=`;
