@@ -1,50 +1,32 @@
-import type { LanguageModel } from "ai";
-import { getFastModel, getMainModel, getMainModelId, getEscalationModel } from "../lib/ai.js";
+import { gateway } from "@ai-sdk/gateway";
+import { withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
 
-export type BenchModelTier = "fast" | "main" | "escalation";
+const ENV_EXTRACTION = "BENCH_EXTRACTION_MODEL";
+const ENV_ANSWERER = "BENCH_ANSWERER_MODEL";
+const ENV_JUDGE = "BENCH_JUDGE_MODEL";
 
-function tierFromEnv(value: string | undefined, defaultTier: BenchModelTier): BenchModelTier {
-  if (value === "fast" || value === "main" || value === "escalation") return value;
-  return defaultTier;
-}
+export const DEFAULT_EXTRACTION_MODEL = "anthropic/claude-sonnet-4.6";
+export const DEFAULT_ANSWERER_MODEL = "anthropic/claude-sonnet-4.6";
+export const DEFAULT_JUDGE_MODEL = "anthropic/claude-opus-4.6";
 
-async function modelForTier(tier: BenchModelTier): Promise<LanguageModel> {
-  if (tier === "fast") return getFastModel();
-  if (tier === "escalation") return (await getEscalationModel()).model;
-  return (await getMainModel()).model;
-}
-
-async function modelIdForTier(tier: BenchModelTier): Promise<string> {
-  const { getFastModelId } = await import("../lib/ai.js");
-  if (tier === "fast") return getFastModelId();
-  if (tier === "escalation") return (await getEscalationModel()).modelId;
-  return getMainModelId();
-}
-
-/** Extraction LLM for bench runs (default: main / Sonnet-class). */
-export async function getBenchExtractionModel(): Promise<LanguageModel> {
-  return modelForTier(tierFromEnv(process.env.AURA_BENCH_EXTRACTION, "main"));
-}
-
-/** Constrained answerer for QA eval (default: main). */
-export async function getBenchAnswerModel(): Promise<LanguageModel> {
-  return modelForTier(tierFromEnv(process.env.AURA_BENCH_ANSWER, "main"));
-}
-
-/** Judge for QA scoring (default: escalation / Opus-class). */
-export async function getBenchJudgeModel(): Promise<LanguageModel> {
-  return modelForTier(tierFromEnv(process.env.AURA_BENCH_JUDGE, "escalation"));
-}
-
-export async function resolveBenchRunModelIds(): Promise<{
+export interface BenchModels {
   extraction: string;
-  answer: string;
+  answerer: string;
   judge: string;
-}> {
-  const [extraction, answer, judge] = await Promise.all([
-    modelIdForTier(tierFromEnv(process.env.AURA_BENCH_EXTRACTION, "main")),
-    modelIdForTier(tierFromEnv(process.env.AURA_BENCH_ANSWER, "main")),
-    modelIdForTier(tierFromEnv(process.env.AURA_BENCH_JUDGE, "escalation")),
-  ]);
-  return { extraction, answer, judge };
+}
+
+export function resolveBenchModels(overrides: Partial<BenchModels> = {}): BenchModels {
+  return {
+    extraction:
+      overrides.extraction ??
+      process.env[ENV_EXTRACTION] ??
+      DEFAULT_EXTRACTION_MODEL,
+    answerer:
+      overrides.answerer ?? process.env[ENV_ANSWERER] ?? DEFAULT_ANSWERER_MODEL,
+    judge: overrides.judge ?? process.env[ENV_JUDGE] ?? DEFAULT_JUDGE_MODEL,
+  };
+}
+
+export async function getBenchLanguageModel(modelId: string): Promise<WrappableModel> {
+  return withAnthropicFallback(gateway(modelId), modelId);
 }

@@ -1,10 +1,9 @@
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
-import { embedText } from "../lib/embeddings.js";
-import { retrieveMemories } from "../memory/retrieve.js";
+import type { Memory } from "@aura/db/schema";
 import { formatMemoriesForPrompt } from "../memory/format-for-prompt.js";
-import { getBenchAnswerModel, getBenchJudgeModel } from "./models.js";
-import type { BenchCase } from "./types.js";
+import { getBenchLanguageModel } from "./models.js";
+import type { BenchCase, JudgeVerdict } from "./types.js";
 import { buildJudgePrompt, QA_JUDGE_SYSTEM } from "./judge.js";
 
 const verdictSchema = z.object({
@@ -17,69 +16,69 @@ const ANSWER_SYSTEM = `Answer ONLY using the provided memories. If the memories 
 
 export async function answerFromMemories(
   benchCase: BenchCase,
-  workspaceId: string,
-  generationModelId?: string,
-): Promise<{ answer: string; retrievedCount: number }> {
-  const queryEmbedding = await embedText(benchCase.question);
-  const retrieved = await retrieveMemories({
-    query: benchCase.question,
-    queryEmbedding,
-    currentUserId: `bench:${benchCase.id}:user`,
-    workspaceId,
-    limit: 15,
-    adminMode: true,
-  });
+  memories: Memory[],
+  modelId: string,
+): Promise<string> {
+  if (memories.length === 0) return "I don't know.";
 
-  const memoryBlock = formatMemoriesForPrompt(retrieved);
-  const model = await getBenchAnswerModel();
-  void generationModelId;
-
+  const model = await getBenchLanguageModel(modelId);
+  const memoryBlock = formatMemoriesForPrompt(memories);
   const { text } = await generateText({
     model,
     system: ANSWER_SYSTEM,
-    prompt: `${memoryBlock ? `Memories:\n${memoryBlock}\n\n` : "Memories: (none)\n\n"}Question: ${benchCase.question}`,
+    prompt: `Memories:\n${memoryBlock}\n\nQuestion: ${benchCase.question}`,
     temperature: 0,
   });
-
-  return { answer: text.trim(), retrievedCount: retrieved.length };
+  return text.trim();
 }
 
-export async function judgeAnswer(
-  benchCase: BenchCase,
-  hypothesis: string,
-): Promise<{ correct: boolean; verdict: string }> {
+export async function judgeAnswer(params: {
+  benchCase: BenchCase;
+  answer: string;
+  modelId: string;
+}): Promise<{
+  verdict: JudgeVerdict;
+  qaCorrect: boolean;
+  rationale: string;
+  confidence: number;
+}> {
+  const { benchCase, answer, modelId } = params;
+  const lower = answer.toLowerCase();
+  const abstained =
+    answer.length === 0 ||
+    lower.includes("i don't know") ||
+    lower.includes("i do not know");
+
+  if (benchCase.abstention && abstained) {
+    return {
+      verdict: "abstain_ok",
+      qaCorrect: true,
+      rationale: "Expected abstention; model abstained.",
+      confidence: 1,
+    };
+  }
+
   const gold =
     typeof benchCase.goldAnswer === "string"
       ? benchCase.goldAnswer
       : benchCase.goldAnswer.join(" | ");
 
-  if (benchCase.abstention) {
-    const lower = hypothesis.toLowerCase();
-    const abstained =
-      retrievedNothing(hypothesis) ||
-      lower.includes("don't know") ||
-      lower.includes("do not know") ||
-      lower.includes("insufficient") ||
-      lower.includes("no information");
-    if (abstained) {
-      return { correct: true, verdict: "abstain_ok" };
-    }
-  }
-
-  const model = await getBenchJudgeModel();
+  const model = await getBenchLanguageModel(modelId);
   const { object } = await generateObject({
     model,
     schema: verdictSchema,
     system: QA_JUDGE_SYSTEM,
-    prompt: buildJudgePrompt(benchCase.question, gold, hypothesis, benchCase.abstention),
+    prompt: buildJudgePrompt(benchCase.question, gold, answer, benchCase.abstention),
     temperature: 0,
   });
 
-  const correct = object.verdict === "correct" || object.verdict === "abstain_ok";
+  const verdict = object.verdict as JudgeVerdict;
+  const qaCorrect = verdict === "correct" || verdict === "abstain_ok";
 
-  return { correct, verdict: object.verdict };
-}
-
-function retrievedNothing(hypothesis: string): boolean {
-  return hypothesis.length === 0;
+  return {
+    verdict,
+    qaCorrect,
+    rationale: object.rationale,
+    confidence: object.confidence,
+  };
 }

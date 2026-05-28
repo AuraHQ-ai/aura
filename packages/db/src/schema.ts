@@ -168,6 +168,13 @@ export const memories = pgTable(
     supersedesMemoryId: uuid("supersedes_memory_id"),
     supersededAt: timestamptz("superseded_at"),
     supersededByMemoryId: uuid("superseded_by_memory_id"),
+    /** Populated only for bench workspaces — evidence dia_ids / session_ids for recall@K */
+    benchProvenance: jsonb("bench_provenance").$type<{
+      datasetId?: string;
+      conversationId?: string;
+      diaIds?: string[];
+      sessionIds?: string[];
+    } | null>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -1233,6 +1240,7 @@ export const benchRuns = pgTable(
     corpusHash: text("corpus_hash"),
     gitSha: text("git_sha"),
     prNumber: integer("pr_number"),
+    metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [

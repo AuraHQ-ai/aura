@@ -1,31 +1,38 @@
-import { randomUUID } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { loadCases, loadManifest, corpusHashForCases } from "./fixtures.js";
+import { benchWorkspaceId, makeRunId } from "./workspace-id.js";
 import {
   createBenchWorkspace,
   cleanupStaleBenchWorkspaces,
   wipeBenchWorkspace,
 } from "./workspace.js";
 import { ingestCases } from "./ingest.js";
-import { evalRetrievalRecall } from "./eval-retrieval.js";
+import { evaluateRetrieval } from "./eval-retrieval.js";
 import { answerFromMemories, judgeAnswer } from "./eval-qa.js";
-import { aggregateScores, persistBenchRun, loadPriorScores } from "./score.js";
+import {
+  aggregateScores,
+  attachPriorDeltas,
+  loadAllPriorScores,
+  persistBenchRun,
+} from "./score.js";
 import { postBenchSlackReport } from "./report.js";
-import type { BenchRunConfig, BenchRunResult } from "./types.js";
-import { resolveBenchRunModelIds } from "./models.js";
+import type { BenchRunConfig, BenchRunResult, PerCaseResult } from "./types.js";
+import { resolveBenchModels } from "./models.js";
 import { logger } from "../lib/logger.js";
 
-function gitSha(): string {
+function gitSha(): string | undefined {
   try {
-    return execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   } catch {
-    return "unknown";
+    return undefined;
   }
 }
 
 export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunResult> {
-  const start = Date.now();
-  await cleanupStaleBenchWorkspaces();
+  const started = Date.now();
+  const runId = makeRunId();
+  const workspaceId = benchWorkspaceId(runId);
+  const models = resolveBenchModels(config.models ?? {});
 
   const cases = loadCases({
     dataset: config.dataset,
@@ -34,94 +41,153 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
   });
 
   if (cases.length === 0) {
-    throw new Error("No benchmark cases loaded — check dataset and corpus files");
+    return {
+      ok: false,
+      runId,
+      workspaceId,
+      corpusHash: "none",
+      scores: [],
+      cases: [],
+      models,
+      costUsd: 0,
+      durationMs: Date.now() - started,
+      embeddingModel: process.env.MODEL_EMBEDDING ?? "openai/text-embedding-3-small",
+      error: "No cases loaded — run pnpm --filter aura-api bench:fetch-corpus",
+    };
   }
 
   const manifest = loadManifest();
   const corpusHash = corpusHashForCases(cases) || manifest.corpus_hash || "unknown";
-  const runId = config.runId?.trim() ? config.runId.trim() : randomUUID().slice(0, 8);
-  const workspaceId = await createBenchWorkspace(runId);
 
-  logger.info(`Memory bench starting`, {
+  if (config.dryRun) {
+    return {
+      ok: true,
+      runId,
+      workspaceId,
+      gitSha: gitSha(),
+      corpusHash,
+      scores: [],
+      cases: [],
+      models,
+      costUsd: 0,
+      durationMs: Date.now() - started,
+      embeddingModel: process.env.MODEL_EMBEDDING ?? "openai/text-embedding-3-small",
+      prNumber: config.prNumber,
+    };
+  }
+
+  logger.info("Memory bench starting", {
     runId,
     workspaceId,
     cases: cases.length,
-    skipIngest: config.skipIngest,
+    models,
   });
 
   try {
-    if (!config.skipIngest && !config.dryRun) {
-      await ingestCases(cases, workspaceId, config.concurrency);
+    await cleanupStaleBenchWorkspaces();
+    await createBenchWorkspace(runId);
+
+    if (!config.skipIngest) {
+      await ingestCases(cases, workspaceId, models.extraction, config.concurrency);
     }
 
-    const evalRows: Array<{
-      dataset: string;
-      category: string;
-      scoreType: "qa_accuracy" | "retrieval_recall_at_15";
-      correct: boolean;
-    }> = [];
+    const caseResults: PerCaseResult[] = [];
+    const judgeModelId =
+      config.judge === false
+        ? null
+        : typeof config.judge === "string"
+          ? config.judge
+          : models.judge;
 
-    for (const c of cases) {
-      const dataset = c.source === "longmemeval" ? "longmemeval" : c.source;
+    for (const benchCase of cases) {
+      const caseStart = Date.now();
+      const dataset =
+        benchCase.source === "longmemeval"
+          ? "longmemeval"
+          : benchCase.source === "locomo"
+            ? "locomo"
+            : benchCase.source;
 
-      if (!config.dryRun) {
-        const recallHit = await evalRetrievalRecall(c, workspaceId);
-        evalRows.push({
-          dataset,
-          category: c.category,
-          scoreType: "retrieval_recall_at_15",
-          correct: recallHit,
+      const { retrieved, hit } = await evaluateRetrieval(benchCase, workspaceId);
+
+      let modelAnswer = "";
+      let judgeVerdict: PerCaseResult["judgeVerdict"] = judgeModelId ? "skipped" : "skipped";
+      let judgeConfidence = 0;
+      let judgeRationale = "";
+
+      if (judgeModelId) {
+        modelAnswer = await answerFromMemories(benchCase, retrieved, models.answerer);
+        const judged = await judgeAnswer({
+          benchCase,
+          answer: modelAnswer,
+          modelId: judgeModelId,
         });
+        judgeVerdict = judged.verdict;
+        judgeConfidence = judged.confidence;
+        judgeRationale = judged.rationale;
       }
 
-      if (config.judge && !config.dryRun) {
-        const { answer, retrievedCount } = await answerFromMemories(c, workspaceId);
-        let qaCorrect = false;
-        if (c.abstention && retrievedCount === 0) {
-          qaCorrect = true;
-        } else {
-          const judged = await judgeAnswer(c, answer);
-          qaCorrect = judged.correct;
-        }
-        evalRows.push({
-          dataset,
-          category: c.category,
-          scoreType: "qa_accuracy",
-          correct: qaCorrect,
-        });
-      }
+      caseResults.push({
+        caseId: benchCase.id,
+        dataset,
+        category: benchCase.category,
+        question: benchCase.question,
+        goldAnswer:
+          typeof benchCase.goldAnswer === "string"
+            ? benchCase.goldAnswer
+            : benchCase.goldAnswer.join(" | "),
+        abstention: benchCase.abstention,
+        retrievedMemoryIds: retrieved.map((m) => m.id),
+        retrievedRecallHit: hit,
+        modelAnswer,
+        judgeVerdict,
+        judgeConfidence,
+        judgeRationale,
+        durationMs: Date.now() - caseStart,
+      });
     }
 
-    const scores = aggregateScores(evalRows);
-    const modelIds = await resolveBenchRunModelIds();
-    const embModel = process.env.MODEL_EMBEDDING ?? "openai/text-embedding-3-small";
+    let scores = aggregateScores(caseResults);
+    const priors = await loadAllPriorScores(runId);
+    scores = attachPriorDeltas(scores, priors);
 
     const result: BenchRunResult = {
+      ok: true,
       runId,
+      workspaceId,
       gitSha: gitSha(),
       corpusHash,
       scores,
+      cases: caseResults,
+      models,
       costUsd: 0,
-      durationMs: Date.now() - start,
-      generationModel: modelIds.answer,
-      judgeModel: config.judge ? modelIds.judge : undefined,
-      embeddingModel: embModel,
-      extractionModel: modelIds.extraction,
+      durationMs: Date.now() - started,
+      embeddingModel: process.env.MODEL_EMBEDDING ?? "openai/text-embedding-3-small",
+      prNumber: config.prNumber,
     };
 
-    if (!config.dryRun) {
-      await persistBenchRun({ ...result, prNumber: config.prNumber });
+    await persistBenchRun(result);
+
+    if (config.postSlack) {
+      await postBenchSlackReport(result);
     }
 
-    if (config.postSlack && !config.dryRun) {
-      const priors = await loadPriorScores("longmemeval", "qa_accuracy", runId);
-      await postBenchSlackReport(result, priors);
-    }
-
-    return { ...result, prNumber: config.prNumber };
+    return result;
+  } catch (error) {
+    return {
+      ok: false,
+      runId,
+      workspaceId,
+      corpusHash,
+      scores: [],
+      cases: [],
+      models,
+      costUsd: 0,
+      durationMs: Date.now() - started,
+      embeddingModel: process.env.MODEL_EMBEDDING ?? "openai/text-embedding-3-small",
+      error: error instanceof Error ? error.message : String(error),
+    };
   } finally {
-    if (!config.dryRun) {
-      await wipeBenchWorkspace(workspaceId);
-    }
+    await wipeBenchWorkspace(workspaceId);
   }
 }

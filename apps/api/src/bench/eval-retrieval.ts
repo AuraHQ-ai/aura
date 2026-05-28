@@ -1,35 +1,58 @@
-import { embedText } from "../lib/embeddings.js";
 import { retrieveMemories } from "../memory/retrieve.js";
+import type { Memory } from "@aura/db/schema";
+import { logger } from "../lib/logger.js";
 import type { BenchCase } from "./types.js";
 
-const RECALL_K = 15;
+const DEFAULT_K = 15;
 
-/**
- * Deterministic retrieval recall@K using corpus evidence session ids
- * (stored as memory sourceThreadTs during bench ingest).
- */
-export async function evalRetrievalRecall(
+export type RetrievalEvalResult = {
+  retrieved: Memory[];
+  hit: boolean | null;
+};
+
+export async function evaluateRetrieval(
   benchCase: BenchCase,
   workspaceId: string,
-): Promise<boolean> {
-  const evidence = benchCase.evidenceSessionIds ?? [];
-  if (evidence.length === 0) {
-    return false;
+  k = DEFAULT_K,
+): Promise<RetrievalEvalResult> {
+  let retrieved: Memory[] = [];
+  try {
+    retrieved = await retrieveMemories({
+      query: benchCase.question,
+      currentUserId: `bench:${benchCase.id}:user`,
+      workspaceId,
+      limit: k,
+      adminMode: true,
+    });
+  } catch (error) {
+    logger.warn("bench: retrieval failed", {
+      caseId: benchCase.id,
+      error: String(error).slice(0, 200),
+    });
   }
 
-  const queryEmbedding = await embedText(benchCase.question);
-  const retrieved = await retrieveMemories({
-    query: benchCase.question,
-    queryEmbedding,
-    currentUserId: `bench:${benchCase.id}:user`,
-    workspaceId,
-    limit: RECALL_K,
-    adminMode: true,
-  });
+  const hasEvidence =
+    (benchCase.evidenceDiaIds?.length ?? 0) > 0 ||
+    (benchCase.evidenceSessionIds?.length ?? 0) > 0;
 
-  const retrievedSessions = new Set(
-    retrieved.map((m) => m.sourceThreadTs).filter((s): s is string => !!s),
-  );
+  if (benchCase.abstention || !hasEvidence) {
+    return { retrieved, hit: null };
+  }
 
-  return evidence.some((id) => retrievedSessions.has(id));
+  const wantDia = new Set(benchCase.evidenceDiaIds ?? []);
+  const wantSession = new Set(benchCase.evidenceSessionIds ?? []);
+
+  for (const mem of retrieved) {
+    const prov = mem.benchProvenance;
+    if (!prov) {
+      if (mem.sourceThreadTs && wantSession.has(mem.sourceThreadTs)) {
+        return { retrieved, hit: true };
+      }
+      continue;
+    }
+    if (prov.diaIds?.some((d) => wantDia.has(d))) return { retrieved, hit: true };
+    if (prov.sessionIds?.some((s) => wantSession.has(s))) return { retrieved, hit: true };
+  }
+
+  return { retrieved, hit: false };
 }

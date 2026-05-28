@@ -1,74 +1,57 @@
-import { config } from "dotenv";
+import { config as loadDotenv } from "dotenv";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { BenchDataset, BenchRunConfig, BenchSubset } from "../bench/types.js";
+import { formatBenchReport } from "../bench/report.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
-const isProd = process.argv.includes("--prod");
-const dryRun = process.argv.includes("--dry-run");
-const skipIngest = process.argv.includes("--skip-ingest");
-const postSlack = process.argv.includes("--post-slack");
-const jsonOut = process.argv.includes("--json");
-const useFastModels = process.argv.includes("--fast-models");
-const envFile = isProd ? ".env.production" : ".env.local";
-config({ path: resolve(repoRoot, envFile) });
+loadDotenv({ path: resolve(repoRoot, process.argv.includes("--prod") ? ".env.production" : ".env.local") });
 
-/** Bench quality defaults: Sonnet extraction/answer, Opus judge (override with --fast-models). */
-if (!useFastModels) {
-  process.env.AURA_BENCH_EXTRACTION ??= "main";
-  process.env.AURA_BENCH_ANSWER ??= "main";
-  process.env.AURA_BENCH_JUDGE ??= "escalation";
+function argValue(name: string): string | undefined {
+  const prefix = `--${name}=`;
+  return process.argv.find((a) => a.startsWith(prefix))?.slice(prefix.length);
 }
 
-if (isProd) console.log("Using .env.production (--prod)");
-if (dryRun) console.log("DRY RUN — no DB writes");
-if (!useFastModels) {
-  console.log(
-    "Models: extraction=main answer=main judge=escalation (--fast-models for Haiku-tier)",
-  );
+function hasFlag(name: string): boolean {
+  return process.argv.includes(`--${name}`);
 }
 
-function argValue(prefix: string): string | undefined {
-  const hit = process.argv.find((a) => a.startsWith(`${prefix}=`));
-  return hit?.split("=")[1];
+function parseConfig(): BenchRunConfig {
+  const judgeArg = argValue("judge");
+  return {
+    dataset: (argValue("dataset") ?? "lme") as BenchDataset,
+    subset: (argValue("subset") ?? "full") as BenchSubset,
+    categoryFilter: argValue("category"),
+    skipIngest: hasFlag("skip-ingest"),
+    dryRun: hasFlag("dry-run"),
+    postSlack: hasFlag("post-slack"),
+    judge:
+      judgeArg === "false" || judgeArg === "off"
+        ? false
+        : judgeArg ?? true,
+    prNumber: argValue("pr-number") ? Number(argValue("pr-number")) : undefined,
+    concurrency: Number(argValue("concurrency") ?? "2") || 2,
+    models: {
+      extraction: argValue("extraction-model") ?? process.env.BENCH_EXTRACTION_MODEL,
+      answerer: argValue("answer-model") ?? process.env.BENCH_ANSWERER_MODEL,
+      judge: typeof judgeArg === "string" && judgeArg.includes("/") ? judgeArg : process.env.BENCH_JUDGE_MODEL,
+    },
+  };
 }
 
-import type { BenchDataset, BenchSubset } from "../bench/types.js";
-
+const config = parseConfig();
 const { runMemoryBench } = await import("../bench/runner.js");
 
-const dataset = (argValue("--dataset") ?? "lme") as BenchDataset;
-const subset = (argValue("--subset") ?? "full") as BenchSubset;
-const category = argValue("--category");
-const judge = process.argv.includes("--judge") || !process.argv.includes("--no-judge");
-const concurrency = Number(argValue("--concurrency") ?? "2");
-const prNumber = argValue("--pr-number") ? Number(argValue("--pr-number")) : undefined;
-
-const result = await runMemoryBench({
-  runId: argValue("--run-id") ?? "",
-  workspaceId: "",
-  dataset,
-  subset,
-  categoryFilter: category,
-  skipIngest,
-  dryRun,
-  judge,
-  postSlack,
-  prNumber,
-  concurrency: Number.isFinite(concurrency) ? concurrency : 2,
-});
-
-if (jsonOut) {
-  console.log(JSON.stringify(result, null, 2));
-} else {
-  console.log("\nMemory benchmark results\n");
-  for (const s of result.scores) {
-    const pct = Math.round(s.score * 100);
-    console.log(
-      `  ${s.dataset} / ${s.category} / ${s.scoreType}: ${pct}% (${s.nCorrect}/${s.n})`,
-    );
+try {
+  const result = await runMemoryBench(config);
+  if (hasFlag("json")) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    console.log(formatBenchReport(result));
   }
-  console.log(
-    `\nRun ${result.runId} in ${Math.round(result.durationMs / 1000)}s · extraction=${result.extractionModel} judge=${result.judgeModel ?? "—"}`,
-  );
+  process.exit(result.ok ? 0 : 1);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 }

@@ -1,4 +1,11 @@
+import type { Memory } from "@aura/db/schema";
+import type { BenchModels } from "./models.js";
+
 export type BenchSource = "locomo" | "longmemeval" | "toy";
+
+export type BenchSubset = "fast" | "medium" | "full";
+
+export type BenchDataset = "locomo" | "lme" | "both" | "toy";
 
 export type BenchCase = {
   id: string;
@@ -10,49 +17,74 @@ export type BenchCase = {
   sessions: Array<{
     id: string;
     timestamp: string;
-    turns: Array<{ role: "user" | "assistant"; content: string }>;
+    turns: Array<{
+      role: "user" | "assistant";
+      content: string;
+      diaId?: string;
+      speaker?: string;
+    }>;
   }>;
-  /** Session or dia_ids used for retrieval recall@K */
   evidenceSessionIds?: string[];
+  evidenceDiaIds?: string[];
 };
 
-export type BenchSubset = "fast" | "full";
-
-export type BenchDataset = "locomo" | "lme" | "both" | "toy";
-
 export type BenchRunConfig = {
-  runId: string;
-  workspaceId: string;
   dataset: BenchDataset;
   subset: BenchSubset;
   categoryFilter?: string;
   skipIngest: boolean;
   dryRun: boolean;
-  judge: boolean;
+  /** false = skip QA judge; string = judge model id */
+  judge: boolean | string;
   postSlack: boolean;
   prNumber?: number;
   concurrency: number;
+  models?: Partial<BenchModels>;
+};
+
+export type JudgeVerdict = "correct" | "partial" | "incorrect" | "abstain_ok" | "skipped";
+
+export type PerCaseResult = {
+  caseId: string;
+  dataset: string;
+  category: string;
+  question: string;
+  goldAnswer: string;
+  abstention: boolean;
+  retrievedMemoryIds: string[];
+  retrievedRecallHit: boolean | null;
+  modelAnswer: string;
+  judgeVerdict: JudgeVerdict;
+  judgeConfidence: number;
+  judgeRationale: string;
+  durationMs: number;
 };
 
 export type CategoryScore = {
   dataset: string;
   category: string;
-  scoreType: "qa_accuracy" | "retrieval_recall_at_15";
+  scoreType:
+    | "qa_accuracy"
+    | "retrieval_recall_at_15"
+    | "abstention_accuracy";
   n: number;
   nCorrect: number;
   score: number;
+  deltaPp?: number;
 };
 
 export type BenchRunResult = {
+  ok: boolean;
   runId: string;
-  gitSha: string;
+  workspaceId: string;
+  gitSha?: string;
   corpusHash: string;
   scores: CategoryScore[];
+  cases: PerCaseResult[];
+  models: BenchModels;
   costUsd: number;
   durationMs: number;
-  generationModel: string;
-  extractionModel?: string;
-  judgeModel?: string;
   embeddingModel: string;
   prNumber?: number;
+  error?: string;
 };

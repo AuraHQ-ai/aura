@@ -10,7 +10,8 @@
     "db:migrate": "./scripts/env.sh pnpm --filter @aura/db db:migrate",
     "db:push": "./scripts/env.sh pnpm --filter @aura/db db:push",
     "db:studio": "./scripts/env.sh pnpm --filter @aura/db db:studio",
-    "bench:memory": "./scripts/env.sh pnpm --filter aura-api bench:memory"
+    "bench:memory": "./scripts/env.sh pnpm --filter aura-api bench:memory",
+    "bench:fetch-corpus": "pnpm --filter aura-api bench:fetch-corpus"
   },
   "pnpm": {
     "overrides": {

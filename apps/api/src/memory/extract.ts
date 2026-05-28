@@ -1,6 +1,7 @@
 import { generateText, generateObject, Output } from "ai";
 import { z } from "zod";
-import { getFastModel, getMainModel, getEscalationModel } from "../lib/ai.js";
+import { gateway } from "@ai-sdk/gateway";
+import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
@@ -49,12 +50,11 @@ function stripInjectedContext(text: string): string {
 
 const MIN_STRIPPED_LENGTH = 50;
 
-/** Production uses fast; bench sets AURA_BENCH_EXTRACTION=main|escalation|fast. */
-async function resolveExtractionModel() {
-  const tier = process.env.AURA_BENCH_EXTRACTION;
-  if (tier === "main") return (await getMainModel()).model;
-  if (tier === "escalation") return (await getEscalationModel()).model;
-  if (tier === "fast") return getFastModel();
+/** Honours bench-pinned model IDs; production uses catalog fast model. */
+async function resolveExtractionModel(context: ExtractionContext): Promise<WrappableModel> {
+  if (context.extractionModelId) {
+    return withAnthropicFallback(gateway(context.extractionModelId), context.extractionModelId);
+  }
   return getFastModel();
 }
 
@@ -461,6 +461,8 @@ export interface ExtractionContext {
   createdAt?: Date;
   /** Workspace for memory storage and retrieval (defaults to DEFAULT_WORKSPACE_ID) */
   workspaceId?: string;
+  /** Bench: pin extraction LLM (e.g. anthropic/claude-sonnet-4.6) for comparable runs */
+  extractionModelId?: string;
 }
 
 /**
@@ -579,7 +581,7 @@ async function extractWithReconciliation(
 
   const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", () => existingMemoriesText);
 
-  const model = await resolveExtractionModel();
+  const model = await resolveExtractionModel(context);
 
   const { output: result } = await generateText({
     model,
@@ -895,7 +897,7 @@ async function extractSingleExchange(
     ? `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${strippedAssistant}`
     : `User (${context.displayName || context.userId}): ${context.userMessage}`;
 
-  const model = await resolveExtractionModel();
+  const model = await resolveExtractionModel(context);
 
   const { output: object } = await generateText({
     model,

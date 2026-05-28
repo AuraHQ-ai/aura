@@ -1,11 +1,25 @@
 {
+  "version": 2,
   "subset_seed": 1043,
   "subset_targets": {
     "temporal-reasoning": 40,
     "knowledge-update": 25,
     "multi-session": 35
   },
-  "oracle_url": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json",
-  "license": "MIT",
-  "notes": "Subset JSON is generated into corpus/cache/ (gitignored). Commit only toy-corpus.json + this manifest."
+  "datasets": {
+    "toy": {
+      "file": "toy-corpus.json",
+      "vendored": true
+    },
+    "longmemeval_oracle": {
+      "file": "cache/longmemeval_oracle.json",
+      "vendored": false,
+      "fetchUrl": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json"
+    },
+    "locomo": {
+      "file": "cache/locomo10.json",
+      "vendored": false,
+      "fetchUrl": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
+    }
+  }
 }

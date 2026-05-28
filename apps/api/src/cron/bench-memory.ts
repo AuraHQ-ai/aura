@@ -21,13 +21,7 @@ benchMemoryCronApp.get("/api/cron/bench-memory", async (c) => {
   logger.info("Cron: Starting memory benchmark");
 
   try {
-    process.env.AURA_BENCH_EXTRACTION ??= "main";
-    process.env.AURA_BENCH_ANSWER ??= "main";
-    process.env.AURA_BENCH_JUDGE ??= "escalation";
-
     const result = await runMemoryBench({
-      runId: "",
-      workspaceId: "",
       dataset: "lme",
       subset: "full",
       skipIngest: false,
@@ -38,7 +32,7 @@ benchMemoryCronApp.get("/api/cron/bench-memory", async (c) => {
     });
 
     return c.json({
-      ok: true,
+      ok: result.ok,
       duration: Date.now() - start,
       runId: result.runId,
       scores: result.scores,

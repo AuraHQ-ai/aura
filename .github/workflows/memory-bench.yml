@@ -1,0 +1,164 @@
+name: Memory benchmark
+
+# Path-triggered only — no nightly schedule. Manual: workflow_dispatch.
+# Uses ephemeral Neon branch + cached corpora. Warn-only regression gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      subset:
+        description: "fast | medium | full"
+        type: choice
+        options: [fast, medium, full]
+        default: full
+      dataset:
+        description: "toy | lme | locomo | both"
+        type: choice
+        options: [toy, lme, locomo, both]
+        default: lme
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/api/src/memory/**"
+      - "apps/api/src/bench/**"
+      - "apps/api/src/scripts/bench-memory.ts"
+      - "packages/db/src/schema.ts"
+      - "packages/db/drizzle/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  STRICT_REGRESSION_GATE: "false"
+  REGRESSION_THRESHOLD_PP: "2"
+  BENCH_EXTRACTION_MODEL: anthropic/claude-sonnet-4.6
+  BENCH_ANSWERER_MODEL: anthropic/claude-sonnet-4.6
+  BENCH_JUDGE_MODEL: anthropic/claude-opus-4.6
+
+concurrency:
+  group: memory-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memory-bench:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !contains(github.event.pull_request.labels.*.name, 'memory-bench-override')
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache benchmark corpus
+        id: corpus-cache
+        uses: actions/cache@v4
+        with:
+          path: apps/api/src/bench/corpus/cache
+          key: bench-corpus-${{ hashFiles('apps/api/src/bench/corpus/manifest.json') }}
+
+      - name: Fetch corpora
+        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter aura-api bench:fetch-corpus
+
+      - name: Create Neon branch
+        id: neon
+        uses: neondatabase/create-branch-action@v6
+        continue-on-error: true
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          branch_name: memory-bench-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Run benchmark
+        id: bench
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_with_pooler || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          DEFAULT_WORKSPACE_ID: default
+          ELEVENLABS_API_KEY: placeholder
+        run: |
+          pnpm --filter @aura/db build
+          pnpm --filter @aura/db db:migrate
+          SUBSET="${{ github.event.inputs.subset || 'full' }}"
+          DATASET="${{ github.event.inputs.dataset || 'lme' }}"
+          mkdir -p /tmp/bench
+          set -o pipefail
+          pnpm --filter aura-api bench:memory -- \
+            --dataset="$DATASET" \
+            --subset="$SUBSET" \
+            --judge \
+            --json \
+            --pr-number=${{ github.event.pull_request.number || '' }} \
+            | tee /tmp/bench/result.json
+          node -e "
+            const fs = require('fs');
+            const r = JSON.parse(fs.readFileSync('/tmp/bench/result.json','utf8'));
+            const lines = ['Run ' + r.runId + ' models=' + JSON.stringify(r.models)];
+            for (const s of (r.scores || [])) {
+              const d = s.deltaPp != null ? ' (' + (s.deltaPp >= 0 ? '+' : '') + s.deltaPp + 'pp)' : '';
+              lines.push('  ' + s.dataset + ' / ' + s.category + ' / ' + s.scoreType + ': ' + Math.round(s.score * 100) + '% (' + s.nCorrect + '/' + s.n + ')' + d);
+            }
+            if (!r.ok) lines.push('ERROR: ' + (r.error || 'failed'));
+            fs.writeFileSync('/tmp/bench/output.txt', lines.join('\n'));
+          "
+
+      - name: Upload artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-bench-${{ github.run_id }}
+          path: /tmp/bench/*
+          retention-days: 14
+        continue-on-error: true
+
+      - name: Build PR comment
+        if: github.event_name == 'pull_request'
+        id: comment
+        run: |
+          {
+            echo "body<<EOF"
+            echo "### Memory benchmark (\`${{ github.event.inputs.subset || 'full' }}\` / \`${{ github.event.inputs.dataset || 'lme' }}\`)"
+            echo ""
+            echo "_Path-triggered; Sonnet extract/answer + Opus judge. Not scheduled nightly._"
+            echo ""
+            echo '```'
+            cat /tmp/bench/output.txt 2>/dev/null || echo "No output"
+            echo '```'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Sticky PR comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: memory-bench
+          message: ${{ steps.comment.outputs.body }}
+        continue-on-error: true
+
+      - name: Delete Neon branch
+        if: always() && steps.neon.outputs.branch_id != ''
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          BRANCH_ID: ${{ steps.neon.outputs.branch_id }}
+        run: |
+          curl -sS -X DELETE \
+            "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${BRANCH_ID}" \
+            -H "Authorization: Bearer ${NEON_API_KEY}" || true
