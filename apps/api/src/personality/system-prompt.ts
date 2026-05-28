@@ -2,7 +2,7 @@ import { eq, or, and, isNull, gt, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { notes } from "@aura/db/schema";
-import { getCurrentTimeContext, relativeTime } from "../lib/temporal.js";
+import { getCurrentTimeContext } from "../lib/temporal.js";
 import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
@@ -266,25 +266,11 @@ These rules were learned through repeated failures. They are non-negotiable and 
 
 `;
 
-/**
- * Format retrieved memories for injection into the prompt.
- */
-function formatMemories(memories: Memory[]): string {
-  if (memories.length === 0) return "";
-
-  const formatted = memories
-    .map((m) => {
-      const timeAgo = relativeTime(new Date(m.createdAt));
-      const users =
-        m.relatedUserIds.length > 0
-          ? ` [about: ${m.relatedUserIds.join(", ")}]`
-          : "";
-      return `- [${m.type}] ${m.content} (${timeAgo})${users}`;
-    })
-    .join("\n");
-
-  return `These are things you've learned from previous interactions. Use them naturally if relevant -- don't force them in. Don't tell the user you're "checking your memories."\n\n${formatted}`;
-}
+// Memory formatting moved to ../memory/format-for-prompt.ts so the bench
+// harness can render memories the same way production does. Re-exported here
+// for callers that still import from this module.
+import { formatMemoriesForPrompt as formatMemories } from "../memory/format-for-prompt.js";
+export { formatMemoriesForPrompt } from "../memory/format-for-prompt.js";
 
 /**
  * Format user profile for tone adaptation hints.

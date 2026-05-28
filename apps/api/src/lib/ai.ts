@@ -138,6 +138,11 @@ export async function getFastModel() {
   return withAnthropicFallback(gatewayModel, gatewayId);
 }
 
+/** Resolve the fast model ID string (no gateway wrapping). */
+export async function getFastModelId(): Promise<string> {
+  return resolveModelId("model_fast", "fast");
+}
+
 /**
  * Get the embedding model with Anthropic fallback support.
  * Priority: DB setting > catalog default

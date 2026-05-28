@@ -123,6 +123,99 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ---
 
+## Memory PR checklist
+
+The harness in `apps/api/bench/` makes memory PRs falsifiable. It replays vendored LoCoMo + LongMemEval corpora through Aura's real `extract → retrieve → answer` pipeline, scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
+
+### When does it run?
+
+The bench is **event-driven, not scheduled** — you run it when memory formation or retrieval actually changes, not on a clock. Re-running the same code against the same corpus every night would just spend money re-deriving identical numbers.
+
+* **Automatically on PRs** when a memory-relevant path changes — `apps/api/src/memory/**`, `apps/api/bench/**`, `apps/api/src/personality/system-prompt.ts`, `apps/api/src/pipeline/core-prompt.ts`, `packages/db/src/schema.ts`, or `packages/db/drizzle/**`. Other PRs skip the bench entirely so we don't burn cycles on unrelated changes. Results land in a sticky PR comment. This path filter *is* the "significant change" trigger.
+* **Manually via `workflow_dispatch`** in the GitHub UI (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`) and dataset (`toy | lme | locomo | both`).
+* **Locally**, any time — this is the primary loop while iterating on a memory change.
+
+### Local workflow
+
+```bash
+# One-time: cache the real corpora locally (~18 MB, gitignored).
+pnpm bench:fetch-corpus
+
+# Cheap smoke test (3 questions, ~$0.05, ~30s).
+pnpm bench:memory --dataset=toy
+
+# Standard run — main-tier extraction + answerer, escalation-tier judge.
+# ~330 questions across LoCoMo + LongMemEval, ~$15–25.
+pnpm bench:memory --dataset=both --subset=medium
+
+# PR-speed iteration loop (~40 Qs, ~$2).
+pnpm bench:memory --dataset=both --subset=fast
+
+# Full corpus — every question. Costs real money, only run when warranted.
+pnpm bench:memory --dataset=both --subset=full --concurrency=4
+
+# Bring-your-own normalized corpus, skipping fetch-corpus entirely.
+pnpm bench:memory --corpus-file=/tmp/my-cases.json --subset=full
+```
+
+Models are slotted onto three catalog **tiers** (`fast`, `main`, `escalation`). Defaults: `extraction=main`, `answerer=main`, `judge=escalation`. When the team updates "main" to point at the next-gen Sonnet, the bench picks it up automatically. The resolved gateway id is persisted on every `bench_runs` row so cross-run deltas stay honest.
+
+Override per-slot via either a tier name or an explicit gateway id:
+
+```bash
+# Override one slot to Haiku-tier via the catalog
+pnpm bench:memory --extraction-model=fast
+
+# Or pin an exact id
+pnpm bench:memory --judge-model=anthropic/claude-opus-4.6
+```
+
+`--prod` switches to `.env.production`. `--dry-run` validates corpora load without any DB writes or LLM calls. `--json=path` writes per-question detail.
+
+### Iterating: ramp the data up, don't boil the ocean
+
+Don't jump straight to the full corpus. Start tiny, confirm the axis you're working on improves, then widen. There's no point scoring 1,500 LoCoMo questions while `temporal` and `knowledge_update` sit at 0% — fix those on a handful of cases first.
+
+`--limit=N` caps cases **per category** (overriding `--subset`), and `--category=` narrows to the one axis you're fixing:
+
+```bash
+# Tight loop on the failing axis — 3 cases, seconds, cents.
+pnpm bench:memory --dataset=lme --category=temporal-reasoning --limit=3
+
+# Looks better? Widen to 10 and log the result for the record.
+pnpm bench:memory --dataset=lme --category=temporal-reasoning --limit=10 --log --note="extractor durability fix"
+
+# Axis healthy across categories? Now it's worth the full run.
+pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
+```
+
+### Results log (commit fingerprints)
+
+`--log` appends a fingerprint of the run to [`apps/api/bench/RESULTS.md`](apps/api/bench/RESULTS.md): the commit SHA, corpus hash, config, and per-category scores. Commit that file alongside the change so every result is permanently tied to the code that produced it — diffing entries (or `git log` on `RESULTS.md`) shows whether a change actually moved the needle. A `-dirty` suffix on the commit flags runs that included uncommitted changes. Add `--note="…"` to annotate what you were trying.
+
+### What to put in the PR description
+
+The CI bench posts a sticky comment automatically. For the description, paste at least the rows your change targets, plus two it shouldn't affect:
+
+| Dataset | Category | Before | After | Δ |
+|---|---|---|---|---|
+| LongMemEval | temporal-reasoning | 39% | 46% | **+7pp** |
+| LongMemEval | knowledge-update | 31% | 33% | +2pp |
+| LongMemEval | abstention | 28% | 27% | -1pp |
+| LoCoMo | multi_hop | 41% | 40% | -1pp |
+| Retrieval recall@15 (overall) | — | 67% | 71% | +4pp |
+| Runtime / cost | — | 8m02s / $4.18 | 8m11s / $4.31 | — |
+
+Regressions > **2pp** on any category require explicit justification. The PR-time gate (`.github/workflows/memory-bench.yml`) surfaces them automatically; once we have a noise floor, flip `STRICT_REGRESSION_GATE: "true"` to turn warnings into hard fails. Apply the `override-bench` label to merge through a justified regression.
+
+### Adding new evidence
+
+* **New corpus** → entry in `apps/api/bench/corpus/manifest.json` (set `vendored: false` + a `fetchUrl`; the file lands in the gitignored `cache/` dir), and a loader in `apps/api/bench/src/fixtures.ts` that returns `BenchCase[]`.
+* **New scoring lane** → new `ScoreType` in `apps/api/bench/src/types.ts` + branch in `aggregateScores()`.
+* **New judge prompt** → drop next to the existing ones in `apps/api/bench/src/judge.ts` and route via `pickPrompt()`.
+
+---
+
 ## Troubleshooting
 
 **Aura doesn't respond to DMs**

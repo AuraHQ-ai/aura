@@ -1,0 +1,268 @@
+name: Memory bench
+
+# Runs the memory benchmark harness (#1043).
+#
+# Triggers:
+#   - workflow_dispatch     manual, with optional subset + dataset inputs
+#   - pull_request          ONLY when memory-relevant paths change:
+#                             apps/api/src/memory/**
+#                             apps/api/bench/**
+#                             apps/api/src/personality/system-prompt.ts
+#                             apps/api/src/pipeline/core-prompt.ts
+#                             apps/api/src/scripts/bench-memory.ts
+#                             packages/db/src/schema.ts
+#                             packages/db/drizzle/**
+#                           Skipping unrelated PRs keeps the bill predictable.
+#
+# Defaults: --subset=medium, --dataset=both. Models default to the catalog
+# tiers main (Sonnet-class) for extraction + answerer and escalation
+# (Opus-class) for the judge — see apps/api/bench/src/models.ts.
+#
+# Costs: ~$15–25 per run on the medium subset (~330 questions), Opus judge.
+#
+# Required secrets:
+#   - NEON_API_KEY            ephemeral Neon branch for DB isolation
+#   - NEON_PROJECT_ID         the Aura project on Neon
+#   - NEON_DATABASE_URL       fallback DB url if Neon-branch creation fails
+#   - AI_GATEWAY_API_KEY      Sonnet/Opus calls via Vercel AI Gateway
+#   - ANTHROPIC_API_KEY       direct fallback when the gateway is down
+#   - COHERE_API_KEY          reranker (optional but recommended)
+#
+# Initial deployment is WARN-ONLY: regressions surface in the PR comment
+# but don't fail the check. Flip STRICT_REGRESSION_GATE to "true" below
+# once a noise floor is known. The `override-bench` label lets a PR merge
+# through a justified regression.
+
+on:
+  workflow_dispatch:
+    inputs:
+      subset:
+        description: "Subset size (fast | medium | full)"
+        type: choice
+        options: [fast, medium, full]
+        default: medium
+      dataset:
+        description: "Dataset (toy | lme | locomo | both)"
+        type: choice
+        options: [toy, lme, locomo, both]
+        default: both
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/api/src/memory/**"
+      - "apps/api/bench/**"
+      - "apps/api/src/personality/system-prompt.ts"
+      - "apps/api/src/pipeline/core-prompt.ts"
+      - "apps/api/src/scripts/bench-memory.ts"
+      - "packages/db/src/schema.ts"
+      - "packages/db/drizzle/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Cancel stale runs on the same ref when a new commit lands. Saves money
+# on PRs that force-push or get rebased while the bench is still warming up.
+concurrency:
+  group: memory-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  STRICT_REGRESSION_GATE: "false"
+  REGRESSION_THRESHOLD_PP: "2"
+
+jobs:
+  bench:
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # No `version:` — pnpm/action-setup reads it from the repo's
+      # `packageManager` field (pnpm@10.33.0). Pinning it here too triggers
+      # ERR_PNPM_BAD_PM_VERSION ("multiple versions of pnpm specified").
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache corpus
+        uses: actions/cache@v4
+        with:
+          path: apps/api/bench/corpus/cache
+          # Bust the cache when the manifest changes — that's our source of
+          # truth for which URLs to fetch.
+          key: bench-corpus-${{ hashFiles('apps/api/bench/corpus/manifest.json') }}
+          restore-keys: |
+            bench-corpus-
+
+      - name: Fetch corpus (cached)
+        run: pnpm --filter aura-api bench:fetch-corpus
+
+      - name: Create ephemeral Neon branch
+        id: neon
+        uses: neondatabase/create-branch-action@v6
+        continue-on-error: true
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          branch_name: memory-bench-${{ github.run_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Migrate bench database
+        # A fresh Neon branch inherits the parent's schema, but a PR that *adds*
+        # the bench migrations needs them applied before persistRun() can write
+        # to bench_runs. Run the migrator directly against the branch URL
+        # (the root db:migrate wrapper needs a .env.local that CI doesn't have).
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+        run: pnpm --filter @aura/db db:migrate
+
+      - name: Run bench
+        env:
+          # Prefer the ephemeral branch URL; fall back to a long-lived bench
+          # database if the Neon API is down or the secret is missing. Either
+          # way the run is isolated by workspace_id='bench-{runId}'.
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          ELEVENLABS_API_KEY: placeholder
+          DEFAULT_WORKSPACE_ID: bench-ci
+          DASHBOARD_API_SECRET: placeholder
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Model tiers — read by the bench at runtime via the live model
+          # catalog. main = Sonnet-class today, escalation = Opus-class.
+          AURA_BENCH_EXTRACTION: main
+          AURA_BENCH_ANSWERER: main
+          AURA_BENCH_JUDGE: escalation
+          SUBSET: ${{ github.event.inputs.subset || 'medium' }}
+          DATASET: ${{ github.event.inputs.dataset || 'both' }}
+        run: |
+          mkdir -p /tmp/bench
+          set -o pipefail
+          pnpm --filter aura-api bench:memory \
+            --dataset=${DATASET} \
+            --subset=${SUBSET} \
+            --concurrency=4 \
+            --json=/tmp/bench/result.json \
+            | tee /tmp/bench/output.txt
+        continue-on-error: true
+
+      - name: Upload bench artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-bench-${{ github.run_id }}
+          path: |
+            /tmp/bench/result.json
+            /tmp/bench/output.txt
+          retention-days: 30
+        continue-on-error: true
+
+      - name: Build PR comment table
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          SUBSET: ${{ github.event.inputs.subset || 'medium' }}
+          DATASET: ${{ github.event.inputs.dataset || 'both' }}
+          STRICT_GATE: ${{ env.STRICT_REGRESSION_GATE }}
+          THRESHOLD_PP: ${{ env.REGRESSION_THRESHOLD_PP }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '/tmp/bench/result.json';
+            const subset = process.env.SUBSET;
+            const dataset = process.env.DATASET;
+            const strict = process.env.STRICT_GATE === 'true';
+            const thr = Number(process.env.THRESHOLD_PP);
+
+            const lines = [];
+            lines.push(`### Memory bench (\`${subset}\` / \`${dataset}\`)`);
+            lines.push('');
+
+            if (!fs.existsSync(path)) {
+              lines.push('Bench did not complete — see workflow logs.');
+              fs.writeFileSync('/tmp/bench/comment.md', lines.join('\n'));
+              return;
+            }
+
+            const r = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const sha = (context.payload.pull_request?.head?.sha ?? context.sha).slice(0, 7);
+            lines.push(`Run \`${r.runId}\` · commit \`${sha}\` · corpus \`${(r.corpusHash || '').slice(0, 12)}\``);
+            lines.push('');
+            lines.push('| Dataset | Category | Metric | Score | n | Δ vs prior |');
+            lines.push('|---|---|---|---:|---:|---:|');
+
+            const rows = (r.scores || []).slice().sort((a, b) =>
+              a.dataset.localeCompare(b.dataset) ||
+              a.category.localeCompare(b.category) ||
+              a.scoreType.localeCompare(b.scoreType)
+            );
+            const deltas = r.deltas || {};
+            for (const s of rows) {
+              const key = `${s.dataset}|${s.category}|${s.scoreType}`;
+              const d = deltas[key];
+              let dCell = '—';
+              if (d && d.delta != null) {
+                const pp = Math.round(d.delta * 100);
+                const flag = pp <= -thr ? ' ⚠' : '';
+                dCell = `${pp >= 0 ? '+' : ''}${pp}pp${flag}`;
+              }
+              const pct = Math.round((s.score || 0) * 100);
+              lines.push(`| ${s.dataset} | ${s.category} | ${s.scoreType} | ${pct}% | ${s.nCorrect}/${s.n} | ${dCell} |`);
+            }
+            lines.push('');
+            lines.push(strict
+              ? `_Hard-fail mode — regressions >${thr}pp will fail this check. Apply \`override-bench\` to merge anyway._`
+              : `_Warn-only mode — regressions surface but don't fail the check._`);
+
+            fs.writeFileSync('/tmp/bench/comment.md', lines.join('\n'));
+
+      - name: Post / update sticky PR comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: memory-bench
+          path: /tmp/bench/comment.md
+
+      - name: Enforce regression gate
+        if: env.STRICT_REGRESSION_GATE == 'true' && github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'override-bench')
+        env:
+          THRESHOLD_PP: ${{ env.REGRESSION_THRESHOLD_PP }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            if (!fs.existsSync('/tmp/bench/result.json')) {
+              console.log('No result.json — failing closed.');
+              process.exit(1);
+            }
+            const r = JSON.parse(fs.readFileSync('/tmp/bench/result.json', 'utf8'));
+            const threshold = -Number(process.env.THRESHOLD_PP) / 100;
+            const regressions = Object.entries(r.deltas ?? {}).filter(([_, v]) => v?.delta != null && v.delta <= threshold);
+            if (regressions.length > 0) {
+              console.log('Regressions detected:');
+              for (const [k, v] of regressions) console.log('  ' + k + ': ' + (v.delta * 100).toFixed(1) + 'pp');
+              process.exit(1);
+            }
+            console.log('No regressions exceeded ' + (threshold * 100) + 'pp.');
+          "
+
+      - name: Delete Neon branch
+        if: always() && steps.neon.outputs.branch_id != ''
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          BRANCH_ID: ${{ steps.neon.outputs.branch_id }}
+        run: |
+          curl -sS -X DELETE \
+            "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${BRANCH_ID}" \
+            -H "Authorization: Bearer ${NEON_API_KEY}" \
+            || echo "Failed to delete Neon branch (will be GC'd by retention)."

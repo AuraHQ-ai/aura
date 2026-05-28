@@ -168,6 +168,18 @@ export const memories = pgTable(
     supersedesMemoryId: uuid("supersedes_memory_id"),
     supersededAt: timestamptz("superseded_at"),
     supersededByMemoryId: uuid("superseded_by_memory_id"),
+    /**
+     * Benchmark-only provenance — links a memory back to the corpus turns
+     * it was extracted from (e.g. LoCoMo dia_ids like ["D1:3", "D1:7"]).
+     * Populated only when the harness writes into a bench-* workspace;
+     * NULL in production. Powers retrieval recall@K scoring.
+     */
+    benchProvenance: jsonb("bench_provenance").$type<{
+      datasetId?: string;
+      conversationId?: string;
+      diaIds?: string[];
+      sessionIds?: string[];
+    } | null>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -1248,6 +1260,53 @@ export const content = pgTable(
 
 export type Content = typeof content.$inferSelect;
 export type NewContent = typeof content.$inferInsert;
+
+// ── Memory Benchmark Runs ──────────────────────────────────────────────────
+//
+// One row per (dataset, category, scoreType) per bench run. The harness
+// writes into a dedicated workspace_id = 'bench-meta' that is never wiped,
+// so historical scores survive even as the per-run extraction workspaces
+// (bench-{runId}) are garbage-collected.
+
+export const benchRuns = pgTable(
+  "bench_runs",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    /** Stable identifier for one full bench execution (groups all rows of a run). */
+    runId: text("run_id").notNull(),
+    /** "locomo" | "longmemeval" | "toy" (or future datasets). */
+    dataset: text("dataset").notNull(),
+    /** Per-dataset category, e.g. "temporal", "multi_hop", "abstention", "all". */
+    category: text("category").notNull(),
+    /** "qa_accuracy" | "retrieval_recall_at_15" | etc. */
+    scoreType: text("score_type").notNull(),
+    n: integer("n").notNull(),
+    nCorrect: integer("n_correct").notNull(),
+    score: real("score").notNull(),
+    costUsd: real("cost_usd"),
+    durationMs: integer("duration_ms"),
+    generationModel: text("generation_model"),
+    judgeModel: text("judge_model"),
+    embeddingModel: text("embedding_model"),
+    corpusHash: text("corpus_hash"),
+    gitSha: text("git_sha"),
+    prNumber: integer("pr_number"),
+    /** Free-form metadata (subset name, model overrides, etc.). */
+    metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("bench_runs_run_id_idx").on(table.runId),
+    index("bench_runs_dataset_category_idx").on(table.dataset, table.category, table.scoreType),
+    index("bench_runs_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export type BenchRun = typeof benchRuns.$inferSelect;
+export type NewBenchRun = typeof benchRuns.$inferInsert;
 export type ConversationTrace = typeof conversationTraces.$inferSelect;
 export type NewConversationTrace = typeof conversationTraces.$inferInsert;
 export type ConversationMessage = typeof conversationMessages.$inferSelect;

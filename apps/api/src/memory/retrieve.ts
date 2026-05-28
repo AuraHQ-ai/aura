@@ -332,7 +332,14 @@ export async function retrieveMemories(
       )`;
 
     const statusFilter = sql`${memories.status} IN ('current', 'disputed')`;
-    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter}`;
+    // Multi-tenancy: scope the hybrid SQL lane to the workspace when one is
+    // supplied. Without this, the vector + full-text RRF query would see
+    // every workspace's memories. The entity-first lane already filters by
+    // workspace_id; this brings the hybrid lane in line.
+    const workspaceFilter = workspaceId
+      ? sql`${memories.workspaceId} = ${workspaceId}`
+      : sql`TRUE`;
+    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter} AND ${workspaceFilter}`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
@@ -596,6 +603,8 @@ interface ConversationRetrievalOptions {
   minSimilarity?: number;
   /** Thread ts to exclude from results (e.g. the current thread, which is already in context) */
   excludeThreadTs?: string;
+  /** Workspace ID for tenant isolation. When provided, only messages in this workspace are searched. */
+  workspaceId?: string;
 }
 
 /**
@@ -621,6 +630,7 @@ export async function retrieveConversations(
     threadLimit = 5,
     minSimilarity = 0.3,
     excludeThreadTs,
+    workspaceId,
   } = options;
   const start = Date.now();
 
@@ -629,13 +639,16 @@ export async function retrieveConversations(
     const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
     // Find the most similar messages
+    const messagesWorkspaceFilter = workspaceId
+      ? sql`AND ${messages.workspaceId} = ${workspaceId}`
+      : sql``;
     const matchedMessages = await db
       .select({
         message: messages,
         similarity: sql<number>`1 - (${messages.embedding} <=> ${vectorSql})`.as("similarity"),
       })
       .from(messages)
-      .where(sql`${messages.embedding} IS NOT NULL`)
+      .where(sql`${messages.embedding} IS NOT NULL ${messagesWorkspaceFilter}`)
       .orderBy(sql`${messages.embedding} <=> ${vectorSql}`)
       .limit(matchLimit);
 
@@ -695,11 +708,15 @@ export async function retrieveConversations(
     // DISTINCT ON returns exactly one row per thread, prioritising user messages
     const threadKeys = sortedThreads.map(([key]) => key);
     const threadKeysList = sql.join(threadKeys.map(k => sql`${k}`), sql`, `);
+    const summaryWorkspaceFilter = workspaceId
+      ? sql`AND workspace_id = ${workspaceId}`
+      : sql``;
     const summaryResult = await db.execute(sql`
       SELECT DISTINCT ON (COALESCE(slack_thread_ts, slack_ts))
         slack_ts, slack_thread_ts, content, role, created_at
       FROM messages
-      WHERE slack_thread_ts IN (${threadKeysList}) OR slack_ts IN (${threadKeysList})
+      WHERE (slack_thread_ts IN (${threadKeysList}) OR slack_ts IN (${threadKeysList}))
+        ${summaryWorkspaceFilter}
       ORDER BY COALESCE(slack_thread_ts, slack_ts),
                (CASE WHEN role = 'user' THEN 0 ELSE 1 END),
                created_at
