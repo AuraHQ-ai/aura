@@ -81,9 +81,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      # No `version:` — pnpm/action-setup reads it from the repo's
+      # `packageManager` field (pnpm@10.33.0). Pinning it here too triggers
+      # ERR_PNPM_BAD_PM_VERSION ("multiple versions of pnpm specified").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
