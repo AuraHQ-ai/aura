@@ -22,7 +22,7 @@ interface RetrievalOptions {
   minRelevanceScore?: number;
   /** Skip privacy filter (for admin dashboard) */
   adminMode?: boolean;
-  /** Workspace ID for tenant isolation in entity queries */
+  /** Workspace ID for tenant isolation */
   workspaceId?: string;
 }
 
@@ -265,6 +265,7 @@ async function fetchEntityMatchedMemories(
       shareable: row.shareable ?? 0,
       searchVector: row.search_vector ?? null,
       status: row.status ?? "current",
+      benchProvenance: row.bench_provenance ?? null,
       confidence: row.confidence ?? 0.8,
       validFrom: row.valid_from ?? null,
       validUntil: row.valid_until ?? null,
@@ -305,7 +306,15 @@ async function fetchEntityMatchedMemories(
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId } = options;
+  const {
+    query,
+    queryEmbedding: precomputed,
+    currentUserId,
+    limit = 20,
+    minRelevanceScore = 0.1,
+    adminMode = false,
+    workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default",
+  } = options;
   const start = Date.now();
 
   try {
@@ -332,7 +341,8 @@ export async function retrieveMemories(
       )`;
 
     const statusFilter = sql`${memories.status} IN ('current', 'disputed')`;
-    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter}`;
+    const workspaceFilter = sql`${memories.workspaceId} = ${workspaceId}`;
+    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter} AND ${workspaceFilter}`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
@@ -433,6 +443,7 @@ export async function retrieveMemories(
         shareable: row.shareable ?? 0,
         searchVector: row.search_vector ?? null,
         status: row.status ?? "current",
+        benchProvenance: row.bench_provenance ?? null,
         confidence: row.confidence ?? 0.8,
         validFrom: row.valid_from ?? null,
         validUntil: row.valid_until ?? null,
@@ -596,6 +607,8 @@ interface ConversationRetrievalOptions {
   minSimilarity?: number;
   /** Thread ts to exclude from results (e.g. the current thread, which is already in context) */
   excludeThreadTs?: string;
+  /** Workspace ID for tenant isolation */
+  workspaceId?: string;
 }
 
 /**
@@ -621,6 +634,7 @@ export async function retrieveConversations(
     threadLimit = 5,
     minSimilarity = 0.3,
     excludeThreadTs,
+    workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default",
   } = options;
   const start = Date.now();
 
@@ -635,7 +649,7 @@ export async function retrieveConversations(
         similarity: sql<number>`1 - (${messages.embedding} <=> ${vectorSql})`.as("similarity"),
       })
       .from(messages)
-      .where(sql`${messages.embedding} IS NOT NULL`)
+      .where(sql`${messages.embedding} IS NOT NULL AND ${messages.workspaceId} = ${workspaceId}`)
       .orderBy(sql`${messages.embedding} <=> ${vectorSql}`)
       .limit(matchLimit);
 
@@ -699,7 +713,8 @@ export async function retrieveConversations(
       SELECT DISTINCT ON (COALESCE(slack_thread_ts, slack_ts))
         slack_ts, slack_thread_ts, content, role, created_at
       FROM messages
-      WHERE slack_thread_ts IN (${threadKeysList}) OR slack_ts IN (${threadKeysList})
+      WHERE workspace_id = ${workspaceId}
+        AND (slack_thread_ts IN (${threadKeysList}) OR slack_ts IN (${threadKeysList}))
       ORDER BY COALESCE(slack_thread_ts, slack_ts),
                (CASE WHEN role = 'user' THEN 0 ELSE 1 END),
                created_at

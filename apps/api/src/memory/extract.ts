@@ -435,11 +435,13 @@ Aggressive scoring guidance:
 
 ${ENTITY_EXTRACTION_RULES}`;
 
-interface ExtractionContext {
+export interface ExtractionContext {
   userMessage: string;
   assistantResponse: string;
   userId: string;
   channelType: ChannelType | DbChannelType;
+  /** Workspace ID for tenant isolation. Falls back to DEFAULT_WORKSPACE_ID/default. */
+  workspaceId?: string;
   sourceMessageId?: string;
   displayName?: string;
   /** Role of the message that triggered extraction */
@@ -450,6 +452,13 @@ interface ExtractionContext {
   threadTs?: string;
   /** Override createdAt on stored memories (for backfills) */
   createdAt?: Date;
+  /** Benchmark-only source mapping used for deterministic retrieval recall. */
+  benchProvenance?: {
+    caseId?: string;
+    sessionId?: string;
+    diaIds?: string[];
+    source?: string;
+  };
 }
 
 /**
@@ -465,14 +474,25 @@ type ExtractionSourceRole = "user" | "assistant" | "tool";
 
 export async function extractMemories(context: ExtractionContext): Promise<void> {
   const start = Date.now();
-  const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
+  const workspaceId = context.workspaceId || process.env.DEFAULT_WORKSPACE_ID || "default";
   const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
 
   try {
     const useReconciliation = !!(context.channelId && context.threadTs);
 
     if (useReconciliation) {
-      await extractWithReconciliation(context, workspaceId, extractionSourceRole, start);
+      const threadMessages = await fetchThreadMessages({
+        channelId: context.channelId!,
+        threadTs: context.threadTs!,
+        workspaceId,
+        limit: 30,
+      });
+      if (threadMessages.length === 0) {
+        logger.debug("No thread messages found — falling back to single-exchange extraction");
+        await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
+      } else {
+        await extractWithReconciliation(threadMessages, context, workspaceId, extractionSourceRole, start);
+      }
     } else {
       await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
     }
@@ -485,38 +505,56 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
   }
 }
 
+/**
+ * Extract memories from an already-loaded transcript. This keeps benchmark
+ * replays on the production extraction path without forcing synthetic Slack
+ * messages through the message store first.
+ */
+export async function extractMemoriesFromTranscript(
+  threadMessages: ThreadMessage[],
+  context: ExtractionContext,
+): Promise<void> {
+  const start = Date.now();
+  const workspaceId = context.workspaceId || process.env.DEFAULT_WORKSPACE_ID || "default";
+  const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
+
+  try {
+    if (threadMessages.length > 0 && context.channelId && context.threadTs) {
+      await extractWithReconciliation(threadMessages, context, workspaceId, extractionSourceRole, start);
+    } else {
+      await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
+    }
+  } catch (error) {
+    logger.error("Memory extraction from transcript failed", {
+      error: String(error).slice(0, 200),
+      userId: context.userId,
+      workspaceId,
+    });
+    throw error;
+  }
+}
+
 // ── Thread-Scoped Reconciliation Path ────────────────────────────────────────
 
 async function extractWithReconciliation(
+  threadMessages: ThreadMessage[],
   context: ExtractionContext,
   workspaceId: string,
   extractionSourceRole: ExtractionSourceRole,
   start: number,
 ): Promise<void> {
   let existingMemories: Memory[] = [];
-  const [threadMessages] = await Promise.all([
-    fetchThreadMessages({
-      channelId: context.channelId!,
-      threadTs: context.threadTs!,
-      limit: 30,
-    }),
-    retrieveMemories({
+  await retrieveMemories({
       query: context.userMessage,
       currentUserId: context.userId,
       limit: 20,
       workspaceId,
       adminMode: true,
-    }).then((mems) => { existingMemories = mems; }).catch((err) => {
-      logger.warn("Memory retrieval failed during reconciliation — proceeding with empty existing memories", {
-        error: String(err?.message ?? err).slice(0, 200),
-      });
-    }),
-  ]);
-
-  if (threadMessages.length === 0) {
-    logger.debug("No thread messages found — falling back to single-exchange extraction");
-    return extractSingleExchange(context, workspaceId, extractionSourceRole, start);
-  }
+  }).then((mems) => { existingMemories = mems; }).catch((err) => {
+    logger.warn("Memory retrieval failed during reconciliation — proceeding with empty existing memories", {
+      error: String(err?.message ?? err).slice(0, 200),
+    });
+  });
 
   const userIds = [...new Set(threadMessages.map((m) => m.userId).filter(Boolean))];
   const displayNames = new Map<string, string>();
@@ -787,6 +825,7 @@ async function processCreateOperations(
     importance: normalizedMemories[i].importance,
     relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
     extractionSourceRole,
+    ...(context.benchProvenance && { benchProvenance: context.benchProvenance }),
     ...(context.createdAt && { createdAt: context.createdAt, updatedAt: context.createdAt }),
   }));
 

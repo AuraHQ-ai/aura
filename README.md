@@ -146,6 +146,35 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ---
 
+## Memory PR checklist
+
+Memory-labeled PRs should include benchmark evidence from the real
+extract -> retrieve -> answer pipeline:
+
+```bash
+pnpm bench:memory -- --dataset=lme --subset=fast --json
+```
+
+Add a before/after table to the PR description:
+
+| Dataset | Category | Metric | Before | After | Delta |
+|---|---|---|---:|---:|---:|
+| longmemeval | temporal_reasoning | qa_accuracy | 42% | 45% | +3pp |
+| longmemeval | temporal_reasoning | retrieval_recall_at_15 | 61% | 60% | -1pp |
+
+Regression guidance:
+
+- Any category regression greater than 2 percentage points needs an explicit
+  explanation in the PR.
+- The PR workflow is warn-only while the benchmark baseline stabilizes.
+- Add the `memory-bench-override` label only for urgent changes where the
+  benchmark is irrelevant or temporarily blocked, and document why in the PR.
+
+Nightly runs post to `MEMORY_BENCH_SLACK_CHANNEL` via the `/api/cron/bench-memory`
+Vercel cron.
+
+---
+
 ## License
 
 MIT

@@ -269,7 +269,7 @@ These rules were learned through repeated failures. They are non-negotiable and 
 /**
  * Format retrieved memories for injection into the prompt.
  */
-function formatMemories(memories: Memory[]): string {
+export function formatMemoriesForPrompt(memories: Memory[]): string {
   if (memories.length === 0) return "";
 
   const formatted = memories
@@ -712,7 +712,7 @@ export async function buildSystemPrompt(
 
   // Retrieved memories
   if (context.memories.length > 0) {
-    contextParts.push(`  <memories>\n${formatMemories(context.memories)}\n  </memories>`);
+    contextParts.push(`  <memories>\n${formatMemoriesForPrompt(context.memories)}\n  </memories>`);
   }
 
   // Retrieved conversation threads (compact pointers)

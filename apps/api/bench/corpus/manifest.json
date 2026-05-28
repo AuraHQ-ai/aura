@@ -1,0 +1,22 @@
+{
+  "corpusHash": "computed-at-runtime",
+  "generatedAt": "2026-05-28T00:00:00.000Z",
+  "datasets": [
+    {
+      "name": "longmemeval",
+      "file": "longmemeval-subset.json",
+      "license": "MIT",
+      "sourceUrl": "https://github.com/xiaowu0162/LongMemEval",
+      "cases": 5,
+      "included": true
+    },
+    {
+      "name": "locomo",
+      "file": "locomo-subset.json",
+      "license": "CC-BY-NC-4.0",
+      "sourceUrl": "https://snap.stanford.edu/locomo/",
+      "cases": 0,
+      "included": false
+    }
+  ]
+}

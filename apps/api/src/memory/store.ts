@@ -43,9 +43,10 @@ export interface ThreadMessage {
 export async function fetchThreadMessages(params: {
   channelId: string;
   threadTs: string;
+  workspaceId?: string;
   limit?: number;
 }): Promise<ThreadMessage[]> {
-  const { channelId, threadTs, limit = 30 } = params;
+  const { channelId, threadTs, workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default", limit = 30 } = params;
   try {
     const rows = await db
       .select({
@@ -57,6 +58,7 @@ export async function fetchThreadMessages(params: {
       .from(messages)
       .where(
         and(
+          eq(messages.workspaceId, workspaceId),
           eq(messages.channelId, channelId),
           sql`(${messages.slackThreadTs} = ${threadTs} OR ${messages.slackTs} = ${threadTs})`,
         ),
@@ -116,7 +118,12 @@ export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { 
     const existing = await db
       .select({ id: messages.id })
       .from(messages)
-      .where(eq(messages.externalId, message.externalId))
+      .where(
+        and(
+          eq(messages.workspaceId, message.workspaceId ?? process.env.DEFAULT_WORKSPACE_ID ?? "default"),
+          eq(messages.externalId, message.externalId),
+        ),
+      )
       .limit(1);
 
     return existing[0]?.id ?? "";

@@ -1,0 +1,74 @@
+name: Memory PR Bench
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  memory-bench:
+    if: contains(github.event.pull_request.labels.*.name, 'memory') && !contains(github.event.pull_request.labels.*.name, 'memory-bench-override')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+      VERCEL_AI_GATEWAY_API_KEY: ${{ secrets.VERCEL_AI_GATEWAY_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+      ELEVENLABS_API_KEY: placeholder-for-api-startup
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create Neon benchmark branch
+        id: neon
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ env.NEON_PROJECT_ID }}
+          branch_name: memory-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          api_key: ${{ env.NEON_API_KEY }}
+
+      - name: Run fast memory benchmark
+        id: bench
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_with_pooler }}
+          DATABASE_URL_UNPOOLED: ${{ steps.neon.outputs.db_url }}
+        run: |
+          pnpm --filter @aura/db build
+          pnpm --filter @aura/db db:migrate
+          pnpm bench:memory -- --dataset=lme --subset=fast --json --judge=false --pr-number=${{ github.event.pull_request.number }} > memory-bench.json
+          node -e "const fs=require('fs'); const r=JSON.parse(fs.readFileSync('memory-bench.json','utf8')); const rows=r.aggregates.map(a=>`| ${a.dataset} | ${a.category} | ${a.scoreType} | ${(a.score*100).toFixed(1)}% | ${a.nCorrect}/${a.n} |`).join('\n'); fs.writeFileSync('memory-bench.md', ['<!-- memory-bench-comment -->','## Memory benchmark (warn-only)','', '| Dataset | Category | Metric | Score | N |','|---|---|---|---:|---:|', rows || '| - | - | - | - | - |','', '> Regression checks are warn-only while the baseline stabilizes. Add the `memory-bench-override` label to skip this workflow for urgent non-memory changes.'].join('\n'))"
+
+      - name: Sticky PR comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- memory-bench-comment -->';
+            const body = fs.existsSync('memory-bench.md')
+              ? fs.readFileSync('memory-bench.md', 'utf8')
+              : `${marker}\n## Memory benchmark (warn-only)\n\nBenchmark did not complete; inspect the workflow logs.`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+            const existing = comments.data.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

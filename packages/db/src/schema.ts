@@ -161,6 +161,12 @@ export const memories = pgTable(
     shareable: integer("shareable").notNull().default(0),
     extractionSourceRole: extractionSourceRoleEnum("extraction_source_role"),
     searchVector: text("search_vector"),
+    benchProvenance: jsonb("bench_provenance").$type<{
+      caseId?: string;
+      sessionId?: string;
+      diaIds?: string[];
+      source?: string;
+    }>(),
     status: memoryStatusEnum("status").notNull().default("current"),
     confidence: real("confidence").default(0.8),
     validFrom: timestamptz("valid_from"),
@@ -656,6 +662,43 @@ export const jobOutcomes = pgTable(
   ],
 );
 
+// ── Benchmark Runs ──────────────────────────────────────────────────────────
+export const benchRuns = pgTable(
+  "bench_runs",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    runId: text("run_id").notNull(),
+    dataset: text("dataset").notNull(),
+    category: text("category").notNull(),
+    scoreType: text("score_type").notNull(),
+    n: integer("n").notNull(),
+    nCorrect: integer("n_correct").notNull(),
+    score: real("score").notNull(),
+    costUsd: real("cost_usd"),
+    durationMs: integer("duration_ms"),
+    generationModel: text("generation_model"),
+    judgeModel: text("judge_model"),
+    embeddingModel: text("embedding_model"),
+    corpusHash: text("corpus_hash"),
+    gitSha: text("git_sha"),
+    prNumber: integer("pr_number"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("bench_runs_lookup_idx").on(
+      table.workspaceId,
+      table.dataset,
+      table.category,
+      table.scoreType,
+      table.createdAt,
+    ),
+    index("bench_runs_run_id_idx").on(table.runId),
+  ],
+);
+
 // ── Detached Sandbox Commands ────────────────────────────────────────────────
 
 export const detachedCommands = pgTable(
@@ -1066,6 +1109,8 @@ export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type NewErrorEvent = typeof errorEvents.$inferInsert;
 export type JobExecution = typeof jobExecutions.$inferSelect;
 export type NewJobExecution = typeof jobExecutions.$inferInsert;
+export type BenchRun = typeof benchRuns.$inferSelect;
+export type NewBenchRun = typeof benchRuns.$inferInsert;
 export type OAuthToken = typeof oauthTokens.$inferSelect;
 export type NewOAuthToken = typeof oauthTokens.$inferInsert;
 export type EmailRaw = typeof emailsRaw.$inferSelect;

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
+import { benchMemoryApp } from "./cron/bench-memory.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { supervisorApp } from "./cron/supervisor.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
@@ -143,6 +144,7 @@ app.get("/api/health", (c) => {
 
 // Mount cron routes
 app.route("/", cronApp);
+app.route("/", benchMemoryApp);
 app.route("/", heartbeatApp);
 app.route("/", supervisorApp);
 

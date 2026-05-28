@@ -1,0 +1,190 @@
+[
+  {
+    "id": "lme-toy-info-001",
+    "source": "longmemeval",
+    "category": "information_extraction",
+    "question": "What instrument did Maya say she is learning?",
+    "goldAnswer": "Maya is learning the cello.",
+    "abstention": false,
+    "evidenceDiaIds": ["s1:1"],
+    "evidenceSessionIds": ["s1"],
+    "sessions": [
+      {
+        "id": "s1",
+        "timestamp": "2026-01-02T09:00:00.000Z",
+        "turns": [
+          {
+            "role": "user",
+            "content": "Maya mentioned she started learning the cello this month and practices every evening.",
+            "diaId": "s1:1"
+          },
+          {
+            "role": "assistant",
+            "content": "Got it -- Maya is learning the cello.",
+            "diaId": "s1:2"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "lme-toy-temporal-001",
+    "source": "longmemeval",
+    "category": "temporal_reasoning",
+    "question": "Where did Alex move after leaving Zurich?",
+    "goldAnswer": "Alex moved to Lisbon after leaving Zurich.",
+    "abstention": false,
+    "evidenceDiaIds": ["s2:1"],
+    "evidenceSessionIds": ["s2"],
+    "sessions": [
+      {
+        "id": "s1",
+        "timestamp": "2026-02-01T10:00:00.000Z",
+        "turns": [
+          {
+            "role": "user",
+            "content": "Alex has been living in Zurich since 2024.",
+            "diaId": "s1:1"
+          },
+          {
+            "role": "assistant",
+            "content": "Understood.",
+            "diaId": "s1:2"
+          }
+        ]
+      },
+      {
+        "id": "s2",
+        "timestamp": "2026-03-15T10:00:00.000Z",
+        "turns": [
+          {
+            "role": "user",
+            "content": "Update on Alex: he left Zurich and moved to Lisbon for the new role.",
+            "diaId": "s2:1"
+          },
+          {
+            "role": "assistant",
+            "content": "I'll remember that Alex moved to Lisbon after Zurich.",
+            "diaId": "s2:2"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "lme-toy-update-001",
+    "source": "longmemeval",
+    "category": "knowledge_updates",
+    "question": "Which database did the team finally choose for the audit log?",
+    "goldAnswer": "The team finally chose Postgres for the audit log.",
+    "abstention": false,
+    "evidenceDiaIds": ["s2:1"],
+    "evidenceSessionIds": ["s2"],
+    "sessions": [
+      {
+        "id": "s1",
+        "timestamp": "2026-04-01T11:00:00.000Z",
+        "turns": [
+          {
+            "role": "user",
+            "content": "The audit log prototype is using DynamoDB this week.",
+            "diaId": "s1:1"
+          },
+          {
+            "role": "assistant",
+            "content": "Noted.",
+            "diaId": "s1:2"
+          }
+        ]
+      },
+      {
+        "id": "s2",
+        "timestamp": "2026-04-09T11:00:00.000Z",
+        "turns": [
+          {
+            "role": "user",
+            "content": "We reversed the audit log decision: the final choice is Postgres, not DynamoDB.",
+            "diaId": "s2:1"
+          },
+          {
+            "role": "assistant",
+            "content": "Understood -- Postgres is the final audit log choice.",
+            "diaId": "s2:2"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "lme-toy-abstain-001",
+    "source": "longmemeval",
+    "category": "abstention",
+    "question": "What is Priya's passport number?",
+    "goldAnswer": "Not answerable from the conversation.",
+    "abstention": true,
+    "evidenceDiaIds": [],
+    "evidenceSessionIds": [],
+    "sessions": [
+      {
+        "id": "s1",
+        "timestamp": "2026-05-01T12:00:00.000Z",
+        "turns": [
+          {
+            "role": "user",
+            "content": "Priya prefers early morning design reviews and works from Berlin.",
+            "diaId": "s1:1"
+          },
+          {
+            "role": "assistant",
+            "content": "I'll remember Priya's design review preference and location.",
+            "diaId": "s1:2"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "lme-toy-multisession-001",
+    "source": "longmemeval",
+    "category": "multi_session_reasoning",
+    "question": "Who owns the Spain launch and what channel should updates use?",
+    "goldAnswer": "Nora owns the Spain launch, and updates should go in #intl-launch.",
+    "abstention": false,
+    "evidenceDiaIds": ["s1:1", "s2:1"],
+    "evidenceSessionIds": ["s1", "s2"],
+    "sessions": [
+      {
+        "id": "s1",
+        "timestamp": "2026-05-10T08:30:00.000Z",
+        "turns": [
+          {
+            "role": "user",
+            "content": "Nora is the owner for the Spain launch.",
+            "diaId": "s1:1"
+          },
+          {
+            "role": "assistant",
+            "content": "Noted: Nora owns the Spain launch.",
+            "diaId": "s1:2"
+          }
+        ]
+      },
+      {
+        "id": "s2",
+        "timestamp": "2026-05-11T08:30:00.000Z",
+        "turns": [
+          {
+            "role": "user",
+            "content": "All Spain launch updates should be posted in #intl-launch.",
+            "diaId": "s2:1"
+          },
+          {
+            "role": "assistant",
+            "content": "Understood.",
+            "diaId": "s2:2"
+          }
+        ]
+      }
+    ]
+  }
+]
