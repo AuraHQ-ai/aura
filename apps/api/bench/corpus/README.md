@@ -11,16 +11,25 @@ This directory contains the corpus files consumed by `pnpm bench:memory`.
   effective SHA-256 corpus hash at runtime from included files.
 
 The committed subset is intentionally small so the harness, database isolation,
-scoring, persistence, cron, and PR workflow can be exercised cheaply. Replace or
-extend this file with the deterministic ~100-question LongMemEval oracle subset
-when refreshing benchmark coverage.
+scoring, persistence, and PR workflow can be exercised cheaply without polluting
+the repo with large benchmark data files.
 
-## Pending
+## Full/review-grade corpora
 
-LoCoMo is not vendored because its dataset is CC-BY-NC-4.0. Keep
-`included: false` until the license decision is made for this commercial repo.
-When approved, add `locomo-subset.json`, set `included: true`, and ensure cases
-populate `evidenceDiaIds` for retrieval recall@15.
+LoCoMo can be used for Aura, but do not vendor the full dataset or many derived
+files into this repo. Keep larger normalized subsets outside git and pass them
+explicitly:
+
+```bash
+pnpm --filter aura-api bench:memory -- \
+  --dataset=both \
+  --subset=full \
+  --corpus-file=/path/to/normalized-memory-bench.json
+```
+
+The external file should contain enough conversations to be meaningful for
+temporal and multi-session categories. LoCoMo cases should populate
+`evidenceDiaIds` for deterministic retrieval recall@15.
 
 ## Normalized case shape
 

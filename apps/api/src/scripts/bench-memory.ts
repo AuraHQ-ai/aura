@@ -41,7 +41,10 @@ function parseConfig(): BenchRunConfig {
     postSlack: hasFlag("post-slack"),
     judge: judgeArg === "false" || judgeArg === "off"
       ? false
-      : judgeArg ?? "configured-fast-model",
+      : judgeArg ?? process.env.MEMORY_BENCH_JUDGE_MODEL,
+    extractionModel: argValue("extraction-model") ?? process.env.MEMORY_BENCH_EXTRACTION_MODEL,
+    answerModel: argValue("answer-model") ?? process.env.MEMORY_BENCH_ANSWER_MODEL,
+    corpusFile: argValue("corpus-file") ?? process.env.MEMORY_BENCH_CORPUS_FILE,
     prNumber: prNumber ? Number(prNumber) : undefined,
   };
 }

@@ -47,7 +47,10 @@ export interface BenchRunConfig {
   dryRun: boolean;
   json: boolean;
   postSlack: boolean;
-  judge: string | false;
+  judge?: string | false;
+  extractionModel?: string;
+  answerModel?: string;
+  corpusFile?: string;
   prNumber?: number;
 }
 

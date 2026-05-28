@@ -148,11 +148,25 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ## Memory PR checklist
 
-Memory-labeled PRs should include benchmark evidence from the real
-extract -> retrieve -> answer pipeline:
+Memory PRs should include benchmark evidence from the real extract -> retrieve
+-> answer pipeline. For a quick smoke check against the small vendored corpus:
 
 ```bash
 pnpm bench:memory -- --dataset=lme --subset=fast --json
+```
+
+For a review-grade run, point the harness at a larger normalized corpus file
+kept outside git and use higher-quality models:
+
+```bash
+pnpm --filter aura-api bench:memory -- \
+  --dataset=both \
+  --subset=full \
+  --corpus-file=/path/to/normalized-memory-bench.json \
+  --extraction-model=anthropic/claude-sonnet-4.6 \
+  --answer-model=anthropic/claude-sonnet-4.6 \
+  --judge=anthropic/claude-opus-4.7 \
+  --json
 ```
 
 Add a before/after table to the PR description:
@@ -166,12 +180,13 @@ Regression guidance:
 
 - Any category regression greater than 2 percentage points needs an explicit
   explanation in the PR.
-- The PR workflow is warn-only while the benchmark baseline stabilizes.
+- The PR workflow runs only for memory-path changes or manual dispatch, and is
+  warn-only while the benchmark baseline stabilizes.
 - Add the `memory-bench-override` label only for urgent changes where the
   benchmark is irrelevant or temporarily blocked, and document why in the PR.
 
-Nightly runs post to `MEMORY_BENCH_SLACK_CHANNEL` via the `/api/cron/bench-memory`
-Vercel cron.
+There is intentionally no nightly benchmark cron. Use `--post-slack` with
+`MEMORY_BENCH_SLACK_CHANNEL` for an intentional Slack report after a manual run.
 
 ---
 

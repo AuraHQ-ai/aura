@@ -20,13 +20,14 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
   const runId = makeRunId();
   const workspaceId = benchWorkspaceId(runId);
   const gitSha = currentGitSha();
-  const corpusHash = await computeCorpusHash();
+  const corpusHash = await computeCorpusHash(config.corpusFile);
 
   try {
     const cases = await loadBenchCases({
       dataset: config.dataset,
       subset: config.subset,
       category: config.category,
+      corpusFile: config.corpusFile,
     });
 
     if (config.dryRun) {
@@ -55,6 +56,10 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
     await pruneOldBenchWorkspaces();
     await createBenchWorkspace(workspaceId);
 
+    if (config.extractionModel) {
+      process.env.MEMORY_BENCH_EXTRACTION_MODEL = config.extractionModel;
+    }
+
     if (!config.skipIngest) {
       await ingestBenchCases(cases, workspaceId);
     }
@@ -64,8 +69,12 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
       const { result, memories } = await evaluateRetrievalCase(benchCase, workspaceId, 15);
 
       if (config.judge !== false) {
-        const answer = await answerFromMemories(benchCase, memories);
-        const judged = await judgeAnswer({ benchCase, answer });
+        const answer = await answerFromMemories(benchCase, memories, config.answerModel);
+        const judged = await judgeAnswer({
+          benchCase,
+          answer,
+          modelId: typeof config.judge === "string" ? config.judge : undefined,
+        });
         caseResults.push({
           ...result,
           answer,
@@ -91,8 +100,12 @@ export async function runMemoryBench(config: BenchRunConfig): Promise<BenchRunRe
       corpusHash,
       gitSha,
       durationMs,
-      generationModel: "fast",
-      judgeModel: config.judge === false ? undefined : config.judge,
+      generationModel: config.answerModel ?? config.extractionModel ?? "configured-fast-model",
+      judgeModel: config.judge === false
+        ? undefined
+        : typeof config.judge === "string"
+          ? config.judge
+          : "configured-fast-model",
       embeddingModel: "configured",
       prNumber: config.prNumber,
     });

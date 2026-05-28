@@ -33,10 +33,6 @@
       "schedule": "0 4 * * *"
     },
     {
-      "path": "/api/cron/bench-memory",
-      "schedule": "30 4 * * *"
-    },
-    {
       "path": "/api/cron/heartbeat",
       "schedule": "*/30 * * * *"
     }

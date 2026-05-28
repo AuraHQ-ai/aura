@@ -1,10 +1,10 @@
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import type { Memory } from "@aura/db/schema";
-import { getFastModel } from "../../src/lib/ai.js";
 import { formatMemoriesForPrompt } from "../../src/personality/system-prompt.js";
 import { QA_ANSWER_SYSTEM, QA_JUDGE_SYSTEM } from "./judge.js";
 import type { BenchCase } from "./types.js";
+import { getBenchLanguageModel } from "./models.js";
 
 const judgeSchema = z.object({
   verdict: z.enum(["correct", "partial", "incorrect", "abstain_ok"]),
@@ -15,10 +15,11 @@ const judgeSchema = z.object({
 export async function answerFromMemories(
   benchCase: BenchCase,
   memories: Memory[],
+  modelId?: string,
 ): Promise<string> {
   if (memories.length === 0) return "I don't know.";
 
-  const model = await getFastModel();
+  const model = await getBenchLanguageModel(modelId);
   const memoryBlock = formatMemoriesForPrompt(memories);
   const { text } = await generateText({
     model,
@@ -32,12 +33,13 @@ export async function answerFromMemories(
 export async function judgeAnswer(params: {
   benchCase: BenchCase;
   answer: string;
+  modelId?: string;
 }): Promise<{
   verdict: "correct" | "partial" | "incorrect" | "abstain_ok";
   qaCorrect: boolean;
   rationale: string;
 }> {
-  const { benchCase, answer } = params;
+  const { benchCase, answer, modelId } = params;
   const lower = answer.toLowerCase();
   const abstained = lower.includes("i don't know") || lower.includes("i do not know");
 
@@ -49,7 +51,7 @@ export async function judgeAnswer(params: {
     };
   }
 
-  const model = await getFastModel();
+  const model = await getBenchLanguageModel(modelId);
   const { object } = await generateObject({
     model,
     schema: judgeSchema,
