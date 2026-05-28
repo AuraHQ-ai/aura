@@ -123,6 +123,53 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ---
 
+## Memory PR checklist
+
+Every PR that touches the memory subsystem — extractor, retriever, dedup, schema, prompts that change how memories are formatted, anything in `apps/api/src/memory/**` or `apps/api/src/personality/system-prompt.ts` — must include a bench score in the description.
+
+### How to run it locally
+
+```bash
+# Cheap smoke test (3 questions, ~$0, ~30s)
+pnpm bench:memory --dataset=toy
+
+# Real evaluation on the vendored LongMemEval slice (~100 questions, ~$1)
+pnpm --filter aura-api tsx apps/api/bench/scripts/fetch-longmemeval.ts \
+  --out apps/api/bench/corpus/longmemeval-subset.json \
+  --seed 4711
+pnpm bench:memory --dataset=lme --subset=full
+
+# Fast subset across whatever you have (~40 Qs, ~$0.50)
+pnpm bench:memory --dataset=both --subset=fast
+
+# Just the retrieval recall lane, no answerer/judge
+pnpm bench:memory --dataset=lme --dry-run        # validates the corpus loads
+```
+
+The harness creates a throwaway `bench-{runId}` workspace, replays the corpus through `extractMemoriesFromTranscript`, calls `retrieveMemories` for each question, then asks a constrained answerer + LLM judge for QA accuracy. Per-category scores land in `bench_runs`; the workspace is wiped at the end.
+
+### What to put in the PR description
+
+Run the bench **before** your change (on `main`), then **after**. Paste the relevant rows into a table — at minimum the categories your change is supposed to affect, plus the two it shouldn't:
+
+| Dataset | Category | Score before | Score after | Δ |
+|---|---|---|---|---|
+| LongMemEval | temporal-reasoning | 39% | 46% | **+7pp** |
+| LongMemEval | knowledge-update | 31% | 33% | +2pp |
+| LongMemEval | abstention | 28% | 27% | -1pp |
+| Retrieval recall@15 | (overall) | 67% | 71% | +4pp |
+| Runtime / cost | | 8m02s / $4.18 | 8m11s / $4.31 | — |
+
+If you regress more than **2pp** on any category, that is a blocker unless you justify the trade-off in the PR description. The PR-time CI gate (`.github/workflows/memory-pr-bench.yml`, triggered by the `memory` label) will surface this automatically. Apply the `override-bench` label to merge through a justified regression.
+
+### Adding new evidence
+
+* New corpus → loader in `apps/api/bench/src/fixtures.ts` + entry in `apps/api/bench/corpus/manifest.json` (license must be MIT/Apache or already cleared for commercial use; see `apps/api/bench/corpus/README.md` for the LoCoMo caveat).
+* New scoring lane → new `ScoreType` value in `apps/api/bench/src/types.ts` + branch in `aggregateScores()`.
+* New judge prompt → drop it next to the existing ones in `apps/api/bench/src/judge.ts` and add the category-routing case to `pickPrompt()`.
+
+---
+
 ## Troubleshooting
 
 **Aura doesn't respond to DMs**

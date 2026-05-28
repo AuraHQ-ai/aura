@@ -1,0 +1,186 @@
+name: Memory PR bench
+
+# Triggered when a PR is labelled `memory` (or already had the label and
+# new commits land). Runs the fast bench subset against a Neon branch so
+# production data is never touched, then posts a sticky comment with
+# before/after numbers.
+#
+# Initial deployment is WARN-ONLY: any regression posts a comment but does
+# not fail the job. Once we have a stable noise floor, flip
+# `STRICT_REGRESSION_GATE` to "true" in the env block below — that turns
+# >2pp regressions into a job failure (per the acceptance criteria in
+# #1043). An `override-bench` label on the PR bypasses the hard gate.
+#
+# Required secrets:
+#   - NEON_API_KEY            — for creating an ephemeral Neon branch
+#   - NEON_PROJECT_ID         — the Aura project on Neon
+#   - AI_GATEWAY_API_KEY      — for the constrained answerer + judge
+#   - COHERE_API_KEY          — reranker, optional but recommended
+#   - DASHBOARD_API_SECRET    — unused at runtime, satisfies env validation
+#
+# These should be set up under repo Settings → Secrets and variables → Actions.
+
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  STRICT_REGRESSION_GATE: "false"
+  REGRESSION_THRESHOLD_PP: "2"
+
+jobs:
+  bench:
+    # Only run for PRs that carry the `memory` label and are not draft.
+    if: contains(github.event.pull_request.labels.*.name, 'memory') && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Create ephemeral Neon branch
+        id: neon
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NEON_API_KEY:-}" ] || [ -z "${NEON_PROJECT_ID:-}" ]; then
+            echo "neon-skip=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::NEON_API_KEY or NEON_PROJECT_ID missing — bench will skip."
+            exit 0
+          fi
+          BRANCH="pr-${{ github.event.pull_request.number }}-${{ github.run_id }}"
+          # Create a branch from main with a connection_uri response so we can
+          # read DATABASE_URL straight from the API.
+          RESPONSE=$(curl -sS -X POST \
+            "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches" \
+            -H "Authorization: Bearer ${NEON_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"branch\":{\"name\":\"${BRANCH}\"},\"endpoints\":[{\"type\":\"read_write\"}]}")
+          DB_URL=$(echo "$RESPONSE" | jq -r '.connection_uris[0].connection_uri')
+          BRANCH_ID=$(echo "$RESPONSE" | jq -r '.branch.id')
+          if [ "$DB_URL" = "null" ] || [ -z "$DB_URL" ]; then
+            echo "Failed to create Neon branch. Response was:"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          echo "::add-mask::$DB_URL"
+          echo "db-url=$DB_URL" >> "$GITHUB_OUTPUT"
+          echo "branch-id=$BRANCH_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Bail if Neon unavailable
+        if: steps.neon.outputs.neon-skip == 'true'
+        run: |
+          echo "Skipping bench — no Neon credentials." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Run migrations on the Neon branch
+        if: steps.neon.outputs.neon-skip != 'true'
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db-url }}
+        run: pnpm --filter @aura/db db:migrate
+
+      - name: Run bench (fast subset, warn-only)
+        if: steps.neon.outputs.neon-skip != 'true'
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db-url }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          ELEVENLABS_API_KEY: placeholder
+          DEFAULT_WORKSPACE_ID: bench-pr
+          DASHBOARD_API_SECRET: placeholder
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p /tmp/bench
+          pnpm --filter aura-api bench:memory \
+            --dataset=both \
+            --subset=fast \
+            --json=/tmp/bench/result.json \
+            | tee /tmp/bench/output.txt
+        continue-on-error: true
+
+      - name: Build sticky PR comment
+        if: steps.neon.outputs.neon-skip != 'true'
+        id: comment
+        run: |
+          if [ ! -f /tmp/bench/output.txt ]; then
+            echo "No bench output produced." > /tmp/bench/output.txt
+          fi
+          {
+            echo "body<<EOF"
+            echo "### Memory bench (fast subset)"
+            echo ""
+            echo "<!-- memory-bench-sticky -->"
+            echo ""
+            echo "Run: \`${{ github.run_id }}\` · commit \`${GITHUB_SHA::7}\`"
+            echo ""
+            echo '```'
+            cat /tmp/bench/output.txt
+            echo '```'
+            echo ""
+            if [ -n "${{ env.STRICT_REGRESSION_GATE }}" ] && [ "${{ env.STRICT_REGRESSION_GATE }}" = "true" ]; then
+              echo "_Hard-fail gate is ON — regressions >${{ env.REGRESSION_THRESHOLD_PP }}pp will fail this check. Apply the \`override-bench\` label to merge anyway._"
+            else
+              echo "_Warn-only mode — regressions are surfaced but don't fail the check. Ship #1043e to flip on the hard gate._"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post / update PR comment
+        if: steps.neon.outputs.neon-skip != 'true'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: memory-bench
+          message: ${{ steps.comment.outputs.body }}
+
+      - name: Enforce regression gate
+        if: env.STRICT_REGRESSION_GATE == 'true' && steps.neon.outputs.neon-skip != 'true' && !contains(github.event.pull_request.labels.*.name, 'override-bench')
+        env:
+          THRESHOLD_PP: ${{ env.REGRESSION_THRESHOLD_PP }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            if (!fs.existsSync('/tmp/bench/result.json')) {
+              console.log('No result.json — failing closed.');
+              process.exit(1);
+            }
+            const r = JSON.parse(fs.readFileSync('/tmp/bench/result.json', 'utf8'));
+            const threshold = -Number(process.env.THRESHOLD_PP) / 100;
+            const regressions = Object.entries(r.deltas ?? {}).filter(([_, v]) => v?.delta != null && v.delta <= threshold);
+            if (regressions.length > 0) {
+              console.log('Regressions detected:');
+              for (const [k, v] of regressions) console.log('  ' + k + ': ' + (v.delta * 100).toFixed(1) + 'pp');
+              process.exit(1);
+            }
+            console.log('No regressions exceeded ' + (threshold * 100) + 'pp.');
+          "
+
+      - name: Delete Neon branch
+        if: always() && steps.neon.outputs.branch-id != ''
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          BRANCH_ID: ${{ steps.neon.outputs.branch-id }}
+        run: |
+          curl -sS -X DELETE \
+            "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${BRANCH_ID}" \
+            -H "Authorization: Bearer ${NEON_API_KEY}" \
+            || echo "Failed to delete Neon branch (will be GC'd by Neon retention)."
