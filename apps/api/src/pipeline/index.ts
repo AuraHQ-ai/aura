@@ -10,6 +10,7 @@ import {
 import { assemblePrompt } from "./prompt.js";
 import { generateResponse, type LLMResponse } from "./respond.js";
 import { InvocationSupersededError } from "./prepare-step.js";
+import { buildMessageText } from "./message-text.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import {
   fetchConversationContext,
@@ -296,15 +297,32 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       ],
     });
 
+    // 4b. Download files if the message has attachments. Voice notes produce
+    // transcripts for the canonical message body instead of file content parts.
+    const botToken = process.env.SLACK_BOT_TOKEN || "";
+    const downloadedFiles = hasFiles
+      ? await downloadEventFiles(event, botToken)
+      : { parts: [], transcripts: [] };
+    const fileParts = downloadedFiles.parts;
+    const voiceTranscripts = downloadedFiles.transcripts;
+    if (fileParts.length > 0) {
+      logger.info("Files ready for LLM", {
+        count: fileParts.length,
+        types: fileParts.map((p) => p.type),
+      });
+    }
+
     // ── Edge case: extremely long message ────────────────────────────────
-    let messageText = context.text || (hasFiles ? "What can you tell me about this file?" : "");
+    let messageText = buildMessageText(context.text, hasFiles, voiceTranscripts);
     if (messageText.length > MAX_MESSAGE_LENGTH) {
+      const originalLength = messageText.length;
       messageText = messageText.substring(0, MAX_MESSAGE_LENGTH);
       logger.warn("Truncated long message", {
-        originalLength: context.text.length,
+        originalLength,
         truncatedTo: MAX_MESSAGE_LENGTH,
       });
     }
+    context.text = messageText;
 
     // ── USLACKBOT list notification enrichment ───────────────────────────
     // Any USLACKBOT message in a tracked List channel is a list activity
@@ -368,16 +386,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
 
     capturedSystemPrompt = [stablePrefix, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
     capturedUserPrompt = messageText;
-
-    // 4b. Download files if the message has attachments
-    const botToken = process.env.SLACK_BOT_TOKEN || "";
-    const fileParts = await downloadEventFiles(event, botToken);
-    if (fileParts.length > 0) {
-      logger.info("Files ready for LLM", {
-        count: fileParts.length,
-        types: fileParts.map((p) => p.type),
-      });
-    }
 
     // 5. Call LLM (streams response directly to Slack via chat.update)
     const llmStart = Date.now();
