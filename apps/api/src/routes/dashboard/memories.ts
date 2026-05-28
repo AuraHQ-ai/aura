@@ -71,6 +71,7 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
           currentUserId: "dashboard",
           limit,
           adminMode: true,
+          workspaceId: process.env.DEFAULT_WORKSPACE_ID ?? "default",
         });
 
         let items = results.map(({ embedding, searchVector, workspaceId, ...rest }) => rest);

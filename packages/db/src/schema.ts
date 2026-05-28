@@ -1209,6 +1209,46 @@ export type NewCredentialGrant = typeof credentialGrants.$inferInsert;
 export type CredentialAuditEntry = typeof credentialAuditLog.$inferSelect;
 export type NewCredentialAuditEntry = typeof credentialAuditLog.$inferInsert;
 
+// ── Memory benchmark runs (aggregate scores; workspace bench-meta) ─────────
+
+export const benchRuns = pgTable(
+  "bench_runs",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    runId: text("run_id").notNull(),
+    dataset: text("dataset").notNull(),
+    category: text("category").notNull(),
+    scoreType: text("score_type").notNull(),
+    n: integer("n").notNull(),
+    nCorrect: integer("n_correct").notNull(),
+    score: real("score").notNull(),
+    costUsd: real("cost_usd"),
+    durationMs: integer("duration_ms"),
+    generationModel: text("generation_model"),
+    judgeModel: text("judge_model"),
+    embeddingModel: text("embedding_model"),
+    corpusHash: text("corpus_hash"),
+    gitSha: text("git_sha"),
+    prNumber: integer("pr_number"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("bench_runs_run_id_idx").on(table.runId),
+    index("bench_runs_dataset_category_idx").on(
+      table.dataset,
+      table.category,
+      table.scoreType,
+      table.createdAt,
+    ),
+  ],
+);
+
+export type BenchRun = typeof benchRuns.$inferSelect;
+export type NewBenchRun = typeof benchRuns.$inferInsert;
+
 // ── Content (blog/docs index for semantic search + related posts) ───────────
 
 export const content = pgTable(

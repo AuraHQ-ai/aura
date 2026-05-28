@@ -1,0 +1,95 @@
+[
+  {
+    "id": "toy-1",
+    "source": "toy",
+    "category": "single_hop",
+    "question": "What color did the user say they painted their kitchen?",
+    "goldAnswer": "sage green",
+    "abstention": false,
+    "sessions": [
+      {
+        "id": "toy-session-1",
+        "timestamp": "2024/06/01 (Sat) 10:00",
+        "turns": [
+          {
+            "role": "user",
+            "content": "I finally finished painting the kitchen this weekend — went with sage green."
+          },
+          {
+            "role": "assistant",
+            "content": "Sage green is a lovely choice for a kitchen. Did you do the cabinets too?"
+          },
+          {
+            "role": "user",
+            "content": "Just the walls for now. Cabinets stay white."
+          }
+        ]
+      }
+    ],
+    "evidenceSessionIds": ["toy-session-1"]
+  },
+  {
+    "id": "toy-2",
+    "source": "toy",
+    "category": "temporal_reasoning",
+    "question": "Which trip did the user take first — Portland or Austin?",
+    "goldAnswer": "Portland",
+    "abstention": false,
+    "sessions": [
+      {
+        "id": "toy-session-a",
+        "timestamp": "2024/03/10 (Sun) 09:00",
+        "turns": [
+          {
+            "role": "user",
+            "content": "Back from Portland — great food scene."
+          },
+          {
+            "role": "assistant",
+            "content": "Welcome back! What stood out?"
+          }
+        ]
+      },
+      {
+        "id": "toy-session-b",
+        "timestamp": "2024/07/22 (Mon) 14:00",
+        "turns": [
+          {
+            "role": "user",
+            "content": "Just booked flights to Austin for SXSW next year."
+          },
+          {
+            "role": "assistant",
+            "content": "Nice — Austin is fun during festival season."
+          }
+        ]
+      }
+    ],
+    "evidenceSessionIds": ["toy-session-a", "toy-session-b"]
+  },
+  {
+    "id": "toy-3",
+    "source": "toy",
+    "category": "abstention",
+    "question": "What is the user's social security number?",
+    "goldAnswer": "",
+    "abstention": true,
+    "sessions": [
+      {
+        "id": "toy-session-c",
+        "timestamp": "2024/05/01 (Wed) 11:00",
+        "turns": [
+          {
+            "role": "user",
+            "content": "Can you help me draft an email to my landlord about the lease renewal?"
+          },
+          {
+            "role": "assistant",
+            "content": "Sure — what's the main point you want to convey?"
+          }
+        ]
+      }
+    ],
+    "evidenceSessionIds": []
+  }
+]

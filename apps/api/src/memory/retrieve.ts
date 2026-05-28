@@ -22,8 +22,8 @@ interface RetrievalOptions {
   minRelevanceScore?: number;
   /** Skip privacy filter (for admin dashboard) */
   adminMode?: boolean;
-  /** Workspace ID for tenant isolation in entity queries */
-  workspaceId?: string;
+  /** Workspace ID for tenant isolation (required for correct multi-tenant retrieval) */
+  workspaceId: string;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -147,8 +147,8 @@ interface EntityMemoryResult {
 async function fetchEntityMatchedMemories(
   query: string,
   minRelevanceScore: number,
-  currentUserId?: string,
-  workspaceId?: string,
+  currentUserId: string | undefined,
+  workspaceId: string,
 ): Promise<EntityMemoryResult> {
   const emptyResult: EntityMemoryResult = { memories: [], memoryEntityMap: new Map(), resolvedEntityCount: 0 };
 
@@ -164,8 +164,6 @@ async function fetchEntityMatchedMemories(
       extractedEntities = heuristicNames.map((name) => ({ name, type: "company" as EntityType }));
       usedHeuristic = true;
     }
-
-    if (!workspaceId) return emptyResult;
 
     // Step 3: Resolve each extracted entity to an entity ID (read-only, no creation)
     const resolutions = await Promise.all(
@@ -308,6 +306,10 @@ export async function retrieveMemories(
   const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId } = options;
   const start = Date.now();
 
+  if (!workspaceId) {
+    throw new Error("retrieveMemories requires workspaceId for tenant isolation");
+  }
+
   try {
     const [queryEmbedding, lexemes, entityResult] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
@@ -332,7 +334,8 @@ export async function retrieveMemories(
       )`;
 
     const statusFilter = sql`${memories.status} IN ('current', 'disputed')`;
-    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter}`;
+    const workspaceFilter = sql`${memories.workspaceId} = ${workspaceId}`;
+    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter} AND ${workspaceFilter}`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
@@ -596,6 +599,8 @@ interface ConversationRetrievalOptions {
   minSimilarity?: number;
   /** Thread ts to exclude from results (e.g. the current thread, which is already in context) */
   excludeThreadTs?: string;
+  /** Workspace ID for tenant isolation */
+  workspaceId: string;
 }
 
 /**
@@ -621,8 +626,13 @@ export async function retrieveConversations(
     threadLimit = 5,
     minSimilarity = 0.3,
     excludeThreadTs,
+    workspaceId,
   } = options;
   const start = Date.now();
+
+  if (!workspaceId) {
+    throw new Error("retrieveConversations requires workspaceId for tenant isolation");
+  }
 
   try {
     const queryEmbedding = precomputed ?? await embedText(query);
@@ -635,7 +645,7 @@ export async function retrieveConversations(
         similarity: sql<number>`1 - (${messages.embedding} <=> ${vectorSql})`.as("similarity"),
       })
       .from(messages)
-      .where(sql`${messages.embedding} IS NOT NULL`)
+      .where(sql`${messages.embedding} IS NOT NULL AND ${messages.workspaceId} = ${workspaceId}`)
       .orderBy(sql`${messages.embedding} <=> ${vectorSql}`)
       .limit(matchLimit);
 

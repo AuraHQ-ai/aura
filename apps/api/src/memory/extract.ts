@@ -435,7 +435,7 @@ Aggressive scoring guidance:
 
 ${ENTITY_EXTRACTION_RULES}`;
 
-interface ExtractionContext {
+export interface ExtractionContext {
   userMessage: string;
   assistantResponse: string;
   userId: string;
@@ -448,8 +448,10 @@ interface ExtractionContext {
   channelId?: string;
   /** Thread timestamp — enables thread-scoped extraction when paired with channelId */
   threadTs?: string;
-  /** Override createdAt on stored memories (for backfills) */
+  /** Override createdAt on stored memories (for backfills / benchmarks) */
   createdAt?: Date;
+  /** Workspace for memory storage and retrieval (defaults to DEFAULT_WORKSPACE_ID) */
+  workspaceId?: string;
 }
 
 /**
@@ -463,16 +465,34 @@ interface ExtractionContext {
  */
 type ExtractionSourceRole = "user" | "assistant" | "tool";
 
-export async function extractMemories(context: ExtractionContext): Promise<void> {
+function resolveExtractionWorkspaceId(context: ExtractionContext): string {
+  return context.workspaceId ?? process.env.DEFAULT_WORKSPACE_ID ?? "default";
+}
+
+/**
+ * Extract memories from a pre-loaded thread transcript (no Slack fetch).
+ * Used by benchmarks and backfills; production uses {@link extractMemories}.
+ */
+export async function extractMemoriesFromTranscript(
+  threadMessages: ThreadMessage[],
+  context: ExtractionContext,
+): Promise<void> {
   const start = Date.now();
-  const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
+  const workspaceId = resolveExtractionWorkspaceId(context);
   const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
 
   try {
-    const useReconciliation = !!(context.channelId && context.threadTs);
+    const useReconciliation =
+      !!(context.channelId && context.threadTs) && threadMessages.length > 0;
 
     if (useReconciliation) {
-      await extractWithReconciliation(context, workspaceId, extractionSourceRole, start);
+      await extractWithReconciliation(
+        context,
+        workspaceId,
+        extractionSourceRole,
+        start,
+        threadMessages,
+      );
     } else {
       await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
     }
@@ -485,6 +505,18 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
   }
 }
 
+export async function extractMemories(context: ExtractionContext): Promise<void> {
+  const useReconciliation = !!(context.channelId && context.threadTs);
+  const threadMessages = useReconciliation
+    ? await fetchThreadMessages({
+        channelId: context.channelId!,
+        threadTs: context.threadTs!,
+        limit: 30,
+      })
+    : [];
+  return extractMemoriesFromTranscript(threadMessages, context);
+}
+
 // ── Thread-Scoped Reconciliation Path ────────────────────────────────────────
 
 async function extractWithReconciliation(
@@ -492,31 +524,27 @@ async function extractWithReconciliation(
   workspaceId: string,
   extractionSourceRole: ExtractionSourceRole,
   start: number,
+  threadMessages: ThreadMessage[],
 ): Promise<void> {
   let existingMemories: Memory[] = [];
-  const [threadMessages] = await Promise.all([
-    fetchThreadMessages({
-      channelId: context.channelId!,
-      threadTs: context.threadTs!,
-      limit: 30,
-    }),
-    retrieveMemories({
-      query: context.userMessage,
-      currentUserId: context.userId,
-      limit: 20,
-      workspaceId,
-      adminMode: true,
-    }).then((mems) => { existingMemories = mems; }).catch((err) => {
-      logger.warn("Memory retrieval failed during reconciliation — proceeding with empty existing memories", {
-        error: String(err?.message ?? err).slice(0, 200),
-      });
-    }),
-  ]);
-
-  if (threadMessages.length === 0) {
-    logger.debug("No thread messages found — falling back to single-exchange extraction");
-    return extractSingleExchange(context, workspaceId, extractionSourceRole, start);
-  }
+  await retrieveMemories({
+    query: context.userMessage,
+    currentUserId: context.userId,
+    limit: 20,
+    workspaceId,
+    adminMode: true,
+  })
+    .then((mems) => {
+      existingMemories = mems;
+    })
+    .catch((err) => {
+      logger.warn(
+        "Memory retrieval failed during reconciliation — proceeding with empty existing memories",
+        {
+          error: String(err?.message ?? err).slice(0, 200),
+        },
+      );
+    });
 
   const userIds = [...new Set(threadMessages.map((m) => m.userId).filter(Boolean))];
   const displayNames = new Map<string, string>();

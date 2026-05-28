@@ -1,0 +1,12 @@
+{
+  "corpus_hash": "967c7570742e6878",
+  "seed": 1043,
+  "counts": {
+    "temporal_reasoning": 40,
+    "knowledge_update": 25,
+    "multi_session": 35
+  },
+  "total": 100,
+  "source": "longmemeval_oracle.json",
+  "license": "MIT"
+}
