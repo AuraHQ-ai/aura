@@ -129,11 +129,11 @@ The harness in `apps/api/bench/` makes memory PRs falsifiable. It replays vendor
 
 ### When does it run?
 
-* **Automatically on PRs** when a memory-relevant path changes — `apps/api/src/memory/**`, `apps/api/bench/**`, `apps/api/src/personality/system-prompt.ts`, `apps/api/src/pipeline/core-prompt.ts`, `packages/db/src/schema.ts`, or `packages/db/drizzle/**`. Other PRs skip the bench entirely so we don't burn cycles on unrelated changes.
-* **Manually via `workflow_dispatch`** in the GitHub UI (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`) and dataset (`toy | lme | locomo | both`).
-* **Locally**, any time. Useful when iterating on a memory change before pushing.
+The bench is **event-driven, not scheduled** — you run it when memory formation or retrieval actually changes, not on a clock. Re-running the same code against the same corpus every night would just spend money re-deriving identical numbers.
 
-There is **no nightly cron** — the corpora and the codepath are both stable, so re-running the same bench every night would just spend money on identical numbers. PRs and manual runs are the right cadence.
+* **Automatically on PRs** when a memory-relevant path changes — `apps/api/src/memory/**`, `apps/api/bench/**`, `apps/api/src/personality/system-prompt.ts`, `apps/api/src/pipeline/core-prompt.ts`, `packages/db/src/schema.ts`, or `packages/db/drizzle/**`. Other PRs skip the bench entirely so we don't burn cycles on unrelated changes. Results land in a sticky PR comment. This path filter *is* the "significant change" trigger.
+* **Manually via `workflow_dispatch`** in the GitHub UI (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`) and dataset (`toy | lme | locomo | both`).
+* **Locally**, any time — this is the primary loop while iterating on a memory change.
 
 ### Local workflow
 
@@ -171,6 +171,27 @@ pnpm bench:memory --judge-model=anthropic/claude-opus-4.6
 ```
 
 `--prod` switches to `.env.production`. `--dry-run` validates corpora load without any DB writes or LLM calls. `--json=path` writes per-question detail.
+
+### Iterating: ramp the data up, don't boil the ocean
+
+Don't jump straight to the full corpus. Start tiny, confirm the axis you're working on improves, then widen. There's no point scoring 1,500 LoCoMo questions while `temporal` and `knowledge_update` sit at 0% — fix those on a handful of cases first.
+
+`--limit=N` caps cases **per category** (overriding `--subset`), and `--category=` narrows to the one axis you're fixing:
+
+```bash
+# Tight loop on the failing axis — 3 cases, seconds, cents.
+pnpm bench:memory --dataset=lme --category=temporal-reasoning --limit=3
+
+# Looks better? Widen to 10 and log the result for the record.
+pnpm bench:memory --dataset=lme --category=temporal-reasoning --limit=10 --log --note="extractor durability fix"
+
+# Axis healthy across categories? Now it's worth the full run.
+pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
+```
+
+### Results log (commit fingerprints)
+
+`--log` appends a fingerprint of the run to [`apps/api/bench/RESULTS.md`](apps/api/bench/RESULTS.md): the commit SHA, corpus hash, config, and per-category scores. Commit that file alongside the change so every result is permanently tied to the code that produced it — diffing entries (or `git log` on `RESULTS.md`) shows whether a change actually moved the needle. A `-dirty` suffix on the commit flags runs that included uncommitted changes. Add `--note="…"` to annotate what you were trying.
 
 ### What to put in the PR description
 

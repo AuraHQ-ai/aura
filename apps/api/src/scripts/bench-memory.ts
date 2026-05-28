@@ -9,6 +9,14 @@
  *   pnpm bench:memory --corpus-file=/path/data.json  # bring-your-own normalized corpus
  *   pnpm bench:memory --dry-run                      # no DB writes, no LLM calls
  *
+ * Iterating on a memory change? Ramp the data up in small steps instead of
+ * jumping straight to the full set, and focus on the axis you're fixing:
+ *   pnpm bench:memory --dataset=lme --category=temporal-reasoning --limit=3
+ *   pnpm bench:memory --dataset=lme --category=temporal-reasoning --limit=10 --log
+ * --limit=N caps cases per category (overrides --subset). --log appends a
+ * fingerprint (commit + scores) to apps/api/bench/RESULTS.md; pair with
+ * --note="…" for context.
+ *
  * Model overrides accept either a gateway model id or a catalog tier name:
  *   --extraction-model=anthropic/claude-sonnet-4.6   # explicit pin
  *   --extraction-model=main                          # tier (resolves via DB catalog)
@@ -60,6 +68,7 @@ const datasets =
         : ([datasetArg] as any);
 
 const subsetArg = (getFlag("subset") ?? "medium") as "fast" | "medium" | "full";
+const limit = getFlag("limit") ? Number(getFlag("limit")) : undefined;
 const category = getFlag("category");
 const judgeModel = getFlag("judge-model") ?? getFlag("judge");
 const extractionModel = getFlag("extraction-model");
@@ -67,10 +76,18 @@ const answererModel = getFlag("answerer-model");
 const concurrency = getFlag("concurrency") ? Number(getFlag("concurrency")) : undefined;
 const corpusFile = getFlag("corpus-file");
 const jsonOut = getFlag("json");
+// CI passes --pr-number (or PR_NUMBER env) so the run row is attributable to a
+// pull request; nightly/manual runs leave it null.
+const prNumberArg = getFlag("pr-number") ?? process.env.PR_NUMBER;
+const prNumber =
+  prNumberArg && Number.isFinite(Number(prNumberArg))
+    ? Number(prNumberArg)
+    : undefined;
 
 const cfg = {
   datasets,
   subset: subsetArg,
+  limit,
   category,
   skipIngest: hasFlag("skip-ingest"),
   dryRun: hasFlag("dry-run"),
@@ -80,11 +97,15 @@ const cfg = {
   judgeModel,
   concurrency,
   corpusFile,
+  prNumber,
 };
+
+const note = getFlag("note");
+const logResults = hasFlag("log");
 
 if (cfg.dryRun) console.log("DRY RUN — no DB writes, no LLM calls");
 console.log(
-  `Running bench: datasets=${cfg.datasets.join(",")} subset=${cfg.subset}${category ? " category=" + category : ""}`,
+  `Running bench: datasets=${cfg.datasets.join(",")} ${limit ? "limit=" + limit : "subset=" + cfg.subset}${category ? " category=" + category : ""}`,
 );
 
 try {
@@ -105,6 +126,26 @@ try {
       2,
     ));
     console.log(`\nWrote detailed JSONL to ${jsonOut}`);
+  }
+
+  // Append a commit-stamped fingerprint to RESULTS.md when asked. Skipped for
+  // dry runs and empty result sets (nothing meaningful to record).
+  if (logResults && !cfg.dryRun && output.scores.length > 0) {
+    const { appendResultsLog } = await import("../../bench/src/results-log.js");
+    const path = appendResultsLog({
+      runId: output.runId,
+      scores: output.scores,
+      datasets: [...cfg.datasets],
+      subset: cfg.subset,
+      limit: cfg.limit,
+      category: cfg.category,
+      corpusHash: output.corpusHash,
+      totalDurationMs: output.totalDurationMs,
+      note,
+    });
+    console.log(`\nLogged result fingerprint to ${path}`);
+  } else if (logResults && (cfg.dryRun || output.scores.length === 0)) {
+    console.log("\n--log skipped (dry run or no scores to record).");
   }
 
   process.exit(0);

@@ -75,6 +75,12 @@ export interface BenchRunConfig {
    *               Manual runs only — costly.
    */
   subset: "fast" | "medium" | "full";
+  /**
+   * Optional explicit per-category cap. Overrides `subset` when set — useful
+   * for ramping data up in small steps (`--limit=2`, then `5`, then `10`)
+   * while iterating on a memory change. 0 or undefined falls back to `subset`.
+   */
+  limit?: number;
   /** Optional category filter (e.g. only "temporal"). */
   category?: string;
   /** Skip ingestion (assumes memories already populated for this runId). */

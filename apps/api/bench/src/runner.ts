@@ -73,7 +73,12 @@ function resolveGitSha(): string | undefined {
 }
 
 async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
-  const perCategory = SUBSET_PER_CATEGORY[config.subset];
+  // An explicit --limit wins over the named subset, so you can dial the
+  // per-category count up incrementally while iterating.
+  const perCategory =
+    config.limit && config.limit > 0
+      ? config.limit
+      : SUBSET_PER_CATEGORY[config.subset];
 
   if (config.corpusFile) {
     const cases = await loadExternalCorpus(config.corpusFile);
@@ -122,6 +127,7 @@ export async function runBench(
     runId,
     datasets: partialConfig.datasets ?? ["toy"],
     subset: partialConfig.subset ?? "medium",
+    limit: partialConfig.limit,
     category: partialConfig.category,
     skipIngest: partialConfig.skipIngest ?? false,
     dryRun: partialConfig.dryRun ?? false,

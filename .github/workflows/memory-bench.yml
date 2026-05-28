@@ -115,6 +115,15 @@ jobs:
           branch_name: memory-bench-${{ github.run_id }}
           api_key: ${{ secrets.NEON_API_KEY }}
 
+      - name: Migrate bench database
+        # A fresh Neon branch inherits the parent's schema, but a PR that *adds*
+        # the bench migrations needs them applied before persistRun() can write
+        # to bench_runs. Run the migrator directly against the branch URL
+        # (the root db:migrate wrapper needs a .env.local that CI doesn't have).
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_with_pooler || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+        run: pnpm --filter @aura/db db:migrate
+
       - name: Run bench
         env:
           # Prefer the ephemeral branch URL; fall back to a long-lived bench
