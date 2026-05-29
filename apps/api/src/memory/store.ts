@@ -530,6 +530,77 @@ export async function storeMemories(newMemories: NewMemory[]): Promise<string[]>
   }
 }
 
+/** Hard cap on how many neighbors a single memory links to (#1054). */
+const MAX_LINKED_MEMORIES = 25;
+
+/**
+ * Recompute `linked_memory_ids` (#1054) for a freshly-stored batch and every
+ * existing memory that shares an entity with one of them.
+ *
+ * Two memories are "linked" when they share at least one resolved entity (via
+ * `memory_entities`), scoped to the same workspace. The edge is symmetric, so we
+ * recompute the full neighbor set for the new memories AND their neighbors —
+ * keeping the graph consistent in both directions. This materializes the
+ * adjacency so the retrieval ranker can apply a graph-expansion boost without a
+ * join at read time (the multi-hop "surface the other operands" signal).
+ *
+ * Idempotent and set-based: one UPDATE per batch. Call AFTER entity linking.
+ */
+export async function updateLinkedMemoryIds(
+  workspaceId: string,
+  memoryIds: string[],
+): Promise<void> {
+  const ids = memoryIds.filter(Boolean);
+  if (ids.length === 0) return;
+
+  const idList = sql.join(
+    ids.map((id) => sql`${id}::uuid`),
+    sql`, `,
+  );
+
+  try {
+    await db.execute(sql`
+      WITH affected AS (
+        SELECT DISTINCT m.id
+        FROM memories m
+        WHERE m.workspace_id = ${workspaceId}
+          AND (
+            m.id IN (${idList})
+            OR m.id IN (
+              SELECT me2.memory_id
+              FROM memory_entities me1
+              JOIN memory_entities me2 ON me2.entity_id = me1.entity_id
+              WHERE me1.memory_id IN (${idList})
+            )
+          )
+      ),
+      neighbors AS (
+        SELECT a.id AS memory_id,
+               (array_agg(DISTINCT me2.memory_id))[1:${sql.raw(String(MAX_LINKED_MEMORIES))}] AS linked
+        FROM affected a
+        JOIN memory_entities me1 ON me1.memory_id = a.id
+        JOIN memory_entities me2
+          ON me2.entity_id = me1.entity_id AND me2.memory_id <> a.id
+        JOIN memories mb ON mb.id = me2.memory_id AND mb.workspace_id = ${workspaceId}
+        GROUP BY a.id
+      )
+      UPDATE memories
+      SET linked_memory_ids = COALESCE(
+            (SELECT linked FROM neighbors WHERE neighbors.memory_id = memories.id),
+            '{}'::uuid[]
+          )
+      WHERE workspace_id = ${workspaceId}
+        AND id IN (SELECT id FROM affected)
+    `);
+  } catch (error) {
+    logger.warn("updateLinkedMemoryIds failed — continuing without graph links", {
+      error: String(error).slice(0, 200),
+      workspaceId,
+      count: ids.length,
+    });
+  }
+}
+
 // ── Invocation Context Storage ──────────────────────────────────────────────
 
 const MAX_TOOL_CONTENT_LENGTH = 2000;

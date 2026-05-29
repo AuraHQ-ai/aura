@@ -38,7 +38,8 @@ vi.mock("ai", () => ({
   rerank: aiMocks.rerank,
 }));
 
-import { retrieveMemories } from "./retrieve.js";
+import { retrieveMemories, fuseCandidates } from "./retrieve.js";
+import type { Memory } from "@aura/db/schema";
 
 interface RenderedQuery {
   sql: string;
@@ -194,5 +195,81 @@ describe("retrieveMemories prefilter", () => {
     const compact = normalizeSql(hybridQuery(executed).sql);
     expect(compact).not.toContain("candidate_pool AS");
     expect(compact).not.toContain("id IN (SELECT id FROM candidate_pool)");
+  });
+});
+
+describe("fuseCandidates (#1054 score fusion)", () => {
+  const NOW = Date.UTC(2026, 0, 1);
+
+  function mem(id: string, over: Partial<Memory> = {}): Memory {
+    return {
+      id,
+      content: `memory ${id}`,
+      relevanceScore: 0.5,
+      linkedMemoryIds: [],
+      createdAt: new Date(NOW),
+      sourceChannelId: null,
+      ...over,
+    } as unknown as Memory;
+  }
+
+  function candidate(
+    id: string,
+    signals: { similarity?: number; bm25?: number; entityBoost?: number; channelBoost?: number; linkedMemoryIds?: string[]; createdAt?: Date },
+  ) {
+    return {
+      memory: mem(id, {
+        linkedMemoryIds: signals.linkedMemoryIds ?? [],
+        createdAt: signals.createdAt ?? new Date(NOW),
+      }),
+      similarity: signals.similarity ?? 0,
+      bm25: signals.bm25 ?? 0,
+      entityBoost: signals.entityBoost ?? 0,
+      channelBoost: signals.channelBoost ?? 0,
+    };
+  }
+
+  it("ranks the strongest semantic + lexical candidate first", () => {
+    const out = fuseCandidates(
+      [
+        candidate("weak", { similarity: 0.1, bm25: 0 }),
+        candidate("strong", { similarity: 0.9, bm25: 0.3 }),
+        candidate("mid", { similarity: 0.5, bm25: 0.05 }),
+      ],
+      { now: NOW },
+    );
+    expect(out[0].memory.id).toBe("strong");
+    expect(out[out.length - 1].memory.id).toBe("weak");
+  });
+
+  it("applies a graph-expansion boost to memories linked from a top anchor (multi-hop)", () => {
+    // `operandB` has no direct semantic/lexical signal, but the top anchor
+    // links to it — fusion should lift it above an unrelated weak candidate.
+    const ranked = fuseCandidates(
+      [
+        candidate("anchor", { similarity: 0.95, bm25: 0.3, linkedMemoryIds: ["operandB"] }),
+        candidate("operandB", { similarity: 0.05 }),
+        candidate("unrelated", { similarity: 0.05 }),
+      ],
+      { now: NOW },
+    );
+    const idx = (id: string) => ranked.findIndex((r) => r.memory.id === id);
+    expect(idx("operandB")).toBeLessThan(idx("unrelated"));
+  });
+
+  it("uses the Cohere semantic override when provided", () => {
+    // override flips the semantic ordering relative to raw cosine.
+    const ranked = fuseCandidates(
+      [
+        candidate("a", { similarity: 0.9 }),
+        candidate("b", { similarity: 0.1 }),
+      ],
+      { now: NOW, semanticOverride: [0.0, 1.0] },
+    );
+    expect(ranked[0].memory.id).toBe("b");
+  });
+
+  it("returns an empty list for no candidates", () => {
+    expect(fuseCandidates([], { now: NOW })).toEqual([]);
   });
 });

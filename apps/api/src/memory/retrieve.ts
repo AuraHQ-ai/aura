@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { generateObject, rerank } from "ai";
+import { generateObject, rerank as rerankMemories } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { messages, type Memory } from "@aura/db/schema";
@@ -54,6 +54,12 @@ interface RetrievalOptions {
   ) => void;
   /** Restrict cosine/full-text candidates to resolved entities + a recent tail. Defaults on. */
   prefilter?: boolean;
+  /**
+   * Apply a Cohere rerank pass and use its relevance score as the semantic
+   * signal in the fusion ranker. Off by default — score fusion (#1054) is the
+   * default ranker; Cohere is now opt-in, not the default.
+   */
+  rerank?: boolean;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -392,17 +398,141 @@ async function fetchEntityMatchedMemories(
   }
 }
 
+/** A merged retrieval candidate carrying every raw fusion signal. */
+interface FusionCandidate {
+  memory: Memory;
+  /** Cosine similarity (1 - distance); 0 for entity-only candidates. */
+  similarity: number;
+  /** Raw BM25 (ts_rank_cd) over the OR of query lexemes; 0 when none matched. */
+  bm25: number;
+  /** Fraction of resolved query entities this memory is linked to (0..1). */
+  entityBoost: number;
+  /** 1 when the memory's source channel equals the query channel. */
+  channelBoost: number;
+}
+
 /**
- * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
+ * Explicit score-fusion weights (#1054). Tuned against the bench; kept in one
+ * object so a single edit + bench run re-tunes the ranker. Semantic dominates,
+ * BM25 is the lexical anchor, entity + graph-link signals carry the multi-hop
+ * coverage, and recency/relevance/channel are light tie-breakers.
+ */
+const FUSION_WEIGHTS = {
+  semantic: 0.42,
+  bm25: 0.18,
+  entity: 0.15,
+  link: 0.1,
+  recency: 0.05,
+  relevance: 0.05,
+  channel: 0.05,
+} as const;
+
+/** Sigmoid shaping for raw BM25 (ts_rank_cd values cluster low and positive). */
+const BM25_SIGMOID_SCALE = 12;
+const BM25_SIGMOID_MID = 0.08;
+/** How many top base-scoring candidates seed the graph-expansion (link) boost. */
+const LINK_ANCHOR_COUNT = 5;
+
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
+/** Min-max normalize to [0,1]; collapses to a clamp when the range is ~0. */
+function minMaxNormalize(values: number[]): number[] {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const range = max - min;
+  if (!Number.isFinite(range) || range < 1e-9) {
+    return values.map((v) => Math.max(0, Math.min(1, v)));
+  }
+  return values.map((v) => (v - min) / range);
+}
+
+export interface FusionResult {
+  memory: Memory;
+  score: number;
+}
+
+/**
+ * Fuse merged candidates into a single ranked list via explicit weighted score
+ * fusion (#1054), replacing the old "RRF → Cohere-as-default" path.
+ *
+ * Signals: min-max-normalized cosine similarity (or a Cohere override),
+ * sigmoid-normalized BM25, entity-match fraction, a graph-expansion boost
+ * (candidates linked from the top base-scoring anchors — the multi-hop signal),
+ * plus light recency / relevance / channel tie-breakers.
+ */
+export function fuseCandidates(
+  candidates: FusionCandidate[],
+  opts: { channelId?: string; now: number; semanticOverride?: number[] },
+): FusionResult[] {
+  if (candidates.length === 0) return [];
+  const { channelId, now, semanticOverride } = opts;
+
+  const semNorm = semanticOverride
+    ? semanticOverride.map((v) => Math.max(0, Math.min(1, v)))
+    : minMaxNormalize(candidates.map((c) => Math.max(0, c.similarity)));
+  const bm25Norm = candidates.map((c) =>
+    c.bm25 > 0 ? sigmoid(BM25_SIGMOID_SCALE * (c.bm25 - BM25_SIGMOID_MID)) : 0,
+  );
+
+  // Base score (no graph-link term) → pick anchors → union their linked ids.
+  const baseScore = candidates.map(
+    (c, i) =>
+      FUSION_WEIGHTS.semantic * semNorm[i] +
+      FUSION_WEIGHTS.bm25 * bm25Norm[i] +
+      FUSION_WEIGHTS.entity * c.entityBoost,
+  );
+  const anchorIdx = candidates
+    .map((_, i) => i)
+    .sort((a, b) => baseScore[b] - baseScore[a])
+    .slice(0, LINK_ANCHOR_COUNT);
+  const linkedFromAnchors = new Set<string>();
+  for (const i of anchorIdx) {
+    for (const id of candidates[i].memory.linkedMemoryIds ?? []) {
+      linkedFromAnchors.add(id);
+    }
+  }
+
+  const channelWeight = channelId ? FUSION_WEIGHTS.channel : 0;
+
+  const scored = candidates.map((c, i) => {
+    const ageDays = (now - new Date(c.memory.createdAt).getTime()) / 86_400_000;
+    const recency = Math.max(0, 1 - ageDays / 365);
+    const linkBoost = linkedFromAnchors.has(c.memory.id) ? 1 : 0;
+
+    const score =
+      FUSION_WEIGHTS.semantic * semNorm[i] +
+      FUSION_WEIGHTS.bm25 * bm25Norm[i] +
+      FUSION_WEIGHTS.entity * c.entityBoost +
+      FUSION_WEIGHTS.link * linkBoost +
+      FUSION_WEIGHTS.recency * recency +
+      FUSION_WEIGHTS.relevance * c.memory.relevanceScore +
+      channelWeight * c.channelBoost;
+
+    return { memory: c.memory, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+/**
+ * Retrieve relevant memories using hybrid search (vector + full-text), merged
+ * with entity-first retrieval, then ranked by explicit score fusion (#1054).
  *
  * Flow:
  * 0. Entity-first retrieval: resolve entity names from the query via aliases, fetch linked memories
  * 1. Embed the user's message
  * 2. Extract up to 8 positional lexemes from Postgres full-text parsing
- * 3. Run hybrid SQL: pgvector + per-term full-text lanes merged by best rank
- * 4. Fuse results via Reciprocal Rank Fusion (RRF) with FULL OUTER JOIN
- * 5. Merge entity-matched + hybrid results, apply entity boost
- * 6. Rerank top candidates with Cohere (or fall back to legacy scoring)
+ * 3. Run hybrid SQL: pgvector + per-term full-text lanes + raw BM25 + linked ids
+ * 4. Merge entity-matched + hybrid results
+ * 5. Score fusion: semantic + BM25 + entity + graph-link + recency/relevance/channel
+ * 6. (optional) Cohere rerank override behind the `rerank` flag
  * 7. Return top-K memories
  */
 export async function retrieveMemories(
@@ -419,6 +549,7 @@ export async function retrieveMemories(
     adminMode = false,
     workspaceId,
     prefilter = true,
+    rerank = false,
     onUsage,
     asOf,
   } = options;
@@ -472,6 +603,13 @@ export async function retrieveMemories(
       : sql``;
     const channelBoostSql = channelId
       ? sql`CASE WHEN m.source_channel_id = ${channelId} THEN 1.0 ELSE 0.0 END`
+      : sql`0.0`;
+    // Raw BM25 relevance over the OR of all query lexemes, surfaced so the
+    // fusion ranker can sigmoid-normalize it (#1054). 0 when there are no
+    // lexemes to match.
+    const combinedTsQuery = lexemes.join(" | ");
+    const bm25Sql = lexemes.length > 0
+      ? sql`COALESCE(ts_rank_cd(m.search_vector, to_tsquery('english', ${combinedTsQuery}), 4), 0.0)`
       : sql`0.0`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
@@ -541,6 +679,7 @@ export async function retrieveMemories(
         m.*,
         COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
         (1 - (m.embedding <=> ${vectorSql})) AS similarity,
+        ${bm25Sql} AS bm25,
         ${channelBoostSql} AS channel_boost
       FROM (
         SELECT COALESCE(v.id, f.id) AS id, v.rank AS vector_rank, f.rank AS fulltext_rank
@@ -574,6 +713,7 @@ export async function retrieveMemories(
         sourceThreadTs: row.source_thread_ts ?? null,
         sourceChannelId: row.source_channel_id ?? null,
         relatedUserIds: row.related_user_ids ?? [],
+        linkedMemoryIds: row.linked_memory_ids ?? [],
         embedding: row.embedding,
         relevanceScore: row.relevance_score ?? 1,
         shareable: row.shareable ?? 0,
@@ -590,6 +730,7 @@ export async function retrieveMemories(
       } as Memory,
       similarity: Number(row.similarity ?? 0),
       rrfScore: Number(row.rrf_score ?? 0),
+      bm25: Number(row.bm25 ?? 0),
       channelBoost: Number(row.channel_boost ?? 0),
     }));
 
@@ -611,6 +752,7 @@ export async function retrieveMemories(
         memory: m,
         similarity: 0,
         rrfScore: ENTITY_RRF_BOOST,
+        bm25: 0,
         entityBoost: entityBoostScore(m.id),
         channelBoost: channelId && m.sourceChannelId === channelId ? 1 : 0,
       }));
@@ -629,92 +771,46 @@ export async function retrieveMemories(
       });
     }
 
-    const rerankingModel = await getRerankingModel();
     const now = Date.now();
-    let topMemories: Memory[];
 
-    if (rerankingModel && results.length > 0) {
-      const documents = results.map((r) => r.memory.content);
-
-      const { ranking } = await rerank({
-        model: rerankingModel,
-        query,
-        documents,
-        topN: results.length,
-      });
-
-      const ENTITY_WEIGHT = 0.1;
-      const CHANNEL_WEIGHT = channelId ? 0.05 : 0;
-      const scored = ranking.map((item) => {
-        const result = results[item.originalIndex];
-        const memory = result.memory;
-        const ageMs = now - new Date(memory.createdAt).getTime();
-        const ageDays = ageMs / (1000 * 60 * 60 * 24);
-        const recencyBoost = Math.max(0, 1 - ageDays / 365);
-
-        const score =
-          item.score * (0.8 - ENTITY_WEIGHT / 2 - CHANNEL_WEIGHT / 2) +
-          recencyBoost * (0.2 - ENTITY_WEIGHT / 2 - CHANNEL_WEIGHT / 2) +
-          result.entityBoost * ENTITY_WEIGHT +
-          result.channelBoost * CHANNEL_WEIGHT;
-        return { memory, score, originalIndex: item.originalIndex, cohereScore: item.score };
-      });
-
-      scored.sort((a, b) => b.score - a.score);
-      topMemories = scored.slice(0, limit).map((s) => s.memory);
-
-      logger.info(
-        `Reranked ${results.length} memories → top ${topMemories.length} in ${Date.now() - start}ms`,
-        {
-          query: query.substring(0, 100),
-          totalCandidates: results.length,
-          lexemeCount: lexemes.length,
-          prefilter: shouldPrefilterByEntity,
-          channelId,
-          method: "hybrid-rrf+cohere-rerank",
-        },
-      );
-      const reranking = scored.slice(0, limit).map((s, newRank) =>
-        `${s.originalIndex + 1} → ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`
-      ).join(", ");
-      logger.debug(`Reranking details: ${reranking}`);
-    } else {
-      const RRF_K = 60;
-      const maxRrfScore = 2 / (1 + RRF_K);
-
-      const CHANNEL_WEIGHT = channelId ? 0.1 : 0;
-      const scored = results.map(({ memory, similarity, rrfScore, entityBoost, channelBoost }) => {
-        const ageMs = now - new Date(memory.createdAt).getTime();
-        const ageDays = ageMs / (1000 * 60 * 60 * 24);
-        const recencyBoost = Math.max(0, 1 - ageDays / 365);
-
-        const normalizedRrf = maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
-        const score =
-          normalizedRrf * (0.4 - CHANNEL_WEIGHT / 2) +
-          similarity * 0.2 +
-          memory.relevanceScore * 0.1 +
-          recencyBoost * 0.1 +
-          entityBoost * (0.2 - CHANNEL_WEIGHT / 2) +
-          channelBoost * CHANNEL_WEIGHT;
-
-        return { memory, score };
-      });
-
-      scored.sort((a, b) => b.score - a.score);
-      topMemories = scored.slice(0, limit).map((s) => s.memory);
-
-      logger.info(
-        `Retrieved ${topMemories.length} memories (hybrid+legacy scoring) in ${Date.now() - start}ms`,
-        {
-          query: query.substring(0, 100),
-          totalCandidates: results.length,
-          lexemeCount: lexemes.length,
-          prefilter: shouldPrefilterByEntity,
-          channelId,
-          method: "hybrid-rrf+legacy",
-        },
-      );
+    // Optional Cohere semantic override. Cohere is no longer the default ranker
+    // (#1054) — fusion is. When `rerank` is requested and a model is available,
+    // its relevance score replaces the cosine semantic signal in the fusion.
+    let semanticOverride: number[] | undefined;
+    if (rerank && results.length > 0) {
+      const rerankingModel = await getRerankingModel();
+      if (rerankingModel) {
+        const { ranking } = await rerankMemories({
+          model: rerankingModel,
+          query,
+          documents: results.map((r) => r.memory.content),
+          topN: results.length,
+        });
+        semanticOverride = new Array<number>(results.length).fill(0);
+        for (const item of ranking) semanticOverride[item.originalIndex] = item.score;
+      }
     }
+
+    const fused = fuseCandidates(results, {
+      channelId,
+      now,
+      semanticOverride,
+    });
+
+    const topMemories = fused.slice(0, limit).map((f) => f.memory);
+
+    logger.info(
+      `Retrieved ${topMemories.length} memories (score-fusion${semanticOverride ? "+cohere" : ""}) in ${Date.now() - start}ms`,
+      {
+        query: query.substring(0, 100),
+        totalCandidates: results.length,
+        lexemeCount: lexemes.length,
+        prefilter: shouldPrefilterByEntity,
+        channelId,
+        topScore: fused[0]?.score.toFixed(3),
+        method: semanticOverride ? "score-fusion+cohere" : "score-fusion",
+      },
+    );
 
     return topMemories;
   } catch (error: any) {

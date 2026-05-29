@@ -156,6 +156,17 @@ export const memories = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    /**
+     * IDs of other memories that share at least one resolved entity with this
+     * one (#1054). Materialized at store time so the retrieval ranker can apply
+     * a graph-expansion ("spreading activation") boost — surfacing the other
+     * operands of a multi-hop question once one of them is retrieved — without
+     * a join at read time. Workspace-scoped; never references cross-tenant rows.
+     */
+    linkedMemoryIds: uuid("linked_memory_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
     embedding: vector("embedding", { dimensions: 1536 }),
     importance: integer("importance"),
     relevanceScore: real("relevance_score").notNull().default(1.0),
