@@ -312,6 +312,7 @@ export async function buildCorePrompt(
             channelType: session.channelType,
             workspaceId: session.workspaceId ?? process.env.DEFAULT_WORKSPACE_ID ?? "default",
             prefilter: true,
+            rewrite: true,
             limit: 15,
           }).catch(() => [] as Memory[])
         : Promise.resolve([] as Memory[]),

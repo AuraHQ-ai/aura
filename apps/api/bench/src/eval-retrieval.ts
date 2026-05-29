@@ -74,6 +74,7 @@ export async function evaluateRetrieval(
       workspaceId,
       adminMode: true,
       prefilter: true,
+      rewrite: true,
       onUsage,
       asOf,
     });

@@ -66,6 +66,14 @@ interface RetrievalOptions {
    * Defaults on; pass false for best-effort callers that always want candidates.
    */
   abstain?: boolean;
+  /**
+   * Run a fast-model query-rewrite + multi-hop decomposition pass before
+   * retrieval (#276 / #1056). When the planner decomposes the query, each
+   * sub-query is retrieved independently and the pools are merged round-robin
+   * for coverage. Off by default (adds one fast LLM call and forces re-embed,
+   * which discards a precomputed weighted embedding).
+   */
+  rewrite?: boolean;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -133,6 +141,73 @@ Message: "${query}"`,
       query: query.substring(0, 100),
     });
     return [];
+  }
+}
+
+// ── Query planning: rewrite + multi-hop decomposition (#276 / #1056) ─────────
+
+const queryPlanSchema = z.object({
+  /** A standalone, search-optimized rewrite of the query (resolve pronouns, drop chit-chat). */
+  rewritten: z.string(),
+  /**
+   * For multi-hop questions only: 2–4 atomic sub-queries, each retrievable on
+   * its own. Empty for single-fact questions.
+   */
+  subQueries: z.array(z.string()).max(4),
+});
+
+export interface QueryPlan {
+  rewritten: string;
+  subQueries: string[];
+}
+
+/**
+ * Cheap gate so we don't pay a planner LLM call on every retrieval. Flags
+ * queries that plausibly need multiple independent facts (conjunctions,
+ * comparisons, several question marks).
+ */
+export function looksMultiHop(query: string): boolean {
+  const q = query.toLowerCase();
+  if ((query.match(/\?/g)?.length ?? 0) >= 2) return true;
+  return /\b(and|or|both|compare|versus|vs\.?|difference between|as well as|along with|each of|all of)\b/.test(
+    q,
+  );
+}
+
+/**
+ * Rewrite a query into a standalone search query and, for multi-hop questions,
+ * decompose it into atomic sub-queries (#276 rewrite, #1056 decomposition).
+ * Falls back to the original query on any failure — never throws.
+ */
+async function planQuery(
+  query: string,
+  onUsage?: RetrievalOptions["onUsage"],
+): Promise<QueryPlan> {
+  const fallback: QueryPlan = { rewritten: query, subQueries: [] };
+  try {
+    const model = await getFastModel();
+    const { object, usage } = await generateObject({
+      model,
+      schema: queryPlanSchema,
+      prompt: `Rewrite this message into a concise, standalone search query for a memory database: resolve pronouns, drop greetings/filler, keep the salient entities and intent.
+
+If — and only if — answering requires multiple INDEPENDENT facts (a multi-hop question, e.g. "who manages the project Alice started?"), also return 2–4 atomic sub-queries, each retrievable on its own. For a single-fact question, return an empty subQueries array.
+
+Message: "${query}"`,
+      temperature: 0,
+    });
+    onUsage?.((model as any)?.modelId ?? "retrieve", usage);
+    const rewritten = object.rewritten?.trim() || query;
+    const subQueries = (object.subQueries ?? [])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return { rewritten, subQueries };
+  } catch (error) {
+    logger.warn("Query planning failed, using original query", {
+      error: String(error).slice(0, 200),
+      query: query.substring(0, 100),
+    });
+    return fallback;
   }
 }
 
@@ -558,8 +633,87 @@ export function fuseCandidates(
 }
 
 /**
- * Retrieve relevant memories using hybrid search (vector + full-text), merged
- * with entity-first retrieval, then ranked by explicit score fusion (#1054).
+ * Round-robin merge of several ranked memory lists, de-duplicated by id. Takes
+ * one from each list in turn so every sub-query (operand) is represented in the
+ * merged top-`limit` — the multi-hop coverage property (#1056).
+ */
+export function mergeRoundRobin(lists: Memory[][], limit: number): Memory[] {
+  const seen = new Set<string>();
+  const merged: Memory[] = [];
+  const maxLen = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < maxLen && merged.length < limit; i++) {
+    for (const list of lists) {
+      if (merged.length >= limit) break;
+      const m = list[i];
+      if (m && !seen.has(m.id)) {
+        seen.add(m.id);
+        merged.push(m);
+      }
+    }
+  }
+  return merged;
+}
+
+/**
+ * Public retrieval entry point. By default delegates to a single fused pass
+ * ({@link retrieveSingleQuery}). When `rewrite` is set, a fast-model planner
+ * (#276) first rewrites the query and, for multi-hop questions, decomposes it
+ * into atomic sub-queries (#1056) that are retrieved independently and merged
+ * round-robin so every operand is covered.
+ */
+export async function retrieveMemories(
+  options: RetrievalOptions,
+): Promise<Memory[]> {
+  if (!options.rewrite) {
+    return retrieveSingleQuery(options);
+  }
+
+  const { query, limit = 20, onUsage } = options;
+  // Only pay the planner call when the query plausibly needs it.
+  const plan = looksMultiHop(query)
+    ? await planQuery(query, onUsage)
+    : { rewritten: query, subQueries: [] as string[] };
+
+  if (plan.subQueries.length >= 2) {
+    // Decomposed multi-hop: retrieve each operand independently (don't abstain
+    // per-operand or reuse a stale precomputed embedding), then merge for
+    // coverage. Over-fetch per sub-query so the round-robin has depth.
+    const perQueryLimit = Math.max(5, Math.ceil(limit / plan.subQueries.length) + 2);
+    const lists = await Promise.all(
+      plan.subQueries.map((sub) =>
+        retrieveSingleQuery({
+          ...options,
+          query: sub,
+          queryEmbedding: undefined,
+          limit: perQueryLimit,
+          abstain: false,
+          rewrite: false,
+        }),
+      ),
+    );
+    const merged = mergeRoundRobin(lists, limit);
+    logger.info(`Multi-hop retrieval: ${plan.subQueries.length} sub-queries → ${merged.length} merged`, {
+      query: query.substring(0, 100),
+      subQueries: plan.subQueries,
+    });
+    if (merged.length > 0) return merged;
+    // Fall through to a single rewritten pass if decomposition found nothing.
+  }
+
+  // Single (rewritten) pass. Re-embed since the query text changed.
+  return retrieveSingleQuery({
+    ...options,
+    query: plan.rewritten,
+    queryEmbedding: plan.rewritten === query ? options.queryEmbedding : undefined,
+    rewrite: false,
+  });
+}
+
+/**
+ * Single-pass retrieval: hybrid search (vector + full-text) merged with
+ * entity-first retrieval, ranked by explicit score fusion (#1054), with the
+ * #1045 abstention gate. The public `retrieveMemories` orchestrator wraps this
+ * with optional query rewrite / multi-hop decomposition (#276 / #1056).
  *
  * Flow:
  * 0. Entity-first retrieval: resolve entity names from the query via aliases, fetch linked memories
@@ -571,7 +725,7 @@ export function fuseCandidates(
  * 6. (optional) Cohere rerank override behind the `rerank` flag
  * 7. Return top-K memories
  */
-export async function retrieveMemories(
+async function retrieveSingleQuery(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
   const {
