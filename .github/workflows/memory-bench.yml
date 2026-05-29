@@ -2,8 +2,9 @@ name: Memory bench
 
 # Runs the memory benchmark harness (#1043).
 #
-# Manual dispatch only. The bench does NOT run on pull requests — it timed out
-# and was irrelevant to most PRs. Routine results now come from local runs:
+# Pull requests always run the tiny toy bench as a smoke test. The medium
+# server bench runs on PRs only when memory-relevant paths changed, and always
+# remains available via workflow_dispatch for explicit runs.
 #
 #   pnpm bench:memory --dataset=both --subset=medium --log
 #
@@ -12,26 +13,39 @@ name: Memory bench
 # Commit those alongside the code change so the repo always carries the scores
 # the current codebase produces. See the `aura-memory-bench` skill.
 #
-# This workflow stays around for the occasional managed, isolated run from the
-# Actions UI (Actions → Memory bench → Run workflow) with a fresh Neon branch —
-# handy when you don't have a local DB / gateway access. It uploads the result
-# JSON + stdout as an artifact; it does NOT commit anything back to the repo.
+# Server runs should target a dedicated Neon bench branch, not production. Set
+# NEON_BENCH_PARENT_BRANCH (repo variable) or pass `neon_parent_branch` manually
+# so the workflow creates copy-on-write child branches from the canonical bench
+# branch. For extraction/schema changes, run from cached messages:
+#
+#   --bench-id=phase2 --from=extract --to=score
+#
+# To seed the canonical bench branch, run messages only and skip message
+# embeddings; extraction and memory retrieval do not read message vectors:
+#
+#   --bench-id=phase2 --from=messages --to=messages --reset --skip-message-embeddings
 #
 # Defaults: --subset=medium, --dataset=both. Models default to the catalog
-# tiers main (Sonnet-class) for extraction + answerer and escalation
-# (Opus-class) for the judge — see apps/api/bench/src/models.ts.
+# tiers fast for extraction, main for answerer, and escalation for judge — see
+# apps/api/bench/src/models.ts.
 #
-# Costs: ~$15–25 per run on the medium subset (~330 questions), Opus judge.
+# Costs: depends on selected subset and live model tiers. Medium is the
+# memory-PR server budget; full is manual-only and costs real money.
 #
 # Required secrets:
 #   - NEON_API_KEY            ephemeral Neon branch for DB isolation
 #   - NEON_PROJECT_ID         the Aura project on Neon
-#   - NEON_DATABASE_URL       fallback DB url if Neon-branch creation fails
+#   - BENCH_DATABASE_URL      dedicated bench DB fallback (never prod)
+#   - NEON_DATABASE_URL       fallback DB url if Neon branch creation fails
 #   - AI_GATEWAY_API_KEY      Sonnet/Opus calls via Vercel AI Gateway
 #   - ANTHROPIC_API_KEY       direct fallback when the gateway is down
 #   - COHERE_API_KEY          reranker (optional but recommended)
+# Optional variables:
+#   - NEON_BENCH_PARENT_BRANCH  canonical Neon bench branch name/id (default: bench)
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       subset:
@@ -44,19 +58,105 @@ on:
         type: choice
         options: [toy, lme, locomo, both]
         default: both
+      timeout_minutes:
+        description: "Job timeout for the medium/manual bench"
+        type: number
+        default: 180
+      bench_id:
+        description: "Stable bench workspace key (e.g. phase2)"
+        type: string
+        default: phase2
+      from_stage:
+        description: "First stage (messages | extract | score)"
+        type: choice
+        options: [messages, extract, score]
+        default: extract
+      to_stage:
+        description: "Last stage (messages | extract | score)"
+        type: choice
+        options: [messages, extract, score]
+        default: score
+      reset:
+        description: "Wipe the persistent bench workspace before running"
+        type: boolean
+        default: false
+      skip_message_embeddings:
+        description: "Store raw message rows without message embeddings"
+        type: boolean
+        default: false
+      concurrency:
+        description: "Extraction/scoring worker concurrency"
+        type: number
+        default: 4
+      embed_concurrency:
+        description: "Message embedding concurrency"
+        type: number
+        default: 4
+      category:
+        description: "Optional category filter"
+        type: string
+        default: ""
+      limit:
+        description: "Optional per-category cap"
+        type: string
+        default: ""
+      cases:
+        description: "Optional total case cap"
+        type: string
+        default: ""
+      extraction_model:
+        description: "Optional extraction model/tier override"
+        type: string
+        default: ""
+      answerer_model:
+        description: "Optional answerer model/tier override"
+        type: string
+        default: ""
+      judge_model:
+        description: "Optional judge model/tier override"
+        type: string
+        default: ""
+      neon_parent_branch:
+        description: "Neon parent branch name/id for COW bench branches"
+        type: string
+        default: bench
 
 permissions:
   contents: read
+  pull-requests: read
 
-# Cancel stale runs on the same ref when a new dispatch lands.
+# Cancel stale runs on the same PR/ref when a new dispatch lands.
 concurrency:
-  group: memory-bench-${{ github.ref }}
+  group: memory-bench-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  bench:
+  changes:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    outputs:
+      memory: ${{ steps.filter.outputs.memory }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            memory:
+              - 'apps/api/src/memory/**'
+              - 'apps/api/bench/**'
+              - 'apps/api/src/lib/embeddings.ts'
+              - 'apps/api/src/lib/vector.ts'
+              - 'apps/api/src/pipeline/**'
+              - 'packages/db/src/schema.ts'
+              - 'packages/db/drizzle/**'
+              - 'packages/db/scripts/backfill-*.ts'
+              - '.github/workflows/memory-bench.yml'
+
+  toy:
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,52 +188,162 @@ jobs:
       - name: Fetch corpus (cached)
         run: pnpm --filter aura-api bench:fetch-corpus
 
-      - name: Create ephemeral Neon branch
+      - name: Create toy Neon branch
         id: neon
         uses: neondatabase/create-branch-action@v6
         continue-on-error: true
         with:
           project_id: ${{ secrets.NEON_PROJECT_ID }}
-          branch_name: memory-bench-${{ github.run_id }}
+          branch_name: memory-bench-toy-${{ github.run_id }}
+          parent_branch: ${{ vars.NEON_BENCH_PARENT_BRANCH || 'bench' }}
           api_key: ${{ secrets.NEON_API_KEY }}
 
-      - name: Migrate bench database
-        # A fresh Neon branch inherits the parent's schema; run the migrator
-        # directly against the branch URL so persistRun() can write to
-        # bench_runs (the root db:migrate wrapper needs a .env.local CI lacks).
+      - name: Migrate toy bench database
         env:
-          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
         run: pnpm --filter @aura/db db:migrate
 
-      - name: Run bench
+      - name: Run toy bench
         env:
-          # Prefer the ephemeral branch URL; fall back to a long-lived bench
-          # database if the Neon API is down or the secret is missing. Either
-          # way the run is isolated by workspace_id='bench-{runId}'.
-          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          BENCH_DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           ELEVENLABS_API_KEY: placeholder
           DEFAULT_WORKSPACE_ID: bench-ci
           DASHBOARD_API_SECRET: placeholder
-          # Model tiers — read by the bench at runtime via the live model
-          # catalog. main = Sonnet-class today, escalation = Opus-class.
-          AURA_BENCH_EXTRACTION: main
+          AURA_BENCH_EXTRACTION: fast
           AURA_BENCH_ANSWERER: main
           AURA_BENCH_JUDGE: escalation
-          SUBSET: ${{ github.event.inputs.subset || 'medium' }}
-          DATASET: ${{ github.event.inputs.dataset || 'both' }}
         run: |
           mkdir -p /tmp/bench
           set -o pipefail
           pnpm --filter aura-api bench:memory \
-            --dataset=${DATASET} \
-            --subset=${SUBSET} \
-            --concurrency=4 \
-            --json=/tmp/bench/result.json \
+            --dataset=toy \
+            --subset=fast \
+            --concurrency=2 \
+            --json=/tmp/bench/toy-result.json \
             | tee /tmp/bench/output.txt
+
+      - name: Upload toy bench artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-bench-toy-${{ github.run_id }}
+          path: |
+            /tmp/bench/toy-result.json
+            /tmp/bench/output.txt
+            apps/api/bench/runs/**
+          retention-days: 30
         continue-on-error: true
+
+      - name: Delete toy Neon branch
+        if: always() && steps.neon.outputs.branch_id != ''
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+          BRANCH_ID: ${{ steps.neon.outputs.branch_id }}
+        run: |
+          curl -sS -X DELETE \
+            "https://console.neon.tech/api/v2/projects/${NEON_PROJECT_ID}/branches/${BRANCH_ID}" \
+            -H "Authorization: Bearer ${NEON_API_KEY}" \
+            || echo "Failed to delete Neon branch (will be GC'd by retention)."
+
+  bench:
+    needs: [changes]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft != true && needs.changes.outputs.memory == 'true')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(github.event.inputs.timeout_minutes || '180') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # No `version:` — pnpm/action-setup reads it from the repo's
+      # `packageManager` field (pnpm@10.33.0). Pinning it here too triggers
+      # ERR_PNPM_BAD_PM_VERSION ("multiple versions of pnpm specified").
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache corpus
+        uses: actions/cache@v4
+        with:
+          path: apps/api/bench/corpus/cache
+          key: bench-corpus-${{ hashFiles('apps/api/bench/corpus/manifest.json') }}
+          restore-keys: |
+            bench-corpus-
+
+      - name: Fetch corpus (cached)
+        run: pnpm --filter aura-api bench:fetch-corpus
+
+      - name: Create bench Neon branch
+        id: neon
+        uses: neondatabase/create-branch-action@v6
+        continue-on-error: true
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          branch_name: memory-bench-${{ github.run_id }}
+          parent_branch: ${{ github.event.inputs.neon_parent_branch || vars.NEON_BENCH_PARENT_BRANCH || 'bench' }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Migrate bench database
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+        run: pnpm --filter @aura/db db:migrate
+
+      - name: Run bench
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          BENCH_DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          ELEVENLABS_API_KEY: placeholder
+          DEFAULT_WORKSPACE_ID: bench-ci
+          DASHBOARD_API_SECRET: placeholder
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AURA_BENCH_EXTRACTION: ${{ github.event.inputs.extraction_model || 'fast' }}
+          AURA_BENCH_ANSWERER: ${{ github.event.inputs.answerer_model || 'main' }}
+          AURA_BENCH_JUDGE: ${{ github.event.inputs.judge_model || 'escalation' }}
+          SUBSET: ${{ github.event.inputs.subset || 'medium' }}
+          DATASET: ${{ github.event.inputs.dataset || 'both' }}
+          BENCH_ID: ${{ github.event.inputs.bench_id || 'phase2' }}
+          FROM_STAGE: ${{ github.event.inputs.from_stage || 'extract' }}
+          TO_STAGE: ${{ github.event.inputs.to_stage || 'score' }}
+          RESET: ${{ github.event.inputs.reset || 'false' }}
+          SKIP_MESSAGE_EMBEDDINGS: ${{ github.event.inputs.skip_message_embeddings || 'false' }}
+          CONCURRENCY: ${{ github.event.inputs.concurrency || '4' }}
+          EMBED_CONCURRENCY: ${{ github.event.inputs.embed_concurrency || '4' }}
+          CATEGORY: ${{ github.event.inputs.category || '' }}
+          LIMIT: ${{ github.event.inputs.limit || '' }}
+          CASES: ${{ github.event.inputs.cases || '' }}
+        run: |
+          mkdir -p /tmp/bench
+          args=(
+            "--dataset=${DATASET}"
+            "--subset=${SUBSET}"
+            "--bench-id=${BENCH_ID}"
+            "--from=${FROM_STAGE}"
+            "--to=${TO_STAGE}"
+            "--concurrency=${CONCURRENCY}"
+            "--embed-concurrency=${EMBED_CONCURRENCY}"
+            "--json=/tmp/bench/result.json"
+          )
+          if [ "${RESET}" = "true" ]; then args+=("--reset"); fi
+          if [ "${SKIP_MESSAGE_EMBEDDINGS}" = "true" ]; then args+=("--skip-message-embeddings"); fi
+          if [ -n "${CATEGORY}" ]; then args+=("--category=${CATEGORY}"); fi
+          if [ -n "${LIMIT}" ]; then args+=("--limit=${LIMIT}"); fi
+          if [ -n "${CASES}" ]; then args+=("--cases=${CASES}"); fi
+          set -o pipefail
+          pnpm --filter aura-api bench:memory "${args[@]}" | tee /tmp/bench/output.txt
 
       - name: Upload bench artefacts
         if: always()
@@ -143,6 +353,7 @@ jobs:
           path: |
             /tmp/bench/result.json
             /tmp/bench/output.txt
+            apps/api/bench/runs/**
           retention-days: 30
         continue-on-error: true
 

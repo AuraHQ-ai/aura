@@ -182,11 +182,12 @@ export async function storeMessagesForCases(
   workspaceId: string,
   concurrency = 4,
   onProgress?: (done: number, total: number) => void,
+  embedMessages = true,
 ): Promise<{ totalMessages: number }> {
   const unique = uniqueConversations(cases);
   logger.debug(
     `bench: storing messages for ${unique.length} unique conversation(s) from ${cases.length} case(s)`,
-    { workspaceId, concurrency },
+    { workspaceId, concurrency, embedMessages },
   );
 
   let totalMessages = 0;
@@ -196,16 +197,18 @@ export async function storeMessagesForCases(
     const rows = buildMessageRows(unique[i], workspaceId);
     const withContent = rows.filter((r) => r.content && r.content.trim().length > 0);
 
-    // Batch-embed in chunks, then attach embeddings positionally.
     const embeddings = new Map<string, number[]>();
-    for (const group of chunk(withContent, EMBED_CHUNK)) {
-      try {
-        const vecs = await embedTexts(group.map((r) => r.content as string));
-        group.forEach((r, gi) => embeddings.set(r.externalId, vecs[gi]));
-      } catch (error) {
-        logger.warn("bench: message embedding chunk failed (storing without)", {
-          error: String(error).slice(0, 200),
-        });
+    if (embedMessages) {
+      // Batch-embed in chunks, then attach embeddings positionally.
+      for (const group of chunk(withContent, EMBED_CHUNK)) {
+        try {
+          const vecs = await embedTexts(group.map((r) => r.content as string));
+          group.forEach((r, gi) => embeddings.set(r.externalId, vecs[gi]));
+        } catch (error) {
+          logger.warn("bench: message embedding chunk failed (storing without)", {
+            error: String(error).slice(0, 200),
+          });
+        }
       }
     }
 

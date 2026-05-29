@@ -88,10 +88,12 @@ export interface BenchRunConfig {
   datasets: DatasetId[];
   /**
    * Subset selector:
-   *  - "fast"   ≈ 40 Qs, stratified per category. Used by ad-hoc local runs.
-   *  - "medium" ≈ 300 Qs, the standard PR / scheduled-CI budget.
-   *  - "full"   = the entire vendored corpus (~1,500 LoCoMo + 500 LongMemEval).
-   *               Manual runs only — costly.
+   *  - "fast"   ≈ 10 minutes with extraction, stratified per category.
+   *  - "medium" ≈ 30 minutes with extraction, the memory-PR server budget.
+   *  - "full"   = all loaded corpus questions. Manual runs only — costly.
+   *
+   * These are runtime budgets, not corpus-size promises. Extraction cost is
+   * driven by unique conversations/sessions as much as by final question count.
    */
   subset: "fast" | "medium" | "full";
   /**
@@ -108,6 +110,12 @@ export interface BenchRunConfig {
   cases?: number;
   /** Optional category filter (e.g. only "temporal"). */
   category?: string;
+  /**
+   * Skip message embeddings during the messages stage. Extraction reads the
+   * transcript text, not message vectors, so server seed runs can cache raw
+   * corpus messages quickly while keeping memory embeddings branch-local.
+   */
+  skipMessageEmbeddings?: boolean;
   /** Skip ingestion (assumes memories already populated for this runId). */
   skipIngest: boolean;
   /** Don't write to bench_runs, don't post to Slack, don't touch memories. */
@@ -117,7 +125,7 @@ export interface BenchRunConfig {
   /**
    * Override the extraction-stage LLM. Accepts a gateway id
    * (e.g. anthropic/claude-sonnet-4.6) or a tier name (fast | main |
-   * escalation). Default tier: main.
+   * escalation). Default tier: fast.
    */
   extractionModel?: string;
   /**

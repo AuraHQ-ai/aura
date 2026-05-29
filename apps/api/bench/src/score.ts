@@ -215,8 +215,10 @@ export async function persistRun(
 }
 
 /**
- * For each (dataset, category, scoreType) in `scores`, look up the most
- * recent prior run and return the delta (current - prior).
+ * For each (dataset, category, scoreType) in `scores`, look up the most recent
+ * comparable prior run and return the delta (current - prior).
+ * Comparable means the same corpus and exact sampled case set. This prevents a
+ * manual fast/full/category run from becoming the baseline for a different preset.
  *
  * Implementation note: previous versions did one DB roundtrip per score
  * row (O(scoreRows) queries). A medium-subset run produces ~30 score rows,
@@ -227,6 +229,7 @@ export async function persistRun(
 export async function computeDeltas(
   scores: BenchScore[],
   config: BenchRunConfig,
+  scope: { corpusHash: string; caseSetHash: string },
 ): Promise<Map<string, { prior: number | null; delta: number | null; priorRunId: string | null }>> {
   const out = new Map<string, { prior: number | null; delta: number | null; priorRunId: string | null }>();
   for (const s of scores) {
@@ -252,7 +255,11 @@ export async function computeDeltas(
         runId: benchRuns.runId,
       })
       .from(benchRuns)
-      .where(sql`${benchRuns.runId} != ${config.runId}`)
+      .where(sql`
+        ${benchRuns.runId} != ${config.runId}
+        AND ${benchRuns.corpusHash} = ${scope.corpusHash}
+        AND ${benchRuns.metadata}->>'caseSetHash' = ${scope.caseSetHash}
+      `)
       .orderBy(desc(benchRuns.createdAt))
       .limit(1000);
 

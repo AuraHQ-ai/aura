@@ -15,6 +15,7 @@
  */
 
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   BENCH_META_WORKSPACE,
   benchWorkspaceId,
@@ -80,6 +81,7 @@ export interface BenchRunOutput {
   textSummary: string;
   totalDurationMs: number;
   corpusHash: string;
+  caseSetHash: string;
   slackTs: string | null;
   /** Total USD spent across all stages (0 for dry runs / no-case bails). */
   costUsd: number;
@@ -97,6 +99,19 @@ function resolveGitSha(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function computeCaseSetHash(cases: BenchCase[]): string {
+  const hash = createHash("sha256");
+  for (const c of cases) {
+    hash.update(c.source);
+    hash.update("\0");
+    hash.update(c.id);
+    hash.update("\0");
+    hash.update(c.category);
+    hash.update("\n");
+  }
+  return hash.digest("hex").slice(0, 16);
 }
 
 async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
@@ -170,6 +185,7 @@ export async function runBench(
     limit: partialConfig.limit,
     cases: partialConfig.cases,
     category: partialConfig.category,
+    skipMessageEmbeddings: partialConfig.skipMessageEmbeddings ?? false,
     skipIngest: partialConfig.skipIngest ?? false,
     dryRun: partialConfig.dryRun ?? false,
     postSlack: partialConfig.postSlack ?? false,
@@ -255,6 +271,7 @@ export async function runBench(
       textSummary: "(no cases — corpus missing? Run `pnpm bench:fetch-corpus`.)",
       totalDurationMs: Date.now() - start,
       corpusHash: "empty",
+      caseSetHash: "empty",
       slackTs: null,
       costUsd: 0,
       models: null,
@@ -262,6 +279,7 @@ export async function runBench(
   }
 
   const corpusHash = await computeCorpusHash(config.datasets, config.corpusFile);
+  const caseSetHash = computeCaseSetHash(cases);
 
   // Dry-run: print what we would do, no DB writes, no LLM calls, no
   // catalog lookup, no expensive loop. CI can validate plumbing for $0.
@@ -281,6 +299,7 @@ export async function runBench(
       textSummary: `Dry run: ${cases.length} case(s) loaded across ${config.datasets.join(", ")} (subset=${config.subset}, corpus=${corpusHash.slice(0, 12)}).`,
       totalDurationMs: Date.now() - start,
       corpusHash,
+      caseSetHash,
       slackTs: null,
       costUsd: 0,
       models: null,
@@ -413,6 +432,7 @@ export async function runBench(
         workspaceId,
         embedConcurrency,
         (done) => p.update(done),
+        !config.skipMessageEmbeddings,
       );
       p.done();
       logger.info("bench: messages stage complete", r);
@@ -623,7 +643,7 @@ export async function runBench(
 
     if (stageRuns("score")) {
       scores = aggregateScores(results);
-      deltas = (await computeDeltas(scores, config).catch(
+      deltas = (await computeDeltas(scores, config, { corpusHash, caseSetHash }).catch(
         () => new Map(),
       )) as BenchRunOutput["deltas"];
 
@@ -644,6 +664,7 @@ export async function runBench(
           subset: config.subset,
           category: config.category ?? null,
           cases: results.length,
+          caseSetHash,
           extractionModel: models!.extraction,
           replay,
           costUsd: totalCostUsd,
@@ -701,6 +722,7 @@ export async function runBench(
       workspaceId,
       persistent,
       corpusHash,
+      caseSetHash,
       gitSha: config.gitSha ?? null,
       models,
       counts: {
@@ -757,6 +779,7 @@ export async function runBench(
       textSummary: summary,
       totalDurationMs,
       corpusHash,
+      caseSetHash,
       slackTs,
       costUsd: cost.usd,
       models,
