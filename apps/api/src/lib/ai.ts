@@ -7,8 +7,13 @@ import {
 /** The model type that wrapLanguageModel accepts (LanguageModelV3, not re-exported by "ai"). */
 export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
-import { getDefaultModelId } from "./model-catalog.js";
+import { getDefaultModelId, updateModelCapabilities } from "./model-catalog.js";
 import { logger } from "./logger.js";
+import {
+  getProviderThinkingOptions,
+  resolveProviderThinkingOptions,
+} from "../pipeline/prepare-step.js";
+import type { ModelCapabilities } from "@aura/db/schema";
 
 /**
  * All LLM and embedding calls go through Vercel AI Gateway.
@@ -73,8 +78,122 @@ async function getDirectAnthropicModel(modelId: string) {
   return createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY })(modelId);
 }
 
+const ENABLED_THINKING_UNSUPPORTED =
+  "\"thinking.type.enabled\" is not supported for this model";
+const ADAPTIVE_THINKING_UNSUPPORTED =
+  "adaptive thinking is not supported on this model";
+
+function errorIncludes(error: unknown, needle: string): boolean {
+  if (error instanceof Error) {
+    if (error.message.includes(needle) || String(error).includes(needle)) {
+      return true;
+    }
+
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause && errorIncludes(cause, needle)) {
+      return true;
+    }
+
+    const nested = (error as { errors?: unknown }).errors;
+    if (Array.isArray(nested)) {
+      return nested.some((item) => errorIncludes(item, needle));
+    }
+
+    return false;
+  }
+
+  return String(error).includes(needle);
+}
+
+function getSelfHealedAnthropicCapabilities(
+  error: unknown,
+): ModelCapabilities | null {
+  if (errorIncludes(error, ENABLED_THINKING_UNSUPPORTED)) {
+    return { provider: "anthropic", thinkingMode: "adaptive" };
+  }
+  if (errorIncludes(error, ADAPTIVE_THINKING_UNSUPPORTED)) {
+    return { provider: "anthropic", thinkingMode: "enabled" };
+  }
+  return null;
+}
+
+function getBudgetTokensFromParams(params: unknown): number {
+  const thinking = (params as any)?.providerOptions?.anthropic?.thinking;
+  return typeof thinking?.budgetTokens === "number" ? thinking.budgetTokens : 8000;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeProviderOptions(
+  existing: unknown,
+  corrected: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = isRecord(existing) ? { ...existing } : {};
+
+  for (const [provider, options] of Object.entries(corrected)) {
+    const existingProviderOptions = merged[provider];
+    merged[provider] = {
+      ...(isRecord(existingProviderOptions) ? existingProviderOptions : {}),
+      ...(isRecord(options) ? options : {}),
+    };
+  }
+
+  return merged;
+}
+
+type SelfHealRetryResult<T> =
+  | { healed: false }
+  | { healed: true; result: T };
+
+async function retryWithSelfHealedThinking<T>(opts: {
+  error: unknown;
+  gatewayId: string;
+  params: unknown;
+  retry: (params: any) => PromiseLike<T>;
+}): Promise<SelfHealRetryResult<T>> {
+  const capabilities = getSelfHealedAnthropicCapabilities(opts.error);
+  if (!capabilities) return { healed: false };
+
+  const wrote = await updateModelCapabilities(opts.gatewayId, capabilities);
+  logger.info("Self-healed Anthropic thinking capabilities", {
+    modelId: opts.gatewayId,
+    capabilities,
+    persisted: wrote,
+  });
+
+  const budgetTokens = getBudgetTokensFromParams(opts.params);
+  let correctedProviderOptions = await getProviderThinkingOptions(
+    opts.gatewayId,
+    budgetTokens,
+  ).catch(() =>
+    resolveProviderThinkingOptions(opts.gatewayId, capabilities, budgetTokens),
+  );
+
+  if (Object.keys(correctedProviderOptions).length === 0) {
+    correctedProviderOptions = resolveProviderThinkingOptions(
+      opts.gatewayId,
+      capabilities,
+      budgetTokens,
+    );
+  }
+
+  const retryParams = {
+    ...(isRecord(opts.params) ? opts.params : {}),
+    providerOptions: mergeProviderOptions(
+      (opts.params as any)?.providerOptions,
+      correctedProviderOptions as Record<string, unknown>,
+    ),
+  };
+
+  return { healed: true, result: await opts.retry(retryParams) };
+}
+
 function gatewayFallbackMiddleware(
   directModelId: string,
+  gatewayId: string,
+  gatewayModel: WrappableModel,
 ): LanguageModelMiddleware {
   return {
     specificationVersion: "v3" as const,
@@ -82,6 +201,17 @@ function gatewayFallbackMiddleware(
       try {
         return await doGenerate();
       } catch (error) {
+        const healed = await retryWithSelfHealedThinking<
+          Awaited<ReturnType<typeof doGenerate>>
+        >({
+          error,
+          gatewayId,
+          params,
+          retry: (retryParams) =>
+            gatewayModel.doGenerate(retryParams) as ReturnType<typeof doGenerate>,
+        });
+        if (healed.healed) return healed.result;
+
         if (GatewayAuthenticationError.isInstance(error)) {
           logger.warn(
             "Gateway auth failed, falling back to direct Anthropic API",
@@ -97,6 +227,17 @@ function gatewayFallbackMiddleware(
       try {
         return await doStream();
       } catch (error) {
+        const healed = await retryWithSelfHealedThinking<
+          Awaited<ReturnType<typeof doStream>>
+        >({
+          error,
+          gatewayId,
+          params,
+          retry: (retryParams) =>
+            gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
+        });
+        if (healed.healed) return healed.result;
+
         if (GatewayAuthenticationError.isInstance(error)) {
           logger.warn(
             "Gateway auth failed (stream), falling back to direct Anthropic API",
@@ -124,7 +265,7 @@ export function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: s
 
   return wrapLanguageModel({
     model: gatewayModel,
-    middleware: gatewayFallbackMiddleware(directId),
+    middleware: gatewayFallbackMiddleware(directId, gatewayId, gatewayModel),
   });
 }
 
@@ -150,13 +291,6 @@ export async function getFastModelId(): Promise<string> {
 export async function getEmbeddingModel() {
   const gatewayId = await resolveModelId("model_embedding", "embedding");
   return gateway.embedding(gatewayId);
-}
-
-/**
- * Check if a model is Anthropic (used to decide where provider options apply).
- */
-export function isAnthropicModel(modelId: string): boolean {
-  return modelId.startsWith("anthropic/") || modelId.startsWith("claude");
 }
 
 /**

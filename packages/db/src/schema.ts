@@ -20,6 +20,7 @@ import {
   numeric,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { z } from "zod";
 
 // ── Enums ──────────────────────────────────────────────────────────────────
 
@@ -389,6 +390,28 @@ export const settings = pgTable(
 
 // ── Model Catalog ───────────────────────────────────────────────────────────
 
+export const ModelCapabilities = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("anthropic"),
+    thinkingMode: z.enum(["adaptive", "enabled", "none"]),
+  }),
+  z.object({
+    provider: z.literal("openai"),
+    reasoningEffort: z.enum(["minimal", "low", "medium", "high", "none"]),
+  }),
+  z.object({
+    provider: z.literal("google"),
+    thinkingBudget: z.union([z.number(), z.literal("dynamic"), z.literal("none")]),
+  }),
+  z.object({
+    provider: z.literal("xai"),
+    reasoningEffort: z.enum(["low", "high", "none"]),
+  }),
+  z.object({ provider: z.literal("none") }),
+]);
+
+export type ModelCapabilities = z.infer<typeof ModelCapabilities>;
+
 export const modelCatalog = pgTable(
   "model_catalog",
   {
@@ -404,6 +427,7 @@ export const modelCatalog = pgTable(
     contextWindow: integer("context_window"),
     maxTokens: integer("max_tokens"),
     tags: jsonb("tags").$type<string[]>(),
+    capabilities: jsonb("capabilities").$type<ModelCapabilities | null>(),
     rawPricing: jsonb("raw_pricing").$type<Record<string, string | number | null>>(),
     rawPayload: jsonb("raw_payload").$type<Record<string, unknown>>(),
     lastSyncedAt: timestamptz("last_synced_at").notNull().defaultNow(),
