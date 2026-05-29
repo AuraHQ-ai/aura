@@ -81,6 +81,10 @@ export interface BenchRunOutput {
   totalDurationMs: number;
   corpusHash: string;
   slackTs: string | null;
+  /** Total USD spent across all stages (0 for dry runs / no-case bails). */
+  costUsd: number;
+  /** Resolved gateway model ids for the run, or null when no stage ran. */
+  models: { extraction: string; answerer: string; judge: string } | null;
 }
 
 function resolveGitSha(): string | undefined {
@@ -252,6 +256,8 @@ export async function runBench(
       totalDurationMs: Date.now() - start,
       corpusHash: "empty",
       slackTs: null,
+      costUsd: 0,
+      models: null,
     };
   }
 
@@ -276,6 +282,8 @@ export async function runBench(
       totalDurationMs: Date.now() - start,
       corpusHash,
       slackTs: null,
+      costUsd: 0,
+      models: null,
     };
   }
 
@@ -750,6 +758,8 @@ export async function runBench(
       totalDurationMs,
       corpusHash,
       slackTs,
+      costUsd: cost.usd,
+      models,
     };
   } finally {
     dashboard?.stop();

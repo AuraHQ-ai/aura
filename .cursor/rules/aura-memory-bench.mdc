@@ -1,0 +1,39 @@
+---
+description: Validate memory changes with the bench. Triggers on memory pipeline, bench, prompt, and schema paths.
+globs: apps/api/src/memory/**,apps/api/bench/**,apps/api/src/personality/system-prompt.ts,apps/api/src/pipeline/core-prompt.ts,packages/db/src/schema.ts,packages/db/drizzle/**
+alwaysApply: false
+---
+
+# Memory changes must be validated with the bench
+
+You're editing a path that can move Aura's memory quality. These changes are
+**not falsifiable by typecheck alone** — validate with the memory bench. Read
+the `aura-memory-bench` skill for the full workflow.
+
+The bench is **local-first** (it no longer runs on PRs). Results are recorded in
+`apps/api/bench/history.jsonl` and the generated `apps/api/bench/README.md` +
+root `README.md` snapshot. Commit those alongside your change.
+
+## Runtime + cost dictate HOW you run it
+
+| Run | Command | Time | Cost | Who runs it |
+|---|---|---|---|---|
+| Smoke | `pnpm bench:memory --dataset=toy --log` | ~1 min | cents | **You** (background) |
+| Iteration | `pnpm bench:memory --dataset=both --subset=fast --log` | a few min | ~$2 | **You** (background) |
+| Standard | `pnpm bench:memory --dataset=both --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | **Ask the user** |
+| Full | `pnpm bench:memory --dataset=both --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | **Ask the user** |
+
+## Rules for invoking it
+
+- **NEVER block the shell on a bench run.** Do not pipe it through `tail`,
+  `head`, or `tee` in a foreground call — a full run can take an hour and will
+  hang your turn. Cheap runs you launch yourself MUST be fire-and-forget:
+  start them with `block_until_ms: 0` and let the completion notification tell
+  you when they're done.
+- **Smoke / fast subsets only**: you may run these yourself (background) to
+  sanity-check a change before handing off.
+- **Medium / full runs cost real money and take a long time**: do NOT run them
+  autonomously. Give the user the exact command and ask them to run it, then
+  commit the regenerated `history.jsonl` + READMEs.
+- Always pass `--log --note="<what changed>"` so the result is recorded.
+- Iterate narrow first: `--category=<axis> --limit=3` before widening (see skill).

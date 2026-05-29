@@ -12,7 +12,8 @@
     "db:studio": "./scripts/env.sh pnpm --filter @aura/db db:studio",
     "bench:memory": "./scripts/env.sh pnpm --filter aura-api bench:memory",
     "bench:memory:i": "./scripts/env.sh pnpm --filter aura-api bench:memory:i",
-    "bench:fetch-corpus": "pnpm --filter aura-api bench:fetch-corpus"
+    "bench:fetch-corpus": "pnpm --filter aura-api bench:fetch-corpus",
+    "bench:report": "pnpm --filter aura-api bench:report"
   },
   "pnpm": {
     "overrides": {
