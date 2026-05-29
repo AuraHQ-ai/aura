@@ -48,6 +48,7 @@ export interface HistoryEntry {
   limit: number | null;
   category: string | null;
   corpusHash: string;
+  caseSetHash: string | null;
   runtimeMs: number;
   costUsd: number | null;
   models: { extraction: string; answerer: string; judge: string } | null;
@@ -64,6 +65,7 @@ export interface RecordRunInput {
   limit?: number;
   category?: string;
   corpusHash: string;
+  caseSetHash?: string;
   totalDurationMs: number;
   costUsd?: number | null;
   models?: { extraction: string; answerer: string; judge: string } | null;
@@ -182,6 +184,7 @@ export function buildHistoryEntry(input: RecordRunInput): HistoryEntry {
     limit: input.limit && input.limit > 0 ? input.limit : null,
     category: input.category ?? null,
     corpusHash: input.corpusHash,
+    caseSetHash: input.caseSetHash ?? null,
     runtimeMs: input.totalDurationMs,
     costUsd: input.costUsd ?? null,
     models: input.models ?? null,
@@ -254,7 +257,7 @@ export function renderBenchReadme(
   );
   lines.push("");
   lines.push(
-    `- scope: \`${fmtScope(latest)}\` · corpus \`${latest.corpusHash.slice(0, 12)}\` · runtime ${fmtDuration(latest.runtimeMs)} · cost ${fmtCost(latest.costUsd)}`,
+    `- scope: \`${fmtScope(latest)}\` · corpus \`${latest.corpusHash.slice(0, 12)}\`${latest.caseSetHash ? ` · cases \`${latest.caseSetHash}\`` : ""} · runtime ${fmtDuration(latest.runtimeMs)} · cost ${fmtCost(latest.costUsd)}`,
   );
   if (latest.models) {
     lines.push(
