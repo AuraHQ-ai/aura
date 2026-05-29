@@ -15,6 +15,7 @@
     "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings",
     "backfill:canonical-model-ids": "tsx scripts/backfill-canonical-model-ids.ts",
     "bench:memory": "tsx src/scripts/bench-memory.ts",
+    "bench:memory:i": "tsx src/scripts/bench-memory.ts --interactive",
     "bench:fetch-corpus": "tsx bench/scripts/fetch-corpus.ts"
   },
   "dependencies": {
@@ -31,6 +32,7 @@
     "@googleapis/gmail": "^16.1.1",
     "@hono/node-server": "^1.19.9",
     "@hono/zod-openapi": "^0.19.10",
+    "@inquirer/prompts": "^8.5.0",
     "@neondatabase/serverless": "^1.0.0",
     "@slack/web-api": "^7.15.1",
     "@tavily/core": "^0.7.1",
@@ -46,10 +48,13 @@
     "google-auth-library": "^10.5.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.11.9",
+    "ink": "^7.0.4",
+    "ink-spinner": "^5.0.0",
     "jose": "^6.2.2",
     "mammoth": "^1.11.0",
     "markdown-table-prettify": "^3.7.0",
     "playwright-core": "^1.58.2",
+    "react": "^19.2.6",
     "reading-time": "^1.5.0",
     "turndown": "^7.2.2",
     "xlsx": "^0.18.5",
@@ -57,6 +62,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
+    "@types/react": "19.2.14",
     "@types/turndown": "^5.0.6",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",

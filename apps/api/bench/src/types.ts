@@ -9,6 +9,16 @@
 export type DatasetId = "locomo" | "longmemeval" | "toy";
 
 /**
+ * Pipeline stages, in execution order:
+ *   messages → store + embed raw messages
+ *   extract  → extract memories from transcripts
+ *   score    → retrieval recall@K + QA (answerer + judge)
+ * The runner can start/stop at any stage (`--from` / `--to`).
+ */
+export type BenchStage = "messages" | "extract" | "score";
+export const BENCH_STAGE_ORDER: BenchStage[] = ["messages", "extract", "score"];
+
+/**
  * A single Q&A case after normalization. Both LoCoMo's `dia_id`-style
  * evidence and LongMemEval's per-session evidence collapse onto
  * `evidenceSessionIds` + `evidenceDiaIds`.
@@ -40,6 +50,15 @@ export interface BenchCase {
    * turn 3). Required for fine-grained retrieval recall.
    */
   evidenceDiaIds?: string[];
+  /**
+   * Optional: the reference "now" at which the question is asked (LongMemEval
+   * `question_date`, e.g. "2023/04/10 (Mon) 23:07"). Temporal-reasoning gold
+   * answers ("five months ago") are relative to THIS instant, not the wall
+   * clock. Used to anchor both the relative-time rendering of memories and the
+   * answerer's notion of the current date. When absent, the harness falls back
+   * to the latest session timestamp, then to wall-clock now.
+   */
+  questionDate?: string;
 }
 
 export interface BenchSession {
@@ -81,6 +100,12 @@ export interface BenchRunConfig {
    * while iterating on a memory change. 0 or undefined falls back to `subset`.
    */
   limit?: number;
+  /**
+   * Optional TOTAL case cap across all datasets/categories combined (distinct
+   * from `limit`, which is per-category). Applied after loading via a
+   * deterministic seeded sample. Used by `--cases=N` for quick smoke runs.
+   */
+  cases?: number;
   /** Optional category filter (e.g. only "temporal"). */
   category?: string;
   /** Skip ingestion (assumes memories already populated for this runId). */
@@ -121,6 +146,57 @@ export interface BenchRunConfig {
   prNumber?: number;
   /** Git SHA of HEAD at run time. */
   gitSha?: string;
+
+  // ── Staged local-dev controls ──────────────────────────────────────────────
+  /**
+   * First stage to run (inclusive). Defaults to "messages" (full pipeline).
+   * Using any stage control switches the run to a persistent local workspace
+   * so data survives between invocations.
+   */
+  fromStage?: BenchStage;
+  /** Last stage to run (inclusive). Defaults to "score". */
+  toStage?: BenchStage;
+  /**
+   * Stable workspace key for staged local runs. Defaults to a key derived
+   * from datasets+subset(+category). Pick the same id across runs to reuse
+   * ingested data.
+   */
+  benchId?: string;
+  /**
+   * Use a persistent workspace and DON'T wipe it at the end (so later stages
+   * can reuse the data). Implied by any of fromStage/toStage/benchId/reset.
+   */
+  persist?: boolean;
+  /** Wipe the persistent workspace's data before running (start from scratch). */
+  reset?: boolean;
+  /** Number of parallel embedding/message workers. Defaults to `concurrency`. */
+  embedConcurrency?: number;
+  /** Force the TTY progress bar on/off. Defaults to stdout.isTTY. */
+  progress?: boolean;
+  /**
+   * Extraction replay cadence:
+   *  - "session"  (default): one extraction per session over the full session
+   *    transcript. Cheap; a good approximation when benchmarking retrieval.
+   *  - "exchange": one extraction per assistant turn over the accumulating
+   *    last-30-message window — mirrors production's per-reply cadence and
+   *    incremental reconciliation. Faithful but multiplies extraction LLM
+   *    cost by ~(turns ÷ 2) per session.
+   */
+  replay?: "session" | "exchange";
+  /**
+   * Resume a prior run: skip cases already recorded in that run's
+   * `cases.jsonl` and append new results to the same run directory. An empty
+   * string means "resume the latest run" (via the `runs/latest` pointer).
+   * Pairs naturally with `--from=score` since memories survive in the
+   * persistent workspace.
+   */
+  resume?: string;
+  /**
+   * Cooperative cancellation handle. The CLI installs a SIGINT handler that
+   * flips `cancelled` to true; the score loop checks it between cases, drains
+   * in-flight work, then persists partial results. Not serialized.
+   */
+  cancelSignal?: { cancelled: boolean };
 }
 
 // ── Score aggregation ──────────────────────────────────────────────────────
@@ -155,10 +231,30 @@ export interface PerCaseResult {
   abstention: boolean;
   retrievedMemoryIds: string[];
   retrievedRecallHit: boolean | null;
+  /**
+   * Fraction (0..1) of the case's evidence sessions that are represented in
+   * the retrieved set. null when the case has no evidence pointers. This is
+   * the coverage-based recall signal: a multi-hop question citing two evidence
+   * sessions where only one is retrieved scores 0.5, surfacing the gap that
+   * the old binary `retrievedRecallHit` (any-session = 1.0) hid.
+   */
+  retrievalCoverage?: number | null;
   modelAnswer: string;
   judgeVerdict: "correct" | "partial" | "incorrect" | "abstain_ok" | "skipped";
   judgeConfidence: number;
   judgeRationale: string;
+  /**
+   * Estimated token count of the retrieved-memory block injected into the
+   * answerer (~4 chars/token). The context-efficiency signal: quality per
+   * token of memory context, mirroring mem0's token-efficiency reporting.
+   * Model-independent so cross-run deltas aren't confounded by model repoints.
+   * Undefined for cases that errored before the answerer ran.
+   */
+  memoryTokens?: number;
+  /** Exact character count of that memory block (audits `memoryTokens`). */
+  memoryChars?: number;
+  /** Number of memories injected into the answerer prompt. */
+  memoryCount?: number;
   durationMs: number;
   costUsd?: number;
 }

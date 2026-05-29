@@ -15,37 +15,54 @@ import { retrieveMemories } from "../../src/memory/retrieve.js";
 import type { Memory } from "@aura/db/schema";
 import { logger } from "../../src/lib/logger.js";
 import type { BenchCase } from "./types.js";
+import type { UsageLike } from "./cost-meter.js";
 
 const DEFAULT_K = 15;
 
 export interface RetrievalEvalResult {
   retrievedMemoryIds: string[];
   retrieved: Memory[];
-  /** null when the case has no evidence pointers (can't score recall). */
+  /**
+   * Coverage-based recall: fraction (0..1) of the case's evidence SESSIONS
+   * represented in the retrieved set. null when the case has no evidence
+   * pointers (can't score recall).
+   *
+   * This replaces the old binary "any evidence session present" hit, which
+   * reported 1.0 for a multi-hop question even when only one of its two
+   * evidence sessions was retrieved — masking exactly the failures the QA
+   * lane was catching. Coverage drops to 0.5 in that case.
+   */
+  coverage: number | null;
+  /** Distinct evidence sessions represented in the retrieved set. */
+  coveredSessions: number;
+  /** Total distinct evidence sessions the gold answer cites. */
+  evidenceSessions: number;
+  /** Convenience: coverage > 0. null when no evidence pointers. */
   hit: boolean | null;
 }
 
 /**
- * Score retrieval recall for one case. Returns `hit=null` when the case
- * has no evidence pointers — those questions are scored on QA accuracy
+ * Score retrieval recall for one case. Returns coverage/hit `null` when the
+ * case has no evidence pointers — those questions are scored on QA accuracy
  * only.
  *
- * Hit semantics: a hit means at least one retrieved memory came from a
- * session the gold answer cites. We check two channels and take the
- * union so the scorer works for both corpora:
+ * Coverage semantics: we count how many of the gold-cited evidence sessions
+ * are represented by at least one retrieved memory, divided by the total
+ * number of evidence sessions. A retrieved memory "represents" a session via
+ * any of three channels (union):
  *
  *   1. sourceThreadTs ∈ evidenceSessionIds.
  *      Cheap. Works because bench ingest sets sourceThreadTs = session.id.
  *      Covers LongMemEval where evidence is session-level.
- *   2. bench_provenance.diaIds ∩ evidenceDiaIds ≠ ∅, or
- *      bench_provenance.sessionIds ∩ evidenceSessionIds ≠ ∅.
- *      Fallback for cases where (1) misses — and the route to
- *      dia_id-granular recall once we want it.
+ *   2. bench_provenance.sessionIds ∩ evidenceSessionIds ≠ ∅.
+ *   3. bench_provenance.diaIds whose session prefix ∈ evidence sessions, or
+ *      that match an evidence dia_id exactly (LoCoMo turn-level pointers).
  */
 export async function evaluateRetrieval(
   benchCase: BenchCase,
   workspaceId: string,
   k = DEFAULT_K,
+  onUsage?: (modelId: string, usage: UsageLike) => void,
 ): Promise<RetrievalEvalResult> {
   let retrieved: Memory[] = [];
   try {
@@ -55,6 +72,7 @@ export async function evaluateRetrieval(
       limit: k,
       workspaceId,
       adminMode: true,
+      onUsage,
     });
   } catch (error) {
     logger.warn("bench: retrieval failed", {
@@ -66,39 +84,53 @@ export async function evaluateRetrieval(
   const retrievedMemoryIds = retrieved.map((m) => m.id);
   const wantDia = new Set(benchCase.evidenceDiaIds ?? []);
   const wantSession = new Set(benchCase.evidenceSessionIds ?? []);
-  const hasEvidence = wantDia.size > 0 || wantSession.size > 0;
+
+  // The denominator is the set of distinct evidence sessions. LoCoMo only
+  // ships turn-level dia_ids, so fold their session prefixes in too.
+  const evidence = new Set<string>(wantSession);
+  for (const d of wantDia) evidence.add(d.split(":")[0]);
+
+  const none: RetrievalEvalResult = {
+    retrievedMemoryIds,
+    retrieved,
+    coverage: null,
+    coveredSessions: 0,
+    evidenceSessions: evidence.size,
+    hit: null,
+  };
 
   if (benchCase.abstention) {
     // For abstention cases, recall is unusual: "no relevant memory" is
     // actually the right answer. Score abstention via QA, not recall.
-    return { retrievedMemoryIds, retrieved, hit: null };
+    return none;
   }
-  if (!hasEvidence) {
-    return { retrievedMemoryIds, retrieved, hit: null };
-  }
+  if (evidence.size === 0) return none;
 
-  // Channel 1 — sourceThreadTs (the simple session-level check)
-  if (wantSession.size > 0) {
-    for (const mem of retrieved) {
-      if (mem.sourceThreadTs && wantSession.has(mem.sourceThreadTs)) {
-        return { retrievedMemoryIds, retrieved, hit: true };
-      }
-    }
-  }
-
-  // Channel 2 — bench_provenance for fine-grained matching
+  // Mark every evidence session that at least one retrieved memory represents.
+  const covered = new Set<string>();
+  const mark = (s: string | null | undefined) => {
+    if (s && evidence.has(s)) covered.add(s);
+  };
   for (const mem of retrieved) {
+    mark(mem.sourceThreadTs);
     const prov = (mem as any).benchProvenance as
       | { diaIds?: string[]; sessionIds?: string[] }
       | null
       | undefined;
-    if (!prov) continue;
-    if (prov.diaIds?.some((d) => wantDia.has(d))) {
-      return { retrievedMemoryIds, retrieved, hit: true };
-    }
-    if (prov.sessionIds?.some((s) => wantSession.has(s))) {
-      return { retrievedMemoryIds, retrieved, hit: true };
+    if (prov) {
+      prov.sessionIds?.forEach(mark);
+      // A dia_id like "D1:3" belongs to session "D1"; mark that session.
+      prov.diaIds?.forEach((d) => mark(d.split(":")[0]));
     }
   }
-  return { retrievedMemoryIds, retrieved, hit: false };
+
+  const coverage = covered.size / evidence.size;
+  return {
+    retrievedMemoryIds,
+    retrieved,
+    coverage,
+    coveredSessions: covered.size,
+    evidenceSessions: evidence.size,
+    hit: covered.size > 0,
+  };
 }

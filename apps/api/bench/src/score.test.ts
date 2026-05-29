@@ -48,7 +48,7 @@ describe("aggregateScores", () => {
     expect(qa!.score).toBe((2 + 0.5) / 4);
   });
 
-  it("retrieval recall ignores null hits and tracks true/false", () => {
+  it("retrieval recall ignores null hits and falls back to binary hit when coverage absent", () => {
     const results = [
       makeResult({ retrievedRecallHit: true }),
       makeResult({ retrievedRecallHit: true }),
@@ -61,6 +61,21 @@ describe("aggregateScores", () => {
     expect(recall!.n).toBe(3);
     expect(recall!.nCorrect).toBe(2);
     expect(recall!.score).toBeCloseTo(2 / 3, 5);
+  });
+
+  it("retrieval recall is mean coverage; nCorrect counts only full coverage", () => {
+    const results = [
+      makeResult({ retrievalCoverage: 1 }),
+      makeResult({ retrievalCoverage: 0.5 }), // multi-hop: one of two sessions
+      makeResult({ retrievalCoverage: 0 }),
+      makeResult({ retrievalCoverage: null }), // no evidence → ignored
+    ];
+    const scores = aggregateScores(results);
+    const recall = scores.find((s) => s.scoreType === "retrieval_recall_at_15");
+    expect(recall).toBeDefined();
+    expect(recall!.n).toBe(3);
+    expect(recall!.nCorrect).toBe(1); // only the coverage===1 case
+    expect(recall!.score).toBeCloseTo((1 + 0.5 + 0) / 3, 5);
   });
 
   it("abstention lane fires only when there are abstention cases", () => {
@@ -185,11 +200,13 @@ describe("loadToyCorpus", () => {
 });
 
 describe("bench tier defaults", () => {
-  it("pins extraction + answerer to main and judge to escalation", () => {
+  it("mirrors prod: extraction=fast, answerer=main, judge=escalation", () => {
     // Tiers are declarative knobs that map onto whatever's in the live
-    // model catalog. The exact gateway ids resolved at runtime are
-    // captured in bench_runs so cross-run deltas stay honest.
-    expect(DEFAULT_TIERS.extraction).toBe("main");
+    // model catalog. Because the bench runs against a copy of the prod DB,
+    // these tiers resolve to the same models prod uses. The exact gateway
+    // ids resolved at runtime are captured in bench_runs so cross-run
+    // deltas stay honest.
+    expect(DEFAULT_TIERS.extraction).toBe("fast");
     expect(DEFAULT_TIERS.answerer).toBe("main");
     expect(DEFAULT_TIERS.judge).toBe("escalation");
   });

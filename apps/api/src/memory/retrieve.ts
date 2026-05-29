@@ -24,6 +24,19 @@ interface RetrievalOptions {
   adminMode?: boolean;
   /** Workspace ID for tenant isolation in entity queries */
   workspaceId?: string;
+  /**
+   * Optional cost hook. When set, the query-entity-extraction LLM call reports
+   * its model id + token usage so callers (e.g. the bench cost meter) can price
+   * retrieval. Production passes nothing — no behaviour change.
+   */
+  onUsage?: (
+    modelId: string,
+    usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    },
+  ) => void;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -66,10 +79,13 @@ const queryEntitySchema = z.object({
   })),
 });
 
-async function extractQueryEntities(query: string): Promise<Array<{ name: string; type: EntityType }>> {
+async function extractQueryEntities(
+  query: string,
+  onUsage?: RetrievalOptions["onUsage"],
+): Promise<Array<{ name: string; type: EntityType }>> {
   try {
     const model = await getFastModel();
-    const { object } = await generateObject({
+    const { object, usage } = await generateObject({
       model,
       schema: queryEntitySchema,
       prompt: `Extract entity mentions from this message. Include explicitly named entities and strongly implied ones. Be conservative — only extract entities you're confident about.
@@ -79,6 +95,7 @@ Entity types: person, company, project, product, channel, technology, concept, l
 Message: "${query}"`,
       temperature: 0,
     });
+    onUsage?.((model as any)?.modelId ?? "retrieve", usage);
     return object.entities;
   } catch (error) {
     logger.warn("Query entity extraction failed, falling back to heuristic", {
@@ -149,12 +166,13 @@ async function fetchEntityMatchedMemories(
   minRelevanceScore: number,
   currentUserId?: string,
   workspaceId?: string,
+  onUsage?: RetrievalOptions["onUsage"],
 ): Promise<EntityMemoryResult> {
   const emptyResult: EntityMemoryResult = { memories: [], memoryEntityMap: new Map(), resolvedEntityCount: 0 };
 
   try {
     // Step 1: Extract entities via LLM
-    let extractedEntities = await extractQueryEntities(query);
+    let extractedEntities = await extractQueryEntities(query, onUsage);
 
     // Step 2: Fall back to heuristic if LLM returns empty
     let usedHeuristic = false;
@@ -305,14 +323,14 @@ async function fetchEntityMatchedMemories(
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId } = options;
+  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage } = options;
   const start = Date.now();
 
   try {
     const [queryEmbedding, lexemes, entityResult] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
       extractLexemes(query),
-      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId),
+      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId, onUsage),
     ]);
     const { memories: entityMemories, memoryEntityMap, resolvedEntityCount } = entityResult;
 

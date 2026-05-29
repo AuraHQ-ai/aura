@@ -19,34 +19,57 @@ import {
   BENCH_META_WORKSPACE,
   benchWorkspaceId,
   createBenchWorkspace,
+  ensureBenchWorkspace,
   gcStaleBenchWorkspaces,
+  localBenchWorkspaceId,
+  wipeBenchData,
+  wipeBenchMemories,
   wipeBenchWorkspace,
 } from "./workspace.js";
 import {
   computeCorpusHash,
   loadDataset,
   loadExternalCorpus,
+  sampleTotal,
   stratifiedSample,
   SUBSET_PER_CATEGORY,
 } from "./fixtures.js";
-import { ingestCases } from "./ingest.js";
+import {
+  countUniqueConversations,
+  countTotalSessions,
+  storeMessagesForCases,
+  extractMemoriesForCases,
+} from "./ingest.js";
 import { evaluateRetrieval } from "./eval-retrieval.js";
 import { evaluateQA } from "./eval-qa.js";
 import { resolveBenchRunModelIds } from "./models.js";
 import {
+  aggregateContextEfficiency,
   aggregateScores,
   computeDeltas,
   persistRun,
+  type ContextEfficiency,
 } from "./score.js";
 import { buildTextSummary, postReport } from "./report.js";
+import { createProgress } from "./progress.js";
+import { createCostMeter, type CostStage } from "./cost-meter.js";
+import {
+  createRunArtifacts,
+  readLatestRunId,
+  type RunArtifacts,
+} from "./artifacts.js";
+import type { Dashboard } from "./dashboard.js";
 import { getEmbeddingModel } from "../../src/lib/ai.js";
-import { logger } from "../../src/lib/logger.js";
-import type {
-  BenchCase,
-  BenchRunConfig,
-  BenchScore,
-  PerCaseResult,
+import { logger, setLogFile, closeLogFile } from "../../src/lib/logger.js";
+import {
+  BENCH_STAGE_ORDER,
+  type BenchCase,
+  type BenchRunConfig,
+  type BenchScore,
+  type BenchStage,
+  type PerCaseResult,
 } from "./types.js";
+
 
 export interface BenchRunOutput {
   runId: string;
@@ -88,12 +111,15 @@ async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
     const sized = Number.isFinite(perCategory)
       ? stratifiedSample(filtered, perCategory)
       : filtered;
-    logger.info(`bench: loaded ${sized.length} case(s) from --corpus-file`, {
+    const capped =
+      config.cases && config.cases > 0 ? sampleTotal(sized, config.cases) : sized;
+    logger.info(`bench: loaded ${capped.length} case(s) from --corpus-file`, {
       file: config.corpusFile,
       requested: filtered.length,
       subset: config.subset,
+      cases: config.cases,
     });
-    return sized;
+    return capped;
   }
 
   const all: BenchCase[] = [];
@@ -112,6 +138,16 @@ async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
     });
     all.push(...sized);
   }
+
+  // --cases=N: deterministic TOTAL cap across everything loaded above.
+  if (config.cases && config.cases > 0 && all.length > config.cases) {
+    const capped = sampleTotal(all, config.cases);
+    logger.info(`bench: capped to ${capped.length} total case(s) (--cases)`, {
+      requested: all.length,
+      cases: config.cases,
+    });
+    return capped;
+  }
   return all;
 }
 
@@ -128,6 +164,7 @@ export async function runBench(
     datasets: partialConfig.datasets ?? ["toy"],
     subset: partialConfig.subset ?? "medium",
     limit: partialConfig.limit,
+    cases: partialConfig.cases,
     category: partialConfig.category,
     skipIngest: partialConfig.skipIngest ?? false,
     dryRun: partialConfig.dryRun ?? false,
@@ -139,6 +176,16 @@ export async function runBench(
     corpusFile: partialConfig.corpusFile,
     prNumber: partialConfig.prNumber,
     gitSha: partialConfig.gitSha ?? resolveGitSha(),
+    fromStage: partialConfig.fromStage,
+    toStage: partialConfig.toStage,
+    benchId: partialConfig.benchId,
+    persist: partialConfig.persist,
+    reset: partialConfig.reset,
+    embedConcurrency: partialConfig.embedConcurrency,
+    progress: partialConfig.progress,
+    replay: partialConfig.replay,
+    resume: partialConfig.resume,
+    cancelSignal: partialConfig.cancelSignal,
   };
 
   const start = Date.now();
@@ -148,7 +195,48 @@ export async function runBench(
     category: config.category ?? "(all)",
   });
 
-  const workspaceId = benchWorkspaceId(runId);
+  // ── Stage range + workspace selection ──────────────────────────────────────
+  // Any staged control (or legacy --skip-ingest) switches the run to a stable,
+  // persistent local workspace so data survives between invocations. Otherwise
+  // we use the classic ephemeral per-run workspace that gets wiped at the end.
+  const fromStage: BenchStage =
+    config.fromStage ?? (config.skipIngest ? "score" : "messages");
+  const toStage: BenchStage = config.toStage ?? "score";
+  const fromIdx = BENCH_STAGE_ORDER.indexOf(fromStage);
+  const toIdx = BENCH_STAGE_ORDER.indexOf(toStage);
+  const stageRuns = (s: BenchStage): boolean => {
+    const i = BENCH_STAGE_ORDER.indexOf(s);
+    return i >= fromIdx && i <= toIdx;
+  };
+
+  const persistent = Boolean(
+    config.persist ||
+      config.reset ||
+      config.benchId ||
+      config.fromStage ||
+      config.toStage ||
+      config.skipIngest,
+  );
+  const replay = config.replay ?? "session";
+  const benchKey =
+    config.benchId ??
+    `${config.datasets.join("-")}-${config.subset}` +
+      `${config.category ? `-${config.category}` : ""}` +
+      `${config.limit ? `-l${config.limit}` : ""}` +
+      // A total cap selects a different case set, so its extracted memory
+      // corpus differs — keep it in its own persistent workspace.
+      `${config.cases ? `-c${config.cases}` : ""}` +
+      // Per-exchange replay produces a different memory corpus, so keep it in a
+      // separate workspace to allow A/B'ing against the session cadence.
+      `${replay === "exchange" ? "-px" : ""}`;
+  const workspaceId = persistent
+    ? localBenchWorkspaceId(benchKey)
+    : benchWorkspaceId(runId);
+
+  const tty = config.progress ?? Boolean(process.stdout.isTTY);
+  const ingestConcurrency = config.concurrency ?? 2;
+  const embedConcurrency = config.embedConcurrency ?? Math.max(ingestConcurrency, 4);
+
   const cases = await loadAllCases(config);
   if (cases.length === 0) {
     logger.warn("bench: no cases loaded — bailing", {
@@ -191,147 +279,482 @@ export async function runBench(
     };
   }
 
-  // Past this point we touch Postgres and the AI Gateway. Resolve the
-  // three bench slots through the live model catalog (each honours its
-  // CLI override, then its env var, then its default tier). We persist
-  // the resolved ids so cross-run deltas stay honest if tiers eventually
-  // point at a different model.
-  const models = await resolveBenchRunModelIds({
-    extraction: config.extractionModel,
-    answerer: config.answererModel,
-    judge: config.judgeModel,
-  });
-  logger.info(`bench: resolved models`, models);
+  // Past this point we touch Postgres and the AI Gateway. Resolve the three
+  // bench slots through the live model catalog only for the stages we'll run
+  // (extraction is needed by `extract`; answerer+judge by `score`). Each slot
+  // honours its CLI override, then env var, then default tier. Resolved ids
+  // are persisted so cross-run deltas stay honest if tiers later repoint.
+  const needModels = stageRuns("extract") || stageRuns("score");
+  const models = needModels
+    ? await resolveBenchRunModelIds({
+        extraction: config.extractionModel,
+        answerer: config.answererModel,
+        judge: config.judgeModel,
+      })
+    : null;
+  if (models) logger.info(`bench: resolved models`, models);
 
-  // GC orphans from crashed prior runs (safe, idempotent) and seed the
-  // workspace row before any inserts.
-  await gcStaleBenchWorkspaces().catch(() => {});
-  await createBenchWorkspace(runId);
-
-  if (!config.skipIngest) {
-    const ing = await ingestCases(
-      cases,
+  // ── Workspace setup + stage-scoped wipes ───────────────────────────────────
+  if (persistent) {
+    await ensureBenchWorkspace(workspaceId);
+    if (config.reset || fromStage === "messages") {
+      // From scratch: drop all data (messages + memories), keep the row.
+      await wipeBenchData(workspaceId);
+    } else if (fromStage === "extract") {
+      // Reuse messages, re-extract: drop only memories + entities.
+      await wipeBenchMemories(workspaceId);
+    }
+    // fromStage === "score": reuse everything already ingested.
+    logger.info("bench: persistent local workspace", {
       workspaceId,
-      models.extraction,
-      config.concurrency ?? 2,
-      (done, total) => {
-        if (done % 5 === 0 || done === total) {
-          logger.info(`bench: ingest progress`, { done, total });
-        }
-      },
-    );
-    logger.info(`bench: ingest complete`, ing);
+      from: fromStage,
+      to: toStage,
+      reset: Boolean(config.reset),
+    });
+  } else {
+    // Classic ephemeral run: GC crash orphans + seed a fresh per-run row.
+    await gcStaleBenchWorkspaces().catch(() => {});
+    await createBenchWorkspace(runId);
   }
 
-  // Score each case.
-  const results: PerCaseResult[] = [];
-  for (const [i, benchCase] of cases.entries()) {
-    const caseStart = Date.now();
-    const retrieval = await evaluateRetrieval(benchCase, workspaceId);
-    // QA uses the memories returned by the recall lane so we don't pay
-    // for retrieval twice. evaluateRetrieval already invoked retrieveMemories.
-    const qa = await evaluateQA(benchCase, retrieval.retrieved, {
-      modelId: models.answerer,
-      judgeModelId: models.judge,
+  // ── Artifacts + resume + live dashboard setup ──────────────────────────────
+  // Resolve the effective run id: a --resume points artifacts at a prior run's
+  // directory so we append to its cases.jsonl and skip what's already scored.
+  const resumeId =
+    config.resume != null
+      ? config.resume.length > 0
+        ? config.resume
+        : readLatestRunId()
+      : null;
+  const effectiveRunId = resumeId ?? runId;
+  const artifacts: RunArtifacts = createRunArtifacts(effectiveRunId);
+  // Capture every log line to runs/<id>/run.log while the dashboard owns the TTY.
+  setLogFile(artifacts.logPath);
+  artifacts.markLatest();
+
+  const priorResults: PerCaseResult[] = resumeId ? artifacts.loadCases() : [];
+  if (resumeId) {
+    logger.info(`bench: resuming run ${resumeId}`, {
+      alreadyScored: priorResults.length,
     });
-    void models.extraction; // recorded on the run row, not used at QA time
-    results.push({
-      caseId: benchCase.id,
-      dataset: benchCase.source,
-      category: benchCase.category,
-      question: benchCase.question,
-      goldAnswer: benchCase.goldAnswer,
-      abstention: benchCase.abstention,
-      retrievedMemoryIds: retrieval.retrievedMemoryIds,
-      retrievedRecallHit: retrieval.hit,
-      modelAnswer: qa.modelAnswer,
-      judgeVerdict: qa.judgeVerdict,
-      judgeConfidence: qa.judgeConfidence,
-      judgeRationale: qa.judgeRationale,
-      durationMs: Date.now() - caseStart,
-    });
-    if ((i + 1) % 10 === 0 || i + 1 === cases.length) {
-      logger.info(`bench: scored ${i + 1}/${cases.length}`);
+  }
+
+  // Cost meter: stages report (modelId, usage); the meter prices it via the
+  // model_pricing table and feeds the dashboard's running $.
+  const meter = createCostMeter();
+
+  // TTY → Ink dashboard (dynamically imported so ink/react never load on the
+  // Vercel runtime). Non-TTY → per-stage heartbeat fallback.
+  const stageDefs: { name: string; label: string }[] = [];
+  if (stageRuns("messages")) stageDefs.push({ name: "messages", label: "messages" });
+  if (stageRuns("extract")) stageDefs.push({ name: "extract", label: "extract" });
+  if (stageRuns("score")) stageDefs.push({ name: "score", label: "score" });
+
+  let dashboard: Dashboard | null = null;
+  if (tty) {
+    try {
+      const { createDashboard } = await import("./dashboard.js");
+      dashboard = createDashboard(stageDefs);
+    } catch (error) {
+      logger.warn("bench: dashboard unavailable, using heartbeat", {
+        error: String(error).slice(0, 160),
+      });
+      dashboard = null;
     }
   }
 
-  const totalDurationMs = Date.now() - start;
-  const scores = aggregateScores(results);
-  const deltas = await computeDeltas(scores, config).catch(() => new Map());
+  const recordUsage = (stage: CostStage, modelId: string, usage: unknown) => {
+    void meter
+      .record(stage, modelId, usage as any)
+      .then(() => dashboard?.setCost(meter.snapshot()))
+      .catch(() => {});
+  };
 
-  const embeddingModelObj: any = await getEmbeddingModel().catch(() => null);
-  const embeddingModel =
-    embeddingModelObj?.modelId ?? embeddingModelObj?.id ?? "unknown";
+  /** A stage progress handle backed by either the dashboard or a heartbeat. */
+  const makeStage = (name: string, total: number) => {
+    if (dashboard) {
+      const h = dashboard.stage(name);
+      h.start(total);
+      return {
+        update: (done: number, t?: number) => h.update(done, t),
+        done: () => h.done(),
+      };
+    }
+    const p = createProgress(name, total);
+    return {
+      update: (done: number, t?: number) => p.update(done, t),
+      done: () => p.done(),
+    };
+  };
 
-  await persistRun(scores, config, {
-    corpusHash,
-    generationModel: models.answerer,
-    judgeModel: models.judge,
-    embeddingModel,
-    totalDurationMs,
-    metadata: {
-      subset: config.subset,
-      category: config.category ?? null,
-      cases: results.length,
-      extractionModel: models.extraction,
-    },
-  });
-
-  const summary = buildTextSummary({
-    scores,
-    deltas,
-    config,
-    totalDurationMs,
-  });
-
+  let results: PerCaseResult[] = [];
+  let scores: BenchScore[] = [];
+  let contextEfficiency: ContextEfficiency | null = null;
+  let deltas: BenchRunOutput["deltas"] = new Map();
   let slackTs: string | null = null;
-  if (config.postSlack) {
-    try {
-      slackTs = await postReport({
+  let cancelled = false;
+  let summary = "";
+  let totalDurationMs = 0;
+
+  try {
+    // ── Stage: messages (store + batch-embed raw messages) ───────────────────
+    if (stageRuns("messages")) {
+      const p = makeStage("messages", countUniqueConversations(cases));
+      const r = await storeMessagesForCases(
+        cases,
+        workspaceId,
+        embedConcurrency,
+        (done) => p.update(done),
+      );
+      p.done();
+      logger.info("bench: messages stage complete", r);
+    }
+
+    // ── Stage: extract (transcript → memories) ───────────────────────────────
+    if (stageRuns("extract")) {
+      // Extraction work is per-session, so the bar counts sessions, not convos.
+      const p = makeStage("extract", countTotalSessions(cases));
+      const r = await extractMemoriesForCases(
+        cases,
+        workspaceId,
+        models!.extraction,
+        ingestConcurrency,
+        (done, total) => p.update(done, total),
+        replay,
+        (modelId, usage) => recordUsage("extract", modelId, usage),
+      );
+      p.done();
+      logger.info("bench: extract stage complete", { ...r, replay });
+    }
+
+    // ── Stage: score (retrieval recall@K + QA) ───────────────────────────────
+    // Each case fires a constrained answerer call plus an Opus-class judge
+    // call, so the phase is dominated by LLM latency. A bounded worker pool
+    // runs them; each result is appended to cases.jsonl AS it completes, so a
+    // Ctrl-C (cooperative cancel) or crash still leaves a partial record. On
+    // --resume, already-scored case ids are skipped and seeded from disk.
+    if (stageRuns("score")) {
+      const scoringConcurrency = Math.max(
+        1,
+        Math.min(config.concurrency ?? 2, cases.length),
+      );
+      const slots: (PerCaseResult | undefined)[] = new Array(cases.length);
+      const doneIds = new Set<string>();
+      if (priorResults.length > 0) {
+        const byId = new Map(priorResults.map((r) => [r.caseId, r]));
+        cases.forEach((c, i) => {
+          const pr = byId.get(c.id);
+          if (pr) {
+            slots[i] = pr;
+            doneIds.add(c.id);
+          }
+        });
+      }
+
+      // Live QA% / recall% tallies (seeded from any resumed results).
+      let qaCorrect = 0;
+      let qaTotal = 0;
+      let recallHit = 0;
+      let recallTotal = 0;
+      const tally = (r: PerCaseResult) => {
+        qaTotal += 1;
+        if (r.judgeVerdict === "correct" || r.judgeVerdict === "abstain_ok") {
+          qaCorrect += 1;
+        }
+        // Coverage-based: recallTotal counts evidence cases, recallHit counts
+        // FULLY-covered ones. For the single-evidence cases that dominate the
+        // corpora this equals the report's mean coverage; for multi-hop cases
+        // it's the stricter "all sessions retrieved" rate. Falls back to the
+        // legacy binary hit for results recorded before coverage existed.
+        const cov =
+          r.retrievalCoverage != null
+            ? r.retrievalCoverage
+            : r.retrievedRecallHit != null
+              ? r.retrievedRecallHit
+                ? 1
+                : 0
+              : null;
+        if (cov !== null) {
+          recallTotal += 1;
+          if (cov >= 1) recallHit += 1;
+        }
+      };
+      for (const r of slots) if (r) tally(r);
+      const pushScores = () =>
+        dashboard?.setScores({ qaCorrect, qaTotal, recallHit, recallTotal });
+      pushScores();
+
+      const p = makeStage("score", cases.length);
+      let scored = doneIds.size;
+      p.update(scored, cases.length);
+      let scoreIdx = 0;
+
+      const scoreWorker = async () => {
+        while (true) {
+          if (config.cancelSignal?.cancelled) {
+            cancelled = true;
+            return;
+          }
+          const i = scoreIdx++;
+          if (i >= cases.length) return;
+          const benchCase = cases[i];
+          if (doneIds.has(benchCase.id)) continue;
+
+          const caseStart = Date.now();
+          let result: PerCaseResult;
+          try {
+            const retrieval = await evaluateRetrieval(
+              benchCase,
+              workspaceId,
+              15,
+              (modelId, usage) => recordUsage("retrieve", modelId, usage),
+            );
+            const qa = await evaluateQA(benchCase, retrieval.retrieved, {
+              modelId: models!.answerer,
+              judgeModelId: models!.judge,
+              onUsage: (stage, modelId, usage) =>
+                recordUsage(stage, modelId, usage),
+            });
+            result = {
+              caseId: benchCase.id,
+              dataset: benchCase.source,
+              category: benchCase.category,
+              question: benchCase.question,
+              goldAnswer: benchCase.goldAnswer,
+              abstention: benchCase.abstention,
+              retrievedMemoryIds: retrieval.retrievedMemoryIds,
+              retrievedRecallHit: retrieval.hit,
+              retrievalCoverage: retrieval.coverage,
+              modelAnswer: qa.modelAnswer,
+              judgeVerdict: qa.judgeVerdict,
+              judgeConfidence: qa.judgeConfidence,
+              judgeRationale: qa.judgeRationale,
+              memoryTokens: qa.memoryTokens,
+              memoryChars: qa.memoryChars,
+              memoryCount: qa.memoryCount,
+              durationMs: Date.now() - caseStart,
+            };
+          } catch (error) {
+            // Per-case isolation: one bad case must not reject the whole pool.
+            logger.warn("bench: case failed (recording skipped verdict)", {
+              caseId: benchCase.id,
+              error: String(error).slice(0, 200),
+            });
+            result = {
+              caseId: benchCase.id,
+              dataset: benchCase.source,
+              category: benchCase.category,
+              question: benchCase.question,
+              goldAnswer: benchCase.goldAnswer,
+              abstention: benchCase.abstention,
+              retrievedMemoryIds: [],
+              retrievedRecallHit: null,
+              retrievalCoverage: null,
+              modelAnswer: "",
+              judgeVerdict: "skipped",
+              judgeConfidence: 0,
+              judgeRationale: `case error: ${String(error).slice(0, 160)}`,
+              durationMs: Date.now() - caseStart,
+            };
+          }
+
+          slots[i] = result;
+          artifacts.appendCase(result);
+
+          const qaOk =
+            result.judgeVerdict === "correct" ||
+            result.judgeVerdict === "abstain_ok";
+          if (!qaOk) {
+            artifacts.appendFailure({
+              caseId: result.caseId,
+              dataset: result.dataset,
+              category: result.category,
+              kind: "qa",
+              question: result.question,
+              goldAnswer: result.goldAnswer,
+              modelAnswer: result.modelAnswer,
+              judgeVerdict: result.judgeVerdict,
+              judgeRationale: result.judgeRationale,
+              retrievedMemoryIds: result.retrievedMemoryIds,
+            });
+          }
+          // Log any case whose evidence sessions weren't fully retrieved —
+          // including partial multi-hop coverage (0 < coverage < 1), which the
+          // old binary hit silently passed.
+          if (result.retrievalCoverage != null && result.retrievalCoverage < 1) {
+            artifacts.appendFailure({
+              caseId: result.caseId,
+              dataset: result.dataset,
+              category: result.category,
+              kind: "recall",
+              question: result.question,
+              goldAnswer: result.goldAnswer,
+              modelAnswer: result.modelAnswer,
+              judgeVerdict: result.judgeVerdict,
+              judgeRationale: `coverage ${(result.retrievalCoverage * 100).toFixed(0)}% — ${result.judgeRationale}`,
+              retrievedMemoryIds: result.retrievedMemoryIds,
+            });
+          }
+
+          tally(result);
+          pushScores();
+          scored += 1;
+          p.update(scored, cases.length);
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: scoringConcurrency }, () => scoreWorker()),
+      );
+      p.done();
+
+      results = slots.filter((r): r is PerCaseResult => Boolean(r));
+    }
+
+    totalDurationMs = Date.now() - start;
+
+    if (stageRuns("score")) {
+      scores = aggregateScores(results);
+      deltas = (await computeDeltas(scores, config).catch(
+        () => new Map(),
+      )) as BenchRunOutput["deltas"];
+
+      const embeddingModelObj: any = await getEmbeddingModel().catch(() => null);
+      const embeddingModel =
+        embeddingModelObj?.modelId ?? embeddingModelObj?.id ?? "unknown";
+
+      const totalCostUsd = meter.snapshot().usd;
+
+      await persistRun(scores, config, {
+        corpusHash,
+        generationModel: models!.answerer,
+        judgeModel: models!.judge,
+        embeddingModel,
+        totalDurationMs,
+        totalCostUsd,
+        metadata: {
+          subset: config.subset,
+          category: config.category ?? null,
+          cases: results.length,
+          extractionModel: models!.extraction,
+          replay,
+          costUsd: totalCostUsd,
+          cancelled,
+        },
+      });
+
+      contextEfficiency = aggregateContextEfficiency(results);
+      summary = buildTextSummary({
         scores,
         deltas,
         config,
         totalDurationMs,
+        contextEfficiency,
       });
-    } catch (error) {
-      logger.warn("bench: Slack post failed (continuing)", {
-        error: String(error).slice(0, 200),
-      });
-    }
-  }
 
-  if (!partialConfig.skipIngest) {
-    // GC this run's workspace — it's already aggregated. The bench-meta
-    // workspace is preserved.
-    try {
-      await wipeBenchWorkspace(workspaceId);
-    } catch (error) {
-      logger.warn("bench: workspace wipe failed (continuing)", {
+      if (config.postSlack && !cancelled) {
+        try {
+          slackTs = await postReport({
+            scores,
+            deltas,
+            config,
+            totalDurationMs,
+            contextEfficiency,
+          });
+        } catch (error) {
+          logger.warn("bench: Slack post failed (continuing)", {
+            error: String(error).slice(0, 200),
+          });
+        }
+      }
+    } else {
+      summary =
+        `Ran stages ${fromStage}→${toStage} on workspace ${workspaceId} ` +
+        `(${cases.length} case(s)). Scoring skipped — re-run with --to=score ` +
+        `or --from=score to evaluate.`;
+      logger.info("bench: scoring stage skipped", { fromStage, toStage });
+    }
+
+    // Crash-safe artifacts: summary, scores, manifest (+ already-streamed JSONL).
+    const cost = meter.snapshot();
+    artifacts.writeScores(scores);
+    artifacts.writeSummary(summary);
+    artifacts.writeManifest({
+      runId: effectiveRunId,
+      resumedFrom: resumeId,
+      cancelled,
+      datasets: config.datasets,
+      subset: config.subset,
+      cases: config.cases ?? null,
+      category: config.category ?? null,
+      replay,
+      fromStage,
+      toStage,
+      workspaceId,
+      persistent,
+      corpusHash,
+      gitSha: config.gitSha ?? null,
+      models,
+      counts: {
+        cases: cases.length,
+        scored: results.length,
+        scoreRows: scores.length,
+      },
+      cost: { usd: cost.usd, tokens: cost.tokens, byStage: cost.byStage },
+      // Map → plain object so the per-dataset stats survive JSON.stringify.
+      contextEfficiency: contextEfficiency
+        ? {
+            overall: contextEfficiency.overall,
+            byDataset: Object.fromEntries(contextEfficiency.byDataset),
+          }
+        : null,
+      totalDurationMs,
+    });
+
+    // Only the classic ephemeral run wipes at the end. Persistent local
+    // workspaces are intentionally left in place so the next staged run can
+    // reuse the data (that's the whole point of --from / --persist).
+    if (!persistent) {
+      try {
+        await wipeBenchWorkspace(workspaceId);
+      } catch (error) {
+        logger.warn("bench: workspace wipe failed (continuing)", {
+          workspaceId,
+          error: String(error).slice(0, 200),
+        });
+      }
+    }
+
+    logger.info(
+      `bench: run ${effectiveRunId} ${cancelled ? "cancelled" : "complete"} in ${totalDurationMs}ms`,
+      {
+        cases: results.length,
+        scoreRows: scores.length,
+        costUsd: Number(cost.usd.toFixed(4)),
         workspaceId,
-        error: String(error).slice(0, 200),
-      });
-    }
+        persistent,
+        artifacts: artifacts.dir,
+      },
+    );
+
+    // bench-meta workspace must always exist (we touch it on every run).
+    void BENCH_META_WORKSPACE;
+
+    return {
+      runId: effectiveRunId,
+      workspaceId,
+      scores,
+      results,
+      deltas,
+      textSummary: summary,
+      totalDurationMs,
+      corpusHash,
+      slackTs,
+    };
+  } finally {
+    dashboard?.stop();
+    closeLogFile();
   }
-
-  logger.info(`bench: run ${runId} complete in ${totalDurationMs}ms`, {
-    cases: results.length,
-    scoreRows: scores.length,
-  });
-
-  // bench-meta workspace must always exist (we touch it on every run).
-  void BENCH_META_WORKSPACE;
-
-  return {
-    runId,
-    workspaceId,
-    scores,
-    results,
-    deltas,
-    textSummary: summary,
-    totalDurationMs,
-    corpusHash,
-    slackTs,
-  };
 }
 
 function cryptoSafeId(): string {

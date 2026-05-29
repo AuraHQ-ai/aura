@@ -100,6 +100,7 @@ interface ToyCorpus {
     abstention: boolean;
     evidenceSessionIds?: string[];
     evidenceDiaIds?: string[];
+    questionDate?: string;
     sessions: Array<{
       id: string;
       timestamp: string;
@@ -139,6 +140,7 @@ export async function loadToyCorpus(): Promise<BenchCase[]> {
     })),
     evidenceSessionIds: c.evidenceSessionIds,
     evidenceDiaIds: c.evidenceDiaIds,
+    questionDate: c.questionDate,
   }));
 }
 
@@ -167,6 +169,9 @@ interface LongMemEvalRecord {
   answer?: string | string[];
   goldAnswer?: string | string[];
   abstention?: boolean;
+  /** Reference "now" for the question, e.g. "2023/04/10 (Mon) 23:07". */
+  question_date?: string;
+  questionDate?: string;
   haystack_session_ids?: string[];
   haystack_dates?: string[];
   haystack_sessions?: Array<Array<{ role: string; content: string }>>;
@@ -222,6 +227,7 @@ export async function loadLongMemEval(): Promise<BenchCase[]> {
         })),
       })),
       evidenceSessionIds: r.answer_session_ids,
+      questionDate: r.questionDate ?? r.question_date,
     };
   });
 }
@@ -454,6 +460,29 @@ export const SUBSET_PER_CATEGORY = {
   medium: 30,
   full: Number.POSITIVE_INFINITY,
 } as const;
+
+/**
+ * Deterministic total cap across the whole case list (all datasets/categories
+ * combined). Stable seeded shuffle, then take the first `total`. Unlike
+ * `stratifiedSample` (per-category), this caps the grand total — used by
+ * `--cases=N` for quick smoke runs. Output is stable per (cases, total, seed).
+ */
+export function sampleTotal(
+  cases: BenchCase[],
+  total: number,
+  seed = 4711,
+): BenchCase[] {
+  if (!Number.isFinite(total) || total <= 0 || cases.length <= total) {
+    return cases;
+  }
+  const rng = mulberry32(seed);
+  const shuffled = [...cases];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, total);
+}
 
 /** Legacy export kept for backward compatibility with existing tests. */
 export const sampleFast = stratifiedSample;

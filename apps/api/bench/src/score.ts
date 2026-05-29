@@ -23,8 +23,11 @@ import type {
  * credit (we treat it as 0.5 toward `nCorrect`-equivalent for the score
  * field, but the integer `nCorrect` only counts fully-correct).
  *
- * Retrieval recall counts cases where `retrievedRecallHit === true` over
- * cases where it is not null.
+ * Retrieval recall is the MEAN per-case evidence-session coverage
+ * (`retrievalCoverage`) over cases that have evidence pointers. `nCorrect`
+ * counts fully-covered cases (coverage === 1). This makes multi-hop misses
+ * visible — a question needing two sessions where one is retrieved scores
+ * 0.5 instead of the old binary 1.0.
  */
 export function aggregateScores(
   results: PerCaseResult[],
@@ -59,17 +62,28 @@ export function aggregateScores(
       });
     }
 
-    // Retrieval recall lane (skip cases with null hit)
-    const recallScored = group.filter((r) => r.retrievedRecallHit !== null);
+    // Retrieval recall lane — mean evidence-session coverage. We accept the
+    // coverage field when present and fall back to the legacy binary hit
+    // (0/1) for results recorded before coverage existed (e.g. resumed runs).
+    const coverageOf = (r: PerCaseResult): number | null => {
+      if (r.retrievalCoverage != null) return r.retrievalCoverage;
+      if (r.retrievedRecallHit != null) return r.retrievedRecallHit ? 1 : 0;
+      return null;
+    };
+    const recallScored = group
+      .map((r) => coverageOf(r))
+      .filter((c): c is number => c !== null);
     if (recallScored.length > 0) {
-      const nCorrect = recallScored.filter((r) => r.retrievedRecallHit === true).length;
+      const nFull = recallScored.filter((c) => c >= 1).length;
+      const meanCoverage =
+        recallScored.reduce((acc, c) => acc + c, 0) / recallScored.length;
       out.push({
         dataset,
         category,
         scoreType: "retrieval_recall_at_15",
         n: recallScored.length,
-        nCorrect,
-        score: nCorrect / recallScored.length,
+        nCorrect: nFull,
+        score: meanCoverage,
       });
     }
 
@@ -88,6 +102,62 @@ export function aggregateScores(
     }
   }
   return out;
+}
+
+/** One context-efficiency cell: mean memory-block size over scored cases. */
+export interface ContextEfficiencyStat {
+  /** Cases that carried a memoryTokens measurement (answerer ran). */
+  n: number;
+  /** Mean estimated memory-context tokens injected into the answerer. */
+  meanTokens: number;
+  /** Mean memory-context characters (audits meanTokens). */
+  meanChars: number;
+  /** Mean number of memories injected. */
+  meanCount: number;
+}
+
+export interface ContextEfficiency {
+  byDataset: Map<DatasetId, ContextEfficiencyStat>;
+  overall: ContextEfficiencyStat;
+}
+
+/**
+ * Aggregate the per-case memory-context size into mean tokens/chars/count, per
+ * dataset and overall. This is the mem0-style "quality per token of context"
+ * companion to the accuracy lanes: a retrieval/formatter change that lifts QA
+ * by a hair while doubling the injected context shows up here as a regression.
+ *
+ * Cases without a `memoryTokens` value (errored before the answerer ran, or
+ * results recorded before this metric existed) are ignored so the mean stays
+ * honest on resumed/mixed runs.
+ */
+export function aggregateContextEfficiency(
+  results: PerCaseResult[],
+): ContextEfficiency {
+  const mean = (rows: PerCaseResult[]): ContextEfficiencyStat => {
+    const measured = rows.filter((r) => r.memoryTokens != null);
+    const n = measured.length;
+    if (n === 0) return { n: 0, meanTokens: 0, meanChars: 0, meanCount: 0 };
+    const sum = (pick: (r: PerCaseResult) => number) =>
+      measured.reduce((acc, r) => acc + pick(r), 0);
+    return {
+      n,
+      meanTokens: sum((r) => r.memoryTokens ?? 0) / n,
+      meanChars: sum((r) => r.memoryChars ?? 0) / n,
+      meanCount: sum((r) => r.memoryCount ?? 0) / n,
+    };
+  };
+
+  const byDataset = new Map<DatasetId, ContextEfficiencyStat>();
+  const datasets = new Set<DatasetId>(results.map((r) => r.dataset));
+  for (const dataset of datasets) {
+    byDataset.set(
+      dataset,
+      mean(results.filter((r) => r.dataset === dataset)),
+    );
+  }
+
+  return { byDataset, overall: mean(results) };
 }
 
 /**

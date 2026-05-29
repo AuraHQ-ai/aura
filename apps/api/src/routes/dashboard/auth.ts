@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { eq, sql } from "drizzle-orm";
 import { users } from "@aura/db/schema";
 import { db } from "../../db/client.js";
+import { withTransaction } from "../../db/tx.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
 import { SignJWT } from "jose";
@@ -58,7 +59,7 @@ export async function checkUserRole(
     return { allowed: false, reason: "insufficient_role", role };
   }
 
-  const bootstrapResult = await db.transaction(async (tx) => {
+  const bootstrapResult = await withTransaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(42)`);
 
     const adminCount = await tx

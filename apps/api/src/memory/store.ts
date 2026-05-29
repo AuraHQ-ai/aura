@@ -1,5 +1,6 @@
 import { eq, sql, isNull, and, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
+import { withTransaction } from "../db/tx.js";
 import { messages, memories, notes, eventLocks, type NewMessage, type NewMemory } from "@aura/db/schema";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
@@ -401,7 +402,7 @@ export async function checkDuplicates(
 export async function supersedeMemory(oldMemoryId: string, newMemoryId: string): Promise<void> {
   const now = new Date();
   try {
-    await db.transaction(async (tx) => {
+    await withTransaction(async (tx) => {
       await tx.execute(sql`
         UPDATE memories
         SET status = 'superseded',

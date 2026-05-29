@@ -9,13 +9,18 @@ import { relativeTime } from "../lib/temporal.js";
  * eval-qa.ts) so the bench scores reflect the same wire format the agent
  * actually sees in production. Touching this file shifts both at once,
  * which is the desired property.
+ *
+ * `now` anchors the relative-time rendering ("3 months ago"). Production
+ * leaves it undefined → wall-clock now. The bench passes the question's
+ * reference date so temporal-reasoning answers are computed against the same
+ * "now" the gold answer assumes, instead of the real (2026) clock.
  */
-export function formatMemoriesForPrompt(memories: Memory[]): string {
+export function formatMemoriesForPrompt(memories: Memory[], now?: Date): string {
   if (memories.length === 0) return "";
 
   const formatted = memories
     .map((m) => {
-      const timeAgo = relativeTime(new Date(m.createdAt));
+      const timeAgo = relativeTime(new Date(m.createdAt), now);
       const users =
         m.relatedUserIds.length > 0
           ? ` [about: ${m.relatedUserIds.join(", ")}]`
