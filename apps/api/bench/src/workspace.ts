@@ -20,6 +20,93 @@ export function benchWorkspaceId(runId: string): string {
 }
 
 /**
+ * Build a STABLE workspace_id for local staged dev runs. Unlike the per-run
+ * id, this persists across invocations so you can ingest once and then iterate
+ * on later stages (`--from=extract` / `--from=score`) without re-loading data.
+ * Keyed by dataset+subset (or an explicit `--bench-id`) so different corpora
+ * don't collide.
+ */
+export function localBenchWorkspaceId(key: string): string {
+  const slug = key.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${BENCH_WORKSPACE_PREFIX}local-${slug || "default"}`;
+}
+
+/**
+ * Ensure an arbitrary bench workspace row (and the meta workspace) exist.
+ * Idempotent. Used by persistent local-staged runs whose workspace id isn't
+ * derived from a runId.
+ */
+export async function ensureBenchWorkspace(workspaceId: string): Promise<string> {
+  if (!workspaceId.startsWith(BENCH_WORKSPACE_PREFIX)) {
+    throw new Error(`ensureBenchWorkspace requires a bench-* id, got "${workspaceId}"`);
+  }
+  await db
+    .insert(workspaces)
+    .values([
+      { id: workspaceId, name: `Memory Bench ${workspaceId}`, plan: "internal" },
+      { id: BENCH_META_WORKSPACE, name: "Memory Bench Metadata", plan: "internal" },
+    ])
+    .onConflictDoNothing();
+  return workspaceId;
+}
+
+function assertWipeable(workspaceId: string): void {
+  if (!workspaceId.startsWith(BENCH_WORKSPACE_PREFIX)) {
+    throw new Error(
+      `Refusing to wipe non-bench workspace_id="${workspaceId}". Bench wipe requires bench-* prefix.`,
+    );
+  }
+  if (workspaceId === BENCH_META_WORKSPACE) {
+    throw new Error("Refusing to wipe bench-meta — that's where scores live.");
+  }
+}
+
+/**
+ * Delete memories + entities (and their junction rows) for a workspace, while
+ * keeping `messages` and the workspace row intact. Used to re-run the `extract`
+ * stage on a persistent local workspace without re-loading messages.
+ */
+export async function wipeBenchMemories(workspaceId: string): Promise<void> {
+  assertWipeable(workspaceId);
+  logger.info("Wiping bench memories (keeping messages)", { workspaceId });
+
+  const stmts = [
+    sql`DELETE FROM memory_entities WHERE memory_id IN (SELECT id FROM memories WHERE workspace_id = ${workspaceId})`,
+    sql`DELETE FROM entity_aliases WHERE entity_id IN (SELECT id FROM entities WHERE workspace_id = ${workspaceId})`,
+    sql`DELETE FROM memories WHERE workspace_id = ${workspaceId}`,
+    sql`DELETE FROM entities WHERE workspace_id = ${workspaceId}`,
+  ];
+  for (const stmt of stmts) {
+    try {
+      await db.execute(stmt);
+    } catch (error) {
+      logger.warn("wipeBenchMemories: delete failed (continuing)", {
+        workspaceId,
+        error: String(error).slice(0, 200),
+      });
+    }
+  }
+}
+
+/**
+ * Delete ALL data (messages + memories + entities) for a workspace, keeping
+ * the workspace row. Used to re-run from the `messages` stage on a persistent
+ * local workspace (`--reset` / `--from=messages`).
+ */
+export async function wipeBenchData(workspaceId: string): Promise<void> {
+  assertWipeable(workspaceId);
+  await wipeBenchMemories(workspaceId);
+  try {
+    await db.execute(sql`DELETE FROM messages WHERE workspace_id = ${workspaceId}`);
+  } catch (error) {
+    logger.warn("wipeBenchData: messages delete failed (continuing)", {
+      workspaceId,
+      error: String(error).slice(0, 200),
+    });
+  }
+}
+
+/**
  * Insert the per-run workspace row and ensure the meta workspace exists.
  * Both are idempotent (ON CONFLICT DO NOTHING). Returns the per-run id.
  */

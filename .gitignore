@@ -11,6 +11,8 @@ dist/
 
 # Memory bench corpus cache — fetched on demand, never committed.
 apps/api/bench/corpus/cache/
+# Memory bench run artifacts (logs, cases.jsonl, manifest, scores) — local only.
+apps/api/bench/runs/
 
 # Landing page
 apps/web/.next/

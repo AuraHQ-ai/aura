@@ -2,6 +2,15 @@
  * Ingest a BenchCase's conversation history into the real extractor →
  * memory pipeline, scoped to a single bench workspace.
  *
+ * The pipeline is split into two independent stages so the harness can replay
+ * just the part you're iterating on (see runner.ts `--from`):
+ *
+ *   1. `storeMessagesForCases`   — store + embed raw messages (the `messages`
+ *                                  table). Embeddings are batched per
+ *                                  conversation and rows are bulk-inserted.
+ *   2. `extractMemoriesForCases` — run the real extractor over each session's
+ *                                  transcript, producing `memories`.
+ *
  * Two important invariants:
  *
  *   1. The `sourceThreadTs` written on each message AND on every memory
@@ -15,12 +24,18 @@
  * `created_at` on messages and `valid_from` on memories come from the
  * corpus session timestamp — critical for temporal-reasoning categories
  * and the future bi-temporal work (#1040).
+ *
+ * Note: extraction uses the in-memory transcript (it does NOT read the
+ * `messages` table), so the two stages are genuinely independent — you can
+ * run `extract` without having run `messages`.
  */
 
 import { sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { db } from "../../src/db/client.js";
-import { storeMessage } from "../../src/memory/store.js";
+import { messages as messagesTable, type NewMessage } from "@aura/db/schema";
+import { toDbChannelType } from "../../src/memory/store.js";
+import { embedTexts } from "../../src/lib/embeddings.js";
 import {
   extractMemoriesFromTranscript,
   type ExtractionContext,
@@ -28,6 +43,18 @@ import {
 import type { ThreadMessage } from "../../src/memory/store.js";
 import { logger } from "../../src/lib/logger.js";
 import type { BenchCase } from "./types.js";
+
+/** Max texts per embedding API call. */
+const EMBED_CHUNK = 128;
+/** Max rows per bulk INSERT. */
+const INSERT_CHUNK = 100;
+/**
+ * Thread-context window for per-exchange replay, matching production's
+ * `fetchThreadMessages({ limit: 30 })` default.
+ */
+const THREAD_WINDOW = 30;
+
+export type ReplayMode = "session" | "exchange";
 
 /**
  * Stable identity for the conversation a case carries, used to de-dupe
@@ -54,158 +81,25 @@ function speakerToUserId(caseId: string, speaker: string | undefined): string {
   return `bench:${caseId}:${slug || "user"}`;
 }
 
-/**
- * Ingest a single BenchCase into the workspace. Per-session extraction
- * mirrors how production sees a Slack thread, so we exercise the same
- * reconciliation path (CREATE / UPDATE / DELETE ops over existing
- * memories from earlier sessions in the same case).
- */
-export async function ingestCase(
-  benchCase: BenchCase,
-  workspaceId: string,
-  extractionModelId: string,
-): Promise<{ memoriesAdded: number; sessionsIngested: number }> {
-  const channelId = `bench:${benchCase.id}`;
-  let sessionsIngested = 0;
-
-  const beforeRows = (await db.execute(sql`
-    SELECT count(*)::int AS n FROM memories WHERE workspace_id = ${workspaceId}
-  `)) as any;
-  const before = Number((beforeRows.rows ?? beforeRows)[0]?.n ?? 0);
-
-  for (const session of benchCase.sessions) {
-    // Use the raw corpus session id as the thread key. This is what makes
-    // retrieval-recall scoring a simple set membership check —
-    // m.sourceThreadTs ∈ evidenceSessionIds.
-    const threadTs = session.id;
-    const sessionDate = new Date(session.timestamp);
-
-    const threadMessages: ThreadMessage[] = [];
-    const diaIds: string[] = [];
-
-    for (const [turnIdx, turn] of session.turns.entries()) {
-      const userId = speakerToUserId(benchCase.id, turn.speaker);
-      // Per-turn timestamp inside the session window so retrieval ordering
-      // is well-defined when categories are temporal.
-      const turnTs = new Date(sessionDate.getTime() + turnIdx * 60_000);
-
-      const diaId = turn.diaId ?? `${session.id}:${turnIdx + 1}`;
-      diaIds.push(diaId);
-
-      const externalId = `${channelId}:${session.id}:${diaId}`;
-      try {
-        await storeMessage({
-          externalId,
-          workspaceId,
-          // slackTs deliberately encodes the session epoch so messages
-          // inside one session sort together; bench workspaces aren't
-          // expected to interop with the real Slack ts space.
-          slackTs: `${Math.floor(turnTs.getTime() / 1000)}.${String(turnIdx).padStart(6, "0")}`,
-          slackThreadTs: threadTs,
-          channelId,
-          channelType: "public_channel",
-          userId,
-          role: turn.role,
-          content: turn.content,
-          createdAt: turnTs,
-        } as any);
-      } catch (error) {
-        logger.warn("bench: storeMessage failed (continuing)", {
-          externalId,
-          error: String(error).slice(0, 200),
-        });
-      }
-
-      threadMessages.push({
-        role: turn.role,
-        userId,
-        content: turn.content,
-        createdAt: turnTs,
-      });
-    }
-
-    if (threadMessages.length === 0) continue;
-
-    const lastUser =
-      [...threadMessages].reverse().find((m) => m.role === "user") ??
-      threadMessages[threadMessages.length - 1];
-    const lastAssistant = [...threadMessages]
-      .reverse()
-      .find((m) => m.role === "assistant");
-
-    const ctx: ExtractionContext = {
-      userMessage: lastUser.content,
-      assistantResponse: lastAssistant?.content ?? "",
-      userId: lastUser.userId,
-      channelType: "public_channel",
-      channelId,
-      threadTs,
-      workspaceId,
-      extractionModelId,
-      triggerRole: "user",
-      // valid_from = session timestamp. Critical for temporal categories.
-      createdAt: sessionDate,
-      displayName: lastUser.userId.replace(/^bench:/, ""),
-      // Stamped atomically with the memory inserts — no follow-up UPDATE.
-      benchProvenance: {
-        datasetId: benchCase.source,
-        caseId: benchCase.id,
-        conversationId: benchCase.id,
-        sessionId: session.id,
-        sessionIds: [session.id],
-        diaIds,
-      },
-    };
-
-    try {
-      await extractMemoriesFromTranscript(threadMessages, ctx);
-      sessionsIngested++;
-    } catch (error) {
-      logger.warn("bench: extraction failed for session", {
-        caseId: benchCase.id,
-        sessionId: session.id,
-        error: String(error).slice(0, 200),
-      });
-    }
-  }
-
-  const afterRows = (await db.execute(sql`
-    SELECT count(*)::int AS n FROM memories WHERE workspace_id = ${workspaceId}
-  `)) as any;
-  const after = Number((afterRows.rows ?? afterRows)[0]?.n ?? 0);
-
-  return {
-    memoriesAdded: Math.max(0, after - before),
-    sessionsIngested,
-  };
+/** Number of unique conversations in a case list (for progress totals). */
+export function countUniqueConversations(cases: BenchCase[]): number {
+  return uniqueConversations(cases).length;
 }
 
 /**
- * Ingest a list of cases, optionally in parallel.
- *
- * Concurrency >1 speeds up the full-corpus run substantially: extraction
- * is dominated by LLM latency, not DB throughput. The pool pattern keeps
- * memory bounded — at most `concurrency` extractions in flight at once.
+ * Total number of sessions across the unique conversations in a case list.
+ * Used as the `extract` progress total so the bar advances per session (the
+ * real unit of extraction work) rather than per whole conversation.
  */
-export async function ingestCases(
-  cases: BenchCase[],
-  workspaceId: string,
-  extractionModelId: string,
-  concurrency = 2,
-  onProgress?: (done: number, total: number) => void,
-): Promise<{ totalMemories: number; totalSessions: number }> {
-  // De-dupe by conversation: LoCoMo packs many QA pairs per conversation,
-  // and they all share one session set. Re-extracting N times would waste
-  // money and produce duplicate memories.
-  //
-  // The key must be the conversation's *content*, not its session-id labels.
-  // Session ids are only unique within a conversation: the toy corpus reuses
-  // "S1"/"S2" across unrelated cases, and LoCoMo reuses "D1".."DN" across
-  // every conversation. Keying on the id list alone collapses genuinely
-  // distinct conversations into one and silently drops their memories from
-  // ingest (which then read as QA 0% for the dropped cases). Hashing the full
-  // session payload means only byte-identical conversations — LoCoMo's shared
-  // session set across its qa pairs — collapse together.
+export function countTotalSessions(cases: BenchCase[]): number {
+  return uniqueConversations(cases).reduce(
+    (sum, c) => sum + c.sessions.length,
+    0,
+  );
+}
+
+/** De-dupe cases down to unique conversations (see conversationKey). */
+function uniqueConversations(cases: BenchCase[]): BenchCase[] {
   const seen = new Set<string>();
   const unique: BenchCase[] = [];
   for (const c of cases) {
@@ -214,33 +108,368 @@ export async function ingestCases(
     seen.add(key);
     unique.push(c);
   }
-  logger.info(
-    `bench: ingesting ${unique.length} unique conversation(s) from ${cases.length} case(s)`,
+  return unique;
+}
+
+/** Run `worker` over `[0, count)` with at most `concurrency` in flight. */
+async function pool(
+  count: number,
+  concurrency: number,
+  worker: (index: number) => Promise<void>,
+): Promise<void> {
+  let idx = 0;
+  const run = async () => {
+    while (true) {
+      const i = idx++;
+      if (i >= count) return;
+      await worker(i);
+    }
+  };
+  const n = Math.max(1, Math.min(concurrency, count));
+  await Promise.all(Array.from({ length: n }, () => run()));
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// ── Stage 1: message storage ─────────────────────────────────────────────────
+
+/** Build the `messages` rows (sans embedding) for one conversation. */
+function buildMessageRows(benchCase: BenchCase, workspaceId: string): NewMessage[] {
+  const channelId = `bench:${benchCase.id}`;
+  const rows: NewMessage[] = [];
+
+  for (const session of benchCase.sessions) {
+    const threadTs = session.id;
+    const sessionDate = new Date(session.timestamp);
+    for (const [turnIdx, turn] of session.turns.entries()) {
+      const userId = speakerToUserId(benchCase.id, turn.speaker);
+      const turnTs = new Date(sessionDate.getTime() + turnIdx * 60_000);
+      const diaId = turn.diaId ?? `${session.id}:${turnIdx + 1}`;
+      rows.push({
+        externalId: `${channelId}:${session.id}:${diaId}`,
+        workspaceId,
+        // slackTs encodes the session epoch so messages inside one session
+        // sort together; bench workspaces don't interop with real Slack ts.
+        slackTs: `${Math.floor(turnTs.getTime() / 1000)}.${String(turnIdx).padStart(6, "0")}`,
+        slackThreadTs: threadTs,
+        channelId,
+        channelType: toDbChannelType("public_channel"),
+        userId,
+        role: turn.role,
+        content: turn.content,
+        createdAt: turnTs,
+      } as NewMessage);
+    }
+  }
+  return rows;
+}
+
+/**
+ * Store + embed the raw messages for a list of cases. Embeddings are batched
+ * (one `embedMany` call per chunk) and rows are bulk-inserted, which is far
+ * faster than the per-message embed+insert production path.
+ *
+ * Functionally optional for scoring — retrieval and extraction never read the
+ * `messages` table — but kept as a first-class stage for realism and so a run
+ * can mirror production's stored corpus when desired.
+ */
+export async function storeMessagesForCases(
+  cases: BenchCase[],
+  workspaceId: string,
+  concurrency = 4,
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ totalMessages: number }> {
+  const unique = uniqueConversations(cases);
+  logger.debug(
+    `bench: storing messages for ${unique.length} unique conversation(s) from ${cases.length} case(s)`,
     { workspaceId, concurrency },
+  );
+
+  let totalMessages = 0;
+  let done = 0;
+
+  await pool(unique.length, concurrency, async (i) => {
+    const rows = buildMessageRows(unique[i], workspaceId);
+    const withContent = rows.filter((r) => r.content && r.content.trim().length > 0);
+
+    // Batch-embed in chunks, then attach embeddings positionally.
+    const embeddings = new Map<string, number[]>();
+    for (const group of chunk(withContent, EMBED_CHUNK)) {
+      try {
+        const vecs = await embedTexts(group.map((r) => r.content as string));
+        group.forEach((r, gi) => embeddings.set(r.externalId, vecs[gi]));
+      } catch (error) {
+        logger.warn("bench: message embedding chunk failed (storing without)", {
+          error: String(error).slice(0, 200),
+        });
+      }
+    }
+
+    const valued = rows.map((r) => ({
+      ...r,
+      embedding: embeddings.get(r.externalId) ?? null,
+    }));
+    for (const group of chunk(valued, INSERT_CHUNK)) {
+      try {
+        await db
+          .insert(messagesTable)
+          .values(group)
+          .onConflictDoNothing({
+            target: [messagesTable.workspaceId, messagesTable.externalId],
+          });
+        totalMessages += group.length;
+      } catch (error) {
+        logger.warn("bench: message bulk insert failed (continuing)", {
+          error: String(error).slice(0, 200),
+        });
+      }
+    }
+
+    done += 1;
+    onProgress?.(done, unique.length);
+  });
+
+  return { totalMessages };
+}
+
+// ── Stage 2: memory extraction ───────────────────────────────────────────────
+
+/** One materialized turn of a session, with the metadata extraction needs. */
+interface BuiltTurn {
+  role: "user" | "assistant";
+  userId: string;
+  /** Human display name for this speaker (e.g. "James"), for the transcript. */
+  speaker: string;
+  content: string;
+  createdAt: Date;
+  diaId: string;
+}
+
+/** Materialize a session's turns with synthetic user ids and timestamps. */
+function buildSessionTurns(benchCase: BenchCase, session: BenchCase["sessions"][number]): BuiltTurn[] {
+  const sessionDate = new Date(session.timestamp);
+  return session.turns.map((turn, turnIdx) => ({
+    role: turn.role,
+    userId: speakerToUserId(benchCase.id, turn.speaker),
+    speaker: turn.speaker?.trim() || (turn.role === "assistant" ? "Assistant" : "User"),
+    content: turn.content,
+    // Per-turn timestamp inside the session window so retrieval ordering is
+    // well-defined for temporal categories.
+    createdAt: new Date(sessionDate.getTime() + turnIdx * 60_000),
+    diaId: turn.diaId ?? `${session.id}:${turnIdx + 1}`,
+  }));
+}
+
+/**
+ * Build the synthetic name→id directory for one conversation. Maps every alias
+ * a speaker might appear as (clean name, underscored, the raw synthetic id, and
+ * the prefix-stripped display form fed to the LLM) to that speaker's synthetic
+ * user id. Passed as ExtractionContext.userDirectory so the extractor resolves
+ * fictional speakers against THIS map instead of the real Slack workspace.
+ */
+function buildUserDirectory(benchCase: BenchCase): Record<string, string> {
+  const dir: Record<string, string> = {};
+  const add = (key: string | undefined, id: string) => {
+    const k = key?.toLowerCase().trim();
+    if (k) dir[k] = id;
+  };
+  for (const session of benchCase.sessions) {
+    for (const turn of session.turns) {
+      const id = speakerToUserId(benchCase.id, turn.speaker);
+      const name = turn.speaker?.trim();
+      add(name, id);
+      add(name?.replace(/\s+/g, "_"), id);
+      add(id, id); // raw synthetic id resolves to itself (no warning)
+      add(id.replace(/^bench:/, ""), id); // the display form
+    }
+  }
+  return dir;
+}
+
+/**
+ * Extract memories from one BenchCase. Sessions MUST run in order: a later
+ * session can supersede memories created by an earlier one. Different
+ * conversations are independent and run in parallel (see
+ * extractMemoriesForCases).
+ *
+ * Two cadences (`replay`):
+ *  - "session": one extraction per session over the full session transcript.
+ *    Cheap approximation, good for benchmarking retrieval.
+ *  - "exchange": one extraction per assistant turn over the accumulating
+ *    last-30-message window — mirrors production's per-reply trigger
+ *    (pipeline/index.ts calls extractMemories once per assistant response,
+ *    which fetches the last 30 thread messages and reconciles incrementally).
+ */
+export async function extractMemoriesForCase(
+  benchCase: BenchCase,
+  workspaceId: string,
+  extractionModelId: string,
+  replay: ReplayMode = "session",
+  onSession?: () => void,
+  onUsage?: ExtractionContext["onUsage"],
+): Promise<{ memoriesAdded: number; sessionsIngested: number; extractions: number }> {
+  const channelId = `bench:${benchCase.id}`;
+  const userDirectory = buildUserDirectory(benchCase);
+  let sessionsIngested = 0;
+  let extractions = 0;
+
+  const beforeRows = (await db.execute(sql`
+    SELECT count(*)::int AS n FROM memories WHERE workspace_id = ${workspaceId}
+  `)) as any;
+  const before = Number((beforeRows.rows ?? beforeRows)[0]?.n ?? 0);
+
+  for (const session of benchCase.sessions) {
+    const threadTs = session.id;
+    const sessionDate = new Date(session.timestamp);
+    const built = buildSessionTurns(benchCase, session);
+    if (built.length === 0) {
+      onSession?.();
+      continue;
+    }
+
+    const toThreadMessage = (b: BuiltTurn): ThreadMessage => ({
+      role: b.role,
+      userId: b.userId,
+      content: b.content,
+      createdAt: b.createdAt,
+    });
+
+    // Build the (transcript, focal-exchange) extraction calls for this session.
+    type Call = { window: BuiltTurn[]; focalAssistant: BuiltTurn | null; at: Date };
+    const calls: Call[] = [];
+
+    if (replay === "exchange") {
+      // One call per assistant turn, transcript = last THREAD_WINDOW msgs up to
+      // and including that turn. Matches prod's per-reply, sliding-window cadence.
+      for (let k = 0; k < built.length; k++) {
+        if (built[k].role !== "assistant") continue;
+        const window = built.slice(Math.max(0, k + 1 - THREAD_WINDOW), k + 1);
+        calls.push({ window, focalAssistant: built[k], at: built[k].createdAt });
+      }
+      // Fallback: a session with no assistant turn would extract nothing.
+      // Trigger a single full-session pass so we don't silently drop it.
+      if (calls.length === 0) {
+        calls.push({ window: built, focalAssistant: null, at: sessionDate });
+      }
+    } else {
+      // Session cadence: a single pass over the whole session transcript.
+      calls.push({ window: built, focalAssistant: null, at: sessionDate });
+    }
+
+    let sessionExtracted = false;
+    for (const call of calls) {
+      const threadMessages = call.window.map(toThreadMessage);
+      const lastUser =
+        [...call.window].reverse().find((m) => m.role === "user") ?? call.window[call.window.length - 1];
+      const lastAssistant =
+        call.focalAssistant ?? [...call.window].reverse().find((m) => m.role === "assistant") ?? null;
+
+      const ctx: ExtractionContext = {
+        userMessage: lastUser.content,
+        assistantResponse: lastAssistant?.content ?? "",
+        userId: lastUser.userId,
+        channelType: "public_channel",
+        channelId,
+        threadTs,
+        workspaceId,
+        extractionModelId,
+        onUsage,
+        triggerRole: "user",
+        // valid_from = the turn (or session) timestamp. Critical for temporal.
+        createdAt: call.at,
+        // Clean speaker name for the transcript; synthetic directory so user
+        // references resolve locally instead of against the real Slack workspace.
+        displayName: lastUser.speaker,
+        userDirectory,
+        benchProvenance: {
+          datasetId: benchCase.source,
+          caseId: benchCase.id,
+          conversationId: benchCase.id,
+          sessionId: session.id,
+          sessionIds: [session.id],
+          // Provenance reflects exactly the turns this extraction saw.
+          diaIds: call.window.map((b) => b.diaId),
+        },
+      };
+
+      try {
+        await extractMemoriesFromTranscript(threadMessages, ctx);
+        extractions++;
+        sessionExtracted = true;
+      } catch (error) {
+        logger.warn("bench: extraction failed", {
+          caseId: benchCase.id,
+          sessionId: session.id,
+          replay,
+          error: String(error).slice(0, 200),
+        });
+      }
+    }
+    if (sessionExtracted) sessionsIngested++;
+    // Tick progress per session (the real unit of work), counting even
+    // empty/failed sessions so the bar total matches countTotalSessions.
+    onSession?.();
+  }
+
+  const afterRows = (await db.execute(sql`
+    SELECT count(*)::int AS n FROM memories WHERE workspace_id = ${workspaceId}
+  `)) as any;
+  const after = Number((afterRows.rows ?? afterRows)[0]?.n ?? 0);
+
+  return { memoriesAdded: Math.max(0, after - before), sessionsIngested, extractions };
+}
+
+/**
+ * Extract memories for a list of cases. De-dupes by conversation (LoCoMo packs
+ * many QA pairs per conversation), then runs conversations through a bounded
+ * worker pool — extraction is dominated by LLM latency, not DB throughput.
+ *
+ * Sessions within a conversation stay serial (supersession ordering); only
+ * distinct conversations run concurrently.
+ */
+export async function extractMemoriesForCases(
+  cases: BenchCase[],
+  workspaceId: string,
+  extractionModelId: string,
+  concurrency = 4,
+  onProgress?: (done: number, total: number) => void,
+  replay: ReplayMode = "session",
+  onUsage?: ExtractionContext["onUsage"],
+): Promise<{ totalMemories: number; totalSessions: number; totalExtractions: number }> {
+  const unique = uniqueConversations(cases);
+  // Progress is reported per SESSION (the real unit of extraction work), so the
+  // bar advances smoothly instead of jumping per whole conversation.
+  const totalSessionUnits = unique.reduce((s, c) => s + c.sessions.length, 0);
+  logger.debug(
+    `bench: extracting memories from ${unique.length} unique conversation(s) of ${cases.length} case(s)`,
+    { workspaceId, concurrency, replay, sessions: totalSessionUnits },
   );
 
   let totalMemories = 0;
   let totalSessions = 0;
-  let done = 0;
-  let idx = 0;
+  let totalExtractions = 0;
+  let sessionsDone = 0;
 
-  const worker = async () => {
-    while (true) {
-      const i = idx++;
-      if (i >= unique.length) return;
-      const r = await ingestCase(unique[i], workspaceId, extractionModelId);
-      totalMemories += r.memoriesAdded;
-      totalSessions += r.sessionsIngested;
-      done += 1;
-      onProgress?.(done, unique.length);
-    }
-  };
+  await pool(unique.length, concurrency, async (i) => {
+    const r = await extractMemoriesForCase(
+      unique[i],
+      workspaceId,
+      extractionModelId,
+      replay,
+      () => {
+        sessionsDone += 1;
+        onProgress?.(sessionsDone, totalSessionUnits);
+      },
+      onUsage,
+    );
+    totalMemories += r.memoriesAdded;
+    totalSessions += r.sessionsIngested;
+    totalExtractions += r.extractions;
+  });
 
-  const workers = Array.from(
-    { length: Math.max(1, Math.min(concurrency, unique.length)) },
-    () => worker(),
-  );
-  await Promise.all(workers);
-
-  return { totalMemories, totalSessions };
+  return { totalMemories, totalSessions, totalExtractions };
 }

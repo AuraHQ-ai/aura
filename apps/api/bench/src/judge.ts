@@ -17,6 +17,7 @@ import { z } from "zod";
 import { generateObject } from "ai";
 import type { BenchCase } from "./types.js";
 import { resolveBenchJudgeModel } from "./models.js";
+import type { UsageLike } from "./cost-meter.js";
 
 export const judgeSchema = z.object({
   verdict: z
@@ -84,6 +85,8 @@ function pickPrompt(benchCase: BenchCase): string {
 export interface JudgeConfig {
   /** Gateway-style model id, e.g. "anthropic/claude-sonnet-4.7". Defaults to main model. */
   modelId?: string;
+  /** Optional cost hook: receives the resolved judge model id + token usage. */
+  onUsage?: (modelId: string, usage: UsageLike) => void;
 }
 
 /**
@@ -97,7 +100,7 @@ export async function judgeAnswer(
   modelAnswer: string,
   config: JudgeConfig = {},
 ): Promise<JudgeResult> {
-  const { model } = await resolveBenchJudgeModel(config.modelId);
+  const { model, modelId } = await resolveBenchJudgeModel(config.modelId);
   const gold = Array.isArray(benchCase.goldAnswer)
     ? benchCase.goldAnswer.join(" | ")
     : benchCase.goldAnswer;
@@ -111,12 +114,13 @@ Model answer: ${modelAnswer || "(empty)"}
 
 Grade the model answer per the rules above.`;
 
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model,
     schema: judgeSchema,
     system,
     prompt,
     temperature: 0,
   });
+  config.onUsage?.(modelId, usage);
   return object;
 }

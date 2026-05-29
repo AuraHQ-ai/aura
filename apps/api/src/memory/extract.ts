@@ -203,9 +203,32 @@ async function buildUserLookupInner(): Promise<Map<string, string>> {
  * Normalize an array of user references (names, IDs, @-mentions) to
  * canonical Slack user IDs.  Unresolvable references are kept as-is.
  */
-async function normalizeUserReferences(refs: string[]): Promise<string[]> {
+async function normalizeUserReferences(
+  refs: string[],
+  directory?: Record<string, string>,
+): Promise<string[]> {
   if (refs.length === 0) return refs;
   if (refs.every((r) => SLACK_USER_ID_RE.test(r))) return refs;
+
+  // Bench / replay harnesses supply their own synthetic name→id directory.
+  // When present we resolve ONLY against it and never touch the live Slack
+  // workspace — fictional corpus speakers ("James", "Mel") would otherwise
+  // either spam "could not resolve" warnings or, worse, get linked to a real
+  // employee who happens to share a first name. Unknown refs are kept as-is.
+  if (directory) {
+    return refs.map((ref) => {
+      if (SLACK_USER_ID_RE.test(ref)) return ref;
+      const mention = ref.match(/^<@([UW][A-Z0-9]+)>$/);
+      if (mention) return mention[1];
+      const lower = ref.toLowerCase().trim().replace(/^@/, "");
+      return (
+        directory[lower] ??
+        directory[lower.replace(/_/g, " ")] ??
+        directory[lower.replace(/\s+/g, "_")] ??
+        ref
+      );
+    });
+  }
 
   const lookup = await buildUserLookup();
   if (lookup.size === 0) return refs;
@@ -302,6 +325,14 @@ Extract ONLY things worth remembering long-term. Skip pleasantries, small talk, 
 - **semantic**: Durable facts, preferences, relationships that remain true over time.
 - **episodic**: Time-bound events, conversations, incidents tied to a specific moment.
 - **procedural**: How-to knowledge, workflows, processes, patterns of behavior.
+
+## Preserve concrete specifics (do NOT summarize these away)
+
+When a message states a specific value -- a number, price, amount, quantity, duration, date, measurement, score, or a named item/place/product -- capture it VERBATIM in the memory content. These exact values are the operands needed to answer later questions (price differences, totals, elapsed time, "which came first") and are expensive to rediscover.
+- Keep the precise figure: "found a similar pair of boots at a budget store for $50" -- NOT "found cheaper boots".
+- When several distinct values are stated that could later be compared or combined, record EACH as its own fact (e.g. the $800 luxury price AND the $50 budget-store price are two separate, equally worth-keeping facts -- not one vague summary).
+- Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The precise figure is worth keeping on its own.
+- A concrete personal/world fact carrying a specific stated value is worth AT LEAST importance 40 -- do not discard it as noise just because it seems minor in the moment.
 
 ## Admission Rules
 
@@ -408,6 +439,13 @@ Types of memories:
 
 Categories: semantic (durable facts), episodic (time-bound events), procedural (how-to knowledge).
 
+## Preserve concrete specifics (do NOT summarize these away)
+When a message states a specific value — a number, price, amount, quantity, duration, date, measurement, score, or a named item/place/product — capture it VERBATIM in the memory content. These exact values are the operands needed to answer later questions (price differences, totals, elapsed time, "which came first") and are expensive to rediscover.
+- Keep the precise figure: "found a similar pair of boots at a budget store for $50" — NOT "found cheaper boots".
+- When several distinct values are stated that could later be compared or combined, record EACH as its own fact (e.g. the $800 luxury boots price AND the $50 budget-store price are two separate, equally worth-keeping facts — not one vague summary).
+- Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The preference and the precise figure are both worth keeping.
+- A concrete personal/world fact that carries a specific stated value is worth AT LEAST importance 40 — do not discard it as noise just because it seems minor in the moment.
+
 Importance (be strict):
 - 90-100: company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents.
 - 70-89: important technical/product decisions, high-impact org/customer context, durable people facts.
@@ -479,6 +517,27 @@ export interface ExtractionContext {
     sessionIds?: string[];
     diaIds?: string[];
   };
+  /**
+   * Bench/replay only: a synthetic lowercased name→id directory. When set,
+   * user-reference normalization resolves against THIS map instead of the live
+   * Slack workspace, so fictional corpus speakers map to deterministic
+   * synthetic ids and never collide with (or warn against) real employees.
+   * Always undefined in production.
+   */
+  userDirectory?: Record<string, string>;
+  /**
+   * Optional cost hook. When set, each extraction-stage LLM call reports its
+   * resolved model id + token usage so callers (e.g. the bench cost meter) can
+   * price the run. Production passes nothing — no behaviour change.
+   */
+  onUsage?: (
+    modelId: string,
+    usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    },
+  ) => void;
 }
 
 /**
@@ -706,12 +765,16 @@ async function runReconciliationCore(
 
   const model = await resolveExtractionModel(context);
 
-  const { output: result } = await generateText({
+  const { output: result, usage } = await generateText({
     model,
     output: Output.object({ schema: reconciliationSchema }),
     system: systemPrompt,
     prompt: threadContext,
   });
+  context.onUsage?.(
+    context.extractionModelId ?? (model as any)?.modelId ?? "extraction",
+    usage,
+  );
 
   if (!result || result.operations.length === 0) {
     logger.debug("No memory operations from reconciliation");
@@ -835,6 +898,8 @@ async function detectContradictions(
   }>,
   workspaceId: string,
   model: Awaited<ReturnType<typeof getFastModel>>,
+  onUsage?: ExtractionContext["onUsage"],
+  modelId?: string,
 ): Promise<void> {
   const batchIds = storedMemories.map((m) => m.id);
   for (const newMem of storedMemories) {
@@ -855,13 +920,14 @@ async function detectContradictions(
         .map((c, i) => `[${i}] ${c.content}`)
         .join("\n");
 
-      const { object } = await generateObject({
+      const { object, usage } = await generateObject({
         model,
         schema: contradictionResultSchema,
         system: CONTRADICTION_PROMPT,
         prompt: `NEW MEMORY: ${newMem.content}\n\nEXISTING CANDIDATE MEMORIES:\n${candidateList}`,
         temperature: 0,
       });
+      onUsage?.(modelId ?? (model as any)?.modelId ?? "extraction", usage);
 
       for (const result of object.results) {
         if (!result.contradicts) continue;
@@ -905,7 +971,7 @@ async function processCreateOperations(
   const normalizedMemories = await Promise.all(
     filtered.map(async (m) => ({
       ...m,
-      relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
+      relatedUserIds: await normalizeUserReferences(m.relatedUserIds, context.userDirectory),
     })),
   );
 
@@ -977,7 +1043,13 @@ async function processCreateOperations(
       }))
       .filter((m) => m.id);
     if (storedForContradiction.length > 0) {
-      await detectContradictions(storedForContradiction, workspaceId, model);
+      await detectContradictions(
+        storedForContradiction,
+        workspaceId,
+        model,
+        context.onUsage,
+        context.extractionModelId ?? (model as any)?.modelId,
+      );
     }
   } catch (error) {
     logger.warn("Contradiction detection pass failed — continuing without it", {
@@ -1023,12 +1095,16 @@ async function extractSingleExchange(
 
   const model = await resolveExtractionModel(context);
 
-  const { output: object } = await generateText({
+  const { output: object, usage } = await generateText({
     model,
     output: Output.object({ schema: extractedMemoriesSchema }),
     system: EXTRACTION_PROMPT,
     prompt: conversationText,
   });
+  context.onUsage?.(
+    context.extractionModelId ?? (model as any)?.modelId ?? "extraction",
+    usage,
+  );
 
   if (!object || object.memories.length === 0) {
     logger.debug("No memories extracted from exchange");
