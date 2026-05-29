@@ -9,7 +9,7 @@ import {
   retrieveConversations,
   type ConversationThread,
 } from "../memory/retrieve.js";
-import { embedText } from "../lib/embeddings.js";
+import { embedWeightedQuery } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
 import { getSandboxEnvNames } from "../lib/sandbox.js";
@@ -33,6 +33,13 @@ export interface ChannelSession {
   conversationId: string;
   threadId?: string;
   messageText: string;
+  /**
+   * The single latest user turn (without prior thread context). When provided
+   * and distinct from `messageText`, the retrieval query embedding is weighted
+   * toward this message to avoid topic-pivot dilution (#1038). Falls back to
+   * `messageText` when omitted.
+   */
+  latestMessageText?: string;
   /** Pre-formatted recent messages — each connector provides its own format. */
   conversationContext?: string;
   isDirectMessage: boolean;
@@ -280,7 +287,10 @@ export async function buildCorePrompt(
 
   let queryEmbedding: number[] | undefined;
   try {
-    queryEmbedding = await embedText(session.messageText);
+    queryEmbedding = await embedWeightedQuery(
+      session.latestMessageText ?? session.messageText,
+      session.messageText,
+    );
   } catch (error) {
     logger.error("Embedding failed, proceeding without memory context", {
       error: String(error),
