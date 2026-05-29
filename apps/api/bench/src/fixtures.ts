@@ -410,10 +410,12 @@ export async function loadExternalCorpus(filePath: string): Promise<BenchCase[]>
 /**
  * Deterministic stratified sampler.
  *
- * Caps each category at `targetPerCategory` and applies a stable shuffle
- * via the seeded RNG. Categories below the cap pass through untouched.
- * Output ordering is stable per (cases, target, seed) so a re-run with
- * the same inputs always picks the same questions.
+ * Caps each category at `targetPerCategory`, applies a stable shuffle via the
+ * seeded RNG, then prefers lower extraction-work cases inside each category.
+ * The runtime budget matters because extraction cost tracks sessions/turns,
+ * not just scored question count. Categories below the cap pass through
+ * untouched. Output ordering is stable per (cases, target, seed) so a re-run
+ * with the same inputs always picks the same questions.
  */
 export function stratifiedSample(
   cases: BenchCase[],
@@ -433,31 +435,39 @@ export function stratifiedSample(
       const j = Math.floor(rng() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
+    shuffled.sort((a, b) => extractionWorkUnits(a) - extractionWorkUnits(b));
     out.push(...shuffled.slice(0, targetPerCategory));
   }
   return out;
+}
+
+function extractionWorkUnits(benchCase: BenchCase): number {
+  const sessions = benchCase.sessions.length;
+  const turns = benchCase.sessions.reduce((sum, s) => sum + s.turns.length, 0);
+  // Sessions dominate because the default replay mode makes one LLM extraction
+  // call per session. Turns are a light tie-breaker for long transcripts.
+  return sessions * 1000 + turns;
 }
 
 /**
  * Subset size table. Keep these in one place so the CLI, the GitHub
  * Action, and any future runners agree on what each label means.
  *
- * Numbers reflect a per-category cap after stratified shuffling, so the
- * actual question count depends on how many categories the dataset has.
- * LongMemEval (cleaned) ships 6 categories; LoCoMo ships 5.
+ * Numbers reflect a per-category cap after stratified, extraction-work-aware
+ * sampling, so the actual question count depends on how many categories the
+ * dataset has. LongMemEval (cleaned) ships 6 categories; LoCoMo ships 5.
  *
- *   fast    4/category → ~44 Qs total. Iteration-speed for ad-hoc local runs.
- *   medium  30/category → ~330 Qs total. PR-time / automation default.
- *   full    no cap     → 2,486 Qs total. Manual deep-dive only — costs real money.
+ *   fast    1/category → ~11 Qs total. About 10 minutes with extraction.
+ *   medium  2/category → ~22 Qs total. About 30 minutes with extraction.
+ *   full    no cap     → all loaded corpus questions. Manual deep-dive only.
  *
- * The medium tier is sized so a PR-time bench with Sonnet for extraction
- * + answerer and Opus as judge comes in around ~$15–25 per run, low enough
- * to be acceptable for every memory-touching PR but still statistically
- * meaningful (30 Qs/category gives roughly ±15pp at 95% confidence).
+ * Runtime is dominated by extraction work over unique conversations/sessions,
+ * not by final QA count alone. These caps are intentionally conservative for
+ * server runs; use --limit/--cases for ad-hoc experiments.
  */
 export const SUBSET_PER_CATEGORY = {
-  fast: 4,
-  medium: 30,
+  fast: 1,
+  medium: 2,
   full: Number.POSITIVE_INFINITY,
 } as const;
 

@@ -3,8 +3,8 @@
  *
  *   pnpm bench:memory                                # toy corpus, medium subset
  *   pnpm bench:memory --dataset=lme                  # LongMemEval (cached corpus)
- *   pnpm bench:memory --dataset=both --subset=full   # ~2,500 questions
- *   pnpm bench:memory --dataset=both --subset=fast   # ~40 questions, PR speed
+ *   pnpm bench:memory --dataset=both --subset=full   # entire loaded corpus
+ *   pnpm bench:memory --dataset=both --subset=fast   # ~10m server budget
  *   pnpm bench:memory --concurrency=4                # parallel ingest workers
  *   pnpm bench:memory --corpus-file=/path/data.json  # bring-your-own normalized corpus
  *   pnpm bench:memory --dry-run                      # no DB writes, no LLM calls
@@ -17,6 +17,7 @@
  *   pnpm bench:memory --from=extract                 # reuse messages, re-extract + score
  *   pnpm bench:memory --from=score                   # reuse memories, only re-run retrieval+QA
  *   pnpm bench:memory --from=messages --to=extract   # load + extract, stop before scoring
+ *   pnpm bench:memory --from=messages --to=messages --skip-message-embeddings # seed raw corpus rows
  *   pnpm bench:memory --embed-concurrency=8          # parallel embedding/message workers
  *   pnpm bench:memory --bench-id=my-exp              # explicit persistent workspace key
  * Any of --from/--to/--reset/--persist/--bench-id switches to the persistent
@@ -44,12 +45,15 @@
  *   --extraction-model=main                          # tier (resolves via DB catalog)
  *   --judge-model=escalation                         # default; Opus-class today
  *
- * Defaults: extraction=main, answerer=main, judge=escalation. The exact
+ * Runtime tiers are budgets for fast/medium; full means the entire loaded
+ * corpus and can take hours. Defaults: extraction=fast, answerer=main,
+ * judge=escalation. The exact
  * model id used is persisted on bench_runs so cross-run deltas stay
  * honest when the catalog gets updated.
  *
  * Mirrors the pattern of `backfill-memories.ts`: dotenv at the top, `--prod`
- * to switch to `.env.production`.
+ * to switch to `.env.production`. If BENCH_DATABASE_URL is set, it overrides
+ * DATABASE_URL for this process before any DB modules are imported.
  */
 
 import { config } from "dotenv";
@@ -65,6 +69,10 @@ const isProd = argv.includes("--prod");
 const envFile = isProd ? ".env.production" : ".env.local";
 config({ path: resolve(repoRoot, envFile) });
 if (isProd) console.log("Using .env.production (--prod)");
+if (process.env.BENCH_DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.BENCH_DATABASE_URL;
+  console.log("Using BENCH_DATABASE_URL for memory bench database");
+}
 
 const { runBench } = await import("../../bench/src/runner.js");
 const { logger } = await import("../lib/logger.js");
@@ -95,6 +103,7 @@ const limit = getFlag("limit") ? Number(getFlag("limit")) : undefined;
 // --cases=N caps the TOTAL number of cases (distinct from --limit, per-category).
 const cases = getFlag("cases") ? Number(getFlag("cases")) : undefined;
 const category = getFlag("category");
+const skipMessageEmbeddings = hasFlag("skip-message-embeddings");
 const judgeModel = getFlag("judge-model") ?? getFlag("judge");
 const extractionModel = getFlag("extraction-model");
 const answererModel = getFlag("answerer-model");
@@ -145,22 +154,26 @@ const prNumber =
     ? Number(prNumberArg)
     : undefined;
 
-// Cooperative cancellation: first ^C asks the runner to drain in-flight cases
-// and persist partial results; a second ^C force-quits.
+// Cooperative cancellation: first signal asks the runner to drain in-flight
+// cases and persist partial results; a second signal force-quits. GitHub
+// Actions sends SIGTERM on timeout/cancel, so handle it like Ctrl-C.
 const cancelSignal = { cancelled: false };
-let sigintCount = 0;
-process.on("SIGINT", () => {
-  sigintCount += 1;
-  if (sigintCount === 1) {
+let signalCount = 0;
+function requestCancel(signal: NodeJS.Signals): void {
+  signalCount += 1;
+  if (signalCount === 1) {
     cancelSignal.cancelled = true;
     console.error(
-      "\n^C — finishing in-flight cases and saving partial results… (press Ctrl-C again to force quit)",
+      `\n${signal} — finishing in-flight cases and saving partial results… (send the signal again to force quit)`,
     );
   } else {
     console.error("\nForce quit.");
     process.exit(130);
   }
-});
+}
+process.on("SIGINT", requestCancel);
+process.on("SIGTERM", requestCancel);
+process.on("SIGHUP", requestCancel);
 
 // Launch the guided wizard on --interactive/-i, or when this is an interactive
 // terminal and the user passed no meaningful flags. CI always passes flags.
@@ -187,6 +200,7 @@ if (wantWizard) {
     limit,
     cases,
     category,
+    skipMessageEmbeddings,
     skipIngest: hasFlag("skip-ingest"),
     dryRun: hasFlag("dry-run"),
     postSlack: hasFlag("post-slack"),
@@ -220,7 +234,7 @@ if (!wantWizard) {
       `  [replay=${replay ?? "session"}]` +
       (resume != null ? `  [resume${resume ? "=" + resume : "=latest"}]` : "") +
       (staged
-        ? `  [stages ${fromStage ?? "messages"}→${toStage ?? "score"}${reset ? ", reset" : ""}]`
+        ? `  [stages ${fromStage ?? "messages"}→${toStage ?? "score"}${reset ? ", reset" : ""}${skipMessageEmbeddings ? ", raw messages" : ""}]`
         : ""),
   );
 }

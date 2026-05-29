@@ -170,6 +170,7 @@ export async function runBench(
     limit: partialConfig.limit,
     cases: partialConfig.cases,
     category: partialConfig.category,
+    skipMessageEmbeddings: partialConfig.skipMessageEmbeddings ?? false,
     skipIngest: partialConfig.skipIngest ?? false,
     dryRun: partialConfig.dryRun ?? false,
     postSlack: partialConfig.postSlack ?? false,
@@ -413,6 +414,7 @@ export async function runBench(
         workspaceId,
         embedConcurrency,
         (done) => p.update(done),
+        !config.skipMessageEmbeddings,
       );
       p.done();
       logger.info("bench: messages stage complete", r);

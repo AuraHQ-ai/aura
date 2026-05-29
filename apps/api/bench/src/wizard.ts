@@ -95,8 +95,8 @@ export async function runWizard(): Promise<WizardResult> {
       message: "Model tier for extraction + answerer?",
       choices: [
         { name: "default (main / escalation judge)", value: "" },
-        { name: "fast  — cheapest, fastest", value: "fast" },
-        { name: "main  — balanced", value: "main" },
+        { name: "fast  — production extraction tier / cheapest", value: "fast" },
+        { name: "main  — stronger, slower", value: "main" },
       ],
       default: "",
     });
