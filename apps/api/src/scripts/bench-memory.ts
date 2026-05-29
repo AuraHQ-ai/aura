@@ -248,11 +248,12 @@ try {
     console.log(`\nWrote detailed JSONL to ${jsonOut}`);
   }
 
-  // Append a commit-stamped fingerprint to RESULTS.md when asked. Skipped for
-  // dry runs and empty result sets (nothing meaningful to record).
+  // Record a structured entry in history.jsonl and regenerate the markdown
+  // views (bench README + root README snapshot). Skipped for dry runs and
+  // empty result sets (nothing meaningful to record).
   if (logResults && !cfg.dryRun && output.scores.length > 0) {
-    const { appendResultsLog } = await import("../../bench/src/results-log.js");
-    const path = appendResultsLog({
+    const { recordRun } = await import("../../bench/src/results-log.js");
+    const { historyFile, benchReadme, mainReadme } = recordRun({
       runId: output.runId,
       scores: output.scores,
       datasets: [...(cfg.datasets ?? [])],
@@ -261,9 +262,13 @@ try {
       category: cfg.category,
       corpusHash: output.corpusHash,
       totalDurationMs: output.totalDurationMs,
+      costUsd: output.costUsd,
+      models: output.models,
       note,
     });
-    console.log(`\nLogged result fingerprint to ${path}`);
+    console.log(`\nLogged run to ${historyFile}`);
+    console.log(`Regenerated ${benchReadme}`);
+    if (mainReadme) console.log(`Regenerated snapshot in ${mainReadme}`);
   } else if (logResults && (cfg.dryRun || output.scores.length === 0)) {
     console.log("\n--log skipped (dry run or no scores to record).");
   }

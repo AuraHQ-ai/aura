@@ -123,17 +123,41 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ---
 
-## Memory PR checklist
+## Memory benchmark
 
-The harness in `apps/api/bench/` makes memory PRs falsifiable. It replays vendored LoCoMo + LongMemEval corpora through Aura's real `extract → retrieve → answer` pipeline, scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
+The harness in `apps/api/bench/` makes memory changes falsifiable. It replays vendored LoCoMo + LongMemEval corpora through Aura's real `extract → retrieve → answer` pipeline, scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
+
+### Current results
+
+<!-- BENCH_SNAPSHOT:START -->
+<!-- Generated from apps/api/bench/history.jsonl — do not edit by hand. -->
+
+Current codebase (as of `c80b07e-dirty`, scope `locomo+longmemeval/medium`): **QA 32%** · **recall@15 74%** across 329 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
+
+| dataset | category | QA acc | recall@15 | n |
+|---|---|---:|---:|---:|
+| locomo | adversarial | 3% | 87% | 30 |
+| locomo | multi_hop | 25% | 64% | 30 |
+| locomo | open_domain | 55% | 80% | 30 |
+| locomo | single_hop | 10% | 61% | 30 |
+| locomo | temporal | 13% | 68% | 30 |
+| longmemeval | knowledge-update | 65% | 78% | 30 |
+| longmemeval | multi-session | 22% | 68% | 30 |
+| longmemeval | single-session-assistant | 27% | 73% | 30 |
+| longmemeval | single-session-preference | 38% | 70% | 30 |
+| longmemeval | single-session-user | 72% | 87% | 30 |
+| longmemeval | temporal-reasoning | 26% | 77% | 30 |
+
+<!-- BENCH_SNAPSHOT:END -->
+
+The full per-category breakdown and the run-over-run evolution live in [`apps/api/bench/README.md`](apps/api/bench/README.md), generated from [`apps/api/bench/history.jsonl`](apps/api/bench/history.jsonl). The snapshot above reflects the latest logged run on the current codebase.
 
 ### When does it run?
 
-The bench is **event-driven, not scheduled** — you run it when memory formation or retrieval actually changes, not on a clock. Re-running the same code against the same corpus every night would just spend money re-deriving identical numbers.
+The bench is **local-first** — you run it when memory formation or retrieval actually changes, not on a clock and **not on every PR** (it's slow and irrelevant to most changes). Re-running the same code against the same corpus would just re-derive identical numbers.
 
-* **Automatically on PRs** when a memory-relevant path changes — `apps/api/src/memory/**`, `apps/api/bench/**`, `apps/api/src/personality/system-prompt.ts`, `apps/api/src/pipeline/core-prompt.ts`, `packages/db/src/schema.ts`, or `packages/db/drizzle/**`. Other PRs skip the bench entirely so we don't burn cycles on unrelated changes. Results land in a sticky PR comment. This path filter *is* the "significant change" trigger.
-* **Manually via `workflow_dispatch`** in the GitHub UI (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`) and dataset (`toy | lme | locomo | both`).
-* **Locally**, any time — this is the primary loop while iterating on a memory change.
+* **Locally**, any time — this is the primary loop. Run with `--log` to record the result (see below) and commit the generated files alongside your change.
+* **Manually via `workflow_dispatch`** in the GitHub UI (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`) and dataset (`toy | lme | locomo | both`). This spins up an isolated Neon branch and uploads the result JSON as an artifact — useful when you don't have local DB / gateway access. It does not commit anything back to the repo.
 
 ### Local workflow
 
@@ -145,14 +169,14 @@ pnpm bench:fetch-corpus
 pnpm bench:memory --dataset=toy
 
 # Standard run — main-tier extraction + answerer, escalation-tier judge.
-# ~330 questions across LoCoMo + LongMemEval, ~$15–25.
-pnpm bench:memory --dataset=both --subset=medium
+# ~330 questions across LoCoMo + LongMemEval, ~1h, ~$10.
+pnpm bench:memory --dataset=both --subset=medium --log
 
-# PR-speed iteration loop (~40 Qs, ~$2).
-pnpm bench:memory --dataset=both --subset=fast
+# Fast iteration loop (~44 Qs, a few min, ~$2).
+pnpm bench:memory --dataset=both --subset=fast --log
 
-# Full corpus — every question. Costs real money, only run when warranted.
-pnpm bench:memory --dataset=both --subset=full --concurrency=4
+# Full corpus — every question (~2,486 Qs, ~2–3h). Costs real money; ask before running.
+pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
 
 # Bring-your-own normalized corpus, skipping fetch-corpus entirely.
 pnpm bench:memory --corpus-file=/tmp/my-cases.json --subset=full
@@ -191,11 +215,11 @@ pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
 
 ### Results log (commit fingerprints)
 
-`--log` appends a fingerprint of the run to [`apps/api/bench/RESULTS.md`](apps/api/bench/RESULTS.md): the commit SHA, corpus hash, config, and per-category scores. Commit that file alongside the change so every result is permanently tied to the code that produced it — diffing entries (or `git log` on `RESULTS.md`) shows whether a change actually moved the needle. A `-dirty` suffix on the commit flags runs that included uncommitted changes. Add `--note="…"` to annotate what you were trying.
+`--log` appends a structured entry to [`apps/api/bench/history.jsonl`](apps/api/bench/history.jsonl) — runId, commit SHA, corpus hash, config, resolved models, cost, and per-category scores — then regenerates [`apps/api/bench/README.md`](apps/api/bench/README.md) and the snapshot block above. Commit all three alongside the change so every result is permanently tied to the code that produced it; `git log` on `history.jsonl` shows whether a change actually moved the needle. A `-dirty` suffix on the commit flags runs that included uncommitted changes. Add `--note="…"` to annotate what you were trying. Regenerate the markdown from history at any time with `pnpm bench:report` (no DB or LLM needed).
 
 ### What to put in the PR description
 
-The CI bench posts a sticky comment automatically. For the description, paste at least the rows your change targets, plus two it shouldn't affect:
+Paste at least the rows your change targets, plus two it shouldn't affect (the generated [`apps/api/bench/README.md`](apps/api/bench/README.md) carries the full table):
 
 | Dataset | Category | Before | After | Δ |
 |---|---|---|---|---|
@@ -206,7 +230,7 @@ The CI bench posts a sticky comment automatically. For the description, paste at
 | Retrieval recall@15 (overall) | — | 67% | 71% | +4pp |
 | Runtime / cost | — | 8m02s / $4.18 | 8m11s / $4.31 | — |
 
-Regressions > **2pp** on any category require explicit justification. The PR-time gate (`.github/workflows/memory-bench.yml`) surfaces them automatically; once we have a noise floor, flip `STRICT_REGRESSION_GATE: "true"` to turn warnings into hard fails. Apply the `override-bench` label to merge through a justified regression.
+Regressions > **2pp** on any category require explicit justification in the PR description. There's no automated PR gate — the bench is local-first now — so the burden is on the author to run the relevant bench and surface the deltas honestly.
 
 ### Adding new evidence
 

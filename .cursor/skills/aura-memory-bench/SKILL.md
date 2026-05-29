@@ -30,6 +30,26 @@ The toy run takes ~1 minute, costs a few cents, ingests 5 cases across
 and prints a QA + recall table. It creates and then wipes a scratch
 workspace (`bench-<runId>`), so it never touches real workspace data.
 
+## Cost, runtime, and how to run it (esp. from an agent)
+
+The bench is **local-first** — it does NOT run on PRs. How you run it depends on
+the size, because a full run is slow and costs real money:
+
+| Run | Command | Time | Cost | Who runs it |
+|---|---|---|---|---|
+| Smoke | `--dataset=toy --log` | ~1 min | cents | agent (background) |
+| Iteration | `--dataset=both --subset=fast --log` | a few min | ~$2 | agent (background) |
+| Standard | `--dataset=both --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | ask the user |
+| Full | `--dataset=both --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | ask the user |
+
+**Never block a turn on a bench run.** Don't pipe it through `tail`/`head`/`tee`
+in a foreground shell call — a full run can take an hour and will hang. Launch
+cheap runs as fire-and-forget background jobs (`block_until_ms: 0`) and rely on
+the completion notification. For medium/full runs, hand the user the exact
+command and let them run it — then commit the regenerated `history.jsonl` +
+READMEs. The run is resume-safe (`--resume`) and Ctrl-C drains + saves partial
+results, so a long run interrupted partway isn't wasted.
+
 ## Iterating on a memory change
 
 Ramp data up in small steps on the axis you're fixing — don't jump to the full set:
@@ -44,25 +64,31 @@ pnpm bench:memory --dataset=lme --category=temporal --limit=10 --log
 - `--json=/tmp/out.json` dumps per-case `modelAnswer`, `judgeVerdict`,
   `judgeRationale`, and `retrievedMemoryIds` — **this is the first thing to
   reach for when a category scores 0%.**
-- `--log` appends a commit-stamped fingerprint to `apps/api/bench/RESULTS.md`
-  (pair with `--note="…"`). Skipped on `--dry-run`.
+- `--log` appends a structured entry to `apps/api/bench/history.jsonl` and
+  regenerates `apps/api/bench/README.md` + the snapshot block in the root
+  `README.md` (pair with `--note="…"`). Skipped on `--dry-run`.
+- `pnpm bench:report` regenerates both markdown views from `history.jsonl`
+  without running the bench (no DB / LLM needed) — handy after a rebase or a
+  manual history edit.
 
 ## Convention: log + commit results with every memory change (REQUIRED)
 
-Any change that can move the numbers (memory extraction, retrieval,
-reconciliation, scoring, corpus) must ship with a fresh fingerprint:
+The bench is **local-first** — it does not run on PRs. Any change that can move
+the numbers (memory extraction, retrieval, reconciliation, scoring, corpus)
+must ship with a fresh logged run:
 
 1. Make the change and verify it (`pnpm typecheck`).
 2. Run the relevant bench with `--log --note="<what changed + score deltas>"`.
    For a quick memory change the toy run is enough: `pnpm bench:memory --log --note="…"`.
-3. Commit the code change **and** the `apps/api/bench/RESULTS.md` entry in the
+3. Commit the code change **and** the regenerated files — `apps/api/bench/history.jsonl`,
+   `apps/api/bench/README.md`, and the root `README.md` snapshot — in the
    **same commit**, so every commit carries the scores it produced.
 
-The fingerprint records the current `git rev-parse HEAD`. Because step 2 runs
-before the commit exists, the entry is stamped `<sha>-dirty` — that's expected
-and honest (it means the run included uncommitted changes). If you need the
-entry to carry the *final* commit SHA, commit the code first, re-run `--log` on
-the clean tree, then amend `RESULTS.md` into the commit.
+The entry records the current `git rev-parse HEAD`. Because step 2 runs before
+the commit exists, it's stamped `<sha>-dirty` — that's expected and honest (the
+run included uncommitted changes). If you need the entry to carry the *final*
+commit SHA, commit the code first, re-run `--log` (or `pnpm bench:report`) on
+the clean tree, then amend the regenerated files into the commit.
 
 ## Useful flags
 
@@ -126,5 +152,8 @@ regression. Judge it against QA accuracy.
 | Retrieval recall scoring | `apps/api/bench/src/eval-retrieval.ts` |
 | QA answerer + judge | `apps/api/bench/src/eval-qa.ts` |
 | Score aggregation / persistence | `apps/api/bench/src/score.ts` |
-| Nightly cron | `apps/api/src/cron/bench-memory.ts` |
-| Historical fingerprints | `apps/api/bench/RESULTS.md` |
+| History + markdown generation | `apps/api/bench/src/results-log.ts` |
+| Markdown regen script (`bench:report`) | `apps/api/bench/scripts/report.ts` |
+| Structured run history (source of truth) | `apps/api/bench/history.jsonl` |
+| Generated detailed results | `apps/api/bench/README.md` |
+| Manual / isolated CI run | `.github/workflows/memory-bench.yml` (workflow_dispatch only) |

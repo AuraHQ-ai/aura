@@ -78,6 +78,11 @@ All `db:*` scripts use `./scripts/env.sh` which loads `.env.local` by default. P
 - API routes live in `apps/api/src/routes/dashboard/` with shared auth middleware in `index.ts`
 - When adding a new dashboard feature, add an API endpoint first, then call it from the dashboard
 
+## Memory changes (run the bench)
+- Changes to `apps/api/src/memory/**`, `apps/api/bench/**`, the system/core prompts, or the DB schema can move memory quality — validate with the memory bench, not just `pnpm typecheck`. See the `aura-memory-bench` skill + rule.
+- It's **local-first** (no PR run). Record results with `--log` (appends `apps/api/bench/history.jsonl`, regenerates `apps/api/bench/README.md` + the root README snapshot) and commit those with the change.
+- **Cost/runtime gate**: a full run (~2,486 questions) takes ~2–3 hours and costs real money; medium (~330 Qs) is ~1 hour / ~$10. NEVER block a turn on a run (no `| tail`/`| tee`). Run cheap smoke/fast subsets yourself as background jobs; for medium/full runs, hand the user the command and ask them to run it.
+
 ## Multi-Channel LLM Pipeline
 - All LLM responses go through `createAgenticStream()` in `apps/api/src/pipeline/generate.ts`
 - This applies `prepareStep` middleware (thinking, effort, escalation, pruning) uniformly across channels
