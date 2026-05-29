@@ -1,10 +1,10 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { isAnthropicModel } from "../lib/ai.js";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
+import type { ModelCapabilities } from "@aura/db/schema";
 
 export class InvocationSupersededError extends Error {
   constructor(public readonly invocationId: string) {
@@ -55,29 +55,90 @@ type PrepareStepFn = (options: {
  * ignored — we rely on the model's own adaptive behavior.
  */
 
-/**
- * Some Anthropic models only support adaptive thinking (self-managed budget),
- * not the classic `{ type: "enabled", budgetTokens }` API. Opus 4.7 is the
- * first such model. Sending `enabled` to an adaptive-only model causes the
- * direct Anthropic API to reject the request, producing
- * `AI_NoOutputGeneratedError` with an empty stream.
- *
- * The gateway catalog only exposes a single `reasoning` tag and doesn't
- * distinguish the two thinking modes, so we keep a small allowlist of
- * adaptive-only gateway IDs. When more land, add them here.
- */
-const ADAPTIVE_ONLY_THINKING_MODELS = new Set<string>([
-  "anthropic/claude-opus-4.7",
-]);
+function isAnthropicGatewayModel(modelId: string): boolean {
+  return modelId.startsWith("anthropic/") || modelId.startsWith("claude");
+}
 
-function getAnthropicThinkingOptions(
+function hasProviderOptions(options: ProviderOptions): boolean {
+  return Object.keys(options).length > 0;
+}
+
+export function resolveProviderThinkingOptions(
+  modelId: string,
+  capabilities: ModelCapabilities | null,
+  budgetTokens: number,
+  catalogState?: { found: boolean; supportsThinking: boolean },
+): ProviderOptions {
+  if (!capabilities) {
+    // Preserve historical Anthropic behavior while allowing the catalog probe
+    // or runtime self-heal to write the more precise mode back later.
+    if (
+      isAnthropicGatewayModel(modelId) &&
+      (catalogState?.supportsThinking || catalogState?.found === false)
+    ) {
+      return {
+        anthropic: {
+          thinking: { type: "enabled", budgetTokens },
+        },
+      } as ProviderOptions;
+    }
+    return {};
+  }
+
+  switch (capabilities.provider) {
+    case "anthropic":
+      if (capabilities.thinkingMode === "none") return {};
+      return {
+        anthropic: {
+          thinking: capabilities.thinkingMode === "adaptive"
+            ? { type: "adaptive" }
+            : { type: "enabled", budgetTokens },
+        },
+      } as ProviderOptions;
+    case "openai":
+      if (capabilities.reasoningEffort === "none") return {};
+      return {
+        openai: {
+          reasoningEffort: capabilities.reasoningEffort,
+        },
+      } as ProviderOptions;
+    case "google":
+      if (capabilities.thinkingBudget === "none") return {};
+      return {
+        google: {
+          thinkingConfig: {
+            thinkingBudget: capabilities.thinkingBudget === "dynamic"
+              ? -1
+              : capabilities.thinkingBudget,
+          },
+        },
+      } as ProviderOptions;
+    case "xai":
+      if (capabilities.reasoningEffort === "none") return {};
+      return {
+        xai: {
+          reasoningEffort: capabilities.reasoningEffort,
+        },
+      } as ProviderOptions;
+    case "none":
+      return {};
+  }
+}
+
+export async function getProviderThinkingOptions(
   modelId: string,
   budgetTokens: number,
-): { type: "adaptive" } | { type: "enabled"; budgetTokens: number } {
-  if (ADAPTIVE_ONLY_THINKING_MODELS.has(modelId)) {
-    return { type: "adaptive" };
-  }
-  return { type: "enabled", budgetTokens };
+): Promise<ProviderOptions> {
+  const catalogCapabilities = await getModelCapabilities(modelId);
+  return resolveProviderThinkingOptions(
+    modelId,
+    catalogCapabilities.capabilities,
+    budgetTokens,
+    {
+      found: catalogCapabilities.found,
+      supportsThinking: catalogCapabilities.supportsThinking,
+    },
+  );
 }
 
 export function createPrepareStep(opts: {
@@ -101,26 +162,30 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
 
-  // Cache thinking support per model ID for this prepareStep instance.
-  // Catalog lookups are already in-memory-cached (5 min TTL), but we also
-  // memoize here so we don't hit the cache on every step.
-  const thinkingCache = new Map<string, boolean>();
-  async function modelSupportsThinking(modelId: string | undefined): Promise<boolean> {
-    if (!modelId) return false;
-    if (!isAnthropicModel(modelId)) return false;
-    const hit = thinkingCache.get(modelId);
-    if (hit !== undefined) return hit;
+  // Cache providerOptions per model/budget for this prepareStep instance.
+  // Catalog lookups are also in-memory cached, but this avoids repeated work
+  // while a long multi-step response is running.
+  const thinkingOptionsCache = new Map<string, ProviderOptions>();
+  async function getCachedProviderThinkingOptions(
+    modelId: string | undefined,
+    budgetTokens: number | undefined,
+  ): Promise<ProviderOptions | undefined> {
+    if (!modelId || !budgetTokens) return undefined;
+    const cacheKey = `${modelId}::${budgetTokens}`;
+    const hit = thinkingOptionsCache.get(cacheKey);
+    if (hit) return hasProviderOptions(hit) ? hit : undefined;
+
     try {
-      const caps = await getModelCapabilities(modelId);
-      thinkingCache.set(modelId, caps.supportsThinking);
-      return caps.supportsThinking;
+      const options = await getProviderThinkingOptions(modelId, budgetTokens);
+      thinkingOptionsCache.set(cacheKey, options);
+      return hasProviderOptions(options) ? options : undefined;
     } catch (err: any) {
       logger.warn("prepareStep: capability lookup failed", {
         modelId,
         error: err?.message,
       });
-      thinkingCache.set(modelId, false);
-      return false;
+      thinkingOptionsCache.set(cacheKey, {});
+      return undefined;
     }
   }
 
@@ -191,16 +256,7 @@ export function createPrepareStep(opts: {
     // support via the gateway-sourced catalog (tags.includes("reasoning")).
     const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
-    const thinkingEnabled = await modelSupportsThinking(effectiveModelId);
-
-    // --- Build Anthropic provider options ---
-    if (thinkingEnabled && opts.thinkingBudget && effectiveModelId) {
-      providerOptions = {
-        anthropic: {
-          thinking: getAnthropicThinkingOptions(effectiveModelId, opts.thinkingBudget),
-        },
-      };
-    }
+    providerOptions = await getCachedProviderThinkingOptions(effectiveModelId, opts.thinkingBudget);
 
     // --- Step limit warning ---
     // Concatenates all layers into a single string override. This breaks

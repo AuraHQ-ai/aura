@@ -7,6 +7,8 @@ import {
   sql,
 } from "drizzle-orm";
 import {
+  ModelCapabilities as ModelCapabilitiesSchema,
+  type ModelCapabilities as StoredModelCapabilities,
   modelCatalog,
   modelCatalogSelections,
   modelPricing,
@@ -71,6 +73,141 @@ const DEFAULT_WORKSPACE_ID = "default";
 
 function providerFromModelId(modelId: string): string {
   return modelId.split("/")[0] ?? "unknown";
+}
+
+function getGatewayModelTags(model: GatewayModel): string[] {
+  return Array.isArray(model.tags)
+    ? model.tags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+}
+
+function hasReasoningTag(tags: string[]): boolean {
+  return tags.includes("reasoning");
+}
+
+function errorIncludes(error: unknown, needle: string): boolean {
+  if (error instanceof Error) {
+    if (error.message.includes(needle) || String(error).includes(needle)) {
+      return true;
+    }
+
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause && errorIncludes(cause, needle)) {
+      return true;
+    }
+
+    const nested = (error as { errors?: unknown }).errors;
+    if (Array.isArray(nested)) {
+      return nested.some((item) => errorIncludes(item, needle));
+    }
+
+    return false;
+  }
+
+  return String(error).includes(needle);
+}
+
+function inferStaticModelCapabilities(
+  gatewayModel: GatewayModel,
+): StoredModelCapabilities | null {
+  const tags = getGatewayModelTags(gatewayModel);
+  if (!hasReasoningTag(tags)) return null;
+
+  switch (providerFromModelId(gatewayModel.id)) {
+    case "openai":
+      return { provider: "openai", reasoningEffort: "medium" };
+    case "google":
+      return { provider: "google", thinkingBudget: "dynamic" };
+    case "xai":
+      return { provider: "xai", reasoningEffort: "low" };
+    default:
+      return null;
+  }
+}
+
+async function probeAnthropicThinkingMode(
+  modelId: string,
+): Promise<StoredModelCapabilities | null> {
+  const [{ generateText }, { gateway }] = await Promise.all([
+    import("ai"),
+    import("@ai-sdk/gateway"),
+  ]);
+
+  try {
+    await generateText({
+      model: gateway(modelId),
+      prompt: "ok",
+      providerOptions: {
+        anthropic: {
+          thinking: { type: "enabled", budgetTokens: 1024 },
+        },
+      },
+      maxOutputTokens: 10,
+    });
+    return { provider: "anthropic", thinkingMode: "enabled" };
+  } catch (error) {
+    if (errorIncludes(error, "\"thinking.type.enabled\" is not supported")) {
+      return { provider: "anthropic", thinkingMode: "adaptive" };
+    }
+    if (errorIncludes(error, "adaptive thinking is not supported on this model")) {
+      return { provider: "anthropic", thinkingMode: "enabled" };
+    }
+
+    logger.warn("Anthropic thinking-mode probe failed", {
+      modelId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+async function seedModelCapabilitiesForSyncedModels(
+  gatewayModels: GatewayModel[],
+  workspaceId: string,
+): Promise<void> {
+  const modelIds = gatewayModels.map((model) => model.id);
+  if (modelIds.length === 0) return;
+
+  const gatewayModelById = new Map(
+    gatewayModels.map((model) => [model.id, model]),
+  );
+  const rows = await db
+    .select({
+      modelId: modelCatalog.modelId,
+      capabilities: modelCatalog.capabilities,
+    })
+    .from(modelCatalog)
+    .where(
+      and(
+        eq(modelCatalog.workspaceId, workspaceId),
+        inArray(modelCatalog.modelId, modelIds),
+        isNull(modelCatalog.capabilities),
+      ),
+    );
+
+  for (const row of rows) {
+    const gatewayModel = gatewayModelById.get(row.modelId);
+    if (!gatewayModel) continue;
+
+    const tags = getGatewayModelTags(gatewayModel);
+    if (!hasReasoningTag(tags)) continue;
+
+    let capabilities: StoredModelCapabilities | null = null;
+    if (providerFromModelId(row.modelId) === "anthropic") {
+      capabilities = await probeAnthropicThinkingMode(row.modelId);
+    } else {
+      capabilities = inferStaticModelCapabilities(gatewayModel);
+    }
+
+    if (!capabilities) continue;
+
+    await updateModelCapabilities(row.modelId, capabilities, workspaceId);
+    logger.info("Seeded model capabilities from catalog refresh", {
+      workspaceId,
+      modelId: row.modelId,
+      capabilities,
+    });
+  }
 }
 
 function normalizePricingKey(key: string): string {
@@ -142,11 +279,8 @@ export async function syncModelCatalogFromGateway(
             typeof gatewayModel.max_tokens === "number"
               ? gatewayModel.max_tokens
               : null,
-          tags: Array.isArray(gatewayModel.tags)
-            ? gatewayModel.tags.filter(
-                (tag): tag is string => typeof tag === "string",
-              )
-            : null,
+          tags: getGatewayModelTags(gatewayModel),
+          capabilities: inferStaticModelCapabilities(gatewayModel),
           rawPricing: gatewayModel.pricing ?? null,
           rawPayload: gatewayModel,
           lastSyncedAt: syncedAt,
@@ -170,6 +304,11 @@ export async function syncModelCatalogFromGateway(
         },
       });
   }
+
+  for (const modelId of gatewayModels.map((model) => model.id)) {
+    capabilityCache.delete(`${workspaceId}::${modelId}`);
+  }
+  await seedModelCapabilitiesForSyncedModels(gatewayModels, workspaceId);
 
   const modelIds = gatewayModels.map((model) => model.id);
   const activeRows = modelIds.length
@@ -367,31 +506,41 @@ export async function getDefaultModelId(
   return catalog.defaults[category] ?? null;
 }
 
-// ── Model capabilities (from gateway tags) ───────────────────────────────────
+// ── Model capabilities (from gateway tags + persisted provider config) ───────
 // The Vercel AI Gateway returns a `tags` array per model. We treat the
 // presence of `"reasoning"` as the signal that a model supports thinking —
 // this is the same source of truth used across repos (mako/mono). No model
 // ID parsing.
 
-export interface ModelCapabilities {
+export interface ModelCatalogCapabilities {
+  found: boolean;
   supportsThinking: boolean;
   tags: string[];
+  capabilities: StoredModelCapabilities | null;
 }
 
 const CAPABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
-const capabilityCache = new Map<string, { value: ModelCapabilities; expiresAt: number }>();
-const MISSING_CAPABILITIES: ModelCapabilities = { supportsThinking: false, tags: [] };
+const capabilityCache = new Map<string, { value: ModelCatalogCapabilities; expiresAt: number }>();
+const MISSING_CAPABILITIES: ModelCatalogCapabilities = {
+  found: false,
+  supportsThinking: false,
+  tags: [],
+  capabilities: null,
+};
 
 export async function getModelCapabilities(
   modelId: string,
   workspaceId = DEFAULT_WORKSPACE_ID,
-): Promise<ModelCapabilities> {
+): Promise<ModelCatalogCapabilities> {
   const cacheKey = `${workspaceId}::${modelId}`;
   const cached = capabilityCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
   const [row] = await db
-    .select({ tags: modelCatalog.tags })
+    .select({
+      tags: modelCatalog.tags,
+      capabilities: modelCatalog.capabilities,
+    })
     .from(modelCatalog)
     .where(
       and(
@@ -402,9 +551,25 @@ export async function getModelCapabilities(
     .limit(1);
 
   const tags = Array.isArray(row?.tags) ? row!.tags : [];
-  const value: ModelCapabilities = {
+  let capabilities: StoredModelCapabilities | null = null;
+  if (row?.capabilities != null) {
+    const parsed = ModelCapabilitiesSchema.safeParse(row.capabilities);
+    if (parsed.success) {
+      capabilities = parsed.data;
+    } else {
+      logger.warn("getModelCapabilities: invalid persisted capabilities", {
+        modelId,
+        workspaceId,
+        issues: parsed.error.issues,
+      });
+    }
+  }
+
+  const value: ModelCatalogCapabilities = {
+    found: Boolean(row),
     supportsThinking: tags.includes("reasoning"),
     tags,
+    capabilities,
   };
 
   if (!row) {
@@ -424,5 +589,39 @@ export async function getModelCapabilities(
     expiresAt: Date.now() + CAPABILITY_CACHE_TTL_MS,
   });
   return value;
+}
+
+export async function updateModelCapabilities(
+  modelId: string,
+  capabilities: StoredModelCapabilities,
+  workspaceId = DEFAULT_WORKSPACE_ID,
+): Promise<boolean> {
+  const parsed = ModelCapabilitiesSchema.parse(capabilities);
+  const [updated] = await db
+    .update(modelCatalog)
+    .set({
+      capabilities: parsed,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(modelCatalog.workspaceId, workspaceId),
+        eq(modelCatalog.modelId, modelId),
+      ),
+    )
+    .returning({ modelId: modelCatalog.modelId });
+
+  capabilityCache.delete(`${workspaceId}::${modelId}`);
+
+  if (!updated) {
+    logger.warn("updateModelCapabilities: model not in catalog", {
+      modelId,
+      workspaceId,
+      capabilities: parsed,
+    });
+    return false;
+  }
+
+  return true;
 }
 
