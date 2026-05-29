@@ -60,6 +60,12 @@ interface RetrievalOptions {
    * default ranker; Cohere is now opt-in, not the default.
    */
   rerank?: boolean;
+  /**
+   * Abstain (return no memories) when no candidate clears the raw-signal
+   * evidence floors (#1045), rather than injecting low-relevance noise.
+   * Defaults on; pass false for best-effort callers that always want candidates.
+   */
+  abstain?: boolean;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -433,6 +439,36 @@ const BM25_SIGMOID_MID = 0.08;
 /** How many top base-scoring candidates seed the graph-expansion (link) boost. */
 const LINK_ANCHOR_COUNT = 5;
 
+/**
+ * Post-fusion abstention floors (#1045). A candidate set is "evidence" only if
+ * at least one signal clears a floor: a real cosine match, any lexical (BM25)
+ * hit, or a resolved entity link. Min-max normalization makes the *fused* score
+ * useless as an absolute confidence gauge (the best of pure noise normalizes to
+ * 1), so the gate inspects RAW signals. Floors are deliberately conservative to
+ * avoid spurious abstentions on answerable questions (epic acceptance #4).
+ */
+const ABSTAIN_SIM_FLOOR = 0.3;
+const ABSTAIN_BM25_FLOOR = 0;
+
+/**
+ * True when the merged candidate pool carries at least one real retrieval
+ * signal. When false, the caller should abstain (return no memories) rather
+ * than inject low-relevance noise. Pure + exported for testing.
+ */
+export function hasRetrievalEvidence(
+  candidates: Array<{ similarity: number; bm25: number }>,
+  resolvedEntityCount: number,
+): boolean {
+  if (resolvedEntityCount > 0) return true;
+  let maxSim = 0;
+  let maxBm25 = 0;
+  for (const c of candidates) {
+    if (c.similarity > maxSim) maxSim = c.similarity;
+    if (c.bm25 > maxBm25) maxBm25 = c.bm25;
+  }
+  return maxSim >= ABSTAIN_SIM_FLOOR || maxBm25 > ABSTAIN_BM25_FLOOR;
+}
+
 function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
 }
@@ -550,6 +586,7 @@ export async function retrieveMemories(
     workspaceId,
     prefilter = true,
     rerank = false,
+    abstain = true,
     onUsage,
     asOf,
   } = options;
@@ -772,6 +809,20 @@ export async function retrieveMemories(
     }
 
     const now = Date.now();
+
+    // #1045: abstain before ranking when no candidate clears the raw-signal
+    // evidence floors — injecting nothing beats injecting noise.
+    if (abstain && !hasRetrievalEvidence(results, resolvedEntityCount)) {
+      logger.info(
+        `Abstaining: no candidate cleared evidence floors in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          resolvedEntityCount,
+        },
+      );
+      return [];
+    }
 
     // Optional Cohere semantic override. Cohere is no longer the default ranker
     // (#1054) — fusion is. When `rerank` is requested and a model is available,

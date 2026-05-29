@@ -38,7 +38,7 @@ vi.mock("ai", () => ({
   rerank: aiMocks.rerank,
 }));
 
-import { retrieveMemories, fuseCandidates } from "./retrieve.js";
+import { retrieveMemories, fuseCandidates, hasRetrievalEvidence } from "./retrieve.js";
 import type { Memory } from "@aura/db/schema";
 
 interface RenderedQuery {
@@ -271,5 +271,35 @@ describe("fuseCandidates (#1054 score fusion)", () => {
 
   it("returns an empty list for no candidates", () => {
     expect(fuseCandidates([], { now: NOW })).toEqual([]);
+  });
+});
+
+describe("hasRetrievalEvidence (#1045 abstention gate)", () => {
+  it("treats a resolved entity as evidence regardless of similarity", () => {
+    expect(hasRetrievalEvidence([{ similarity: 0, bm25: 0 }], 1)).toBe(true);
+  });
+
+  it("treats a strong cosine match as evidence", () => {
+    expect(hasRetrievalEvidence([{ similarity: 0.42, bm25: 0 }], 0)).toBe(true);
+  });
+
+  it("treats any lexical (BM25) hit as evidence", () => {
+    expect(hasRetrievalEvidence([{ similarity: 0.1, bm25: 0.05 }], 0)).toBe(true);
+  });
+
+  it("abstains when all signals are weak (no entity, low sim, no lexical)", () => {
+    expect(
+      hasRetrievalEvidence(
+        [
+          { similarity: 0.2, bm25: 0 },
+          { similarity: 0.15, bm25: 0 },
+        ],
+        0,
+      ),
+    ).toBe(false);
+  });
+
+  it("abstains on an empty candidate set", () => {
+    expect(hasRetrievalEvidence([], 0)).toBe(false);
   });
 });
