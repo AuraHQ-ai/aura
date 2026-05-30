@@ -55,6 +55,12 @@ export interface HistoryEntry {
   scores: HistoryScore[];
   overall: { qa: number | null; recall: number | null; n: number };
   note?: string;
+  /**
+   * Pull request number this run is attributable to (CI), or null/undefined for
+   * local and post-merge runs. Used to squash repeated pushes on one PR down to
+   * a single history entry (see `recordRun`).
+   */
+  prNumber?: number | null;
 }
 
 export interface RecordRunInput {
@@ -70,6 +76,7 @@ export interface RecordRunInput {
   costUsd?: number | null;
   models?: { extraction: string; answerer: string; judge: string } | null;
   note?: string;
+  prNumber?: number | null;
 }
 
 export function historyPath(): string {
@@ -126,7 +133,7 @@ function fmtScope(e: {
 }
 
 /** Pivot the raw aggregated scores into one (dataset, category) row each. */
-function pivotScores(scores: BenchScore[]): HistoryScore[] {
+export function pivotScores(scores: BenchScore[]): HistoryScore[] {
   const rows = new Map<string, HistoryScore>();
   for (const s of scores) {
     const key = `${s.dataset}|${s.category}`;
@@ -147,7 +154,7 @@ function pivotScores(scores: BenchScore[]): HistoryScore[] {
 }
 
 /** Weighted overall QA + recall across all qa/recall lanes in the run. */
-function computeOverall(scores: BenchScore[]): {
+export function computeOverall(scores: BenchScore[]): {
   qa: number | null;
   recall: number | null;
   n: number;
@@ -191,11 +198,18 @@ export function buildHistoryEntry(input: RecordRunInput): HistoryEntry {
     scores: pivotScores(input.scores),
     overall: computeOverall(input.scores),
     ...(input.note ? { note: input.note } : {}),
+    ...(input.prNumber != null ? { prNumber: input.prNumber } : {}),
   };
 }
 
 export function appendHistory(entry: HistoryEntry, file: string = historyPath()): string {
   appendFileSync(file, `${JSON.stringify(entry)}\n`);
+  return file;
+}
+
+/** Overwrite the whole history file from an in-memory list (newest last). */
+export function writeHistory(entries: HistoryEntry[], file: string = historyPath()): string {
+  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + (entries.length ? "\n" : ""));
   return file;
 }
 
@@ -342,7 +356,20 @@ export function recordRun(input: RecordRunInput): {
   mainReadme: string | null;
 } {
   const entry = buildHistoryEntry(input);
-  const historyFile = appendHistory(entry);
+
+  // A single PR can be pushed many times; each push re-runs the bench. To keep
+  // one entry per PR (instead of N appended rows that all merge into main), we
+  // drop any prior entry with the same prNumber before appending the new one.
+  // Local / post-merge runs (no prNumber) always append.
+  let historyFile: string;
+  if (entry.prNumber != null) {
+    const kept = readHistory().filter((e) => e.prNumber !== entry.prNumber);
+    kept.push(entry);
+    historyFile = writeHistory(kept);
+  } else {
+    historyFile = appendHistory(entry);
+  }
+
   const history = readHistory();
   const { benchReadme, mainReadme } = renderReports(history);
   return { historyFile, benchReadme, mainReadme };

@@ -1,29 +1,30 @@
 name: Memory bench
 
-# Runs the memory benchmark harness (#1043).
+# Runs the memory benchmark harness (#1043) on the server.
 #
-# Pull requests always run the tiny toy bench as a smoke test. The medium
-# server bench runs on PRs only when memory-relevant paths changed, and always
-# remains available via workflow_dispatch for explicit runs.
+# Pull requests always run the tiny toy bench as a smoke test. On PRs that touch
+# memory-relevant paths, the medium server bench runs a full ephemeral
+# (messages -> extract -> score) pass over LoCoMo + LongMemEval, then:
 #
-#   pnpm bench:memory --dataset=both --subset=medium --log
+#   1. diffs the result against the *target branch's* committed
+#      apps/api/bench/history.jsonl (the like-for-like baseline) and posts a
+#      sticky "deploy-preview"-style PR comment with per-category deltas, and
+#   2. commits the regenerated apps/api/bench/history.jsonl + README.md + the
+#      root README snapshot back to the PR branch.
+#
+# The commit is pushed with the workflow's default GITHUB_TOKEN, which by design
+# does NOT trigger new workflow runs — so it never loops. The real numbers land
+# on main automatically when the PR merges (nothing pushes to main directly).
 #
 # `--log` appends a structured entry to apps/api/bench/history.jsonl and
-# regenerates apps/api/bench/README.md + the snapshot in the root README.
-# Commit those alongside the code change so the repo always carries the scores
-# the current codebase produces. See the `aura-memory-bench` skill.
+# regenerates the two markdown views. `--pr-number` attributes the run to the PR
+# and squashes repeated pushes down to one history entry per PR.
 #
-# Server runs should target a dedicated Neon bench branch, not production. Set
+# Server runs target a dedicated Neon bench branch, not production. Set
 # NEON_BENCH_PARENT_BRANCH (repo variable) or pass `neon_parent_branch` manually
 # so the workflow creates copy-on-write child branches from the canonical bench
-# branch. For extraction/schema changes, run from cached messages:
-#
-#   --bench-id=phase2 --from=extract --to=score
-#
-# To seed the canonical bench branch, run messages only and skip message
-# embeddings; extraction and memory retrieval do not read message vectors:
-#
-#   --bench-id=phase2 --from=messages --to=messages --reset --skip-message-embeddings
+# branch. workflow_dispatch keeps the flexible staged knobs (bench_id/from/to)
+# for manual/isolated runs; PR runs always do a full ephemeral pass.
 #
 # Defaults: --subset=medium, --dataset=both. Models default to the catalog
 # tiers fast for extraction, main for answerer, and escalation for judge — see
@@ -121,9 +122,11 @@ on:
         type: string
         default: bench
 
+# `contents: write` lets the bench job commit regenerated results back to the PR
+# branch; `pull-requests: write` lets it upsert the sticky delta comment.
 permissions:
-  contents: read
-  pull-requests: read
+  contents: write
+  pull-requests: write
 
 # Cancel stale runs on the same PR/ref when a new dispatch lands.
 concurrency:
@@ -256,9 +259,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(github.event.inputs.timeout_minutes || '180') }}
     steps:
+      # Check out the PR HEAD branch (not the detached merge ref) so the bench
+      # runs against the PR's code and we can commit + push regenerated results
+      # straight back to the head branch. Pushes use the default GITHUB_TOKEN,
+      # which does not retrigger workflows. Falls back to github.ref for
+      # workflow_dispatch (no PR context).
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
       # No `version:` — pnpm/action-setup reads it from the repo's
       # `packageManager` field (pnpm@10.33.0). Pinning it here too triggers
@@ -300,6 +310,7 @@ jobs:
         run: pnpm --filter @aura/db db:migrate
 
       - name: Run bench
+        id: run
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
           BENCH_DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
@@ -315,9 +326,11 @@ jobs:
           AURA_BENCH_JUDGE: ${{ github.event.inputs.judge_model || 'escalation' }}
           SUBSET: ${{ github.event.inputs.subset || 'medium' }}
           DATASET: ${{ github.event.inputs.dataset || 'both' }}
-          BENCH_ID: ${{ github.event.inputs.bench_id || 'phase2' }}
-          FROM_STAGE: ${{ github.event.inputs.from_stage || 'extract' }}
-          TO_STAGE: ${{ github.event.inputs.to_stage || 'score' }}
+          # bench_id/from/to default to '' on PRs (full ephemeral pass) and to the
+          # workflow_dispatch input defaults (phase2/extract/score) for manual runs.
+          BENCH_ID: ${{ github.event.inputs.bench_id || '' }}
+          FROM_STAGE: ${{ github.event.inputs.from_stage || '' }}
+          TO_STAGE: ${{ github.event.inputs.to_stage || '' }}
           RESET: ${{ github.event.inputs.reset || 'false' }}
           SKIP_MESSAGE_EMBEDDINGS: ${{ github.event.inputs.skip_message_embeddings || 'false' }}
           CONCURRENCY: ${{ github.event.inputs.concurrency || '4' }}
@@ -330,13 +343,18 @@ jobs:
           args=(
             "--dataset=${DATASET}"
             "--subset=${SUBSET}"
-            "--bench-id=${BENCH_ID}"
-            "--from=${FROM_STAGE}"
-            "--to=${TO_STAGE}"
             "--concurrency=${CONCURRENCY}"
             "--embed-concurrency=${EMBED_CONCURRENCY}"
             "--json=/tmp/bench/result.json"
+            "--log"
           )
+          # On a PR, attribute the run (squashes repeated pushes to one entry).
+          if [ -n "${PR_NUMBER}" ]; then args+=("--pr-number=${PR_NUMBER}"); fi
+          # Staged-reuse knobs only apply to manual workflow_dispatch runs; on PRs
+          # these are empty, so the run is a full ephemeral messages->extract->score.
+          if [ -n "${BENCH_ID}" ]; then args+=("--bench-id=${BENCH_ID}"); fi
+          if [ -n "${FROM_STAGE}" ]; then args+=("--from=${FROM_STAGE}"); fi
+          if [ -n "${TO_STAGE}" ]; then args+=("--to=${TO_STAGE}"); fi
           if [ "${RESET}" = "true" ]; then args+=("--reset"); fi
           if [ "${SKIP_MESSAGE_EMBEDDINGS}" = "true" ]; then args+=("--skip-message-embeddings"); fi
           if [ -n "${CATEGORY}" ]; then args+=("--category=${CATEGORY}"); fi
@@ -344,6 +362,68 @@ jobs:
           if [ -n "${CASES}" ]; then args+=("--cases=${CASES}"); fi
           set -o pipefail
           pnpm --filter aura-api bench:memory "${args[@]}" | tee /tmp/bench/output.txt
+
+      # ── PR delta comment + commit (same-repo PRs only) ────────────────────────
+      # Fork PRs don't get repo secrets (so the bench can't run) and can't push
+      # with GITHUB_TOKEN, so both steps are guarded on head.repo.fork != true.
+      - name: Build PR delta comment
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true }}
+        continue-on-error: true
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The baseline is the target branch's committed history.jsonl. Read it
+          # from the git object store (unaffected by this run's local --log edit).
+          git fetch origin "$BASE_REF" || true
+          git show "origin/${BASE_REF}:apps/api/bench/history.jsonl" > /tmp/bench/base-history.jsonl 2>/dev/null \
+            || : > /tmp/bench/base-history.jsonl
+          pnpm --filter aura-api bench:pr-comment \
+            --result=/tmp/bench/result.json \
+            --base-history=/tmp/bench/base-history.jsonl \
+            --base-ref="$BASE_REF" \
+            --head-commit="$HEAD_SHA" \
+            --run-url="$RUN_URL" \
+            --out=/tmp/bench/comment.md
+
+      - name: Upsert sticky PR comment
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && hashFiles('/tmp/bench/comment.md') != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/bench/comment.md', 'utf8');
+            const marker = '<!-- aura-memory-bench -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find((c) => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Commit regenerated results to PR branch
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true }}
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Only the three generated files; nothing else should be touched.
+          if git diff --quiet -- apps/api/bench/history.jsonl apps/api/bench/README.md README.md; then
+            echo "No bench result changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/api/bench/history.jsonl apps/api/bench/README.md README.md
+          git commit -m "chore(bench): update memory bench results (PR #${PR_NUMBER})"
+          # Pushed with GITHUB_TOKEN -> does not retrigger any workflow.
+          git push origin "HEAD:${HEAD_REF}"
 
       - name: Upload bench artefacts
         if: always()

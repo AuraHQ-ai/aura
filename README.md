@@ -154,10 +154,15 @@ The full per-category breakdown and the run-over-run evolution live in [`apps/ap
 
 ### When does it run?
 
-The bench is **local-first** — you run it when memory formation or retrieval actually changes, not on a clock and **not on every PR** (it's slow and irrelevant to most changes). Re-running the same code against the same corpus would just re-derive identical numbers.
+The bench runs **on the server, in CI**, so every memory change ships with real, reproducible numbers:
 
-* **Locally**, any time — this is the primary loop. Run with `--log` to record the result (see below) and commit the generated files alongside your change.
-* **Manually via `workflow_dispatch`** in the GitHub UI (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`) and dataset (`toy | lme | locomo | both`). This spins up an isolated Neon branch and uploads the result JSON as an artifact — useful when you don't have local DB / gateway access. It does not commit anything back to the repo.
+* **On pull requests** that touch memory-relevant paths (`apps/api/src/memory/**`, `apps/api/bench/**`, the embedding/vector libs, the pipeline, or the DB schema). The action runs the medium LoCoMo + LongMemEval pass on an isolated Neon branch, then:
+  * **posts a sticky PR comment** with per-category deltas vs the target branch (like a deploy preview), flagging any regression > 2pp, and
+  * **commits the regenerated `history.jsonl` + READMEs back to the PR branch**, so the real numbers travel with the change and land on `main` at merge. The commit is pushed with the workflow's `GITHUB_TOKEN`, which by design does not retrigger CI.
+* Every non-draft PR also runs the tiny **toy** bench as a fast smoke test.
+* **Manually via `workflow_dispatch`** (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`), dataset (`toy | lme | locomo | both`), and the staged-reuse knobs (`bench_id`/`from`/`to`) for isolated experiments. Manual runs upload the result JSON as an artifact and don't comment or commit.
+
+Running locally is still the fast iteration loop while you're working on a change (see below) — but you no longer have to remember to run medium/full and paste numbers by hand; CI does that on the PR.
 
 ### Local workflow
 
@@ -217,20 +222,16 @@ pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
 
 `--log` appends a structured entry to [`apps/api/bench/history.jsonl`](apps/api/bench/history.jsonl) — runId, commit SHA, corpus hash, config, resolved models, cost, and per-category scores — then regenerates [`apps/api/bench/README.md`](apps/api/bench/README.md) and the snapshot block above. Commit all three alongside the change so every result is permanently tied to the code that produced it; `git log` on `history.jsonl` shows whether a change actually moved the needle. A `-dirty` suffix on the commit flags runs that included uncommitted changes. Add `--note="…"` to annotate what you were trying. Regenerate the markdown from history at any time with `pnpm bench:report` (no DB or LLM needed).
 
-### What to put in the PR description
+### What goes in the PR
 
-Paste at least the rows your change targets, plus two it shouldn't affect (the generated [`apps/api/bench/README.md`](apps/api/bench/README.md) carries the full table):
+You don't paste numbers by hand. The **Memory bench** action posts a sticky comment on the PR with the per-category before/after/Δ table (QA + recall@15) computed against the target branch, and commits the regenerated `history.jsonl` + READMEs to your branch. The comment looks like:
 
-| Dataset | Category | Before | After | Δ |
-|---|---|---|---|---|
-| LongMemEval | temporal-reasoning | 39% | 46% | **+7pp** |
-| LongMemEval | knowledge-update | 31% | 33% | +2pp |
-| LongMemEval | abstention | 28% | 27% | -1pp |
-| LoCoMo | multi_hop | 41% | 40% | -1pp |
-| Retrieval recall@15 (overall) | — | 67% | 71% | +4pp |
-| Runtime / cost | — | 8m02s / $4.18 | 8m11s / $4.31 | — |
+| Dataset | Category | QA before | QA after | QA Δ | recall before | recall after | recall Δ | n |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| longmemeval | temporal-reasoning | 39% | 46% | +7pp | 77% | 79% | +2pp | 30 |
+| … | | | | | | | | |
 
-Regressions > **2pp** on any category require explicit justification in the PR description. There's no automated PR gate — the bench is local-first now — so the burden is on the author to run the relevant bench and surface the deltas honestly.
+Any category that regresses by more than **2pp** is flagged in the comment and **requires explicit justification in the PR description**. If there's no comparable baseline on the target branch yet (corpus or case-set changed), the comment shows absolute scores instead of deltas. Because the sampler is deterministic, a PR run and the target branch's run at the same subset/corpus diff like-for-like.
 
 ### Adding new evidence
 
