@@ -4,7 +4,8 @@ name: Memory bench
 #
 # Pull requests always run the tiny toy bench as a smoke test. On PRs that touch
 # memory-relevant paths, the medium server bench runs a full ephemeral
-# production-faithful timeline pass over LongMemEval (default): messages are
+# production-faithful timeline pass over BOTH corpora (LoCoMo + LongMemEval,
+# the default): messages are
 # replayed in corpus-time order, per-assistant-reply (exchange) extraction runs
 # concurrently, and each question is scored the moment its own conversation's
 # extraction frontier passes its timestamp (bi-temporal as-of retrieval). Then it:
@@ -29,7 +30,7 @@ name: Memory bench
 # branch. workflow_dispatch keeps the flexible staged knobs (bench_id/from/to)
 # for manual/isolated runs; PR runs always do a full ephemeral pass.
 #
-# Defaults: --subset=medium, --dataset=lme, --replay=exchange. Models default to
+# Defaults: --subset=medium, --dataset=both, --replay=exchange. Models default to
 # the catalog tiers fast for extraction, main for answerer, and escalation for
 # judge — see apps/api/bench/src/models.ts.
 #
@@ -335,9 +336,14 @@ jobs:
           AURA_BENCH_ANSWERER: ${{ github.event.inputs.answerer_model || 'main' }}
           AURA_BENCH_JUDGE: ${{ github.event.inputs.judge_model || 'escalation' }}
           SUBSET: ${{ github.event.inputs.subset || 'medium' }}
-          # Production-faithful timeline defaults to LongMemEval (real question
-          # timestamps). LoCoMo/toy remain selectable for the smoke path.
-          DATASET: ${{ github.event.inputs.dataset || 'lme' }}
+          # PR runs bench BOTH corpora (LoCoMo + LongMemEval). The corpus
+          # hash is keyed on the sorted dataset set, so a PR must run the same
+          # dataset set as the committed baseline to diff like-for-like — the
+          # committed baseline is a `both` run, so PRs default to `both` too.
+          # LongMemEval supplies real question timestamps for the bi-temporal
+          # timeline; LoCoMo is where retrieval recall regressions surface.
+          # lme/locomo/toy remain individually selectable via workflow_dispatch.
+          DATASET: ${{ github.event.inputs.dataset || 'both' }}
           REPLAY: ${{ github.event.inputs.replay || 'exchange' }}
           # bench_id/from/to default to '' on PRs (full ephemeral pass) and to the
           # workflow_dispatch input defaults (phase2/extract/score) for manual runs.
