@@ -10,13 +10,26 @@ You're editing a path that can move Aura's memory quality. These changes are
 **not falsifiable by typecheck alone** — validate with the memory bench. Read
 the `aura-memory-bench` skill for the full workflow.
 
+The bench replays each corpus on a **production-faithful timeline**: per
+assistant-reply (`exchange`) extraction runs as a producer that advances a global
+watermark, and each question is scored the moment the watermark passes its
+timestamp, retrieving **bi-temporally as-of that instant** (no future leak). It
+defaults to `--dataset=lme` (real question timestamps); LoCoMo/toy fall back to
+end-of-conversation. The full model is in the `aura-memory-bench` skill +
+`apps/api/bench/src/timeline.ts`.
+
 The bench runs **in CI on PRs** that touch memory paths. The action runs the
-medium LoCoMo + LongMemEval pass on an isolated Neon branch, posts a sticky PR
-comment with per-category deltas vs the target branch, and **commits the
-regenerated `apps/api/bench/history.jsonl` + `apps/api/bench/README.md` + root
-`README.md` snapshot back to the PR branch** (pushed with `GITHUB_TOKEN`, so it
-doesn't retrigger CI). You don't paste numbers by hand or run medium/full
-yourself — CI produces the authoritative numbers on the PR.
+medium LongMemEval (`--dataset=lme --replay=exchange`) pass on an isolated Neon
+branch, posts a sticky PR comment with per-category deltas vs the target branch,
+and **commits the regenerated `apps/api/bench/history.jsonl` +
+`apps/api/bench/README.md` + root `README.md` snapshot back to the PR branch**
+(pushed with `GITHUB_TOKEN`, so it doesn't retrigger CI). You don't paste numbers
+by hand or run medium/full yourself — CI produces the authoritative numbers on
+the PR.
+
+The timeline + as-of model and `exchange` default reset the baseline once: expect
+a one-time `history.jsonl` delta (notably `temporal` / `knowledge_update`) on the
+first run after it lands. Expected, not a regression.
 
 Locally is the fast iteration loop while you're developing the change: run the
 cheap subsets to sanity-check before you push, then let CI handle the medium run.
@@ -26,9 +39,9 @@ cheap subsets to sanity-check before you push, then let CI handle the medium run
 | Run | Command | Time | Cost | Who runs it |
 |---|---|---|---|---|
 | Smoke | `pnpm bench:memory --dataset=toy --log` | ~1 min | cents | **You** (background) |
-| Iteration | `pnpm bench:memory --dataset=both --subset=fast --log` | a few min | ~$2 | **You** (background) |
-| Standard | `pnpm bench:memory --dataset=both --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | **CI on the PR** (don't run locally) |
-| Full | `pnpm bench:memory --dataset=both --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | **Ask the user** (manual dispatch) |
+| Iteration | `pnpm bench:memory --dataset=lme --subset=fast --log` | a few min | ~$2 | **You** (background) |
+| Standard | `pnpm bench:memory --dataset=lme --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | **CI on the PR** (don't run locally) |
+| Full | `pnpm bench:memory --dataset=lme --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | **Ask the user** (manual dispatch) |
 
 ## Rules for invoking it
 
@@ -51,8 +64,8 @@ A default medium/full run re-ingests and re-extracts everything (>70 min) into a
 throwaway workspace. For repeated runs, pin a persistent workspace and reuse the
 expensive stages (full details + invalidation rules in the `aura-memory-bench` skill):
 
-- Seed once: `--dataset=both --subset=medium --bench-id=<key> --log`.
-- Retrieval/answer-only iteration: `--bench-id=<key> --from=score` (reuses messages + memories).
+- Seed once: `--dataset=lme --subset=medium --bench-id=<key> --log`.
+- Retrieval/answer-only iteration: `--bench-id=<key> --from=score` (reuses messages + memories; the watermark starts at +inf so every question is immediately releasable against the final pool).
 - After an extraction or schema change: `--bench-id=<key> --from=extract` (reuses messages, re-extracts).
 
 ## "Δ vs prior" only compares like-for-like

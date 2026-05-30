@@ -37,12 +37,9 @@ import {
 } from "./fixtures.js";
 import {
   countUniqueConversations,
-  countTotalSessions,
   storeMessagesForCases,
-  extractMemoriesForCases,
 } from "./ingest.js";
-import { evaluateRetrieval } from "./eval-retrieval.js";
-import { evaluateQA } from "./eval-qa.js";
+import { runTimeline } from "./timeline.js";
 import { resolveBenchRunModelIds } from "./models.js";
 import {
   aggregateContextEfficiency,
@@ -192,7 +189,9 @@ export async function runBench(
     extractionModel: partialConfig.extractionModel,
     answererModel: partialConfig.answererModel,
     judgeModel: partialConfig.judgeModel,
-    concurrency: partialConfig.concurrency ?? 2,
+    concurrency: partialConfig.concurrency ?? 4,
+    scoreConcurrency: partialConfig.scoreConcurrency,
+    asOf: partialConfig.asOf ?? true,
     corpusFile: partialConfig.corpusFile,
     prNumber: partialConfig.prNumber,
     gitSha: partialConfig.gitSha ?? resolveGitSha(),
@@ -237,7 +236,7 @@ export async function runBench(
       config.toStage ||
       config.skipIngest,
   );
-  const replay = config.replay ?? "session";
+  const replay = config.replay ?? "exchange";
   const benchKey =
     config.benchId ??
     `${config.datasets.join("-")}-${config.subset}` +
@@ -254,8 +253,12 @@ export async function runBench(
     : benchWorkspaceId(runId);
 
   const tty = config.progress ?? Boolean(process.stdout.isTTY);
-  const ingestConcurrency = config.concurrency ?? 2;
-  const embedConcurrency = config.embedConcurrency ?? Math.max(ingestConcurrency, 4);
+  // Extraction (producer) and scoring (consumer) concurrency are decoupled —
+  // they overlap in the timeline engine. Scoring is independent LLM work so it
+  // defaults higher; both are overridable from the CLI / CI.
+  const extractConcurrency = config.concurrency ?? 4;
+  const scoreConcurrency = config.scoreConcurrency ?? Math.max(extractConcurrency * 2, 8);
+  const embedConcurrency = config.embedConcurrency ?? Math.max(extractConcurrency, 4);
 
   const cases = await loadAllCases(config);
   if (cases.length === 0) {
@@ -372,10 +375,14 @@ export async function runBench(
 
   // TTY → Ink dashboard (dynamically imported so ink/react never load on the
   // Vercel runtime). Non-TTY → per-stage heartbeat fallback.
+  // Labels reflect the timeline roles: these tracks run concurrently, not in
+  // sequence. `messages` stores raw rows off the critical path; `extract` is the
+  // producer advancing the watermark; `score` is the consumer draining
+  // releasable questions as the frontier passes them.
   const stageDefs: { name: string; label: string }[] = [];
   if (stageRuns("messages")) stageDefs.push({ name: "messages", label: "messages" });
-  if (stageRuns("extract")) stageDefs.push({ name: "extract", label: "extract" });
-  if (stageRuns("score")) stageDefs.push({ name: "score", label: "score" });
+  if (stageRuns("extract")) stageDefs.push({ name: "extract", label: "extract ▸ producer" });
+  if (stageRuns("score")) stageDefs.push({ name: "score", label: "score ◂ consumer" });
 
   let dashboard: Dashboard | null = null;
   if (tty) {
@@ -425,219 +432,157 @@ export async function runBench(
 
   try {
     // ── Stage: messages (store + batch-embed raw messages) ───────────────────
+    // Off the critical path: retrieval/extraction never read the `messages`
+    // table, so this runs concurrently with the timeline (extraction + scoring)
+    // and is only awaited before finalizing. We don't gate the watermark on it.
+    let messagesPromise: Promise<unknown> | null = null;
     if (stageRuns("messages")) {
       const p = makeStage("messages", countUniqueConversations(cases));
-      const r = await storeMessagesForCases(
+      messagesPromise = storeMessagesForCases(
         cases,
         workspaceId,
         embedConcurrency,
         (done) => p.update(done),
         !config.skipMessageEmbeddings,
-      );
-      p.done();
-      logger.info("bench: messages stage complete", r);
+      )
+        .then((r) => {
+          p.done();
+          logger.info("bench: messages stage complete", r);
+        })
+        .catch((error) => {
+          p.done();
+          logger.warn("bench: messages stage failed (continuing)", {
+            error: String(error).slice(0, 200),
+          });
+        });
     }
 
-    // ── Stage: extract (transcript → memories) ───────────────────────────────
-    if (stageRuns("extract")) {
-      // Extraction work is per-session, so the bar counts sessions, not convos.
-      const p = makeStage("extract", countTotalSessions(cases));
-      const r = await extractMemoriesForCases(
-        cases,
-        workspaceId,
-        models!.extraction,
-        ingestConcurrency,
-        (done, total) => p.update(done, total),
-        replay,
-        (modelId, usage) => recordUsage("extract", modelId, usage),
-      );
-      p.done();
-      logger.info("bench: extract stage complete", { ...r, replay });
+    // ── Timeline: extraction (producer) overlapped with scoring (consumer) ────
+    // Extraction replays each conversation's assistant replies in corpus-time
+    // order; a question is scored the moment the global extraction watermark
+    // passes its timestamp, retrieving as-of that instant. Each scored case is
+    // appended to cases.jsonl AS it completes (crash/Ctrl-C safe; --resume skips
+    // already-scored ids). When only extraction runs (--to=extract) the consumer
+    // is idle; when only scoring runs (--from=score) the watermark starts at +inf.
+    const runExtraction = stageRuns("extract");
+    const runScoring = stageRuns("score");
+
+    const doneIds = new Set<string>();
+    if (runScoring && priorResults.length > 0) {
+      for (const r of priorResults) doneIds.add(r.caseId);
     }
 
-    // ── Stage: score (retrieval recall@K + QA) ───────────────────────────────
-    // Each case fires a constrained answerer call plus an Opus-class judge
-    // call, so the phase is dominated by LLM latency. A bounded worker pool
-    // runs them; each result is appended to cases.jsonl AS it completes, so a
-    // Ctrl-C (cooperative cancel) or crash still leaves a partial record. On
-    // --resume, already-scored case ids are skipped and seeded from disk.
-    if (stageRuns("score")) {
-      const scoringConcurrency = Math.max(
-        1,
-        Math.min(config.concurrency ?? 2, cases.length),
-      );
-      const slots: (PerCaseResult | undefined)[] = new Array(cases.length);
-      const doneIds = new Set<string>();
-      if (priorResults.length > 0) {
-        const byId = new Map(priorResults.map((r) => [r.caseId, r]));
-        cases.forEach((c, i) => {
-          const pr = byId.get(c.id);
-          if (pr) {
-            slots[i] = pr;
-            doneIds.add(c.id);
-          }
+    // Live QA% / recall% tallies (seeded from any resumed results).
+    let qaCorrect = 0;
+    let qaTotal = 0;
+    let recallHit = 0;
+    let recallTotal = 0;
+    const tally = (r: PerCaseResult) => {
+      qaTotal += 1;
+      if (r.judgeVerdict === "correct" || r.judgeVerdict === "abstain_ok") {
+        qaCorrect += 1;
+      }
+      // Coverage-based: recallTotal counts evidence cases, recallHit counts
+      // FULLY-covered ones. For the single-evidence cases that dominate the
+      // corpora this equals the report's mean coverage; for multi-hop cases
+      // it's the stricter "all sessions retrieved" rate. Falls back to the
+      // legacy binary hit for results recorded before coverage existed.
+      const cov =
+        r.retrievalCoverage != null
+          ? r.retrievalCoverage
+          : r.retrievedRecallHit != null
+            ? r.retrievedRecallHit
+              ? 1
+              : 0
+            : null;
+      if (cov !== null) {
+        recallTotal += 1;
+        if (cov >= 1) recallHit += 1;
+      }
+    };
+    for (const r of priorResults) tally(r);
+    const pushScores = () =>
+      dashboard?.setScores({ qaCorrect, qaTotal, recallHit, recallTotal });
+    pushScores();
+
+    const extractStage = runExtraction ? makeStage("extract", 0) : null;
+    const scoreStage = runScoring ? makeStage("score", cases.length) : null;
+    scoreStage?.update(doneIds.size, cases.length);
+
+    const onResult = (result: PerCaseResult): void => {
+      artifacts.appendCase(result);
+
+      const qaOk =
+        result.judgeVerdict === "correct" || result.judgeVerdict === "abstain_ok";
+      if (!qaOk) {
+        artifacts.appendFailure({
+          caseId: result.caseId,
+          dataset: result.dataset,
+          category: result.category,
+          kind: "qa",
+          question: result.question,
+          goldAnswer: result.goldAnswer,
+          modelAnswer: result.modelAnswer,
+          judgeVerdict: result.judgeVerdict,
+          judgeRationale: result.judgeRationale,
+          retrievedMemoryIds: result.retrievedMemoryIds,
+        });
+      }
+      // Log any case whose evidence sessions weren't fully retrieved —
+      // including partial multi-hop coverage (0 < coverage < 1), which the
+      // old binary hit silently passed.
+      if (result.retrievalCoverage != null && result.retrievalCoverage < 1) {
+        artifacts.appendFailure({
+          caseId: result.caseId,
+          dataset: result.dataset,
+          category: result.category,
+          kind: "recall",
+          question: result.question,
+          goldAnswer: result.goldAnswer,
+          modelAnswer: result.modelAnswer,
+          judgeVerdict: result.judgeVerdict,
+          judgeRationale: `coverage ${(result.retrievalCoverage * 100).toFixed(0)}% — ${result.judgeRationale}`,
+          retrievedMemoryIds: result.retrievedMemoryIds,
         });
       }
 
-      // Live QA% / recall% tallies (seeded from any resumed results).
-      let qaCorrect = 0;
-      let qaTotal = 0;
-      let recallHit = 0;
-      let recallTotal = 0;
-      const tally = (r: PerCaseResult) => {
-        qaTotal += 1;
-        if (r.judgeVerdict === "correct" || r.judgeVerdict === "abstain_ok") {
-          qaCorrect += 1;
-        }
-        // Coverage-based: recallTotal counts evidence cases, recallHit counts
-        // FULLY-covered ones. For the single-evidence cases that dominate the
-        // corpora this equals the report's mean coverage; for multi-hop cases
-        // it's the stricter "all sessions retrieved" rate. Falls back to the
-        // legacy binary hit for results recorded before coverage existed.
-        const cov =
-          r.retrievalCoverage != null
-            ? r.retrievalCoverage
-            : r.retrievedRecallHit != null
-              ? r.retrievedRecallHit
-                ? 1
-                : 0
-              : null;
-        if (cov !== null) {
-          recallTotal += 1;
-          if (cov >= 1) recallHit += 1;
-        }
-      };
-      for (const r of slots) if (r) tally(r);
-      const pushScores = () =>
-        dashboard?.setScores({ qaCorrect, qaTotal, recallHit, recallTotal });
+      tally(result);
       pushScores();
+    };
 
-      const p = makeStage("score", cases.length);
-      let scored = doneIds.size;
-      p.update(scored, cases.length);
-      let scoreIdx = 0;
+    const timeline = await runTimeline({
+      cases,
+      workspaceId,
+      models: models!,
+      replay,
+      asOf: config.asOf ?? true,
+      extractConcurrency,
+      scoreConcurrency,
+      runExtraction,
+      runScoring,
+      doneIds,
+      priorResults,
+      recordUsage,
+      onExtractProgress: (done, total) => extractStage?.update(done, total),
+      onScoreProgress: (done, total) => scoreStage?.update(done, total),
+      onResult,
+      cancelSignal: config.cancelSignal,
+    });
+    extractStage?.done();
+    scoreStage?.done();
+    cancelled = timeline.cancelled;
+    if (runScoring) results = timeline.results;
+    logger.info("bench: timeline complete", {
+      replay,
+      asOf: config.asOf ?? true,
+      extractionUnits: timeline.extractionUnitsDone,
+      scored: results.length,
+      cancelled,
+    });
 
-      const scoreWorker = async () => {
-        while (true) {
-          if (config.cancelSignal?.cancelled) {
-            cancelled = true;
-            return;
-          }
-          const i = scoreIdx++;
-          if (i >= cases.length) return;
-          const benchCase = cases[i];
-          if (doneIds.has(benchCase.id)) continue;
-
-          const caseStart = Date.now();
-          let result: PerCaseResult;
-          try {
-            const retrieval = await evaluateRetrieval(
-              benchCase,
-              workspaceId,
-              15,
-              (modelId, usage) => recordUsage("retrieve", modelId, usage),
-            );
-            const qa = await evaluateQA(benchCase, retrieval.retrieved, {
-              modelId: models!.answerer,
-              judgeModelId: models!.judge,
-              onUsage: (stage, modelId, usage) =>
-                recordUsage(stage, modelId, usage),
-            });
-            result = {
-              caseId: benchCase.id,
-              dataset: benchCase.source,
-              category: benchCase.category,
-              question: benchCase.question,
-              goldAnswer: benchCase.goldAnswer,
-              abstention: benchCase.abstention,
-              retrievedMemoryIds: retrieval.retrievedMemoryIds,
-              retrievedRecallHit: retrieval.hit,
-              retrievalCoverage: retrieval.coverage,
-              modelAnswer: qa.modelAnswer,
-              judgeVerdict: qa.judgeVerdict,
-              judgeConfidence: qa.judgeConfidence,
-              judgeRationale: qa.judgeRationale,
-              memoryTokens: qa.memoryTokens,
-              memoryChars: qa.memoryChars,
-              memoryCount: qa.memoryCount,
-              durationMs: Date.now() - caseStart,
-            };
-          } catch (error) {
-            // Per-case isolation: one bad case must not reject the whole pool.
-            logger.warn("bench: case failed (recording skipped verdict)", {
-              caseId: benchCase.id,
-              error: String(error).slice(0, 200),
-            });
-            result = {
-              caseId: benchCase.id,
-              dataset: benchCase.source,
-              category: benchCase.category,
-              question: benchCase.question,
-              goldAnswer: benchCase.goldAnswer,
-              abstention: benchCase.abstention,
-              retrievedMemoryIds: [],
-              retrievedRecallHit: null,
-              retrievalCoverage: null,
-              modelAnswer: "",
-              judgeVerdict: "skipped",
-              judgeConfidence: 0,
-              judgeRationale: `case error: ${String(error).slice(0, 160)}`,
-              durationMs: Date.now() - caseStart,
-            };
-          }
-
-          slots[i] = result;
-          artifacts.appendCase(result);
-
-          const qaOk =
-            result.judgeVerdict === "correct" ||
-            result.judgeVerdict === "abstain_ok";
-          if (!qaOk) {
-            artifacts.appendFailure({
-              caseId: result.caseId,
-              dataset: result.dataset,
-              category: result.category,
-              kind: "qa",
-              question: result.question,
-              goldAnswer: result.goldAnswer,
-              modelAnswer: result.modelAnswer,
-              judgeVerdict: result.judgeVerdict,
-              judgeRationale: result.judgeRationale,
-              retrievedMemoryIds: result.retrievedMemoryIds,
-            });
-          }
-          // Log any case whose evidence sessions weren't fully retrieved —
-          // including partial multi-hop coverage (0 < coverage < 1), which the
-          // old binary hit silently passed.
-          if (result.retrievalCoverage != null && result.retrievalCoverage < 1) {
-            artifacts.appendFailure({
-              caseId: result.caseId,
-              dataset: result.dataset,
-              category: result.category,
-              kind: "recall",
-              question: result.question,
-              goldAnswer: result.goldAnswer,
-              modelAnswer: result.modelAnswer,
-              judgeVerdict: result.judgeVerdict,
-              judgeRationale: `coverage ${(result.retrievalCoverage * 100).toFixed(0)}% — ${result.judgeRationale}`,
-              retrievedMemoryIds: result.retrievedMemoryIds,
-            });
-          }
-
-          tally(result);
-          pushScores();
-          scored += 1;
-          p.update(scored, cases.length);
-        }
-      };
-
-      await Promise.all(
-        Array.from({ length: scoringConcurrency }, () => scoreWorker()),
-      );
-      p.done();
-
-      results = slots.filter((r): r is PerCaseResult => Boolean(r));
-    }
+    // Message storage is off the critical path; make sure it lands before we
+    // finalize artifacts (so a run that asked for messages actually has them).
+    if (messagesPromise) await messagesPromise;
 
     totalDurationMs = Date.now() - start;
 

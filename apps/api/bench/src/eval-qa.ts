@@ -21,6 +21,7 @@ import type { BenchCase, PerCaseResult } from "./types.js";
 // pipeline. We import the same helper buildSystemPrompt() uses.
 import { formatMemoriesForPrompt } from "../../src/memory/format-for-prompt.js";
 import { resolveBenchAnswererModel } from "./models.js";
+import { resolveQuestionDate } from "./fixtures.js";
 import { judgeAnswer } from "./judge.js";
 import type { CostStage, UsageLike } from "./cost-meter.js";
 
@@ -40,12 +41,6 @@ Rules:
 - Do not add commentary. Output only the answer.`;
 
 /**
- * Resolve the reference "now" for a case: the question's own date when the
- * corpus provides one (LongMemEval), else the latest session timestamp, else
- * wall-clock now. Temporal gold answers ("five months ago") are relative to
- * this instant — NOT the real 2026 clock the bench runs on.
- */
-/**
  * Estimate the token count of a string with the conventional ~4-chars-per-token
  * heuristic. Deliberately tokenizer-free: the value is model-INDEPENDENT, so the
  * context-efficiency metric stays stable when the answerer/judge model is
@@ -56,19 +51,6 @@ Rules:
 function estimateTokens(text: string): number {
   if (!text) return 0;
   return Math.ceil(text.length / 4);
-}
-
-function resolveReferenceNow(benchCase: BenchCase): Date | undefined {
-  if (benchCase.questionDate) {
-    const d = new Date(benchCase.questionDate);
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  let latest: number | undefined;
-  for (const s of benchCase.sessions) {
-    const t = new Date(s.timestamp).getTime();
-    if (!Number.isNaN(t) && (latest === undefined || t > latest)) latest = t;
-  }
-  return latest !== undefined ? new Date(latest) : undefined;
 }
 
 interface AnswerConfig {
@@ -97,9 +79,12 @@ export async function evaluateQA(
     | "memoryCount"
   >
 > {
-  const referenceNow = resolveReferenceNow(benchCase);
+  // The answerer's "now" is the question's own instant on the timeline — the
+  // same T_Q the as-of retrieval and the watermark release use. Keeps relative
+  // gold answers ("five months ago") anchored consistently across all lanes.
+  const referenceNow = resolveQuestionDate(benchCase);
   const memoryBlock = formatMemoriesForPrompt(retrieved, referenceNow);
-  const nowLine = `Current date: ${(referenceNow ?? new Date()).toISOString().slice(0, 10)}`;
+  const nowLine = `Current date: ${referenceNow.toISOString().slice(0, 10)}`;
   const userPrompt = `${nowLine}\n\nMemories:\n${memoryBlock || "(no memories available)"}\n\nQuestion: ${benchCase.question}\n\nAnswer:`;
 
   // Context-efficiency signal (mem0 reports quality-per-token). We measure the

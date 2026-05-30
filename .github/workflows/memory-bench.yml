@@ -4,7 +4,10 @@ name: Memory bench
 #
 # Pull requests always run the tiny toy bench as a smoke test. On PRs that touch
 # memory-relevant paths, the medium server bench runs a full ephemeral
-# (messages -> extract -> score) pass over LoCoMo + LongMemEval, then:
+# production-faithful timeline pass over LongMemEval (default): messages are
+# replayed in corpus-time order, per-assistant-reply (exchange) extraction runs
+# concurrently, and each question is scored the moment the global extraction
+# watermark passes its timestamp (bi-temporal as-of retrieval). Then it:
 #
 #   1. diffs the result against the *target branch's* committed
 #      apps/api/bench/history.jsonl (the like-for-like baseline) and posts a
@@ -26,9 +29,9 @@ name: Memory bench
 # branch. workflow_dispatch keeps the flexible staged knobs (bench_id/from/to)
 # for manual/isolated runs; PR runs always do a full ephemeral pass.
 #
-# Defaults: --subset=medium, --dataset=both. Models default to the catalog
-# tiers fast for extraction, main for answerer, and escalation for judge — see
-# apps/api/bench/src/models.ts.
+# Defaults: --subset=medium, --dataset=lme, --replay=exchange. Models default to
+# the catalog tiers fast for extraction, main for answerer, and escalation for
+# judge — see apps/api/bench/src/models.ts.
 #
 # Costs: depends on selected subset and live model tiers. Medium is the
 # memory-PR server budget; full is manual-only and costs real money.
@@ -58,7 +61,12 @@ on:
         description: "Dataset (toy | lme | locomo | both)"
         type: choice
         options: [toy, lme, locomo, both]
-        default: both
+        default: lme
+      replay:
+        description: "Extraction cadence (exchange = prod-faithful per-reply | session = cheap dev-only)"
+        type: choice
+        options: [exchange, session]
+        default: exchange
       timeout_minutes:
         description: "Job timeout for the medium/manual bench"
         type: number
@@ -86,9 +94,13 @@ on:
         type: boolean
         default: false
       concurrency:
-        description: "Extraction/scoring worker concurrency"
+        description: "Extraction (producer) worker concurrency"
         type: number
         default: 4
+      score_concurrency:
+        description: "Scoring (consumer) worker concurrency — overlaps extraction"
+        type: number
+        default: 8
       embed_concurrency:
         description: "Message embedding concurrency"
         type: number
@@ -325,7 +337,10 @@ jobs:
           AURA_BENCH_ANSWERER: ${{ github.event.inputs.answerer_model || 'main' }}
           AURA_BENCH_JUDGE: ${{ github.event.inputs.judge_model || 'escalation' }}
           SUBSET: ${{ github.event.inputs.subset || 'medium' }}
-          DATASET: ${{ github.event.inputs.dataset || 'both' }}
+          # Production-faithful timeline defaults to LongMemEval (real question
+          # timestamps). LoCoMo/toy remain selectable for the smoke path.
+          DATASET: ${{ github.event.inputs.dataset || 'lme' }}
+          REPLAY: ${{ github.event.inputs.replay || 'exchange' }}
           # bench_id/from/to default to '' on PRs (full ephemeral pass) and to the
           # workflow_dispatch input defaults (phase2/extract/score) for manual runs.
           BENCH_ID: ${{ github.event.inputs.bench_id || '' }}
@@ -334,6 +349,7 @@ jobs:
           RESET: ${{ github.event.inputs.reset || 'false' }}
           SKIP_MESSAGE_EMBEDDINGS: ${{ github.event.inputs.skip_message_embeddings || 'false' }}
           CONCURRENCY: ${{ github.event.inputs.concurrency || '4' }}
+          SCORE_CONCURRENCY: ${{ github.event.inputs.score_concurrency || '8' }}
           EMBED_CONCURRENCY: ${{ github.event.inputs.embed_concurrency || '4' }}
           CATEGORY: ${{ github.event.inputs.category || '' }}
           LIMIT: ${{ github.event.inputs.limit || '' }}
@@ -343,7 +359,9 @@ jobs:
           args=(
             "--dataset=${DATASET}"
             "--subset=${SUBSET}"
+            "--replay=${REPLAY}"
             "--concurrency=${CONCURRENCY}"
+            "--score-concurrency=${SCORE_CONCURRENCY}"
             "--embed-concurrency=${EMBED_CONCURRENCY}"
             "--json=/tmp/bench/result.json"
             "--log"

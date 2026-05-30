@@ -125,7 +125,7 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ## Memory benchmark
 
-The harness in `apps/api/bench/` makes memory changes falsifiable. It replays vendored LoCoMo + LongMemEval corpora through Aura's real `extract → retrieve → answer` pipeline, scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
+The harness in `apps/api/bench/` makes memory changes falsifiable. It replays vendored LongMemEval (default) / LoCoMo corpora through Aura's real `extract → retrieve → answer` pipeline on a **production-faithful timeline** — per-assistant-reply extraction runs as a producer that advances a global watermark, and each question is scored the moment the watermark passes its timestamp, retrieving **bi-temporally as-of that instant** (so questions never see the future). It scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
 
 ### Current results
 
@@ -156,7 +156,7 @@ The full per-category breakdown and the run-over-run evolution live in [`apps/ap
 
 The bench runs **on the server, in CI**, so every memory change ships with real, reproducible numbers:
 
-* **On pull requests** that touch memory-relevant paths (`apps/api/src/memory/**`, `apps/api/bench/**`, the embedding/vector libs, the pipeline, or the DB schema). The action runs the medium LoCoMo + LongMemEval pass on an isolated Neon branch, then:
+* **On pull requests** that touch memory-relevant paths (`apps/api/src/memory/**`, `apps/api/bench/**`, the embedding/vector libs, the pipeline, or the DB schema). The action runs the medium LongMemEval (`--dataset=lme --replay=exchange`) pass on an isolated Neon branch, then:
   * **posts a sticky PR comment** with per-category deltas vs the target branch (like a deploy preview), flagging any regression > 2pp, and
   * **commits the regenerated `history.jsonl` + READMEs back to the PR branch**, so the real numbers travel with the change and land on `main` at merge. The commit is pushed with the workflow's `GITHUB_TOKEN`, which by design does not retrigger CI.
 * Every non-draft PR also runs the tiny **toy** bench as a fast smoke test.

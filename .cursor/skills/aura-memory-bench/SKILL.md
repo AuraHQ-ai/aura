@@ -5,13 +5,42 @@ description: Run and interpret Aura's memory benchmark (toy/LongMemEval/LoCoMo c
 
 # Aura Memory Benchmark
 
-End-to-end harness that ingests corpus conversations through the real
-extractor → memory pipeline, then scores **retrieval recall@15** (deterministic,
-no LLM) and **QA accuracy** (constrained answerer + LLM judge).
+End-to-end harness that replays corpus conversations through the real
+extractor → memory pipeline on a **production-faithful timeline**, then scores
+**retrieval recall@15** (deterministic, no LLM) and **QA accuracy**
+(constrained answerer + LLM judge).
 
 - CLI entry: `apps/api/src/scripts/bench-memory.ts`
 - Orchestrator: `apps/api/bench/src/runner.ts`
+- Timeline engine: `apps/api/bench/src/timeline.ts`
 - Corpora: `apps/api/bench/corpus/` (toy is always vendored)
+
+## The timeline model (how this mirrors production)
+
+The bench does **not** run three sequential stages (store all → extract all →
+score all against the final pool). It runs a single global timeline that mirrors
+prod end to end:
+
+- **Messages arrive over corpus time** and extraction runs as they arrive —
+  per assistant reply over a sliding 30-message window (`exchange` cadence, the
+  default), exactly like prod's incremental reconciliation.
+- **Questions arrive over time too.** A question asked at instant `T_Q` is
+  scored the moment the **global extraction watermark** (the min next-unextracted
+  reply timestamp across every conversation) passes `T_Q` — guaranteeing every
+  globally-earlier reply is already reconciled.
+- **Retrieval is bi-temporal "as-of `T_Q`"**: it returns the memory state that
+  was valid at that instant (`valid_from <= T_Q AND (valid_until IS NULL OR
+  valid_until > T_Q)`), so a fact superseded *later* is still visible and one
+  superseded *earlier* is gone. This closes the old "questions see the future"
+  leak (a `knowledge_update` question retrieving the post-update memory) and
+  keeps scoring deterministic even though the producer (extraction) races ahead
+  of and overlaps the consumer (scoring). Pass `--no-as-of` to score against the
+  live final pool instead (the old behaviour).
+
+`--dataset=lme` (LongMemEval) is the default because it ships **real question
+timestamps**. LoCoMo/toy have none, so their questions fall back to
+"asked at end of conversation" (watermark after all that conversation's turns) —
+the same graceful degradation, still runnable for the smoke path.
 
 ## Run it
 
@@ -19,9 +48,10 @@ Always run from the **repo root** (the root script loads `.env.local` via
 `scripts/env.sh`). Needs a live `DATABASE_URL` and AI Gateway access.
 
 ```bash
-pnpm bench:memory                              # toy corpus, medium subset (the smoke test)
-pnpm bench:memory --dataset=lme                # LongMemEval (must be fetched first)
+pnpm bench:memory                              # LongMemEval, medium subset (the default)
+pnpm bench:memory --dataset=toy                # tiny vendored smoke test (~1 min)
 pnpm bench:memory --dataset=both --subset=fast # LoCoMo + LongMemEval, ~40 Qs
+pnpm bench:memory --replay=session             # cheap dev-only cadence (one extraction/session)
 pnpm bench:memory --dry-run                    # validate plumbing, no DB writes / no LLM calls
 ```
 
@@ -30,22 +60,32 @@ The toy run takes ~1 minute, costs a few cents, ingests 5 cases across
 and prints a QA + recall table. It creates and then wipes a scratch
 workspace (`bench-<runId>`), so it never touches real workspace data.
 
+> **Baseline reset (one-time):** the timeline + as-of model and the `exchange`
+> default change both the corpus shape and retrieval strictness, so the first
+> run after this lands shows a one-time `history.jsonl` delta (expect movement
+> on `temporal` and `knowledge_update`). That's expected, not a regression.
+
 ## Cost, runtime, and how to run it (esp. from an agent)
 
 The bench runs **in CI on memory-relevant PRs**: the action does the medium
-LoCoMo + LongMemEval pass on an isolated Neon branch, posts a sticky PR comment
-with per-category deltas vs the target branch, and commits the regenerated
-`history.jsonl` + READMEs back to the PR branch (pushed with `GITHUB_TOKEN`, so
-it doesn't retrigger CI). See `.github/workflows/memory-bench.yml`. Locally is
-the fast iteration loop; how you run it depends on size, because a full run is
-slow and costs real money:
+LongMemEval (`--dataset=lme`, `--replay=exchange`) pass on an isolated Neon
+branch, posts a sticky PR comment with per-category deltas vs the target branch,
+and commits the regenerated `history.jsonl` + READMEs back to the PR branch
+(pushed with `GITHUB_TOKEN`, so it doesn't retrigger CI). See
+`.github/workflows/memory-bench.yml`. Locally is the fast iteration loop; how you
+run it depends on size, because a full run is slow and costs real money:
 
 | Run | Command | Time | Cost | Who runs it |
 |---|---|---|---|---|
 | Smoke | `--dataset=toy --log` | ~1 min | cents | agent (background) |
-| Iteration | `--dataset=both --subset=fast --log` | a few min | ~$2 | agent (background) |
-| Standard | `--dataset=both --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | CI on the PR (don't run locally) |
-| Full | `--dataset=both --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | ask the user (manual dispatch) |
+| Iteration | `--dataset=lme --subset=fast --log` | a few min | ~$2 | agent (background) |
+| Standard | `--dataset=lme --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | CI on the PR (don't run locally) |
+| Full | `--dataset=lme --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | ask the user (manual dispatch) |
+
+Note: `exchange` cadence fires one extraction per assistant reply (~turns/2× more
+LLM calls than `session`), so wall-clock is held down by the **overlap** —
+`--concurrency` extraction (producer) workers run concurrently with
+`--score-concurrency` scoring (consumer) workers, gated only by the watermark.
 
 **Never block a turn on a bench run.** Don't pipe it through `tail`/`head`/`tee`
 in a foreground shell call — a full run can take an hour and will hang. Launch
@@ -103,11 +143,14 @@ a rebase or manual history edit).
 
 | Flag | Effect |
 |---|---|
-| `--dataset=` | `toy` (default), `lme`, `locomo`, `both`, `all` |
+| `--dataset=` | `lme` (default), `toy`, `locomo`, `both`, `all` |
 | `--subset=` | `fast` (~4/cat), `medium` (~30/cat, default), `full` (no cap, costly) |
+| `--replay=` | `exchange` (default, prod-faithful per-reply) or `session` (cheap dev-only) |
 | `--limit=N` | per-category cap, overrides `--subset` |
 | `--category=` | filter to one category |
-| `--concurrency=N` | parallel ingest workers (default 2) |
+| `--concurrency=N` | extraction (producer) workers (default 4) |
+| `--score-concurrency=N` | scoring (consumer) workers, overlaps extraction (default 8) |
+| `--no-as-of` | disable bi-temporal retrieval — score against the live final pool |
 | `--json=PATH` | write detailed per-case results |
 | `--dry-run` | no DB writes, no LLM calls |
 | `--skip-ingest` | reuse already-ingested memories for this runId |
@@ -135,8 +178,8 @@ Two independent signals — always check both, they fail for different reasons:
    payload (`conversationKey` in `bench/src/ingest.ts`). If two cases share
    identical session content they collapse to one ingest — intended for
    LoCoMo's many-QA-per-conversation layout. Confirm the run log line
-   `bench: ingesting N unique conversation(s) from M case(s)` shows the
-   expected unique count.
+   `bench: extracting memories from N unique conversation(s) of M case(s)`
+   shows the expected unique count.
 3. Inspect `modelAnswer` + `judgeRationale` in the JSON for answerer/judge
    issues (format strictness, stale-vs-updated facts).
 
@@ -156,8 +199,10 @@ regression. Judge it against QA accuracy.
 |---|---|
 | CLI / flags | `apps/api/src/scripts/bench-memory.ts` |
 | Orchestration | `apps/api/bench/src/runner.ts` |
-| Corpus loaders + sampling | `apps/api/bench/src/fixtures.ts` |
-| Ingest + conversation de-dupe | `apps/api/bench/src/ingest.ts` |
+| Timeline engine (producer/consumer + watermark) | `apps/api/bench/src/timeline.ts` |
+| Corpus loaders + sampling + `resolveQuestionDate` | `apps/api/bench/src/fixtures.ts` |
+| Ingest + extraction units + conversation de-dupe | `apps/api/bench/src/ingest.ts` |
+| Bi-temporal as-of retrieval | `apps/api/src/memory/retrieve.ts` (`asOf` option) |
 | Retrieval recall scoring | `apps/api/bench/src/eval-retrieval.ts` |
 | QA answerer + judge | `apps/api/bench/src/eval-qa.ts` |
 | Score aggregation / persistence | `apps/api/bench/src/score.ts` |

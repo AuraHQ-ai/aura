@@ -2,9 +2,12 @@
 
 <!-- Generated from history.jsonl by `pnpm bench:memory … --log` / `pnpm bench:report`. Do not edit by hand. -->
 
-The memory bench replays vendored LoCoMo + LongMemEval corpora through Aura's real
-`extract → retrieve → answer` pipeline and scores each category on deterministic
-retrieval recall@15 and LLM-judged QA accuracy. Runs are logged locally with
+The memory bench replays vendored LongMemEval (default) / LoCoMo corpora through
+Aura's real `extract → retrieve → answer` pipeline on a production-faithful timeline:
+per-assistant-reply extraction runs as a producer that advances a global watermark,
+and each question is scored the moment the watermark passes its timestamp, retrieving
+bi-temporally as-of that instant. It scores each category on deterministic retrieval
+recall@15 and LLM-judged QA accuracy. Runs are logged locally with
 `pnpm bench:memory … --log`, which appends to `history.jsonl` and regenerates this
 file plus the snapshot in the root `README.md`. See the `aura-memory-bench` skill.
 
