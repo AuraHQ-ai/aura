@@ -63,6 +63,7 @@ export async function evaluateRetrieval(
   workspaceId: string,
   k = DEFAULT_K,
   onUsage?: (modelId: string, usage: UsageLike) => void,
+  asOf?: Date,
 ): Promise<RetrievalEvalResult> {
   let retrieved: Memory[] = [];
   try {
@@ -73,6 +74,7 @@ export async function evaluateRetrieval(
       workspaceId,
       adminMode: true,
       onUsage,
+      asOf,
     });
   } catch (error) {
     logger.warn("bench: retrieval failed", {

@@ -798,7 +798,7 @@ async function runReconciliationCore(
     const memoryId = refToId.get(del.memoryRef);
     if (memoryId) {
       try {
-        await archiveMemory(memoryId, del.reason);
+        await archiveMemory(memoryId, del.reason, context.createdAt);
       } catch {
         logger.warn("Skipping delete because archive failed", {
           memoryId,
@@ -824,7 +824,7 @@ async function runReconciliationCore(
       logger.warn("Failed to embed updated memory content", { ref: upd.memoryRef });
     }
     try {
-      await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined);
+      await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined, context.createdAt);
     } catch {
       logger.warn("Skipping entity link refresh because content update failed", {
         memoryId,
@@ -900,6 +900,7 @@ async function detectContradictions(
   model: Awaited<ReturnType<typeof getFastModel>>,
   onUsage?: ExtractionContext["onUsage"],
   modelId?: string,
+  at?: Date,
 ): Promise<void> {
   const batchIds = storedMemories.map((m) => m.id);
   for (const newMem of storedMemories) {
@@ -941,7 +942,7 @@ async function detectContradictions(
           similarity: candidate.similarity,
         });
 
-        await supersedeMemory(candidate.id, newMem.id);
+        await supersedeMemory(candidate.id, newMem.id, at);
       }
     } catch (error) {
       logger.warn("Contradiction detection LLM call failed — skipping", {
@@ -1016,7 +1017,15 @@ async function processCreateOperations(
     relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
     extractionSourceRole,
     ...(context.benchProvenance && { benchProvenance: context.benchProvenance }),
-    ...(context.createdAt && { createdAt: context.createdAt, updatedAt: context.createdAt }),
+    // Bench replay stamps corpus time on the full temporal triplet so as-of
+    // retrieval can place the memory on the replayed timeline. validFrom is what
+    // the `valid_from <= asOf` filter keys on; without it storeMemories would
+    // default valid_from to wall-clock now and every memory would look "future".
+    ...(context.createdAt && {
+      createdAt: context.createdAt,
+      updatedAt: context.createdAt,
+      validFrom: context.createdAt,
+    }),
   }));
 
   const memoryIds = await storeMemories(newMemories);
@@ -1026,7 +1035,7 @@ async function processCreateOperations(
     const oldId = dedupResults[i].supersedesId;
     const newId = memoryIds[j];
     if (oldId && newId) {
-      await supersedeMemory(oldId, newId);
+      await supersedeMemory(oldId, newId, context.createdAt);
     }
   }
 
@@ -1049,6 +1058,7 @@ async function processCreateOperations(
         model,
         context.onUsage,
         context.extractionModelId ?? (model as any)?.modelId,
+        context.createdAt,
       );
     }
   } catch (error) {

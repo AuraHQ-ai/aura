@@ -23,14 +23,19 @@
  * Any of --from/--to/--reset/--persist/--bench-id switches to the persistent
  * local workspace (it is NOT wiped at the end). Use --reset to start clean.
  *
- * Extraction cadence (--replay, default "session"):
- *   --replay=session    one extraction per session (cheap, default)
+ * Extraction cadence (--replay, default "exchange"):
  *   --replay=exchange   one extraction per assistant turn over a sliding
- *   --per-exchange      30-message window — mirrors prod's per-reply cadence.
+ *   --per-exchange      30-message window — mirrors prod's per-reply cadence
+ *                       and incremental reconciliation (the default).
+ *   --replay=session    one cheaper extraction per whole session (dev-only).
  * Per-exchange runs use a separate `bench-local-*-px` workspace, so you can
  * A/B it against the session cadence without clobbering. Bench both, e.g.:
- *   pnpm bench:memory --dataset=both --subset=fast --reset                # session
- *   pnpm bench:memory --dataset=both --subset=fast --reset --per-exchange # exchange
+ *   pnpm bench:memory --dataset=both --subset=fast --reset                 # exchange
+ *   pnpm bench:memory --dataset=both --subset=fast --reset --replay=session # session
+ *
+ * Concurrency: --concurrency=N extraction (producer) workers, --score-concurrency=N
+ * scoring (consumer) workers — they overlap on the timeline. --no-as-of disables
+ * bi-temporal retrieval (scores against the live final pool).
  *
  * Iterating on a memory change? Ramp the data up in small steps instead of
  * jumping straight to the full set, and focus on the axis you're fixing:
@@ -88,7 +93,10 @@ function hasFlag(name: string): boolean {
   return argv.includes(`--${name}`);
 }
 
-const datasetArg = getFlag("dataset") ?? "toy";
+// Default to LongMemEval: it ships real question timestamps, which the
+// production-faithful timeline needs to release each question at its own
+// instant. toy/LoCoMo remain runnable (they fall back to end-of-conversation).
+const datasetArg = getFlag("dataset") ?? "lme";
 const datasets =
   datasetArg === "both"
     ? (["locomo", "longmemeval"] as const)
@@ -108,9 +116,15 @@ const judgeModel = getFlag("judge-model") ?? getFlag("judge");
 const extractionModel = getFlag("extraction-model");
 const answererModel = getFlag("answerer-model");
 const concurrency = getFlag("concurrency") ? Number(getFlag("concurrency")) : undefined;
+const scoreConcurrency = getFlag("score-concurrency")
+  ? Number(getFlag("score-concurrency"))
+  : undefined;
 const embedConcurrency = getFlag("embed-concurrency")
   ? Number(getFlag("embed-concurrency"))
   : undefined;
+// --no-as-of disables bi-temporal retrieval (score against the live final pool
+// instead of the memory state valid at each question's instant). Default on.
+const asOf = hasFlag("no-as-of") ? false : undefined;
 const corpusFile = getFlag("corpus-file");
 const jsonOut = getFlag("json");
 
@@ -208,6 +222,8 @@ if (wantWizard) {
     answererModel,
     judgeModel,
     concurrency,
+    scoreConcurrency,
+    asOf,
     embedConcurrency,
     corpusFile,
     prNumber,
@@ -231,7 +247,7 @@ if (!wantWizard) {
   const staged = Boolean(fromStage || toStage || reset || persist || benchId);
   console.log(
     `Running bench: datasets=${(cfg.datasets as string[]).join(",")} ${limit ? "limit=" + limit : "subset=" + cfg.subset}${cases ? " cases=" + cases : ""}${category ? " category=" + category : ""}` +
-      `  [replay=${replay ?? "session"}]` +
+      `  [replay=${replay ?? "exchange"}${asOf === false ? ", no-as-of" : ""}]` +
       (resume != null ? `  [resume${resume ? "=" + resume : "=latest"}]` : "") +
       (staged
         ? `  [stages ${fromStage ?? "messages"}→${toStage ?? "score"}${reset ? ", reset" : ""}${skipMessageEmbeddings ? ", raw messages" : ""}]`

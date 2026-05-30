@@ -14,7 +14,7 @@
  *     --base-ref=main \
  *     --head-commit=<sha> \
  *     --run-url=<url> \
- *     --out=/tmp/bench/comment.md
+ *     --out=.bench/comment.md
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

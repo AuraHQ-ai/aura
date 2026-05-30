@@ -125,28 +125,23 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ## Memory benchmark
 
-The harness in `apps/api/bench/` makes memory changes falsifiable. It replays vendored LoCoMo + LongMemEval corpora through Aura's real `extract → retrieve → answer` pipeline, scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
+The harness in `apps/api/bench/` makes memory changes falsifiable. It replays vendored LongMemEval (default) / LoCoMo corpora through Aura's real `extract → retrieve → answer` pipeline on a **production-faithful timeline** — per-assistant-reply extraction runs as a producer that advances a global watermark, and each question is scored the moment the watermark passes its timestamp, retrieving **bi-temporally as-of that instant** (so questions never see the future). It scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
 
 ### Current results
 
 <!-- BENCH_SNAPSHOT:START -->
 <!-- Generated from apps/api/bench/history.jsonl — do not edit by hand. -->
 
-Current codebase (as of `0ee6037`, scope `locomo+longmemeval/medium`): **QA 30%** · **recall@15 74%** across 330 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
+Current codebase (as of `84515ad`, scope `longmemeval/medium`): **QA 53%** · **recall@15 85%** across 180 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| locomo | adversarial | 7% | 70% | 30 |
-| locomo | multi_hop | 27% | 74% | 30 |
-| locomo | open_domain | 17% | 77% | 30 |
-| locomo | single_hop | 12% | 87% | 30 |
-| locomo | temporal | 20% | 59% | 30 |
-| longmemeval | knowledge-update | 67% | 80% | 30 |
-| longmemeval | multi-session | 43% | 70% | 30 |
-| longmemeval | single-session-assistant | 17% | 67% | 30 |
-| longmemeval | single-session-preference | 28% | 73% | 30 |
-| longmemeval | single-session-user | 68% | 87% | 30 |
-| longmemeval | temporal-reasoning | 20% | 72% | 30 |
+| longmemeval | knowledge-update | 70% | 77% | 30 |
+| longmemeval | multi-session | 57% | 78% | 30 |
+| longmemeval | single-session-assistant | 23% | 87% | 30 |
+| longmemeval | single-session-preference | 43% | 90% | 30 |
+| longmemeval | single-session-user | 83% | 93% | 30 |
+| longmemeval | temporal-reasoning | 40% | 83% | 30 |
 
 <!-- BENCH_SNAPSHOT:END -->
 
@@ -156,11 +151,9 @@ The full per-category breakdown and the run-over-run evolution live in [`apps/ap
 
 The bench runs **on the server, in CI**, so every memory change ships with real, reproducible numbers:
 
-* **On pull requests** that touch memory-relevant paths (`apps/api/src/memory/**`, `apps/api/bench/**`, the embedding/vector libs, the pipeline, or the DB schema). The action runs the medium LoCoMo + LongMemEval pass on an isolated Neon branch, then:
-  * **posts a sticky PR comment** with per-category deltas vs the target branch (like a deploy preview), flagging any regression > 2pp, and
-  * **commits the regenerated `history.jsonl` + READMEs back to the PR branch**, so the real numbers travel with the change and land on `main` at merge. The commit is pushed with the workflow's `GITHUB_TOKEN`, which by design does not retrigger CI.
+* **On pull requests** that touch memory-relevant paths (`apps/api/src/memory/**`, `apps/api/bench/**`, the embedding/vector libs, the pipeline, or the DB schema). The action runs the medium LongMemEval (`--dataset=lme --replay=exchange`) pass on an isolated Neon branch, then **posts a sticky PR comment** with per-category deltas vs the target branch (like a deploy preview), flagging any regression > 2pp.
 * Every non-draft PR also runs the tiny **toy** bench as a fast smoke test.
-* **Manually via `workflow_dispatch`** (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`), dataset (`toy | lme | locomo | both`), and the staged-reuse knobs (`bench_id`/`from`/`to`) for isolated experiments. Manual runs upload the result JSON as an artifact and don't comment or commit.
+* **Manually via `workflow_dispatch`** (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`), dataset (`toy | lme | locomo | both`), and the staged-reuse knobs (`bench_id`/`from`/`to`) for isolated experiments. Manual runs upload the result JSON as an artifact and may commit regenerated `history.jsonl` + README artifacts to the selected branch.
 
 Running locally is still the fast iteration loop while you're working on a change (see below) — but you no longer have to remember to run medium/full and paste numbers by hand; CI does that on the PR.
 
@@ -224,7 +217,7 @@ pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
 
 ### What goes in the PR
 
-You don't paste numbers by hand. The **Memory bench** action posts a sticky comment on the PR with the per-category before/after/Δ table (QA + recall@15) computed against the target branch, and commits the regenerated `history.jsonl` + READMEs to your branch. The comment looks like:
+You don't paste numbers by hand. The **Memory bench** action posts a sticky comment on the PR with the per-category before/after/Δ table (QA + recall@15) computed against the target branch. The comment looks like:
 
 | Dataset | Category | QA before | QA after | QA Δ | recall before | recall after | recall Δ | n |
 |---|---|---:|---:|---:|---:|---:|---:|---:|

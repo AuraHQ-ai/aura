@@ -398,9 +398,19 @@ export async function checkDuplicates(
  * Sets old memory: status='superseded', superseded_at=now(), superseded_by_memory_id=newMemoryId, valid_until=now()
  * Sets new memory: status='current', valid_from=now(), supersedes_memory_id=oldMemoryId
  * Leaves relevance_score untouched — it's purely a recency/decay signal.
+ *
+ * `at` overrides the timestamp written to the temporal columns (superseded_at,
+ * valid_until, valid_from). Production callers omit it and get wall-clock now.
+ * The memory bench passes the corpus timestamp of the triggering exchange so
+ * bi-temporal as-of retrieval can reconstruct the memory state at any point on
+ * the replayed timeline.
  */
-export async function supersedeMemory(oldMemoryId: string, newMemoryId: string): Promise<void> {
-  const now = new Date();
+export async function supersedeMemory(
+  oldMemoryId: string,
+  newMemoryId: string,
+  at?: Date,
+): Promise<void> {
+  const now = at ?? new Date();
   try {
     await withTransaction(async (tx) => {
       await tx.execute(sql`
@@ -669,8 +679,9 @@ export async function updateMemoryContent(
   newContent: string,
   newEmbedding: number[] | null,
   newImportance?: number,
+  at?: Date,
 ): Promise<void> {
-  const now = new Date();
+  const now = at ?? new Date();
   try {
     const updates: Record<string, unknown> = {
       content: newContent,
@@ -702,12 +713,15 @@ export async function updateMemoryContent(
 export async function archiveMemory(
   memoryId: string,
   reason: string,
+  at?: Date,
 ): Promise<void> {
-  const now = new Date();
+  const now = at ?? new Date();
   try {
     await db
       .update(memories)
-      .set({ status: "archived", updatedAt: now })
+      // `at` (corpus time, bench only) also closes the validity interval so
+      // bi-temporal as-of retrieval treats the memory as gone after the delete.
+      .set({ status: "archived", updatedAt: now, ...(at ? { validUntil: at } : {}) })
       .where(eq(memories.id, memoryId));
     logger.info("Archived memory", { memoryId, reason });
   } catch (error) {

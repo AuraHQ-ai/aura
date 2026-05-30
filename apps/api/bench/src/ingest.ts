@@ -63,7 +63,7 @@ export type ReplayMode = "session" | "exchange";
  * cases that merely reuse session-id labels (toy "S1", LoCoMo "D1" across
  * conversations) stay distinct.
  */
-function conversationKey(benchCase: BenchCase): string {
+export function conversationKey(benchCase: BenchCase): string {
   return createHash("sha1")
     .update(benchCase.source)
     .update("\0")
@@ -99,7 +99,7 @@ export function countTotalSessions(cases: BenchCase[]): number {
 }
 
 /** De-dupe cases down to unique conversations (see conversationKey). */
-function uniqueConversations(cases: BenchCase[]): BenchCase[] {
+export function uniqueConversations(cases: BenchCase[]): BenchCase[] {
   const seen = new Set<string>();
   const unique: BenchCase[] = [];
   for (const c of cases) {
@@ -293,29 +293,166 @@ function buildUserDirectory(benchCase: BenchCase): Record<string, string> {
   return dir;
 }
 
+/** A single extraction call: the transcript window + its focal exchange. */
+interface ExtractionCall {
+  window: BuiltTurn[];
+  focalAssistant: BuiltTurn | null;
+  /** Corpus timestamp of this extraction event (assistant reply or session). */
+  at: Date;
+}
+
 /**
- * Extract memories from one BenchCase. Sessions MUST run in order: a later
- * session can supersede memories created by an earlier one. Different
- * conversations are independent and run in parallel (see
- * extractMemoriesForCases).
+ * Build the ordered extraction calls for one session under the given cadence.
+ *  - "exchange": one call per assistant reply over the sliding THREAD_WINDOW,
+ *    mirroring prod's per-reply incremental reconciliation. A session with no
+ *    assistant turn falls back to a single full-transcript pass.
+ *  - "session": a single pass over the whole session transcript.
+ */
+function buildSessionCalls(
+  built: BuiltTurn[],
+  sessionDate: Date,
+  replay: ReplayMode,
+): ExtractionCall[] {
+  const calls: ExtractionCall[] = [];
+  if (replay === "exchange") {
+    for (let k = 0; k < built.length; k++) {
+      if (built[k].role !== "assistant") continue;
+      const window = built.slice(Math.max(0, k + 1 - THREAD_WINDOW), k + 1);
+      calls.push({ window, focalAssistant: built[k], at: built[k].createdAt });
+    }
+    if (calls.length === 0) {
+      calls.push({ window: built, focalAssistant: null, at: sessionDate });
+    }
+  } else {
+    calls.push({ window: built, focalAssistant: null, at: sessionDate });
+  }
+  return calls;
+}
+
+/**
+ * Execute one extraction call against the real reconciliation pipeline. Builds
+ * the ExtractionContext exactly as production would and stamps corpus time
+ * (`call.at`) onto every created/superseded/archived memory so bi-temporal
+ * as-of retrieval can reconstruct the memory state at any point on the
+ * timeline. Throws propagate to the caller for logging.
+ */
+async function runExtractionCall(
+  benchCase: BenchCase,
+  session: BenchCase["sessions"][number],
+  call: ExtractionCall,
+  workspaceId: string,
+  extractionModelId: string,
+  userDirectory: Record<string, string>,
+  onUsage?: ExtractionContext["onUsage"],
+): Promise<void> {
+  const channelId = `bench:${benchCase.id}`;
+  const threadTs = session.id;
+  const threadMessages: ThreadMessage[] = call.window.map((b) => ({
+    role: b.role,
+    userId: b.userId,
+    content: b.content,
+    createdAt: b.createdAt,
+  }));
+  const lastUser =
+    [...call.window].reverse().find((m) => m.role === "user") ?? call.window[call.window.length - 1];
+  const lastAssistant =
+    call.focalAssistant ?? [...call.window].reverse().find((m) => m.role === "assistant") ?? null;
+
+  const ctx: ExtractionContext = {
+    userMessage: lastUser.content,
+    assistantResponse: lastAssistant?.content ?? "",
+    userId: lastUser.userId,
+    channelType: "public_channel",
+    channelId,
+    threadTs,
+    workspaceId,
+    extractionModelId,
+    onUsage,
+    triggerRole: "user",
+    // valid_from / superseded_at / valid_until all stamp this corpus instant.
+    createdAt: call.at,
+    // Clean speaker name for the transcript; synthetic directory so user
+    // references resolve locally instead of against the real Slack workspace.
+    displayName: lastUser.speaker,
+    userDirectory,
+    benchProvenance: {
+      datasetId: benchCase.source,
+      caseId: benchCase.id,
+      conversationId: benchCase.id,
+      sessionId: session.id,
+      sessionIds: [session.id],
+      // Provenance reflects exactly the turns this extraction saw.
+      diaIds: call.window.map((b) => b.diaId),
+    },
+  };
+
+  await extractMemoriesFromTranscript(threadMessages, ctx);
+}
+
+/** One schedulable extraction event, with the corpus time it occurs at. */
+export interface ExtractionUnit {
+  /** Corpus timestamp of this extraction event — drives the global watermark. */
+  at: Date;
+  /** Run this single reconciliation pass. */
+  run: () => Promise<void>;
+}
+
+/**
+ * Build the full ordered list of extraction units for one conversation, across
+ * all of its sessions, under the given cadence.
  *
- * Two cadences (`replay`):
- *  - "session": one extraction per session over the full session transcript.
- *    Cheap approximation, good for benchmarking retrieval.
- *  - "exchange": one extraction per assistant turn over the accumulating
- *    last-30-message window — mirrors production's per-reply trigger
- *    (pipeline/index.ts calls extractMemories once per assistant response,
- *    which fetches the last 30 thread messages and reconciles incrementally).
+ * Units MUST be run in array order: a later session/reply can supersede
+ * memories created by an earlier one. The timeline producer enforces in-order
+ * execution within a conversation while running distinct conversations
+ * concurrently. Each unit carries its corpus timestamp so the engine can
+ * advance each conversation's extraction frontier per completed unit.
+ */
+export function buildExtractionUnits(
+  benchCase: BenchCase,
+  workspaceId: string,
+  extractionModelId: string,
+  replay: ReplayMode = "exchange",
+  onUsage?: ExtractionContext["onUsage"],
+): ExtractionUnit[] {
+  const userDirectory = buildUserDirectory(benchCase);
+  const units: ExtractionUnit[] = [];
+  for (const session of benchCase.sessions) {
+    const sessionDate = new Date(session.timestamp);
+    const built = buildSessionTurns(benchCase, session);
+    if (built.length === 0) continue;
+    for (const call of buildSessionCalls(built, sessionDate, replay)) {
+      units.push({
+        at: call.at,
+        run: () =>
+          runExtractionCall(
+            benchCase,
+            session,
+            call,
+            workspaceId,
+            extractionModelId,
+            userDirectory,
+            onUsage,
+          ),
+      });
+    }
+  }
+  return units;
+}
+
+/**
+ * Extract memories from one BenchCase serially (legacy, non-timeline path).
+ * Kept for callers that want a simple per-conversation extraction without the
+ * global watermark. Sessions and replies run in order; ticks `onSession` per
+ * session (the unit `countTotalSessions` reports).
  */
 export async function extractMemoriesForCase(
   benchCase: BenchCase,
   workspaceId: string,
   extractionModelId: string,
-  replay: ReplayMode = "session",
+  replay: ReplayMode = "exchange",
   onSession?: () => void,
   onUsage?: ExtractionContext["onUsage"],
 ): Promise<{ memoriesAdded: number; sessionsIngested: number; extractions: number }> {
-  const channelId = `bench:${benchCase.id}`;
   const userDirectory = buildUserDirectory(benchCase);
   let sessionsIngested = 0;
   let extractions = 0;
@@ -326,7 +463,6 @@ export async function extractMemoriesForCase(
   const before = Number((beforeRows.rows ?? beforeRows)[0]?.n ?? 0);
 
   for (const session of benchCase.sessions) {
-    const threadTs = session.id;
     const sessionDate = new Date(session.timestamp);
     const built = buildSessionTurns(benchCase, session);
     if (built.length === 0) {
@@ -334,73 +470,18 @@ export async function extractMemoriesForCase(
       continue;
     }
 
-    const toThreadMessage = (b: BuiltTurn): ThreadMessage => ({
-      role: b.role,
-      userId: b.userId,
-      content: b.content,
-      createdAt: b.createdAt,
-    });
-
-    // Build the (transcript, focal-exchange) extraction calls for this session.
-    type Call = { window: BuiltTurn[]; focalAssistant: BuiltTurn | null; at: Date };
-    const calls: Call[] = [];
-
-    if (replay === "exchange") {
-      // One call per assistant turn, transcript = last THREAD_WINDOW msgs up to
-      // and including that turn. Matches prod's per-reply, sliding-window cadence.
-      for (let k = 0; k < built.length; k++) {
-        if (built[k].role !== "assistant") continue;
-        const window = built.slice(Math.max(0, k + 1 - THREAD_WINDOW), k + 1);
-        calls.push({ window, focalAssistant: built[k], at: built[k].createdAt });
-      }
-      // Fallback: a session with no assistant turn would extract nothing.
-      // Trigger a single full-session pass so we don't silently drop it.
-      if (calls.length === 0) {
-        calls.push({ window: built, focalAssistant: null, at: sessionDate });
-      }
-    } else {
-      // Session cadence: a single pass over the whole session transcript.
-      calls.push({ window: built, focalAssistant: null, at: sessionDate });
-    }
-
     let sessionExtracted = false;
-    for (const call of calls) {
-      const threadMessages = call.window.map(toThreadMessage);
-      const lastUser =
-        [...call.window].reverse().find((m) => m.role === "user") ?? call.window[call.window.length - 1];
-      const lastAssistant =
-        call.focalAssistant ?? [...call.window].reverse().find((m) => m.role === "assistant") ?? null;
-
-      const ctx: ExtractionContext = {
-        userMessage: lastUser.content,
-        assistantResponse: lastAssistant?.content ?? "",
-        userId: lastUser.userId,
-        channelType: "public_channel",
-        channelId,
-        threadTs,
-        workspaceId,
-        extractionModelId,
-        onUsage,
-        triggerRole: "user",
-        // valid_from = the turn (or session) timestamp. Critical for temporal.
-        createdAt: call.at,
-        // Clean speaker name for the transcript; synthetic directory so user
-        // references resolve locally instead of against the real Slack workspace.
-        displayName: lastUser.speaker,
-        userDirectory,
-        benchProvenance: {
-          datasetId: benchCase.source,
-          caseId: benchCase.id,
-          conversationId: benchCase.id,
-          sessionId: session.id,
-          sessionIds: [session.id],
-          // Provenance reflects exactly the turns this extraction saw.
-          diaIds: call.window.map((b) => b.diaId),
-        },
-      };
-
+    for (const call of buildSessionCalls(built, sessionDate, replay)) {
       try {
-        await extractMemoriesFromTranscript(threadMessages, ctx);
+        await runExtractionCall(
+          benchCase,
+          session,
+          call,
+          workspaceId,
+          extractionModelId,
+          userDirectory,
+          onUsage,
+        );
         extractions++;
         sessionExtracted = true;
       } catch (error) {
@@ -413,8 +494,6 @@ export async function extractMemoriesForCase(
       }
     }
     if (sessionExtracted) sessionsIngested++;
-    // Tick progress per session (the real unit of work), counting even
-    // empty/failed sessions so the bar total matches countTotalSessions.
     onSession?.();
   }
 
@@ -440,7 +519,7 @@ export async function extractMemoriesForCases(
   extractionModelId: string,
   concurrency = 4,
   onProgress?: (done: number, total: number) => void,
-  replay: ReplayMode = "session",
+  replay: ReplayMode = "exchange",
   onUsage?: ExtractionContext["onUsage"],
 ): Promise<{ totalMemories: number; totalSessions: number; totalExtractions: number }> {
   const unique = uniqueConversations(cases);

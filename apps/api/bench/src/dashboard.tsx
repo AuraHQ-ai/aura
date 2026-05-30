@@ -1,11 +1,14 @@
 /**
  * Ink-based live dashboard for the memory bench.
  *
- * Renders a stack of stage progress bars (messages → extract → score) plus a
- * live scores line (QA% / recall%) and a running cost meter. Ink's
- * `patchConsole` captures every `console.*` write and prints it ABOVE the
- * dashboard, so pipeline logs scroll cleanly while the bars stay pinned to the
- * bottom — replacing the old manual ANSI live-region hack in the logger.
+ * Renders the production-faithful timeline as concurrent tracks rather than
+ * three sequential stages: the producer (extraction, advancing the global
+ * watermark/frontier) and the consumer (scoring, scored/total) run at the same
+ * time and their bars fill in parallel. A live scores line (QA% / recall%) and
+ * a running cost meter sit below. Ink's `patchConsole` captures every
+ * `console.*` write and prints it ABOVE the dashboard, so pipeline logs scroll
+ * cleanly while the bars stay pinned to the bottom — replacing the old manual
+ * ANSI live-region hack in the logger.
  *
  * The runner talks to a tiny external store (subscribe/getSnapshot wired into
  * React via `useSyncExternalStore`); a local interval re-renders ~8×/s so the
@@ -175,7 +178,7 @@ function StageRow({ stage, now }: { stage: StageState; now: number }): React.Rea
   return (
     <Box>
       <Box width={2}>{icon}</Box>
-      <Box width={10}>
+      <Box width={20}>
         <Text color={status === "pending" ? "gray" : "white"}>{label}</Text>
       </Box>
       <Text color={barColor}>{renderBar(done, total)}</Text>
@@ -215,6 +218,11 @@ function Dashboard({ store }: { store: DashboardStore }): React.ReactElement {
 
   return (
     <Box flexDirection="column" marginTop={1}>
+      <Box>
+        <Text color="gray">
+          timeline · producer (extraction frontier) ‖ consumer (scoring) overlap
+        </Text>
+      </Box>
       {snap.stages.map((s) => (
         <StageRow key={s.name} stage={s} now={now} />
       ))}

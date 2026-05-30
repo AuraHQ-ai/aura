@@ -25,6 +25,17 @@ interface RetrievalOptions {
   /** Workspace ID for tenant isolation in entity queries */
   workspaceId?: string;
   /**
+   * Bi-temporal "as-of" instant. When set, retrieval returns the memories that
+   * were valid at this point in time — `valid_from <= asOf AND (valid_until IS
+   * NULL OR valid_until > asOf)` — instead of the live `status IN
+   * ('current','disputed')` pool. A memory superseded/archived AFTER `asOf` is
+   * still included (it was current then); one closed out at or before `asOf` is
+   * excluded. This is what makes the memory bench's timeline deterministic when
+   * extraction races ahead of scoring. Production passes nothing — live status
+   * filtering is unchanged.
+   */
+  asOf?: Date;
+  /**
    * Optional cost hook. When set, the query-entity-extraction LLM call reports
    * its model id + token usage so callers (e.g. the bench cost meter) can price
    * retrieval. Production passes nothing — no behaviour change.
@@ -167,6 +178,7 @@ async function fetchEntityMatchedMemories(
   currentUserId?: string,
   workspaceId?: string,
   onUsage?: RetrievalOptions["onUsage"],
+  asOf?: Date,
 ): Promise<EntityMemoryResult> {
   const emptyResult: EntityMemoryResult = { memories: [], memoryEntityMap: new Map(), resolvedEntityCount: 0 };
 
@@ -228,6 +240,12 @@ async function fetchEntityMatchedMemories(
 
     const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
 
+    // As-of (bench): temporal validity replaces the live status filter so a
+    // question sees the exact memory state at its instant on the timeline.
+    const lifecycleFilter = asOf
+      ? sql`AND m.valid_from <= ${asOf} AND (m.valid_until IS NULL OR m.valid_until > ${asOf})`
+      : sql`AND m.status IN ('current', 'disputed')`;
+
     const entityIdList = sql.join(entityIds.map(id => sql`${id}`), sql`, `);
 
     const memoryResult = await db.execute(sql`
@@ -236,7 +254,7 @@ async function fetchEntityMatchedMemories(
       JOIN memory_entities me ON m.id = me.memory_id
       WHERE me.entity_id IN (${entityIdList})
         AND m.relevance_score >= ${minRelevanceScore}
-        AND m.status IN ('current', 'disputed')
+        ${lifecycleFilter}
         ${privacyFilter}
         ${workspaceMemoryFilter}
       ORDER BY m.relevance_score DESC, m.created_at DESC
@@ -323,14 +341,14 @@ async function fetchEntityMatchedMemories(
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage } = options;
+  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage, asOf } = options;
   const start = Date.now();
 
   try {
     const [queryEmbedding, lexemes, entityResult] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
       extractLexemes(query),
-      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId, onUsage),
+      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId, onUsage, asOf),
     ]);
     const { memories: entityMemories, memoryEntityMap, resolvedEntityCount } = entityResult;
 
@@ -349,7 +367,12 @@ export async function retrieveMemories(
         OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
       )`;
 
-    const statusFilter = sql`${memories.status} IN ('current', 'disputed')`;
+    // As-of (bench): the hybrid lane keys on temporal validity instead of live
+    // status so it matches the entity lane and stays deterministic under
+    // concurrent extraction. Production (no asOf) keeps the live status filter.
+    const statusFilter = asOf
+      ? sql`${memories.validFrom} <= ${asOf} AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > ${asOf})`
+      : sql`${memories.status} IN ('current', 'disputed')`;
     // Multi-tenancy: scope the hybrid SQL lane to the workspace when one is
     // supplied. Without this, the vector + full-text RRF query would see
     // every workspace's memories. The entity-first lane already filters by

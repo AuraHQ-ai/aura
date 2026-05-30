@@ -241,13 +241,22 @@ export function renderBenchReadme(
   lines.push(GENERATED_NOTICE);
   lines.push("");
   lines.push(
-    "The memory bench replays vendored LoCoMo + LongMemEval corpora through Aura's real",
+    "The memory bench replays vendored LongMemEval (default) / LoCoMo corpora through",
   );
   lines.push(
-    "`extract → retrieve → answer` pipeline and scores each category on deterministic",
+    "Aura's real `extract → retrieve → answer` pipeline on a production-faithful timeline:",
   );
   lines.push(
-    "retrieval recall@15 and LLM-judged QA accuracy. Runs are logged locally with",
+    "per-assistant-reply extraction runs as a producer that advances a global watermark,",
+  );
+  lines.push(
+    "and each question is scored the moment the watermark passes its timestamp, retrieving",
+  );
+  lines.push(
+    "bi-temporally as-of that instant. It scores each category on deterministic retrieval",
+  );
+  lines.push(
+    "recall@15 and LLM-judged QA accuracy. Runs are logged locally with",
   );
   lines.push(
     "`pnpm bench:memory … --log`, which appends to `history.jsonl` and regenerates this",

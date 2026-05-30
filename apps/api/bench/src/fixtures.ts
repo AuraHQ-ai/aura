@@ -377,6 +377,46 @@ export async function loadLoCoMo(): Promise<BenchCase[]> {
   return cases;
 }
 
+// ── Question timing ─────────────────────────────────────────────────────────
+
+/**
+ * Per-turn timestamp spacing inside a session, mirroring `ingest.ts`
+ * (`sessionDate + turnIdx * 60_000`). Used to place the end-of-conversation
+ * fallback strictly after the last replayed turn.
+ */
+const TURN_OFFSET_MS = 60_000;
+
+/**
+ * Resolve the instant a question is "asked" on the replay timeline. The
+ * production-faithful timeline scores each question against the memory state
+ * valid at THIS moment (bi-temporal as-of retrieval), and releases it once the
+ * global extraction frontier passes it.
+ *
+ *  - LongMemEval ships `questionDate` (the real reference "now") — use it.
+ *  - Corpora without question timestamps (LoCoMo, some toy cases) fall back to
+ *    "end of conversation": just after the final turn of the latest session, so
+ *    the question can see every memory that conversation produced.
+ *
+ * Always returns a Date (sessions always carry timestamps), so the timeline and
+ * the answerer's notion of "now" agree on a single instant per question.
+ */
+export function resolveQuestionDate(benchCase: BenchCase): Date {
+  if (benchCase.questionDate) {
+    const d = new Date(benchCase.questionDate);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  let latest = 0;
+  for (const s of benchCase.sessions) {
+    const base = new Date(s.timestamp).getTime();
+    if (Number.isNaN(base)) continue;
+    const end = base + Math.max(0, s.turns.length) * TURN_OFFSET_MS;
+    if (end > latest) latest = end;
+  }
+  // +1s so a strict `T_Q < watermark` release fires only after the last turn's
+  // extraction (whose unit timestamp is the turn time) has completed.
+  return latest > 0 ? new Date(latest + 1000) : new Date();
+}
+
 // ── Public entry ───────────────────────────────────────────────────────────
 
 export async function loadDataset(id: DatasetId): Promise<BenchCase[]> {

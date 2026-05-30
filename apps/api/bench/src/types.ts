@@ -139,10 +139,29 @@ export interface BenchRunConfig {
    */
   judgeModel?: string;
   /**
-   * Number of parallel ingest workers. Memory is bounded — at most this
-   * many extraction LLM calls in flight. Defaults to 2.
+   * Number of parallel extraction workers (producer pool). In the timeline
+   * engine this bounds how many conversations extract concurrently. Should be
+   * >= the number of conversations so the global watermark never stalls on an
+   * un-started conversation. `neon-http` has no connection-pool limit, so this
+   * can be set high. Defaults to a value that covers all conversations.
    */
   concurrency?: number;
+  /**
+   * Number of parallel scoring workers (consumer pool), decoupled from
+   * extraction `concurrency`. Scoring overlaps extraction in the timeline
+   * engine; raising this drains releasable questions faster. Defaults to
+   * `concurrency`.
+   */
+  scoreConcurrency?: number;
+  /**
+   * Bi-temporal as-of retrieval. Default true: each question retrieves against
+   * the memory state valid at its own timestamp (`valid_from <= T_Q AND
+   * (valid_until IS NULL OR valid_until > T_Q)`), which is what makes the
+   * timeline deterministic while extraction races ahead. Set false (`--no-as-of`)
+   * to retrieve against the live final pool — useful for A/B-ing against the
+   * pre-timeline behaviour.
+   */
+  asOf?: boolean;
   /**
    * Optional path to an external normalized corpus JSON. When set, the
    * runner skips the cache+manifest lookup and loads BenchCase[] directly
@@ -183,12 +202,13 @@ export interface BenchRunConfig {
   progress?: boolean;
   /**
    * Extraction replay cadence:
-   *  - "session"  (default): one extraction per session over the full session
-   *    transcript. Cheap; a good approximation when benchmarking retrieval.
-   *  - "exchange": one extraction per assistant turn over the accumulating
-   *    last-30-message window — mirrors production's per-reply cadence and
-   *    incremental reconciliation. Faithful but multiplies extraction LLM
-   *    cost by ~(turns ÷ 2) per session.
+   *  - "exchange" (default): one extraction per assistant turn over the
+   *    accumulating last-30-message window — mirrors production's per-reply
+   *    cadence and incremental reconciliation. This is the production-faithful
+   *    default; it multiplies extraction LLM cost by ~(turns ÷ 2) per session,
+   *    absorbed by running extraction at high concurrency.
+   *  - "session": one extraction per session over the full session transcript.
+   *    Cheaper, dev-only approximation when iterating on retrieval.
    */
   replay?: "session" | "exchange";
   /**
