@@ -116,18 +116,25 @@ Additional cron jobs:
 
 ## Extended Thinking
 
-Aura uses Claude's extended thinking capability, which captures the model's reasoning process before generating a response. These reasoning traces are:
+Aura captures the model's reasoning process before it generates a response, across every provider that exposes it -- not just Claude. These reasoning traces are:
 
 - Stored alongside conversation messages
 - Visible in the dashboard for debugging
 - Useful for understanding why Aura made specific decisions or tool calls
 
-Thinking capability is detected from the gateway model catalog rather than a hand-maintained regex. `getModelCapabilities` reads the `tags` column synced from the Vercel AI Gateway and reports `supportsThinking` when the catalog tags include `reasoning`. This means new Claude releases light up automatically without a code change.
+Reasoning support is driven by the model catalog rather than any hand-maintained regex or model-ID parsing. Two columns on `model_catalog` carry the signal:
 
-Two thinking modes are supported:
+- **`tags`** -- synced verbatim from the Vercel AI Gateway. The presence of `"reasoning"` sets `supportsThinking`, used for surfacing which models think at all.
+- **`capabilities`** -- a structured, per-provider config persisted as JSONB and validated by a discriminated-union Zod schema (`ModelCapabilities`). This is the source of truth for *how* to ask each model to think.
 
-- **Classic budget** -- `{ type: "enabled", budgetTokens }`. The caller sets a token budget per step. Used for Sonnet and older Opus models.
-- **Adaptive** -- `{ type: "adaptive" }`. The model self-manages its own reasoning budget. Opus 4.7 is adaptive-only and will reject a classic budget request with `AI_NoOutputGeneratedError`. Adaptive-only gateway IDs are kept in a small allowlist in `prepare-step.ts`.
+`getModelCapabilities` reads both columns (with a 5-minute in-process cache). `resolveProviderThinkingOptions` in `prepare-step.ts` then maps the stored capability to the correct provider option, so new releases light up automatically without a code change:
+
+- **Anthropic** -- `thinkingMode` of `enabled` (`{ type: "enabled", budgetTokens }`, a per-step token budget; used for Sonnet and older Opus), `adaptive` (`{ type: "adaptive" }`, the model self-manages its budget; Opus 4.7+ is adaptive-only and rejects a classic budget request), or `none`.
+- **OpenAI** -- `reasoningEffort` of `minimal` / `low` / `medium` / `high` / `none`.
+- **Google** -- `thinkingBudget` as a token count, `dynamic` (maps to `-1`), or `none`.
+- **xAI** -- `reasoningEffort` of `low` / `high` / `none`.
+
+Capabilities are seeded on catalog refresh: Anthropic models are live-probed (`probeAnthropicThinkingMode` sends a throwaway request and inspects the error to tell `enabled` from `adaptive`), while OpenAI/Google/xAI reasoning models are inferred statically from provider + tags. When a model has no persisted `capabilities` yet, Aura falls back to the historical Anthropic `enabled` behavior and lets the next probe write the precise mode back.
 
 ## Slack Streaming & Task Display
 
