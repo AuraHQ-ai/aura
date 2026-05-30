@@ -32,15 +32,20 @@ workspace (`bench-<runId>`), so it never touches real workspace data.
 
 ## Cost, runtime, and how to run it (esp. from an agent)
 
-The bench is **local-first** — it does NOT run on PRs. How you run it depends on
-the size, because a full run is slow and costs real money:
+The bench runs **in CI on memory-relevant PRs**: the action does the medium
+LoCoMo + LongMemEval pass on an isolated Neon branch, posts a sticky PR comment
+with per-category deltas vs the target branch, and commits the regenerated
+`history.jsonl` + READMEs back to the PR branch (pushed with `GITHUB_TOKEN`, so
+it doesn't retrigger CI). See `.github/workflows/memory-bench.yml`. Locally is
+the fast iteration loop; how you run it depends on size, because a full run is
+slow and costs real money:
 
 | Run | Command | Time | Cost | Who runs it |
 |---|---|---|---|---|
 | Smoke | `--dataset=toy --log` | ~1 min | cents | agent (background) |
 | Iteration | `--dataset=both --subset=fast --log` | a few min | ~$2 | agent (background) |
-| Standard | `--dataset=both --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | ask the user |
-| Full | `--dataset=both --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | ask the user |
+| Standard | `--dataset=both --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | CI on the PR (don't run locally) |
+| Full | `--dataset=both --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | ask the user (manual dispatch) |
 
 **Never block a turn on a bench run.** Don't pipe it through `tail`/`head`/`tee`
 in a foreground shell call — a full run can take an hour and will hang. Launch
@@ -71,24 +76,28 @@ pnpm bench:memory --dataset=lme --category=temporal --limit=10 --log
   without running the bench (no DB / LLM needed) — handy after a rebase or a
   manual history edit.
 
-## Convention: log + commit results with every memory change (REQUIRED)
+## Convention: CI logs + commits results on the PR (don't hand-paste numbers)
 
-The bench is **local-first** — it does not run on PRs. Any change that can move
-the numbers (memory extraction, retrieval, reconciliation, scoring, corpus)
-must ship with a fresh logged run:
+Any change that can move the numbers (memory extraction, retrieval,
+reconciliation, scoring, corpus) is validated **on the PR by CI**:
 
 1. Make the change and verify it (`pnpm typecheck`).
-2. Run the relevant bench with `--log --note="<what changed + score deltas>"`.
-   For a quick memory change the toy run is enough: `pnpm bench:memory --log --note="…"`.
-3. Commit the code change **and** the regenerated files — `apps/api/bench/history.jsonl`,
-   `apps/api/bench/README.md`, and the root `README.md` snapshot — in the
-   **same commit**, so every commit carries the scores it produced.
+2. Optionally sanity-check locally on the cheap subsets while iterating:
+   `pnpm bench:memory --dataset=toy --log` or `--subset=fast` (see the table above).
+   Don't run medium/full locally — that's CI's job.
+3. Open the PR. The **Memory bench** action runs the medium pass, posts a sticky
+   comment with per-category deltas vs the target branch, and **commits the
+   regenerated `apps/api/bench/history.jsonl` + `apps/api/bench/README.md` + root
+   `README.md` snapshot to your PR branch** (one squashed entry per PR, keyed by
+   `prNumber`). Those real numbers merge into `main` with the PR.
 
-The entry records the current `git rev-parse HEAD`. Because step 2 runs before
-the commit exists, it's stamped `<sha>-dirty` — that's expected and honest (the
-run included uncommitted changes). If you need the entry to carry the *final*
-commit SHA, commit the code first, re-run `--log` (or `pnpm bench:report`) on
-the clean tree, then amend the regenerated files into the commit.
+If a category regresses by more than 2pp the comment flags it and you must
+justify it in the PR description.
+
+For *local* `--log` runs the entry records the current `git rev-parse HEAD`;
+running before the commit exists stamps it `<sha>-dirty`. `pnpm bench:report`
+regenerates the markdown views from `history.jsonl` with no DB/LLM (handy after
+a rebase or manual history edit).
 
 ## Useful flags
 
@@ -156,4 +165,6 @@ regression. Judge it against QA accuracy.
 | Markdown regen script (`bench:report`) | `apps/api/bench/scripts/report.ts` |
 | Structured run history (source of truth) | `apps/api/bench/history.jsonl` |
 | Generated detailed results | `apps/api/bench/README.md` |
-| Manual / isolated CI run | `.github/workflows/memory-bench.yml` (workflow_dispatch only) |
+| PR delta baseline + diff + comment render | `apps/api/bench/src/pr-delta.ts` |
+| PR comment orchestration (CI) | `apps/api/bench/scripts/pr-comment.ts` |
+| CI: PR runs (auto on memory paths) + manual dispatch | `.github/workflows/memory-bench.yml` |

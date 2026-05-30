@@ -256,6 +256,13 @@ try {
         totalDurationMs: output.totalDurationMs,
         corpusHash: output.corpusHash,
         caseSetHash: output.caseSetHash,
+        // Scope + meta so the PR-comment step can build a HistoryEntry and diff
+        // against the base branch without re-querying anything.
+        datasets: [...(cfg.datasets ?? [])],
+        subset: cfg.subset ?? "medium",
+        costUsd: output.costUsd ?? null,
+        models: output.models,
+        prNumber: cfg.prNumber ?? null,
       },
       null,
       2,
@@ -281,6 +288,7 @@ try {
       costUsd: output.costUsd,
       models: output.models,
       note,
+      prNumber: cfg.prNumber,
     });
     console.log(`\nLogged run to ${historyFile}`);
     console.log(`Regenerated ${benchReadme}`);

@@ -10,9 +10,16 @@ You're editing a path that can move Aura's memory quality. These changes are
 **not falsifiable by typecheck alone** — validate with the memory bench. Read
 the `aura-memory-bench` skill for the full workflow.
 
-The bench is **local-first** (it no longer runs on PRs). Results are recorded in
-`apps/api/bench/history.jsonl` and the generated `apps/api/bench/README.md` +
-root `README.md` snapshot. Commit those alongside your change.
+The bench runs **in CI on PRs** that touch memory paths. The action runs the
+medium LoCoMo + LongMemEval pass on an isolated Neon branch, posts a sticky PR
+comment with per-category deltas vs the target branch, and **commits the
+regenerated `apps/api/bench/history.jsonl` + `apps/api/bench/README.md` + root
+`README.md` snapshot back to the PR branch** (pushed with `GITHUB_TOKEN`, so it
+doesn't retrigger CI). You don't paste numbers by hand or run medium/full
+yourself — CI produces the authoritative numbers on the PR.
+
+Locally is the fast iteration loop while you're developing the change: run the
+cheap subsets to sanity-check before you push, then let CI handle the medium run.
 
 ## Runtime + cost dictate HOW you run it
 
@@ -20,8 +27,8 @@ root `README.md` snapshot. Commit those alongside your change.
 |---|---|---|---|---|
 | Smoke | `pnpm bench:memory --dataset=toy --log` | ~1 min | cents | **You** (background) |
 | Iteration | `pnpm bench:memory --dataset=both --subset=fast --log` | a few min | ~$2 | **You** (background) |
-| Standard | `pnpm bench:memory --dataset=both --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | **Ask the user** |
-| Full | `pnpm bench:memory --dataset=both --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | **Ask the user** |
+| Standard | `pnpm bench:memory --dataset=both --subset=medium --log` | ~1 hour (~330 Qs) | ~$10 | **CI on the PR** (don't run locally) |
+| Full | `pnpm bench:memory --dataset=both --subset=full --log` | ~2–3 hours (2,486 Qs) | real money | **Ask the user** (manual dispatch) |
 
 ## Rules for invoking it
 
@@ -37,3 +44,26 @@ root `README.md` snapshot. Commit those alongside your change.
   commit the regenerated `history.jsonl` + READMEs.
 - Always pass `--log --note="<what changed>"` so the result is recorded.
 - Iterate narrow first: `--category=<axis> --limit=3` before widening (see skill).
+
+## Reuse expensive stages instead of re-ingesting
+
+A default medium/full run re-ingests and re-extracts everything (>70 min) into a
+throwaway workspace. For repeated runs, pin a persistent workspace and reuse the
+expensive stages (full details + invalidation rules in the `aura-memory-bench` skill):
+
+- Seed once: `--dataset=both --subset=medium --bench-id=<key> --log`.
+- Retrieval/answer-only iteration: `--bench-id=<key> --from=score` (reuses messages + memories).
+- After an extraction or schema change: `--bench-id=<key> --from=extract` (reuses messages, re-extracts).
+
+## "Δ vs prior" only compares like-for-like
+
+Deltas compare against the newest prior run with the **same corpus hash and the
+exact same sampled case set** (`caseSetHash` in `bench/src/score.ts`). A `fast`
+(n≈4) run will NOT diff against a `medium` (n≈30) baseline — the case sets
+differ — so it shows `—` instead of a fake regression. For a real before/after,
+run with the **same subset/corpus** as the baseline you're comparing to.
+
+The CI PR comment applies the same like-for-like rule, but its baseline is the
+**target branch's committed `history.jsonl`** (read git-natively, not from the
+ephemeral run DB) — see `bench/src/pr-delta.ts` and `bench/scripts/pr-comment.ts`.
+When there's no comparable base entry it shows absolute scores, not a fake delta.

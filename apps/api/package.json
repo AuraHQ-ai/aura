@@ -17,7 +17,8 @@
     "bench:memory": "tsx src/scripts/bench-memory.ts",
     "bench:memory:i": "tsx src/scripts/bench-memory.ts --interactive",
     "bench:fetch-corpus": "tsx bench/scripts/fetch-corpus.ts",
-    "bench:report": "tsx bench/scripts/report.ts"
+    "bench:report": "tsx bench/scripts/report.ts",
+    "bench:pr-comment": "tsx bench/scripts/pr-comment.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.46",
