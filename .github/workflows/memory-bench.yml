@@ -6,18 +6,18 @@ name: Memory bench
 # memory-relevant paths, the medium server bench runs a full ephemeral
 # production-faithful timeline pass over LongMemEval (default): messages are
 # replayed in corpus-time order, per-assistant-reply (exchange) extraction runs
-# concurrently, and each question is scored the moment the global extraction
-# watermark passes its timestamp (bi-temporal as-of retrieval). Then it:
+# concurrently, and each question is scored the moment its own conversation's
+# extraction frontier passes its timestamp (bi-temporal as-of retrieval). Then it:
 #
 #   1. diffs the result against the *target branch's* committed
 #      apps/api/bench/history.jsonl (the like-for-like baseline) and posts a
-#      sticky "deploy-preview"-style PR comment with per-category deltas, and
-#   2. commits the regenerated apps/api/bench/history.jsonl + README.md + the
-#      root README snapshot back to the PR branch.
+#      sticky "deploy-preview"-style PR comment with per-category deltas.
 #
-# The commit is pushed with the workflow's default GITHUB_TOKEN, which by design
-# does NOT trigger new workflow runs — so it never loops. The real numbers land
-# on main automatically when the PR merges (nothing pushes to main directly).
+# PR runs intentionally do NOT commit regenerated history/README artifacts back
+# to the head branch: GITHUB_TOKEN pushes do not trigger a follow-up check run,
+# so committing on PR events would advance HEAD past the bench check SHA and make
+# the result disappear from the PR Checks tab. Manual workflow_dispatch runs may
+# still commit artifacts to the selected branch.
 #
 # `--log` appends a structured entry to apps/api/bench/history.jsonl and
 # regenerates the two markdown views. `--pr-number` attributes the run to the PR
@@ -134,8 +134,8 @@ on:
         type: string
         default: bench
 
-# `contents: write` lets the bench job commit regenerated results back to the PR
-# branch; `pull-requests: write` lets it upsert the sticky delta comment.
+# `contents: write` lets manual dispatch runs commit regenerated results;
+# `pull-requests: write` lets PR runs upsert the sticky delta comment.
 permissions:
   contents: write
   pull-requests: write
@@ -272,10 +272,8 @@ jobs:
     timeout-minutes: ${{ fromJSON(github.event.inputs.timeout_minutes || '180') }}
     steps:
       # Check out the PR HEAD branch (not the detached merge ref) so the bench
-      # runs against the PR's code and we can commit + push regenerated results
-      # straight back to the head branch. Pushes use the default GITHUB_TOKEN,
-      # which does not retrigger workflows. Falls back to github.ref for
-      # workflow_dispatch (no PR context).
+      # runs against the PR's code. Falls back to github.ref for workflow_dispatch
+      # (no PR context), where regenerated artifacts can be committed manually.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -381,7 +379,7 @@ jobs:
           set -o pipefail
           pnpm --filter aura-api bench:memory "${args[@]}" | tee /tmp/bench/output.txt
 
-      # ── PR delta comment + commit (same-repo PRs only) ────────────────────────
+      # ── PR delta comment (same-repo PRs only) ─────────────────────────────────
       # Fork PRs don't get repo secrets (so the bench can't run) and can't push
       # with GITHUB_TOKEN, so both steps are guarded on head.repo.fork != true.
       - name: Build PR delta comment
@@ -391,7 +389,9 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMENT_PATH: ${{ github.workspace }}/.bench/comment.md
         run: |
+          mkdir -p "${GITHUB_WORKSPACE}/.bench"
           # The baseline is the target branch's committed history.jsonl. Read it
           # from the git object store (unaffected by this run's local --log edit).
           git fetch origin "$BASE_REF" || true
@@ -403,15 +403,16 @@ jobs:
             --base-ref="$BASE_REF" \
             --head-commit="$HEAD_SHA" \
             --run-url="$RUN_URL" \
-            --out=/tmp/bench/comment.md
+            --out="$COMMENT_PATH"
 
       - name: Upsert sticky PR comment
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && hashFiles('/tmp/bench/comment.md') != '' }}
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && hashFiles('.bench/comment.md') != '' }}
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('/tmp/bench/comment.md', 'utf8');
+            const path = `${process.env.GITHUB_WORKSPACE}/.bench/comment.md`;
+            const body = fs.readFileSync(path, 'utf8');
             const marker = '<!-- aura-memory-bench -->';
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
@@ -425,11 +426,10 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number, body });
             }
 
-      - name: Commit regenerated results to PR branch
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true }}
+      - name: Commit regenerated results
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.ref_name }}
         run: |
           # Only the three generated files; nothing else should be touched.
           if git diff --quiet -- apps/api/bench/history.jsonl apps/api/bench/README.md README.md; then
@@ -439,8 +439,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/api/bench/history.jsonl apps/api/bench/README.md README.md
-          git commit -m "chore(bench): update memory bench results (PR #${PR_NUMBER})"
-          # Pushed with GITHUB_TOKEN -> does not retrigger any workflow.
+          git commit -m "chore(bench): update memory bench results"
           git push origin "HEAD:${HEAD_REF}"
 
       - name: Upload bench artefacts

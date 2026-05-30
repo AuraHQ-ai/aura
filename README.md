@@ -151,11 +151,9 @@ The full per-category breakdown and the run-over-run evolution live in [`apps/ap
 
 The bench runs **on the server, in CI**, so every memory change ships with real, reproducible numbers:
 
-* **On pull requests** that touch memory-relevant paths (`apps/api/src/memory/**`, `apps/api/bench/**`, the embedding/vector libs, the pipeline, or the DB schema). The action runs the medium LongMemEval (`--dataset=lme --replay=exchange`) pass on an isolated Neon branch, then:
-  * **posts a sticky PR comment** with per-category deltas vs the target branch (like a deploy preview), flagging any regression > 2pp, and
-  * **commits the regenerated `history.jsonl` + READMEs back to the PR branch**, so the real numbers travel with the change and land on `main` at merge. The commit is pushed with the workflow's `GITHUB_TOKEN`, which by design does not retrigger CI.
+* **On pull requests** that touch memory-relevant paths (`apps/api/src/memory/**`, `apps/api/bench/**`, the embedding/vector libs, the pipeline, or the DB schema). The action runs the medium LongMemEval (`--dataset=lme --replay=exchange`) pass on an isolated Neon branch, then **posts a sticky PR comment** with per-category deltas vs the target branch (like a deploy preview), flagging any regression > 2pp.
 * Every non-draft PR also runs the tiny **toy** bench as a fast smoke test.
-* **Manually via `workflow_dispatch`** (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`), dataset (`toy | lme | locomo | both`), and the staged-reuse knobs (`bench_id`/`from`/`to`) for isolated experiments. Manual runs upload the result JSON as an artifact and don't comment or commit.
+* **Manually via `workflow_dispatch`** (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`), dataset (`toy | lme | locomo | both`), and the staged-reuse knobs (`bench_id`/`from`/`to`) for isolated experiments. Manual runs upload the result JSON as an artifact and may commit regenerated `history.jsonl` + README artifacts to the selected branch.
 
 Running locally is still the fast iteration loop while you're working on a change (see below) — but you no longer have to remember to run medium/full and paste numbers by hand; CI does that on the PR.
 
@@ -219,7 +217,7 @@ pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
 
 ### What goes in the PR
 
-You don't paste numbers by hand. The **Memory bench** action posts a sticky comment on the PR with the per-category before/after/Δ table (QA + recall@15) computed against the target branch, and commits the regenerated `history.jsonl` + READMEs to your branch. The comment looks like:
+You don't paste numbers by hand. The **Memory bench** action posts a sticky comment on the PR with the per-category before/after/Δ table (QA + recall@15) computed against the target branch. The comment looks like:
 
 | Dataset | Category | QA before | QA after | QA Δ | recall before | recall after | recall Δ | n |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
