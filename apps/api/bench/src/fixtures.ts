@@ -457,17 +457,19 @@ function extractionWorkUnits(benchCase: BenchCase): number {
  * sampling, so the actual question count depends on how many categories the
  * dataset has. LongMemEval (cleaned) ships 6 categories; LoCoMo ships 5.
  *
- *   fast    1/category → ~11 Qs total. About 10 minutes with extraction.
- *   medium  2/category → ~22 Qs total. About 30 minutes with extraction.
- *   full    no cap     → all loaded corpus questions. Manual deep-dive only.
+ *   fast    1/category  → ~11 Qs total. A few minutes. Local sanity check.
+ *   medium  30/category → ~329 Qs total. ~1 hour, ~$10. The server PR budget:
+ *                         large enough for per-category deltas to mean something.
+ *   full    no cap      → all loaded corpus questions (~2,486). Manual deep-dive.
  *
  * Runtime is dominated by extraction work over unique conversations/sessions,
- * not by final QA count alone. These caps are intentionally conservative for
- * server runs; use --limit/--cases for ad-hoc experiments.
+ * not by final QA count alone. `medium` is the statistically-meaningful tier
+ * the CI PR comment diffs against; `fast` is the cheap local smoke. Use
+ * --limit/--cases for ad-hoc experiments.
  */
 export const SUBSET_PER_CATEGORY = {
   fast: 1,
-  medium: 2,
+  medium: 30,
   full: Number.POSITIVE_INFINITY,
 } as const;
 
