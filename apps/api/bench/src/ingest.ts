@@ -63,7 +63,7 @@ export type ReplayMode = "session" | "exchange";
  * cases that merely reuse session-id labels (toy "S1", LoCoMo "D1" across
  * conversations) stay distinct.
  */
-function conversationKey(benchCase: BenchCase): string {
+export function conversationKey(benchCase: BenchCase): string {
   return createHash("sha1")
     .update(benchCase.source)
     .update("\0")
@@ -405,7 +405,7 @@ export interface ExtractionUnit {
  * memories created by an earlier one. The timeline producer enforces in-order
  * execution within a conversation while running distinct conversations
  * concurrently. Each unit carries its corpus timestamp so the engine can
- * advance the global extraction watermark per completed unit.
+ * advance each conversation's extraction frontier per completed unit.
  */
 export function buildExtractionUnits(
   benchCase: BenchCase,

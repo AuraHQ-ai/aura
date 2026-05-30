@@ -459,11 +459,11 @@ export async function runBench(
 
     // ── Timeline: extraction (producer) overlapped with scoring (consumer) ────
     // Extraction replays each conversation's assistant replies in corpus-time
-    // order; a question is scored the moment the global extraction watermark
+    // order; a question is scored the moment its own conversation frontier
     // passes its timestamp, retrieving as-of that instant. Each scored case is
     // appended to cases.jsonl AS it completes (crash/Ctrl-C safe; --resume skips
     // already-scored ids). When only extraction runs (--to=extract) the consumer
-    // is idle; when only scoring runs (--from=score) the watermark starts at +inf.
+    // is idle; when only scoring runs (--from=score) frontiers start at +inf.
     const runExtraction = stageRuns("extract");
     const runScoring = stageRuns("score");
 

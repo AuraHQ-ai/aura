@@ -9,9 +9,8 @@
  *     — per assistant reply over a sliding window in `exchange` cadence, exactly
  *     like prod's incremental reconciliation.
  *   - Questions arrive over time too. A question asked at instant `T_Q` is
- *     scored the moment the GLOBAL extraction frontier (watermark) passes it —
- *     i.e. once every reply across every conversation with timestamp <= T_Q has
- *     been extracted and reconciled.
+ *     scored the moment its OWN conversation's extraction frontier passes it —
+ *     i.e. once that case's relevant conversation has been extracted past T_Q.
  *   - Retrieval is bi-temporal "as-of T_Q": it returns the memory state that was
  *     valid at that instant (`valid_from <= T_Q AND (valid_until IS NULL OR
  *     valid_until > T_Q)`), so a memory superseded LATER is still visible and one
@@ -20,11 +19,12 @@
  *
  * Producer (extraction) and consumer (scoring) run concurrently against one
  * shared memory pool. The producer is a bounded-concurrency scheduler that
- * always dispatches the globally-earliest next unit, so the watermark rises
- * smoothly and the consumer can start draining releasable questions early.
+ * always dispatches the globally-earliest next unit, while the consumer drains
+ * questions as soon as each question's own conversation frontier permits it.
  */
 
 import {
+  conversationKey,
   uniqueConversations,
   buildExtractionUnits,
   type ExtractionUnit,
@@ -115,32 +115,16 @@ export async function runTimeline(
   const extractionUnitsTotal = units.reduce((s, u) => s + u.length, 0);
   let extractionUnitsDone = 0;
 
-  // ── Global watermark over completed extraction units ────────────────────────
+  // ── Per-conversation frontier over completed extraction units ───────────────
   // frontier[c] = corpus timestamp (ms) of conversation c's next UNCOMPLETED
-  // unit, or +inf once it's fully extracted. watermark = min frontier. A
-  // question at T_Q is releasable once T_Q < watermark (every globally-earlier
-  // reply is already reconciled). Score-only runs start at +inf (all present).
+  // unit, or +inf once it's fully extracted. A question at T_Q is releasable
+  // once T_Q < frontier[its conversation]. Score-only runs start at +inf.
   const completed = new Array<number>(conversations.length).fill(0);
   const dispatched = new Array<number>(conversations.length).fill(0);
   const inFlight = new Array<boolean>(conversations.length).fill(false);
 
   const frontierOf = (c: number): number =>
     completed[c] < units[c].length ? units[c][completed[c]].at.getTime() : Infinity;
-
-  let watermark = Number.POSITIVE_INFINITY;
-  const recomputeWatermark = (): void => {
-    if (!runExtraction) {
-      watermark = Number.POSITIVE_INFINITY;
-      return;
-    }
-    let m = Number.POSITIVE_INFINITY;
-    for (let c = 0; c < conversations.length; c++) {
-      const f = frontierOf(c);
-      if (f < m) m = f;
-    }
-    watermark = m;
-  };
-  recomputeWatermark();
 
   const allExtractionDone = (): boolean => {
     for (let c = 0; c < conversations.length; c++) {
@@ -201,7 +185,6 @@ export async function runTimeline(
               inFlight[c] = false;
               active -= 1;
               extractionUnitsDone += 1;
-              recomputeWatermark();
               onExtractProgress?.(extractionUnitsDone, extractionUnitsTotal);
               if (allExtractionDone() && active === 0) {
                 finish();
@@ -235,17 +218,28 @@ export async function runTimeline(
     });
   }
 
-  // Questions still to score, in ascending T_Q order. Once the question at the
-  // head is releasable (T_Q < watermark), so is every earlier one — so a single
-  // monotonic claim pointer is enough, and claim+increment is atomic in JS.
+  const conversationIndexByKey = new Map(
+    conversations.map((conv, index) => [conversationKey(conv), index] as const),
+  );
+
+  // Questions still to score, ordered by T_Q only for fairness. Release is no
+  // longer globally monotonic: each question checks its own conversation's
+  // frontier so a late conversation cannot starve earlier-finished ones.
   const pending = cases
-    .map((c, index) => ({ index, tq: resolveQuestionDate(c).getTime() }))
+    .map((c, index) => {
+      const conversationIndex = conversationIndexByKey.get(conversationKey(c));
+      if (conversationIndex === undefined) {
+        throw new Error(`bench: case ${c.id} did not map to a timeline conversation`);
+      }
+      return { index, tq: resolveQuestionDate(c).getTime(), conversationIndex };
+    })
     .filter((q) => !doneIds.has(cases[q.index].id))
     .sort((a, b) => a.tq - b.tq);
 
   let scored = doneIds.size;
   let cancelled = false;
-  let claimPtr = 0;
+  let claimed = 0;
+  const pendingClaimed = new Array<boolean>(pending.length).fill(false);
 
   const scoreOne = async (index: number): Promise<void> => {
     const benchCase = cases[index];
@@ -315,21 +309,36 @@ export async function runTimeline(
     onScoreProgress?.(scored, n);
   };
 
+  const isReleasable = (q: (typeof pending)[number]): boolean => {
+    if (!runExtraction) return true;
+    return q.tq < frontierOf(q.conversationIndex);
+  };
+
+  const claimReleasable = (): number | null => {
+    for (let i = 0; i < pending.length; i++) {
+      if (pendingClaimed[i]) continue;
+      if (!isReleasable(pending[i])) continue;
+      pendingClaimed[i] = true;
+      claimed += 1;
+      return pending[i].index;
+    }
+    return null;
+  };
+
   const consumer = async (): Promise<void> => {
     while (true) {
       if (cancelSignal?.cancelled) {
         cancelled = true;
         return;
       }
-      if (claimPtr >= pending.length) return;
-      const head = pending[claimPtr];
-      if (head.tq < watermark) {
-        // Releasable: claim it (synchronous claim+increment = atomic) and score.
-        claimPtr += 1;
-        await scoreOne(head.index);
+      if (claimed >= pending.length) return;
+      const index = claimReleasable();
+      if (index !== null) {
+        await scoreOne(index);
         continue;
       }
-      // Not yet releasable — the producer is still working toward this instant.
+      // No question is currently releasable — the producer is still working
+      // toward at least one pending question's own conversation frontier.
       await delay(CONSUMER_POLL_MS);
     }
   };
