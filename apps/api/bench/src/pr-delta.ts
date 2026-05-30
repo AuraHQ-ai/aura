@@ -56,17 +56,24 @@ function sameDatasets(a: string[], b: string[]): boolean {
 
 /**
  * Return the newest history entry comparable to the current run's scope, or
- * null when none matches. Skips PR-attributed entries so a PR never diffs
- * against itself if base history happens to carry one.
+ * null when none matches.
+ *
+ * The baseline is read from the *target branch's* committed history, so the
+ * only PR-attributed entry we must reject is the current PR's own (a PR must
+ * never diff against a result it pushed earlier). Entries from other PRs are
+ * legitimate baselines once they've merged and landed on the target branch —
+ * that's how a merged bench PR seeds the baseline for the next one. Pass
+ * `currentPrNumber` so we skip exactly that PR and nothing else.
  */
 export function loadBaselineEntry(
   historyText: string,
   scope: BaselineScope,
+  currentPrNumber?: number | null,
 ): HistoryEntry | null {
   const entries = parseHistoryText(historyText);
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
-    if (e.prNumber != null) continue;
+    if (currentPrNumber != null && e.prNumber === currentPrNumber) continue;
     if (
       e.corpusHash === scope.corpusHash &&
       (e.caseSetHash ?? null) === (scope.caseSetHash ?? null) &&

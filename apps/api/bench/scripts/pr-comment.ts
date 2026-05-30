@@ -56,6 +56,7 @@ interface ResultJson {
   costUsd: number | null;
   totalDurationMs: number;
   models: { extraction: string; answerer: string; judge: string } | null;
+  prNumber?: number | null;
 }
 
 const result = JSON.parse(readFileSync(resolve(resultPath), "utf8")) as ResultJson;
@@ -91,7 +92,9 @@ const baseHistoryText =
     ? readFileSync(resolve(baseHistoryPath), "utf8")
     : "";
 
-const baseline = loadBaselineEntry(baseHistoryText, scope);
+// Skip only this PR's own prior entries; entries from already-merged PRs on the
+// base branch are valid like-for-like baselines.
+const baseline = loadBaselineEntry(baseHistoryText, scope, result.prNumber ?? null);
 const diff = diffEntries(current, baseline);
 const markdown = renderPrComment(diff, {
   baseRef,

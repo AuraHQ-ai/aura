@@ -54,11 +54,20 @@ describe("loadBaselineEntry", () => {
     expect(found?.commit).toBe("new2222");
   });
 
-  it("skips PR-attributed entries (never diff against a PR)", () => {
+  it("uses entries from other (merged) PRs as baselines", () => {
+    // A merged bench PR's entry lands on the target branch and is the newest
+    // comparable run — it should seed the next PR's baseline.
     const main = makeEntry({ runId: "main", commit: "main111" });
-    const pr = makeEntry({ runId: "pr", commit: "pr22222", prNumber: 42 });
-    const text = [main, pr].map((e) => JSON.stringify(e)).join("\n");
-    expect(loadBaselineEntry(text, scope)?.commit).toBe("main111");
+    const mergedPr = makeEntry({ runId: "pr", commit: "pr22222", prNumber: 42 });
+    const text = [main, mergedPr].map((e) => JSON.stringify(e)).join("\n");
+    expect(loadBaselineEntry(text, scope)?.commit).toBe("pr22222");
+  });
+
+  it("skips the current PR's own entries (never diff against itself)", () => {
+    const main = makeEntry({ runId: "main", commit: "main111" });
+    const mine = makeEntry({ runId: "mine", commit: "mine333", prNumber: 99 });
+    const text = [main, mine].map((e) => JSON.stringify(e)).join("\n");
+    expect(loadBaselineEntry(text, scope, 99)?.commit).toBe("main111");
   });
 
   it("returns null when corpus or case set differs", () => {
