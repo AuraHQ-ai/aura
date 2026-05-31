@@ -81,6 +81,8 @@ if (process.env.BENCH_DATABASE_URL) {
 
 const { runBench } = await import("../../bench/src/runner.js");
 const { logger } = await import("../lib/logger.js");
+const { formatMemV3RetrievalFlags, getMemV3RetrievalFlagSnapshot } =
+  await import("../memory/retrieval-flags.js");
 type BenchRunConfig = import("../../bench/src/types.js").BenchRunConfig;
 
 function getFlag(name: string): string | undefined {
@@ -245,6 +247,7 @@ const logResults = hasFlag("log");
 if (cfg.dryRun) console.log("DRY RUN — no DB writes, no LLM calls");
 if (!wantWizard) {
   const staged = Boolean(fromStage || toStage || reset || persist || benchId);
+  const retrievalFlags = getMemV3RetrievalFlagSnapshot();
   console.log(
     `Running bench: datasets=${(cfg.datasets as string[]).join(",")} ${limit ? "limit=" + limit : "subset=" + cfg.subset}${cases ? " cases=" + cases : ""}${category ? " category=" + category : ""}` +
       `  [replay=${replay ?? "exchange"}${asOf === false ? ", no-as-of" : ""}]` +
@@ -253,6 +256,7 @@ if (!wantWizard) {
         ? `  [stages ${fromStage ?? "messages"}→${toStage ?? "score"}${reset ? ", reset" : ""}${skipMessageEmbeddings ? ", raw messages" : ""}]`
         : ""),
   );
+  console.log(`MEMv3 retrieval flags: ${formatMemV3RetrievalFlags(retrievalFlags)}`);
 }
 
 try {
@@ -278,6 +282,7 @@ try {
         subset: cfg.subset ?? "medium",
         costUsd: output.costUsd ?? null,
         models: output.models,
+        retrievalFlags: output.retrievalFlags,
         prNumber: cfg.prNumber ?? null,
       },
       null,
@@ -303,6 +308,7 @@ try {
       totalDurationMs: output.totalDurationMs,
       costUsd: output.costUsd,
       models: output.models,
+      retrievalFlags: output.retrievalFlags,
       note,
       prNumber: cfg.prNumber,
     });

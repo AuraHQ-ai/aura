@@ -60,6 +60,11 @@ import type { Dashboard } from "./dashboard.js";
 import { getEmbeddingModel } from "../../src/lib/ai.js";
 import { logger, setLogFile, closeLogFile } from "../../src/lib/logger.js";
 import {
+  formatMemV3RetrievalFlags,
+  getMemV3RetrievalFlagSnapshot,
+  type MemV3RetrievalFlagSnapshot,
+} from "../../src/memory/retrieval-flags.js";
+import {
   BENCH_STAGE_ORDER,
   type BenchCase,
   type BenchRunConfig,
@@ -84,6 +89,8 @@ export interface BenchRunOutput {
   costUsd: number;
   /** Resolved gateway model ids for the run, or null when no stage ran. */
   models: { extraction: string; answerer: string; judge: string } | null;
+  /** Runtime retrieval bisect flags active for this run. */
+  retrievalFlags: MemV3RetrievalFlagSnapshot;
 }
 
 function resolveGitSha(): string | undefined {
@@ -208,10 +215,12 @@ export async function runBench(
   };
 
   const start = Date.now();
+  const retrievalFlags = getMemV3RetrievalFlagSnapshot();
   logger.info(`bench: starting run ${runId}`, {
     datasets: config.datasets,
     subset: config.subset,
     category: config.category ?? "(all)",
+    retrievalFlags,
   });
 
   // ── Stage range + workspace selection ──────────────────────────────────────
@@ -278,6 +287,7 @@ export async function runBench(
       slackTs: null,
       costUsd: 0,
       models: null,
+      retrievalFlags,
     };
   }
 
@@ -306,6 +316,7 @@ export async function runBench(
       slackTs: null,
       costUsd: 0,
       models: null,
+      retrievalFlags,
     };
   }
 
@@ -361,6 +372,10 @@ export async function runBench(
   // Capture every log line to runs/<id>/run.log while the dashboard owns the TTY.
   setLogFile(artifacts.logPath);
   artifacts.markLatest();
+  logger.info("bench: active MEMv3 retrieval flags", {
+    flags: retrievalFlags,
+    display: formatMemV3RetrievalFlags(retrievalFlags),
+  });
 
   const priorResults: PerCaseResult[] = resumeId ? artifacts.loadCases() : [];
   if (resumeId) {
@@ -612,6 +627,7 @@ export async function runBench(
           caseSetHash,
           extractionModel: models!.extraction,
           replay,
+          retrievalFlags,
           costUsd: totalCostUsd,
           cancelled,
         },
@@ -669,6 +685,7 @@ export async function runBench(
       corpusHash,
       caseSetHash,
       gitSha: config.gitSha ?? null,
+      retrievalFlags,
       models,
       counts: {
         cases: cases.length,
@@ -728,6 +745,7 @@ export async function runBench(
       slackTs,
       costUsd: cost.usd,
       models,
+      retrievalFlags,
     };
   } finally {
     dashboard?.stop();

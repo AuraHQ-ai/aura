@@ -131,6 +131,10 @@ on:
         description: "Optional judge model/tier override"
         type: string
         default: ""
+      memv3_flags:
+        description: "Optional space-separated retrieval flags, e.g. MEMV3_PREFILTER=0 MEMV3_ABSTENTION=1"
+        type: string
+        default: ""
       neon_parent_branch:
         description: "Neon parent branch name/id for COW bench branches"
         type: string
@@ -360,8 +364,39 @@ jobs:
           CATEGORY: ${{ github.event.inputs.category || '' }}
           LIMIT: ${{ github.event.inputs.limit || '' }}
           CASES: ${{ github.event.inputs.cases || '' }}
+          MEMV3_FLAGS: ${{ github.event.inputs.memv3_flags || '' }}
         run: |
           mkdir -p /tmp/bench
+          allowed_memv3_flags=" MEMV3_PREFILTER MEMV3_ABSTENTION MEMV3_LASTMSG_WEIGHT MEMV3_SCORE_FUSION MEMV3_QUERY_REWRITE "
+          if [ -n "${MEMV3_FLAGS}" ]; then
+            for pair in ${MEMV3_FLAGS}; do
+              key="${pair%%=*}"
+              value="${pair#*=}"
+              if [ "${key}" = "${pair}" ]; then
+                echo "Invalid memv3 flag '${pair}' (expected NAME=0 or NAME=1)" >&2
+                exit 1
+              fi
+              case "${allowed_memv3_flags}" in
+                *" ${key} "*) ;;
+                *)
+                  echo "Unsupported memv3 flag '${key}'" >&2
+                  exit 1
+                  ;;
+              esac
+              case "${value}" in
+                0|1) export "${key}=${value}" ;;
+                *)
+                  echo "Invalid value for ${key}: '${value}' (expected 0 or 1)" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+          fi
+          echo "MEMv3 retrieval flags:"
+          for key in MEMV3_PREFILTER MEMV3_ABSTENTION MEMV3_LASTMSG_WEIGHT MEMV3_SCORE_FUSION MEMV3_QUERY_REWRITE; do
+            value="${!key:-1}"
+            echo "  ${key}=${value}"
+          done
           args=(
             "--dataset=${DATASET}"
             "--subset=${SUBSET}"
