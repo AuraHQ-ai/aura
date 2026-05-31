@@ -9,7 +9,8 @@ import {
   retrieveConversations,
   type ConversationThread,
 } from "../memory/retrieve.js";
-import { embedWeightedQuery } from "../lib/embeddings.js";
+import { embedText, embedWeightedQuery } from "../lib/embeddings.js";
+import { isMemV3RetrievalFlagEnabled } from "../memory/retrieval-flags.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
 import { getSandboxEnvNames } from "../lib/sandbox.js";
@@ -287,10 +288,12 @@ export async function buildCorePrompt(
 
   let queryEmbedding: number[] | undefined;
   try {
-    queryEmbedding = await embedWeightedQuery(
-      session.latestMessageText ?? session.messageText,
-      session.messageText,
-    );
+    queryEmbedding = isMemV3RetrievalFlagEnabled("lastMessageWeight")
+      ? await embedWeightedQuery(
+          session.latestMessageText ?? session.messageText,
+          session.messageText,
+        )
+      : await embedText(session.messageText);
   } catch (error) {
     logger.error("Embedding failed, proceeding without memory context", {
       error: String(error),

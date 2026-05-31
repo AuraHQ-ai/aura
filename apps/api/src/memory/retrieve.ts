@@ -8,6 +8,7 @@ import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
 import { resolveEntityReadOnly } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
+import { isMemV3RetrievalFlagEnabled } from "./retrieval-flags.js";
 
 interface RetrievalOptions {
   /** The user's current message text */
@@ -74,6 +75,11 @@ interface RetrievalOptions {
    * which discards a precomputed weighted embedding).
    */
   rewrite?: boolean;
+  /**
+   * Rank merged candidates with the #1054 score-fusion model. Defaults on;
+   * disable to use the pre-fusion RRF/Cohere legacy scorer.
+   */
+  scoreFusion?: boolean;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -492,6 +498,11 @@ interface FusionCandidate {
   channelBoost: number;
 }
 
+interface LegacyCandidate extends FusionCandidate {
+  /** Reciprocal-rank-fusion score emitted by the hybrid SQL CTE. */
+  rrfScore: number;
+}
+
 /**
  * Explicit score-fusion weights (#1054). Tuned against the bench; kept in one
  * object so a single edit + bench run re-tunes the ranker. Semantic dominates,
@@ -632,6 +643,88 @@ export function fuseCandidates(
   return scored;
 }
 
+async function rankLegacyCandidates(
+  candidates: LegacyCandidate[],
+  opts: { query: string; limit: number; now: number },
+): Promise<{ memories: Memory[]; method: string; topScore?: number }> {
+  const { query, limit, now } = opts;
+  const rerankingModel = await getRerankingModel();
+
+  if (rerankingModel && candidates.length > 0) {
+    const { ranking } = await rerankMemories({
+      model: rerankingModel,
+      query,
+      documents: candidates.map((r) => r.memory.content),
+      topN: candidates.length,
+    });
+
+    const ENTITY_WEIGHT = 0.1;
+    const scored = ranking.map((item) => {
+      const result = candidates[item.originalIndex];
+      const memory = result.memory;
+      const ageMs = now - new Date(memory.createdAt).getTime();
+      const ageDays = ageMs / 86_400_000;
+      const recencyBoost = Math.max(0, 1 - ageDays / 365);
+
+      const score =
+        item.score * (0.8 - ENTITY_WEIGHT / 2) +
+        recencyBoost * (0.2 - ENTITY_WEIGHT / 2) +
+        result.entityBoost * ENTITY_WEIGHT;
+
+      return {
+        memory,
+        score,
+        originalIndex: item.originalIndex,
+        cohereScore: item.score,
+      };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const reranking = scored
+      .slice(0, limit)
+      .map(
+        (s, newRank) =>
+          `${s.originalIndex + 1} -> ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`,
+      )
+      .join(", ");
+    logger.debug(`Reranking details: ${reranking}`);
+
+    return {
+      memories: scored.slice(0, limit).map((s) => s.memory),
+      method: "hybrid-rrf+cohere-rerank",
+      topScore: scored[0]?.score,
+    };
+  }
+
+  const RRF_K = 60;
+  const maxRrfScore = 2 / (1 + RRF_K);
+
+  const scored = candidates.map((candidate) => {
+    const { memory, similarity, rrfScore, entityBoost } = candidate;
+    const ageMs = now - new Date(memory.createdAt).getTime();
+    const ageDays = ageMs / 86_400_000;
+    const recencyBoost = Math.max(0, 1 - ageDays / 365);
+
+    const normalizedRrf =
+      maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
+    const score =
+      normalizedRrf * 0.4 +
+      similarity * 0.2 +
+      memory.relevanceScore * 0.1 +
+      recencyBoost * 0.1 +
+      entityBoost * 0.2;
+
+    return { memory, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return {
+    memories: scored.slice(0, limit).map((s) => s.memory),
+    method: "hybrid-rrf+legacy",
+    topScore: scored[0]?.score,
+  };
+}
+
 /**
  * Round-robin merge of several ranked memory lists, de-duplicated by id. Takes
  * one from each list in turn so every sub-query (operand) is represented in the
@@ -664,7 +757,9 @@ export function mergeRoundRobin(lists: Memory[][], limit: number): Memory[] {
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  if (!options.rewrite) {
+  const rewriteEnabled =
+    Boolean(options.rewrite) && isMemV3RetrievalFlagEnabled("queryRewrite");
+  if (!rewriteEnabled) {
     return retrieveSingleQuery(options);
   }
 
@@ -741,11 +836,18 @@ async function retrieveSingleQuery(
     prefilter = true,
     rerank = false,
     abstain = true,
+    scoreFusion = true,
     onUsage,
     asOf,
   } = options;
   const start = Date.now();
   const visibility = { adminMode, currentUserId, channelId };
+  const prefilterEnabled =
+    prefilter && isMemV3RetrievalFlagEnabled("prefilter");
+  const abstentionEnabled =
+    abstain && isMemV3RetrievalFlagEnabled("abstention");
+  const scoreFusionEnabled =
+    scoreFusion && isMemV3RetrievalFlagEnabled("scoreFusion");
 
   try {
     const [queryEmbedding, lexemes, entityResult] = await Promise.all([
@@ -764,7 +866,8 @@ async function retrieveSingleQuery(
 
     const privacyFilter = buildMemoryVisibilityFilter(visibility);
     const baseFilter = buildMemoryBaseFilter(minRelevanceScore, workspaceId, undefined, true, asOf);
-    const shouldPrefilterByEntity = prefilter && resolvedEntityIds.length > 0;
+    const shouldPrefilterByEntity =
+      prefilterEnabled && resolvedEntityIds.length > 0;
     const entityPrefilterIds = shouldPrefilterByEntity
       ? sql.join(resolvedEntityIds.map(id => sql`${id}`), sql`, `)
       : sql``;
@@ -966,7 +1069,7 @@ async function retrieveSingleQuery(
 
     // #1045: abstain before ranking when no candidate clears the raw-signal
     // evidence floors — injecting nothing beats injecting noise.
-    if (abstain && !hasRetrievalEvidence(results, resolvedEntityCount)) {
+    if (abstentionEnabled && !hasRetrievalEvidence(results, resolvedEntityCount)) {
       logger.info(
         `Abstaining: no candidate cleared evidence floors in ${Date.now() - start}ms`,
         {
@@ -976,6 +1079,24 @@ async function retrieveSingleQuery(
         },
       );
       return [];
+    }
+
+    if (!scoreFusionEnabled) {
+      const legacy = await rankLegacyCandidates(results, { query, limit, now });
+      logger.info(
+        `Retrieved ${legacy.memories.length} memories (${legacy.method}) in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          lexemeCount: lexemes.length,
+          prefilter: shouldPrefilterByEntity,
+          channelId,
+          topScore: legacy.topScore?.toFixed(3),
+          method: legacy.method,
+          scoreFusion: false,
+        },
+      );
+      return legacy.memories;
     }
 
     // Optional Cohere semantic override. Cohere is no longer the default ranker

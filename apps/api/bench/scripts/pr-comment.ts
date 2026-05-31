@@ -56,6 +56,7 @@ interface ResultJson {
   costUsd: number | null;
   totalDurationMs: number;
   models: { extraction: string; answerer: string; judge: string } | null;
+  retrievalFlags?: Record<string, "0" | "1"> | null;
   prNumber?: number | null;
 }
 
@@ -78,6 +79,7 @@ const current = buildHistoryEntry({
   totalDurationMs: result.totalDurationMs,
   costUsd: result.costUsd,
   models: result.models,
+  retrievalFlags: result.retrievalFlags ?? null,
 });
 
 const scope: BaselineScope = {
