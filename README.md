@@ -132,15 +132,15 @@ The harness in `apps/api/bench/` makes memory changes falsifiable. It replays ve
 <!-- BENCH_SNAPSHOT:START -->
 <!-- Generated from apps/api/bench/history.jsonl — do not edit by hand. -->
 
-Current codebase (as of `8099713-dirty`, scope `locomo/medium`): **QA 28%** · **recall@15 78%** across 150 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
+Current codebase (as of `65b1205`, scope `locomo/medium`): **QA 14%** · **recall@15 55%** across 150 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| locomo | adversarial | 12% | 70% | 30 |
-| locomo | multi_hop | 33% | 71% | 30 |
-| locomo | open_domain | 55% | 90% | 30 |
-| locomo | single_hop | 22% | 87% | 30 |
-| locomo | temporal | 18% | 72% | 30 |
+| locomo | adversarial | 7% | 40% | 30 |
+| locomo | multi_hop | 22% | 51% | 30 |
+| locomo | open_domain | 18% | 57% | 30 |
+| locomo | single_hop | 10% | 67% | 30 |
+| locomo | temporal | 12% | 59% | 30 |
 
 <!-- BENCH_SNAPSHOT:END -->
 
