@@ -13,20 +13,20 @@ file plus the snapshot in the root `README.md`. See the `aura-memory-bench` skil
 
 ## Current
 
-Latest logged run: `3643897` · 2026-05-31 16:31 UTC
+Latest logged run: `65b1205` · 2026-05-31 18:13 UTC
 
-- scope: `locomo/medium` · corpus `f9cf2279e3e1` · cases `a6f1cceb887cfe19` · runtime 76m37s · cost $10.92
+- scope: `locomo/medium` · corpus `f9cf2279e3e1` · cases `a6f1cceb887cfe19` · runtime 97m56s · cost $11.02
 - models: extraction `anthropic/claude-haiku-4.5` · answerer `anthropic/claude-opus-4.8` · judge `anthropic/claude-opus-4.6`
 - MEMv3 flags: `MEMV3_PREFILTER=0` `MEMV3_ABSTENTION=1` `MEMV3_LASTMSG_WEIGHT=1` `MEMV3_SCORE_FUSION=1` `MEMV3_QUERY_REWRITE=1`
-- overall: QA 20% · recall@15 69% (n=150)
+- overall: QA 17% · recall@15 74% (n=150)
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| locomo | adversarial | 8% | 63% | 30 |
-| locomo | multi_hop | 35% | 54% | 30 |
-| locomo | open_domain | 32% | 77% | 30 |
-| locomo | single_hop | 12% | 83% | 30 |
-| locomo | temporal | 12% | 66% | 30 |
+| locomo | adversarial | 8% | 73% | 30 |
+| locomo | multi_hop | 25% | 59% | 30 |
+| locomo | open_domain | 22% | 77% | 30 |
+| locomo | single_hop | 7% | 83% | 30 |
+| locomo | temporal | 22% | 75% | 30 |
 
 ## Evolution
 
@@ -34,6 +34,7 @@ Overall QA accuracy and recall@15 across logged runs (newest first).
 
 | date | commit | scope | QA | recall@15 | n | cost | runtime |
 |---|---|---|---:|---:|---:|---:|---:|
+| 2026-05-31 | `65b1205` | locomo/medium | 17% | 74% | 150 | $11.02 | 97m56s |
 | 2026-05-31 | `3643897` | locomo/medium | 20% | 69% | 150 | $10.92 | 76m37s |
 | 2026-05-31 | `8099713-dirty` | locomo/medium | 28% | 78% | 150 | $11.04 | 74m41s |
 | 2026-05-31 | `8099713-dirty` | longmemeval/medium | 55% | 88% | 180 | $12.03 | 80m31s |
