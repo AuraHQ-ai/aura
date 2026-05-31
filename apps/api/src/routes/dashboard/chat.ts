@@ -429,6 +429,8 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
       conversationId: "dashboard",
       messageText,
       isDirectMessage: true,
+      channelType: "dashboard",
+      workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
       modelIdOverride: modelId,
     });
 

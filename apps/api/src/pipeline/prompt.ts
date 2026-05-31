@@ -100,6 +100,7 @@ export async function assemblePrompt(
     conversationContext: threadContext,
     isDirectMessage: context.isDm,
     channelType: context.channelType === "slack_list_item" ? "public_channel" : context.channelType,
+    workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
     userTimezone,
     channelDisplayName,
     isChannelHistory,
