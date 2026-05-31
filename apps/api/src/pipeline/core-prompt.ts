@@ -9,7 +9,8 @@ import {
   retrieveConversations,
   type ConversationThread,
 } from "../memory/retrieve.js";
-import { embedText } from "../lib/embeddings.js";
+import { embedText, embedWeightedQuery } from "../lib/embeddings.js";
+import { isMemV3RetrievalFlagEnabled } from "../memory/retrieval-flags.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
 import { getSandboxEnvNames } from "../lib/sandbox.js";
@@ -33,11 +34,20 @@ export interface ChannelSession {
   conversationId: string;
   threadId?: string;
   messageText: string;
+  /**
+   * The single latest user turn (without prior thread context). When provided
+   * and distinct from `messageText`, the retrieval query embedding is weighted
+   * toward this message to avoid topic-pivot dilution (#1038). Falls back to
+   * `messageText` when omitted.
+   */
+  latestMessageText?: string;
   /** Pre-formatted recent messages — each connector provides its own format. */
   conversationContext?: string;
   isDirectMessage: boolean;
   /** Specific channel type — when omitted, derived from isDirectMessage (dm vs public_channel). */
   channelType?: ChannelType;
+  /** Workspace ID for tenant-scoped memory retrieval. */
+  workspaceId?: string;
   userTimezone?: string;
   /** Human-readable channel name (e.g. "#dev (C0BNVKS77)"). Falls back to conversationId. */
   channelDisplayName?: string;
@@ -278,7 +288,12 @@ export async function buildCorePrompt(
 
   let queryEmbedding: number[] | undefined;
   try {
-    queryEmbedding = await embedText(session.messageText);
+    queryEmbedding = isMemV3RetrievalFlagEnabled("lastMessageWeight")
+      ? await embedWeightedQuery(
+          session.latestMessageText ?? session.messageText,
+          session.messageText,
+        )
+      : await embedText(session.messageText);
   } catch (error) {
     logger.error("Embedding failed, proceeding without memory context", {
       error: String(error),
@@ -296,6 +311,11 @@ export async function buildCorePrompt(
             query: session.messageText,
             queryEmbedding,
             currentUserId: session.userId,
+            channelId: session.conversationId,
+            channelType: session.channelType,
+            workspaceId: session.workspaceId ?? process.env.DEFAULT_WORKSPACE_ID ?? "default",
+            prefilter: true,
+            rewrite: true,
             limit: 15,
           }).catch(() => [] as Memory[])
         : Promise.resolve([] as Memory[]),
@@ -307,6 +327,7 @@ export async function buildCorePrompt(
             matchLimit: 15,
             minSimilarity: 0.35,
             excludeThreadTs: session.threadId,
+            workspaceId: session.workspaceId ?? process.env.DEFAULT_WORKSPACE_ID ?? "default",
           })
         : Promise.resolve([] as ConversationThread[]),
       session.userProfile !== undefined

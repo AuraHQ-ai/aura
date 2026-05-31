@@ -1,6 +1,9 @@
 import { embed, embedMany } from "ai";
 import { getEmbeddingModel } from "./ai.js";
 import { logger } from "./logger.js";
+import { blendEmbeddings } from "./vector.js";
+
+export { blendEmbeddings } from "./vector.js";
 
 const EXPECTED_DIMENSIONS = 1536;
 
@@ -59,6 +62,35 @@ export async function embedText(text: string): Promise<number[]> {
     });
     throw error;
   }
+}
+
+/**
+ * Build a retrieval query embedding that weights the latest message more heavily
+ * than the surrounding thread context, mitigating topic-pivot dilution (#1038).
+ *
+ * `context` is the full joined thread text (which already contains `latest`); when
+ * it is empty or identical to `latest`, this degrades to a plain single embed.
+ * Otherwise both texts are embedded in ONE batched call (no extra request count)
+ * and blended `latestWeight` / `1 - latestWeight`.
+ */
+export async function embedWeightedQuery(
+  latest: string,
+  context?: string,
+  latestWeight = 0.65,
+): Promise<number[]> {
+  const trimmedLatest = latest.trim();
+  const trimmedContext = (context ?? "").trim();
+  if (!trimmedLatest || !trimmedContext || trimmedContext === trimmedLatest) {
+    return embedText(trimmedLatest || context || latest);
+  }
+  const [latestEmb, contextEmb] = await embedTexts([
+    trimmedLatest,
+    trimmedContext,
+  ]);
+  return blendEmbeddings(
+    [latestEmb, contextEmb],
+    [latestWeight, 1 - latestWeight],
+  );
 }
 
 /**

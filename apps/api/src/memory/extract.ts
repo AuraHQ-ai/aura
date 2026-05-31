@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
-  storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
+  storeMemories, supersedeMemory, toDbChannelType, checkDuplicates, updateLinkedMemoryIds,
   fetchThreadMessages, updateMemoryContent, archiveMemory,
   findContradictionCandidates,
 } from "./store.js";
@@ -663,9 +663,12 @@ async function extractWithReconciliation(
     retrieveMemories({
       query: context.userMessage,
       currentUserId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
       limit: 20,
       workspaceId,
       adminMode: true,
+      prefilter: true,
     }).then((mems) => { existingMemories = mems; }).catch((err) => {
       logger.warn("Memory retrieval failed during reconciliation — proceeding with empty existing memories", {
         error: String(err?.message ?? err).slice(0, 200),
@@ -706,9 +709,12 @@ async function extractWithReconciliationFromTranscript(
     existingMemories = await retrieveMemories({
       query: context.userMessage,
       currentUserId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
       limit: 20,
       workspaceId,
       adminMode: true,
+      prefilter: true,
     });
   } catch (err) {
     logger.warn("Memory retrieval failed during transcript reconciliation — proceeding with empty existing memories", {
@@ -840,6 +846,8 @@ async function runReconciliationCore(
         await db.delete(memoryEntities).where(eq(memoryEntities.memoryId, memoryId));
         const resolved = await resolveEntities(extractedEntities, workspaceId, model);
         await linkMemoryEntities(memoryId, resolved);
+        // Refresh graph links (#1054) now that this memory's entities changed.
+        await updateLinkedMemoryIds(workspaceId, [memoryId]);
       }
     } catch (entityError) {
       logger.warn("Failed to refresh entity links for updated memory", {
@@ -1082,6 +1090,10 @@ async function processCreateOperations(
       }
     }
   }
+
+  // #1054: materialize shared-entity graph links for the new batch so the
+  // retrieval ranker can apply a multi-hop graph-expansion boost.
+  await updateLinkedMemoryIds(workspaceId, memoryIds.filter(Boolean));
 
   logger.info(`${source === "reconciliation" ? "Reconciliation" : "Single-exchange extraction"} created ${newMemories.length} memories in ${Date.now() - start}ms`, {
     types: newMemories.map((m) => m.type),

@@ -45,7 +45,9 @@ the same graceful degradation, still runnable for the smoke path.
 ## Run it
 
 Always run from the **repo root** (the root script loads `.env.local` via
-`scripts/env.sh`). Needs a live `DATABASE_URL` and AI Gateway access.
+`scripts/env.sh`). Needs a live `DATABASE_URL` and AI Gateway access. To keep
+bench fixtures off dev/prod, set `BENCH_DATABASE_URL` (e.g. a Neon "bench"
+branch) and the whole bench process uses it instead of `DATABASE_URL`.
 
 ```bash
 pnpm bench:memory                              # LongMemEval, medium subset (the default)
@@ -94,6 +96,41 @@ the completion notification. For medium/full runs, hand the user the exact
 command and let them run it — then commit the regenerated `history.jsonl` +
 READMEs. The run is resume-safe (`--resume`) and Ctrl-C drains + saves partial
 results, so a long run interrupted partway isn't wasted.
+
+## Reusing ingested data (persistent workspaces)
+
+By default every run uses a throwaway workspace (`bench-<runId>`) that is wiped
+at the end — so a medium run re-ingests **and re-extracts everything** (the
+extract stage alone can take >70 min) and then throws it away. To iterate
+without paying that cost each time, pin a **persistent** workspace with
+`--bench-id` and reuse the expensive stages via `--from`.
+
+The pipeline has three stages — `messages` (store + embed raw turns) → `extract`
+(LLM extraction into memories) → `score` (retrieval + answerer + judge). What
+`--from` reuses, and what invalidates the reuse:
+
+| Command | Reuses | Re-runs | Use after you changed… |
+|---|---|---|---|
+| `--bench-id=X --from=messages` (default) | nothing | everything | the corpus, or the embedding model |
+| `--bench-id=X --from=extract` | stored messages | extraction + score | extraction logic or the memory **schema** (e.g. a new column) |
+| `--bench-id=X --from=score` | messages + memories | retrieval + QA only | retrieval / fusion / answerer / judge only |
+
+Recommended loop for a retrieval/answer change against a stable corpus:
+
+```bash
+# 1. Seed once (full ingest into a persistent workspace, ~1h, ask the user):
+pnpm bench:memory --dataset=both --subset=medium --bench-id=phase2 --log
+# 2. Iterate cheaply (reuse messages + memories, only retrieval + QA re-run):
+pnpm bench:memory --bench-id=phase2 --from=score --log
+# 3. After an extraction or schema change, re-extract but keep the messages:
+pnpm bench:memory --bench-id=phase2 --from=extract --log
+```
+
+Invalidation rules of thumb: a **schema/extraction** change invalidates persisted
+*memories* (use `--from=extract`); an **embedding-model or corpus** change
+invalidates persisted *messages* too (use `--from=messages` / `--reset`). The
+embedding model and corpus hash are stamped on every `bench_runs` row so you can
+tell when a reuse would be stale.
 
 ## Iterating on a memory change
 
@@ -154,6 +191,9 @@ a rebase or manual history edit).
 | `--json=PATH` | write detailed per-case results |
 | `--dry-run` | no DB writes, no LLM calls |
 | `--skip-ingest` | reuse already-ingested memories for this runId |
+| `--bench-id=KEY` | pin a persistent workspace (`bench-local-KEY`) that survives between runs, so `--from` can reuse its data |
+| `--from=` / `--to=` | stage window: `messages` → `extract` → `score`. `--from=score` reuses messages + memories; `--from=extract` reuses messages (see "Reusing ingested data") |
+| `--reset` | wipe the persistent workspace's data before running (start the `--bench-id` workspace from scratch) |
 | `--corpus-file=PATH` | load a normalized `BenchCase[]` JSON directly |
 | `--extraction-model=` / `--answerer-model=` / `--judge-model=` | model id (e.g. `anthropic/claude-sonnet-4.6`) or tier (`fast`/`main`/`escalation`) |
 | `--prod` | use `.env.production` instead of `.env.local` |
@@ -167,6 +207,16 @@ Two independent signals — always check both, they fail for different reasons:
   retrieval problem.
 - **QA accuracy** — did the answerer produce the gold answer (per the judge)?
   Low QA *despite* high recall → answering/judging problem.
+
+The **"Δ vs prior"** column only compares against the newest prior run with the
+**same corpus hash and the exact same sampled case set** — `computeDeltas` in
+`bench/src/score.ts` filters `bench_runs` on `corpusHash` + `caseSetHash`
+(the sha of the sampled `source/id/category` set). This is deliberate: a `fast`
+run has n≈4/category while a `medium` run has n≈30, so the case sets differ and
+diffing fast-against-medium would be a fake regression. When there's no
+comparable prior run (first run for that corpus + case set), every delta cell
+shows `—` — not a regression, just no baseline. To get a real before/after, run
+the **same subset/corpus** as your baseline.
 
 ### Diagnosing a 0% category
 

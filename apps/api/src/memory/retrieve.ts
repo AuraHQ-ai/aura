@@ -1,13 +1,14 @@
 import { sql } from "drizzle-orm";
-import { generateObject, rerank } from "ai";
+import { generateObject, rerank as rerankMemories } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
-import { memories, messages, type Memory } from "@aura/db/schema";
+import { messages, type Memory } from "@aura/db/schema";
 import type { EntityType } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
-import { resolveEntityReadOnly } from "./entity-resolution.js";
+import { resolveEntityReadOnly, type ResolvedEntity } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
+import { isMemV3RetrievalFlagEnabled } from "./retrieval-flags.js";
 
 interface RetrievalOptions {
   /** The user's current message text */
@@ -16,6 +17,10 @@ interface RetrievalOptions {
   queryEmbedding?: number[];
   /** The Slack user ID of the person asking */
   currentUserId: string;
+  /** Slack channel/conversation where the query is happening, used for DM privacy and channel weighting */
+  channelId?: string;
+  /** Slack channel type for the current query context */
+  channelType?: string;
   /** Maximum number of memories to return */
   limit?: number;
   /** Minimum relevance score threshold */
@@ -48,10 +53,42 @@ interface RetrievalOptions {
       totalTokens?: number;
     },
   ) => void;
+  /** Restrict cosine/full-text candidates to resolved entities + a recent tail. Defaults on. */
+  prefilter?: boolean;
+  /**
+   * Apply a Cohere rerank pass and use its relevance score as the semantic
+   * signal in the fusion ranker. Off by default — score fusion (#1054) is the
+   * default ranker; Cohere is now opt-in, not the default.
+   */
+  rerank?: boolean;
+  /**
+   * Abstain (return no memories) when no candidate clears the raw-signal
+   * evidence floors (#1045), rather than injecting low-relevance noise.
+   * Defaults on; pass false for best-effort callers that always want candidates.
+   */
+  abstain?: boolean;
+  /**
+   * Run a fast-model query-rewrite + multi-hop decomposition pass before
+   * retrieval (#276 / #1056). When the planner decomposes the query, each
+   * sub-query is retrieved independently and the pools are merged round-robin
+   * for coverage. Off by default (adds one fast LLM call and forces re-embed,
+   * which discards a precomputed weighted embedding).
+   */
+  rewrite?: boolean;
+  /**
+   * Rank merged candidates with the #1054 score-fusion model. Defaults on;
+   * disable to use the pre-fusion RRF/Cohere legacy scorer.
+   */
+  scoreFusion?: boolean;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
 const PER_TERM_FULLTEXT_LIMIT = 25;
+const ENTITY_PREFILTER_RECENT_TAIL_LIMIT = 50;
+const HIGH_CONFIDENCE_ENTITY_RESOLUTIONS = new Set<ResolvedEntity["confidence"]>([
+  "exact",
+  "alias",
+]);
 
 async function extractLexemes(
   query: string,
@@ -117,6 +154,73 @@ Message: "${query}"`,
   }
 }
 
+// ── Query planning: rewrite + multi-hop decomposition (#276 / #1056) ─────────
+
+const queryPlanSchema = z.object({
+  /** A standalone, search-optimized rewrite of the query (resolve pronouns, drop chit-chat). */
+  rewritten: z.string(),
+  /**
+   * For multi-hop questions only: 2–4 atomic sub-queries, each retrievable on
+   * its own. Empty for single-fact questions.
+   */
+  subQueries: z.array(z.string()).max(4),
+});
+
+export interface QueryPlan {
+  rewritten: string;
+  subQueries: string[];
+}
+
+/**
+ * Cheap gate so we don't pay a planner LLM call on every retrieval. Flags
+ * queries that plausibly need multiple independent facts (conjunctions,
+ * comparisons, several question marks).
+ */
+export function looksMultiHop(query: string): boolean {
+  const q = query.toLowerCase();
+  if ((query.match(/\?/g)?.length ?? 0) >= 2) return true;
+  return /\b(and|or|both|compare|versus|vs\.?|difference between|as well as|along with|each of|all of)\b/.test(
+    q,
+  );
+}
+
+/**
+ * Rewrite a query into a standalone search query and, for multi-hop questions,
+ * decompose it into atomic sub-queries (#276 rewrite, #1056 decomposition).
+ * Falls back to the original query on any failure — never throws.
+ */
+async function planQuery(
+  query: string,
+  onUsage?: RetrievalOptions["onUsage"],
+): Promise<QueryPlan> {
+  const fallback: QueryPlan = { rewritten: query, subQueries: [] };
+  try {
+    const model = await getFastModel();
+    const { object, usage } = await generateObject({
+      model,
+      schema: queryPlanSchema,
+      prompt: `Rewrite this message into a concise, standalone search query for a memory database: resolve pronouns, drop greetings/filler, keep the salient entities and intent.
+
+If — and only if — answering requires multiple INDEPENDENT facts (a multi-hop question, e.g. "who manages the project Alice started?"), also return 2–4 atomic sub-queries, each retrievable on its own. For a single-fact question, return an empty subQueries array.
+
+Message: "${query}"`,
+      temperature: 0,
+    });
+    onUsage?.((model as any)?.modelId ?? "retrieve", usage);
+    const rewritten = object.rewritten?.trim() || query;
+    const subQueries = (object.subQueries ?? [])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return { rewritten, subQueries };
+  } catch (error) {
+    logger.warn("Query planning failed, using original query", {
+      error: String(error).slice(0, 200),
+      query: query.substring(0, 100),
+    });
+    return fallback;
+  }
+}
+
 // ── Heuristic proper noun extraction (fallback) ─────────────────────────────
 
 function extractEntitiesHeuristic(query: string): string[] {
@@ -166,6 +270,123 @@ interface EntityMemoryResult {
   memoryEntityMap: Map<string, Set<string>>;
   /** Total number of distinct entities resolved */
   resolvedEntityCount: number;
+  /** Distinct resolved entity IDs, used to pre-filter the hybrid candidate pool */
+  resolvedEntityIds: string[];
+  /** True when query entities came from the heuristic fallback, not the LLM extractor. */
+  usedHeuristic: boolean;
+  /** Best read-only resolution confidence per distinct resolved entity. */
+  resolutionConfidences: ResolvedEntity["confidence"][];
+}
+
+export interface EntityPrefilterDecision {
+  apply: boolean;
+  reason:
+    | "disabled"
+    | "no-resolved-entities"
+    | "heuristic-resolution"
+    | "low-confidence-resolution"
+    | "sparse-entity-candidates"
+    | "applied";
+  minEntityMemories: number;
+}
+
+export function decideEntityPrefilter(
+  params: {
+    enabled: boolean;
+    resolvedEntityCount: number;
+    entityMemoryCount: number;
+    usedHeuristic: boolean;
+    resolutionConfidences: ResolvedEntity["confidence"][];
+    limit: number;
+  },
+): EntityPrefilterDecision {
+  const minEntityMemories = Math.max(1, params.limit);
+  if (!params.enabled) {
+    return { apply: false, reason: "disabled", minEntityMemories };
+  }
+  if (params.resolvedEntityCount === 0) {
+    return { apply: false, reason: "no-resolved-entities", minEntityMemories };
+  }
+  if (params.usedHeuristic) {
+    return { apply: false, reason: "heuristic-resolution", minEntityMemories };
+  }
+  if (
+    params.resolutionConfidences.length === 0 ||
+    params.resolutionConfidences.some((confidence) => !HIGH_CONFIDENCE_ENTITY_RESOLUTIONS.has(confidence))
+  ) {
+    return { apply: false, reason: "low-confidence-resolution", minEntityMemories };
+  }
+  if (params.entityMemoryCount < minEntityMemories) {
+    return { apply: false, reason: "sparse-entity-candidates", minEntityMemories };
+  }
+  return { apply: true, reason: "applied", minEntityMemories };
+}
+
+interface MemoryVisibilityOptions {
+  adminMode: boolean;
+  currentUserId: string;
+  channelId?: string;
+}
+
+function memoryColumn(columnName: string, tableAlias?: string) {
+  return sql.raw(tableAlias ? `${tableAlias}.${columnName}` : columnName);
+}
+
+function buildMemoryVisibilityFilter(
+  options: MemoryVisibilityOptions,
+  tableAlias?: string,
+) {
+  if (options.adminMode) return sql`TRUE`;
+
+  const sourceChannelType = memoryColumn("source_channel_type", tableAlias);
+  const sourceChannelId = memoryColumn("source_channel_id", tableAlias);
+  const shareable = memoryColumn("shareable", tableAlias);
+  const relatedUserIds = memoryColumn("related_user_ids", tableAlias);
+  const sameDmPrivateMemory = options.channelId
+    ? sql`(
+        ${sourceChannelType} = 'dm'
+        AND ${sourceChannelId} = ${options.channelId}
+        AND ${relatedUserIds} @> ARRAY[${options.currentUserId}]::text[]
+      )`
+    : sql`FALSE`;
+
+  return sql`(
+    ${sourceChannelType} != 'dm'
+    OR ${shareable} = 1
+    OR ${sameDmPrivateMemory}
+  )`;
+}
+
+function buildMemoryBaseFilter(
+  minRelevanceScore: number,
+  workspaceId?: string,
+  tableAlias?: string,
+  requireEmbedding = true,
+  asOf?: Date,
+) {
+  const embedding = memoryColumn("embedding", tableAlias);
+  const relevanceScore = memoryColumn("relevance_score", tableAlias);
+  const status = memoryColumn("status", tableAlias);
+  const validFrom = memoryColumn("valid_from", tableAlias);
+  const validUntil = memoryColumn("valid_until", tableAlias);
+  const workspace = memoryColumn("workspace_id", tableAlias);
+  const workspaceFilter = workspaceId
+    ? sql`${workspace} = ${workspaceId}`
+    : sql`TRUE`;
+
+  const embeddingFilter = requireEmbedding ? sql`${embedding} IS NOT NULL` : sql`TRUE`;
+
+  // As-of (bench): temporal validity replaces the live status filter so a
+  // question sees the exact memory state at its instant on the timeline.
+  // Production (no asOf) keeps the live status filter.
+  const lifecycleFilter = asOf
+    ? sql`${validFrom} <= ${asOf} AND (${validUntil} IS NULL OR ${validUntil} > ${asOf})`
+    : sql`${status} IN ('current', 'disputed')`;
+
+  return sql`${embeddingFilter}
+    AND ${relevanceScore} >= ${minRelevanceScore}
+    AND ${lifecycleFilter}
+    AND ${workspaceFilter}`;
 }
 
 /**
@@ -175,12 +396,19 @@ interface EntityMemoryResult {
 async function fetchEntityMatchedMemories(
   query: string,
   minRelevanceScore: number,
-  currentUserId?: string,
+  visibility: MemoryVisibilityOptions,
   workspaceId?: string,
   onUsage?: RetrievalOptions["onUsage"],
   asOf?: Date,
 ): Promise<EntityMemoryResult> {
-  const emptyResult: EntityMemoryResult = { memories: [], memoryEntityMap: new Map(), resolvedEntityCount: 0 };
+  const emptyResult: EntityMemoryResult = {
+    memories: [],
+    memoryEntityMap: new Map(),
+    resolvedEntityCount: 0,
+    resolvedEntityIds: [],
+    usedHeuristic: false,
+    resolutionConfidences: [],
+  };
 
   try {
     // Step 1: Extract entities via LLM
@@ -201,7 +429,9 @@ async function fetchEntityMatchedMemories(
     const resolutions = await Promise.all(
       extractedEntities.map(async (entity) => {
         const resolved = await resolveEntityReadOnly(entity.name, entity.type, workspaceId);
-        return resolved ? { entityId: resolved.entityId, name: entity.name } : null;
+        return resolved
+          ? { entityId: resolved.entityId, name: entity.name, confidence: resolved.confidence }
+          : null;
       }),
     );
     const resolvedByEntity = resolutions.filter((r): r is NonNullable<typeof r> => r !== null);
@@ -212,39 +442,50 @@ async function fetchEntityMatchedMemories(
       const heuristicResolutions = await Promise.all(
         heuristicNames.map(async (name) => {
           const resolved = await resolveEntityReadOnly(name, "company" as EntityType, workspaceId);
-          return resolved ? { entityId: resolved.entityId, name } : null;
+          return resolved
+            ? { entityId: resolved.entityId, name, confidence: resolved.confidence }
+            : null;
         }),
       );
-      resolvedByEntity.push(...heuristicResolutions.filter((r): r is NonNullable<typeof r> => r !== null));
+      const heuristicResolved = heuristicResolutions.filter((r): r is NonNullable<typeof r> => r !== null);
+      if (heuristicResolved.length > 0) usedHeuristic = true;
+      resolvedByEntity.push(...heuristicResolved);
     }
 
     if (resolvedByEntity.length === 0) return emptyResult;
 
     const entityIds = [...new Set(resolvedByEntity.map((r) => r.entityId))];
+    const confidenceRank: Record<ResolvedEntity["confidence"], number> = {
+      exact: 0,
+      alias: 1,
+      fuzzy: 2,
+      new: 3,
+    };
+    const confidenceByEntityId = new Map<string, ResolvedEntity["confidence"]>();
+    for (const resolution of resolvedByEntity) {
+      const existing = confidenceByEntityId.get(resolution.entityId);
+      if (
+        !existing ||
+        confidenceRank[resolution.confidence] < confidenceRank[existing]
+      ) {
+        confidenceByEntityId.set(resolution.entityId, resolution.confidence);
+      }
+    }
+    const resolutionConfidences = entityIds.map(
+      (id) => confidenceByEntityId.get(id) ?? "fuzzy",
+    );
 
     logger.debug("Entity resolution for retrieval", {
       extracted: extractedEntities.length,
       resolved: entityIds.length,
       usedHeuristic,
+      resolutionConfidences,
       query: query.substring(0, 100),
     });
 
     // Step 4: Fetch memories linked to resolved entities, tracking which entity each memory came from
-    const privacyFilter = currentUserId
-      ? sql`AND (
-          m.source_channel_type != 'dm'
-          OR m.shareable = 1
-          OR m.related_user_ids @> ARRAY[${currentUserId}]::text[]
-        )`
-      : sql``;
-
-    const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
-
-    // As-of (bench): temporal validity replaces the live status filter so a
-    // question sees the exact memory state at its instant on the timeline.
-    const lifecycleFilter = asOf
-      ? sql`AND m.valid_from <= ${asOf} AND (m.valid_until IS NULL OR m.valid_until > ${asOf})`
-      : sql`AND m.status IN ('current', 'disputed')`;
+    const visibilityFilter = buildMemoryVisibilityFilter(visibility, "m");
+    const memoryBaseFilter = buildMemoryBaseFilter(minRelevanceScore, workspaceId, "m", false, asOf);
 
     const entityIdList = sql.join(entityIds.map(id => sql`${id}`), sql`, `);
 
@@ -253,10 +494,8 @@ async function fetchEntityMatchedMemories(
       FROM memories m
       JOIN memory_entities me ON m.id = me.memory_id
       WHERE me.entity_id IN (${entityIdList})
-        AND m.relevance_score >= ${minRelevanceScore}
-        ${lifecycleFilter}
-        ${privacyFilter}
-        ${workspaceMemoryFilter}
+        AND ${memoryBaseFilter}
+        AND ${visibilityFilter}
       ORDER BY m.relevance_score DESC, m.created_at DESC
       LIMIT 50
     `);
@@ -315,6 +554,9 @@ async function fetchEntityMatchedMemories(
       memories: memoriesList,
       memoryEntityMap,
       resolvedEntityCount: entityIds.length,
+      resolvedEntityIds: entityIds,
+      usedHeuristic,
+      resolutionConfidences,
     };
   } catch (error) {
     logger.warn("Entity-first retrieval failed, falling back to hybrid search only", {
@@ -325,32 +567,384 @@ async function fetchEntityMatchedMemories(
   }
 }
 
+/** A merged retrieval candidate carrying every raw fusion signal. */
+interface FusionCandidate {
+  memory: Memory;
+  /** Cosine similarity (1 - distance); 0 for entity-only candidates. */
+  similarity: number;
+  /** Raw BM25 (ts_rank_cd) over the OR of query lexemes; 0 when none matched. */
+  bm25: number;
+  /** Fraction of resolved query entities this memory is linked to (0..1). */
+  entityBoost: number;
+  /** 1 when the memory's source channel equals the query channel. */
+  channelBoost: number;
+}
+
+interface LegacyCandidate extends FusionCandidate {
+  /** Reciprocal-rank-fusion score emitted by the hybrid SQL CTE. */
+  rrfScore: number;
+}
+
 /**
- * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
+ * Explicit score-fusion weights (#1054). Tuned against the bench; kept in one
+ * object so a single edit + bench run re-tunes the ranker. Semantic dominates,
+ * BM25 is the lexical anchor, entity + graph-link signals carry the multi-hop
+ * coverage, and recency/relevance/channel are light tie-breakers.
+ */
+const FUSION_WEIGHTS = {
+  semantic: 0.42,
+  bm25: 0.18,
+  entity: 0.15,
+  link: 0.1,
+  recency: 0.05,
+  relevance: 0.05,
+  channel: 0.05,
+} as const;
+
+/** Sigmoid shaping for raw BM25 (ts_rank_cd values cluster low and positive). */
+const BM25_SIGMOID_SCALE = 12;
+const BM25_SIGMOID_MID = 0.08;
+/** How many top base-scoring candidates seed the graph-expansion (link) boost. */
+const LINK_ANCHOR_COUNT = 5;
+
+/**
+ * Post-fusion abstention floors (#1045). A candidate set is "evidence" only if
+ * at least one signal clears a floor: a real cosine match, any lexical (BM25)
+ * hit, or a resolved entity link. Min-max normalization makes the *fused* score
+ * useless as an absolute confidence gauge (the best of pure noise normalizes to
+ * 1), so the gate inspects RAW signals. Floors are deliberately conservative to
+ * avoid spurious abstentions on answerable questions (epic acceptance #4).
+ */
+const ABSTAIN_SIM_FLOOR = 0.3;
+const ABSTAIN_BM25_FLOOR = 0;
+
+/**
+ * True when the merged candidate pool carries at least one real retrieval
+ * signal. When false, the caller should abstain (return no memories) rather
+ * than inject low-relevance noise. Pure + exported for testing.
+ */
+export function hasRetrievalEvidence(
+  candidates: Array<{ similarity: number; bm25: number }>,
+  resolvedEntityCount: number,
+): boolean {
+  if (resolvedEntityCount > 0) return true;
+  let maxSim = 0;
+  let maxBm25 = 0;
+  for (const c of candidates) {
+    if (c.similarity > maxSim) maxSim = c.similarity;
+    if (c.bm25 > maxBm25) maxBm25 = c.bm25;
+  }
+  return maxSim >= ABSTAIN_SIM_FLOOR || maxBm25 > ABSTAIN_BM25_FLOOR;
+}
+
+function sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
+/** Min-max normalize to [0,1]; collapses to a clamp when the range is ~0. */
+function minMaxNormalize(values: number[]): number[] {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const range = max - min;
+  if (!Number.isFinite(range) || range < 1e-9) {
+    return values.map((v) => Math.max(0, Math.min(1, v)));
+  }
+  return values.map((v) => (v - min) / range);
+}
+
+export interface FusionResult {
+  memory: Memory;
+  score: number;
+}
+
+/**
+ * Fuse merged candidates into a single ranked list via explicit weighted score
+ * fusion (#1054), replacing the old "RRF → Cohere-as-default" path.
+ *
+ * Signals: min-max-normalized cosine similarity (or a Cohere override),
+ * sigmoid-normalized BM25, entity-match fraction, a graph-expansion boost
+ * (candidates linked from the top base-scoring anchors — the multi-hop signal),
+ * plus light recency / relevance / channel tie-breakers.
+ */
+export function fuseCandidates(
+  candidates: FusionCandidate[],
+  opts: { channelId?: string; now: number; semanticOverride?: number[] },
+): FusionResult[] {
+  if (candidates.length === 0) return [];
+  const { channelId, now, semanticOverride } = opts;
+
+  const semNorm = semanticOverride
+    ? semanticOverride.map((v) => Math.max(0, Math.min(1, v)))
+    : minMaxNormalize(candidates.map((c) => Math.max(0, c.similarity)));
+  const bm25Norm = candidates.map((c) =>
+    c.bm25 > 0 ? sigmoid(BM25_SIGMOID_SCALE * (c.bm25 - BM25_SIGMOID_MID)) : 0,
+  );
+
+  // Base score (no graph-link term) → pick anchors → union their linked ids.
+  const baseScore = candidates.map(
+    (c, i) =>
+      FUSION_WEIGHTS.semantic * semNorm[i] +
+      FUSION_WEIGHTS.bm25 * bm25Norm[i] +
+      FUSION_WEIGHTS.entity * c.entityBoost,
+  );
+  const anchorIdx = candidates
+    .map((_, i) => i)
+    .sort((a, b) => baseScore[b] - baseScore[a])
+    .slice(0, LINK_ANCHOR_COUNT);
+  const linkedFromAnchors = new Set<string>();
+  for (const i of anchorIdx) {
+    for (const id of candidates[i].memory.linkedMemoryIds ?? []) {
+      linkedFromAnchors.add(id);
+    }
+  }
+
+  const channelWeight = channelId ? FUSION_WEIGHTS.channel : 0;
+
+  const scored = candidates.map((c, i) => {
+    const ageDays = (now - new Date(c.memory.createdAt).getTime()) / 86_400_000;
+    const recency = Math.max(0, 1 - ageDays / 365);
+    const linkBoost = linkedFromAnchors.has(c.memory.id) ? 1 : 0;
+
+    const score =
+      FUSION_WEIGHTS.semantic * semNorm[i] +
+      FUSION_WEIGHTS.bm25 * bm25Norm[i] +
+      FUSION_WEIGHTS.entity * c.entityBoost +
+      FUSION_WEIGHTS.link * linkBoost +
+      FUSION_WEIGHTS.recency * recency +
+      FUSION_WEIGHTS.relevance * c.memory.relevanceScore +
+      channelWeight * c.channelBoost;
+
+    return { memory: c.memory, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+async function rankLegacyCandidates(
+  candidates: LegacyCandidate[],
+  opts: { query: string; limit: number; now: number },
+): Promise<{ memories: Memory[]; method: string; topScore?: number }> {
+  const { query, limit, now } = opts;
+  const rerankingModel = await getRerankingModel();
+
+  if (rerankingModel && candidates.length > 0) {
+    const { ranking } = await rerankMemories({
+      model: rerankingModel,
+      query,
+      documents: candidates.map((r) => r.memory.content),
+      topN: candidates.length,
+    });
+
+    const ENTITY_WEIGHT = 0.1;
+    const scored = ranking.map((item) => {
+      const result = candidates[item.originalIndex];
+      const memory = result.memory;
+      const ageMs = now - new Date(memory.createdAt).getTime();
+      const ageDays = ageMs / 86_400_000;
+      const recencyBoost = Math.max(0, 1 - ageDays / 365);
+
+      const score =
+        item.score * (0.8 - ENTITY_WEIGHT / 2) +
+        recencyBoost * (0.2 - ENTITY_WEIGHT / 2) +
+        result.entityBoost * ENTITY_WEIGHT;
+
+      return {
+        memory,
+        score,
+        originalIndex: item.originalIndex,
+        cohereScore: item.score,
+      };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const reranking = scored
+      .slice(0, limit)
+      .map(
+        (s, newRank) =>
+          `${s.originalIndex + 1} -> ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`,
+      )
+      .join(", ");
+    logger.debug(`Reranking details: ${reranking}`);
+
+    return {
+      memories: scored.slice(0, limit).map((s) => s.memory),
+      method: "hybrid-rrf+cohere-rerank",
+      topScore: scored[0]?.score,
+    };
+  }
+
+  const RRF_K = 60;
+  const maxRrfScore = 2 / (1 + RRF_K);
+
+  const scored = candidates.map((candidate) => {
+    const { memory, similarity, rrfScore, entityBoost } = candidate;
+    const ageMs = now - new Date(memory.createdAt).getTime();
+    const ageDays = ageMs / 86_400_000;
+    const recencyBoost = Math.max(0, 1 - ageDays / 365);
+
+    const normalizedRrf =
+      maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
+    const score =
+      normalizedRrf * 0.4 +
+      similarity * 0.2 +
+      memory.relevanceScore * 0.1 +
+      recencyBoost * 0.1 +
+      entityBoost * 0.2;
+
+    return { memory, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return {
+    memories: scored.slice(0, limit).map((s) => s.memory),
+    method: "hybrid-rrf+legacy",
+    topScore: scored[0]?.score,
+  };
+}
+
+/**
+ * Round-robin merge of several ranked memory lists, de-duplicated by id. Takes
+ * one from each list in turn so every sub-query (operand) is represented in the
+ * merged top-`limit` — the multi-hop coverage property (#1056).
+ */
+export function mergeRoundRobin(lists: Memory[][], limit: number): Memory[] {
+  const seen = new Set<string>();
+  const merged: Memory[] = [];
+  const maxLen = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < maxLen && merged.length < limit; i++) {
+    for (const list of lists) {
+      if (merged.length >= limit) break;
+      const m = list[i];
+      if (m && !seen.has(m.id)) {
+        seen.add(m.id);
+        merged.push(m);
+      }
+    }
+  }
+  return merged;
+}
+
+/**
+ * Public retrieval entry point. By default delegates to a single fused pass
+ * ({@link retrieveSingleQuery}). When `rewrite` is set, a fast-model planner
+ * (#276) first rewrites the query and, for multi-hop questions, decomposes it
+ * into atomic sub-queries (#1056) that are retrieved independently and merged
+ * round-robin so every operand is covered.
+ */
+export async function retrieveMemories(
+  options: RetrievalOptions,
+): Promise<Memory[]> {
+  const rewriteEnabled =
+    Boolean(options.rewrite) && isMemV3RetrievalFlagEnabled("queryRewrite");
+  if (!rewriteEnabled) {
+    return retrieveSingleQuery(options);
+  }
+
+  const { query, limit = 20, onUsage } = options;
+  // Only pay the planner call when the query plausibly needs it.
+  const plan = looksMultiHop(query)
+    ? await planQuery(query, onUsage)
+    : { rewritten: query, subQueries: [] as string[] };
+
+  if (plan.subQueries.length >= 2) {
+    // Decomposed multi-hop: retrieve each operand independently (don't abstain
+    // per-operand or reuse a stale precomputed embedding), then merge for
+    // coverage. Over-fetch per sub-query so the round-robin has depth.
+    const perQueryLimit = Math.max(5, Math.ceil(limit / plan.subQueries.length) + 2);
+    const lists = await Promise.all(
+      plan.subQueries.map((sub) =>
+        retrieveSingleQuery({
+          ...options,
+          query: sub,
+          queryEmbedding: undefined,
+          limit: perQueryLimit,
+          abstain: false,
+          rewrite: false,
+        }),
+      ),
+    );
+    const merged = mergeRoundRobin(lists, limit);
+    logger.info(`Multi-hop retrieval: ${plan.subQueries.length} sub-queries → ${merged.length} merged`, {
+      query: query.substring(0, 100),
+      subQueries: plan.subQueries,
+    });
+    if (merged.length > 0) return merged;
+    // Fall through to a single rewritten pass if decomposition found nothing.
+  }
+
+  // Single (rewritten) pass. Re-embed since the query text changed.
+  return retrieveSingleQuery({
+    ...options,
+    query: plan.rewritten,
+    queryEmbedding: plan.rewritten === query ? options.queryEmbedding : undefined,
+    rewrite: false,
+  });
+}
+
+/**
+ * Single-pass retrieval: hybrid search (vector + full-text) merged with
+ * entity-first retrieval, ranked by explicit score fusion (#1054), with the
+ * #1045 abstention gate. The public `retrieveMemories` orchestrator wraps this
+ * with optional query rewrite / multi-hop decomposition (#276 / #1056).
  *
  * Flow:
  * 0. Entity-first retrieval: resolve entity names from the query via aliases, fetch linked memories
  * 1. Embed the user's message
  * 2. Extract up to 8 positional lexemes from Postgres full-text parsing
- * 3. Run hybrid SQL: pgvector + per-term full-text lanes merged by best rank
- * 4. Fuse results via Reciprocal Rank Fusion (RRF) with FULL OUTER JOIN
- * 5. Merge entity-matched + hybrid results, apply entity boost
- * 6. Rerank top candidates with Cohere (or fall back to legacy scoring)
+ * 3. Run hybrid SQL: pgvector + per-term full-text lanes + raw BM25 + linked ids
+ * 4. Merge entity-matched + hybrid results
+ * 5. Score fusion: semantic + BM25 + entity + graph-link + recency/relevance/channel
+ * 6. (optional) Cohere rerank override behind the `rerank` flag
  * 7. Return top-K memories
  */
-export async function retrieveMemories(
+async function retrieveSingleQuery(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage, asOf } = options;
+  const {
+    query,
+    queryEmbedding: precomputed,
+    currentUserId,
+    channelId,
+    channelType,
+    limit = 20,
+    minRelevanceScore = 0.1,
+    adminMode = false,
+    workspaceId,
+    prefilter = true,
+    rerank = false,
+    abstain = true,
+    scoreFusion = true,
+    onUsage,
+    asOf,
+  } = options;
   const start = Date.now();
+  const visibility = { adminMode, currentUserId, channelId };
+  const prefilterEnabled =
+    prefilter && isMemV3RetrievalFlagEnabled("prefilter");
+  const abstentionEnabled =
+    abstain && isMemV3RetrievalFlagEnabled("abstention");
+  const scoreFusionEnabled =
+    scoreFusion && isMemV3RetrievalFlagEnabled("scoreFusion");
 
   try {
     const [queryEmbedding, lexemes, entityResult] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
       extractLexemes(query),
-      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId, onUsage, asOf),
+      fetchEntityMatchedMemories(query, minRelevanceScore, visibility, workspaceId, onUsage, asOf),
     ]);
-    const { memories: entityMemories, memoryEntityMap, resolvedEntityCount } = entityResult;
+    const {
+      memories: entityMemories,
+      memoryEntityMap,
+      resolvedEntityCount,
+      resolvedEntityIds,
+      usedHeuristic,
+      resolutionConfidences,
+    } = entityResult;
 
     const CANDIDATE_POOL_SIZE = Math.max(25, limit);
     // Embed vector as a raw SQL literal instead of a parameterized value.
@@ -359,32 +953,78 @@ export async function retrieveMemories(
     // values are finite numbers.
     const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
-    const privacyFilter = adminMode
-      ? sql`TRUE`
-      : sql`(
-        ${memories.sourceChannelType} != 'dm'
-        OR ${memories.shareable} = 1
-        OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
-      )`;
-
-    // As-of (bench): the hybrid lane keys on temporal validity instead of live
-    // status so it matches the entity lane and stays deterministic under
-    // concurrent extraction. Production (no asOf) keeps the live status filter.
-    const statusFilter = asOf
-      ? sql`${memories.validFrom} <= ${asOf} AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > ${asOf})`
-      : sql`${memories.status} IN ('current', 'disputed')`;
-    // Multi-tenancy: scope the hybrid SQL lane to the workspace when one is
-    // supplied. Without this, the vector + full-text RRF query would see
-    // every workspace's memories. The entity-first lane already filters by
-    // workspace_id; this brings the hybrid lane in line.
-    const workspaceFilter = workspaceId
-      ? sql`${memories.workspaceId} = ${workspaceId}`
-      : sql`TRUE`;
-    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter} AND ${workspaceFilter}`;
+    const privacyFilter = buildMemoryVisibilityFilter(visibility);
+    const baseFilter = buildMemoryBaseFilter(minRelevanceScore, workspaceId, undefined, true, asOf);
+    const entityPrefilter = decideEntityPrefilter({
+      enabled: prefilterEnabled,
+      resolvedEntityCount,
+      entityMemoryCount: entityMemories.length,
+      usedHeuristic,
+      resolutionConfidences,
+      limit,
+    });
+    const shouldPrefilterByEntity = entityPrefilter.apply;
+    const entityPrefilterIds = shouldPrefilterByEntity
+      ? sql.join(resolvedEntityIds.map(id => sql`${id}`), sql`, `)
+      : sql``;
+    // Keep prefilter as a precision hint, not a hard recall cliff: only use it
+    // for high-yield exact/alias resolutions, and always union in global cosine
+    // top-k so semantic matches are still eligible for final scoring.
+    const candidatePoolCte = shouldPrefilterByEntity
+      ? sql`
+        global_cosine_candidates AS (
+          SELECT id
+          FROM memories
+          WHERE ${baseFilter} AND ${privacyFilter}
+          ORDER BY embedding <=> ${vectorSql}
+          LIMIT ${CANDIDATE_POOL_SIZE}
+        ),
+        candidate_pool AS (
+          SELECT DISTINCT me.memory_id AS id
+          FROM memory_entities me
+          JOIN memories m ON m.id = me.memory_id
+          WHERE me.entity_id IN (${entityPrefilterIds})
+            AND ${buildMemoryBaseFilter(minRelevanceScore, workspaceId, "m", true, asOf)}
+            AND ${buildMemoryVisibilityFilter(visibility, "m")}
+          UNION
+          SELECT id
+          FROM (
+            SELECT id
+            FROM memories
+            WHERE ${baseFilter} AND ${privacyFilter}
+            ORDER BY created_at DESC
+            LIMIT ${ENTITY_PREFILTER_RECENT_TAIL_LIMIT}
+          ) recent_global_memories
+          UNION
+          SELECT id
+          FROM global_cosine_candidates
+        ),
+      `
+      : sql``;
+    const candidatePoolFilter = shouldPrefilterByEntity
+      ? sql`AND id IN (SELECT id FROM candidate_pool)`
+      : sql``;
+    const channelBoostSql = channelId
+      ? sql`CASE WHEN m.source_channel_id = ${channelId} THEN 1.0 ELSE 0.0 END`
+      : sql`0.0`;
+    // Raw BM25 relevance over the OR of all query lexemes, surfaced so the
+    // fusion ranker can sigmoid-normalize it (#1054). 0 when there are no
+    // lexemes to match.
+    const combinedTsQuery = lexemes.join(" | ");
+    const bm25Sql = lexemes.length > 0
+      ? sql`COALESCE(ts_rank_cd(m.search_vector, to_tsquery('english', ${combinedTsQuery}), 4), 0.0)`
+      : sql`0.0`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
       query: query.substring(0, 100),
+      prefilter: shouldPrefilterByEntity,
+      prefilterReason: entityPrefilter.reason,
+      entityMemoryCount: entityMemories.length,
+      minEntityPrefilterMemories: entityPrefilter.minEntityMemories,
+      resolvedEntityCount,
+      resolutionConfidences,
+      channelType,
     });
 
     const fulltextSearchCte = lexemes.length === 0
@@ -406,6 +1046,7 @@ export async function retrieveMemories(
               WHERE search_vector @@ to_tsquery('english', ${lexeme})
                 AND ${baseFilter}
                 AND ${privacyFilter}
+                ${candidatePoolFilter}
               ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
               LIMIT ${PER_TERM_FULLTEXT_LIMIT}
             )
@@ -432,10 +1073,11 @@ export async function retrieveMemories(
       })();
 
     const hybridQuery = sql`
-      WITH vector_search AS (
+      WITH ${candidatePoolCte}
+      vector_search AS (
         SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${vectorSql}) AS rank
         FROM memories
-        WHERE ${baseFilter} AND ${privacyFilter}
+        WHERE ${baseFilter} AND ${privacyFilter} ${candidatePoolFilter}
         ORDER BY embedding <=> ${vectorSql}
         LIMIT ${CANDIDATE_POOL_SIZE}
       ),
@@ -443,7 +1085,9 @@ export async function retrieveMemories(
       SELECT
         m.*,
         COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
-        (1 - (m.embedding <=> ${vectorSql})) AS similarity
+        (1 - (m.embedding <=> ${vectorSql})) AS similarity,
+        ${bm25Sql} AS bm25,
+        ${channelBoostSql} AS channel_boost
       FROM (
         SELECT COALESCE(v.id, f.id) AS id, v.rank AS vector_rank, f.rank AS fulltext_rank
         FROM vector_search v
@@ -476,6 +1120,7 @@ export async function retrieveMemories(
         sourceThreadTs: row.source_thread_ts ?? null,
         sourceChannelId: row.source_channel_id ?? null,
         relatedUserIds: row.related_user_ids ?? [],
+        linkedMemoryIds: row.linked_memory_ids ?? [],
         embedding: row.embedding,
         relevanceScore: row.relevance_score ?? 1,
         shareable: row.shareable ?? 0,
@@ -492,6 +1137,8 @@ export async function retrieveMemories(
       } as Memory,
       similarity: Number(row.similarity ?? 0),
       rrfScore: Number(row.rrf_score ?? 0),
+      bm25: Number(row.bm25 ?? 0),
+      channelBoost: Number(row.channel_boost ?? 0),
     }));
 
     // Merge entity-matched memories; track entity boost as a separate signal
@@ -512,7 +1159,9 @@ export async function retrieveMemories(
         memory: m,
         similarity: 0,
         rrfScore: ENTITY_RRF_BOOST,
+        bm25: 0,
         entityBoost: entityBoostScore(m.id),
+        channelBoost: channelId && m.sourceChannelId === channelId ? 1 : 0,
       }));
 
     const results = hybridResults.map((r) => ({
@@ -524,85 +1173,86 @@ export async function retrieveMemories(
     if (entityMemories.length > 0) {
       logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
         resolvedEntities: resolvedEntityCount,
+        prefilter: shouldPrefilterByEntity,
+        prefilterReason: entityPrefilter.reason,
         query: query.substring(0, 100),
       });
     }
 
-    const rerankingModel = await getRerankingModel();
     const now = Date.now();
-    let topMemories: Memory[];
 
-    if (rerankingModel && results.length > 0) {
-      const documents = results.map((r) => r.memory.content);
-
-      const { ranking } = await rerank({
-        model: rerankingModel,
-        query,
-        documents,
-        topN: results.length,
-      });
-
-      const ENTITY_WEIGHT = 0.1;
-      const scored = ranking.map((item) => {
-        const result = results[item.originalIndex];
-        const memory = result.memory;
-        const ageMs = now - new Date(memory.createdAt).getTime();
-        const ageDays = ageMs / (1000 * 60 * 60 * 24);
-        const recencyBoost = Math.max(0, 1 - ageDays / 365);
-
-        const score = item.score * (0.8 - ENTITY_WEIGHT / 2) + recencyBoost * (0.2 - ENTITY_WEIGHT / 2) + result.entityBoost * ENTITY_WEIGHT;
-        return { memory, score, originalIndex: item.originalIndex, cohereScore: item.score };
-      });
-
-      scored.sort((a, b) => b.score - a.score);
-      topMemories = scored.slice(0, limit).map((s) => s.memory);
-
+    // #1045: abstain before ranking when no candidate clears the raw-signal
+    // evidence floors — injecting nothing beats injecting noise.
+    if (abstentionEnabled && !hasRetrievalEvidence(results, resolvedEntityCount)) {
       logger.info(
-        `Reranked ${results.length} memories → top ${topMemories.length} in ${Date.now() - start}ms`,
+        `Abstaining: no candidate cleared evidence floors in ${Date.now() - start}ms`,
         {
           query: query.substring(0, 100),
           totalCandidates: results.length,
-          lexemeCount: lexemes.length,
-          method: "hybrid-rrf+cohere-rerank",
+          resolvedEntityCount,
         },
       );
-      const reranking = scored.slice(0, limit).map((s, newRank) =>
-        `${s.originalIndex + 1} → ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`
-      ).join(", ");
-      logger.debug(`Reranking details: ${reranking}`);
-    } else {
-      const RRF_K = 60;
-      const maxRrfScore = 2 / (1 + RRF_K);
-
-      const scored = results.map(({ memory, similarity, rrfScore, entityBoost }) => {
-        const ageMs = now - new Date(memory.createdAt).getTime();
-        const ageDays = ageMs / (1000 * 60 * 60 * 24);
-        const recencyBoost = Math.max(0, 1 - ageDays / 365);
-
-        const normalizedRrf = maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
-        const score =
-          normalizedRrf * 0.4 +
-          similarity * 0.2 +
-          memory.relevanceScore * 0.1 +
-          recencyBoost * 0.1 +
-          entityBoost * 0.2;
-
-        return { memory, score };
-      });
-
-      scored.sort((a, b) => b.score - a.score);
-      topMemories = scored.slice(0, limit).map((s) => s.memory);
-
-      logger.info(
-        `Retrieved ${topMemories.length} memories (hybrid+legacy scoring) in ${Date.now() - start}ms`,
-        {
-          query: query.substring(0, 100),
-          totalCandidates: results.length,
-          lexemeCount: lexemes.length,
-          method: "hybrid-rrf+legacy",
-        },
-      );
+      return [];
     }
+
+    if (!scoreFusionEnabled) {
+      const legacy = await rankLegacyCandidates(results, { query, limit, now });
+      logger.info(
+        `Retrieved ${legacy.memories.length} memories (${legacy.method}) in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          lexemeCount: lexemes.length,
+          prefilter: shouldPrefilterByEntity,
+          prefilterReason: entityPrefilter.reason,
+          channelId,
+          topScore: legacy.topScore?.toFixed(3),
+          method: legacy.method,
+          scoreFusion: false,
+        },
+      );
+      return legacy.memories;
+    }
+
+    // Optional Cohere semantic override. Cohere is no longer the default ranker
+    // (#1054) — fusion is. When `rerank` is requested and a model is available,
+    // its relevance score replaces the cosine semantic signal in the fusion.
+    let semanticOverride: number[] | undefined;
+    if (rerank && results.length > 0) {
+      const rerankingModel = await getRerankingModel();
+      if (rerankingModel) {
+        const { ranking } = await rerankMemories({
+          model: rerankingModel,
+          query,
+          documents: results.map((r) => r.memory.content),
+          topN: results.length,
+        });
+        semanticOverride = new Array<number>(results.length).fill(0);
+        for (const item of ranking) semanticOverride[item.originalIndex] = item.score;
+      }
+    }
+
+    const fused = fuseCandidates(results, {
+      channelId,
+      now,
+      semanticOverride,
+    });
+
+    const topMemories = fused.slice(0, limit).map((f) => f.memory);
+
+    logger.info(
+      `Retrieved ${topMemories.length} memories (score-fusion${semanticOverride ? "+cohere" : ""}) in ${Date.now() - start}ms`,
+      {
+        query: query.substring(0, 100),
+        totalCandidates: results.length,
+        lexemeCount: lexemes.length,
+        prefilter: shouldPrefilterByEntity,
+        prefilterReason: entityPrefilter.reason,
+        channelId,
+        topScore: fused[0]?.score.toFixed(3),
+        method: semanticOverride ? "score-fusion+cohere" : "score-fusion",
+      },
+    );
 
     return topMemories;
   } catch (error: any) {

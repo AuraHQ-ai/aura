@@ -52,6 +52,8 @@ export interface HistoryEntry {
   runtimeMs: number;
   costUsd: number | null;
   models: { extraction: string; answerer: string; judge: string } | null;
+  /** Runtime retrieval bisect flags (default-on; "0" means disabled). */
+  retrievalFlags?: Record<string, "0" | "1"> | null;
   scores: HistoryScore[];
   overall: { qa: number | null; recall: number | null; n: number };
   note?: string;
@@ -75,6 +77,7 @@ export interface RecordRunInput {
   totalDurationMs: number;
   costUsd?: number | null;
   models?: { extraction: string; answerer: string; judge: string } | null;
+  retrievalFlags?: Record<string, "0" | "1"> | null;
   note?: string;
   prNumber?: number | null;
 }
@@ -195,6 +198,7 @@ export function buildHistoryEntry(input: RecordRunInput): HistoryEntry {
     runtimeMs: input.totalDurationMs,
     costUsd: input.costUsd ?? null,
     models: input.models ?? null,
+    retrievalFlags: input.retrievalFlags ?? null,
     scores: pivotScores(input.scores),
     overall: computeOverall(input.scores),
     ...(input.note ? { note: input.note } : {}),
@@ -285,6 +289,13 @@ export function renderBenchReadme(
   if (latest.models) {
     lines.push(
       `- models: extraction \`${latest.models.extraction}\` · answerer \`${latest.models.answerer}\` · judge \`${latest.models.judge}\``,
+    );
+  }
+  if (latest.retrievalFlags) {
+    lines.push(
+      `- MEMv3 flags: ${Object.entries(latest.retrievalFlags)
+        .map(([key, value]) => `\`${key}=${value}\``)
+        .join(" ")}`,
     );
   }
   lines.push(
