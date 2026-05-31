@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
-  storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
+  storeMemories, supersedeMemory, toDbChannelType, checkDuplicates, updateLinkedMemoryIds,
   fetchThreadMessages, updateMemoryContent, archiveMemory,
   findContradictionCandidates,
 } from "./store.js";
@@ -840,6 +840,8 @@ async function runReconciliationCore(
         await db.delete(memoryEntities).where(eq(memoryEntities.memoryId, memoryId));
         const resolved = await resolveEntities(extractedEntities, workspaceId, model);
         await linkMemoryEntities(memoryId, resolved);
+        // Refresh graph links (#1054) now that this memory's entities changed.
+        await updateLinkedMemoryIds(workspaceId, [memoryId]);
       }
     } catch (entityError) {
       logger.warn("Failed to refresh entity links for updated memory", {
@@ -1082,6 +1084,10 @@ async function processCreateOperations(
       }
     }
   }
+
+  // #1054: materialize shared-entity graph links for the new batch so the
+  // retrieval ranker can apply a multi-hop graph-expansion boost.
+  await updateLinkedMemoryIds(workspaceId, memoryIds.filter(Boolean));
 
   logger.info(`${source === "reconciliation" ? "Reconciliation" : "Single-exchange extraction"} created ${newMemories.length} memories in ${Date.now() - start}ms`, {
     types: newMemories.map((m) => m.type),
