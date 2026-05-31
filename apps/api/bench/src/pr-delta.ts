@@ -9,9 +9,10 @@
  * "Comparable" means the same corpus AND the exact same sampled case set
  * (`corpusHash` + `caseSetHash`), plus the same dataset set and subset. Because
  * the sampler is deterministic (seeded `stratifiedSample` in fixtures.ts), a PR
- * `medium/both` run and the base `medium/both` entry share a case set and diff
- * like-for-like. When no comparable baseline exists (first adoption, corpus or
- * subset change) we render absolute scores with no fake deltas.
+ * `medium/lme` leg diffs only against the base `medium/lme` entry, while
+ * `medium/locomo` diffs only against `medium/locomo`. When no comparable
+ * baseline exists (first adoption, corpus or subset change) we render absolute
+ * scores with no fake deltas.
  *
  * Everything here is pure (no DB, no network) so it is trivially unit-testable
  * and runs in a tiny node step in the workflow.
