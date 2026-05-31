@@ -97,6 +97,7 @@ export async function assemblePrompt(
     conversationId: context.channelId,
     threadId: context.threadTs,
     messageText: queryText,
+    latestMessageText: context.text,
     conversationContext: threadContext,
     isDirectMessage: context.isDm,
     channelType: context.channelType === "slack_list_item" ? "public_channel" : context.channelType,
