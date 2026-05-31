@@ -6,7 +6,7 @@ import { messages, type Memory } from "@aura/db/schema";
 import type { EntityType } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
-import { resolveEntityReadOnly } from "./entity-resolution.js";
+import { resolveEntityReadOnly, type ResolvedEntity } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 import { isMemV3RetrievalFlagEnabled } from "./retrieval-flags.js";
 
@@ -85,6 +85,10 @@ interface RetrievalOptions {
 const MAX_FULLTEXT_LEXEMES = 8;
 const PER_TERM_FULLTEXT_LIMIT = 25;
 const ENTITY_PREFILTER_RECENT_TAIL_LIMIT = 50;
+const HIGH_CONFIDENCE_ENTITY_RESOLUTIONS = new Set<ResolvedEntity["confidence"]>([
+  "exact",
+  "alias",
+]);
 
 async function extractLexemes(
   query: string,
@@ -268,6 +272,54 @@ interface EntityMemoryResult {
   resolvedEntityCount: number;
   /** Distinct resolved entity IDs, used to pre-filter the hybrid candidate pool */
   resolvedEntityIds: string[];
+  /** True when query entities came from the heuristic fallback, not the LLM extractor. */
+  usedHeuristic: boolean;
+  /** Best read-only resolution confidence per distinct resolved entity. */
+  resolutionConfidences: ResolvedEntity["confidence"][];
+}
+
+export interface EntityPrefilterDecision {
+  apply: boolean;
+  reason:
+    | "disabled"
+    | "no-resolved-entities"
+    | "heuristic-resolution"
+    | "low-confidence-resolution"
+    | "sparse-entity-candidates"
+    | "applied";
+  minEntityMemories: number;
+}
+
+export function decideEntityPrefilter(
+  params: {
+    enabled: boolean;
+    resolvedEntityCount: number;
+    entityMemoryCount: number;
+    usedHeuristic: boolean;
+    resolutionConfidences: ResolvedEntity["confidence"][];
+    limit: number;
+  },
+): EntityPrefilterDecision {
+  const minEntityMemories = Math.max(1, params.limit);
+  if (!params.enabled) {
+    return { apply: false, reason: "disabled", minEntityMemories };
+  }
+  if (params.resolvedEntityCount === 0) {
+    return { apply: false, reason: "no-resolved-entities", minEntityMemories };
+  }
+  if (params.usedHeuristic) {
+    return { apply: false, reason: "heuristic-resolution", minEntityMemories };
+  }
+  if (
+    params.resolutionConfidences.length === 0 ||
+    params.resolutionConfidences.some((confidence) => !HIGH_CONFIDENCE_ENTITY_RESOLUTIONS.has(confidence))
+  ) {
+    return { apply: false, reason: "low-confidence-resolution", minEntityMemories };
+  }
+  if (params.entityMemoryCount < minEntityMemories) {
+    return { apply: false, reason: "sparse-entity-candidates", minEntityMemories };
+  }
+  return { apply: true, reason: "applied", minEntityMemories };
 }
 
 interface MemoryVisibilityOptions {
@@ -354,6 +406,8 @@ async function fetchEntityMatchedMemories(
     memoryEntityMap: new Map(),
     resolvedEntityCount: 0,
     resolvedEntityIds: [],
+    usedHeuristic: false,
+    resolutionConfidences: [],
   };
 
   try {
@@ -375,7 +429,9 @@ async function fetchEntityMatchedMemories(
     const resolutions = await Promise.all(
       extractedEntities.map(async (entity) => {
         const resolved = await resolveEntityReadOnly(entity.name, entity.type, workspaceId);
-        return resolved ? { entityId: resolved.entityId, name: entity.name } : null;
+        return resolved
+          ? { entityId: resolved.entityId, name: entity.name, confidence: resolved.confidence }
+          : null;
       }),
     );
     const resolvedByEntity = resolutions.filter((r): r is NonNullable<typeof r> => r !== null);
@@ -386,20 +442,44 @@ async function fetchEntityMatchedMemories(
       const heuristicResolutions = await Promise.all(
         heuristicNames.map(async (name) => {
           const resolved = await resolveEntityReadOnly(name, "company" as EntityType, workspaceId);
-          return resolved ? { entityId: resolved.entityId, name } : null;
+          return resolved
+            ? { entityId: resolved.entityId, name, confidence: resolved.confidence }
+            : null;
         }),
       );
-      resolvedByEntity.push(...heuristicResolutions.filter((r): r is NonNullable<typeof r> => r !== null));
+      const heuristicResolved = heuristicResolutions.filter((r): r is NonNullable<typeof r> => r !== null);
+      if (heuristicResolved.length > 0) usedHeuristic = true;
+      resolvedByEntity.push(...heuristicResolved);
     }
 
     if (resolvedByEntity.length === 0) return emptyResult;
 
     const entityIds = [...new Set(resolvedByEntity.map((r) => r.entityId))];
+    const confidenceRank: Record<ResolvedEntity["confidence"], number> = {
+      exact: 0,
+      alias: 1,
+      fuzzy: 2,
+      new: 3,
+    };
+    const confidenceByEntityId = new Map<string, ResolvedEntity["confidence"]>();
+    for (const resolution of resolvedByEntity) {
+      const existing = confidenceByEntityId.get(resolution.entityId);
+      if (
+        !existing ||
+        confidenceRank[resolution.confidence] < confidenceRank[existing]
+      ) {
+        confidenceByEntityId.set(resolution.entityId, resolution.confidence);
+      }
+    }
+    const resolutionConfidences = entityIds.map(
+      (id) => confidenceByEntityId.get(id) ?? "fuzzy",
+    );
 
     logger.debug("Entity resolution for retrieval", {
       extracted: extractedEntities.length,
       resolved: entityIds.length,
       usedHeuristic,
+      resolutionConfidences,
       query: query.substring(0, 100),
     });
 
@@ -475,6 +555,8 @@ async function fetchEntityMatchedMemories(
       memoryEntityMap,
       resolvedEntityCount: entityIds.length,
       resolvedEntityIds: entityIds,
+      usedHeuristic,
+      resolutionConfidences,
     };
   } catch (error) {
     logger.warn("Entity-first retrieval failed, falling back to hybrid search only", {
@@ -855,7 +937,14 @@ async function retrieveSingleQuery(
       extractLexemes(query),
       fetchEntityMatchedMemories(query, minRelevanceScore, visibility, workspaceId, onUsage, asOf),
     ]);
-    const { memories: entityMemories, memoryEntityMap, resolvedEntityCount, resolvedEntityIds } = entityResult;
+    const {
+      memories: entityMemories,
+      memoryEntityMap,
+      resolvedEntityCount,
+      resolvedEntityIds,
+      usedHeuristic,
+      resolutionConfidences,
+    } = entityResult;
 
     const CANDIDATE_POOL_SIZE = Math.max(25, limit);
     // Embed vector as a raw SQL literal instead of a parameterized value.
@@ -866,13 +955,30 @@ async function retrieveSingleQuery(
 
     const privacyFilter = buildMemoryVisibilityFilter(visibility);
     const baseFilter = buildMemoryBaseFilter(minRelevanceScore, workspaceId, undefined, true, asOf);
-    const shouldPrefilterByEntity =
-      prefilterEnabled && resolvedEntityIds.length > 0;
+    const entityPrefilter = decideEntityPrefilter({
+      enabled: prefilterEnabled,
+      resolvedEntityCount,
+      entityMemoryCount: entityMemories.length,
+      usedHeuristic,
+      resolutionConfidences,
+      limit,
+    });
+    const shouldPrefilterByEntity = entityPrefilter.apply;
     const entityPrefilterIds = shouldPrefilterByEntity
       ? sql.join(resolvedEntityIds.map(id => sql`${id}`), sql`, `)
       : sql``;
+    // Keep prefilter as a precision hint, not a hard recall cliff: only use it
+    // for high-yield exact/alias resolutions, and always union in global cosine
+    // top-k so semantic matches are still eligible for final scoring.
     const candidatePoolCte = shouldPrefilterByEntity
       ? sql`
+        global_cosine_candidates AS (
+          SELECT id
+          FROM memories
+          WHERE ${baseFilter} AND ${privacyFilter}
+          ORDER BY embedding <=> ${vectorSql}
+          LIMIT ${CANDIDATE_POOL_SIZE}
+        ),
         candidate_pool AS (
           SELECT DISTINCT me.memory_id AS id
           FROM memory_entities me
@@ -889,6 +995,9 @@ async function retrieveSingleQuery(
             ORDER BY created_at DESC
             LIMIT ${ENTITY_PREFILTER_RECENT_TAIL_LIMIT}
           ) recent_global_memories
+          UNION
+          SELECT id
+          FROM global_cosine_candidates
         ),
       `
       : sql``;
@@ -910,7 +1019,11 @@ async function retrieveSingleQuery(
       lexemes,
       query: query.substring(0, 100),
       prefilter: shouldPrefilterByEntity,
+      prefilterReason: entityPrefilter.reason,
+      entityMemoryCount: entityMemories.length,
+      minEntityPrefilterMemories: entityPrefilter.minEntityMemories,
       resolvedEntityCount,
+      resolutionConfidences,
       channelType,
     });
 
@@ -1061,6 +1174,7 @@ async function retrieveSingleQuery(
       logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
         resolvedEntities: resolvedEntityCount,
         prefilter: shouldPrefilterByEntity,
+        prefilterReason: entityPrefilter.reason,
         query: query.substring(0, 100),
       });
     }
@@ -1090,6 +1204,7 @@ async function retrieveSingleQuery(
           totalCandidates: results.length,
           lexemeCount: lexemes.length,
           prefilter: shouldPrefilterByEntity,
+          prefilterReason: entityPrefilter.reason,
           channelId,
           topScore: legacy.topScore?.toFixed(3),
           method: legacy.method,
@@ -1132,6 +1247,7 @@ async function retrieveSingleQuery(
         totalCandidates: results.length,
         lexemeCount: lexemes.length,
         prefilter: shouldPrefilterByEntity,
+        prefilterReason: entityPrefilter.reason,
         channelId,
         topScore: fused[0]?.score.toFixed(3),
         method: semanticOverride ? "score-fusion+cohere" : "score-fusion",

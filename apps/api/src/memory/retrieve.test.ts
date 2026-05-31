@@ -40,6 +40,7 @@ vi.mock("ai", () => ({
 
 import {
   retrieveMemories,
+  decideEntityPrefilter,
   fuseCandidates,
   hasRetrievalEvidence,
   looksMultiHop,
@@ -66,9 +67,38 @@ function normalizeSql(sql: string): string {
   return sql.replace(/\s+/g, " ").trim();
 }
 
-function setupDb(options: { resolveEntity?: boolean } = {}) {
+function memoryRow(id: string) {
+  const now = new Date("2026-01-01T00:00:00.000Z");
+  return {
+    id,
+    workspace_id: "W123",
+    content: `memory ${id}`,
+    type: "fact",
+    source_message_id: null,
+    source_channel_type: "public_channel",
+    source_thread_ts: null,
+    source_channel_id: "C123",
+    related_user_ids: [],
+    embedding: null,
+    relevance_score: 0.8,
+    shareable: 0,
+    search_vector: null,
+    status: "current",
+    confidence: 0.8,
+    valid_from: null,
+    valid_until: null,
+    supersedes_memory_id: null,
+    superseded_at: null,
+    superseded_by_memory_id: null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function setupDb(options: { resolveEntity?: boolean; entityMemoryCount?: number } = {}) {
   const executed: RenderedQuery[] = [];
   const resolveEntity = options.resolveEntity ?? false;
+  const entityMemoryCount = options.entityMemoryCount ?? 0;
 
   dbMocks.execute.mockImplementation(async (query: any) => {
     const rendered = renderSql(query);
@@ -91,7 +121,20 @@ function setupDb(options: { resolveEntity?: boolean } = {}) {
     }
 
     if (compact.includes("SELECT DISTINCT m.*") && compact.includes("JOIN memory_entities me")) {
-      return { rows: [] };
+      return {
+        rows: Array.from({ length: entityMemoryCount }, (_, index) =>
+          memoryRow(`entity-memory-${index}`),
+        ),
+      };
+    }
+
+    if (compact.includes("SELECT me.memory_id, me.entity_id")) {
+      return {
+        rows: Array.from({ length: entityMemoryCount }, (_, index) => ({
+          memory_id: `entity-memory-${index}`,
+          entity_id: "entity-vadim",
+        })),
+      };
     }
 
     if (compact.startsWith("WITH ")) {
@@ -120,7 +163,7 @@ describe("retrieveMemories prefilter", () => {
     aiMocks.generateObject.mockResolvedValue({
       object: { entities: [{ name: "Vadim", type: "person" }] },
     });
-    const executed = setupDb({ resolveEntity: true });
+    const executed = setupDb({ resolveEntity: true, entityMemoryCount: 15 });
 
     await retrieveMemories({
       query: "What did Vadim decide?",
@@ -134,6 +177,7 @@ describe("retrieveMemories prefilter", () => {
     const rendered = hybridQuery(executed);
     const compact = normalizeSql(rendered.sql);
     expect(compact).toContain("candidate_pool AS");
+    expect(compact).toContain("global_cosine_candidates AS");
     expect(compact).toContain("FROM memory_entities me JOIN memories m ON m.id = me.memory_id");
     expect(compact).toContain("WHERE me.entity_id IN");
     expect(compact).toContain("ORDER BY created_at DESC");
@@ -147,6 +191,26 @@ describe("retrieveMemories prefilter", () => {
 
     await retrieveMemories({
       query: "what was decided recently",
+      currentUserId: "U123",
+      channelId: "C123",
+      channelType: "public_channel",
+      workspaceId: "W123",
+      limit: 15,
+    });
+
+    const compact = normalizeSql(hybridQuery(executed).sql);
+    expect(compact).not.toContain("candidate_pool AS");
+    expect(compact).not.toContain("id IN (SELECT id FROM candidate_pool)");
+  });
+
+  it("falls back to the global pool when resolved entities return too few memories", async () => {
+    aiMocks.generateObject.mockResolvedValue({
+      object: { entities: [{ name: "Vadim", type: "person" }] },
+    });
+    const executed = setupDb({ resolveEntity: true, entityMemoryCount: 1 });
+
+    await retrieveMemories({
+      query: "What did Vadim decide?",
       currentUserId: "U123",
       channelId: "C123",
       channelType: "public_channel",
@@ -186,7 +250,7 @@ describe("retrieveMemories prefilter", () => {
     aiMocks.generateObject.mockResolvedValue({
       object: { entities: [{ name: "Vadim", type: "person" }] },
     });
-    const executed = setupDb({ resolveEntity: true });
+    const executed = setupDb({ resolveEntity: true, entityMemoryCount: 15 });
 
     await retrieveMemories({
       query: "What did Vadim decide?",
@@ -201,6 +265,54 @@ describe("retrieveMemories prefilter", () => {
     const compact = normalizeSql(hybridQuery(executed).sql);
     expect(compact).not.toContain("candidate_pool AS");
     expect(compact).not.toContain("id IN (SELECT id FROM candidate_pool)");
+  });
+});
+
+describe("decideEntityPrefilter", () => {
+  it("requires high-confidence, top-k-sized entity candidates", () => {
+    expect(
+      decideEntityPrefilter({
+        enabled: true,
+        resolvedEntityCount: 0,
+        entityMemoryCount: 0,
+        usedHeuristic: false,
+        resolutionConfidences: [],
+        limit: 15,
+      }),
+    ).toMatchObject({ apply: false, reason: "no-resolved-entities" });
+
+    expect(
+      decideEntityPrefilter({
+        enabled: true,
+        resolvedEntityCount: 1,
+        entityMemoryCount: 50,
+        usedHeuristic: false,
+        resolutionConfidences: ["fuzzy"],
+        limit: 15,
+      }),
+    ).toMatchObject({ apply: false, reason: "low-confidence-resolution" });
+
+    expect(
+      decideEntityPrefilter({
+        enabled: true,
+        resolvedEntityCount: 1,
+        entityMemoryCount: 14,
+        usedHeuristic: false,
+        resolutionConfidences: ["exact"],
+        limit: 15,
+      }),
+    ).toMatchObject({ apply: false, reason: "sparse-entity-candidates" });
+
+    expect(
+      decideEntityPrefilter({
+        enabled: true,
+        resolvedEntityCount: 1,
+        entityMemoryCount: 15,
+        usedHeuristic: false,
+        resolutionConfidences: ["alias"],
+        limit: 15,
+      }),
+    ).toMatchObject({ apply: true, reason: "applied" });
   });
 });
 
