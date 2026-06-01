@@ -1,0 +1,548 @@
+{
+  "schemaVersion": 1,
+  "source": "history.jsonl",
+  "entries": [
+    {
+      "runId": "2026-05-28T22-13-39-068Z-8zxr4q8c",
+      "timestamp": "2026-05-28T22:15:00Z",
+      "commit": "0fd7f3b",
+      "dirty": true,
+      "datasets": [
+        "toy"
+      ],
+      "subset": "medium",
+      "limit": null,
+      "category": null,
+      "corpusHash": "65d4db8bbcbb",
+      "runtimeMs": 92000,
+      "costUsd": null,
+      "models": null,
+      "scores": [
+        {
+          "dataset": "toy",
+          "category": "abstention",
+          "qa": 1,
+          "recall": null,
+          "n": 1
+        },
+        {
+          "dataset": "toy",
+          "category": "knowledge_update",
+          "qa": 1,
+          "recall": 1,
+          "n": 1
+        },
+        {
+          "dataset": "toy",
+          "category": "multi_hop",
+          "qa": 1,
+          "recall": 1,
+          "n": 1
+        },
+        {
+          "dataset": "toy",
+          "category": "single_hop",
+          "qa": 1,
+          "recall": 1,
+          "n": 1
+        },
+        {
+          "dataset": "toy",
+          "category": "temporal",
+          "qa": 1,
+          "recall": 1,
+          "n": 1
+        }
+      ],
+      "overall": {
+        "qa": 1,
+        "recall": 1,
+        "n": 5
+      },
+      "note": "fix ingest dedup collision (toy S1/S2 reuse) — temporal & knowledge_update QA 0%→100%"
+    },
+    {
+      "runId": "2026-05-29T11-01-07-016Z-9ftbek3u",
+      "timestamp": "2026-05-29T12:01:16.885Z",
+      "commit": "c80b07e",
+      "dirty": true,
+      "datasets": [
+        "locomo",
+        "longmemeval"
+      ],
+      "subset": "medium",
+      "limit": null,
+      "category": null,
+      "corpusHash": "950b9182adf728e2",
+      "runtimeMs": 3548467,
+      "costUsd": 10.765771999999988,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.7",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "locomo",
+          "category": "adversarial",
+          "qa": 0.03333333333333333,
+          "recall": 0.8666666666666667,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "multi_hop",
+          "qa": 0.25,
+          "recall": 0.6383333333333334,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "open_domain",
+          "qa": 0.55,
+          "recall": 0.8,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "single_hop",
+          "qa": 0.1,
+          "recall": 0.611111111111111,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "temporal",
+          "qa": 0.13333333333333333,
+          "recall": 0.6795977011494254,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "knowledge-update",
+          "qa": 0.65,
+          "recall": 0.7833333333333333,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "multi-session",
+          "qa": 0.21666666666666667,
+          "recall": 0.6783333333333331,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-assistant",
+          "qa": 0.26666666666666666,
+          "recall": 0.7333333333333333,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-preference",
+          "qa": 0.38333333333333336,
+          "recall": 0.7,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-user",
+          "qa": 0.7166666666666667,
+          "recall": 0.8666666666666667,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "temporal-reasoning",
+          "qa": 0.25862068965517243,
+          "recall": 0.7699999999999999,
+          "n": 30
+        }
+      ],
+      "overall": {
+        "qa": 0.32370820668693007,
+        "recall": 0.73903242147923,
+        "n": 329
+      },
+      "note": "medium baseline on current codebase"
+    },
+    {
+      "runId": "2026-05-30T07-40-47-874Z-qxgddxws",
+      "timestamp": "2026-05-30T08:37:36.934Z",
+      "commit": "0ee6037",
+      "dirty": false,
+      "datasets": [
+        "locomo",
+        "longmemeval"
+      ],
+      "subset": "medium",
+      "limit": null,
+      "category": null,
+      "corpusHash": "950b9182adf728e2",
+      "caseSetHash": "3cfdf02bf0f8f9b0",
+      "runtimeMs": 3390984,
+      "costUsd": 7.687946999999996,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.8",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "locomo",
+          "category": "adversarial",
+          "qa": 0.06666666666666667,
+          "recall": 0.7,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "multi_hop",
+          "qa": 0.26666666666666666,
+          "recall": 0.7416666666666667,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "open_domain",
+          "qa": 0.16666666666666666,
+          "recall": 0.7666666666666667,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "single_hop",
+          "qa": 0.11666666666666667,
+          "recall": 0.8666666666666667,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "temporal",
+          "qa": 0.2,
+          "recall": 0.5892857142857143,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "knowledge-update",
+          "qa": 0.6666666666666666,
+          "recall": 0.8,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "multi-session",
+          "qa": 0.43333333333333335,
+          "recall": 0.7,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-assistant",
+          "qa": 0.16666666666666666,
+          "recall": 0.6666666666666666,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-preference",
+          "qa": 0.2833333333333333,
+          "recall": 0.7333333333333333,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-user",
+          "qa": 0.6833333333333333,
+          "recall": 0.8666666666666667,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "temporal-reasoning",
+          "qa": 0.2,
+          "recall": 0.7166666666666667,
+          "n": 30
+        }
+      ],
+      "overall": {
+        "qa": 0.29545454545454547,
+        "recall": 0.7416158536585366,
+        "n": 330
+      },
+      "prNumber": 1062
+    },
+    {
+      "runId": "2026-06-01T07-36-13-467Z-djclibah",
+      "timestamp": "2026-06-01T08:51:32.000Z",
+      "commit": "e0bb4c8",
+      "dirty": false,
+      "datasets": [
+        "longmemeval"
+      ],
+      "subset": "medium",
+      "limit": null,
+      "category": null,
+      "corpusHash": "b178d604c01afa4a",
+      "caseSetHash": "a0018f6e9f0fccb4",
+      "runtimeMs": 4518732,
+      "costUsd": 12.28251599999999,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.8",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "longmemeval",
+          "category": "knowledge-update",
+          "qa": 0.6666666666666666,
+          "recall": 0.85,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "multi-session",
+          "qa": 0.6833333333333333,
+          "recall": 0.8833333333333333,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-assistant",
+          "qa": 0.26666666666666666,
+          "recall": 0.8333333333333334,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-preference",
+          "qa": 0.38333333333333336,
+          "recall": 0.9,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-user",
+          "qa": 0.8666666666666667,
+          "recall": 0.9,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "temporal-reasoning",
+          "qa": 0.4,
+          "recall": 0.8166666666666667,
+          "n": 30
+        }
+      ],
+      "overall": {
+        "qa": 0.5444444444444444,
+        "recall": 0.8638888888888889,
+        "n": 180
+      },
+      "note": "parallel per-dataset baseline on main e0bb4c8 after #1067+#1070"
+    },
+    {
+      "runId": "2026-06-01T08-52-31-537Z-zjc3qjp7",
+      "timestamp": "2026-06-01T10:12:09.000Z",
+      "commit": "e0bb4c8",
+      "dirty": false,
+      "datasets": [
+        "locomo"
+      ],
+      "subset": "medium",
+      "limit": null,
+      "category": null,
+      "corpusHash": "f9cf2279e3e18aae",
+      "caseSetHash": "a6f1cceb887cfe19",
+      "runtimeMs": 4777113,
+      "costUsd": 11.297256000000008,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.8",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "locomo",
+          "category": "adversarial",
+          "qa": 0.06666666666666667,
+          "recall": 0.6666666666666666,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "multi_hop",
+          "qa": 0.43333333333333335,
+          "recall": 0.8055555555555556,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "open_domain",
+          "qa": 0.3,
+          "recall": 0.8333333333333334,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "single_hop",
+          "qa": 0.11666666666666667,
+          "recall": 0.8333333333333334,
+          "n": 30
+        },
+        {
+          "dataset": "locomo",
+          "category": "temporal",
+          "qa": 0.16666666666666666,
+          "recall": 0.6488095238095238,
+          "n": 30
+        }
+      ],
+      "overall": {
+        "qa": 0.21666666666666667,
+        "recall": 0.759009009009009,
+        "n": 150
+      },
+      "note": "parallel per-dataset baseline on main e0bb4c8 after #1067+#1070"
+    },
+    {
+      "runId": "2026-06-01T10-50-25-087Z-3tqsxxju",
+      "timestamp": "2026-06-01T11:32:09.237Z",
+      "commit": "c34c107",
+      "dirty": false,
+      "datasets": [
+        "locomo"
+      ],
+      "subset": "toy",
+      "limit": null,
+      "category": null,
+      "corpusHash": "f9cf2279e3e18aae",
+      "caseSetHash": "18a07dd3c451443c",
+      "runtimeMs": 2498082,
+      "costUsd": 3.3534570000000006,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.8",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "locomo",
+          "category": "adversarial",
+          "qa": 0.5,
+          "recall": 0.5,
+          "n": 2
+        },
+        {
+          "dataset": "locomo",
+          "category": "multi_hop",
+          "qa": 0.5,
+          "recall": 0.625,
+          "n": 2
+        },
+        {
+          "dataset": "locomo",
+          "category": "open_domain",
+          "qa": 1,
+          "recall": 1,
+          "n": 2
+        },
+        {
+          "dataset": "locomo",
+          "category": "single_hop",
+          "qa": 0,
+          "recall": 1,
+          "n": 2
+        },
+        {
+          "dataset": "locomo",
+          "category": "temporal",
+          "qa": 0,
+          "recall": 1,
+          "n": 2
+        }
+      ],
+      "overall": {
+        "qa": 0.4,
+        "recall": 0.8055555555555556,
+        "n": 10
+      },
+      "prNumber": 1074
+    },
+    {
+      "runId": "2026-06-01T11-47-06-007Z-l4nkcut4",
+      "timestamp": "2026-06-01T11:50:14.128Z",
+      "commit": "8435b97",
+      "dirty": false,
+      "datasets": [
+        "longmemeval"
+      ],
+      "subset": "toy",
+      "limit": null,
+      "category": null,
+      "corpusHash": "b178d604c01afa4a",
+      "caseSetHash": "0785d34e2111c176",
+      "runtimeMs": 182921,
+      "costUsd": 0.5717329999999997,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.8",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "longmemeval",
+          "category": "knowledge-update",
+          "qa": 1,
+          "recall": 1,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "multi-session",
+          "qa": 0.75,
+          "recall": 0.75,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-assistant",
+          "qa": 0,
+          "recall": 0,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-preference",
+          "qa": 1,
+          "recall": 1,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-user",
+          "qa": 1,
+          "recall": 1,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "temporal-reasoning",
+          "qa": 0.5,
+          "recall": 1,
+          "n": 2
+        }
+      ],
+      "overall": {
+        "qa": 0.7083333333333334,
+        "recall": 0.7916666666666666,
+        "n": 12
+      },
+      "prNumber": 1074
+    }
+  ]
+}

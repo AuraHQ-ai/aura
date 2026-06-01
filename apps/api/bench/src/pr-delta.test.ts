@@ -54,6 +54,17 @@ describe("loadBaselineEntry", () => {
     expect(found?.commit).toBe("new2222");
   });
 
+  it("reads a materialized latest.json baseline", () => {
+    const latest = {
+      schemaVersion: 1,
+      source: "history.jsonl",
+      entries: [
+        makeEntry({ runId: "latest", commit: "latest333" }),
+      ],
+    };
+    expect(loadBaselineEntry(JSON.stringify(latest), scope)?.commit).toBe("latest333");
+  });
+
   it("uses entries from other (merged) PRs as baselines", () => {
     // A merged bench PR's entry lands on the target branch and is the newest
     // comparable run — it should seed the next PR's baseline.

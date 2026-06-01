@@ -2,10 +2,11 @@
  * Build the sticky PR comment for a memory bench run.
  *
  * Pure post-processing: reads the run's `--json` output and the base branch's
- * committed `history.jsonl`, diffs the current scores against the newest
- * comparable baseline entry, and writes the comment markdown to `--out`. No DB,
- * no LLM, no network — the workflow runs this in a tiny node step and then posts
- * the file via actions/github-script.
+ * committed `latest.json` (falling back to `history.jsonl` for older bases),
+ * diffs the current scores against the newest comparable baseline entry, and
+ * writes the comment markdown to `--out`. No DB, no LLM, no network — the
+ * workflow runs this in a tiny node step and then posts the file via
+ * actions/github-script.
  *
  * Usage (from the workflow):
  *   tsx bench/scripts/pr-comment.ts \

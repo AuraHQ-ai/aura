@@ -88,6 +88,7 @@ export interface BenchRunConfig {
   datasets: DatasetId[];
   /**
    * Subset selector:
+   *  - "toy"    tiny plumbing pass, stratified per category.
    *  - "fast"   ≈ 10 minutes with extraction, stratified per category.
    *  - "medium" ≈ 30 minutes with extraction, the memory-PR server budget.
    *  - "full"   = all loaded corpus questions. Manual runs only — costly.
@@ -95,7 +96,7 @@ export interface BenchRunConfig {
    * These are runtime budgets, not corpus-size promises. Extraction cost is
    * driven by unique conversations/sessions as much as by final question count.
    */
-  subset: "fast" | "medium" | "full";
+  subset: "toy" | "fast" | "medium" | "full";
   /**
    * Optional explicit per-category cap. Overrides `subset` when set — useful
    * for ramping data up in small steps (`--limit=2`, then `5`, then `10`)

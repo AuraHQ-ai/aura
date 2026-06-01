@@ -2,10 +2,12 @@
  * Structured, committed history for the memory bench + the markdown views
  * derived from it.
  *
- * The source of truth is `apps/api/bench/history.jsonl` — one JSON object per
- * logged run (`pnpm bench:memory … --log`). From that we regenerate two human
- * views so the committed docs always reflect the current codebase:
+ * The immutable source of truth is `apps/api/bench/history.jsonl` — one JSON
+ * object per logged run (`pnpm bench:memory … --log`). From that append-only log
+ * we regenerate one canonical machine view and two human views so the committed
+ * docs always reflect the current codebase:
  *
+ *   - `apps/api/bench/latest.json`  materialized latest entry per run scope
  *   - `apps/api/bench/README.md`  detailed: current scores + evolution table
  *   - root `README.md`            a compact snapshot block between markers
  *
@@ -55,11 +57,7 @@ export interface HistoryEntry {
   scores: HistoryScore[];
   overall: { qa: number | null; recall: number | null; n: number };
   note?: string;
-  /**
-   * Pull request number this run is attributable to (CI), or null/undefined for
-   * local and post-merge runs. Used to squash repeated pushes on one PR down to
-   * a single history entry (see `recordRun`).
-   */
+  /** Pull request number this run is attributable to (CI), if any. */
   prNumber?: number | null;
 }
 
@@ -81,6 +79,10 @@ export interface RecordRunInput {
 
 export function historyPath(): string {
   return resolve(HERE, "../history.jsonl");
+}
+
+export function latestPath(): string {
+  return resolve(HERE, "../latest.json");
 }
 
 export function benchReadmePath(): string {
@@ -207,9 +209,15 @@ export function appendHistory(entry: HistoryEntry, file: string = historyPath())
   return file;
 }
 
-/** Overwrite the whole history file from an in-memory list (newest last). */
+/**
+ * Append entries to the history file.
+ *
+ * This helper used to overwrite `history.jsonl` for PR-attributed runs. Keep the
+ * name for callers/tests, but make the load-bearing behavior append-only: the
+ * immutable trace must never be compacted or rewritten in place.
+ */
 export function writeHistory(entries: HistoryEntry[], file: string = historyPath()): string {
-  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + (entries.length ? "\n" : ""));
+  for (const entry of entries) appendHistory(entry, file);
   return file;
 }
 
@@ -222,6 +230,47 @@ export function readHistory(file: string = historyPath()): HistoryEntry[] {
     .map((l) => JSON.parse(l) as HistoryEntry);
 }
 
+export interface LatestResults {
+  schemaVersion: 1;
+  source: "history.jsonl";
+  entries: HistoryEntry[];
+}
+
+function scopeKey(entry: Pick<HistoryEntry, "subset" | "corpusHash" | "caseSetHash" | "datasets">): string {
+  return JSON.stringify({
+    subset: entry.subset,
+    corpusHash: entry.corpusHash,
+    caseSetHash: entry.caseSetHash ?? null,
+    datasets: [...entry.datasets].sort(),
+  });
+}
+
+export function materializeLatest(history: HistoryEntry[]): LatestResults {
+  const byScope = new Map<string, HistoryEntry>();
+  for (const entry of history) {
+    const key = scopeKey(entry);
+    // Re-insert existing keys so entries stay ordered by their newest write.
+    if (byScope.has(key)) byScope.delete(key);
+    byScope.set(key, entry);
+  }
+  return {
+    schemaVersion: 1,
+    source: "history.jsonl",
+    entries: [...byScope.values()],
+  };
+}
+
+export function writeLatest(history: HistoryEntry[], file: string = latestPath()): string {
+  writeFileSync(file, `${JSON.stringify(materializeLatest(history), null, 2)}\n`);
+  return file;
+}
+
+export function readLatest(file: string = latestPath()): HistoryEntry[] {
+  if (!existsSync(file)) return [];
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as LatestResults | HistoryEntry[];
+  return Array.isArray(parsed) ? parsed : parsed.entries ?? [];
+}
+
 function scoresTable(scores: HistoryScore[]): string {
   const lines = ["| dataset | category | QA acc | recall@15 | n |", "|---|---|---:|---:|---:|"];
   for (const r of scores) {
@@ -230,10 +279,34 @@ function scoresTable(scores: HistoryScore[]): string {
   return lines.join("\n");
 }
 
+/** Subsets whose results are statistically meaningful enough to define the
+ * canonical "Current" snapshot. Toy/fast runs land in the append-only trace
+ * (history.jsonl) and latest.json, but must never overwrite the canonical
+ * README snapshots — otherwise a 2-case smoke test clobbers a real baseline. */
+const AUTHORITATIVE_SUBSETS = new Set(["medium", "full"]);
+
+/** Pick the entry that should define the canonical snapshot: the newest run at
+ * an authoritative subset (medium/full) with a clean tree. Dirty runs (executed
+ * against uncommitted changes) and non-authoritative subsets (e.g. toy) still
+ * land in the append-only trace but must never define the canonical "Current",
+ * since their numbers don't correspond to any reproducible committed state.
+ * Falls back to the newest overall only when no clean authoritative run exists
+ * yet (e.g. a fresh repo), so the snapshot is never empty. */
+export function authoritativeLatest(
+  entries: HistoryEntry[],
+): HistoryEntry | undefined {
+  const authoritative = entries.filter(
+    (e) => AUTHORITATIVE_SUBSETS.has(e.subset) && !e.dirty,
+  );
+  const pool = authoritative.length > 0 ? authoritative : entries;
+  return pool[pool.length - 1];
+}
+
 /** Render the detailed bench README from the full history. Returns the path. */
 export function renderBenchReadme(
   history: HistoryEntry[],
   file: string = benchReadmePath(),
+  latestEntries: HistoryEntry[] = materializeLatest(history).entries,
 ): string {
   const lines: string[] = [];
   lines.push("# Memory bench results");
@@ -271,43 +344,77 @@ export function renderBenchReadme(
     return file;
   }
 
-  const latest = history[history.length - 1]!;
+  // --- Current: the latest authoritative baseline, one block per dataset. ---
+  // authoritativeLatest gives a single entry; here we want every dataset at the
+  // same baseline commit (e.g. both longmemeval and locomo), so we resolve the
+  // baseline commit then render all entries sharing it.
+  const authoritative = latestEntries.filter(
+    (e) => AUTHORITATIVE_SUBSETS.has(e.subset) && !e.dirty,
+  );
+  const currentPool = authoritative.length > 0 ? authoritative : latestEntries;
+  const baselineCommit = currentPool[currentPool.length - 1]!.commit;
+  const currentEntries = currentPool.filter((e) => e.commit === baselineCommit);
 
   lines.push("## Current");
   lines.push("");
   lines.push(
-    `Latest logged run: \`${latest.commit}${latest.dirty ? "-dirty" : ""}\` · ${latest.timestamp.replace("T", " ").slice(0, 16)} UTC`,
+    `Latest baseline: \`${baselineCommit}\` · ${currentEntries[currentEntries.length - 1]!.timestamp.replace("T", " ").slice(0, 16)} UTC. One block per dataset.`,
   );
   lines.push("");
-  lines.push(
-    `- scope: \`${fmtScope(latest)}\` · corpus \`${latest.corpusHash.slice(0, 12)}\`${latest.caseSetHash ? ` · cases \`${latest.caseSetHash}\`` : ""} · runtime ${fmtDuration(latest.runtimeMs)} · cost ${fmtCost(latest.costUsd)}`,
-  );
-  if (latest.models) {
+  for (const cur of currentEntries) {
+    lines.push(`### \`${fmtScope(cur)}\``);
+    lines.push("");
     lines.push(
-      `- models: extraction \`${latest.models.extraction}\` · answerer \`${latest.models.answerer}\` · judge \`${latest.models.judge}\``,
+      `- scope: \`${fmtScope(cur)}\` · corpus \`${cur.corpusHash.slice(0, 12)}\`${cur.caseSetHash ? ` · cases \`${cur.caseSetHash}\`` : ""} · runtime ${fmtDuration(cur.runtimeMs)} · cost ${fmtCost(cur.costUsd)}`,
     );
+    if (cur.models) {
+      lines.push(
+        `- models: extraction \`${cur.models.extraction}\` · answerer \`${cur.models.answerer}\` · judge \`${cur.models.judge}\``,
+      );
+    }
+    lines.push(
+      `- overall: QA ${fmtPct(cur.overall.qa)} · recall@15 ${fmtPct(cur.overall.recall)} (n=${cur.overall.n})`,
+    );
+    if (cur.category) lines.push(`- category filter: \`${cur.category}\``);
+    if (cur.note) lines.push(`- note: ${cur.note}`);
+    lines.push("");
+    lines.push(scoresTable(cur.scores));
+    lines.push("");
   }
-  lines.push(
-    `- overall: QA ${fmtPct(latest.overall.qa)} · recall@15 ${fmtPct(latest.overall.recall)} (n=${latest.overall.n})`,
-  );
-  if (latest.category) lines.push(`- category filter: \`${latest.category}\``);
-  if (latest.note) lines.push(`- note: ${latest.note}`);
-  lines.push("");
-  lines.push(scoresTable(latest.scores));
-  lines.push("");
 
+  // --- Evolution: one table per (datasets, subset) scope, newest first. ---
+  // Grouping by scope keeps every row in a table like-for-like — never mixing
+  // different benchmarks or sample sizes in the same series.
   lines.push("## Evolution");
   lines.push("");
-  lines.push("Overall QA accuracy and recall@15 across logged runs (newest first).");
+  lines.push(
+    "Overall QA accuracy and recall@15 over time, grouped by scope so every row in a table is comparable. Newest first.",
+  );
   lines.push("");
-  lines.push("| date | commit | scope | QA | recall@15 | n | cost | runtime |");
-  lines.push("|---|---|---|---:|---:|---:|---:|---:|");
-  for (const e of [...history].reverse()) {
-    lines.push(
-      `| ${e.timestamp.slice(0, 10)} | \`${e.commit}${e.dirty ? "-dirty" : ""}\` | ${fmtScope(e)} | ${fmtPct(e.overall.qa)} | ${fmtPct(e.overall.recall)} | ${e.overall.n} | ${fmtCost(e.costUsd)} | ${fmtDuration(e.runtimeMs)} |`,
-    );
+
+  const evoGroups = new Map<string, HistoryEntry[]>();
+  for (const e of history) {
+    const key = fmtScope(e);
+    const arr = evoGroups.get(key);
+    if (arr) arr.push(e);
+    else evoGroups.set(key, [e]);
   }
-  lines.push("");
+  // Order groups by their most recent run so the most recently active scope leads.
+  const orderedScopes = [...evoGroups.entries()].sort((a, b) =>
+    b[1][b[1].length - 1]!.timestamp.localeCompare(a[1][a[1].length - 1]!.timestamp),
+  );
+  for (const [scope, entries] of orderedScopes) {
+    lines.push(`### \`${scope}\``);
+    lines.push("");
+    lines.push("| date | commit | QA | recall@15 | n | cost | runtime |");
+    lines.push("|---|---|---:|---:|---:|---:|---:|");
+    for (const e of [...entries].reverse()) {
+      lines.push(
+        `| ${e.timestamp.slice(0, 10)} | \`${e.commit}${e.dirty ? "-dirty" : ""}\` | ${fmtPct(e.overall.qa)} | ${fmtPct(e.overall.recall)} | ${e.overall.n} | ${fmtCost(e.costUsd)} | ${fmtDuration(e.runtimeMs)} |`,
+      );
+    }
+    lines.push("");
+  }
 
   writeFileSync(file, lines.join("\n"));
   return file;
@@ -345,14 +452,17 @@ export function renderMainSnapshot(
   return file;
 }
 
-/** Regenerate both markdown views from the on-disk history. */
+/** Regenerate latest.json and both markdown views from the on-disk history. */
 export function renderReports(history: HistoryEntry[] = readHistory()): {
+  latestJson: string;
   benchReadme: string;
   mainReadme: string | null;
 } {
-  const benchReadme = renderBenchReadme(history);
-  const mainReadme = renderMainSnapshot(history[history.length - 1]);
-  return { benchReadme, mainReadme };
+  const latest = materializeLatest(history).entries;
+  const latestJson = writeLatest(history);
+  const benchReadme = renderBenchReadme(history, benchReadmePath(), latest);
+  const mainReadme = renderMainSnapshot(authoritativeLatest(latest));
+  return { latestJson, benchReadme, mainReadme };
 }
 
 /**
@@ -361,25 +471,14 @@ export function renderReports(history: HistoryEntry[] = readHistory()): {
  */
 export function recordRun(input: RecordRunInput): {
   historyFile: string;
+  latestJson: string;
   benchReadme: string;
   mainReadme: string | null;
 } {
   const entry = buildHistoryEntry(input);
-
-  // A single PR can be pushed many times; each push re-runs the bench. To keep
-  // one entry per PR (instead of N appended rows that all merge into main), we
-  // drop any prior entry with the same prNumber before appending the new one.
-  // Local / post-merge runs (no prNumber) always append.
-  let historyFile: string;
-  if (entry.prNumber != null) {
-    const kept = readHistory().filter((e) => e.prNumber !== entry.prNumber);
-    kept.push(entry);
-    historyFile = writeHistory(kept);
-  } else {
-    historyFile = appendHistory(entry);
-  }
+  const historyFile = appendHistory(entry);
 
   const history = readHistory();
-  const { benchReadme, mainReadme } = renderReports(history);
-  return { historyFile, benchReadme, mainReadme };
+  const { latestJson, benchReadme, mainReadme } = renderReports(history);
+  return { historyFile, latestJson, benchReadme, mainReadme };
 }

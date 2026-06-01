@@ -1,0 +1,3 @@
+
+# Append-only bench trace: union both sides instead of conflicting on concurrent PRs.
+apps/api/bench/history.jsonl merge=union
