@@ -132,15 +132,16 @@ The harness in `apps/api/bench/` makes memory changes falsifiable. It replays ve
 <!-- BENCH_SNAPSHOT:START -->
 <!-- Generated from apps/api/bench/history.jsonl — do not edit by hand. -->
 
-Current codebase (as of `e0bb4c8`, scope `locomo/medium`): **QA 22%** · **recall@15 76%** across 150 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
+Current codebase (as of `9cdfda1`, scope `longmemeval/medium`): **QA 60%** · **recall@15 90%** across 180 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| locomo | adversarial | 7% | 67% | 30 |
-| locomo | multi_hop | 43% | 81% | 30 |
-| locomo | open_domain | 30% | 83% | 30 |
-| locomo | single_hop | 12% | 83% | 30 |
-| locomo | temporal | 17% | 65% | 30 |
+| longmemeval | knowledge-update | 68% | 93% | 30 |
+| longmemeval | multi-session | 67% | 92% | 30 |
+| longmemeval | single-session-assistant | 35% | 83% | 30 |
+| longmemeval | single-session-preference | 38% | 97% | 30 |
+| longmemeval | single-session-user | 87% | 93% | 30 |
+| longmemeval | temporal-reasoning | 67% | 82% | 30 |
 
 <!-- BENCH_SNAPSHOT:END -->
 
