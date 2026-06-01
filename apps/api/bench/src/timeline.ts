@@ -32,6 +32,10 @@ import {
 } from "./ingest.js";
 import { evaluateRetrieval } from "./eval-retrieval.js";
 import { evaluateQA } from "./eval-qa.js";
+// Memory logic lives in the API; the bench only imports it. Conversation
+// retrieval is the SAME function production calls in core-prompt.ts — the bench
+// just replays it on the bench timeline (scoped as-of the question instant).
+import { retrieveConversations } from "../../src/memory/retrieve.js";
 import { resolveQuestionDate } from "./fixtures.js";
 import { logger } from "../../src/lib/logger.js";
 import type { CostStage } from "./cost-meter.js";
@@ -244,7 +248,9 @@ export async function runTimeline(
   const scoreOne = async (index: number): Promise<void> => {
     const benchCase = cases[index];
     const caseStart = Date.now();
-    // The question is "asked" at its own instant — retrieve as-of that moment.
+    // Strict bi-temporal as-of: retrieve as the memory store stood at the
+    // moment the question was asked. Nothing timestamped after the question is
+    // visible — same discipline production retrieval has against wall-clock now.
     const asOfDate = asOf ? resolveQuestionDate(benchCase) : undefined;
     let result: PerCaseResult;
     try {
@@ -255,9 +261,24 @@ export async function runTimeline(
         (modelId, usage) => recordUsage("retrieve", modelId, usage),
         asOfDate,
       );
+      // Conversation pointers — the SAME prod path (retrieveConversations), so
+      // the answerer sees the exact <related_threads> block production injects.
+      // Scoped to the same as-of instant so it can't leak the future. Params
+      // mirror core-prompt.ts; we don't exclude a "current thread" because the
+      // constrained answerer has no live thread in context — retrieval is its
+      // only window onto past conversations.
+      const conversations = await retrieveConversations({
+        query: benchCase.question,
+        workspaceId,
+        asOf: asOfDate,
+        threadLimit: 3,
+        matchLimit: 15,
+        minSimilarity: 0.35,
+      });
       const qa = await evaluateQA(benchCase, retrieval.retrieved, {
         modelId: models.answerer,
         judgeModelId: models.judge,
+        conversations,
         onUsage: (stage, modelId, usage) => recordUsage(stage, modelId, usage),
       });
       result = {

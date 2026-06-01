@@ -6,7 +6,7 @@
  * and relative-time parsing for scheduling.
  */
 
-import { format } from "date-fns";
+import { format, differenceInCalendarDays } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 
 /**
@@ -70,13 +70,22 @@ export function relativeTime(date: Date, now?: Date): string {
   const seconds = Math.floor(diffMs / 1000);
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
+  // Count CALENDAR days/weeks/months, not elapsed 24h periods. "How many days
+  // ago" means the calendar-day difference (Apr 6 → Apr 10 is 4 days), which is
+  // what people — and the eval gold answers — expect. Flooring elapsed
+  // milliseconds undercounts by one whenever the event happened later in its day
+  // than the reference instant (an event logged "today" at 8pm, asked about the
+  // next morning, is 1 day ago, not 0). Sub-day phrasing still keys off elapsed
+  // time so "5 minutes ago"/"3 hours ago" stay accurate within the same day.
+  const days = differenceInCalendarDays(reference, date);
   const weeks = Math.floor(days / 7);
   const months = Math.floor(days / 30);
 
-  if (seconds < 60) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  if (days === 0) {
+    if (seconds < 60) return "just now";
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
   if (days === 1) return "yesterday";
   if (days < 7) return `${days} days ago`;
   if (weeks === 1) return "about a week ago";

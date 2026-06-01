@@ -405,6 +405,16 @@ export function resolveQuestionDate(benchCase: BenchCase): Date {
     const d = new Date(benchCase.questionDate);
     if (!Number.isNaN(d.getTime())) return d;
   }
+  return endOfConversationInstant(benchCase);
+}
+
+/**
+ * The instant just after the last replayed turn across all of a case's
+ * sessions. Used as the question-date fallback when a case carries no explicit
+ * `questionDate`, so retrieval and the answerer's notion of "now" agree on a
+ * single as-of instant.
+ */
+export function endOfConversationInstant(benchCase: BenchCase): Date {
   let latest = 0;
   for (const s of benchCase.sessions) {
     const base = new Date(s.timestamp).getTime();
@@ -412,7 +422,7 @@ export function resolveQuestionDate(benchCase: BenchCase): Date {
     const end = base + Math.max(0, s.turns.length) * TURN_OFFSET_MS;
     if (end > latest) latest = end;
   }
-  // +1s so a strict `T_Q < watermark` release fires only after the last turn's
+  // +1s so a strict `T < frontier` release fires only after the last turn's
   // extraction (whose unit timestamp is the turn time) has completed.
   return latest > 0 ? new Date(latest + 1000) : new Date();
 }

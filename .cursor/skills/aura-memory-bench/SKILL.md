@@ -10,6 +10,17 @@ extractor → memory pipeline on a **production-faithful timeline**, then scores
 **retrieval recall@15** (deterministic, no LLM) and **QA accuracy**
 (constrained answerer + LLM judge).
 
+> ## CRITICAL INVARIANT — memory logic lives in the API, NEVER in the bench
+> ALL memory logic (extraction, retrieval, ranking, recall, embedding, prompt
+> formatting) lives in `apps/api/src/memory/**` — the code prod runs. The bench
+> (`apps/api/bench/**`) contains **NO memory logic**: it ONLY imports the
+> production memory functions and replicates how prod assembles them. NEVER add
+> a retrieval/recall/formatting path to the bench that production doesn't run —
+> add it to `apps/api/src/memory/**` and wire it into the prod pipeline FIRST,
+> then import it from the bench. A path that exists only in the bench makes the
+> score lie. The only bench-local code is harness scaffolding (corpus loading,
+> timeline replay, the answerer/judge instrument, scoring, artifacts).
+
 - CLI entry: `apps/api/src/scripts/bench-memory.ts`
 - Orchestrator: `apps/api/bench/src/runner.ts`
 - Timeline engine: `apps/api/bench/src/timeline.ts`
@@ -193,11 +204,70 @@ recall scorer can't credit the *updating* evidence session — QA can be 100%
 while recall@15 reads 0%. This is a metric limitation, not a retrieval
 regression. Judge it against QA accuracy.
 
+## Investigating failures (`bench:inspect`)
+
+Every run writes a crash-safe directory under `apps/api/bench/runs/<runId>/`
+(`cases.jsonl`, `failures.jsonl`, `manifest.json`, `run.log`); `runs/latest`
+points at the most recent. `pnpm bench:inspect` reads those artifacts so you
+**don't hand-write a throwaway repro script** every post-mortem. Run from the
+repo root:
+
+```bash
+pnpm bench:inspect                  # newest run: per-category QA+recall tally + failure list
+pnpm bench:inspect --run-id=<id>    # a specific run dir
+pnpm bench:inspect --workspace=<ws> # find the run for a bench-<runId> workspace
+pnpm bench:inspect --triage         # bucket every non-abstention failure vs the live workspace
+pnpm bench:inspect --case=<caseId>  # deep-dive ONE case (the answerer's-eye view)
+pnpm bench:inspect --case=<id> --prod   # read against .env.production
+```
+
+- **default (listing)** is pure file reads — no DB, no env, instant. Reuses the
+  harness's own `aggregateScores`, so the tally matches the run exactly.
+- **`--triage`** classifies each failure into one of three buckets — the fastest
+  way to see whether a category's misses are extraction, retrieval, or downstream:
+  - `no-evidence-extracted` — extractor produced no memory from any evidence
+    session (an **extraction gap**).
+  - `evidence-hidden-by-as-of` — the memory exists but its `valid_from/valid_until`
+    window excludes the retrieval instant (an **as-of cutoff gap**; should be ~0
+    now that `temporal-reasoning` retrieval extends to end-of-conversation, see
+    `resolveRetrievalInstant`).
+  - `visible-but-failed` — evidence *was* retrievable; the miss is **ranking,
+    formatting, or the answerer** itself. Usually the dominant bucket → go
+    `--case` on a few.
+- **`--case`** prints the question/gold/model/verdict, the answerer's vs
+  retrieval instant, as-of vs live coverage, the **literal memory block the
+  answerer saw** (production wire format), and every evidence-session memory in
+  the workspace with `visible|HIDDEN-by-as-of` + `retrieved|not-retrieved` flags.
+
+**The workspace must still exist** for `--triage`/`--case`: a run **wipes its
+`bench-<runId>` workspace on a clean finish**, so if you want to inspect
+memories afterwards, **interrupt the run with Ctrl-C** (it drains + saves
+partial `cases.jsonl` first) rather than letting it complete. In-flight runs
+have no `manifest.json` yet — the script falls back to `bench-<runId>` +
+`longmemeval`, so triage/case still work mid-run.
+
+> Don't reach for `psql` (not installed here). `bench:inspect` and any ad-hoc
+> Node script should query via the codebase's Drizzle client (`apps/api/src/db/
+> client.js`) and the real `retrieveMemories`/`formatMemoriesForPrompt`, so what
+> you inspect is exactly what the harness scored.
+
+**Recurring root causes this surfaces** (all production-affecting, not bench
+artifacts): coarse `relativeTime` rendering destroying day precision for "how
+many days ago" questions (mitigated by pairing the ISO date in
+`format-for-prompt.ts`); the strict as-of cutoff hiding LME temporal evidence
+timestamped *after* `question_date` (~30% of temporal cases; mitigated by
+`resolveRetrievalInstant`); and **local-timezone parsing** of LME
+`question_date`/`haystack_dates` shifting early-morning timestamps to the prior
+UTC day (off-by-one in temporal arithmetic + nondeterministic across machines —
+parse as UTC in `fixtures.ts`).
+
 ## Where things live
 
 | Concern | File |
 |---|---|
 | CLI / flags | `apps/api/src/scripts/bench-memory.ts` |
+| Failure investigation (`bench:inspect`) | `apps/api/bench/scripts/inspect-run.ts` |
+| Crash-safe run artifacts (`runs/<id>/`, `runs/latest`) | `apps/api/bench/src/artifacts.ts` |
 | Orchestration | `apps/api/bench/src/runner.ts` |
 | Timeline engine (producer/consumer + watermark) | `apps/api/bench/src/timeline.ts` |
 | Corpus loaders + sampling + `resolveQuestionDate` | `apps/api/bench/src/fixtures.ts` |

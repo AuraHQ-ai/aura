@@ -6,6 +6,28 @@ alwaysApply: false
 
 # Memory changes must be validated with the bench
 
+## CRITICAL INVARIANT — memory logic lives in the API, NEVER in the bench
+
+**Read this before touching anything under `apps/api/bench/`.**
+
+- ALL memory logic — extraction, retrieval, ranking, recall, embedding, prompt
+  formatting — lives in `apps/api/src/memory/**`. That is the code PROD runs.
+- The bench harness (`apps/api/bench/**`) contains **NO memory logic**. It ONLY
+  imports the production memory functions and replicates how PROD assembles
+  them. It is a measurement instrument, not a second implementation.
+- **NEVER add a retrieval/recall/embedding/formatting path to the bench that
+  production does not run.** If a capability would help the bench, it must be
+  added to `apps/api/src/memory/**` AND used by the production pipeline FIRST;
+  the bench then imports it. No exceptions, no "bench-only" lanes.
+- If you catch yourself writing retrieval/embedding/formatting/recall code under
+  `apps/api/bench/`, STOP — move it to `apps/api/src/memory/` and import it.
+- The bench's ENTIRE value is faithfully measuring prod. A path that exists only
+  in the bench makes the score a lie. Tuning the bench to move a number without
+  the same change in prod is the cardinal sin here.
+- The only bench-local concern is the harness scaffolding: corpus loading,
+  timeline replay, the constrained answerer/judge instrument, scoring math,
+  artifacts. None of that is memory logic.
+
 You're editing a path that can move Aura's memory quality. These changes are
 **not falsifiable by typecheck alone** — validate with the memory bench. Read
 the `aura-memory-bench` skill for the full workflow.
@@ -57,6 +79,20 @@ cheap subsets to sanity-check before you push, then let CI handle the medium run
   commit the regenerated `history.jsonl` + READMEs.
 - Always pass `--log --note="<what changed>"` so the result is recorded.
 - Iterate narrow first: `--category=<axis> --limit=3` before widening (see skill).
+
+## Investigating failures (don't hand-roll repro scripts)
+
+After (or during) a run, use `pnpm bench:inspect` instead of writing throwaway
+DB scripts — it reads the run's artifacts under `apps/api/bench/runs/<id>/`:
+
+- `pnpm bench:inspect` — newest run's per-category QA+recall tally + failure list (pure file read).
+- `pnpm bench:inspect --triage` — buckets each failure as `no-evidence-extracted` / `evidence-hidden-by-as-of` / `visible-but-failed` (extraction vs retrieval vs downstream).
+- `pnpm bench:inspect --case=<id>` — one case: the literal memory block the answerer saw + each evidence memory's visibility/retrieved flags.
+
+`--triage`/`--case` query the run's `bench-<runId>` workspace, which is **wiped
+on a clean finish** — interrupt the run (Ctrl-C, it saves partial results) if you
+want to inspect memories. Full workflow + the recurring root causes are in the
+`aura-memory-bench` skill.
 
 ## Reuse expensive stages instead of re-ingesting
 

@@ -18,7 +18,14 @@ vi.mock("../../src/db/client.js", () => ({
     }),
   },
 }));
-vi.mock("../../src/lib/embeddings.js", () => ({ embedTexts: vi.fn() }));
+vi.mock("../../src/lib/embeddings.js", () => ({
+  embedTexts: vi.fn(),
+  embedText: vi.fn(async () => []),
+}));
+
+vi.mock("../../src/memory/retrieve.js", () => ({
+  retrieveConversations: vi.fn(async () => []),
+}));
 
 vi.mock("../../src/memory/extract.js", () => ({
   extractMemoriesFromTranscript: vi.fn(async (messages: unknown, ctx: any) => {

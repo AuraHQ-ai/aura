@@ -363,8 +363,11 @@ function formatEntitySummaries(summaries: EntitySummary[]): string {
 
 /**
  * Format retrieved conversation threads as compact XML pointers.
+ *
+ * Exported so the memory bench harness can inject the EXACT same
+ * `<related_threads>` block the agent sees, instead of reimplementing it.
  */
-function formatConversations(conversations: ConversationThread[]): string {
+export function formatConversations(conversations: ConversationThread[]): string {
   if (conversations.length === 0) return "";
 
   const threads = conversations
