@@ -34,6 +34,7 @@ Overall QA accuracy and recall@15 across logged runs (newest first).
 
 | date | commit | scope | QA | recall@15 | n | cost | runtime |
 |---|---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `c34c107` | locomo/toy | 40% | 81% | 10 | $3.35 | 41m38s |
 | 2026-06-01 | `c34c107` | longmemeval/toy | 67% | 71% | 12 | $0.57 | 3m09s |
 | 2026-06-01 | `e0bb4c8` | locomo/medium | 22% | 76% | 150 | $11.30 | 79m37s |
 | 2026-06-01 | `e0bb4c8` | longmemeval/medium | 54% | 86% | 180 | $12.28 | 75m19s |
