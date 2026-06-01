@@ -973,6 +973,25 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         }
       }
 
+      if (isFinished && resolvedPrUrl) {
+        try {
+          const { getCredential } = await import("./lib/credentials.js");
+          const { markPullRequestReadyForReview } = await import(
+            "./lib/cursor-agent.js"
+          );
+          const ghToken = await getCredential("github_token");
+          await markPullRequestReadyForReview({
+            prUrl: resolvedPrUrl,
+            githubToken: ghToken,
+          });
+        } catch (error) {
+          logger.warn("Cursor agent webhook: failed to mark PR ready for review", {
+            prUrl: resolvedPrUrl,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       let prTitle = "";
       if (resolvedPrUrl) {
         const prMatch = resolvedPrUrl.match(/\/pull\/(\d+)$/);

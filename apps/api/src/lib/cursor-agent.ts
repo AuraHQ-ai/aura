@@ -54,6 +54,190 @@ export interface ResolveCursorAgentPrUrlParams {
   fetchImpl?: typeof fetch;
 }
 
+export interface GitHubPullRequestRef {
+  owner: string;
+  repo: string;
+  number: number;
+}
+
+export type MarkPullRequestReadyResult =
+  | "marked"
+  | "already_ready"
+  | "skipped"
+  | "failed";
+
+interface GitHubGraphqlResponse<T> {
+  data?: T;
+  errors?: Array<{ message?: string }>;
+  message?: string;
+}
+
+export function parseGitHubPullRequestUrl(
+  prUrl: string,
+): GitHubPullRequestRef | null {
+  try {
+    const url = new URL(prUrl);
+    if (url.hostname !== "github.com") return null;
+
+    const [owner, repo, pullSegment, numberSegment] = url.pathname
+      .split("/")
+      .filter(Boolean);
+    if (!owner || !repo || pullSegment !== "pull" || !numberSegment) {
+      return null;
+    }
+
+    const number = Number(numberSegment);
+    if (!Number.isInteger(number) || number <= 0) return null;
+
+    return { owner, repo, number };
+  } catch {
+    return null;
+  }
+}
+
+async function githubGraphql<T>({
+  githubToken,
+  query,
+  variables,
+  fetchImpl,
+}: {
+  githubToken: string;
+  query: string;
+  variables: Record<string, unknown>;
+  fetchImpl: typeof fetch;
+}): Promise<T | undefined> {
+  const response = await fetchImpl("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${githubToken}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "User-Agent": "Aura",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  let body: GitHubGraphqlResponse<T> | undefined;
+  try {
+    body = (await response.json()) as GitHubGraphqlResponse<T>;
+  } catch {
+    body = undefined;
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `GitHub GraphQL request failed (${response.status}): ${
+        body?.message || "unknown error"
+      }`,
+    );
+  }
+
+  if (body?.errors?.length) {
+    throw new Error(
+      `GitHub GraphQL error: ${body.errors
+        .map((error) => error.message || "unknown error")
+        .join("; ")}`,
+    );
+  }
+
+  return body?.data;
+}
+
+export async function markPullRequestReadyForReview({
+  prUrl,
+  githubToken,
+  fetchImpl = fetch,
+}: {
+  prUrl: string;
+  githubToken: string | null | undefined;
+  fetchImpl?: typeof fetch;
+}): Promise<MarkPullRequestReadyResult> {
+  if (!githubToken) return "skipped";
+
+  const pr = parseGitHubPullRequestUrl(prUrl);
+  if (!pr) return "skipped";
+
+  try {
+    const data = await githubGraphql<{
+      repository: {
+        pullRequest: { id: string; isDraft: boolean; number: number } | null;
+      } | null;
+    }>({
+      githubToken,
+      fetchImpl,
+      query: `
+        query CursorWebhookPullRequest($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              id
+              isDraft
+              number
+            }
+          }
+        }
+      `,
+      variables: {
+        owner: pr.owner,
+        repo: pr.repo,
+        number: pr.number,
+      },
+    });
+
+    const pullRequest = data?.repository?.pullRequest;
+    if (!pullRequest) {
+      throw new Error(`GitHub PR #${pr.number} not found`);
+    }
+
+    if (!pullRequest.isDraft) {
+      logger.info("Cursor agent webhook: PR already ready for review", {
+        owner: pr.owner,
+        repo: pr.repo,
+        number: pr.number,
+      });
+      return "already_ready";
+    }
+
+    await githubGraphql<{
+      markPullRequestReadyForReview: {
+        pullRequest: { id: string; isDraft: boolean; number: number } | null;
+      } | null;
+    }>({
+      githubToken,
+      fetchImpl,
+      query: `
+        mutation CursorWebhookMarkPullRequestReady($pullRequestId: ID!) {
+          markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+            pullRequest {
+              id
+              isDraft
+              number
+            }
+          }
+        }
+      `,
+      variables: { pullRequestId: pullRequest.id },
+    });
+
+    logger.info(
+      `Cursor agent webhook: marked PR #${pr.number} ready for review`,
+      {
+        owner: pr.owner,
+        repo: pr.repo,
+        number: pr.number,
+      },
+    );
+    return "marked";
+  } catch (error) {
+    logger.warn("Cursor agent webhook: failed to mark PR ready for review", {
+      owner: pr.owner,
+      repo: pr.repo,
+      number: pr.number,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "failed";
+  }
+}
+
 export async function resolveCursorAgentPrUrl({
   prUrl,
   branchName,
