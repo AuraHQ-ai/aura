@@ -538,9 +538,9 @@
       "prNumber": 1076
     },
     {
-      "runId": "2026-06-01T13-52-02-195Z-qx7qutdz",
-      "timestamp": "2026-06-01T13:55:51.354Z",
-      "commit": "e6d0e17",
+      "runId": "2026-06-01T14-51-58-178Z-hfsvk7u0",
+      "timestamp": "2026-06-01T14:58:46.948Z",
+      "commit": "59ef24f",
       "dirty": false,
       "datasets": [
         "longmemeval"
@@ -550,8 +550,8 @@
       "category": null,
       "corpusHash": "b178d604c01afa4a",
       "caseSetHash": "0785d34e2111c176",
-      "runtimeMs": 224994,
-      "costUsd": 0.57762,
+      "runtimeMs": 405436,
+      "costUsd": 0.5807199999999999,
       "models": {
         "extraction": "anthropic/claude-haiku-4.5",
         "answerer": "anthropic/claude-opus-4.8",
@@ -562,7 +562,7 @@
           "dataset": "longmemeval",
           "category": "knowledge-update",
           "qa": 1,
-          "recall": 0.5,
+          "recall": 1,
           "n": 2
         },
         {
@@ -589,7 +589,7 @@
         {
           "dataset": "longmemeval",
           "category": "single-session-user",
-          "qa": 1,
+          "qa": 0.5,
           "recall": 1,
           "n": 2
         },
@@ -602,8 +602,8 @@
         }
       ],
       "overall": {
-        "qa": 0.6666666666666666,
-        "recall": 0.7916666666666666,
+        "qa": 0.5833333333333334,
+        "recall": 0.875,
         "n": 12
       },
       "prNumber": 1076
