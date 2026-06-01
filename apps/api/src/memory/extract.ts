@@ -824,7 +824,14 @@ async function runReconciliationCore(
       logger.warn("Failed to embed updated memory content", { ref: upd.memoryRef });
     }
     try {
-      await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined, context.createdAt);
+      await updateMemoryContent(
+        memoryId,
+        upd.content,
+        embedding,
+        upd.importance ?? undefined,
+        context.createdAt,
+        context.benchProvenance,
+      );
     } catch {
       logger.warn("Skipping entity link refresh because content update failed", {
         memoryId,

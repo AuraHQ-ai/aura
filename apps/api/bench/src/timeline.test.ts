@@ -6,13 +6,15 @@ import type { BenchCase } from "./types.js";
 const state = vi.hoisted(() => ({
   lateExtractionFinished: false,
   lateExtractionResolve: null as (() => void) | null,
+  extractionCalls: [] as Array<{ messages: unknown; ctx: any }>,
 }));
 
 vi.mock("../../src/db/client.js", () => ({ db: {} }));
 vi.mock("../../src/lib/embeddings.js", () => ({ embedTexts: vi.fn() }));
 
 vi.mock("../../src/memory/extract.js", () => ({
-  extractMemoriesFromTranscript: vi.fn(async (_messages: unknown, ctx: any) => {
+  extractMemoriesFromTranscript: vi.fn(async (messages: unknown, ctx: any) => {
+    state.extractionCalls.push({ messages, ctx });
     if (ctx.benchProvenance?.caseId !== "late") return;
     await new Promise<void>((resolve) => {
       state.lateExtractionResolve = resolve;
@@ -45,6 +47,7 @@ vi.mock("./eval-qa.js", () => ({
 }));
 
 import { runTimeline } from "./timeline.js";
+import { buildExtractionUnits } from "./ingest.js";
 
 function makeCase(id: string, sessionDate: string, questionDate: string): BenchCase {
   return {
@@ -82,7 +85,51 @@ describe("runTimeline", () => {
   beforeEach(() => {
     state.lateExtractionFinished = false;
     state.lateExtractionResolve = null;
+    state.extractionCalls = [];
     vi.clearAllMocks();
+  });
+
+  it("adds a final exchange extraction for user turns after the last assistant reply", async () => {
+    const benchCase: BenchCase = {
+      id: "trailing",
+      source: "toy",
+      category: "single_hop",
+      question: "What is the final fact?",
+      goldAnswer: "Pepper",
+      abstention: false,
+      sessions: [
+        {
+          id: "S1",
+          timestamp: "2024-09-01T10:00:00.000Z",
+          turns: [
+            { diaId: "S1:1", role: "user", speaker: "Alex", content: "Hello." },
+            { diaId: "S1:2", role: "assistant", speaker: "Aura", content: "Tell me." },
+            {
+              diaId: "S1:3",
+              role: "user",
+              speaker: "Alex",
+              content: "My dog is named Pepper.",
+            },
+          ],
+        },
+      ],
+    };
+
+    const units = buildExtractionUnits(benchCase, "bench-test", "mock-extract", "exchange");
+
+    expect(units).toHaveLength(2);
+    expect(units.map((unit) => unit.at.toISOString())).toEqual([
+      "2024-09-01T10:01:00.000Z",
+      "2024-09-01T10:02:00.000Z",
+    ]);
+
+    await units[1].run();
+
+    expect(state.extractionCalls).toHaveLength(1);
+    const trailing = state.extractionCalls[0].ctx;
+    expect(trailing.userMessage).toBe("My dog is named Pepper.");
+    expect(trailing.assistantResponse).toBe("Tell me.");
+    expect(trailing.benchProvenance.diaIds).toEqual(["S1:1", "S1:2", "S1:3"]);
   });
 
   it("scores a question when its own conversation finishes before later conversations", async () => {

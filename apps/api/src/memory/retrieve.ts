@@ -634,6 +634,7 @@ async function retrieveSingleQuery(
         supersedesMemoryId: row.supersedes_memory_id ?? null,
         supersededAt: row.superseded_at ?? null,
         supersededByMemoryId: row.superseded_by_memory_id ?? null,
+        benchProvenance: row.bench_provenance ?? null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       } as Memory,

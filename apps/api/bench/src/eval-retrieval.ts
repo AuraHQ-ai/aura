@@ -51,12 +51,12 @@ export interface RetrievalEvalResult {
  * number of evidence sessions. A retrieved memory "represents" a session via
  * any of three channels (union):
  *
- *   1. sourceThreadTs ∈ evidenceSessionIds.
- *      Cheap. Works because bench ingest sets sourceThreadTs = session.id.
- *      Covers LongMemEval where evidence is session-level.
- *   2. bench_provenance.sessionIds ∩ evidenceSessionIds ≠ ∅.
- *   3. bench_provenance.diaIds whose session prefix ∈ evidence sessions, or
- *      that match an evidence dia_id exactly (LoCoMo turn-level pointers).
+ *   1. For sessions with turn-level evidence (`evidenceDiaIds`), a retrieved
+ *      memory must include one of those exact dia_ids in `bench_provenance`.
+ *      This prevents over-crediting a memory from the right session but the
+ *      wrong turn.
+ *   2. For session-only evidence (LongMemEval), sourceThreadTs/sessionIds or
+ *      any provenance dia_id from that session can cover the session.
  */
 export async function evaluateRetrieval(
   benchCase: BenchCase,
@@ -109,21 +109,44 @@ export async function evaluateRetrieval(
   }
   if (evidence.size === 0) return none;
 
+  const wantedDiaBySession = new Map<string, Set<string>>();
+  for (const diaId of wantDia) {
+    const sessionId = diaId.split(":")[0];
+    let set = wantedDiaBySession.get(sessionId);
+    if (!set) {
+      set = new Set<string>();
+      wantedDiaBySession.set(sessionId, set);
+    }
+    set.add(diaId);
+  }
+
   // Mark every evidence session that at least one retrieved memory represents.
+  // If the case has turn-level evidence for a session, only exact dia_id
+  // provenance can cover that session. Session-level fields are still valid for
+  // datasets that only provide session evidence.
   const covered = new Set<string>();
-  const mark = (s: string | null | undefined) => {
-    if (s && evidence.has(s)) covered.add(s);
+  const markSessionOnly = (s: string | null | undefined) => {
+    if (s && evidence.has(s) && !wantedDiaBySession.has(s)) covered.add(s);
+  };
+  const markDia = (d: string | null | undefined) => {
+    if (!d) return;
+    const sessionId = d.split(":")[0];
+    const wanted = wantedDiaBySession.get(sessionId);
+    if (wanted) {
+      if (wanted.has(d)) covered.add(sessionId);
+      return;
+    }
+    if (evidence.has(sessionId)) covered.add(sessionId);
   };
   for (const mem of retrieved) {
-    mark(mem.sourceThreadTs);
+    markSessionOnly(mem.sourceThreadTs);
     const prov = (mem as any).benchProvenance as
       | { diaIds?: string[]; sessionIds?: string[] }
       | null
       | undefined;
     if (prov) {
-      prov.sessionIds?.forEach(mark);
-      // A dia_id like "D1:3" belongs to session "D1"; mark that session.
-      prov.diaIds?.forEach((d) => mark(d.split(":")[0]));
+      prov.sessionIds?.forEach(markSessionOnly);
+      prov.diaIds?.forEach(markDia);
     }
   }
 

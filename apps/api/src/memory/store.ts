@@ -680,6 +680,7 @@ export async function updateMemoryContent(
   newEmbedding: number[] | null,
   newImportance?: number,
   at?: Date,
+  benchProvenance?: NewMemory["benchProvenance"],
 ): Promise<void> {
   const now = at ?? new Date();
   try {
@@ -691,6 +692,9 @@ export async function updateMemoryContent(
     if (newImportance != null) {
       updates.importance = newImportance;
       updates.relevanceScore = importanceToRelevance(newImportance);
+    }
+    if (benchProvenance !== undefined) {
+      updates.benchProvenance = benchProvenance;
     }
     await db
       .update(memories)
