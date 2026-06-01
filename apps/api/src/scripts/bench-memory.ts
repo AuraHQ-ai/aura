@@ -106,7 +106,7 @@ const datasets =
         ? (["toy", "longmemeval", "locomo"] as const)
         : ([datasetArg] as any);
 
-const subsetArg = (getFlag("subset") ?? "medium") as "fast" | "medium" | "full";
+const subsetArg = (getFlag("subset") ?? "medium") as "toy" | "fast" | "medium" | "full";
 const limit = getFlag("limit") ? Number(getFlag("limit")) : undefined;
 // --cases=N caps the TOTAL number of cases (distinct from --limit, per-category).
 const cases = getFlag("cases") ? Number(getFlag("cases")) : undefined;
@@ -291,7 +291,7 @@ try {
   // empty result sets (nothing meaningful to record).
   if (logResults && !cfg.dryRun && output.scores.length > 0) {
     const { recordRun } = await import("../../bench/src/results-log.js");
-    const { historyFile, benchReadme, mainReadme } = recordRun({
+    const { historyFile, latestJson, benchReadme, mainReadme } = recordRun({
       runId: output.runId,
       scores: output.scores,
       datasets: [...(cfg.datasets ?? [])],
@@ -307,6 +307,7 @@ try {
       prNumber: cfg.prNumber,
     });
     console.log(`\nLogged run to ${historyFile}`);
+    console.log(`Updated latest state in ${latestJson}`);
     console.log(`Regenerated ${benchReadme}`);
     if (mainReadme) console.log(`Regenerated snapshot in ${mainReadme}`);
   } else if (logResults && (cfg.dryRun || output.scores.length === 0)) {

@@ -2,10 +2,12 @@
  * Structured, committed history for the memory bench + the markdown views
  * derived from it.
  *
- * The source of truth is `apps/api/bench/history.jsonl` — one JSON object per
- * logged run (`pnpm bench:memory … --log`). From that we regenerate two human
- * views so the committed docs always reflect the current codebase:
+ * The immutable source of truth is `apps/api/bench/history.jsonl` — one JSON
+ * object per logged run (`pnpm bench:memory … --log`). From that append-only log
+ * we regenerate one canonical machine view and two human views so the committed
+ * docs always reflect the current codebase:
  *
+ *   - `apps/api/bench/latest.json`  materialized latest entry per run scope
  *   - `apps/api/bench/README.md`  detailed: current scores + evolution table
  *   - root `README.md`            a compact snapshot block between markers
  *
@@ -55,11 +57,7 @@ export interface HistoryEntry {
   scores: HistoryScore[];
   overall: { qa: number | null; recall: number | null; n: number };
   note?: string;
-  /**
-   * Pull request number this run is attributable to (CI), or null/undefined for
-   * local and post-merge runs. Used to squash repeated pushes on one PR down to
-   * a single history entry (see `recordRun`).
-   */
+  /** Pull request number this run is attributable to (CI), if any. */
   prNumber?: number | null;
 }
 
@@ -81,6 +79,10 @@ export interface RecordRunInput {
 
 export function historyPath(): string {
   return resolve(HERE, "../history.jsonl");
+}
+
+export function latestPath(): string {
+  return resolve(HERE, "../latest.json");
 }
 
 export function benchReadmePath(): string {
@@ -207,9 +209,15 @@ export function appendHistory(entry: HistoryEntry, file: string = historyPath())
   return file;
 }
 
-/** Overwrite the whole history file from an in-memory list (newest last). */
+/**
+ * Append entries to the history file.
+ *
+ * This helper used to overwrite `history.jsonl` for PR-attributed runs. Keep the
+ * name for callers/tests, but make the load-bearing behavior append-only: the
+ * immutable trace must never be compacted or rewritten in place.
+ */
 export function writeHistory(entries: HistoryEntry[], file: string = historyPath()): string {
-  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + (entries.length ? "\n" : ""));
+  for (const entry of entries) appendHistory(entry, file);
   return file;
 }
 
@@ -220,6 +228,47 @@ export function readHistory(file: string = historyPath()): HistoryEntry[] {
     .map((l) => l.trim())
     .filter(Boolean)
     .map((l) => JSON.parse(l) as HistoryEntry);
+}
+
+export interface LatestResults {
+  schemaVersion: 1;
+  source: "history.jsonl";
+  entries: HistoryEntry[];
+}
+
+function scopeKey(entry: Pick<HistoryEntry, "subset" | "corpusHash" | "caseSetHash" | "datasets">): string {
+  return JSON.stringify({
+    subset: entry.subset,
+    corpusHash: entry.corpusHash,
+    caseSetHash: entry.caseSetHash ?? null,
+    datasets: [...entry.datasets].sort(),
+  });
+}
+
+export function materializeLatest(history: HistoryEntry[]): LatestResults {
+  const byScope = new Map<string, HistoryEntry>();
+  for (const entry of history) {
+    const key = scopeKey(entry);
+    // Re-insert existing keys so entries stay ordered by their newest write.
+    if (byScope.has(key)) byScope.delete(key);
+    byScope.set(key, entry);
+  }
+  return {
+    schemaVersion: 1,
+    source: "history.jsonl",
+    entries: [...byScope.values()],
+  };
+}
+
+export function writeLatest(history: HistoryEntry[], file: string = latestPath()): string {
+  writeFileSync(file, `${JSON.stringify(materializeLatest(history), null, 2)}\n`);
+  return file;
+}
+
+export function readLatest(file: string = latestPath()): HistoryEntry[] {
+  if (!existsSync(file)) return [];
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as LatestResults | HistoryEntry[];
+  return Array.isArray(parsed) ? parsed : parsed.entries ?? [];
 }
 
 function scoresTable(scores: HistoryScore[]): string {
@@ -234,6 +283,7 @@ function scoresTable(scores: HistoryScore[]): string {
 export function renderBenchReadme(
   history: HistoryEntry[],
   file: string = benchReadmePath(),
+  latestEntries: HistoryEntry[] = materializeLatest(history).entries,
 ): string {
   const lines: string[] = [];
   lines.push("# Memory bench results");
@@ -271,7 +321,7 @@ export function renderBenchReadme(
     return file;
   }
 
-  const latest = history[history.length - 1]!;
+  const latest = latestEntries[latestEntries.length - 1] ?? history[history.length - 1]!;
 
   lines.push("## Current");
   lines.push("");
@@ -345,14 +395,17 @@ export function renderMainSnapshot(
   return file;
 }
 
-/** Regenerate both markdown views from the on-disk history. */
+/** Regenerate latest.json and both markdown views from the on-disk history. */
 export function renderReports(history: HistoryEntry[] = readHistory()): {
+  latestJson: string;
   benchReadme: string;
   mainReadme: string | null;
 } {
-  const benchReadme = renderBenchReadme(history);
-  const mainReadme = renderMainSnapshot(history[history.length - 1]);
-  return { benchReadme, mainReadme };
+  const latest = materializeLatest(history).entries;
+  const latestJson = writeLatest(history);
+  const benchReadme = renderBenchReadme(history, benchReadmePath(), latest);
+  const mainReadme = renderMainSnapshot(latest[latest.length - 1]);
+  return { latestJson, benchReadme, mainReadme };
 }
 
 /**
@@ -361,25 +414,14 @@ export function renderReports(history: HistoryEntry[] = readHistory()): {
  */
 export function recordRun(input: RecordRunInput): {
   historyFile: string;
+  latestJson: string;
   benchReadme: string;
   mainReadme: string | null;
 } {
   const entry = buildHistoryEntry(input);
-
-  // A single PR can be pushed many times; each push re-runs the bench. To keep
-  // one entry per PR (instead of N appended rows that all merge into main), we
-  // drop any prior entry with the same prNumber before appending the new one.
-  // Local / post-merge runs (no prNumber) always append.
-  let historyFile: string;
-  if (entry.prNumber != null) {
-    const kept = readHistory().filter((e) => e.prNumber !== entry.prNumber);
-    kept.push(entry);
-    historyFile = writeHistory(kept);
-  } else {
-    historyFile = appendHistory(entry);
-  }
+  const historyFile = appendHistory(entry);
 
   const history = readHistory();
-  const { benchReadme, mainReadme } = renderReports(history);
-  return { historyFile, benchReadme, mainReadme };
+  const { latestJson, benchReadme, mainReadme } = renderReports(history);
+  return { historyFile, latestJson, benchReadme, mainReadme };
 }

@@ -4,7 +4,8 @@
  * In CI the bench runs on the PR head and we want a "deploy-preview"-style
  * comment showing how the change moved each category against the *target
  * branch*. The baseline is the newest comparable entry in the base branch's
- * committed `history.jsonl` (git-native, auditable) — not the ephemeral run DB.
+ * committed `latest.json` (falling back to `history.jsonl` while older bases
+ * exist) — not the ephemeral run DB.
  *
  * "Comparable" means the same corpus AND the exact same sampled case set
  * (`corpusHash` + `caseSetHash`), plus the same dataset set and subset. Because
@@ -48,6 +49,30 @@ export function parseHistoryText(text: string): HistoryEntry[] {
     });
 }
 
+/** Parse a materialized `latest.json` blob, returning null when it is not one. */
+export function parseLatestText(text: string): HistoryEntry[] | null {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) return parsed as HistoryEntry[];
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as { entries?: unknown }).entries)
+    ) {
+      return (parsed as { entries: HistoryEntry[] }).entries;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function parseBaselineText(text: string): HistoryEntry[] {
+  return parseLatestText(text) ?? parseHistoryText(text);
+}
+
 function sameDatasets(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   const sa = [...a].sort();
@@ -67,11 +92,11 @@ function sameDatasets(a: string[], b: string[]): boolean {
  * `currentPrNumber` so we skip exactly that PR and nothing else.
  */
 export function loadBaselineEntry(
-  historyText: string,
+  baselineText: string,
   scope: BaselineScope,
   currentPrNumber?: number | null,
 ): HistoryEntry | null {
-  const entries = parseHistoryText(historyText);
+  const entries = parseBaselineText(baselineText);
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
     if (currentPrNumber != null && e.prNumber === currentPrNumber) continue;

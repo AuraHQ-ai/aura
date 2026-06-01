@@ -2,6 +2,7 @@
  * Regenerate the memory bench markdown views from the committed history.
  *
  * Reads `apps/api/bench/history.jsonl` and rewrites:
+ *   - `apps/api/bench/latest.json`  (canonical latest state)
  *   - `apps/api/bench/README.md`  (detailed: current scores + evolution)
  *   - root `README.md`            (the snapshot block between markers)
  *
@@ -17,8 +18,9 @@
 import { readHistory, renderReports } from "../src/results-log.js";
 
 const history = readHistory();
-const { benchReadme, mainReadme } = renderReports(history);
+const { latestJson, benchReadme, mainReadme } = renderReports(history);
 
+console.log(`Regenerated ${latestJson} from ${history.length} run(s).`);
 console.log(`Regenerated ${benchReadme} from ${history.length} run(s).`);
 if (mainReadme) {
   console.log(`Regenerated snapshot in ${mainReadme}.`);

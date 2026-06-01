@@ -3,7 +3,7 @@ name: Memory bench
 # Runs the memory benchmark harness (#1043) on the server.
 #
 # Pull requests always run the tiny toy bench as a smoke test. On PRs that touch
-# memory-relevant paths, the medium server bench runs two parallel full
+# memory-relevant paths, the server bench runs two parallel full
 # ephemeral production-faithful timeline passes: one LongMemEval leg and one
 # LoCoMo leg. Messages are
 # replayed in corpus-time order, per-assistant-reply (exchange) extraction runs
@@ -11,19 +11,23 @@ name: Memory bench
 # extraction frontier passes its timestamp (bi-temporal as-of retrieval). Then it:
 #
 #   1. diffs the result against the *target branch's* committed
-#      apps/api/bench/history.jsonl (the like-for-like per-dataset baseline)
+#      apps/api/bench/latest.json (falling back to history.jsonl for older bases)
 #      and posts a sticky "deploy-preview"-style PR comment with per-category
 #      deltas for each dataset leg.
 #
-# PR runs intentionally do NOT commit regenerated history/README artifacts back
-# to the head branch: GITHUB_TOKEN pushes do not trigger a follow-up check run,
-# so committing on PR events would advance HEAD past the bench check SHA and make
-# the result disappear from the PR Checks tab. Manual workflow_dispatch runs may
-# still commit artifacts to the selected branch.
+# PR runs commit regenerated history/latest/README artifacts back to the head
+# branch so the benchmark result travels with the code and becomes the next
+# baseline when the PR merges.
+#
+# LOAD-BEARING LOOP PREVENTION: the commit-back step relies on checkout's
+# default GITHUB_TOKEN credentials, pushing as github-actions[bot]. GitHub does
+# not trigger new workflow runs from GITHUB_TOKEN pushes. Swapping this to a PAT
+# or GitHub App token would silently reintroduce a bench→commit→bench loop unless
+# the bot-artifact guard below catches it.
 #
 # `--log` appends a structured entry to apps/api/bench/history.jsonl and
-# regenerates the two markdown views. `--pr-number` attributes the run to the PR
-# and squashes repeated pushes down to one history entry per PR.
+# regenerates apps/api/bench/latest.json plus the markdown views. `--pr-number`
+# attributes the run to the PR for delta-comment filtering.
 #
 # Server runs target a dedicated Neon bench branch, not production. Set
 # NEON_BENCH_PARENT_BRANCH (repo variable) or pass `neon_parent_branch` manually
@@ -31,7 +35,7 @@ name: Memory bench
 # branch. workflow_dispatch keeps the flexible staged knobs (bench_id/from/to)
 # for manual/isolated runs; PR runs always do a full ephemeral pass.
 #
-# PR defaults: --subset=medium, matrix --dataset=lme/locomo,
+# PR defaults: --subset=toy, matrix --dataset=lme/locomo,
 # --replay=exchange. Models default to the catalog tiers fast for extraction,
 # main for answerer, and escalation for judge — see apps/api/bench/src/models.ts.
 #
@@ -55,9 +59,9 @@ on:
   workflow_dispatch:
     inputs:
       subset:
-        description: "Subset size (fast | medium | full)"
+        description: "Subset size (toy | fast | medium | full)"
         type: choice
-        options: [fast, medium, full]
+        options: [toy, fast, medium, full]
         default: medium
       dataset:
         description: "Dataset (lme | locomo)"
@@ -147,6 +151,11 @@ concurrency:
   group: memory-bench-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # Keep the workflow subset-agnostic. PRs default to toy while the automation
+  # loop is hardened; raising to medium/full later is a one-line variable flip.
+  BENCH_SUBSET: ${{ github.event.inputs.subset || vars.BENCH_SUBSET || 'toy' }}
+
 jobs:
   changes:
     if: github.event_name == 'pull_request'
@@ -179,20 +188,57 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Guard bot-only bench artifact commit
+        id: recursion_guard
+        shell: bash
+        run: |
+          author="$(git log -1 --format='%an')"
+          if [ "${author}" != "github-actions[bot]" ]; then
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          git diff-tree --no-commit-id --name-only -r --root HEAD > /tmp/bench-changed-files.txt
+          node <<'NODE'
+          const fs = require('fs');
+          const files = fs.readFileSync('/tmp/bench-changed-files.txt', 'utf8')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean);
+          const allowed = new Set([
+            'README.md',
+            'apps/api/bench/history.jsonl',
+            'apps/api/bench/latest.json',
+            'apps/api/bench/README.md',
+          ]);
+          const perDatasetReadme = /^apps\/api\/bench\/[^/]+\/README\.md$/;
+          const onlyBenchArtifacts =
+            files.length > 0 &&
+            files.every((file) => allowed.has(file) || perDatasetReadme.test(file));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip=${onlyBenchArtifacts ? 'true' : 'false'}\n`);
+          if (onlyBenchArtifacts) {
+            console.log('Skipping memory bench: github-actions[bot] commit only touched bench artifacts.');
+          }
+          NODE
+
       # No `version:` — pnpm/action-setup reads it from the repo's
       # `packageManager` field (pnpm@10.33.0). Pinning it here too triggers
       # ERR_PNPM_BAD_PM_VERSION ("multiple versions of pnpm specified").
       - uses: pnpm/action-setup@v4
+        if: steps.recursion_guard.outputs.skip != 'true'
 
       - uses: actions/setup-node@v4
+        if: steps.recursion_guard.outputs.skip != 'true'
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install
+        if: steps.recursion_guard.outputs.skip != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Cache corpus
+        if: steps.recursion_guard.outputs.skip != 'true'
         uses: actions/cache@v4
         with:
           path: apps/api/bench/corpus/cache
@@ -203,9 +249,11 @@ jobs:
             bench-corpus-
 
       - name: Fetch corpus (cached)
+        if: steps.recursion_guard.outputs.skip != 'true'
         run: pnpm --filter aura-api bench:fetch-corpus
 
       - name: Create toy Neon branch
+        if: steps.recursion_guard.outputs.skip != 'true'
         id: neon
         uses: neondatabase/create-branch-action@v6
         continue-on-error: true
@@ -216,11 +264,13 @@ jobs:
           api_key: ${{ secrets.NEON_API_KEY }}
 
       - name: Migrate toy bench database
+        if: steps.recursion_guard.outputs.skip != 'true'
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
         run: pnpm --filter @aura/db db:migrate
 
       - name: Run toy bench
+        if: steps.recursion_guard.outputs.skip != 'true'
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
           BENCH_DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
@@ -238,13 +288,13 @@ jobs:
           set -o pipefail
           pnpm --filter aura-api bench:memory \
             --dataset=toy \
-            --subset=fast \
+            --subset=toy \
             --concurrency=2 \
             --json=/tmp/bench/toy-result.json \
             | tee /tmp/bench/output.txt
 
       - name: Upload toy bench artefacts
-        if: always()
+        if: always() && steps.recursion_guard.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: memory-bench-toy-${{ github.run_id }}
@@ -256,7 +306,7 @@ jobs:
         continue-on-error: true
 
       - name: Delete toy Neon branch
-        if: always() && steps.neon.outputs.branch_id != ''
+        if: always() && steps.recursion_guard.outputs.skip != 'true' && steps.neon.outputs.branch_id != ''
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
@@ -287,20 +337,57 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref || github.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
+      - name: Guard bot-only bench artifact commit
+        id: recursion_guard
+        shell: bash
+        run: |
+          author="$(git log -1 --format='%an')"
+          if [ "${author}" != "github-actions[bot]" ]; then
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          git diff-tree --no-commit-id --name-only -r --root HEAD > /tmp/bench-changed-files.txt
+          node <<'NODE'
+          const fs = require('fs');
+          const files = fs.readFileSync('/tmp/bench-changed-files.txt', 'utf8')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean);
+          const allowed = new Set([
+            'README.md',
+            'apps/api/bench/history.jsonl',
+            'apps/api/bench/latest.json',
+            'apps/api/bench/README.md',
+          ]);
+          const perDatasetReadme = /^apps\/api\/bench\/[^/]+\/README\.md$/;
+          const onlyBenchArtifacts =
+            files.length > 0 &&
+            files.every((file) => allowed.has(file) || perDatasetReadme.test(file));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `skip=${onlyBenchArtifacts ? 'true' : 'false'}\n`);
+          if (onlyBenchArtifacts) {
+            console.log('Skipping memory bench: github-actions[bot] commit only touched bench artifacts.');
+          }
+          NODE
+
       # No `version:` — pnpm/action-setup reads it from the repo's
       # `packageManager` field (pnpm@10.33.0). Pinning it here too triggers
       # ERR_PNPM_BAD_PM_VERSION ("multiple versions of pnpm specified").
       - uses: pnpm/action-setup@v4
+        if: steps.recursion_guard.outputs.skip != 'true'
 
       - uses: actions/setup-node@v4
+        if: steps.recursion_guard.outputs.skip != 'true'
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install
+        if: steps.recursion_guard.outputs.skip != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Cache corpus
+        if: steps.recursion_guard.outputs.skip != 'true'
         uses: actions/cache@v4
         with:
           path: apps/api/bench/corpus/cache
@@ -309,9 +396,11 @@ jobs:
             bench-corpus-
 
       - name: Fetch corpus (cached)
+        if: steps.recursion_guard.outputs.skip != 'true'
         run: pnpm --filter aura-api bench:fetch-corpus
 
       - name: Create bench Neon branch
+        if: steps.recursion_guard.outputs.skip != 'true'
         id: neon
         uses: neondatabase/create-branch-action@v6
         continue-on-error: true
@@ -322,11 +411,13 @@ jobs:
           api_key: ${{ secrets.NEON_API_KEY }}
 
       - name: Migrate bench database
+        if: steps.recursion_guard.outputs.skip != 'true'
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
         run: pnpm --filter @aura/db db:migrate
 
       - name: Run bench
+        if: steps.recursion_guard.outputs.skip != 'true'
         id: run
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url_pooled || steps.neon.outputs.db_url || secrets.BENCH_DATABASE_URL || secrets.NEON_DATABASE_URL || secrets.DATABASE_URL }}
@@ -341,7 +432,7 @@ jobs:
           AURA_BENCH_EXTRACTION: ${{ github.event.inputs.extraction_model || 'fast' }}
           AURA_BENCH_ANSWERER: ${{ github.event.inputs.answerer_model || 'main' }}
           AURA_BENCH_JUDGE: ${{ github.event.inputs.judge_model || 'escalation' }}
-          SUBSET: ${{ github.event.inputs.subset || 'medium' }}
+          SUBSET: ${{ env.BENCH_SUBSET }}
           # Matrix legs run one corpus each. The corpus hash is keyed on the
           # sorted dataset set, so lme and locomo produce distinct, independently
           # matchable baselines in the committed history.
@@ -372,7 +463,8 @@ jobs:
             "--json=/tmp/bench/result.json"
             "--log"
           )
-          # On a PR, attribute the run (squashes repeated pushes to one entry).
+          # On a PR, attribute the run so the delta step skips this PR's own
+          # prior entries on branches that still only have history.jsonl.
           if [ -n "${PR_NUMBER}" ]; then args+=("--pr-number=${PR_NUMBER}"); fi
           # Staged-reuse knobs only apply to manual workflow_dispatch runs; on PRs
           # these are empty, so the run is a full ephemeral messages->extract->score.
@@ -387,11 +479,28 @@ jobs:
           set -o pipefail
           pnpm --filter aura-api bench:memory "${args[@]}" | tee /tmp/bench/output.txt
 
+      - name: Upload bench artefacts
+        if: always() && steps.recursion_guard.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-bench-${{ matrix.dataset }}-${{ github.run_id }}
+          path: |
+            /tmp/bench/result.json
+            /tmp/bench/output.txt
+            apps/api/bench/runs/**
+            apps/api/bench/history.jsonl
+            apps/api/bench/latest.json
+            apps/api/bench/README.md
+            apps/api/bench/**/README.md
+            README.md
+          retention-days: 30
+        continue-on-error: true
+
       # ── PR delta comment (same-repo PRs only) ─────────────────────────────────
       # Fork PRs don't get repo secrets (so the bench can't run) and can't push
       # with GITHUB_TOKEN, so both steps are guarded on head.repo.fork != true.
       - name: Build PR delta comment
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true }}
+        if: ${{ steps.recursion_guard.outputs.skip != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true }}
         continue-on-error: true
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
@@ -401,14 +510,21 @@ jobs:
           COMMENT_PATH: ${{ github.workspace }}/.bench/comment-${{ matrix.dataset }}.md
         run: |
           mkdir -p "${GITHUB_WORKSPACE}/.bench"
-          # The baseline is the target branch's committed history.jsonl. Read it
+          # The baseline is the target branch's committed latest.json, falling
+          # back to history.jsonl for branches that predate latest.json. Read it
           # from the git object store (unaffected by this run's local --log edit).
           git fetch origin "$BASE_REF" || true
-          git show "origin/${BASE_REF}:apps/api/bench/history.jsonl" > /tmp/bench/base-history.jsonl 2>/dev/null \
-            || : > /tmp/bench/base-history.jsonl
+          if git show "origin/${BASE_REF}:apps/api/bench/latest.json" > /tmp/bench/base-results.json 2>/dev/null; then
+            echo "Using latest.json baseline from ${BASE_REF}."
+          elif git show "origin/${BASE_REF}:apps/api/bench/history.jsonl" > /tmp/bench/base-results.jsonl 2>/dev/null; then
+            cp /tmp/bench/base-results.jsonl /tmp/bench/base-results.json
+            echo "Using history.jsonl baseline from ${BASE_REF}."
+          else
+            : > /tmp/bench/base-results.json
+          fi
           pnpm --filter aura-api bench:pr-comment \
             --result=/tmp/bench/result.json \
-            --base-history=/tmp/bench/base-history.jsonl \
+            --base-history=/tmp/bench/base-results.json \
             --base-ref="$BASE_REF" \
             --head-commit="$HEAD_SHA" \
             --run-url="$RUN_URL" \
@@ -416,7 +532,7 @@ jobs:
           node -e "const fs = require('fs'); const p = process.env.COMMENT_PATH; const marker = '<!-- aura-memory-bench:' + process.env.DATASET + ' -->'; fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace('<!-- aura-memory-bench -->', marker));"
 
       - name: Upsert sticky PR comment
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && hashFiles(format('.bench/comment-{0}.md', matrix.dataset)) != '' }}
+        if: ${{ steps.recursion_guard.outputs.skip != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && hashFiles(format('.bench/comment-{0}.md', matrix.dataset)) != '' }}
         uses: actions/github-script@v7
         env:
           DATASET: ${{ matrix.dataset }}
@@ -439,35 +555,83 @@ jobs:
             }
 
       - name: Commit regenerated results
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ steps.recursion_guard.outputs.skip != 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true)) }}
         env:
-          HEAD_REF: ${{ github.ref_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
-          # Only the three generated files; nothing else should be touched.
-          if git diff --quiet -- apps/api/bench/history.jsonl apps/api/bench/README.md README.md; then
+          artifacts_status="$(git status --porcelain -- README.md apps/api/bench/history.jsonl apps/api/bench/latest.json apps/api/bench/README.md 'apps/api/bench/*/README.md')"
+          if [ -z "${artifacts_status}" ]; then
             echo "No bench result changes to commit."
             exit 0
           fi
+
+          tmpdir="$(mktemp -d)"
+          cp apps/api/bench/history.jsonl "${tmpdir}/history.jsonl"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/api/bench/history.jsonl apps/api/bench/README.md README.md
-          git commit -m "chore(bench): update memory bench results"
-          git push origin "HEAD:${HEAD_REF}"
 
-      - name: Upload bench artefacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: memory-bench-${{ matrix.dataset }}-${{ github.run_id }}
-          path: |
-            /tmp/bench/result.json
-            /tmp/bench/output.txt
-            apps/api/bench/runs/**
-          retention-days: 30
-        continue-on-error: true
+          for attempt in 1 2 3; do
+            echo "Commit-back attempt ${attempt}/3 for ${HEAD_REF}."
+            git fetch origin "${HEAD_REF}"
+            git reset --hard "origin/${HEAD_REF}"
+
+            LOCAL_HISTORY="${tmpdir}/history.jsonl" node <<'NODE'
+            const fs = require('fs');
+            const currentPath = 'apps/api/bench/history.jsonl';
+            const localPath = process.env.LOCAL_HISTORY;
+            const split = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean);
+            const currentLines = fs.existsSync(currentPath) ? split(fs.readFileSync(currentPath, 'utf8')) : [];
+            const localLines = localPath && fs.existsSync(localPath) ? split(fs.readFileSync(localPath, 'utf8')) : [];
+            const keyFor = (line) => {
+              try {
+                const entry = JSON.parse(line);
+                return entry && entry.runId ? `run:${entry.runId}` : `line:${line}`;
+              } catch {
+                return `line:${line}`;
+              }
+            };
+            const seen = new Set(currentLines.map(keyFor));
+            const merged = [...currentLines];
+            for (const line of localLines) {
+              const key = keyFor(line);
+              if (!seen.has(key)) {
+                seen.add(key);
+                merged.push(line);
+              }
+            }
+            fs.writeFileSync(currentPath, merged.length ? `${merged.join('\n')}\n` : '');
+            NODE
+
+            pnpm --filter aura-api bench:report
+
+            artifacts_status="$(git status --porcelain -- README.md apps/api/bench/history.jsonl apps/api/bench/latest.json apps/api/bench/README.md 'apps/api/bench/*/README.md')"
+            if [ -z "${artifacts_status}" ]; then
+              echo "No bench result changes to commit after refreshing ${HEAD_REF}."
+              exit 0
+            fi
+
+            git add -- README.md apps/api/bench/history.jsonl apps/api/bench/latest.json apps/api/bench/README.md
+            git ls-files 'apps/api/bench/**/README.md' -z | xargs -0 -r git add --
+            git commit -m "chore(bench): update memory bench results [skip ci]"
+
+            # LOAD-BEARING: this push intentionally uses checkout's default
+            # GITHUB_TOKEN credentials as github-actions[bot]. GITHUB_TOKEN
+            # pushes do not trigger pull_request synchronize runs; changing this
+            # token can reintroduce recursion.
+            if git push origin "HEAD:${HEAD_REF}"; then
+              exit 0
+            fi
+
+            echo "Push conflict on ${HEAD_REF}; retrying after refetch."
+            sleep $((attempt * 5))
+          done
+
+          echo "Failed to push regenerated bench results after 3 attempts." >&2
+          exit 1
 
       - name: Delete Neon branch
-        if: always() && steps.neon.outputs.branch_id != ''
+        if: always() && steps.recursion_guard.outputs.skip != 'true' && steps.neon.outputs.branch_id != ''
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}

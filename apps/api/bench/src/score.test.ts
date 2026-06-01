@@ -175,8 +175,10 @@ describe("stratifiedSample", () => {
     expect(a).not.toEqual(b);
   });
 
-  it("subset table defines fast < medium < full", () => {
+  it("subset table defines fast < toy < medium < full", () => {
     expect(SUBSET_PER_CATEGORY.fast).toBeLessThan(SUBSET_PER_CATEGORY.medium);
+    expect(SUBSET_PER_CATEGORY.fast).toBeLessThan(SUBSET_PER_CATEGORY.toy);
+    expect(SUBSET_PER_CATEGORY.toy).toBeLessThan(SUBSET_PER_CATEGORY.medium);
     expect(SUBSET_PER_CATEGORY.medium).toBeLessThan(SUBSET_PER_CATEGORY.full);
   });
 });
