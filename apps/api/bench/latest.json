@@ -275,10 +275,10 @@
       "prNumber": 1062
     },
     {
-      "runId": "2026-05-31T10-10-33-412Z-azdom6dr",
-      "timestamp": "2026-05-31T11:56:42.443Z",
-      "commit": "8099713",
-      "dirty": true,
+      "runId": "2026-06-01T07-36-13-467Z-djclibah",
+      "timestamp": "2026-06-01T08:51:32.000Z",
+      "commit": "e0bb4c8",
+      "dirty": false,
       "datasets": [
         "longmemeval"
       ],
@@ -287,8 +287,8 @@
       "category": null,
       "corpusHash": "b178d604c01afa4a",
       "caseSetHash": "a0018f6e9f0fccb4",
-      "runtimeMs": 4831131,
-      "costUsd": 12.03024799999999,
+      "runtimeMs": 4518732,
+      "costUsd": 12.28251599999999,
       "models": {
         "extraction": "anthropic/claude-haiku-4.5",
         "answerer": "anthropic/claude-opus-4.8",
@@ -298,58 +298,58 @@
         {
           "dataset": "longmemeval",
           "category": "knowledge-update",
-          "qa": 0.7,
+          "qa": 0.6666666666666666,
           "recall": 0.85,
           "n": 30
         },
         {
           "dataset": "longmemeval",
           "category": "multi-session",
-          "qa": 0.7666666666666667,
-          "recall": 0.7833333333333333,
+          "qa": 0.6833333333333333,
+          "recall": 0.8833333333333333,
           "n": 30
         },
         {
           "dataset": "longmemeval",
           "category": "single-session-assistant",
-          "qa": 0.3,
-          "recall": 0.9,
+          "qa": 0.26666666666666666,
+          "recall": 0.8333333333333334,
           "n": 30
         },
         {
           "dataset": "longmemeval",
           "category": "single-session-preference",
-          "qa": 0.35,
-          "recall": 0.9333333333333333,
+          "qa": 0.38333333333333336,
+          "recall": 0.9,
           "n": 30
         },
         {
           "dataset": "longmemeval",
           "category": "single-session-user",
-          "qa": 0.7666666666666667,
-          "recall": 0.9666666666666667,
+          "qa": 0.8666666666666667,
+          "recall": 0.9,
           "n": 30
         },
         {
           "dataset": "longmemeval",
           "category": "temporal-reasoning",
-          "qa": 0.43333333333333335,
-          "recall": 0.8333333333333334,
+          "qa": 0.4,
+          "recall": 0.8166666666666667,
           "n": 30
         }
       ],
       "overall": {
-        "qa": 0.5527777777777778,
-        "recall": 0.8777777777777778,
+        "qa": 0.5444444444444444,
+        "recall": 0.8638888888888889,
         "n": 180
       },
-      "note": "parallel per-dataset baseline (PR #1064 build, run 26709746291)"
+      "note": "parallel per-dataset baseline on main e0bb4c8 after #1067+#1070"
     },
     {
-      "runId": "2026-05-31T10-10-33-498Z-corl5679",
-      "timestamp": "2026-05-31T11:56:42.467Z",
-      "commit": "8099713",
-      "dirty": true,
+      "runId": "2026-06-01T08-52-31-537Z-zjc3qjp7",
+      "timestamp": "2026-06-01T10:12:09.000Z",
+      "commit": "e0bb4c8",
+      "dirty": false,
       "datasets": [
         "locomo"
       ],
@@ -358,8 +358,8 @@
       "category": null,
       "corpusHash": "f9cf2279e3e18aae",
       "caseSetHash": "a6f1cceb887cfe19",
-      "runtimeMs": 4480991,
-      "costUsd": 11.037960999999994,
+      "runtimeMs": 4777113,
+      "costUsd": 11.297256000000008,
       "models": {
         "extraction": "anthropic/claude-haiku-4.5",
         "answerer": "anthropic/claude-opus-4.8",
@@ -369,45 +369,45 @@
         {
           "dataset": "locomo",
           "category": "adversarial",
-          "qa": 0.11666666666666667,
-          "recall": 0.7,
+          "qa": 0.06666666666666667,
+          "recall": 0.6666666666666666,
           "n": 30
         },
         {
           "dataset": "locomo",
           "category": "multi_hop",
-          "qa": 0.3333333333333333,
-          "recall": 0.7111111111111111,
+          "qa": 0.43333333333333335,
+          "recall": 0.8055555555555556,
           "n": 30
         },
         {
           "dataset": "locomo",
           "category": "open_domain",
-          "qa": 0.55,
-          "recall": 0.9,
+          "qa": 0.3,
+          "recall": 0.8333333333333334,
           "n": 30
         },
         {
           "dataset": "locomo",
           "category": "single_hop",
-          "qa": 0.21666666666666667,
-          "recall": 0.8666666666666667,
+          "qa": 0.11666666666666667,
+          "recall": 0.8333333333333334,
           "n": 30
         },
         {
           "dataset": "locomo",
           "category": "temporal",
-          "qa": 0.18333333333333332,
-          "recall": 0.7172619047619048,
+          "qa": 0.16666666666666666,
+          "recall": 0.6488095238095238,
           "n": 30
         }
       ],
       "overall": {
-        "qa": 0.28,
-        "recall": 0.7798423423423423,
+        "qa": 0.21666666666666667,
+        "recall": 0.759009009009009,
         "n": 150
       },
-      "note": "parallel per-dataset baseline (PR #1064 build, run 26709746291)"
+      "note": "parallel per-dataset baseline on main e0bb4c8 after #1067+#1070"
     },
     {
       "runId": "2026-06-01T10-50-27-342Z-m7vcg5u0",
