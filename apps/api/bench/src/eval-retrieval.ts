@@ -14,10 +14,20 @@
 import { retrieveMemories } from "../../src/memory/retrieve.js";
 import type { Memory } from "@aura/db/schema";
 import { logger } from "../../src/lib/logger.js";
+import { db } from "../../src/db/client.js";
+import { sql } from "drizzle-orm";
 import type { BenchCase } from "./types.js";
 import type { UsageLike } from "./cost-meter.js";
 
 const DEFAULT_K = 15;
+
+interface RetrievedProvenance {
+  sourceThreadTs: string | null;
+  benchProvenance:
+    | { diaIds?: string[]; sessionIds?: string[] }
+    | null
+    | undefined;
+}
 
 export interface RetrievalEvalResult {
   retrievedMemoryIds: string[];
@@ -85,6 +95,7 @@ export async function evaluateRetrieval(
   }
 
   const retrievedMemoryIds = retrieved.map((m) => m.id);
+  const provenanceById = await loadRetrievedProvenance(retrievedMemoryIds);
   const wantDia = new Set(benchCase.evidenceDiaIds ?? []);
   const wantSession = new Set(benchCase.evidenceSessionIds ?? []);
 
@@ -139,11 +150,9 @@ export async function evaluateRetrieval(
     if (evidence.has(sessionId)) covered.add(sessionId);
   };
   for (const mem of retrieved) {
-    markSessionOnly(mem.sourceThreadTs);
-    const prov = (mem as any).benchProvenance as
-      | { diaIds?: string[]; sessionIds?: string[] }
-      | null
-      | undefined;
+    const provenance = provenanceById.get(mem.id);
+    markSessionOnly(provenance?.sourceThreadTs ?? mem.sourceThreadTs);
+    const prov = provenance?.benchProvenance;
     if (prov) {
       prov.sessionIds?.forEach(markSessionOnly);
       prov.diaIds?.forEach(markDia);
@@ -159,4 +168,34 @@ export async function evaluateRetrieval(
     evidenceSessions: evidence.size,
     hit: covered.size > 0,
   };
+}
+
+async function loadRetrievedProvenance(
+  memoryIds: string[],
+): Promise<Map<string, RetrievedProvenance>> {
+  const out = new Map<string, RetrievedProvenance>();
+  if (memoryIds.length === 0) return out;
+
+  try {
+    const ids = sql.join(memoryIds.map((id) => sql`${id}::uuid`), sql`, `);
+    const result = await db.execute(sql`
+      SELECT id, source_thread_ts, bench_provenance
+      FROM memories
+      WHERE id IN (${ids})
+    `);
+    const rows = ((result as any).rows ?? result) as Array<Record<string, any>>;
+    for (const row of rows) {
+      out.set(String(row.id), {
+        sourceThreadTs: row.source_thread_ts ?? null,
+        benchProvenance: row.bench_provenance ?? null,
+      });
+    }
+  } catch (error) {
+    logger.warn("bench: failed to load retrieved memory provenance", {
+      error: String(error).slice(0, 200),
+      memoryIds: memoryIds.length,
+    });
+  }
+
+  return out;
 }

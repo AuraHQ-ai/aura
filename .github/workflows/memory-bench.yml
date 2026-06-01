@@ -35,7 +35,7 @@ name: Memory bench
 # branch. workflow_dispatch keeps the flexible staged knobs (bench_id/from/to)
 # for manual/isolated runs; PR runs always do a full ephemeral pass.
 #
-# PR defaults: --subset=toy, matrix --dataset=lme/locomo,
+# PR defaults: --subset=toy, --dataset=lme,
 # --replay=exchange. Models default to the catalog tiers fast for extraction,
 # main for answerer, and escalation for judge — see apps/api/bench/src/models.ts.
 #
@@ -155,8 +155,10 @@ env:
   # Keep the workflow subset-agnostic. PRs default to toy (fast, free smoke
   # signal) so iteration stays cheap. To get a real merge-decision signal on a
   # memory PR, label it `bench:medium` (or `bench:full`) and that PR alone runs
-  # the heavier subset for BOTH datasets via the matrix, posting a per-dataset
-  # sticky delta against main's committed baseline. Resolution order:
+  # the heavier LongMemEval subset, posting a sticky delta against main's
+  # committed baseline. LoCoMo is manual-only for now because even small
+  # question subsets replay very large full conversations.
+  # Resolution order:
   #   1. workflow_dispatch input (manual/isolated runs)
   #   2. PR label  bench:full > bench:medium  (per-PR opt-in)
   #   3. repo variable vars.BENCH_SUBSET  (global override, rarely used)
@@ -338,7 +340,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dataset: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', github.event.inputs.dataset) || '["lme","locomo"]') }}
+        dataset: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', github.event.inputs.dataset) || '["lme"]') }}
     steps:
       # Check out the PR HEAD branch (not the detached merge ref) so the bench
       # runs against the PR's code. Falls back to github.ref for workflow_dispatch
@@ -445,9 +447,8 @@ jobs:
           AURA_BENCH_ANSWERER: ${{ github.event.inputs.answerer_model || 'main' }}
           AURA_BENCH_JUDGE: ${{ github.event.inputs.judge_model || 'escalation' }}
           SUBSET: ${{ env.BENCH_SUBSET }}
-          # Matrix legs run one corpus each. The corpus hash is keyed on the
-          # sorted dataset set, so lme and locomo produce distinct, independently
-          # matchable baselines in the committed history.
+          # PR runs use LongMemEval only; workflow_dispatch can still choose
+          # another dataset for manual research runs.
           DATASET: ${{ matrix.dataset }}
           REPLAY: ${{ github.event.inputs.replay || 'exchange' }}
           # bench_id/from/to default to '' on PRs (full ephemeral pass) and to the

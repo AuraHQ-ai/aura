@@ -8,7 +8,11 @@ vi.mock("../../src/db/client.js", () => ({ db: {} }));
 
 import { aggregateScores } from "./score.js";
 import type { PerCaseResult } from "./types.js";
-import { loadToyCorpus, stratifiedSample, SUBSET_PER_CATEGORY } from "./fixtures.js";
+import {
+  loadToyCorpus,
+  stratifiedSample,
+  SUBSET_PER_CATEGORY,
+} from "./fixtures.js";
 import { formatMemoriesForPrompt } from "../../src/memory/format-for-prompt.js";
 import { DEFAULT_TIERS } from "./models.js";
 import type { BenchCase } from "./types.js";
@@ -138,7 +142,7 @@ describe("formatMemoriesForPrompt (shared with production)", () => {
 });
 
 describe("stratifiedSample", () => {
-  function makeCase(category: string, id: string): BenchCase {
+  function makeCase(category: string, id: string, questionDate?: string): BenchCase {
     return {
       id,
       source: "toy",
@@ -146,6 +150,7 @@ describe("stratifiedSample", () => {
       question: "?",
       goldAnswer: "x",
       abstention: false,
+      questionDate,
       sessions: [],
     };
   }

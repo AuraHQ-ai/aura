@@ -34,6 +34,7 @@ import {
   sampleTotal,
   stratifiedSample,
   SUBSET_PER_CATEGORY,
+  resolveQuestionDate,
 } from "./fixtures.js";
 import {
   countUniqueConversations,
@@ -167,6 +168,56 @@ async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
   return all;
 }
 
+function turnTimestamp(sessionTimestamp: string, turnIdx: number): Date {
+  const base = new Date(sessionTimestamp).getTime();
+  if (Number.isNaN(base)) return new Date(sessionTimestamp);
+  return new Date(base + turnIdx * 60_000);
+}
+
+function pruneLongMemEvalToQuestionCutoff(cases: BenchCase[]): BenchCase[] {
+  const lmeCases = cases.filter((c) => c.source === "longmemeval" && c.questionDate);
+  if (lmeCases.length === 0) return cases;
+
+  const cutoffMs = Math.max(...lmeCases.map((c) => resolveQuestionDate(c).getTime()));
+  const cutoff = new Date(cutoffMs);
+  let sessionsBefore = 0;
+  let sessionsAfter = 0;
+  let turnsBefore = 0;
+  let turnsAfter = 0;
+
+  const pruned = cases.map((benchCase): BenchCase => {
+    if (benchCase.source !== "longmemeval" || !benchCase.questionDate) {
+      return benchCase;
+    }
+
+    sessionsBefore += benchCase.sessions.length;
+    const sessions = benchCase.sessions
+      .map((session) => {
+        const turns = session.turns.filter((_, turnIdx) => {
+          const at = turnTimestamp(session.timestamp, turnIdx);
+          return !Number.isNaN(at.getTime()) && at.getTime() <= cutoffMs;
+        });
+        turnsBefore += session.turns.length;
+        turnsAfter += turns.length;
+        return { ...session, turns };
+      })
+      .filter((session) => session.turns.length > 0);
+    sessionsAfter += sessions.length;
+    return { ...benchCase, sessions };
+  });
+
+  logger.info("bench: pruned LongMemEval corpus to selected question cutoff", {
+    cutoff: cutoff.toISOString(),
+    cases: lmeCases.length,
+    sessionsBefore,
+    sessionsAfter,
+    turnsBefore,
+    turnsAfter,
+  });
+
+  return pruned;
+}
+
 /**
  * Run the bench end-to-end and return the in-memory aggregates. The caller
  * (CLI or cron) decides what to do with them (print JSON, post Slack, etc.).
@@ -260,7 +311,8 @@ export async function runBench(
   const scoreConcurrency = config.scoreConcurrency ?? Math.max(extractConcurrency * 2, 8);
   const embedConcurrency = config.embedConcurrency ?? Math.max(extractConcurrency, 4);
 
-  const cases = await loadAllCases(config);
+  const loadedCases = await loadAllCases(config);
+  const cases = pruneLongMemEvalToQuestionCutoff(loadedCases);
   if (cases.length === 0) {
     logger.warn("bench: no cases loaded — bailing", {
       hint: "run `pnpm bench:fetch-corpus` to populate the cache directory",

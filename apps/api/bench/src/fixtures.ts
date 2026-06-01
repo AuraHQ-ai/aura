@@ -497,7 +497,7 @@ function extractionWorkUnits(benchCase: BenchCase): number {
  * sampling, so the actual question count depends on how many categories the
  * dataset has. LongMemEval (cleaned) ships 6 categories; LoCoMo ships 5.
  *
- *   toy     2/category  → tiny deterministic plumbing pass. A few minutes.
+ *   toy     2/category  → tiny deterministic plumbing pass.
  *   fast    1/category  → ~11 Qs total. A few minutes. Local sanity check.
  *   medium  30/category → ~329 Qs total. ~1 hour, ~$10. The server PR budget:
  *                         large enough for per-category deltas to mean something.

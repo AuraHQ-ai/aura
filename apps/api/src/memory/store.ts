@@ -401,9 +401,8 @@ export async function checkDuplicates(
  *
  * `at` overrides the timestamp written to the temporal columns (superseded_at,
  * valid_until, valid_from). Production callers omit it and get wall-clock now.
- * The memory bench passes the corpus timestamp of the triggering exchange so
- * bi-temporal as-of retrieval can reconstruct the memory state at any point on
- * the replayed timeline.
+ * Replay/import callers can pass historical timestamps so bi-temporal as-of
+ * retrieval can reconstruct the memory state at a prior point in time.
  */
 export async function supersedeMemory(
   oldMemoryId: string,
@@ -680,7 +679,6 @@ export async function updateMemoryContent(
   newEmbedding: number[] | null,
   newImportance?: number,
   at?: Date,
-  benchProvenance?: NewMemory["benchProvenance"],
 ): Promise<void> {
   const now = at ?? new Date();
   try {
@@ -692,9 +690,6 @@ export async function updateMemoryContent(
     if (newImportance != null) {
       updates.importance = newImportance;
       updates.relevanceScore = importanceToRelevance(newImportance);
-    }
-    if (benchProvenance !== undefined) {
-      updates.benchProvenance = benchProvenance;
     }
     await db
       .update(memories)
@@ -723,7 +718,7 @@ export async function archiveMemory(
   try {
     await db
       .update(memories)
-      // `at` (corpus time, bench only) also closes the validity interval so
+      // Historical replays can pass `at`; close the validity interval there so
       // bi-temporal as-of retrieval treats the memory as gone after the delete.
       .set({ status: "archived", updatedAt: now, ...(at ? { validUntil: at } : {}) })
       .where(eq(memories.id, memoryId));

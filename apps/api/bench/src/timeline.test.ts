@@ -7,15 +7,23 @@ const state = vi.hoisted(() => ({
   lateExtractionFinished: false,
   lateExtractionResolve: null as (() => void) | null,
   extractionCalls: [] as Array<{ messages: unknown; ctx: any }>,
+  dbExecuteCount: 0,
 }));
 
-vi.mock("../../src/db/client.js", () => ({ db: {} }));
+vi.mock("../../src/db/client.js", () => ({
+  db: {
+    execute: vi.fn(async () => {
+      state.dbExecuteCount += 1;
+      return [];
+    }),
+  },
+}));
 vi.mock("../../src/lib/embeddings.js", () => ({ embedTexts: vi.fn() }));
 
 vi.mock("../../src/memory/extract.js", () => ({
   extractMemoriesFromTranscript: vi.fn(async (messages: unknown, ctx: any) => {
     state.extractionCalls.push({ messages, ctx });
-    if (ctx.benchProvenance?.caseId !== "late") return;
+    if (ctx.channelId !== "bench:late") return;
     await new Promise<void>((resolve) => {
       state.lateExtractionResolve = resolve;
     });
@@ -86,6 +94,7 @@ describe("runTimeline", () => {
     state.lateExtractionFinished = false;
     state.lateExtractionResolve = null;
     state.extractionCalls = [];
+    state.dbExecuteCount = 0;
     vi.clearAllMocks();
   });
 
@@ -129,7 +138,7 @@ describe("runTimeline", () => {
     const trailing = state.extractionCalls[0].ctx;
     expect(trailing.userMessage).toBe("My dog is named Pepper.");
     expect(trailing.assistantResponse).toBe("Tell me.");
-    expect(trailing.benchProvenance.diaIds).toEqual(["S1:1", "S1:2", "S1:3"]);
+    expect(state.dbExecuteCount).toBe(1);
   });
 
   it("scores a question when its own conversation finishes before later conversations", async () => {

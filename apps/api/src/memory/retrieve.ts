@@ -30,15 +30,14 @@ interface RetrievalOptions {
    * NULL OR valid_until > asOf)` — instead of the live `status IN
    * ('current','disputed')` pool. A memory superseded/archived AFTER `asOf` is
    * still included (it was current then); one closed out at or before `asOf` is
-   * excluded. This is what makes the memory bench's timeline deterministic when
-   * extraction races ahead of scoring. Production passes nothing — live status
-   * filtering is unchanged.
+   * excluded. Useful for replaying historical timelines without exposing future
+   * facts. Production passes nothing — live status filtering is unchanged.
    */
   asOf?: Date;
   /**
    * Optional cost hook. When set, the query-entity-extraction LLM call reports
-   * its model id + token usage so callers (e.g. the bench cost meter) can price
-   * retrieval. Production passes nothing — no behaviour change.
+   * its model id + token usage so callers can price retrieval. Production
+   * passes nothing — no behaviour change.
    */
   onUsage?: (
     modelId: string,
@@ -303,8 +302,8 @@ async function fetchEntityMatchedMemories(
 
     const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
 
-    // As-of (bench): temporal validity replaces the live status filter so a
-    // question sees the exact memory state at its instant on the timeline.
+    // Historical as-of retrieval: temporal validity replaces the live status
+    // filter so callers can replay the memory state at a prior instant.
     const lifecycleFilter = asOf
       ? sql`AND m.valid_from <= ${asOf} AND (m.valid_until IS NULL OR m.valid_until > ${asOf})`
       : sql`AND m.status IN ('current', 'disputed')`;
@@ -509,9 +508,8 @@ async function retrieveSingleQuery(
         OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
       )`;
 
-    // As-of (bench): the hybrid lane keys on temporal validity instead of live
-    // status so it matches the entity lane and stays deterministic under
-    // concurrent extraction. Production (no asOf) keeps the live status filter.
+    // Historical as-of retrieval: the hybrid lane keys on temporal validity
+    // instead of live status. Production (no asOf) keeps the live status filter.
     const statusFilter = asOf
       ? sql`${memories.validFrom} <= ${asOf} AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > ${asOf})`
       : sql`${memories.status} IN ('current', 'disputed')`;
@@ -634,7 +632,6 @@ async function retrieveSingleQuery(
         supersedesMemoryId: row.supersedes_memory_id ?? null,
         supersededAt: row.superseded_at ?? null,
         supersededByMemoryId: row.superseded_by_memory_id ?? null,
-        benchProvenance: row.bench_provenance ?? null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       } as Memory,
