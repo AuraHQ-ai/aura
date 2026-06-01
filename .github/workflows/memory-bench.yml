@@ -55,7 +55,7 @@ name: Memory bench
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   workflow_dispatch:
     inputs:
       subset:
@@ -152,13 +152,25 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Keep the workflow subset-agnostic. PRs default to toy while the automation
-  # loop is hardened; raising to medium/full later is a one-line variable flip.
-  BENCH_SUBSET: ${{ github.event.inputs.subset || vars.BENCH_SUBSET || 'toy' }}
+  # Keep the workflow subset-agnostic. PRs default to toy (fast, free smoke
+  # signal) so iteration stays cheap. To get a real merge-decision signal on a
+  # memory PR, label it `bench:medium` (or `bench:full`) and that PR alone runs
+  # the heavier subset for BOTH datasets via the matrix, posting a per-dataset
+  # sticky delta against main's committed baseline. Resolution order:
+  #   1. workflow_dispatch input (manual/isolated runs)
+  #   2. PR label  bench:full > bench:medium  (per-PR opt-in)
+  #   3. repo variable vars.BENCH_SUBSET  (global override, rarely used)
+  #   4. toy  (default)
+  BENCH_SUBSET: >-
+    ${{ github.event.inputs.subset
+        || (contains(github.event.pull_request.labels.*.name, 'bench:full') && 'full')
+        || (contains(github.event.pull_request.labels.*.name, 'bench:medium') && 'medium')
+        || vars.BENCH_SUBSET
+        || 'toy' }}
 
 jobs:
   changes:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && (github.event.action != 'labeled' || startsWith(github.event.label.name, 'bench:'))
     runs-on: ubuntu-latest
     outputs:
       memory: ${{ steps.filter.outputs.memory }}
@@ -180,7 +192,7 @@ jobs:
               - '.github/workflows/memory-bench.yml'
 
   toy:
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft != true && (github.event.action != 'labeled' || startsWith(github.event.label.name, 'bench:'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -319,7 +331,7 @@ jobs:
 
   bench:
     needs: [changes]
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft != true && needs.changes.outputs.memory == 'true')) }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft != true && needs.changes.outputs.memory == 'true' && (github.event.action != 'labeled' || startsWith(github.event.label.name, 'bench:')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(github.event.inputs.timeout_minutes || '180') }}
     name: Memory bench (${{ matrix.dataset }})
