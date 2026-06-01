@@ -304,8 +304,10 @@ interface ExtractionCall {
 /**
  * Build the ordered extraction calls for one session under the given cadence.
  *  - "exchange": one call per assistant reply over the sliding THREAD_WINDOW,
- *    mirroring prod's per-reply incremental reconciliation. A session with no
- *    assistant turn falls back to a single full-transcript pass.
+ *    mirroring prod's per-reply incremental reconciliation. If a session has
+ *    user turns after the final assistant reply, add one trailing extraction
+ *    call so end-of-session facts are visible to end-of-conversation questions.
+ *    A session with no assistant turn falls back to a single full-transcript pass.
  *  - "session": a single pass over the whole session transcript.
  */
 function buildSessionCalls(
@@ -315,13 +317,34 @@ function buildSessionCalls(
 ): ExtractionCall[] {
   const calls: ExtractionCall[] = [];
   if (replay === "exchange") {
+    let lastAssistantIndex = -1;
     for (let k = 0; k < built.length; k++) {
       if (built[k].role !== "assistant") continue;
+      lastAssistantIndex = k;
       const window = built.slice(Math.max(0, k + 1 - THREAD_WINDOW), k + 1);
       calls.push({ window, focalAssistant: built[k], at: built[k].createdAt });
     }
     if (calls.length === 0) {
       calls.push({ window: built, focalAssistant: null, at: sessionDate });
+    } else {
+      let lastUserIndex = -1;
+      for (let k = built.length - 1; k >= 0; k--) {
+        if (built[k].role === "user") {
+          lastUserIndex = k;
+          break;
+        }
+      }
+      if (lastUserIndex > lastAssistantIndex) {
+        const window = built.slice(
+          Math.max(0, lastUserIndex + 1 - THREAD_WINDOW),
+          lastUserIndex + 1,
+        );
+        calls.push({
+          window,
+          focalAssistant: built[lastAssistantIndex],
+          at: built[lastUserIndex].createdAt,
+        });
+      }
     }
   } else {
     calls.push({ window: built, focalAssistant: null, at: sessionDate });
@@ -347,6 +370,15 @@ async function runExtractionCall(
 ): Promise<void> {
   const channelId = `bench:${benchCase.id}`;
   const threadTs = session.id;
+  const benchProvenance = {
+    datasetId: benchCase.source,
+    caseId: benchCase.id,
+    conversationId: benchCase.id,
+    sessionId: session.id,
+    sessionIds: [session.id],
+    // Provenance reflects exactly the turns this extraction saw.
+    diaIds: call.window.map((b) => b.diaId),
+  };
   const threadMessages: ThreadMessage[] = call.window.map((b) => ({
     role: b.role,
     userId: b.userId,
@@ -375,18 +407,37 @@ async function runExtractionCall(
     // references resolve locally instead of against the real Slack workspace.
     displayName: lastUser.speaker,
     userDirectory,
-    benchProvenance: {
-      datasetId: benchCase.source,
-      caseId: benchCase.id,
-      conversationId: benchCase.id,
-      sessionId: session.id,
-      sessionIds: [session.id],
-      // Provenance reflects exactly the turns this extraction saw.
-      diaIds: call.window.map((b) => b.diaId),
-    },
   };
 
   await extractMemoriesFromTranscript(threadMessages, ctx);
+  await stampBenchProvenance({
+    workspaceId,
+    channelId,
+    updatedAt: call.at,
+    benchProvenance,
+  });
+}
+
+async function stampBenchProvenance(params: {
+  workspaceId: string;
+  channelId: string;
+  updatedAt: Date;
+  benchProvenance: {
+    datasetId: string;
+    caseId: string;
+    conversationId: string;
+    sessionId: string;
+    sessionIds: string[];
+    diaIds: string[];
+  };
+}): Promise<void> {
+  await db.execute(sql`
+    UPDATE memories
+    SET bench_provenance = ${JSON.stringify(params.benchProvenance)}::jsonb
+    WHERE workspace_id = ${params.workspaceId}
+      AND source_channel_id = ${params.channelId}
+      AND updated_at = ${params.updatedAt}
+  `);
 }
 
 /** One schedulable extraction event, with the corpus time it occurs at. */

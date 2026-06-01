@@ -492,33 +492,16 @@ export interface ExtractionContext {
   /**
    * Workspace ID for tenant isolation. Falls back to process.env.DEFAULT_WORKSPACE_ID
    * then to "default". Pass an explicit value when running multiple extractions in
-   * different workspaces from the same process (e.g. the memory benchmark harness).
+   * different workspaces from the same process.
    */
   workspaceId?: string;
   /**
-   * Override the extraction LLM (defaults to getFastModel()). Used by the
-   * bench harness to pin extraction to a specific model (e.g. Sonnet) so
-   * runs are comparable across the codebase even if production swaps the
-   * fast-model default.
+   * Override the extraction LLM (defaults to getFastModel()). Useful for
+   * replays and backfills that need stable model selection.
    */
   extractionModelId?: string;
   /**
-   * Benchmark-only provenance. When set, every memory created from this
-   * extraction call is stamped with this JSON in the `bench_provenance`
-   * column at insert time. Powers deterministic retrieval-recall scoring
-   * by linking memories back to the source turns they came from.
-   * Always NULL in production.
-   */
-  benchProvenance?: {
-    datasetId?: string;
-    caseId?: string;
-    conversationId?: string;
-    sessionId?: string;
-    sessionIds?: string[];
-    diaIds?: string[];
-  };
-  /**
-   * Bench/replay only: a synthetic lowercased name→id directory. When set,
+   * Replay/backfill only: a synthetic lowercased name→id directory. When set,
    * user-reference normalization resolves against THIS map instead of the live
    * Slack workspace, so fictional corpus speakers map to deterministic
    * synthetic ids and never collide with (or warn against) real employees.
@@ -527,8 +510,8 @@ export interface ExtractionContext {
   userDirectory?: Record<string, string>;
   /**
    * Optional cost hook. When set, each extraction-stage LLM call reports its
-   * resolved model id + token usage so callers (e.g. the bench cost meter) can
-   * price the run. Production passes nothing — no behaviour change.
+   * resolved model id + token usage so callers can price the run. Production
+   * passes nothing — no behaviour change.
    */
   onUsage?: (
     modelId: string,
@@ -542,9 +525,8 @@ export interface ExtractionContext {
 
 /**
  * Resolve the extraction model. Honours `context.extractionModelId` when
- * the bench (or any caller) wants to pin a specific model; otherwise uses
- * the catalog-resolved fast model. Anthropic fallback middleware is
- * applied either way.
+ * a caller wants to pin a specific model; otherwise uses the catalog-resolved
+ * fast model. Anthropic fallback middleware is applied either way.
  */
 async function resolveExtractionModel(
   context: ExtractionContext,
@@ -598,9 +580,8 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
  * arbitrary, in-memory transcript instead of fetching messages from Postgres.
  *
  * Production callers should use {@link extractMemories} — this entry point
- * exists for replay harnesses (the memory benchmark) that already have the
- * full conversation in hand and don't want to seed `messages` rows just to
- * extract from them.
+ * exists for replay/import harnesses that already have the full conversation in
+ * hand and don't want to seed `messages` rows just to extract from them.
  *
  * The transcript MUST be in chronological order. `channelId` + `threadTs`
  * must be supplied on the context so subsequent retrieval calls (during
@@ -690,9 +671,8 @@ async function extractWithReconciliation(
 
 /**
  * Variant of {@link extractWithReconciliation} that uses a pre-supplied
- * transcript instead of fetching messages from Postgres. Used by the bench
- * harness — keeps the LLM call, dedup, supersession, and entity-linking
- * logic identical to production.
+ * transcript instead of fetching messages from Postgres. This keeps the LLM
+ * call, dedup, supersession, and entity-linking logic identical to production.
  */
 async function extractWithReconciliationFromTranscript(
   threadMessages: ThreadMessage[],
@@ -1016,7 +996,6 @@ async function processCreateOperations(
     importance: normalizedMemories[i].importance,
     relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
     extractionSourceRole,
-    ...(context.benchProvenance && { benchProvenance: context.benchProvenance }),
     // Bench replay stamps corpus time on the full temporal triplet so as-of
     // retrieval can place the memory on the replayed timeline. validFrom is what
     // the `valid_from <= asOf` filter keys on; without it storeMemories would
