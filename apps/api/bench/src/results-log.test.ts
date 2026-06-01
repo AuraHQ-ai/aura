@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  authoritativeLatest,
+  isAuthoritativeRun,
   materializeLatest,
   readHistory,
   writeHistory,
@@ -70,5 +72,51 @@ describe("history and latest materialization", () => {
     const json = JSON.parse(readFileSync(file, "utf8")) as { entries: HistoryEntry[] };
     expect(json.entries).toHaveLength(1);
     expect(json.entries[0]?.runId).toBe("new");
+  });
+});
+
+describe("authoritative-run gating (which runs may define the README snapshot)", () => {
+  it("only a clean medium/full LongMemEval run is authoritative", () => {
+    expect(
+      isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["longmemeval"] }),
+    ).toBe(true);
+    expect(
+      isAuthoritativeRun({ subset: "full", dirty: false, datasets: ["longmemeval"] }),
+    ).toBe(true);
+  });
+
+  it("rejects toy runs even when they carry the default medium subset", () => {
+    // `--dataset=toy` defaults to subset=medium; the dataset gate is what stops
+    // a smoke test from clobbering a real baseline.
+    expect(
+      isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["toy"] }),
+    ).toBe(false);
+  });
+
+  it("rejects fast subsets, LoCoMo-only runs, and dirty trees", () => {
+    expect(
+      isAuthoritativeRun({ subset: "fast", dirty: false, datasets: ["longmemeval"] }),
+    ).toBe(false);
+    expect(
+      isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["locomo"] }),
+    ).toBe(false);
+    expect(
+      isAuthoritativeRun({ subset: "medium", dirty: true, datasets: ["longmemeval"] }),
+    ).toBe(false);
+  });
+
+  it("authoritativeLatest ignores toy/fast runs and returns undefined when none qualify", () => {
+    const toy = makeEntry({ runId: "toy", subset: "medium", datasets: ["toy"] });
+    const fast = makeEntry({ runId: "fast", subset: "fast", datasets: ["longmemeval"] });
+    expect(authoritativeLatest([toy, fast])).toBeUndefined();
+
+    const realMedium = makeEntry({
+      runId: "lme-medium",
+      subset: "medium",
+      datasets: ["longmemeval"],
+    });
+    // A later toy run must not displace the medium LongMemEval baseline.
+    const laterToy = makeEntry({ runId: "toy-2", subset: "medium", datasets: ["toy"] });
+    expect(authoritativeLatest([realMedium, laterToy])?.runId).toBe("lme-medium");
   });
 });

@@ -291,7 +291,7 @@ try {
   // empty result sets (nothing meaningful to record).
   if (logResults && !cfg.dryRun && output.scores.length > 0) {
     const { recordRun } = await import("../../bench/src/results-log.js");
-    const { historyFile, latestJson, benchReadme, mainReadme } = recordRun({
+    const { historyFile, latestJson, benchReadme, mainReadme, regeneratedReadmes } = recordRun({
       runId: output.runId,
       scores: output.scores,
       datasets: [...(cfg.datasets ?? [])],
@@ -308,8 +308,14 @@ try {
     });
     console.log(`\nLogged run to ${historyFile}`);
     console.log(`Updated latest state in ${latestJson}`);
-    console.log(`Regenerated ${benchReadme}`);
-    if (mainReadme) console.log(`Regenerated snapshot in ${mainReadme}`);
+    if (regeneratedReadmes) {
+      if (benchReadme) console.log(`Regenerated ${benchReadme}`);
+      if (mainReadme) console.log(`Regenerated snapshot in ${mainReadme}`);
+    } else {
+      console.log(
+        "Skipped README regeneration — only a clean `--dataset=lme --subset=medium` (or `full`) run defines the canonical snapshot. This run was recorded in history.jsonl + latest.json.",
+      );
+    }
   } else if (logResults && (cfg.dryRun || output.scores.length === 0)) {
     console.log("\n--log skipped (dry run or no scores to record).");
   }

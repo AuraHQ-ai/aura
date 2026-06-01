@@ -13,7 +13,7 @@ file plus the snapshot in the root `README.md`. See the `aura-memory-bench` skil
 
 ## Current
 
-Latest baseline: `9cdfda1` · 2026-06-01 19:25 UTC. One block per dataset.
+Latest baseline: `9cdfda1` · 2026-06-01 19:25 UTC.
 
 ### `longmemeval/medium`
 
