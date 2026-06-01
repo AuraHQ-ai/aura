@@ -50,6 +50,12 @@ Latest baseline: `e0bb4c8` · 2026-06-01 10:12 UTC. One block per dataset.
 
 Overall QA accuracy and recall@15 over time, grouped by scope so every row in a table is comparable. Newest first.
 
+### `toy/toy`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `d7504bf` | 100% | 100% | 5 | $0.09 | 1m01s |
+
 ### `longmemeval/toy`
 
 | date | commit | QA | recall@15 | n | cost | runtime |

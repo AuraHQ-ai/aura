@@ -543,6 +543,70 @@
         "n": 12
       },
       "prNumber": 1076
+    },
+    {
+      "runId": "2026-06-01T12-37-15-927Z-bmw7sbwp",
+      "timestamp": "2026-06-01T12:38:19.431Z",
+      "commit": "d7504bf",
+      "dirty": false,
+      "datasets": [
+        "toy"
+      ],
+      "subset": "toy",
+      "limit": null,
+      "category": null,
+      "corpusHash": "65d4db8bbcbb702d",
+      "caseSetHash": "f2fbd4db09a2161d",
+      "runtimeMs": 61205,
+      "costUsd": 0.094338,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.7",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "toy",
+          "category": "abstention",
+          "qa": 1,
+          "recall": null,
+          "n": 1
+        },
+        {
+          "dataset": "toy",
+          "category": "knowledge_update",
+          "qa": 1,
+          "recall": 1,
+          "n": 1
+        },
+        {
+          "dataset": "toy",
+          "category": "multi_hop",
+          "qa": 1,
+          "recall": 1,
+          "n": 1
+        },
+        {
+          "dataset": "toy",
+          "category": "single_hop",
+          "qa": 1,
+          "recall": 1,
+          "n": 1
+        },
+        {
+          "dataset": "toy",
+          "category": "temporal",
+          "qa": 1,
+          "recall": 1,
+          "n": 1
+        }
+      ],
+      "overall": {
+        "qa": 1,
+        "recall": 1,
+        "n": 5
+      },
+      "note": "fix trailing user extraction, update provenance, and turn-level recall"
     }
   ]
 }
