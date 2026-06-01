@@ -13,20 +13,20 @@ file plus the snapshot in the root `README.md`. See the `aura-memory-bench` skil
 
 ## Current
 
-Latest logged run: `8099713-dirty` · 2026-05-31 11:56 UTC
+Latest logged run: `c34c107` · 2026-06-01 10:53 UTC
 
-- scope: `locomo/medium` · corpus `f9cf2279e3e1` · cases `a6f1cceb887cfe19` · runtime 74m41s · cost $11.04
+- scope: `longmemeval/toy` · corpus `b178d604c01a` · cases `0785d34e2111c176` · runtime 3m09s · cost $0.57
 - models: extraction `anthropic/claude-haiku-4.5` · answerer `anthropic/claude-opus-4.8` · judge `anthropic/claude-opus-4.6`
-- overall: QA 28% · recall@15 78% (n=150)
-- note: parallel per-dataset baseline (PR #1064 build, run 26709746291)
+- overall: QA 67% · recall@15 71% (n=12)
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| locomo | adversarial | 12% | 70% | 30 |
-| locomo | multi_hop | 33% | 71% | 30 |
-| locomo | open_domain | 55% | 90% | 30 |
-| locomo | single_hop | 22% | 87% | 30 |
-| locomo | temporal | 18% | 72% | 30 |
+| longmemeval | knowledge-update | 100% | 75% | 2 |
+| longmemeval | multi-session | 75% | 50% | 2 |
+| longmemeval | single-session-assistant | 0% | 0% | 2 |
+| longmemeval | single-session-preference | 75% | 100% | 2 |
+| longmemeval | single-session-user | 100% | 100% | 2 |
+| longmemeval | temporal-reasoning | 50% | 100% | 2 |
 
 ## Evolution
 
@@ -34,6 +34,7 @@ Overall QA accuracy and recall@15 across logged runs (newest first).
 
 | date | commit | scope | QA | recall@15 | n | cost | runtime |
 |---|---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `c34c107` | longmemeval/toy | 67% | 71% | 12 | $0.57 | 3m09s |
 | 2026-05-31 | `8099713-dirty` | locomo/medium | 28% | 78% | 150 | $11.04 | 74m41s |
 | 2026-05-31 | `8099713-dirty` | longmemeval/medium | 55% | 88% | 180 | $12.03 | 80m31s |
 | 2026-05-30 | `84515ad` | longmemeval/medium | 53% | 85% | 180 | $12.39 | 76m13s |
