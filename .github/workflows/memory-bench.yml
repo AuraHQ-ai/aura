@@ -576,32 +576,7 @@ jobs:
             git fetch origin "${HEAD_REF}"
             git reset --hard "origin/${HEAD_REF}"
 
-            LOCAL_HISTORY="${tmpdir}/history.jsonl" node <<'NODE'
-            const fs = require('fs');
-            const currentPath = 'apps/api/bench/history.jsonl';
-            const localPath = process.env.LOCAL_HISTORY;
-            const split = (text) => text.split('\n').map((line) => line.trim()).filter(Boolean);
-            const currentLines = fs.existsSync(currentPath) ? split(fs.readFileSync(currentPath, 'utf8')) : [];
-            const localLines = localPath && fs.existsSync(localPath) ? split(fs.readFileSync(localPath, 'utf8')) : [];
-            const keyFor = (line) => {
-              try {
-                const entry = JSON.parse(line);
-                return entry && entry.runId ? `run:${entry.runId}` : `line:${line}`;
-              } catch {
-                return `line:${line}`;
-              }
-            };
-            const seen = new Set(currentLines.map(keyFor));
-            const merged = [...currentLines];
-            for (const line of localLines) {
-              const key = keyFor(line);
-              if (!seen.has(key)) {
-                seen.add(key);
-                merged.push(line);
-              }
-            }
-            fs.writeFileSync(currentPath, merged.length ? `${merged.join('\n')}\n` : '');
-            NODE
+            LOCAL_HISTORY="${tmpdir}/history.jsonl" node apps/api/bench/scripts/merge-history.mjs
 
             pnpm --filter aura-api bench:report
 
