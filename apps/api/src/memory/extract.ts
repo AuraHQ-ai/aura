@@ -285,7 +285,7 @@ const extractedMemoriesSchema = z.object({
         .int()
         .min(1)
         .max(100)
-        .describe("How important is this memory to recall months from now? 1-100. 90-100: business decisions, org changes, key relationships. 70-89: product discussions, bugs with impact, personal facts. 40-69: status updates with substance, meeting notes. 20-39: routine coordination, minor updates. 1-19: operational noise, 'ok thanks', agent self-actions.")
+        .describe("How important is this memory to recall months from now? 1-100. 90-100: business decisions, org changes, key relationships. 70-89: product discussions, bugs with impact, personal facts. 40-69: status updates with substance, meeting notes. 20-39: routine coordination, minor updates. 1-19: operational noise, 'ok thanks', Aura's self-narration (the act of running a query). A grounded RESULT Aura surfaced is a real fact, scored on its own merits.")
         .default(50),
       relatedUserIds: z
         .array(z.string())
@@ -296,6 +296,12 @@ const extractedMemoriesSchema = z.object({
           "True only if the user explicitly asked Aura to share this info with someone specific",
         )
         .default(false),
+      sourceRole: z
+        .enum(["user", "assistant", "tool"])
+        .default("user")
+        .describe(
+          "Who the fact originated from. Use 'assistant' ONLY for a concrete, grounded result or explicit recommendation Aura surfaced (backed by a tool result/computation), phrased with attribution ('Aura found...', 'Aura recommended...'). Use 'user' for everything the user (or a person in the thread) stated. Default 'user'.",
+        ),
       entities: z
         .array(extractedEntitySchema)
         .optional()
@@ -342,11 +348,22 @@ DO NOT save:
 - Things already in the agent's persistent notes or self-directive (those are always in context)
 - Exact duplicates of things already stored as memories
 - Transient noise that won't matter in 48 hours
-- Aura's own actions ("Aura checked the deploy", "Aura ran a query")
+- Aura's self-narration — the ACT of doing something ("Aura checked the deploy", "Aura ran a query", "Aura searched Slack"). Save the RESULT, never the narration.
+- Speculation or hedging from anyone, including Aura ("probably", "I think", "might", "should be", "let me guess") — only grounded, verifiable facts.
 - Acknowledgments and pleasantries ("thanks", "got it", "sounds good")
 - Scheduling logistics ("let's meet at 3pm") unless it's a decision
 - Information that just restates what was already retrieved from memory in this conversation
 - Meta-conversation about the memory system itself
+
+## Capturing what Aura surfaced (assistant-sourced facts)
+
+Aura's own turns appear in the exchange (as "Aura:"). DO capture a concrete result or explicit recommendation Aura produced, but ONLY when ALL of these hold:
+1. **Grounded** — it is backed by a tool result, a computation over stated values, or an explicit recommendation Aura made. If Aura could not have verified it, do NOT store it. (Self-narration like "Aura ran a query" stays excluded; the RESULT — "Aura found the cheapest flight is $340" — is kept.)
+2. **Genuinely new** — not an echo of the user's words or of a memory already retrieved/stored in this conversation.
+3. **Attributed** — phrase it with attribution: "Aura found that...", "Aura calculated...", "Aura recommended...".
+4. Never speculation or hedging (see DO NOT save above).
+
+For every memory, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation she surfaced), otherwise \`"user"\` (the default — anything a person stated). A grounded assistant RESULT is a real fact worth keeping; do not auto-discard it as a low-value "agent self-action".
 
 ## Importance Scoring (be strict, use the 1-100 scale)
 
@@ -354,7 +371,7 @@ DO NOT save:
 - **70-89**: Important technical/product decisions, high-impact customer or org context, durable people/ownership facts, non-trivial constraints.
 - **40-69**: Useful but replaceable context (project updates, meeting outcomes, tactical plans, substantial status).
 - **20-39**: Routine coordination, recurring operational updates, minor progress check-ins.
-- **1-19**: Operational noise, status checks, agent actions, acknowledgments -- these will be DISCARDED.
+- **1-19**: Operational noise, status checks, Aura's self-narration (the act of running a query/checking a deploy), acknowledgments -- these will be DISCARDED. NOTE: a grounded RESULT Aura surfaced (e.g. "Aura found the cheapest flight is $340") is a real fact, not a "self-action" — score it on its own merits, not here.
 
 Aggressive scoring guidance:
 - Default conservative: if unsure, score LOWER.
@@ -387,6 +404,12 @@ const createOperationSchema = z.object({
   importance: z.number().int().min(1).max(100).default(50),
   relatedUserIds: z.array(z.string()).describe("Slack user IDs this memory is about"),
   shareable: z.boolean().default(false),
+  sourceRole: z
+    .enum(["user", "assistant", "tool"])
+    .default("user")
+    .describe(
+      "Who the fact originated from. Use 'assistant' ONLY for a concrete, grounded result or explicit recommendation Aura surfaced (backed by a tool result/computation), phrased with attribution ('Aura found...', 'Aura recommended...'). Use 'user' for everything a person in the thread stated. Default 'user'.",
+    ),
   entities: z.array(extractedEntitySchema).optional().default([]),
 });
 
@@ -451,7 +474,7 @@ Importance (be strict):
 - 70-89: important technical/product decisions, high-impact org/customer context, durable people facts.
 - 40-69: useful but replaceable tactical updates and meeting outcomes.
 - 20-39: routine operational updates and minor coordination.
-- 1-19: noise (will be DISCARDED).
+- 1-19: noise (will be DISCARDED) — operational status checks, Aura's self-narration (the act of running a query/checking a deploy), acknowledgments. NOTE: a grounded RESULT Aura surfaced is a real fact, not a "self-action" — score it on its own merits.
 
 Aggressive scoring guidance:
 - Default conservative: if unsure, score LOWER.
@@ -460,11 +483,22 @@ Aggressive scoring guidance:
 - OKRs, strategy, and important operating rules should score >=75 (often >=85 if broadly impactful).
 
 ## What NOT to extract
-- Aura's own actions ("Aura ran a query", "Aura checked the deploy")
+- Aura's self-narration — the ACT of doing something ("Aura ran a query", "Aura checked the deploy", "Aura searched Slack"). Save the RESULT, never the narration.
+- Speculation or hedging from anyone, including Aura ("probably", "I think", "might", "should be") — only grounded, verifiable facts.
 - Pleasantries and acknowledgments ("thanks", "got it")
 - Information already captured in existing memories above (the whole point is to AVOID duplicates)
 - Meta-conversation about the memory system itself
 - Scheduling logistics unless they represent a decision
+
+## Capturing what Aura surfaced (assistant-sourced facts)
+
+The thread shows Aura's own turns (as "[Aura]:"). DO create a memory for a concrete result or explicit recommendation Aura produced, but ONLY when ALL of these hold:
+1. **Grounded** — backed by a tool result, a computation over stated values, or an explicit recommendation Aura made. If Aura could not have verified it, do NOT store it. (Self-narration like "Aura ran a query" stays excluded; the RESULT — "Aura found the cheapest flight is $340" — is kept.)
+2. **Genuinely new** — not an echo of the user's words and not already covered by an existing memory above.
+3. **Attributed** — phrase it with attribution: "Aura found that...", "Aura calculated...", "Aura recommended...".
+4. Never speculation or hedging (see above).
+
+For every create operation, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation she surfaced), otherwise \`"user"\` (the default — anything a person in the thread stated).
 
 ## Rules
 - Be concise — one clear sentence per memory.
@@ -979,7 +1013,16 @@ async function processCreateOperations(
     return;
   }
 
-  const newMemories: NewMemory[] = survivingIndices.map((i) => ({
+  const newMemories: NewMemory[] = survivingIndices.map((i) => {
+    // Per-memory attribution: the LLM tags each memory with the role it
+    // originated from. The trigger role (extractionSourceRole) is the fallback
+    // when the LLM doesn't specify. Assistant-sourced facts get lower trust
+    // (0.6) so a later user statement (default 0.8) wins via the existing
+    // dedup/contradiction/supersession machinery — preventing self-reinforcing
+    // delusion loops. undefined keeps the column default (0.8).
+    const memorySourceRole = normalizedMemories[i].sourceRole ?? extractionSourceRole;
+    const confidence = memorySourceRole === "assistant" ? 0.6 : undefined;
+    return {
     content: normalizedMemories[i].content,
     type: normalizedMemories[i].type,
     category: normalizedMemories[i].category,
@@ -995,7 +1038,8 @@ async function processCreateOperations(
     shareable: normalizedMemories[i].shareable ? 1 : 0,
     importance: normalizedMemories[i].importance,
     relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
-    extractionSourceRole,
+    extractionSourceRole: memorySourceRole,
+    ...(confidence !== undefined && { confidence }),
     // Bench replay stamps corpus time on the full temporal triplet so as-of
     // retrieval can place the memory on the replayed timeline. validFrom is what
     // the `valid_from <= asOf` filter keys on; without it storeMemories would
@@ -1005,7 +1049,8 @@ async function processCreateOperations(
       updatedAt: context.createdAt,
       validFrom: context.createdAt,
     }),
-  }));
+    };
+  });
 
   const memoryIds = await storeMemories(newMemories);
 
