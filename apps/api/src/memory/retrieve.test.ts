@@ -29,7 +29,8 @@ vi.mock("ai", () => ({
   rerank: vi.fn(),
 }));
 
-import { hasRetrievalEvidence } from "./retrieve.js";
+import { hasRetrievalEvidence, looksMultiHop, mergeRoundRobin } from "./retrieve.js";
+import type { Memory } from "@aura/db/schema";
 
 describe("hasRetrievalEvidence (#1045 abstention gate)", () => {
   it("treats a resolved entity as evidence regardless of similarity", () => {
@@ -58,5 +59,39 @@ describe("hasRetrievalEvidence (#1045 abstention gate)", () => {
 
   it("abstains on an empty candidate set", () => {
     expect(hasRetrievalEvidence([], 0)).toBe(false);
+  });
+});
+
+describe("query planning helpers (#276 / #1056)", () => {
+  it("looksMultiHop flags conjunctions, comparisons, and multi-question queries", () => {
+    expect(looksMultiHop("who manages the project Alice and Bob started?")).toBe(true);
+    expect(looksMultiHop("compare the Q3 and Q4 churn numbers")).toBe(true);
+    expect(looksMultiHop("what's the budget? who approved it?")).toBe(true);
+  });
+
+  it("looksMultiHop leaves simple single-fact queries alone", () => {
+    expect(looksMultiHop("what did Vadim decide about churn")).toBe(false);
+    expect(looksMultiHop("when is the offsite")).toBe(false);
+  });
+
+  it("mergeRoundRobin interleaves lists, dedupes, and respects the limit", () => {
+    const m = (id: string) => ({ id }) as Memory;
+    const merged = mergeRoundRobin(
+      [
+        [m("a1"), m("a2"), m("a3")],
+        [m("b1"), m("a2"), m("b2")],
+      ],
+      4,
+    );
+    expect(merged.map((x) => x.id)).toEqual(["a1", "b1", "a2", "a3"]);
+  });
+
+  it("mergeRoundRobin gives every list representation", () => {
+    const m = (id: string) => ({ id }) as Memory;
+    const merged = mergeRoundRobin(
+      [[m("a1"), m("a2")], [m("b1"), m("b2")], [m("c1")]],
+      3,
+    );
+    expect(merged.map((x) => x.id)).toEqual(["a1", "b1", "c1"]);
   });
 });

@@ -73,6 +73,7 @@ export async function evaluateRetrieval(
       limit: k,
       workspaceId,
       adminMode: true,
+      rewrite: true,
       onUsage,
       asOf,
     });

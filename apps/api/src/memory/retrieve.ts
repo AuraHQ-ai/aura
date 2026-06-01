@@ -49,10 +49,16 @@ interface RetrievalOptions {
     },
   ) => void;
   /**
-   * Return no memories when the candidate pool has no raw retrieval evidence:
+  * Return no memories when the candidate pool has no raw retrieval evidence:
    * no resolved entity, no lexical hit, and no cosine match above the floor.
    */
   abstain?: boolean;
+  /**
+   * Run a fast-model query rewrite + multi-hop decomposition pass before
+   * retrieval. When decomposition yields sub-queries, each is retrieved
+   * independently and merged round-robin for coverage.
+   */
+  rewrite?: boolean;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -119,6 +125,58 @@ Message: "${query}"`,
       query: query.substring(0, 100),
     });
     return [];
+  }
+}
+
+const queryPlanSchema = z.object({
+  /** A standalone, search-optimized rewrite of the query. */
+  rewritten: z.string(),
+  /** Atomic sub-queries for multi-hop questions; empty for single-fact queries. */
+  subQueries: z.array(z.string()).max(4),
+});
+
+export interface QueryPlan {
+  rewritten: string;
+  subQueries: string[];
+}
+
+export function looksMultiHop(query: string): boolean {
+  const q = query.toLowerCase();
+  if ((query.match(/\?/g)?.length ?? 0) >= 2) return true;
+  return /\b(and|or|both|compare|versus|vs\.?|difference between|as well as|along with|each of|all of)\b/.test(
+    q,
+  );
+}
+
+async function planQuery(
+  query: string,
+  onUsage?: RetrievalOptions["onUsage"],
+): Promise<QueryPlan> {
+  const fallback: QueryPlan = { rewritten: query, subQueries: [] };
+  try {
+    const model = await getFastModel();
+    const { object, usage } = await generateObject({
+      model,
+      schema: queryPlanSchema,
+      prompt: `Rewrite this message into a concise, standalone search query for a memory database: resolve pronouns, drop greetings/filler, keep the salient entities and intent.
+
+If, and only if, answering requires multiple independent facts, also return 2-4 atomic sub-queries, each retrievable on its own. For a single-fact question, return an empty subQueries array.
+
+Message: "${query}"`,
+      temperature: 0,
+    });
+    onUsage?.((model as any)?.modelId ?? "retrieve", usage);
+    const rewritten = object.rewritten?.trim() || query;
+    const subQueries = (object.subQueries ?? [])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return { rewritten, subQueries };
+  } catch (error) {
+    logger.warn("Query planning failed, using original query", {
+      error: String(error).slice(0, 200),
+      query: query.substring(0, 100),
+    });
+    return fallback;
   }
 }
 
@@ -351,6 +409,23 @@ export function hasRetrievalEvidence(
   return maxSim >= ABSTAIN_SIM_FLOOR || maxBm25 > ABSTAIN_BM25_FLOOR;
 }
 
+export function mergeRoundRobin(lists: Memory[][], limit: number): Memory[] {
+  const seen = new Set<string>();
+  const merged: Memory[] = [];
+  const maxLen = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < maxLen && merged.length < limit; i++) {
+    for (const list of lists) {
+      if (merged.length >= limit) break;
+      const memory = list[i];
+      if (memory && !seen.has(memory.id)) {
+        seen.add(memory.id);
+        merged.push(memory);
+      }
+    }
+  }
+  return merged;
+}
+
 /**
  * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
  *
@@ -365,6 +440,47 @@ export function hasRetrievalEvidence(
  * 7. Return top-K memories
  */
 export async function retrieveMemories(
+  options: RetrievalOptions,
+): Promise<Memory[]> {
+  if (!options.rewrite) {
+    return retrieveSingleQuery(options);
+  }
+
+  const { query, limit = 20, onUsage } = options;
+  const plan = looksMultiHop(query)
+    ? await planQuery(query, onUsage)
+    : { rewritten: query, subQueries: [] as string[] };
+
+  if (plan.subQueries.length >= 2) {
+    const perQueryLimit = Math.max(5, Math.ceil(limit / plan.subQueries.length) + 2);
+    const lists = await Promise.all(
+      plan.subQueries.map((subQuery) =>
+        retrieveSingleQuery({
+          ...options,
+          query: subQuery,
+          queryEmbedding: undefined,
+          limit: perQueryLimit,
+          rewrite: false,
+        }),
+      ),
+    );
+    const merged = mergeRoundRobin(lists, limit);
+    logger.info(`Multi-hop retrieval: ${plan.subQueries.length} sub-queries -> ${merged.length} merged`, {
+      query: query.substring(0, 100),
+      subQueries: plan.subQueries,
+    });
+    if (merged.length > 0) return merged;
+  }
+
+  return retrieveSingleQuery({
+    ...options,
+    query: plan.rewritten,
+    queryEmbedding: plan.rewritten === query ? options.queryEmbedding : undefined,
+    rewrite: false,
+  });
+}
+
+async function retrieveSingleQuery(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
   const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage, asOf, abstain = true } = options;

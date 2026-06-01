@@ -296,6 +296,7 @@ export async function buildCorePrompt(
             query: session.messageText,
             queryEmbedding,
             currentUserId: session.userId,
+            rewrite: true,
             limit: 15,
           }).catch(() => [] as Memory[])
         : Promise.resolve([] as Memory[]),
