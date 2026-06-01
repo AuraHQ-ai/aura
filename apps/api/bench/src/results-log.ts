@@ -279,6 +279,24 @@ function scoresTable(scores: HistoryScore[]): string {
   return lines.join("\n");
 }
 
+/** Subsets whose results are statistically meaningful enough to define the
+ * canonical "Current" snapshot. Toy/fast runs land in the append-only trace
+ * (history.jsonl) and latest.json, but must never overwrite the canonical
+ * README snapshots — otherwise a 2-case smoke test clobbers a real baseline. */
+const AUTHORITATIVE_SUBSETS = new Set(["medium", "full"]);
+
+/** Pick the entry that should define the canonical snapshot: the newest run at
+ * an authoritative subset. Falls back to the newest overall only when no
+ * authoritative run exists yet (e.g. a fresh repo), so the snapshot is never
+ * empty. */
+export function authoritativeLatest(
+  entries: HistoryEntry[],
+): HistoryEntry | undefined {
+  const authoritative = entries.filter((e) => AUTHORITATIVE_SUBSETS.has(e.subset));
+  const pool = authoritative.length > 0 ? authoritative : entries;
+  return pool[pool.length - 1];
+}
+
 /** Render the detailed bench README from the full history. Returns the path. */
 export function renderBenchReadme(
   history: HistoryEntry[],
@@ -321,7 +339,7 @@ export function renderBenchReadme(
     return file;
   }
 
-  const latest = latestEntries[latestEntries.length - 1] ?? history[history.length - 1]!;
+  const latest = authoritativeLatest(latestEntries) ?? history[history.length - 1]!;
 
   lines.push("## Current");
   lines.push("");
@@ -404,7 +422,7 @@ export function renderReports(history: HistoryEntry[] = readHistory()): {
   const latest = materializeLatest(history).entries;
   const latestJson = writeLatest(history);
   const benchReadme = renderBenchReadme(history, benchReadmePath(), latest);
-  const mainReadme = renderMainSnapshot(latest[latest.length - 1]);
+  const mainReadme = renderMainSnapshot(authoritativeLatest(latest));
   return { latestJson, benchReadme, mainReadme };
 }
 
