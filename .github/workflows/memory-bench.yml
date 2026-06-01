@@ -35,7 +35,7 @@ name: Memory bench
 # branch. workflow_dispatch keeps the flexible staged knobs (bench_id/from/to)
 # for manual/isolated runs; PR runs always do a full ephemeral pass.
 #
-# PR defaults: --subset=toy, --dataset=lme,
+# PR defaults: --dataset=lme, --subset=toy,
 # --replay=exchange. Models default to the catalog tiers fast for extraction,
 # main for answerer, and escalation for judge — see apps/api/bench/src/models.ts.
 #
@@ -152,21 +152,27 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Keep the workflow subset-agnostic. PRs default to toy (fast, free smoke
-  # signal) so iteration stays cheap. To get a real merge-decision signal on a
-  # memory PR, label it `bench:medium` (or `bench:full`) and that PR alone runs
-  # the heavier LongMemEval subset, posting a sticky delta against main's
-  # committed baseline. LoCoMo is manual-only for now because even small
-  # question subsets replay very large full conversations.
+  # PRs default to a cheap LongMemEval toy run. Heavier PR runs are opt-in via
+  # dataset+subset labels:
+  #   bench:lme:toy | bench:lme:fast | bench:lme:medium | bench:lme:full
+  #   bench:locomo:full
+  # LoCoMo intentionally has no subset labels: without question timestamps, even
+  # tiny QA subsets replay large full conversations, so only full/manual-style
+  # runs are worth interpreting.
   # Resolution order:
   #   1. workflow_dispatch input (manual/isolated runs)
-  #   2. PR label  bench:full > bench:medium  (per-PR opt-in)
+  #   2. PR labels above, with full > medium > fast > toy
   #   3. repo variable vars.BENCH_SUBSET  (global override, rarely used)
   #   4. toy  (default)
   BENCH_SUBSET: >-
     ${{ github.event.inputs.subset
+        || (contains(github.event.pull_request.labels.*.name, 'bench:locomo:full') && 'full')
+        || (contains(github.event.pull_request.labels.*.name, 'bench:lme:full') && 'full')
         || (contains(github.event.pull_request.labels.*.name, 'bench:full') && 'full')
+        || (contains(github.event.pull_request.labels.*.name, 'bench:lme:medium') && 'medium')
         || (contains(github.event.pull_request.labels.*.name, 'bench:medium') && 'medium')
+        || (contains(github.event.pull_request.labels.*.name, 'bench:lme:fast') && 'fast')
+        || (contains(github.event.pull_request.labels.*.name, 'bench:lme:toy') && 'toy')
         || vars.BENCH_SUBSET
         || 'toy' }}
 
@@ -340,7 +346,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dataset: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', github.event.inputs.dataset) || '["lme"]') }}
+        dataset: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', github.event.inputs.dataset) || (contains(github.event.pull_request.labels.*.name, 'bench:locomo:full') && '["locomo"]') || '["lme"]') }}
     steps:
       # Check out the PR HEAD branch (not the detached merge ref) so the bench
       # runs against the PR's code. Falls back to github.ref for workflow_dispatch
