@@ -13,22 +13,22 @@ file plus the snapshot in the root `README.md`. See the `aura-memory-bench` skil
 
 ## Current
 
-Latest baseline: `9cdfda1` · 2026-06-01 19:25 UTC.
+Latest baseline: `0d311e5` · 2026-06-01 22:40 UTC.
 
 ### `longmemeval/medium`
 
-- scope: `longmemeval/medium` · corpus `b178d604c01a` · cases `a0018f6e9f0fccb4` · runtime 104m15s · cost $12.32
+- scope: `longmemeval/medium` · corpus `b178d604c01a` · cases `a0018f6e9f0fccb4` · runtime 99m10s · cost $13.05
 - models: extraction `anthropic/claude-haiku-4.5` · answerer `anthropic/claude-opus-4.8` · judge `anthropic/claude-opus-4.6`
-- overall: QA 60% · recall@15 90% (n=180)
+- overall: QA 59% · recall@15 89% (n=180)
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| longmemeval | knowledge-update | 68% | 93% | 30 |
-| longmemeval | multi-session | 67% | 92% | 30 |
-| longmemeval | single-session-assistant | 35% | 83% | 30 |
-| longmemeval | single-session-preference | 38% | 97% | 30 |
-| longmemeval | single-session-user | 87% | 93% | 30 |
-| longmemeval | temporal-reasoning | 67% | 82% | 30 |
+| longmemeval | knowledge-update | 65% | 87% | 30 |
+| longmemeval | multi-session | 70% | 90% | 30 |
+| longmemeval | single-session-assistant | 33% | 83% | 30 |
+| longmemeval | single-session-preference | 38% | 100% | 30 |
+| longmemeval | single-session-user | 73% | 93% | 30 |
+| longmemeval | temporal-reasoning | 73% | 82% | 30 |
 
 ## Evolution
 
@@ -38,6 +38,7 @@ Overall QA accuracy and recall@15 over time, grouped by scope so every row in a 
 
 | date | commit | QA | recall@15 | n | cost | runtime |
 |---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `0d311e5` | 59% | 89% | 180 | $13.05 | 99m10s |
 | 2026-06-01 | `9cdfda1` | 60% | 90% | 180 | $12.32 | 104m15s |
 | 2026-06-01 | `e0bb4c8` | 54% | 86% | 180 | $12.28 | 75m19s |
 | 2026-05-31 | `8099713-dirty` | 55% | 88% | 180 | $12.03 | 80m31s |
