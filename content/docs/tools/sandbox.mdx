@@ -18,7 +18,7 @@ Aura has three sandbox command tools:
 | Tool | Use when | Behavior |
 |------|----------|----------|
 | `run_command` | The command should finish inline, usually under 120s | Starts the process, waits up to `timeout_seconds`, then returns exit code/stdout/stderr. If the process is still running at timeout, returns an `id` and `pid` for polling instead of losing progress. |
-| `run_command_detached` | The command is long-running or has uncertain duration | Starts the process in the background and returns immediately with `id`, `pid`, and `started_at`. |
+| `run_command_detached` | The command is long-running or has uncertain duration | Starts the process in the background and returns immediately with `id`, `pid`, and `started_at`. When the detached-command webhook is configured (`AURA_PUBLIC_URL` + `SANDBOX_WEBHOOK_SECRET`) and the call is made inside a Slack thread, this is a **suspend point**: the turn ends after dispatch and resumes automatically when the process exits. |
 | `check_command` | You need progress or final status for a detached command | Polls `/tmp/aura-bg/<id>.*` and returns status, exit code when available, stdout/stderr tails, and runtime. |
 
 ---
@@ -63,6 +63,18 @@ Start a command in the background and return immediately.
 **Returns:** `id`, `pid`, `started_at`.
 
 Use this for installs, test suites, crawls, data jobs, or any command where blocking the current Slack stream would be risky.
+
+### Webhook-resumed suspend point
+
+When both `AURA_PUBLIC_URL` and `SANDBOX_WEBHOOK_SECRET` are set **and** the call originates from a Slack thread (channel + thread_ts in the schedule context), `run_command_detached` acts as a suspend point:
+
+1. The command is dispatched and the tool returns its `id`/`pid` immediately.
+2. Aura ends the current turn -- she should send a short final note like *"started `<id>`, I'll continue when it finishes"* and stop calling tools.
+3. When the process exits, `/api/webhook/sandbox-command` fires and resumes the same Slack thread with a synthetic `<detached-command-result>` user turn containing the final stdout/stderr/exit code.
+
+This keeps the Slack stream from holding open for long-running work (which would otherwise hit the ~3-minute streaming cap) while still delivering the result in-thread when it's ready.
+
+If either env var is missing, or the call has no thread to resume into (e.g. it's running inside a recurring job context with no `thread_ts`), the tool falls back to the older fire-and-poll behavior -- you have to poll with `check_command` yourself.
 
 ---
 
