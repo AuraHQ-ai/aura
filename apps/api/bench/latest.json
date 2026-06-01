@@ -474,9 +474,9 @@
       "prNumber": 1074
     },
     {
-      "runId": "2026-06-01T11-47-06-007Z-l4nkcut4",
-      "timestamp": "2026-06-01T11:50:14.128Z",
-      "commit": "8435b97",
+      "runId": "2026-06-01T12-22-39-832Z-e4d52ei1",
+      "timestamp": "2026-06-01T12:25:39.844Z",
+      "commit": "03d4a4c",
       "dirty": false,
       "datasets": [
         "longmemeval"
@@ -486,8 +486,8 @@
       "category": null,
       "corpusHash": "b178d604c01afa4a",
       "caseSetHash": "0785d34e2111c176",
-      "runtimeMs": 182921,
-      "costUsd": 0.5717329999999997,
+      "runtimeMs": 177140,
+      "costUsd": 0.569054,
       "models": {
         "extraction": "anthropic/claude-haiku-4.5",
         "answerer": "anthropic/claude-opus-4.8",
@@ -498,27 +498,27 @@
           "dataset": "longmemeval",
           "category": "knowledge-update",
           "qa": 1,
-          "recall": 1,
+          "recall": 0.75,
           "n": 2
         },
         {
           "dataset": "longmemeval",
           "category": "multi-session",
           "qa": 0.75,
-          "recall": 0.75,
+          "recall": 0.5,
           "n": 2
         },
         {
           "dataset": "longmemeval",
           "category": "single-session-assistant",
           "qa": 0,
-          "recall": 0,
+          "recall": 0.5,
           "n": 2
         },
         {
           "dataset": "longmemeval",
           "category": "single-session-preference",
-          "qa": 1,
+          "qa": 0.75,
           "recall": 1,
           "n": 2
         },
@@ -538,11 +538,11 @@
         }
       ],
       "overall": {
-        "qa": 0.7083333333333334,
+        "qa": 0.6666666666666666,
         "recall": 0.7916666666666666,
         "n": 12
       },
-      "prNumber": 1074
+      "prNumber": 1076
     }
   ]
 }
