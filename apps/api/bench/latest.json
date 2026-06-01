@@ -275,77 +275,6 @@
       "prNumber": 1062
     },
     {
-      "runId": "2026-06-01T07-36-13-467Z-djclibah",
-      "timestamp": "2026-06-01T08:51:32.000Z",
-      "commit": "e0bb4c8",
-      "dirty": false,
-      "datasets": [
-        "longmemeval"
-      ],
-      "subset": "medium",
-      "limit": null,
-      "category": null,
-      "corpusHash": "b178d604c01afa4a",
-      "caseSetHash": "a0018f6e9f0fccb4",
-      "runtimeMs": 4518732,
-      "costUsd": 12.28251599999999,
-      "models": {
-        "extraction": "anthropic/claude-haiku-4.5",
-        "answerer": "anthropic/claude-opus-4.8",
-        "judge": "anthropic/claude-opus-4.6"
-      },
-      "scores": [
-        {
-          "dataset": "longmemeval",
-          "category": "knowledge-update",
-          "qa": 0.6666666666666666,
-          "recall": 0.85,
-          "n": 30
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "multi-session",
-          "qa": 0.6833333333333333,
-          "recall": 0.8833333333333333,
-          "n": 30
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "single-session-assistant",
-          "qa": 0.26666666666666666,
-          "recall": 0.8333333333333334,
-          "n": 30
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "single-session-preference",
-          "qa": 0.38333333333333336,
-          "recall": 0.9,
-          "n": 30
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "single-session-user",
-          "qa": 0.8666666666666667,
-          "recall": 0.9,
-          "n": 30
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "temporal-reasoning",
-          "qa": 0.4,
-          "recall": 0.8166666666666667,
-          "n": 30
-        }
-      ],
-      "overall": {
-        "qa": 0.5444444444444444,
-        "recall": 0.8638888888888889,
-        "n": 180
-      },
-      "note": "parallel per-dataset baseline on main e0bb4c8 after #1067+#1070"
-    },
-    {
       "runId": "2026-06-01T08-52-31-537Z-zjc3qjp7",
       "timestamp": "2026-06-01T10:12:09.000Z",
       "commit": "e0bb4c8",
@@ -607,6 +536,77 @@
         "n": 12
       },
       "prNumber": 1076
+    },
+    {
+      "runId": "2026-06-01T17-41-09-845Z-wfgjosj5",
+      "timestamp": "2026-06-01T19:25:40.473Z",
+      "commit": "9cdfda1",
+      "dirty": false,
+      "datasets": [
+        "longmemeval"
+      ],
+      "subset": "medium",
+      "limit": null,
+      "category": null,
+      "corpusHash": "b178d604c01afa4a",
+      "caseSetHash": "a0018f6e9f0fccb4",
+      "runtimeMs": 6255354,
+      "costUsd": 12.31965800000002,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.8",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "longmemeval",
+          "category": "knowledge-update",
+          "qa": 0.6833333333333333,
+          "recall": 0.9333333333333333,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "multi-session",
+          "qa": 0.6666666666666666,
+          "recall": 0.9166666666666666,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-assistant",
+          "qa": 0.35,
+          "recall": 0.8333333333333334,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-preference",
+          "qa": 0.38333333333333336,
+          "recall": 0.9666666666666667,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-user",
+          "qa": 0.8666666666666667,
+          "recall": 0.9333333333333333,
+          "n": 30
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "temporal-reasoning",
+          "qa": 0.6666666666666666,
+          "recall": 0.8166666666666667,
+          "n": 30
+        }
+      ],
+      "overall": {
+        "qa": 0.6027777777777777,
+        "recall": 0.9,
+        "n": 180
+      },
+      "prNumber": 1078
     }
   ]
 }
