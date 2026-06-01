@@ -285,21 +285,43 @@ function scoresTable(scores: HistoryScore[]): string {
  * README snapshots — otherwise a 2-case smoke test clobbers a real baseline. */
 const AUTHORITATIVE_SUBSETS = new Set(["medium", "full"]);
 
-/** Pick the entry that should define the canonical snapshot: the newest run at
- * an authoritative subset (medium/full) with a clean tree. Dirty runs (executed
- * against uncommitted changes) and non-authoritative subsets (e.g. toy) still
- * land in the append-only trace but must never define the canonical "Current",
- * since their numbers don't correspond to any reproducible committed state.
- * Falls back to the newest overall only when no clean authoritative run exists
- * yet (e.g. a fresh repo), so the snapshot is never empty. */
+/** The corpus whose medium/full runs define the canonical README snapshots.
+ * CI runs LongMemEval at the medium subset on every memory PR and commits the
+ * regenerated history + READMEs back, so a clean medium/full LongMemEval run is
+ * the ONLY thing allowed to overwrite the human-facing baselines. Critically,
+ * `--dataset=toy` still carries the default `subset=medium`, so gating on the
+ * subset alone is not enough — a toy smoke run would otherwise slip through and
+ * clobber a real baseline. Gating on the dataset closes that hole. */
+export const AUTHORITATIVE_DATASET: DatasetId = "longmemeval";
+
+/** True iff this run is allowed to (re)define the canonical README snapshots:
+ * a clean (committed-tree) run, at an authoritative subset (medium/full), over
+ * the authoritative corpus (LongMemEval). Everything else — toy plumbing smoke,
+ * fast iteration subsets, LoCoMo, and dirty runs against uncommitted changes —
+ * still lands in the append-only trace + scoped latest.json, but never touches
+ * the human-facing snapshots. */
+export function isAuthoritativeRun(
+  e: Pick<HistoryEntry, "subset" | "dirty" | "datasets">,
+): boolean {
+  return (
+    AUTHORITATIVE_SUBSETS.has(e.subset) &&
+    !e.dirty &&
+    e.datasets.includes(AUTHORITATIVE_DATASET)
+  );
+}
+
+/** Pick the entry that should define the canonical snapshot: the newest clean
+ * medium/full LongMemEval run. Dirty runs, non-authoritative subsets (toy/fast),
+ * and non-authoritative corpora (LoCoMo) still land in the append-only trace but
+ * must never define the canonical "Current", since either their numbers don't
+ * correspond to a reproducible committed state or aren't the corpus CI tracks.
+ * Returns undefined when no qualifying run exists yet (e.g. a fresh repo) so the
+ * snapshot is simply left untouched rather than backfilled from a smoke run. */
 export function authoritativeLatest(
   entries: HistoryEntry[],
 ): HistoryEntry | undefined {
-  const authoritative = entries.filter(
-    (e) => AUTHORITATIVE_SUBSETS.has(e.subset) && !e.dirty,
-  );
-  const pool = authoritative.length > 0 ? authoritative : entries;
-  return pool[pool.length - 1];
+  const authoritative = entries.filter(isAuthoritativeRun);
+  return authoritative[authoritative.length - 1];
 }
 
 /** Render the detailed bench README from the full history. Returns the path. */
@@ -344,42 +366,46 @@ export function renderBenchReadme(
     return file;
   }
 
-  // --- Current: the latest authoritative baseline, one block per dataset. ---
-  // authoritativeLatest gives a single entry; here we want every dataset at the
-  // same baseline commit (e.g. both longmemeval and locomo), so we resolve the
-  // baseline commit then render all entries sharing it.
-  const authoritative = latestEntries.filter(
-    (e) => AUTHORITATIVE_SUBSETS.has(e.subset) && !e.dirty,
-  );
-  const currentPool = authoritative.length > 0 ? authoritative : latestEntries;
-  const baselineCommit = currentPool[currentPool.length - 1]!.commit;
-  const currentEntries = currentPool.filter((e) => e.commit === baselineCommit);
-
+  // --- Current: the latest authoritative baseline. ---
+  // The canonical snapshot is defined by clean medium/full LongMemEval runs only
+  // (see isAuthoritativeRun); we resolve the newest such commit then render every
+  // authoritative entry sharing it (e.g. a medium + full pass at the same commit).
+  const authoritative = latestEntries.filter(isAuthoritativeRun);
   lines.push("## Current");
   lines.push("");
-  lines.push(
-    `Latest baseline: \`${baselineCommit}\` · ${currentEntries[currentEntries.length - 1]!.timestamp.replace("T", " ").slice(0, 16)} UTC. One block per dataset.`,
-  );
-  lines.push("");
-  for (const cur of currentEntries) {
-    lines.push(`### \`${fmtScope(cur)}\``);
-    lines.push("");
+  if (authoritative.length === 0) {
     lines.push(
-      `- scope: \`${fmtScope(cur)}\` · corpus \`${cur.corpusHash.slice(0, 12)}\`${cur.caseSetHash ? ` · cases \`${cur.caseSetHash}\`` : ""} · runtime ${fmtDuration(cur.runtimeMs)} · cost ${fmtCost(cur.costUsd)}`,
+      "_No authoritative run logged yet. The canonical snapshot is defined by a clean " +
+        "`--dataset=lme --subset=medium` (or `full`) run — run one with `--log`, or let CI produce it on a PR._",
     );
-    if (cur.models) {
+    lines.push("");
+  } else {
+    const baselineCommit = authoritative[authoritative.length - 1]!.commit;
+    const currentEntries = authoritative.filter((e) => e.commit === baselineCommit);
+    lines.push(
+      `Latest baseline: \`${baselineCommit}\` · ${currentEntries[currentEntries.length - 1]!.timestamp.replace("T", " ").slice(0, 16)} UTC.`,
+    );
+    lines.push("");
+    for (const cur of currentEntries) {
+      lines.push(`### \`${fmtScope(cur)}\``);
+      lines.push("");
       lines.push(
-        `- models: extraction \`${cur.models.extraction}\` · answerer \`${cur.models.answerer}\` · judge \`${cur.models.judge}\``,
+        `- scope: \`${fmtScope(cur)}\` · corpus \`${cur.corpusHash.slice(0, 12)}\`${cur.caseSetHash ? ` · cases \`${cur.caseSetHash}\`` : ""} · runtime ${fmtDuration(cur.runtimeMs)} · cost ${fmtCost(cur.costUsd)}`,
       );
+      if (cur.models) {
+        lines.push(
+          `- models: extraction \`${cur.models.extraction}\` · answerer \`${cur.models.answerer}\` · judge \`${cur.models.judge}\``,
+        );
+      }
+      lines.push(
+        `- overall: QA ${fmtPct(cur.overall.qa)} · recall@15 ${fmtPct(cur.overall.recall)} (n=${cur.overall.n})`,
+      );
+      if (cur.category) lines.push(`- category filter: \`${cur.category}\``);
+      if (cur.note) lines.push(`- note: ${cur.note}`);
+      lines.push("");
+      lines.push(scoresTable(cur.scores));
+      lines.push("");
     }
-    lines.push(
-      `- overall: QA ${fmtPct(cur.overall.qa)} · recall@15 ${fmtPct(cur.overall.recall)} (n=${cur.overall.n})`,
-    );
-    if (cur.category) lines.push(`- category filter: \`${cur.category}\``);
-    if (cur.note) lines.push(`- note: ${cur.note}`);
-    lines.push("");
-    lines.push(scoresTable(cur.scores));
-    lines.push("");
   }
 
   // --- Evolution: one table per (datasets, subset) scope, newest first. ---
@@ -466,19 +492,39 @@ export function renderReports(history: HistoryEntry[] = readHistory()): {
 }
 
 /**
- * Append one run to the history and regenerate both markdown views. This is the
+ * Append one run to the history and refresh the derived views. This is the
  * single entry point the CLI calls on `--log`.
+ *
+ * `history.jsonl` (append-only trace) and `latest.json` (scoped materialized
+ * view — keyed by run scope, so a toy entry never displaces the medium one) are
+ * updated for EVERY logged run. The human-facing README snapshots, however, are
+ * regenerated ONLY for an authoritative run (a clean medium/full LongMemEval
+ * pass — see {@link isAuthoritativeRun}). A toy/fast/LoCoMo/dirty run therefore
+ * leaves `apps/api/bench/README.md` and the root `README.md` byte-for-byte
+ * untouched, so a smoke test can never clobber a real baseline. `benchReadme` /
+ * `mainReadme` come back null when regeneration was skipped.
  */
 export function recordRun(input: RecordRunInput): {
   historyFile: string;
   latestJson: string;
-  benchReadme: string;
+  benchReadme: string | null;
   mainReadme: string | null;
+  regeneratedReadmes: boolean;
 } {
   const entry = buildHistoryEntry(input);
   const historyFile = appendHistory(entry);
 
   const history = readHistory();
-  const { latestJson, benchReadme, mainReadme } = renderReports(history);
-  return { historyFile, latestJson, benchReadme, mainReadme };
+  // Always refresh the machine-readable latest.json: it's scoped, so a toy run
+  // only updates its own (toy) entry and never touches the medium baseline.
+  const latestJson = writeLatest(history);
+
+  if (!isAuthoritativeRun(entry)) {
+    return { historyFile, latestJson, benchReadme: null, mainReadme: null, regeneratedReadmes: false };
+  }
+
+  const latest = materializeLatest(history).entries;
+  const benchReadme = renderBenchReadme(history, benchReadmePath(), latest);
+  const mainReadme = renderMainSnapshot(authoritativeLatest(latest));
+  return { historyFile, latestJson, benchReadme, mainReadme, regeneratedReadmes: true };
 }
