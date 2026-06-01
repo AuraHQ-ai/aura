@@ -168,9 +168,7 @@ env:
     ${{ github.event.inputs.subset
         || (contains(github.event.pull_request.labels.*.name, 'bench:locomo:full') && 'full')
         || (contains(github.event.pull_request.labels.*.name, 'bench:lme:full') && 'full')
-        || (contains(github.event.pull_request.labels.*.name, 'bench:full') && 'full')
         || (contains(github.event.pull_request.labels.*.name, 'bench:lme:medium') && 'medium')
-        || (contains(github.event.pull_request.labels.*.name, 'bench:medium') && 'medium')
         || (contains(github.event.pull_request.labels.*.name, 'bench:lme:fast') && 'fast')
         || (contains(github.event.pull_request.labels.*.name, 'bench:lme:toy') && 'toy')
         || vars.BENCH_SUBSET
