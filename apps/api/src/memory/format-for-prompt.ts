@@ -20,12 +20,21 @@ export function formatMemoriesForPrompt(memories: Memory[], now?: Date): string 
 
   const formatted = memories
     .map((m) => {
-      const timeAgo = relativeTime(new Date(m.createdAt), now);
+      const created = new Date(m.createdAt);
+      const timeAgo = relativeTime(created, now);
+      // Pair the coarse relative phrase with the absolute date. `relativeTime`
+      // floors to whole weeks/months past 7 days ("about 3 weeks ago"), which
+      // destroys the day-level precision that duration questions ("how many
+      // days ago…") need. The ISO date lets the reader compute exact elapsed
+      // time; the relative phrase stays for natural phrasing.
+      const on = Number.isNaN(created.getTime())
+        ? ""
+        : `${created.toISOString().slice(0, 10)}, `;
       const users =
         m.relatedUserIds.length > 0
           ? ` [about: ${m.relatedUserIds.join(", ")}]`
           : "";
-      return `- [${m.type}] ${m.content} (${timeAgo})${users}`;
+      return `- [${m.type}] ${m.content} (${on}${timeAgo})${users}`;
     })
     .join("\n");
 

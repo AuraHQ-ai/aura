@@ -20,6 +20,10 @@ import type { BenchCase, PerCaseResult } from "./types.js";
 // the QA score measures the formatting difference rather than the memory
 // pipeline. We import the same helper buildSystemPrompt() uses.
 import { formatMemoriesForPrompt } from "../../src/memory/format-for-prompt.js";
+// Reuse the EXACT <related_threads> block production injects, instead of
+// formatting conversations a second way in the harness.
+import { formatConversations } from "../../src/personality/system-prompt.js";
+import type { ConversationThread } from "../../src/memory/retrieve.js";
 import { resolveBenchAnswererModel } from "./models.js";
 import { resolveQuestionDate } from "./fixtures.js";
 import { judgeAnswer } from "./judge.js";
@@ -29,10 +33,10 @@ export { formatMemoriesForPrompt };
 
 const ANSWERER_SYSTEM = `You are a strict grounded question-answerer.
 
-You will receive the current date, a list of memories that were retrieved from a long-term memory store, and a single question. Answer ONLY from the provided memories. Be terse.
+You will receive the current date, a list of memories that were retrieved from a long-term memory store, optionally a <related_threads> block of relevant past conversation pointers, and a single question. Answer ONLY from the provided memories and related threads. Be terse.
 
 Rules:
-- Every fact in your answer MUST come from the memories. Do not use outside world knowledge and do not invent facts.
+- Every fact in your answer MUST come from the memories or the related threads. Do not use outside world knowledge and do not invent facts.
 - You MAY reason over the memories to derive an answer the question asks for: count matching items, add or subtract quantities, order events by their dates, and compute elapsed time or relative dates between dated memories. Use only values present in the memories as inputs.
 - The relative times shown in the memories (e.g. "3 months ago") and any relative time in the question are anchored to the CURRENT DATE provided above. Use it to resolve "ago"/"last week"/etc.
 - Only respond exactly with "I don't know." when the memories genuinely lack the information needed (including the inputs required to derive it). Do not abstain merely because no single memory states the answer verbatim.
@@ -56,6 +60,12 @@ function estimateTokens(text: string): number {
 interface AnswerConfig {
   modelId?: string;
   judgeModelId?: string;
+  /**
+   * Relevant past conversation threads from production's `retrieveConversations`,
+   * injected as the same `<related_threads>` block the agent sees. Empty/omitted
+   * → memories-only behaviour.
+   */
+  conversations?: ConversationThread[];
   /** Optional cost hook: receives (stage, resolved model id, token usage). */
   onUsage?: (stage: CostStage, modelId: string, usage: UsageLike) => void;
 }
@@ -85,7 +95,11 @@ export async function evaluateQA(
   const referenceNow = resolveQuestionDate(benchCase);
   const memoryBlock = formatMemoriesForPrompt(retrieved, referenceNow);
   const nowLine = `Current date: ${referenceNow.toISOString().slice(0, 10)}`;
-  const userPrompt = `${nowLine}\n\nMemories:\n${memoryBlock || "(no memories available)"}\n\nQuestion: ${benchCase.question}\n\nAnswer:`;
+  const conversationBlock = formatConversations(config.conversations ?? []);
+  const conversationSection = conversationBlock
+    ? `\n\n${conversationBlock}`
+    : "";
+  const userPrompt = `${nowLine}\n\nMemories:\n${memoryBlock || "(no memories available)"}${conversationSection}\n\nQuestion: ${benchCase.question}\n\nAnswer:`;
 
   // Context-efficiency signal (mem0 reports quality-per-token). We measure the
   // retrieved-memory block specifically — the part a retrieval/formatter change

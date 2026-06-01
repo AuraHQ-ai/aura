@@ -34,6 +34,21 @@ describe("relativeTime", () => {
     expect(relativeTime(date, now)).toBe("about 2 weeks ago");
   });
 
+  // Calendar-day counting: an event 4 calendar days earlier reads "4 days ago"
+  // even when fewer than 4×24h have elapsed (event late in its day, asked in the
+  // morning). Flooring elapsed time used to undercount this as "3 days ago".
+  it("counts calendar days, not elapsed 24h periods", () => {
+    const ref = new Date("2023-04-10T05:43:00Z");
+    const date = new Date("2023-04-06T20:00:00Z"); // 3.4 days elapsed, 4 calendar days
+    expect(relativeTime(date, ref)).toBe("4 days ago");
+  });
+
+  it("treats an earlier-today event as same-day, a late-yesterday event as 'yesterday'", () => {
+    const ref = new Date("2026-03-03T08:00:00Z");
+    expect(relativeTime(new Date("2026-03-02T22:00:00Z"), ref)).toBe("yesterday");
+    expect(relativeTime(new Date("2026-03-03T02:00:00Z"), ref)).toBe("6 hours ago");
+  });
+
   it("returns 'back in December' for dates months ago", () => {
     const date = new Date("2025-12-01T12:00:00Z");
     expect(relativeTime(date, now)).toBe("back in December");

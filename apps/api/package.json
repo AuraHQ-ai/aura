@@ -18,6 +18,7 @@
     "bench:memory:i": "tsx src/scripts/bench-memory.ts --interactive",
     "bench:fetch-corpus": "tsx bench/scripts/fetch-corpus.ts",
     "bench:report": "tsx bench/scripts/report.ts",
+    "bench:inspect": "tsx bench/scripts/inspect-run.ts",
     "bench:pr-comment": "tsx bench/scripts/pr-comment.ts"
   },
   "dependencies": {

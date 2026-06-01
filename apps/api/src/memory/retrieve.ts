@@ -805,6 +805,13 @@ interface ConversationRetrievalOptions {
   excludeThreadTs?: string;
   /** Workspace ID for tenant isolation. When provided, only messages in this workspace are searched. */
   workspaceId?: string;
+  /**
+   * Bi-temporal upper bound: only messages with `created_at <= asOf` are
+   * searched. Production leaves this undefined (wall-clock now); the memory
+   * bench passes the question's instant so retrieval can't leak the future.
+   * No effect on the prompt — purely a retrieval filter.
+   */
+  asOf?: Date;
 }
 
 /**
@@ -831,6 +838,7 @@ export async function retrieveConversations(
     minSimilarity = 0.3,
     excludeThreadTs,
     workspaceId,
+    asOf,
   } = options;
   const start = Date.now();
 
@@ -842,13 +850,14 @@ export async function retrieveConversations(
     const messagesWorkspaceFilter = workspaceId
       ? sql`AND ${messages.workspaceId} = ${workspaceId}`
       : sql``;
+    const asOfFilter = asOf ? sql`AND ${messages.createdAt} <= ${asOf}` : sql``;
     const matchedMessages = await db
       .select({
         message: messages,
         similarity: sql<number>`1 - (${messages.embedding} <=> ${vectorSql})`.as("similarity"),
       })
       .from(messages)
-      .where(sql`${messages.embedding} IS NOT NULL ${messagesWorkspaceFilter}`)
+      .where(sql`${messages.embedding} IS NOT NULL ${messagesWorkspaceFilter} ${asOfFilter}`)
       .orderBy(sql`${messages.embedding} <=> ${vectorSql}`)
       .limit(matchLimit);
 
@@ -911,12 +920,14 @@ export async function retrieveConversations(
     const summaryWorkspaceFilter = workspaceId
       ? sql`AND workspace_id = ${workspaceId}`
       : sql``;
+    const summaryAsOfFilter = asOf ? sql`AND created_at <= ${asOf}` : sql``;
     const summaryResult = await db.execute(sql`
       SELECT DISTINCT ON (COALESCE(slack_thread_ts, slack_ts))
         slack_ts, slack_thread_ts, content, role, created_at
       FROM messages
       WHERE (slack_thread_ts IN (${threadKeysList}) OR slack_ts IN (${threadKeysList}))
         ${summaryWorkspaceFilter}
+        ${summaryAsOfFilter}
       ORDER BY COALESCE(slack_thread_ts, slack_ts),
                (CASE WHEN role = 'user' THEN 0 ELSE 1 END),
                created_at
