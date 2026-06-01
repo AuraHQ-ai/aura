@@ -344,43 +344,77 @@ export function renderBenchReadme(
     return file;
   }
 
-  const latest = authoritativeLatest(latestEntries) ?? history[history.length - 1]!;
+  // --- Current: the latest authoritative baseline, one block per dataset. ---
+  // authoritativeLatest gives a single entry; here we want every dataset at the
+  // same baseline commit (e.g. both longmemeval and locomo), so we resolve the
+  // baseline commit then render all entries sharing it.
+  const authoritative = latestEntries.filter(
+    (e) => AUTHORITATIVE_SUBSETS.has(e.subset) && !e.dirty,
+  );
+  const currentPool = authoritative.length > 0 ? authoritative : latestEntries;
+  const baselineCommit = currentPool[currentPool.length - 1]!.commit;
+  const currentEntries = currentPool.filter((e) => e.commit === baselineCommit);
 
   lines.push("## Current");
   lines.push("");
   lines.push(
-    `Latest logged run: \`${latest.commit}${latest.dirty ? "-dirty" : ""}\` · ${latest.timestamp.replace("T", " ").slice(0, 16)} UTC`,
+    `Latest baseline: \`${baselineCommit}\` · ${currentEntries[currentEntries.length - 1]!.timestamp.replace("T", " ").slice(0, 16)} UTC. One block per dataset.`,
   );
   lines.push("");
-  lines.push(
-    `- scope: \`${fmtScope(latest)}\` · corpus \`${latest.corpusHash.slice(0, 12)}\`${latest.caseSetHash ? ` · cases \`${latest.caseSetHash}\`` : ""} · runtime ${fmtDuration(latest.runtimeMs)} · cost ${fmtCost(latest.costUsd)}`,
-  );
-  if (latest.models) {
+  for (const cur of currentEntries) {
+    lines.push(`### \`${fmtScope(cur)}\``);
+    lines.push("");
     lines.push(
-      `- models: extraction \`${latest.models.extraction}\` · answerer \`${latest.models.answerer}\` · judge \`${latest.models.judge}\``,
+      `- scope: \`${fmtScope(cur)}\` · corpus \`${cur.corpusHash.slice(0, 12)}\`${cur.caseSetHash ? ` · cases \`${cur.caseSetHash}\`` : ""} · runtime ${fmtDuration(cur.runtimeMs)} · cost ${fmtCost(cur.costUsd)}`,
     );
+    if (cur.models) {
+      lines.push(
+        `- models: extraction \`${cur.models.extraction}\` · answerer \`${cur.models.answerer}\` · judge \`${cur.models.judge}\``,
+      );
+    }
+    lines.push(
+      `- overall: QA ${fmtPct(cur.overall.qa)} · recall@15 ${fmtPct(cur.overall.recall)} (n=${cur.overall.n})`,
+    );
+    if (cur.category) lines.push(`- category filter: \`${cur.category}\``);
+    if (cur.note) lines.push(`- note: ${cur.note}`);
+    lines.push("");
+    lines.push(scoresTable(cur.scores));
+    lines.push("");
   }
-  lines.push(
-    `- overall: QA ${fmtPct(latest.overall.qa)} · recall@15 ${fmtPct(latest.overall.recall)} (n=${latest.overall.n})`,
-  );
-  if (latest.category) lines.push(`- category filter: \`${latest.category}\``);
-  if (latest.note) lines.push(`- note: ${latest.note}`);
-  lines.push("");
-  lines.push(scoresTable(latest.scores));
-  lines.push("");
 
+  // --- Evolution: one table per (datasets, subset) scope, newest first. ---
+  // Grouping by scope keeps every row in a table like-for-like — never mixing
+  // different benchmarks or sample sizes in the same series.
   lines.push("## Evolution");
   lines.push("");
-  lines.push("Overall QA accuracy and recall@15 across logged runs (newest first).");
+  lines.push(
+    "Overall QA accuracy and recall@15 over time, grouped by scope so every row in a table is comparable. Newest first.",
+  );
   lines.push("");
-  lines.push("| date | commit | scope | QA | recall@15 | n | cost | runtime |");
-  lines.push("|---|---|---|---:|---:|---:|---:|---:|");
-  for (const e of [...history].reverse()) {
-    lines.push(
-      `| ${e.timestamp.slice(0, 10)} | \`${e.commit}${e.dirty ? "-dirty" : ""}\` | ${fmtScope(e)} | ${fmtPct(e.overall.qa)} | ${fmtPct(e.overall.recall)} | ${e.overall.n} | ${fmtCost(e.costUsd)} | ${fmtDuration(e.runtimeMs)} |`,
-    );
+
+  const evoGroups = new Map<string, HistoryEntry[]>();
+  for (const e of history) {
+    const key = fmtScope(e);
+    const arr = evoGroups.get(key);
+    if (arr) arr.push(e);
+    else evoGroups.set(key, [e]);
   }
-  lines.push("");
+  // Order groups by their most recent run so the most recently active scope leads.
+  const orderedScopes = [...evoGroups.entries()].sort((a, b) =>
+    b[1][b[1].length - 1]!.timestamp.localeCompare(a[1][a[1].length - 1]!.timestamp),
+  );
+  for (const [scope, entries] of orderedScopes) {
+    lines.push(`### \`${scope}\``);
+    lines.push("");
+    lines.push("| date | commit | QA | recall@15 | n | cost | runtime |");
+    lines.push("|---|---|---:|---:|---:|---:|---:|");
+    for (const e of [...entries].reverse()) {
+      lines.push(
+        `| ${e.timestamp.slice(0, 10)} | \`${e.commit}${e.dirty ? "-dirty" : ""}\` | ${fmtPct(e.overall.qa)} | ${fmtPct(e.overall.recall)} | ${e.overall.n} | ${fmtCost(e.costUsd)} | ${fmtDuration(e.runtimeMs)} |`,
+      );
+    }
+    lines.push("");
+  }
 
   writeFileSync(file, lines.join("\n"));
   return file;

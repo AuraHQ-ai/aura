@@ -13,7 +13,25 @@ file plus the snapshot in the root `README.md`. See the `aura-memory-bench` skil
 
 ## Current
 
-Latest logged run: `e0bb4c8` · 2026-06-01 10:12 UTC
+Latest baseline: `e0bb4c8` · 2026-06-01 10:12 UTC. One block per dataset.
+
+### `longmemeval/medium`
+
+- scope: `longmemeval/medium` · corpus `b178d604c01a` · cases `a0018f6e9f0fccb4` · runtime 75m19s · cost $12.28
+- models: extraction `anthropic/claude-haiku-4.5` · answerer `anthropic/claude-opus-4.8` · judge `anthropic/claude-opus-4.6`
+- overall: QA 54% · recall@15 86% (n=180)
+- note: parallel per-dataset baseline on main e0bb4c8 after #1067+#1070
+
+| dataset | category | QA acc | recall@15 | n |
+|---|---|---:|---:|---:|
+| longmemeval | knowledge-update | 67% | 85% | 30 |
+| longmemeval | multi-session | 68% | 88% | 30 |
+| longmemeval | single-session-assistant | 27% | 83% | 30 |
+| longmemeval | single-session-preference | 38% | 90% | 30 |
+| longmemeval | single-session-user | 87% | 90% | 30 |
+| longmemeval | temporal-reasoning | 40% | 82% | 30 |
+
+### `locomo/medium`
 
 - scope: `locomo/medium` · corpus `f9cf2279e3e1` · cases `a6f1cceb887cfe19` · runtime 79m37s · cost $11.30
 - models: extraction `anthropic/claude-haiku-4.5` · answerer `anthropic/claude-opus-4.8` · judge `anthropic/claude-opus-4.6`
@@ -30,17 +48,44 @@ Latest logged run: `e0bb4c8` · 2026-06-01 10:12 UTC
 
 ## Evolution
 
-Overall QA accuracy and recall@15 across logged runs (newest first).
+Overall QA accuracy and recall@15 over time, grouped by scope so every row in a table is comparable. Newest first.
 
-| date | commit | scope | QA | recall@15 | n | cost | runtime |
-|---|---|---|---:|---:|---:|---:|---:|
-| 2026-06-01 | `c34c107` | locomo/toy | 40% | 81% | 10 | $3.35 | 41m38s |
-| 2026-06-01 | `c34c107` | longmemeval/toy | 67% | 71% | 12 | $0.57 | 3m09s |
-| 2026-06-01 | `e0bb4c8` | locomo/medium | 22% | 76% | 150 | $11.30 | 79m37s |
-| 2026-06-01 | `e0bb4c8` | longmemeval/medium | 54% | 86% | 180 | $12.28 | 75m19s |
-| 2026-05-31 | `8099713-dirty` | locomo/medium | 28% | 78% | 150 | $11.04 | 74m41s |
-| 2026-05-31 | `8099713-dirty` | longmemeval/medium | 55% | 88% | 180 | $12.03 | 80m31s |
-| 2026-05-30 | `84515ad` | longmemeval/medium | 53% | 85% | 180 | $12.39 | 76m13s |
-| 2026-05-30 | `0ee6037` | locomo+longmemeval/medium | 30% | 74% | 330 | $7.69 | 56m31s |
-| 2026-05-29 | `c80b07e-dirty` | locomo+longmemeval/medium | 32% | 74% | 329 | $10.77 | 59m08s |
-| 2026-05-28 | `0fd7f3b-dirty` | toy/medium | 100% | 100% | 5 | — | 1m32s |
+### `locomo/toy`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `c34c107` | 40% | 81% | 10 | $3.35 | 41m38s |
+
+### `longmemeval/toy`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `c34c107` | 67% | 71% | 12 | $0.57 | 3m09s |
+
+### `locomo/medium`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `e0bb4c8` | 22% | 76% | 150 | $11.30 | 79m37s |
+| 2026-05-31 | `8099713-dirty` | 28% | 78% | 150 | $11.04 | 74m41s |
+
+### `longmemeval/medium`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `e0bb4c8` | 54% | 86% | 180 | $12.28 | 75m19s |
+| 2026-05-31 | `8099713-dirty` | 55% | 88% | 180 | $12.03 | 80m31s |
+| 2026-05-30 | `84515ad` | 53% | 85% | 180 | $12.39 | 76m13s |
+
+### `locomo+longmemeval/medium`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-05-30 | `0ee6037` | 30% | 74% | 330 | $7.69 | 56m31s |
+| 2026-05-29 | `c80b07e-dirty` | 32% | 74% | 329 | $10.77 | 59m08s |
+
+### `toy/medium`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-05-28 | `0fd7f3b-dirty` | 100% | 100% | 5 | — | 1m32s |
