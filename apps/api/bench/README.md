@@ -50,6 +50,15 @@ Latest baseline: `e0bb4c8` · 2026-06-01 10:12 UTC. One block per dataset.
 
 Overall QA accuracy and recall@15 over time, grouped by scope so every row in a table is comparable. Newest first.
 
+### `longmemeval/toy`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-01 | `e6d0e17` | 67% | 79% | 12 | $0.58 | 3m45s |
+| 2026-06-01 | `03d4a4c` | 67% | 79% | 12 | $0.57 | 2m57s |
+| 2026-06-01 | `8435b97` | 71% | 79% | 12 | $0.57 | 3m03s |
+| 2026-06-01 | `c34c107` | 67% | 71% | 12 | $0.57 | 3m09s |
+
 ### `locomo/toy`
 
 | date | commit | QA | recall@15 | n | cost | runtime |
@@ -62,14 +71,6 @@ Overall QA accuracy and recall@15 over time, grouped by scope so every row in a 
 | date | commit | QA | recall@15 | n | cost | runtime |
 |---|---|---:|---:|---:|---:|---:|
 | 2026-06-01 | `d7504bf` | 100% | 100% | 5 | $0.09 | 1m01s |
-
-### `longmemeval/toy`
-
-| date | commit | QA | recall@15 | n | cost | runtime |
-|---|---|---:|---:|---:|---:|---:|
-| 2026-06-01 | `03d4a4c` | 67% | 79% | 12 | $0.57 | 2m57s |
-| 2026-06-01 | `8435b97` | 71% | 79% | 12 | $0.57 | 3m03s |
-| 2026-06-01 | `c34c107` | 67% | 71% | 12 | $0.57 | 3m09s |
 
 ### `locomo/medium`
 
