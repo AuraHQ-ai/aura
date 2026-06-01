@@ -48,6 +48,11 @@ interface RetrievalOptions {
       totalTokens?: number;
     },
   ) => void;
+  /**
+   * Return no memories when the candidate pool has no raw retrieval evidence:
+   * no resolved entity, no lexical hit, and no cosine match above the floor.
+   */
+  abstain?: boolean;
 }
 
 const MAX_FULLTEXT_LEXEMES = 8;
@@ -325,6 +330,27 @@ async function fetchEntityMatchedMemories(
   }
 }
 
+const ABSTAIN_SIM_FLOOR = 0.3;
+const ABSTAIN_BM25_FLOOR = 0;
+
+/**
+ * True when the merged candidate pool carries at least one real retrieval
+ * signal. Pure + exported for the atomic abstention tests.
+ */
+export function hasRetrievalEvidence(
+  candidates: Array<{ similarity: number; bm25: number }>,
+  resolvedEntityCount: number,
+): boolean {
+  if (resolvedEntityCount > 0) return true;
+  let maxSim = 0;
+  let maxBm25 = 0;
+  for (const c of candidates) {
+    if (c.similarity > maxSim) maxSim = c.similarity;
+    if (c.bm25 > maxBm25) maxBm25 = c.bm25;
+  }
+  return maxSim >= ABSTAIN_SIM_FLOOR || maxBm25 > ABSTAIN_BM25_FLOOR;
+}
+
 /**
  * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
  *
@@ -341,7 +367,7 @@ async function fetchEntityMatchedMemories(
 export async function retrieveMemories(
   options: RetrievalOptions,
 ): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage, asOf } = options;
+  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage, asOf, abstain = true } = options;
   const start = Date.now();
 
   try {
@@ -381,6 +407,10 @@ export async function retrieveMemories(
       ? sql`${memories.workspaceId} = ${workspaceId}`
       : sql`TRUE`;
     const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter} AND ${workspaceFilter}`;
+    const combinedTsQuery = lexemes.join(" | ");
+    const bm25Sql = lexemes.length > 0
+      ? sql`COALESCE(ts_rank_cd(m.search_vector, to_tsquery('english', ${combinedTsQuery}), 4), 0.0)`
+      : sql`0.0`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
@@ -443,7 +473,8 @@ export async function retrieveMemories(
       SELECT
         m.*,
         COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
-        (1 - (m.embedding <=> ${vectorSql})) AS similarity
+        (1 - (m.embedding <=> ${vectorSql})) AS similarity,
+        ${bm25Sql} AS bm25
       FROM (
         SELECT COALESCE(v.id, f.id) AS id, v.rank AS vector_rank, f.rank AS fulltext_rank
         FROM vector_search v
@@ -492,6 +523,7 @@ export async function retrieveMemories(
       } as Memory,
       similarity: Number(row.similarity ?? 0),
       rrfScore: Number(row.rrf_score ?? 0),
+      bm25: Number(row.bm25 ?? 0),
     }));
 
     // Merge entity-matched memories; track entity boost as a separate signal
@@ -512,6 +544,7 @@ export async function retrieveMemories(
         memory: m,
         similarity: 0,
         rrfScore: ENTITY_RRF_BOOST,
+        bm25: 0,
         entityBoost: entityBoostScore(m.id),
       }));
 
@@ -526,6 +559,18 @@ export async function retrieveMemories(
         resolvedEntities: resolvedEntityCount,
         query: query.substring(0, 100),
       });
+    }
+
+    if (abstain && !hasRetrievalEvidence(results, resolvedEntityCount)) {
+      logger.info(
+        `Abstaining: no candidate cleared evidence floors in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          resolvedEntityCount,
+        },
+      );
+      return [];
     }
 
     const rerankingModel = await getRerankingModel();
