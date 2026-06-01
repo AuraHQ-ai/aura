@@ -286,13 +286,18 @@ function scoresTable(scores: HistoryScore[]): string {
 const AUTHORITATIVE_SUBSETS = new Set(["medium", "full"]);
 
 /** Pick the entry that should define the canonical snapshot: the newest run at
- * an authoritative subset. Falls back to the newest overall only when no
- * authoritative run exists yet (e.g. a fresh repo), so the snapshot is never
- * empty. */
+ * an authoritative subset (medium/full) with a clean tree. Dirty runs (executed
+ * against uncommitted changes) and non-authoritative subsets (e.g. toy) still
+ * land in the append-only trace but must never define the canonical "Current",
+ * since their numbers don't correspond to any reproducible committed state.
+ * Falls back to the newest overall only when no clean authoritative run exists
+ * yet (e.g. a fresh repo), so the snapshot is never empty. */
 export function authoritativeLatest(
   entries: HistoryEntry[],
 ): HistoryEntry | undefined {
-  const authoritative = entries.filter((e) => AUTHORITATIVE_SUBSETS.has(e.subset));
+  const authoritative = entries.filter(
+    (e) => AUTHORITATIVE_SUBSETS.has(e.subset) && !e.dirty,
+  );
   const pool = authoritative.length > 0 ? authoritative : entries;
   return pool[pool.length - 1];
 }
