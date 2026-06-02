@@ -192,6 +192,7 @@ jobs:
               - 'apps/api/src/lib/embeddings.ts'
               - 'apps/api/src/lib/vector.ts'
               - 'apps/api/src/pipeline/**'
+              - 'apps/api/src/personality/**'
               - 'packages/db/src/schema.ts'
               - 'packages/db/drizzle/**'
               - 'packages/db/scripts/backfill-*.ts'
