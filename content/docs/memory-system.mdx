@@ -73,7 +73,16 @@ This keeps the memory store high-signal and avoids unbounded growth from repetit
 
 ## Retrieval: Hybrid Search + Reranking
 
-Aura uses a three-stage retrieval pipeline to find the most relevant memories:
+Aura uses a multi-stage retrieval pipeline to find the most relevant memories. When called from the main prompt pipeline, retrieval first runs a query-planning pass, then hybrid candidate retrieval, then reranking and scoring.
+
+### Stage 0: Query Planning (rewrite + multi-hop decomposition)
+
+Before searching, the raw user message is passed through a fast-model **query-planning** pass (enabled via the `rewrite` option, which the main prompt pipeline turns on). The planner returns:
+
+- a **standalone rewrite** of the message — pronouns resolved, greetings and filler dropped, salient entities and intent preserved — used as the search query;
+- for questions that look multi-hop (heuristic: two or more `?`, or connectives like *and / or / both / compare / versus / difference between*), 2–4 atomic **sub-queries**, each retrievable on its own.
+
+When the planner emits 2+ sub-queries, each is retrieved independently and the lists are merged **round-robin** for balanced coverage across the sub-facts. Otherwise the single rewritten query is used. Planning failures fall back silently to the original query, and callers that omit `rewrite` (e.g. benchmarks, internal lookups) skip this stage entirely.
 
 ### Stage 1: Hybrid Candidate Retrieval
 
@@ -84,6 +93,8 @@ Two search strategies run in parallel and their results are fused using **Recipr
 2. **Full-text search** — up to 8 positional lexemes are extracted from the query using PostgreSQL's `to_tsvector`. Each lexeme is searched independently (per-term limit of 25 results) to catch exact mentions that vector search might miss — especially proper nouns, technical terms, and specific identifiers.
 
 RRF combines both ranked lists with a smoothing constant of 60, ensuring that memories appearing in both lists rank highest.
+
+**Abstention gate.** Before reranking, the merged candidate pool is checked for real retrieval evidence: at least one resolved entity, a full-text (BM25) hit, or a cosine similarity at or above `0.3`. If none of these signals is present, retrieval **abstains and returns no memories** rather than surfacing weak, off-topic matches. This is on by default (the `abstain` option) and can be disabled by callers that want raw candidates.
 
 ### Stage 2: Cohere Reranking
 
