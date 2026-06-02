@@ -50,6 +50,11 @@ function stripInjectedContext(text: string): string {
 
 const MIN_STRIPPED_LENGTH = 50;
 
+// Backstop cap on assistant-sourced memories created per extraction (per
+// exchange). Keeps the high-signal deliverables Aura produced while preventing
+// her verbose/tool-heavy replies from flooding memory with low-value facts.
+const MAX_ASSISTANT_MEMORIES_PER_EXCHANGE = 8;
+
 // ── Thread Context Building ─────────────────────────────────────────────────
 
 // Tool messages are the only real source of context blow-up (large tool I/O),
@@ -379,11 +384,15 @@ Capture a concrete result or explicit recommendation Aura produced when ALL of t
 3. **Attributed** — phrase it with attribution: "Aura recommended...", "Aura found that...", "Aura's <thing> includes...".
 4. Never speculation or hedging (see DO NOT save above).
 
-**Pull the specific operands out of Aura's reply.** When Aura's answer names a specific item, place, product, person, handle/URL, recipe, count, or other concrete value, capture that value VERBATIM as its own assistant-sourced memory — these are exactly what later "what did you recommend?" questions ask for. Examples:
+**Pull the specific operands out of Aura's reply — but be SELECTIVE.** When Aura's answer names a specific item, place, product, person, handle/URL, title, or count that the user is likely to ask about later, capture that value as its own assistant-sourced memory. Examples:
 - Aura recommends a UK jewelry designer who works with unusual gemstones → "Aura recommended UK jewelry designer Jessica Poole (Instagram @jessica_poole_jewellery) for unusual gemstones."
 - Aura's generated one-shot says the temple holds four mummies → "Aura's Lost Temple of the Djinn one-shot has the party face 4 mummies in the temple."
 - Aura suggests a specific hostel → "Aura recommended the International Budget Hostel near Amsterdam's Red Light District."
-Record several such facts when Aura's reply contains several distinct named/numeric deliverables.
+
+DO capture each distinct named/numeric deliverable the user might later ask about (the headline recommendation, the specific count, the key names/handles). But keep it high-signal and concise — Aura is verbose and tool-heavy, so DON'T let her replies flood memory:
+- **One concise memory per distinct deliverable**, capturing its IDENTITY + the single key distinguishing value — NOT exhaustive ingredient lists, full stat blocks, every option, or step-by-step instructions. E.g. "Aura recommended a lentil bolognese recipe" — NOT all 11 ingredients; "Aura's one-shot has the party face 4 mummies (45 HP each)" — NOT every monster's full stat block.
+- **Skip process/tool-call narration entirely** ("Aura searched…", "Aura generated a list…", "Aura ran a query") — keep only the grounded result.
+- Don't split one deliverable into many tiny memories; don't enumerate every sub-component. Capture the answer-bearing fact, not the whole essay.
 
 For every memory, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation/deliverable she produced), otherwise \`"user"\` (the default — anything a person stated). A grounded assistant deliverable is a real fact worth keeping; do not auto-discard it as a low-value "agent self-action".
 
@@ -522,11 +531,15 @@ Create a memory for a concrete result or explicit recommendation Aura produced w
 3. **Attributed** — phrase it with attribution: "Aura recommended...", "Aura found that...", "Aura's <thing> includes...".
 4. Never speculation or hedging (see above).
 
-**Pull the specific operands out of Aura's reply.** When Aura's answer names a specific item, place, product, person, handle/URL, recipe, count, or other concrete value, capture that value VERBATIM as its own assistant-sourced memory — these are exactly what later "what did you recommend?" questions ask for. Examples:
+**Pull the specific operands out of Aura's reply — but be SELECTIVE.** When Aura's answer names a specific item, place, product, person, handle/URL, title, or count that the user is likely to ask about later, capture that value as its own assistant-sourced memory. Examples:
 - "Aura recommended UK jewelry designer Jessica Poole (Instagram @jessica_poole_jewellery) for unusual gemstones."
 - "Aura's Lost Temple of the Djinn one-shot has the party face 4 mummies in the temple."
 - "Aura recommended the International Budget Hostel near Amsterdam's Red Light District."
-Record several such facts when Aura's reply contains several distinct named/numeric deliverables.
+
+DO capture each distinct named/numeric deliverable the user might later ask about (the headline recommendation, the specific count, the key names/handles). But keep it high-signal and concise — Aura is verbose and tool-heavy, so DON'T let her replies flood memory:
+- **One concise memory per distinct deliverable**, capturing its IDENTITY + the single key distinguishing value — NOT exhaustive ingredient lists, full stat blocks, every option, or step-by-step instructions. E.g. "Aura recommended a lentil bolognese recipe" — NOT all 11 ingredients; "Aura's one-shot has the party face 4 mummies (45 HP each)" — NOT every monster's full stat block.
+- **Skip process/tool-call narration entirely** ("Aura searched…", "Aura generated a list…", "Aura ran a query") — keep only the grounded result.
+- Don't split one deliverable into many tiny memories; don't enumerate every sub-component. Capture the answer-bearing fact, not the whole essay.
 
 For every create operation, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation/deliverable she produced), otherwise \`"user"\` (the default — anything a person in the thread stated).
 
@@ -1031,7 +1044,7 @@ async function processCreateOperations(
     return;
   }
 
-  const normalizedMemories = await Promise.all(
+  let normalizedMemories = await Promise.all(
     filtered.map(async (m) => ({
       ...m,
       relatedUserIds: await normalizeUserReferences(m.relatedUserIds, context.userDirectory),
@@ -1042,9 +1055,31 @@ async function processCreateOperations(
   // the trigger role. Computed once and threaded through dedup, the stored
   // attribution/confidence, and contradiction detection so the authority guard
   // (assistant-inferred facts can't supersede user/tool facts) is consistent.
-  const sourceRoles: ExtractionSourceRole[] = normalizedMemories.map(
+  let sourceRoles: ExtractionSourceRole[] = normalizedMemories.map(
     (m) => m.sourceRole ?? extractionSourceRole,
   );
+
+  // Clamp assistant-sourced over-extraction. Aura is verbose and makes many tool
+  // calls, so a single reply can yield dozens of assistant memories (observed: 34
+  // in one exchange; 81% of a bench workspace was assistant-sourced), flooding the
+  // store, slowing retrieval/rerank, and drowning out the user's own facts. Keep
+  // ALL user/tool memories; keep only the top-N highest-importance assistant ones
+  // per exchange. The prompt asks the model to be selective; this is the
+  // deterministic backstop.
+  const assistantByImportance = sourceRoles
+    .map((role, i) => ({ role, i, importance: normalizedMemories[i].importance }))
+    .filter((x) => x.role === "assistant")
+    .sort((a, b) => b.importance - a.importance);
+  if (assistantByImportance.length > MAX_ASSISTANT_MEMORIES_PER_EXCHANGE) {
+    const dropped = new Set(
+      assistantByImportance.slice(MAX_ASSISTANT_MEMORIES_PER_EXCHANGE).map((x) => x.i),
+    );
+    logger.info(
+      `Clamped assistant-sourced memories ${assistantByImportance.length} → ${MAX_ASSISTANT_MEMORIES_PER_EXCHANGE} (${source})`,
+    );
+    normalizedMemories = normalizedMemories.filter((_, i) => !dropped.has(i));
+    sourceRoles = sourceRoles.filter((_, i) => !dropped.has(i));
+  }
 
   const memoryTexts = normalizedMemories.map((m) => m.content);
   let embeddings: (number[] | null)[];
