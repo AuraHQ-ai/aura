@@ -377,20 +377,21 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       );
     }
     const retrievalStart = Date.now();
-    const { stablePrefix, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
+    const { stablePrefix, environmentContext, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
       { ...context, text: messageText },
       conversation,
       client,
     );
     const retrievalMs = Date.now() - retrievalStart;
 
-    capturedSystemPrompt = [stablePrefix, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+    capturedSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
     capturedUserPrompt = messageText;
 
     // 5. Call LLM (streams response directly to Slack via chat.update)
     const llmStart = Date.now();
     const response = await generateResponse({
       stablePrefix,
+      environmentContext,
       conversationContext,
       dynamicContext,
       userMessage: messageText,
@@ -460,7 +461,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     });
 
     // 7. Background tasks (via waitUntil so they don't block the response)
-    const fullSystemPrompt = [stablePrefix, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+    const fullSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
     const backgroundTasks = runBackgroundTasks({
       context: { ...context, text: messageText },
       event,

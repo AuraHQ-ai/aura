@@ -140,6 +140,7 @@ function mockAgentStream(
 function baseOptions(slackClient: any) {
   return {
     stablePrefix: "",
+    environmentContext: "",
     conversationContext: "",
     userMessage: "run a slow command",
     slackClient,

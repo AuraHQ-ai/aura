@@ -33,6 +33,7 @@ export interface AgenticStreamOptions {
   modelId: string;
   tools: Record<string, any>;
   stablePrefix: string;
+  environmentContext: string;
   conversationContext: string;
   dynamicContext: string;
   messages: ModelMessage[];
@@ -52,14 +53,17 @@ export interface AgenticStreamOptions {
 
 export function createAgenticStream(options: AgenticStreamOptions) {
   const stepModelIds: string[] = [];
-  const dynamicContext = appendDeferredToolsBlock(
-    options.dynamicContext,
+  // Deferred-tool manifest is environment-level, so it rides in the cached
+  // environment layer ahead of the conversation — not the volatile runtime tail.
+  const environmentContext = appendDeferredToolsBlock(
+    options.environmentContext,
     getDeferredToolManifest(options.tools),
-  ) ?? options.dynamicContext;
+  ) ?? options.environmentContext;
   const prepareStep = createInteractivePrepareStep({
     stablePrefix: options.stablePrefix,
+    environmentContext,
     conversationContext: options.conversationContext,
-    dynamicContext,
+    dynamicContext: options.dynamicContext,
     thinkingBudget: options.thinkingBudget ?? 8000,
     modelId: options.modelId,
     recordStepModelId: (stepNumber, stepModelId) => {
@@ -73,8 +77,9 @@ export function createAgenticStream(options: AgenticStreamOptions) {
 
   const system = buildCachedSystemMessages(
     options.stablePrefix,
+    environmentContext,
     options.conversationContext,
-    dynamicContext,
+    options.dynamicContext,
   );
 
   return streamText({

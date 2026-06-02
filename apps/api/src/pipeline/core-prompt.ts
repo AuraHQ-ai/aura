@@ -1,6 +1,7 @@
 import {
   buildSystemPrompt,
   buildDynamicContext,
+  buildEnvironmentContext,
   type PersonProfile,
   type EntitySummary,
 } from "../personality/system-prompt.js";
@@ -256,6 +257,8 @@ async function buildEntitySummaries(
 
 export interface CorePrompt {
   stablePrefix: string;
+  /** Per-user "what you can do" layer (capabilities + storage), cached ahead of the conversation. */
+  environmentContext: string;
   conversationContext: string;
   dynamicContext: string;
   memories: Memory[];
@@ -346,13 +349,16 @@ export async function buildCorePrompt(
 
   const modelId = session.modelIdOverride ?? await getMainModelId();
 
+  const environmentContext = buildEnvironmentContext({
+    sandboxEnvNames,
+  });
+
   let dynamicContext = buildDynamicContext({
     userTimezone: session.userTimezone ?? userProfile?.timezone ?? undefined,
     modelId,
     channelId: session.conversationId,
     threadTs: session.threadId,
     usageStats,
-    sandboxEnvNames,
   });
 
   if (session.channel === "dashboard") {
@@ -369,6 +375,7 @@ export async function buildCorePrompt(
 
   return {
     stablePrefix,
+    environmentContext,
     conversationContext,
     dynamicContext,
     memories,

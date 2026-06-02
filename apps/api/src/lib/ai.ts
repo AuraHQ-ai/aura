@@ -332,30 +332,47 @@ export function withCacheControl(systemPrompt: string) {
 /**
  * Build a multi-breakpoint cached system message array for Anthropic prompt caching.
  *
- * Returns 2–3 system messages with cache control on the stable layers:
- *   1. stablePrefix (cached globally): personality + self-directive + auto-generated notes index
- *   2. conversationContext (cached per-thread): channel + user + memories + conversations + thread
- *   3. dynamicContext (uncached, optional): time, model, channelId, threadTs
+ * Layers are ordered by volatility (most stable first), with cache control on
+ * the three stable layers and the volatile runtime tail left uncached:
+ *   1. stablePrefix (cached globally): personality + self-directive + notes index
+ *      — byte-identical across every user and thread.
+ *   2. environmentContext (cached per-user): capabilities + storage + deferred tools
+ *      — "what you can do"; stable across a user's threads. Sits AHEAD of the
+ *      conversation so it caches and is never stranded in the uncached tail.
+ *   3. conversationContext (cached per-turn): channel + user + memories + threads
+ *      + the serialized conversation — constant across the steps of one response.
+ *   4. dynamicContext (UNcached, optional): current time, model, channel, usage
+ *      — the only genuinely volatile layer; kept last so it never busts a cache.
  *
+ * Uses 3 cache breakpoints (Anthropic allows 4). Empty layers are skipped.
  * Safe for non-Anthropic models — they ignore providerOptions.anthropic.
  */
 export function buildCachedSystemMessages(
   stablePrefix: string,
+  environmentContext: string,
   conversationContext: string,
   dynamicContext?: string,
 ) {
+  const ephemeral = { anthropic: { cacheControl: { type: 'ephemeral' } } };
   const messages: Array<{ role: 'system'; content: string; providerOptions?: Record<string, any> }> = [
     {
       role: 'system',
       content: stablePrefix,
-      providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      providerOptions: ephemeral,
     },
   ];
+  if (environmentContext) {
+    messages.push({
+      role: 'system',
+      content: environmentContext,
+      providerOptions: ephemeral,
+    });
+  }
   if (conversationContext) {
     messages.push({
       role: 'system',
       content: conversationContext,
-      providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      providerOptions: ephemeral,
     });
   }
   if (dynamicContext) {
