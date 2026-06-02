@@ -53,6 +53,11 @@ const MIN_STRIPPED_LENGTH = 50;
 // Backstop cap on assistant-sourced memories created per extraction (per
 // exchange). Keeps the high-signal deliverables Aura produced while preventing
 // her verbose/tool-heavy replies from flooding memory with low-value facts.
+// Tuned empirically: an unclamped n=60 LongMemEval probe stored 81% assistant
+// memories (~24/conversation, one exchange creating 34), which diluted retrieval
+// and slowed the bench; clamping (with the concise-deliverable prompt) cut that
+// to ~1-3/conversation. 8 balances single-session-assistant recall against store
+// health — raise it if assistant-recall regresses, lower it if dilution returns.
 const MAX_ASSISTANT_MEMORIES_PER_EXCHANGE = 8;
 
 // ── Thread Context Building ─────────────────────────────────────────────────
