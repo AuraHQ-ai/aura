@@ -210,13 +210,18 @@ jobs:
         id: recursion_guard
         shell: bash
         run: |
-          author="$(git log -1 --format='%an')"
+          # Inspect the commit that TRIGGERED this run, not the current branch
+          # tip. A bot bench-back commit ([skip ci]) can land on the branch while
+          # this run is queued behind an earlier run; checking the tip then wrongly
+          # treats a legitimate code run as "bot-only" and skips the whole bench.
+          TRIGGER_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          author="$(git log -1 --format='%an' "${TRIGGER_SHA}" 2>/dev/null || echo unknown)"
           if [ "${author}" != "github-actions[bot]" ]; then
             echo "skip=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
-          git diff-tree --no-commit-id --name-only -r --root HEAD > /tmp/bench-changed-files.txt
+          git diff-tree --no-commit-id --name-only -r --root "${TRIGGER_SHA}" > /tmp/bench-changed-files.txt
           node <<'NODE'
           const fs = require('fs');
           const files = fs.readFileSync('/tmp/bench-changed-files.txt', 'utf8')
@@ -365,13 +370,18 @@ jobs:
         id: recursion_guard
         shell: bash
         run: |
-          author="$(git log -1 --format='%an')"
+          # Inspect the commit that TRIGGERED this run, not the current branch
+          # tip. A bot bench-back commit ([skip ci]) can land on the branch while
+          # this run is queued behind an earlier run; checking the tip then wrongly
+          # treats a legitimate code run as "bot-only" and skips the whole bench.
+          TRIGGER_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          author="$(git log -1 --format='%an' "${TRIGGER_SHA}" 2>/dev/null || echo unknown)"
           if [ "${author}" != "github-actions[bot]" ]; then
             echo "skip=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
-          git diff-tree --no-commit-id --name-only -r --root HEAD > /tmp/bench-changed-files.txt
+          git diff-tree --no-commit-id --name-only -r --root "${TRIGGER_SHA}" > /tmp/bench-changed-files.txt
           node <<'NODE'
           const fs = require('fs');
           const files = fs.readFileSync('/tmp/bench-changed-files.txt', 'utf8')
