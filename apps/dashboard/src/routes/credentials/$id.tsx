@@ -13,7 +13,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { DetailSkeleton } from "@/components/page-skeleton";
 import { cn, formatDate } from "@/lib/utils";
 import { useState, useMemo } from "react";
-import { ArrowLeft, Trash2, UserPlus, Check, ChevronsUpDown, Shield, ScrollText } from "lucide-react";
+import { ArrowLeft, Trash2, UserPlus, Check, ChevronsUpDown, Shield, ScrollText, Pencil, Eye, EyeOff } from "lucide-react";
 
 interface Grant {
   id: string;
@@ -82,6 +82,9 @@ function CredentialDetailPage() {
   const [granteeId, setGranteeId] = useState("");
   const [permission, setPermission] = useState("read");
   const [userPickerOpen, setUserPickerOpen] = useState(false);
+  const [showRename, setShowRename] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [revealedValue, setRevealedValue] = useState<string | null>(null);
 
   const selectedUser = useMemo(
     () => users.find((u) => u.slackUserId === granteeId),
@@ -94,12 +97,30 @@ function CredentialDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["credentials"] });
       setShowUpdateValue(false);
       setNewValue("");
+      setRevealedValue(null);
     },
   });
 
   const scopeMutation = useMutation({
     mutationFn: (scope: string) => apiPatch(`/credentials/${id}/scope`, { scope }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["credentials"] }),
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: () => apiPatch(`/credentials/${id}/name`, { name: renameValue }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["credentials"] });
+      setShowRename(false);
+      setRenameValue("");
+    },
+  });
+
+  const revealMutation = useMutation({
+    mutationFn: () => apiGet<{ value: string }>(`/credentials/${id}/reveal`),
+    onSuccess: (res) => {
+      setRevealedValue(res.value);
+      queryClient.invalidateQueries({ queryKey: ["credentials", id] });
+    },
   });
 
   const grantMutation = useMutation({
@@ -138,6 +159,16 @@ function CredentialDetailPage() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Badge variant="secondary">{data.type}</Badge>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setRenameValue(data.name);
+              setShowRename(true);
+            }}
+          >
+            <Pencil className="h-4 w-4" /> Rename
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setShowUpdateValue(true)}>Update Value</Button>
           <Button
             variant="destructive"
@@ -153,7 +184,30 @@ function CredentialDetailPage() {
         <Card>
           <CardHeader><CardTitle className="text-sm">Value</CardTitle></CardHeader>
           <CardContent>
-            <code className="text-sm font-mono">{data.maskedValue}</code>
+            <div className="flex items-center gap-2 min-w-0">
+              <code className="text-sm font-mono truncate flex-1">
+                {revealedValue ?? data.maskedValue}
+              </code>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0"
+                disabled={revealMutation.isPending}
+                title={revealedValue ? "Hide value" : "Reveal value"}
+                onClick={() => {
+                  if (revealedValue) {
+                    setRevealedValue(null);
+                  } else {
+                    revealMutation.mutate();
+                  }
+                }}
+              >
+                {revealedValue ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+            {revealMutation.isError && (
+              <p className="text-xs text-destructive mt-1">Failed to reveal value</p>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -261,6 +315,40 @@ function CredentialDetailPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={showRename} onOpenChange={setShowRename}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename Credential</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="e.g. github_token"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Lowercase letters, numbers, and underscores only. Must start with a letter.
+            </p>
+            {renameMutation.isError && (
+              <p className="text-xs text-destructive">
+                {renameMutation.error instanceof Error
+                  ? renameMutation.error.message
+                  : "Failed to rename credential"}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowRename(false)}>Cancel</Button>
+              <Button
+                onClick={() => renameMutation.mutate()}
+                disabled={!renameValue || renameValue === data.name || renameMutation.isPending}
+              >
+                {renameMutation.isPending ? "Renaming..." : "Rename"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showUpdateValue} onOpenChange={setShowUpdateValue}>
         <DialogContent>
