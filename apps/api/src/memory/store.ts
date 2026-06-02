@@ -317,6 +317,35 @@ export async function backfillNoteEmbeddings(
 }
 
 /**
+ * Provenance authority for conflict resolution.
+ *
+ * Grounded sources — a user's own statement or a verified tool result — outrank
+ * the assistant's own inferences/recommendations. This mirrors the "authority
+ * policy" that Zep, Mem0, and the agent-memory literature converge on: a lower-
+ * authority memory must never supersede or invalidate a higher-authority one,
+ * which is what prevents self-reinforcing "delusion" loops where Aura's own
+ * guess silently overwrites a user-stated fact.
+ *
+ * `assistant` → 1 (lowest). `user` / `tool` / unknown(null) → 2.
+ */
+export function memoryAuthority(sourceRole?: string | null): number {
+  return sourceRole === "assistant" ? 1 : 2;
+}
+
+/**
+ * True iff a NEW memory (from `newRole`) is allowed to supersede/invalidate an
+ * EXISTING memory (from `oldRole`). Equal authority is allowed — recency wins,
+ * Zep-style. A strictly lower-authority new memory is blocked, so an
+ * assistant-sourced fact can never displace a user/tool-sourced one.
+ */
+export function canSupersede(
+  newRole?: string | null,
+  oldRole?: string | null,
+): boolean {
+  return memoryAuthority(newRole) >= memoryAuthority(oldRole);
+}
+
+/**
  * Deduplication result for a single candidate memory.
  * - `dominated`: true if the candidate should be skipped entirely (similarity > 0.90)
  * - `supersedesId`: if similarity is 0.85–0.90, the ID of the old memory to soft-supersede
@@ -334,7 +363,7 @@ export interface DedupResult {
  * - similarity < 0.85 → no match, insert normally
  */
 export async function checkDuplicates(
-  candidates: { content: string; embedding: number[] | null }[],
+  candidates: { content: string; embedding: number[] | null; sourceRole?: string | null }[],
   workspaceId: string,
 ): Promise<DedupResult[]> {
   const results: DedupResult[] = [];
@@ -348,7 +377,7 @@ export async function checkDuplicates(
     try {
       const vectorSql = sql.raw(`'[${candidate.embedding.join(",")}]'::vector`);
       const neighbors = await db.execute(sql`
-        SELECT id, 1 - (embedding <=> ${vectorSql}) AS similarity
+        SELECT id, extraction_source_role, 1 - (embedding <=> ${vectorSql}) AS similarity
         FROM memories
         WHERE workspace_id = ${workspaceId}
           AND embedding IS NOT NULL
@@ -370,7 +399,12 @@ export async function checkDuplicates(
           break;
         }
         if (sim >= 0.85 && !supersedesId) {
-          supersedesId = row.id;
+          // Authority guard: a lower-authority (assistant-inferred) memory must
+          // not soft-supersede a higher-authority (user/tool) near-duplicate.
+          // When blocked, both coexist and retrieval ranking arbitrates.
+          if (canSupersede(candidate.sourceRole, row.extraction_source_role)) {
+            supersedesId = row.id;
+          }
         }
       }
 
@@ -448,6 +482,10 @@ export interface ContradictionCandidate {
   id: string;
   content: string;
   similarity: number;
+  /** Provenance of the existing memory — used to gate supersession so an
+   * assistant-sourced new memory can't invalidate a user/tool-sourced one. */
+  sourceRole: string | null;
+  confidence: number | null;
 }
 
 /**
@@ -474,7 +512,7 @@ export async function findContradictionCandidates(
       : sql``;
 
     const result = await db.execute(sql`
-      SELECT id, content, 1 - (embedding <=> ${vectorSql}) AS similarity
+      SELECT id, content, extraction_source_role, confidence, 1 - (embedding <=> ${vectorSql}) AS similarity
       FROM memories
       WHERE workspace_id = ${workspaceId}
         AND embedding IS NOT NULL
@@ -492,6 +530,8 @@ export async function findContradictionCandidates(
       id: row.id as string,
       content: row.content as string,
       similarity: parseFloat(row.similarity),
+      sourceRole: (row.extraction_source_role ?? null) as string | null,
+      confidence: row.confidence != null ? parseFloat(row.confidence) : null,
     }));
   } catch (error) {
     logger.warn("Failed to find contradiction candidates", {
