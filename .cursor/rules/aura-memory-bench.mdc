@@ -56,6 +56,16 @@ first run after it lands. Expected, not a regression.
 Locally is the fast iteration loop while you're developing the change: run the
 cheap subsets to sanity-check before you push, then let CI handle the medium run.
 
+**Cursor Cloud Agents: use the mid-size local loop.** Toy is too small to see
+real failure modes; medium is too slow (~2h) to iterate on. A Cloud Agent has
+`DATABASE_URL` + AI keys in its env, so it can run a **mid-size pass
+(`--dataset=lme --limit=10` ≈ 60 Qs, ~10–30 min) against its own Neon DB in a
+persistent `--bench-id` workspace, then `bench:inspect --triage`/`--case` and
+query the stored memories directly** to find the actual failure cause and
+iterate — the thing CI can't give you (CI wipes its workspace). See the
+`aura-bench-local-iteration` skill for the exact loop (run → triage → inspect DB
+→ iterate → clean up).
+
 ## Runtime + cost dictate HOW you run it
 
 | Run | Command | Time | Cost | Who runs it |
