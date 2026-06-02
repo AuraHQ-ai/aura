@@ -538,9 +538,9 @@
       "prNumber": 1076
     },
     {
-      "runId": "2026-06-02T07-03-59-940Z-4wfbnn9o",
-      "timestamp": "2026-06-02T08:42:28.020Z",
-      "commit": "6452709",
+      "runId": "2026-06-02T08-45-57-595Z-6bzlqfmw",
+      "timestamp": "2026-06-02T11:04:52.998Z",
+      "commit": "772e8fb",
       "dirty": false,
       "datasets": [
         "longmemeval"
@@ -550,8 +550,8 @@
       "category": null,
       "corpusHash": "b178d604c01afa4a",
       "caseSetHash": "a0018f6e9f0fccb4",
-      "runtimeMs": 5892148,
-      "costUsd": 13.294053999999974,
+      "runtimeMs": 8306621,
+      "costUsd": 21.714567999999996,
       "models": {
         "extraction": "anthropic/claude-haiku-4.5",
         "answerer": "anthropic/claude-opus-4.8",
@@ -561,22 +561,22 @@
         {
           "dataset": "longmemeval",
           "category": "knowledge-update",
-          "qa": 0.7666666666666667,
-          "recall": 0.9,
+          "qa": 0.6833333333333333,
+          "recall": 0.9333333333333333,
           "n": 30
         },
         {
           "dataset": "longmemeval",
           "category": "multi-session",
-          "qa": 0.7833333333333333,
-          "recall": 0.9,
+          "qa": 0.6333333333333333,
+          "recall": 0.9333333333333333,
           "n": 30
         },
         {
           "dataset": "longmemeval",
           "category": "single-session-assistant",
-          "qa": 0.3333333333333333,
-          "recall": 0.8,
+          "qa": 0.7666666666666667,
+          "recall": 0.9,
           "n": 30
         },
         {
@@ -589,21 +589,21 @@
         {
           "dataset": "longmemeval",
           "category": "single-session-user",
-          "qa": 0.8,
-          "recall": 0.9666666666666667,
+          "qa": 0.8333333333333334,
+          "recall": 1,
           "n": 30
         },
         {
           "dataset": "longmemeval",
           "category": "temporal-reasoning",
           "qa": 0.6896551724137931,
-          "recall": 0.8166666666666667,
+          "recall": 0.8333333333333334,
           "n": 30
         }
       ],
       "overall": {
-        "qa": 0.6145251396648045,
-        "recall": 0.8916666666666667,
+        "qa": 0.6536312849162011,
+        "recall": 0.9277777777777778,
         "n": 179
       },
       "prNumber": 1079

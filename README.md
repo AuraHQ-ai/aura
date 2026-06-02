@@ -132,16 +132,16 @@ The harness in `apps/api/bench/` makes memory changes falsifiable. It replays ve
 <!-- BENCH_SNAPSHOT:START -->
 <!-- Generated from apps/api/bench/history.jsonl — do not edit by hand. -->
 
-Current codebase (as of `6452709`, scope `longmemeval/medium`): **QA 61%** · **recall@15 89%** across 179 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
+Current codebase (as of `772e8fb`, scope `longmemeval/medium`): **QA 65%** · **recall@15 93%** across 179 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| longmemeval | knowledge-update | 77% | 90% | 30 |
-| longmemeval | multi-session | 78% | 90% | 30 |
-| longmemeval | single-session-assistant | 33% | 80% | 30 |
+| longmemeval | knowledge-update | 68% | 93% | 30 |
+| longmemeval | multi-session | 63% | 93% | 30 |
+| longmemeval | single-session-assistant | 77% | 90% | 30 |
 | longmemeval | single-session-preference | 32% | 97% | 30 |
-| longmemeval | single-session-user | 80% | 97% | 30 |
-| longmemeval | temporal-reasoning | 69% | 82% | 30 |
+| longmemeval | single-session-user | 83% | 100% | 30 |
+| longmemeval | temporal-reasoning | 69% | 83% | 30 |
 
 <!-- BENCH_SNAPSHOT:END -->
 
