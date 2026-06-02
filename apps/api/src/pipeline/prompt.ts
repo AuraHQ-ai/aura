@@ -10,6 +10,7 @@ import { getProfile } from "../users/profiles.js";
 
 export interface AssembledPrompt {
   stablePrefix: string;
+  environmentContext: string;
   conversationContext: string;
   dynamicContext: string;
   memories: Memory[];
@@ -126,6 +127,7 @@ If the thread content is sparse, try list_slack_list_items to find the item by m
 
   return {
     stablePrefix: core.stablePrefix,
+    environmentContext: core.environmentContext,
     conversationContext: core.conversationContext,
     dynamicContext,
     memories: core.memories,

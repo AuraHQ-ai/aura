@@ -145,6 +145,7 @@ export function createPrepareStep(opts: {
   stepLimit?: number;
   warningThreshold?: number;
   stablePrefix: string;
+  environmentContext?: string;
   conversationContext?: string;
   dynamicContext?: string;
   defaultEffort?: EffortLevel;
@@ -267,6 +268,7 @@ export function createPrepareStep(opts: {
         .replace("{stepCount}", String(stepNumber))
         .replace("{limit}", String(limit));
       systemOverride = opts.stablePrefix
+        + (opts.environmentContext ? "\n\n" + opts.environmentContext : "")
         + (opts.conversationContext ? "\n\n" + opts.conversationContext : "")
         + (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "")
         + "\n\n" + wrapUp;
@@ -293,6 +295,7 @@ export function createPrepareStep(opts: {
 /** Factory for interactive Slack agent prepareStep (250-step limit). */
 export function createInteractivePrepareStep(opts: {
   stablePrefix: string;
+  environmentContext?: string;
   conversationContext?: string;
   dynamicContext?: string;
   modelId?: string;
@@ -308,6 +311,7 @@ export function createInteractivePrepareStep(opts: {
     stepLimit: STEP_LIMIT,
     warningThreshold: WARNING_THRESHOLD,
     stablePrefix: opts.stablePrefix,
+    environmentContext: opts.environmentContext,
     conversationContext: opts.conversationContext,
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
@@ -324,6 +328,7 @@ export function createInteractivePrepareStep(opts: {
 /** Factory for headless job execution prepareStep (350-step limit). */
 export function createHeadlessPrepareStep(opts: {
   stablePrefix: string;
+  environmentContext?: string;
   conversationContext?: string;
   dynamicContext?: string;
   modelId?: string;
@@ -339,6 +344,7 @@ export function createHeadlessPrepareStep(opts: {
     stepLimit: HEADLESS_STEP_LIMIT,
     warningThreshold: HEADLESS_WARNING_THRESHOLD,
     stablePrefix: opts.stablePrefix,
+    environmentContext: opts.environmentContext,
     conversationContext: opts.conversationContext,
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,

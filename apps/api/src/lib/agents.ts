@@ -24,6 +24,7 @@ export interface InteractiveAgentOptions {
   slackClient: WebClient;
   context?: ScheduleContext;
   stablePrefix: string;
+  environmentContext: string;
   conversationContext: string;
   dynamicContext?: string;
   invocationId?: string;
@@ -44,14 +45,18 @@ export async function createInteractiveAgent(
   const { modelId, model } = await getMainModel();
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const stepModelIds: string[] = [];
-  const dynamicContext = appendDeferredToolsBlock(
-    options.dynamicContext,
+  // Deferred-tool manifest is environment-level ("what you can call"), so it
+  // rides in the cached environment layer ahead of the conversation — not the
+  // volatile runtime tail.
+  const environmentContext = appendDeferredToolsBlock(
+    options.environmentContext,
     getDeferredToolManifest(tools),
-  );
+  ) ?? options.environmentContext;
   const systemMessages = buildCachedSystemMessages(
     options.stablePrefix,
+    environmentContext,
     options.conversationContext,
-    dynamicContext,
+    options.dynamicContext,
   );
 
   const agent = new ToolLoopAgent({
@@ -61,8 +66,9 @@ export async function createInteractiveAgent(
     stopWhen: stepCountIs(STEP_LIMIT),
     prepareStep: createInteractivePrepareStep({
       stablePrefix: options.stablePrefix,
+      environmentContext,
       conversationContext: options.conversationContext,
-      dynamicContext,
+      dynamicContext: options.dynamicContext,
       modelId,
       defaultEffort: "medium",
       thinkingBudget: 8000,

@@ -13,16 +13,21 @@ vi.mock("../lib/logger.js", () => ({
   },
 }));
 
-import { buildDynamicContext, formatDeferredTools } from "./system-prompt.js";
+import {
+  buildDynamicContext,
+  buildEnvironmentContext,
+  formatDeferredTools,
+} from "./system-prompt.js";
+import { buildCachedSystemMessages } from "../lib/ai.js";
 
 function extractCapabilitiesBlock(prompt: string): string {
   const match = prompt.match(/<capabilities>[\s\S]*<\/capabilities>/);
   return match?.[0] ?? "";
 }
 
-describe("buildDynamicContext capabilities", () => {
+describe("buildEnvironmentContext capabilities", () => {
   it("renders sorted sandbox credential names grouped by capability", () => {
-    const prompt = buildDynamicContext({
+    const prompt = buildEnvironmentContext({
       sandboxEnvNames: ["NOTION_API_KEY", "GITHUB_TOKEN"],
     });
 
@@ -36,25 +41,18 @@ Hard rule: Seeing a credential name is not a reason to use it -- it's a reason t
 </capabilities>`;
 
     expect(extractCapabilitiesBlock(prompt)).toBe(expected);
-    expect(prompt.indexOf("</runtime>")).toBeLessThan(
-      prompt.indexOf("<capabilities>"),
-    );
   });
 
   it("does not include credential values in the capabilities block", () => {
-    const secretValue = "secret_notion_value_123";
-    const prompt = buildDynamicContext({
-      usageStats: `debug value that must not be in capabilities: ${secretValue}`,
-      sandboxEnvNames: ["NOTION_API_KEY"],
-    });
-
-    const block = extractCapabilitiesBlock(prompt);
+    const block = extractCapabilitiesBlock(
+      buildEnvironmentContext({ sandboxEnvNames: ["NOTION_API_KEY"] }),
+    );
     expect(block).toContain("`NOTION_API_KEY`");
-    expect(block).not.toContain(secretValue);
+    expect(block).not.toContain("secret_notion_value_123");
   });
 
   it("contains the hard guardrail line inside the capabilities block", () => {
-    const prompt = buildDynamicContext({
+    const prompt = buildEnvironmentContext({
       sandboxEnvNames: ["SLACK_BOT_TOKEN"],
     });
 
@@ -64,7 +62,7 @@ Hard rule: Seeing a credential name is not a reason to use it -- it's a reason t
   });
 
   it("annotates CURSOR_API_KEY with Cursor tool wrappers when present", () => {
-    const prompt = buildDynamicContext({
+    const prompt = buildEnvironmentContext({
       sandboxEnvNames: ["CURSOR_API_KEY"],
       availableToolNames: ["dispatch_cursor_agent", "check_cursor_agent"],
     });
@@ -76,16 +74,32 @@ Hard rule: Seeing a credential name is not a reason to use it -- it's a reason t
   });
 
   it("omits the capabilities block when no credential names are available", () => {
-    expect(buildDynamicContext({ sandboxEnvNames: [] })).not.toContain(
+    expect(buildEnvironmentContext({ sandboxEnvNames: [] })).not.toContain(
       "<capabilities>",
     );
-    expect(buildDynamicContext({})).not.toContain("<capabilities>");
+    expect(buildEnvironmentContext({})).toBe("");
+  });
+});
+
+describe("buildDynamicContext runtime block", () => {
+  it("renders runtime and never carries the environment blocks", () => {
+    const runtime = buildDynamicContext({
+      modelId: "anthropic/claude-opus-4.8",
+      channelId: "C123",
+      usageStats: "## Usage\nUnique users: 5",
+    });
+    expect(runtime).toContain("<runtime>");
+    expect(runtime).toContain("Active model: `anthropic/claude-opus-4.8`");
+    expect(runtime).toContain("Unique users: 5");
+    expect(runtime).not.toContain("<capabilities>");
+    expect(runtime).not.toContain("<storage>");
+    expect(runtime).not.toContain("<deferred_tools>");
   });
 });
 
 describe("deferred tools manifest", () => {
   it("renders a deferred_tools block when deferred tools exist", () => {
-    const prompt = buildDynamicContext({
+    const prompt = buildEnvironmentContext({
       deferredTools: [
         {
           name: "dispatch_cursor_agent",
@@ -125,16 +139,16 @@ Available on demand (call tool_search_tool_bm25 to load schemas):
   });
 
   it("omits the deferred_tools block when there are no deferred tools", () => {
-    expect(buildDynamicContext({ deferredTools: [] })).not.toContain(
+    expect(buildEnvironmentContext({ deferredTools: [] })).not.toContain(
       "<deferred_tools>",
     );
     expect(formatDeferredTools(undefined)).toBe("");
   });
 });
 
-describe("buildDynamicContext storage block", () => {
+describe("buildEnvironmentContext storage block", () => {
   it("includes the MongoDB storage block when MONGODB_ATLAS_URI is in env names", () => {
-    const prompt = buildDynamicContext({
+    const prompt = buildEnvironmentContext({
       sandboxEnvNames: ["MONGODB_ATLAS_URI", "GITHUB_TOKEN"],
     });
     expect(prompt).toContain("<storage>");
@@ -144,7 +158,7 @@ describe("buildDynamicContext storage block", () => {
   });
 
   it("omits the storage block when MONGODB_ATLAS_URI is not present", () => {
-    const prompt = buildDynamicContext({
+    const prompt = buildEnvironmentContext({
       sandboxEnvNames: ["GITHUB_TOKEN", "NOTION_API_KEY"],
     });
     expect(prompt).not.toContain("<storage>");
@@ -152,9 +166,39 @@ describe("buildDynamicContext storage block", () => {
   });
 
   it("omits the storage block when sandboxEnvNames is empty", () => {
-    expect(buildDynamicContext({ sandboxEnvNames: [] })).not.toContain(
+    expect(buildEnvironmentContext({ sandboxEnvNames: [] })).not.toContain(
       "<storage>",
     );
-    expect(buildDynamicContext({})).not.toContain("<storage>");
+    expect(buildEnvironmentContext({})).toBe("");
+  });
+});
+
+describe("buildCachedSystemMessages layering", () => {
+  it("orders environment before conversation and leaves runtime uncached last", () => {
+    const messages = buildCachedSystemMessages(
+      "<personality>P</personality>",
+      "<capabilities>C</capabilities>",
+      "<context>X</context>\n\n<conversation>T</conversation>",
+      "<runtime>R</runtime>",
+    );
+
+    expect(messages.map((m) => m.content)).toEqual([
+      "<personality>P</personality>",
+      "<capabilities>C</capabilities>",
+      "<context>X</context>\n\n<conversation>T</conversation>",
+      "<runtime>R</runtime>",
+    ]);
+
+    // The three stable layers are cached; the volatile runtime tail is not.
+    expect(messages[0].providerOptions).toBeDefined();
+    expect(messages[1].providerOptions).toBeDefined();
+    expect(messages[2].providerOptions).toBeDefined();
+    expect(messages[3].providerOptions).toBeUndefined();
+  });
+
+  it("skips empty environment and conversation layers", () => {
+    const messages = buildCachedSystemMessages("<personality>P</personality>", "", "", undefined);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe("<personality>P</personality>");
   });
 });

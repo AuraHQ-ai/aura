@@ -136,6 +136,8 @@ function truncate(s: string | undefined, max: number): string | undefined {
 interface RespondOptions {
   /** Stable across all requests (cached globally) */
   stablePrefix: string;
+  /** Per-user "what you can do" layer (capabilities + storage), cached ahead of the conversation */
+  environmentContext: string;
   /** Stable within a conversation thread (cached per-thread) */
   conversationContext: string;
   /** Dynamic per-call context (time, model, channel) — passed as uncached system message */
@@ -591,6 +593,7 @@ export async function generateResponse(
     slackClient: options.slackClient,
     context: options.context,
     stablePrefix: options.stablePrefix,
+    environmentContext: options.environmentContext,
     conversationContext: options.conversationContext,
     dynamicContext: options.dynamicContext,
     invocationId,
@@ -667,7 +670,7 @@ export async function generateResponse(
     model: modelId || "unknown",
     hasFiles,
     toolCount: Object.keys(tools || {}).length,
-    promptLength: options.stablePrefix.length + options.conversationContext.length,
+    promptLength: options.stablePrefix.length + options.environmentContext.length + options.conversationContext.length,
   });
 
   // ── Stream and send to Slack ────────────────────────────────────────
@@ -1745,6 +1748,7 @@ export async function generateResponse(
         const { model: retryModel } = await getMainModel();
         const retrySystemMessages = buildCachedSystemMessages(
           options.stablePrefix,
+          options.environmentContext,
           options.conversationContext,
           options.dynamicContext,
         );
