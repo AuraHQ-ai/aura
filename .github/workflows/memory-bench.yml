@@ -337,7 +337,13 @@ jobs:
 
   bench:
     needs: [changes]
-    if: ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft != true && needs.changes.outputs.memory == 'true' && (github.event.action != 'labeled' || startsWith(github.event.label.name, 'bench:')))) }}
+    # Use !cancelled() rather than always(): we still want the job to run when
+    # `needs.changes` is skipped (e.g. workflow_dispatch), but always() returns
+    # true even on cancellation, which exempts the job from BOTH the manual
+    # Cancel button and `concurrency: cancel-in-progress` — making stale/superseded
+    # runs impossible to stop until the 180-min timeout. !cancelled() runs on
+    # success/failure/skipped but correctly stops when the run is cancelled.
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft != true && needs.changes.outputs.memory == 'true' && (github.event.action != 'labeled' || startsWith(github.event.label.name, 'bench:')))) }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(github.event.inputs.timeout_minutes || '180') }}
     name: Memory bench (${{ matrix.dataset }})
