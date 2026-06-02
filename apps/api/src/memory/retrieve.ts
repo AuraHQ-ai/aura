@@ -709,7 +709,15 @@ async function retrieveSingleQuery(
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
-        const score = item.score * (0.8 - ENTITY_WEIGHT / 2) + recencyBoost * (0.2 - ENTITY_WEIGHT / 2) + result.entityBoost * ENTITY_WEIGHT;
+        const baseScore = item.score * (0.8 - ENTITY_WEIGHT / 2) + recencyBoost * (0.2 - ENTITY_WEIGHT / 2) + result.entityBoost * ENTITY_WEIGHT;
+        // Confidence tiebreaker: gently down-weight lower-trust (assistant-
+        // inferred, confidence 0.6) memories so they don't crowd out a
+        // user/tool-sourced (0.8) memory of equal relevance. Deliberately mild
+        // (~2pp between 0.6 and 0.8) — a tiebreaker, not a dominant signal —
+        // so it never evicts a genuinely relevant memory from the top-k.
+        const confidence = (memory as any).confidence ?? 0.8;
+        const confidenceFactor = 0.9 + 0.1 * confidence;
+        const score = baseScore * confidenceFactor;
         return { memory, score, originalIndex: item.originalIndex, cohereScore: item.score };
       });
 

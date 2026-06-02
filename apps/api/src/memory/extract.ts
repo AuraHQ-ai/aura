@@ -6,7 +6,7 @@ import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
   fetchThreadMessages, updateMemoryContent, archiveMemory,
-  findContradictionCandidates,
+  findContradictionCandidates, canSupersede,
 } from "./store.js";
 import { retrieveMemories } from "./retrieve.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
@@ -909,6 +909,7 @@ async function detectContradictions(
     content: string;
     embedding: number[] | null;
     relatedUserIds: string[];
+    sourceRole: ExtractionSourceRole;
   }>,
   workspaceId: string,
   model: Awaited<ReturnType<typeof getFastModel>>,
@@ -948,6 +949,23 @@ async function detectContradictions(
         if (!result.contradicts) continue;
         const candidate = candidates[result.candidateIndex];
         if (!candidate) continue;
+
+        // Authority guard: never let a lower-authority (assistant-inferred)
+        // memory invalidate a higher-authority (user/tool) one. This is the
+        // load-bearing guardrail against self-reinforcing delusion loops —
+        // Aura's own recommendation must not overwrite a user-stated fact.
+        // Both memories coexist; retrieval ranking (confidence-weighted)
+        // arbitrates which one surfaces.
+        if (!canSupersede(newMem.sourceRole, candidate.sourceRole)) {
+          logger.info("Contradiction detected but new memory is lower authority — keeping both (no supersede)", {
+            oldId: candidate.id,
+            newId: newMem.id,
+            newRole: newMem.sourceRole,
+            oldRole: candidate.sourceRole,
+            reason: result.reason,
+          });
+          continue;
+        }
 
         logger.info("Contradiction detected — superseding old memory", {
           oldId: candidate.id,
@@ -990,6 +1008,14 @@ async function processCreateOperations(
     })),
   );
 
+  // Effective provenance per memory: the LLM-tagged sourceRole, falling back to
+  // the trigger role. Computed once and threaded through dedup, the stored
+  // attribution/confidence, and contradiction detection so the authority guard
+  // (assistant-inferred facts can't supersede user/tool facts) is consistent.
+  const sourceRoles: ExtractionSourceRole[] = normalizedMemories.map(
+    (m) => m.sourceRole ?? extractionSourceRole,
+  );
+
   const memoryTexts = normalizedMemories.map((m) => m.content);
   let embeddings: (number[] | null)[];
   try {
@@ -1000,7 +1026,11 @@ async function processCreateOperations(
   }
 
   const dedupResults = await checkDuplicates(
-    normalizedMemories.map((m, i) => ({ content: m.content, embedding: embeddings[i] ?? null })),
+    normalizedMemories.map((m, i) => ({
+      content: m.content,
+      embedding: embeddings[i] ?? null,
+      sourceRole: sourceRoles[i],
+    })),
     workspaceId,
   );
 
@@ -1017,10 +1047,11 @@ async function processCreateOperations(
     // Per-memory attribution: the LLM tags each memory with the role it
     // originated from. The trigger role (extractionSourceRole) is the fallback
     // when the LLM doesn't specify. Assistant-sourced facts get lower trust
-    // (0.6) so a later user statement (default 0.8) wins via the existing
-    // dedup/contradiction/supersession machinery — preventing self-reinforcing
-    // delusion loops. undefined keeps the column default (0.8).
-    const memorySourceRole = normalizedMemories[i].sourceRole ?? extractionSourceRole;
+    // (0.6); the authority guard in dedup/contradiction (canSupersede) then
+    // ensures a later user statement (default 0.8) wins and an assistant guess
+    // never overwrites a user fact — preventing self-reinforcing delusion
+    // loops. undefined keeps the column default (0.8).
+    const memorySourceRole = sourceRoles[i];
     const confidence = memorySourceRole === "assistant" ? 0.6 : undefined;
     return {
     content: normalizedMemories[i].content,
@@ -1073,6 +1104,7 @@ async function processCreateOperations(
         content: normalizedMemories[i].content,
         embedding: embeddings[i] ?? null,
         relatedUserIds: newMemories[j].relatedUserIds ?? [],
+        sourceRole: sourceRoles[i],
       }))
       .filter((m) => m.id);
     if (storedForContradiction.length > 0) {
