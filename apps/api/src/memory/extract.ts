@@ -52,15 +52,29 @@ const MIN_STRIPPED_LENGTH = 50;
 
 // ── Thread Context Building ─────────────────────────────────────────────────
 
-const MAX_THREAD_CONTEXT_CHARS = 4000;
-const MAX_MSG_CHARS = 500;
+// Tool messages are the only real source of context blow-up (large tool I/O),
+// and they're already pruned to a one-line status below — so user and assistant
+// turns are NOT per-message truncated. The answer to many questions (especially
+// "what did you recommend/tell me?") lives deep in a long assistant reply, so
+// truncating it to a few hundred chars hid the fact from the extractor entirely.
+// A generous overall budget bounds cost; the newest turns are kept first.
+const MAX_THREAD_CONTEXT_CHARS = 12000;
+// Safety cap for a single pathologically long turn (e.g. a giant code/data dump)
+// so one message can't consume the whole budget. Normal replies fall well under.
+const MAX_TURN_CHARS = 6000;
 
 const TOOL_STATUS_RE = /^\[([^\]]+)\]\s*\((OK|ERROR)\)/;
 
+function capTurn(text: string): string {
+  return text.length > MAX_TURN_CHARS ? text.slice(0, MAX_TURN_CHARS) + "..." : text;
+}
+
 /**
  * Build a compact thread representation with aggressive tool-message pruning.
- * Tool messages are reduced to just "[Tool: name] OK/ERROR" (no I/O).
- * User/assistant messages are truncated to MAX_MSG_CHARS.
+ * Tool messages are reduced to just "[Tool: name] OK/ERROR" (no I/O) — that is
+ * where context blow-up comes from. User and assistant turns are kept in full
+ * (only a high per-turn safety cap applies) so concrete details Aura produced or
+ * the user stated survive into extraction.
  */
 function buildThreadContext(
   threadMessages: ThreadMessage[],
@@ -78,20 +92,20 @@ function buildThreadContext(
       const match = msg.content.match(TOOL_STATUS_RE);
       line = match ? `[Tool: ${match[1]}] ${match[2]}` : "[Tool]";
     } else if (msg.role === "assistant") {
-      const stripped = stripInjectedContext(msg.content);
-      const truncated = stripped.length > MAX_MSG_CHARS
-        ? stripped.slice(0, MAX_MSG_CHARS) + "..."
-        : stripped;
-      line = `[Aura]: ${truncated}`;
+      line = `[Aura]: ${capTurn(stripInjectedContext(msg.content))}`;
     } else {
       const name = displayNames.get(msg.userId) || msg.userId;
-      const truncated = msg.content.length > MAX_MSG_CHARS
-        ? msg.content.slice(0, MAX_MSG_CHARS) + "..."
-        : msg.content;
-      line = `[User (${name})]: ${truncated}`;
+      line = `[User (${name})]: ${capTurn(msg.content)}`;
     }
 
-    if (totalLen + line.length + 1 > MAX_THREAD_CONTEXT_CHARS) break;
+    const remaining = MAX_THREAD_CONTEXT_CHARS - totalLen;
+    if (line.length + 1 > remaining) {
+      // The newest turns matter most; rather than dropping an over-budget turn
+      // wholesale (which previously lost the answer entirely), keep its head to
+      // fill the remaining budget, then stop walking further back.
+      if (remaining > 200) lines.push(line.slice(0, remaining - 1));
+      break;
+    }
     lines.push(line);
     totalLen += line.length + 1;
   }
@@ -357,13 +371,21 @@ DO NOT save:
 
 ## Capturing what Aura surfaced (assistant-sourced facts)
 
-Aura's own turns appear in the exchange (as "Aura:"). DO capture a concrete result or explicit recommendation Aura produced, but ONLY when ALL of these hold:
-1. **Grounded** — it is backed by a tool result, a computation over stated values, or an explicit recommendation Aura made. If Aura could not have verified it, do NOT store it. (Self-narration like "Aura ran a query" stays excluded; the RESULT — "Aura found the cheapest flight is $340" — is kept.)
+Aura's own turns appear in the exchange (as "Aura:"). When the user later asks "what did you recommend/suggest/tell me?", the answer lives in Aura's earlier reply — so you MUST capture the concrete deliverables Aura produced, not just the user's request. A memory like "User requested a D&D one-shot" is nearly useless for recall; "Aura's Lost Temple of the Djinn one-shot features 4 mummies in the temple" is the fact that answers the question.
+
+Capture a concrete result or explicit recommendation Aura produced when ALL of these hold:
+1. **Grounded** — backed by a tool result, a computation over stated values, or a specific recommendation/answer Aura actually gave. If Aura could not have verified it, do NOT store it. (Self-narration like "Aura ran a query" stays excluded; the RESULT — "Aura found the cheapest flight is $340" — is kept.)
 2. **Genuinely new** — not an echo of the user's words or of a memory already retrieved/stored in this conversation.
-3. **Attributed** — phrase it with attribution: "Aura found that...", "Aura calculated...", "Aura recommended...".
+3. **Attributed** — phrase it with attribution: "Aura recommended...", "Aura found that...", "Aura's <thing> includes...".
 4. Never speculation or hedging (see DO NOT save above).
 
-For every memory, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation she surfaced), otherwise \`"user"\` (the default — anything a person stated). A grounded assistant RESULT is a real fact worth keeping; do not auto-discard it as a low-value "agent self-action".
+**Pull the specific operands out of Aura's reply.** When Aura's answer names a specific item, place, product, person, handle/URL, recipe, count, or other concrete value, capture that value VERBATIM as its own assistant-sourced memory — these are exactly what later "what did you recommend?" questions ask for. Examples:
+- Aura recommends a UK jewelry designer who works with unusual gemstones → "Aura recommended UK jewelry designer Jessica Poole (Instagram @jessica_poole_jewellery) for unusual gemstones."
+- Aura's generated one-shot says the temple holds four mummies → "Aura's Lost Temple of the Djinn one-shot has the party face 4 mummies in the temple."
+- Aura suggests a specific hostel → "Aura recommended the International Budget Hostel near Amsterdam's Red Light District."
+Record several such facts when Aura's reply contains several distinct named/numeric deliverables.
+
+For every memory, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation/deliverable she produced), otherwise \`"user"\` (the default — anything a person stated). A grounded assistant deliverable is a real fact worth keeping; do not auto-discard it as a low-value "agent self-action".
 
 ## Importance Scoring (be strict, use the 1-100 scale)
 
@@ -492,13 +514,21 @@ Aggressive scoring guidance:
 
 ## Capturing what Aura surfaced (assistant-sourced facts)
 
-The thread shows Aura's own turns (as "[Aura]:"). DO create a memory for a concrete result or explicit recommendation Aura produced, but ONLY when ALL of these hold:
-1. **Grounded** — backed by a tool result, a computation over stated values, or an explicit recommendation Aura made. If Aura could not have verified it, do NOT store it. (Self-narration like "Aura ran a query" stays excluded; the RESULT — "Aura found the cheapest flight is $340" — is kept.)
+The thread shows Aura's own turns (as "[Aura]:"). When the user later asks "what did you recommend/suggest/tell me?", the answer lives in Aura's earlier reply — so you MUST capture the concrete deliverables Aura produced, not just the user's request. "User requested a D&D one-shot" is nearly useless for recall; "Aura's Lost Temple of the Djinn one-shot features 4 mummies" is the fact that answers the question.
+
+Create a memory for a concrete result or explicit recommendation Aura produced when ALL of these hold:
+1. **Grounded** — backed by a tool result, a computation over stated values, or a specific recommendation/answer Aura actually gave. If Aura could not have verified it, do NOT store it. (Self-narration like "Aura ran a query" stays excluded; the RESULT — "Aura found the cheapest flight is $340" — is kept.)
 2. **Genuinely new** — not an echo of the user's words and not already covered by an existing memory above.
-3. **Attributed** — phrase it with attribution: "Aura found that...", "Aura calculated...", "Aura recommended...".
+3. **Attributed** — phrase it with attribution: "Aura recommended...", "Aura found that...", "Aura's <thing> includes...".
 4. Never speculation or hedging (see above).
 
-For every create operation, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation she surfaced), otherwise \`"user"\` (the default — anything a person in the thread stated).
+**Pull the specific operands out of Aura's reply.** When Aura's answer names a specific item, place, product, person, handle/URL, recipe, count, or other concrete value, capture that value VERBATIM as its own assistant-sourced memory — these are exactly what later "what did you recommend?" questions ask for. Examples:
+- "Aura recommended UK jewelry designer Jessica Poole (Instagram @jessica_poole_jewellery) for unusual gemstones."
+- "Aura's Lost Temple of the Djinn one-shot has the party face 4 mummies in the temple."
+- "Aura recommended the International Budget Hostel near Amsterdam's Red Light District."
+Record several such facts when Aura's reply contains several distinct named/numeric deliverables.
+
+For every create operation, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation/deliverable she produced), otherwise \`"user"\` (the default — anything a person in the thread stated).
 
 ## Rules
 - Be concise — one clear sentence per memory.
