@@ -336,8 +336,18 @@ export async function loadLoCoMo(): Promise<BenchCase[]> {
         timestamp: parseLocomoDate(dateRaw, idx),
         turns: (turns ?? []).map((t, i) => ({
           diaId: t.dia_id ?? `D${sessionNumber}:${i + 1}`,
-          role:
-            t.speaker === speakerA ? ("user" as const) : ("assistant" as const),
+          // LoCoMo is a HUMAN↔HUMAN dialog — neither speaker is Aura. The old
+          // mapping (speaker_b → assistant) made the extractor file speaker_b's
+          // self-statements as facts about Aura (e.g. "Melanie likes Bach and
+          // Mozart" → "Aura is a fan of Bach and Mozart"), so ~40% of memories
+          // got entangled with the assistant identity and questions about that
+          // speaker became unanswerable. Both speakers are distinct named USERS
+          // (the `speaker` field carries the name), mirroring how prod ingests a
+          // multi-person channel where Aura is not the one talking. With no
+          // assistant turns, the exchange cadence falls back to one reconciliation
+          // pass per session (sessions are ≤47 turns, within the 30-turn / 12k-char
+          // window), so attribution is correct without losing context.
+          role: "user" as const,
           speaker: t.speaker,
           content: t.text,
         })),
