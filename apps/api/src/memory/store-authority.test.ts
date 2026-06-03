@@ -9,7 +9,7 @@ vi.mock("../lib/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { canSupersede, memoryAuthority } from "./store.js";
+import { canSupersede, memoryAuthority, toDbChannelType } from "./store.js";
 
 describe("memory provenance authority", () => {
   it("ranks user/tool/unknown above assistant", () => {
@@ -33,5 +33,22 @@ describe("memory provenance authority", () => {
     // A user/tool statement may correct an earlier assistant inference.
     expect(canSupersede("user", "assistant")).toBe(true);
     expect(canSupersede("tool", "assistant")).toBe(true);
+  });
+});
+
+describe("toDbChannelType", () => {
+  it("stores MPIM as mpim instead of coercing it to dm", () => {
+    expect(toDbChannelType("mpim")).toBe("mpim");
+  });
+
+  it("preserves durable Slack and dashboard channel types", () => {
+    expect(toDbChannelType("dm")).toBe("dm");
+    expect(toDbChannelType("public_channel")).toBe("public_channel");
+    expect(toDbChannelType("private_channel")).toBe("private_channel");
+    expect(toDbChannelType("dashboard")).toBe("dashboard");
+  });
+
+  it("maps virtual Slack List item events to their backing public channel", () => {
+    expect(toDbChannelType("slack_list_item")).toBe("public_channel");
   });
 });

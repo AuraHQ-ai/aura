@@ -142,6 +142,7 @@ export async function fetchConversationContext(
   channelId: string,
   botUserId: string,
   threadTs?: string,
+  channelType?: string,
 ): Promise<ConversationContext> {
   const result: ConversationContext = {
     thread: null,
@@ -151,8 +152,8 @@ export async function fetchConversationContext(
     auraRecentlyActive: false,
   };
 
-  try {
-    if (threadTs) {
+  if (threadTs) {
+    try {
       // ── Threaded message: fetch the full thread ──────────────────────────
       // conversations.replies returns messages oldest-first. We paginate
       // through all pages to ensure we have the complete thread, including
@@ -209,8 +210,18 @@ export async function fetchConversationContext(
       if (threadMessages.length > 0 && threadMessages[0].isBot) {
         result.isAuraThread = true;
       }
+    } catch (error: any) {
+      logger.error("Failed to fetch Slack thread context", {
+        channelId,
+        channelType,
+        threadTs,
+        slackErrorCode: error?.data?.error,
+        error: error?.message || String(error),
+      });
     }
+  }
 
+  try {
     // ── Always fetch recent channel/DM messages for broader context ──────
     const historyResult = await client.conversations.history({
       channel: channelId,
@@ -249,13 +260,16 @@ export async function fetchConversationContext(
     // Reverse so oldest messages come first (Slack returns newest first)
     result.recentMessages.reverse();
   } catch (error: any) {
-    logger.error("Failed to fetch conversation context from Slack", {
+    logger.error("Failed to fetch Slack conversation history", {
       channelId,
+      channelType,
       threadTs,
-      error: error.message,
+      slackErrorCode: error?.data?.error,
+      error: error?.message || String(error),
     });
-    // Return empty context on failure — pipeline will still work with
-    // memories and profile, just without live conversation context.
+    // Pipeline can still work with thread context, memories, and profile, but
+    // history failures must be visible because missing MPIM scopes otherwise
+    // look like "no surrounding context".
   }
 
   return result;

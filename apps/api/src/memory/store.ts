@@ -8,12 +8,25 @@ import { importanceToRelevance } from "./importance.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
 import type { ChannelType } from "../pipeline/context.js";
 
-export type DbChannelType = "dm" | "public_channel" | "private_channel" | "dashboard";
+export type DbChannelType = "dm" | "mpim" | "public_channel" | "private_channel" | "dashboard";
 
 export function toDbChannelType(ct: ChannelType | "dashboard"): DbChannelType {
-  if (ct === "dm" || ct === "public_channel" || ct === "private_channel" || ct === "dashboard") return ct;
-  if (ct === "mpim") return "dm";
-  return "public_channel";
+  switch (ct) {
+    case "dm":
+    case "mpim":
+    case "public_channel":
+    case "private_channel":
+    case "dashboard":
+      return ct;
+    case "slack_list_item":
+      // Slack List item notifications arrive from a real public channel and
+      // are not a durable channel type in the database enum.
+      return "public_channel";
+    default: {
+      const exhaustive: never = ct;
+      return exhaustive;
+    }
+  }
 }
 
 /**
