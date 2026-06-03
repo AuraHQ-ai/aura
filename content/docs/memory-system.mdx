@@ -120,6 +120,24 @@ After every conversation turn, Aura extracts new memories:
 4. New memories are embedded and stored
 5. Extracted entities are resolved and linked to their memories (see below)
 
+### Source provenance
+
+Every memory records who it originated from in `extraction_source_role` (`user`, `assistant`, or `tool`). Most memories come from what a person *stated*, but Aura also extracts **assistant-sourced** memories: the concrete, answer-bearing deliverables she herself produced (a named recommendation, a specific count, key handles) that the user is likely to ask about later. Process and tool-call narration ("Aura searched...", "Aura ran a query") is deliberately not captured -- only the grounded result.
+
+Because Aura is verbose and tool-heavy, assistant-sourced extraction is clamped to keep the store high-signal:
+
+- **One concise memory per distinct deliverable** -- the identity plus its single key distinguishing value, not exhaustive lists or full step-by-step output.
+- **A per-exchange cap** on assistant-sourced memories prevents a single chatty reply from flooding memory. (Empirically tuned: an unclamped probe stored ~81% assistant memories, diluting retrieval; clamping cut that to ~1-3 per conversation.)
+
+### Provenance authority
+
+Grounded sources outrank the assistant's own inferences. Following the authority policy that Zep, Mem0, and the agent-memory literature converge on, `user`- and `tool`-sourced memories have higher authority than `assistant`-sourced ones. A new memory may supersede or invalidate an existing one **only if its authority is greater than or equal to** the old memory's:
+
+- An assistant-sourced memory can never overwrite a user- or tool-sourced fact -- this blocks the self-reinforcing "delusion" loop where Aura's own guess silently replaces something a person actually said (e.g. an assistant "3-day trip" memory superseding a user's "5-day trip" fact).
+- When a conflict is blocked, **both memories are kept** rather than one being deleted; retrieval ranking arbitrates, with a gentle confidence tiebreaker so a lower-trust assistant memory doesn't crowd out an equally relevant user fact.
+
+The same guard runs through deduplication (an assistant near-duplicate won't soft-supersede a user/tool neighbor) and contradiction detection.
+
 ## Entity Extraction & Resolution
 
 Alongside memory extraction, Aura identifies **entities** -- people, companies, projects, products, channels, technologies, concepts, and locations -- mentioned in conversations. Each entity is extracted with:
