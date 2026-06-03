@@ -498,6 +498,13 @@
       "when": 1780042500000,
       "tag": "0070_model_capabilities",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1780471440000,
+      "tag": "0071_add_mpim_channel_type",
+      "breakpoints": true
     }
   ]
 }

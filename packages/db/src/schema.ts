@@ -26,6 +26,7 @@ import { z } from "zod";
 
 export const channelTypeEnum = pgEnum("channel_type", [
   "dm",
+  "mpim",
   "public_channel",
   "private_channel",
   "dashboard",

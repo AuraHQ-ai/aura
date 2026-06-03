@@ -294,7 +294,7 @@ async function fetchEntityMatchedMemories(
     // Step 4: Fetch memories linked to resolved entities, tracking which entity each memory came from
     const privacyFilter = currentUserId
       ? sql`AND (
-          m.source_channel_type != 'dm'
+          m.source_channel_type NOT IN ('dm', 'mpim')
           OR m.shareable = 1
           OR m.related_user_ids @> ARRAY[${currentUserId}]::text[]
         )`
@@ -425,6 +425,23 @@ export function mergeRoundRobin(lists: Memory[][], limit: number): Memory[] {
   return merged;
 }
 
+export function isMemoryVisibleToParticipant(params: {
+  sourceChannelType: string | null | undefined;
+  shareable: number | boolean | null | undefined;
+  relatedUserIds: string[] | null | undefined;
+  currentUserId: string;
+}): boolean {
+  const { sourceChannelType, shareable, relatedUserIds, currentUserId } = params;
+  const isParticipantScoped =
+    sourceChannelType === "dm" || sourceChannelType === "mpim";
+  return (
+    !isParticipantScoped ||
+    shareable === 1 ||
+    shareable === true ||
+    (relatedUserIds ?? []).includes(currentUserId)
+  );
+}
+
 /**
  * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
  *
@@ -503,7 +520,7 @@ async function retrieveSingleQuery(
     const privacyFilter = adminMode
       ? sql`TRUE`
       : sql`(
-        ${memories.sourceChannelType} != 'dm'
+        ${memories.sourceChannelType} NOT IN ('dm', 'mpim')
         OR ${memories.shareable} = 1
         OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
       )`;

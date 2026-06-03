@@ -72,6 +72,8 @@ export interface MessageContext {
   isMentioned: boolean;
   /** Whether Aura was addressed by name */
   isAddressedByName: boolean;
+  /** Force surrounding channel/DM context into the prompt for implicit requests. */
+  useSurroundingContext?: boolean;
   /** When set, this message is a Slackbot notification about a Slack List item */
   slackListItemContext?: SlackListItemContext;
 }

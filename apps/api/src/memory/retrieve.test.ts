@@ -29,7 +29,12 @@ vi.mock("ai", () => ({
   rerank: vi.fn(),
 }));
 
-import { hasRetrievalEvidence, looksMultiHop, mergeRoundRobin } from "./retrieve.js";
+import {
+  hasRetrievalEvidence,
+  isMemoryVisibleToParticipant,
+  looksMultiHop,
+  mergeRoundRobin,
+} from "./retrieve.js";
 import type { Memory } from "@aura/db/schema";
 
 describe("hasRetrievalEvidence (#1045 abstention gate)", () => {
@@ -93,5 +98,56 @@ describe("query planning helpers (#276 / #1056)", () => {
       3,
     );
     expect(merged.map((x) => x.id)).toEqual(["a1", "b1", "c1"]);
+  });
+});
+
+describe("participant-scoped memory visibility", () => {
+  it("keeps MPIM memories visible only to participants unless shareable", () => {
+    expect(
+      isMemoryVisibleToParticipant({
+        sourceChannelType: "mpim",
+        shareable: 0,
+        relatedUserIds: ["U_participant"],
+        currentUserId: "U_participant",
+      }),
+    ).toBe(true);
+
+    expect(
+      isMemoryVisibleToParticipant({
+        sourceChannelType: "mpim",
+        shareable: 0,
+        relatedUserIds: ["U_participant"],
+        currentUserId: "U_outsider",
+      }),
+    ).toBe(false);
+
+    expect(
+      isMemoryVisibleToParticipant({
+        sourceChannelType: "mpim",
+        shareable: 1,
+        relatedUserIds: [],
+        currentUserId: "U_outsider",
+      }),
+    ).toBe(true);
+  });
+
+  it("applies the same participant scope to DMs but not workspace channels", () => {
+    expect(
+      isMemoryVisibleToParticipant({
+        sourceChannelType: "dm",
+        shareable: 0,
+        relatedUserIds: ["U_other"],
+        currentUserId: "U_current",
+      }),
+    ).toBe(false);
+
+    expect(
+      isMemoryVisibleToParticipant({
+        sourceChannelType: "public_channel",
+        shareable: 0,
+        relatedUserIds: [],
+        currentUserId: "U_current",
+      }),
+    ).toBe(true);
   });
 });
