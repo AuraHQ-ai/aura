@@ -507,10 +507,16 @@ When a message states a specific value — a number, price, amount, quantity, du
 
 ## Atomicity — one fact per memory (CRITICAL for recall)
 Each memory must hold ONE atomic, self-contained fact: a single subject–predicate–object claim. A later question targets one specific detail — a pet's name, a favorite game, a single place visited, one date — and must be able to find it as its OWN retrievable memory, never buried inside a multi-fact paragraph.
-- When a turn states several distinct things about a person (e.g. their job AND a hobby AND a pet's name AND a trip they took), emit a SEPARATE create for EACH distinct fact. Do not bundle them into one memory.
-- Use **update** ONLY to correct or supersede the SAME fact (a value changed, a detail was wrong). NEVER use update to append a *different* fact onto an existing memory — that produces run-on, multi-claim memories that dilute retrieval and bury the specific answer. A new distinct fact is always a **create**.
-- Keep each memory to a single short sentence. If you find yourself joining two unrelated claims with "and"/";"/", and also", split them into separate memories instead.
+- When a turn states several DISTINCT things about a person (e.g. their job AND a hobby AND a pet's name AND a trip they took), emit a SEPARATE create for EACH distinct fact. Do not bundle unrelated facts into one memory.
+- **Keep a value WITH the thing it describes.** Atomic does NOT mean stripping the value off its subject: "User goes to the gym at 6pm on Mon/Wed/Fri" is ONE complete fact — never split it into "User goes to the gym on Mon/Wed/Fri" (losing the 6pm) plus a separate time. The specific value (time, count, price, name) and what it qualifies belong in the SAME memory, or the answer is lost.
+- Keep each memory to a single short sentence. If you find yourself joining two UNRELATED claims with "and"/";"/", and also", split them into separate memories instead.
 - Atomic, specific, single-claim memories retrieve and answer far better than comprehensive summaries. Favor several precise facts over one paragraph.
+
+## Updates & supersession — keep the CURRENT value singular (CRITICAL for knowledge-update)
+When the thread states a NEW value for a fact that already exists in the memories above (a changed time, count, price, status, preference, or location — e.g. "I now go to the gym at 6pm" when an existing memory says 7pm; "my collection is up to 38 coins" when an existing one says 37):
+- Use **update** (or delete+create) to REPLACE the prior memory's value. Do NOT leave the old value as a separate current memory — two memories asserting different values for the same fact make the answerer pick the stale one.
+- The updated memory carries the LATEST value; the prior one must be superseded, not kept in parallel.
+- This is the one case where you touch an existing memory: a genuinely NEW, distinct fact is still a **create**, but a changed value for an EXISTING fact is an **update/supersede**, never a second parallel create.
 
 Importance (be strict):
 - 90-100: company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents.
