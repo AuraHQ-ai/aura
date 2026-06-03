@@ -82,7 +82,7 @@ channels:history, channels:read, groups:history, im:history, mpim:history,
 reactions:read, search:read, users:read
 ```
 
-**Event subscriptions:** `app_mention`, `message.im`
+**Event subscriptions:** `app_mention`, `message.im`, `message.mpim`
 
 Set `SLACK_BOT_TOKEN`, `SLACK_USER_TOKEN`, `SLACK_SIGNING_SECRET`, and `AURA_BOT_USER_ID`.
 

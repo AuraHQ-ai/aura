@@ -41,6 +41,10 @@ import {
   generateUpdatedDmThreadTitle,
 } from "./dm-title.js";
 import {
+  BARE_MENTION_WITH_CONTEXT_PROMPT,
+  shouldGreetAndBailForEmptyMessage,
+} from "./empty-message.js";
+import {
   createConversationTrace,
   persistConversationInputs,
   persistConversationSteps,
@@ -208,6 +212,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       context.channelId,
       botUserId,
       context.threadTs,
+      context.channelType,
     );
     alwaysProcessChannels = new Set(
       (await getSettingJSON<string[]>("always_process_channels", [])) ?? [],
@@ -269,17 +274,57 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   let capturedResponse: LLMResponse | undefined;
   let capturedSystemPrompt: string | undefined;
   let capturedUserPrompt: string | undefined;
+  let bareMentionWithContext = false;
 
   try {
     // ── Edge case: empty or near-empty message (but allow image-only) ───
     const hasFiles = Array.isArray((event as any).files) && (event as any).files.length > 0;
     if (context.text.trim().length === 0 && !hasFiles) {
-      await safePostMessage(client, {
-        channel: context.channelId,
-        text: "Hey. What's up?",
-        thread_ts: replyThreadTs,
+      if (context.isMentioned && !conversation) {
+        conversation = await fetchConversationContext(
+          client,
+          context.channelId,
+          botUserId,
+          context.threadTs,
+          context.channelType,
+        );
+      }
+
+      if (shouldGreetAndBailForEmptyMessage(context, conversation)) {
+        await safePostMessage(client, {
+          channel: context.channelId,
+          text: "Hey. What's up?",
+          thread_ts: replyThreadTs,
+        });
+        const tracePromise = persistConversationTrace({
+          channelId: context.channelId,
+          threadTs: replyThreadTs,
+          userId: context.userId,
+          modelId: "greet-and-bail",
+          systemPrompt: "Greet-and-bail guard: empty message with no surrounding Slack context.",
+          userPrompt: context.isMentioned ? "(bare mention)" : "(empty message)",
+        }).catch((error: any) => {
+          logger.error("Failed to persist greet-and-bail trace", {
+            channelId: context.channelId,
+            error: error?.message || String(error),
+          });
+        });
+        if (waitUntil) {
+          waitUntil(tracePromise);
+        } else {
+          await tracePromise;
+        }
+        return;
+      }
+
+      bareMentionWithContext = true;
+      context.useSurroundingContext = true;
+      logger.info("Bare mention has surrounding context; continuing through pipeline", {
+        channelId: context.channelId,
+        channelType: context.channelType,
+        threadTs: context.threadTs,
+        messageTs: context.messageTs,
       });
-      return;
     }
 
     // Set assistant thread status — triggers the shimmer animation on
@@ -313,7 +358,9 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     }
 
     // ── Edge case: extremely long message ────────────────────────────────
-    let messageText = buildMessageText(context.text, hasFiles, voiceTranscripts);
+    let messageText = bareMentionWithContext
+      ? BARE_MENTION_WITH_CONTEXT_PROMPT
+      : buildMessageText(context.text, hasFiles, voiceTranscripts);
     if (messageText.length > MAX_MESSAGE_LENGTH) {
       const originalLength = messageText.length;
       messageText = messageText.substring(0, MAX_MESSAGE_LENGTH);
@@ -374,6 +421,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         context.channelId,
         botUserId,
         context.threadTs,
+        context.channelType,
       );
     }
     const retrievalStart = Date.now();
