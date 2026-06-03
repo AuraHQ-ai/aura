@@ -104,6 +104,49 @@ for (const ws of ["bench-local-<key>"]) {
 }
 ```
 
+## LoCoMo fast loop (seed once, score a curated subset)
+
+A full LoCoMo run is ~105 min / ~$70, but almost all of that is re-extracting
+the 10 conversations (~3,075 per-reply units). Every LoCoMo failure mode lives
+**downstream of extraction** (over-abstention, multi-hop partial coverage,
+temporal rendering, retrieval whiffs), so when you're iterating on
+retrieval/ranking/answerer/temporal-format changes you should **never
+re-extract**. Two existing primitives, no new machinery:
+
+1. **Seed ONCE** — extract all 10 conversations into a persistent workspace
+   (`--to=extract` skips scoring; bounded by the longest conversation's serial
+   extraction, ~45–60 min one time):
+   ```bash
+   cd apps/api && pnpm exec tsx src/scripts/bench-memory.ts \
+     --dataset=locomo --subset=full --bench-id=locomo --reset --to=extract --concurrency=10
+   ```
+2. **Iterate** — score a curated 250-case subset against those memories, no
+   extraction (~5–10 min, ~$8):
+   ```bash
+   pnpm --filter aura-api bench:locomo-fast --emit            # writes /tmp/locomo-fast-corpus.json
+   cd apps/api && pnpm exec tsx src/scripts/bench-memory.ts \
+     --corpus-file=/tmp/locomo-fast-corpus.json --from=score --bench-id=locomo
+   ```
+
+**Why `--from=score` is faithful for LoCoMo:** LoCoMo questions resolve to
+end-of-conversation (`resolveQuestionDate` → `endOfConversationInstant`), so the
+as-of retrieval instant already includes every memory the conversation produced.
+With extraction complete, each question retrieves bit-identically to a full run —
+the extraction frontier only changes *when* a question releases, never *what* it
+sees (`timeline.ts` `isReleasable`/`scoreOne`). After an **extraction or schema**
+change, re-seed with `--from=extract` (reuses messages, re-extracts) before
+scoring.
+
+**The curated subset** (`bench/fast/locomo-fast.json`, built by
+`bench/scripts/build-locomo-fast.ts`) is a stratified seeded sample, 50/category,
+that (a) reproduces the full run's **per-category** QA within ±2pp and (b)
+guarantees coverage of every failure bucket (`over_abstain`, `answerer_wrong`,
+`partial_coverage`, `zero_coverage`, plus `pass`/`partial_credit` controls to
+catch regressions). Read per-**category** deltas, not the blended overall — the
+subset is category-balanced while the full set is open_domain-heavy, so the
+blended overall is a few pp lower by construction. Regenerate the selection from
+a fresh full run with `pnpm --filter aura-api bench:locomo-fast --select`.
+
 ## Isolation: workspace-id vs Neon branch
 - **Default (what this loop uses):** logical isolation by `workspace_id`
   (`bench-local-<key>`) on the agent's existing Neon DB. Simple, fast, cleaned

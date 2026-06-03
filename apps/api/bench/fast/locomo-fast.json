@@ -1,0 +1,1291 @@
+{
+  "description": "Curated LoCoMo fast-iteration subset. Stratified seeded sample per category that preserves the full run's QA mix and covers every failure bucket. Use with `pnpm bench:locomo-fast --emit` + `--corpus-file ... --from=score` against a workspace seeded once with the full LoCoMo extraction. See build-locomo-fast.ts.",
+  "sourceRun": "2026-06-02T20-56-02-166Z-fthbflk5",
+  "seed": 4711,
+  "perCategory": 50,
+  "generatedAt": "2026-06-03T05:18:54.336Z",
+  "projection": {
+    "adversarial": {
+      "subsetQa": 0.05,
+      "fullQa": 0.05605381165919283,
+      "n": 50,
+      "fullN": 446
+    },
+    "single_hop": {
+      "subsetQa": 0.31,
+      "fullQa": 0.29906542056074764,
+      "n": 50,
+      "fullN": 321
+    },
+    "multi_hop": {
+      "subsetQa": 0.45,
+      "fullQa": 0.4592198581560284,
+      "n": 50,
+      "fullN": 282
+    },
+    "temporal": {
+      "subsetQa": 0.34,
+      "fullQa": 0.359375,
+      "n": 50,
+      "fullN": 96
+    },
+    "open_domain": {
+      "subsetQa": 0.55,
+      "fullQa": 0.5422116527942925,
+      "n": 50,
+      "fullN": 841
+    }
+  },
+  "selection": [
+    {
+      "id": "conv-47-q175",
+      "category": "adversarial",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-30-q103",
+      "category": "adversarial",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q199",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q176",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-44-q147",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q220",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-50-q198",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q192",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-44-q128",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-43-q228",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q188",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-26-q169",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-43-q223",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-26-q197",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-43-q224",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-49-q188",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-44-q137",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-47-q168",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-49-q178",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-30-q86",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-50-q189",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q175",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-49-q195",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q217",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-49-q182",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q256",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-44-q156",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q184",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-26-q170",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-48-q223",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-48-q231",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-48-q203",
+      "category": "adversarial",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-47-q162",
+      "category": "adversarial",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-47-q158",
+      "category": "adversarial",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-50-q183",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-47-q188",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-50-q169",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-50-q168",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-44-q139",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q188",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-42-q208",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q240",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-41-q171",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-42-q249",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q232",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-49-q162",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q195",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-50-q158",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-48-q208",
+      "category": "adversarial",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-47-q186",
+      "category": "adversarial",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-30-q32",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-26-q1",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-30-q34",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q69",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-42-q44",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-30-q35",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-49-q60",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-30-q28",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q50",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q76",
+      "category": "single_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q56",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-42-q35",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-49-q59",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-26-q36",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-26-q74",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q68",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q10",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-41-q43",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-44-q5",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-41-q4",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-30-q8",
+      "category": "single_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-43-q33",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q61",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q54",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-48-q66",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-43-q12",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-47-q53",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q58",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-47-q46",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q31",
+      "category": "single_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-43-q68",
+      "category": "single_hop",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-44-q30",
+      "category": "single_hop",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-30-q38",
+      "category": "single_hop",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-47-q31",
+      "category": "single_hop",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-47-q13",
+      "category": "single_hop",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-48-q51",
+      "category": "single_hop",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-43-q24",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-48-q17",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-42-q2",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-48-q26",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-26-q25",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-48-q81",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-42-q41",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-26-q26",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-30-q19",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-49-q22",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-47-q4",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-49-q17",
+      "category": "single_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-49-q45",
+      "category": "single_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-49-q70",
+      "category": "single_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-44-q27",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-41-q60",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-49-q64",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-49-q82",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-49-q37",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-42-q62",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-50-q18",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-43-q43",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-44-q26",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-43-q61",
+      "category": "multi_hop",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-41-q21",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-43-q18",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-43-q4",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q23",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-49-q77",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-48-q86",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-47-q40",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-43-q14",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-48-q82",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-48-q8",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-26-q38",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-41-q47",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-49-q26",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q6",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q30",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-26-q15",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q64",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-42-q30",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q3",
+      "category": "multi_hop",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-26-q3",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-30-q29",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-42-q49",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q24",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-41-q15",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-41-q32",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-42-q1",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-26-q34",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-26-q65",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q22",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q40",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q41",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q39",
+      "category": "multi_hop",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-44-q18",
+      "category": "multi_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q2",
+      "category": "multi_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-49-q15",
+      "category": "multi_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-44-q14",
+      "category": "multi_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-44-q23",
+      "category": "multi_hop",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q1",
+      "category": "multi_hop",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-44-q28",
+      "category": "multi_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q19",
+      "category": "multi_hop",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-26-q69",
+      "category": "temporal",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-47-q25",
+      "category": "temporal",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-42-q0",
+      "category": "temporal",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q13",
+      "category": "temporal",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-26-q2",
+      "category": "temporal",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-49-q46",
+      "category": "temporal",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-44-q52",
+      "category": "temporal",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-49-q43",
+      "category": "temporal",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-41-q64",
+      "category": "temporal",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-42-q12",
+      "category": "temporal",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-26-q59",
+      "category": "temporal",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-44-q33",
+      "category": "temporal",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-43-q19",
+      "category": "temporal",
+      "bucket": "partial_coverage"
+    },
+    {
+      "id": "conv-49-q27",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q48",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q39",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-49-q38",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-43-q3",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-26-q50",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q70",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-49-q10",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-47-q30",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-43-q27",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-41-q14",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-42-q87",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-26-q42",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q37",
+      "category": "temporal",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-47-q19",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-47-q7",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-44-q43",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-41-q45",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-48-q23",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-44-q44",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q34",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-50-q42",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-47-q0",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-48-q18",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-48-q28",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-50-q4",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-26-q30",
+      "category": "temporal",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q8",
+      "category": "temporal",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-47-q33",
+      "category": "temporal",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q73",
+      "category": "temporal",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-43-q32",
+      "category": "temporal",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-47-q17",
+      "category": "temporal",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q60",
+      "category": "temporal",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-47-q16",
+      "category": "temporal",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-41-q8",
+      "category": "temporal",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-47-q36",
+      "category": "temporal",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-48-q75",
+      "category": "temporal",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-47-q112",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-47-q133",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-44-q90",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-42-q149",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q135",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-41-q151",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q146",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q186",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-49-q121",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-49-q150",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-47-q92",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-50-q105",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-42-q174",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-26-q118",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-49-q134",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-42-q118",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q140",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q124",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-42-q163",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-41-q132",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-41-q137",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q62",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-48-q121",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-47-q79",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-44-q91",
+      "category": "open_domain",
+      "bucket": "pass"
+    },
+    {
+      "id": "conv-30-q50",
+      "category": "open_domain",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-41-q138",
+      "category": "open_domain",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q174",
+      "category": "open_domain",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-30-q56",
+      "category": "open_domain",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-43-q156",
+      "category": "open_domain",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-30-q48",
+      "category": "open_domain",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-41-q77",
+      "category": "open_domain",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-50-q71",
+      "category": "open_domain",
+      "bucket": "zero_coverage"
+    },
+    {
+      "id": "conv-42-q173",
+      "category": "open_domain",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-41-q73",
+      "category": "open_domain",
+      "bucket": "answerer_wrong"
+    },
+    {
+      "id": "conv-48-q162",
+      "category": "open_domain",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-42-q110",
+      "category": "open_domain",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-30-q57",
+      "category": "open_domain",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-48-q189",
+      "category": "open_domain",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-42-q179",
+      "category": "open_domain",
+      "bucket": "partial_credit"
+    },
+    {
+      "id": "conv-50-q136",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-43-q79",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-43-q168",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-47-q116",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q162",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-44-q115",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-49-q153",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-49-q102",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-48-q61",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    },
+    {
+      "id": "conv-42-q165",
+      "category": "open_domain",
+      "bucket": "over_abstain"
+    }
+  ]
+}

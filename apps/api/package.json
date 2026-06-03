@@ -19,6 +19,7 @@
     "bench:fetch-corpus": "tsx bench/scripts/fetch-corpus.ts",
     "bench:report": "tsx bench/scripts/report.ts",
     "bench:inspect": "tsx bench/scripts/inspect-run.ts",
+    "bench:locomo-fast": "tsx bench/scripts/build-locomo-fast.ts",
     "bench:pr-comment": "tsx bench/scripts/pr-comment.ts"
   },
   "dependencies": {
