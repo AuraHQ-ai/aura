@@ -34,6 +34,12 @@ Latest baseline: `f877bc5` · 2026-06-02 18:28 UTC.
 
 Overall QA accuracy and recall@15 over time, grouped by scope so every row in a table is comparable. Newest first.
 
+### `locomo/full`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-02 | `deb43d8` | 37% | 70% | 1986 | $70.26 | 105m30s |
+
 ### `longmemeval/medium`
 
 | date | commit | QA | recall@15 | n | cost | runtime |
