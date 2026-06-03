@@ -34,17 +34,11 @@ Latest baseline: `f877bc5` · 2026-06-02 18:28 UTC.
 
 Overall QA accuracy and recall@15 over time, grouped by scope so every row in a table is comparable. Newest first.
 
-### `locomo/full`
-
-| date | commit | QA | recall@15 | n | cost | runtime |
-|---|---|---:|---:|---:|---:|---:|
-| 2026-06-03 | `57c088c` | 45% | 80% | 1986 | $36.69 | 62m38s |
-| 2026-06-02 | `deb43d8` | 37% | 70% | 1986 | $70.26 | 105m30s |
-
 ### `longmemeval/toy`
 
 | date | commit | QA | recall@15 | n | cost | runtime |
 |---|---|---:|---:|---:|---:|---:|
+| 2026-06-03 | `0e3fb13` | 79% | 88% | 12 | $1.00 | 13m58s |
 | 2026-06-03 | `26a54c6` | 71% | 92% | 12 | $0.96 | 10m48s |
 | 2026-06-02 | `ad3d3da` | 75% | 92% | 12 | $1.01 | 14m47s |
 | 2026-06-01 | `59ef24f` | 58% | 88% | 12 | $0.58 | 6m45s |
@@ -52,6 +46,13 @@ Overall QA accuracy and recall@15 over time, grouped by scope so every row in a 
 | 2026-06-01 | `03d4a4c` | 67% | 79% | 12 | $0.57 | 2m57s |
 | 2026-06-01 | `8435b97` | 71% | 79% | 12 | $0.57 | 3m03s |
 | 2026-06-01 | `c34c107` | 67% | 71% | 12 | $0.57 | 3m09s |
+
+### `locomo/full`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-03 | `57c088c` | 45% | 80% | 1986 | $36.69 | 62m38s |
+| 2026-06-02 | `deb43d8` | 37% | 70% | 1986 | $70.26 | 105m30s |
 
 ### `longmemeval/medium`
 
