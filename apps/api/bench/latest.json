@@ -538,77 +538,6 @@
       "prNumber": 1084
     },
     {
-      "runId": "2026-06-03T07-36-13-553Z-kiddquu4",
-      "timestamp": "2026-06-03T07:47:04.913Z",
-      "commit": "26a54c6",
-      "dirty": false,
-      "datasets": [
-        "longmemeval"
-      ],
-      "subset": "toy",
-      "limit": null,
-      "category": null,
-      "corpusHash": "b178d604c01afa4a",
-      "caseSetHash": "0785d34e2111c176",
-      "runtimeMs": 647659,
-      "costUsd": 0.9648030000000003,
-      "models": {
-        "extraction": "anthropic/claude-haiku-4.5",
-        "answerer": "anthropic/claude-opus-4.8",
-        "judge": "anthropic/claude-opus-4.6"
-      },
-      "scores": [
-        {
-          "dataset": "longmemeval",
-          "category": "knowledge-update",
-          "qa": 1,
-          "recall": 1,
-          "n": 2
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "multi-session",
-          "qa": 0.25,
-          "recall": 0.5,
-          "n": 2
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "single-session-assistant",
-          "qa": 1,
-          "recall": 1,
-          "n": 2
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "single-session-preference",
-          "qa": 0,
-          "recall": 1,
-          "n": 2
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "single-session-user",
-          "qa": 1,
-          "recall": 1,
-          "n": 2
-        },
-        {
-          "dataset": "longmemeval",
-          "category": "temporal-reasoning",
-          "qa": 1,
-          "recall": 1,
-          "n": 2
-        }
-      ],
-      "overall": {
-        "qa": 0.7083333333333334,
-        "recall": 0.9166666666666666,
-        "n": 12
-      },
-      "prNumber": 1091
-    },
-    {
       "runId": "2026-06-03T09-21-30-119Z-2brvt1i8",
       "timestamp": "2026-06-03T10:24:28.300Z",
       "commit": "57c088c",
@@ -671,6 +600,77 @@
         "n": 1986
       },
       "prNumber": 1092
+    },
+    {
+      "runId": "2026-06-03T17-41-34-806Z-9fw0qik8",
+      "timestamp": "2026-06-03T17:55:36.883Z",
+      "commit": "0e3fb13",
+      "dirty": false,
+      "datasets": [
+        "longmemeval"
+      ],
+      "subset": "toy",
+      "limit": null,
+      "category": null,
+      "corpusHash": "b178d604c01afa4a",
+      "caseSetHash": "0785d34e2111c176",
+      "runtimeMs": 838378,
+      "costUsd": 0.9968819999999999,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.8",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "longmemeval",
+          "category": "knowledge-update",
+          "qa": 1,
+          "recall": 1,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "multi-session",
+          "qa": 0.75,
+          "recall": 0.75,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-assistant",
+          "qa": 0.5,
+          "recall": 0.5,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-preference",
+          "qa": 0.5,
+          "recall": 1,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "single-session-user",
+          "qa": 1,
+          "recall": 1,
+          "n": 2
+        },
+        {
+          "dataset": "longmemeval",
+          "category": "temporal-reasoning",
+          "qa": 1,
+          "recall": 1,
+          "n": 2
+        }
+      ],
+      "overall": {
+        "qa": 0.7916666666666666,
+        "recall": 0.875,
+        "n": 12
+      },
+      "prNumber": 1094
     }
   ]
 }
