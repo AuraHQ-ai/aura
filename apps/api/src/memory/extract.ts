@@ -505,6 +505,13 @@ When a message states a specific value — a number, price, amount, quantity, du
 - Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The preference and the precise figure are both worth keeping.
 - A concrete personal/world fact that carries a specific stated value is worth AT LEAST importance 40 — do not discard it as noise just because it seems minor in the moment.
 
+## Atomicity — one fact per memory (CRITICAL for recall)
+Each memory must hold ONE atomic, self-contained fact: a single subject–predicate–object claim. A later question targets one specific detail — a pet's name, a favorite game, a single place visited, one date — and must be able to find it as its OWN retrievable memory, never buried inside a multi-fact paragraph.
+- When a turn states several distinct things about a person (e.g. their job AND a hobby AND a pet's name AND a trip they took), emit a SEPARATE create for EACH distinct fact. Do not bundle them into one memory.
+- Use **update** ONLY to correct or supersede the SAME fact (a value changed, a detail was wrong). NEVER use update to append a *different* fact onto an existing memory — that produces run-on, multi-claim memories that dilute retrieval and bury the specific answer. A new distinct fact is always a **create**.
+- Keep each memory to a single short sentence. If you find yourself joining two unrelated claims with "and"/";"/", and also", split them into separate memories instead.
+- Atomic, specific, single-claim memories retrieve and answer far better than comprehensive summaries. Favor several precise facts over one paragraph.
+
 Importance (be strict):
 - 90-100: company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents.
 - 70-89: important technical/product decisions, high-impact org/customer context, durable people facts.
