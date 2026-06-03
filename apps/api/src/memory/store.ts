@@ -459,12 +459,20 @@ export async function supersedeMemory(
   const now = at ?? new Date();
   try {
     await withTransaction(async (tx) => {
+      // Clamp valid_until to never precede the row's own valid_from. When a
+      // memory is superseded by an event timestamped earlier than its own
+      // valid_from (replay/import ordering, or a backdated correction), a raw
+      // `valid_until = now` would produce an INVERTED window (valid_until <
+      // valid_from). That window is empty, so bi-temporal as-of retrieval
+      // (`valid_from <= T AND valid_until > T`) can never surface the row at
+      // ANY instant — silently erasing the fact and corrupting knowledge-update
+      // / temporal answers. GREATEST keeps the window non-degenerate. (#1040)
       await tx.execute(sql`
         UPDATE memories
         SET status = 'superseded',
             superseded_at = ${now},
             superseded_by_memory_id = ${newMemoryId}::uuid,
-            valid_until = ${now},
+            valid_until = GREATEST(${now}, valid_from),
             updated_at = ${now}
         WHERE id = ${oldMemoryId}::uuid
           AND status IN ('current', 'disputed')
@@ -773,7 +781,13 @@ export async function archiveMemory(
       .update(memories)
       // Historical replays can pass `at`; close the validity interval there so
       // bi-temporal as-of retrieval treats the memory as gone after the delete.
-      .set({ status: "archived", updatedAt: now, ...(at ? { validUntil: at } : {}) })
+      // Clamp to valid_from (GREATEST) so an early/backdated `at` can't create an
+      // inverted, never-visible window (see supersedeMemory / #1040).
+      .set({
+        status: "archived",
+        updatedAt: now,
+        ...(at ? { validUntil: sql`GREATEST(${at}, ${memories.validFrom})` } : {}),
+      })
       .where(eq(memories.id, memoryId));
     logger.info("Archived memory", { memoryId, reason });
   } catch (error) {
