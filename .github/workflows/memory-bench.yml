@@ -156,6 +156,11 @@ env:
   # dataset+subset labels:
   #   bench:lme:toy | bench:lme:fast | bench:lme:medium | bench:lme:full
   #   bench:locomo:full
+  # NOTE: the server bench (medium/full) also requires a memory-relevant PATH
+  # change (the `changes` filter below gates it on `needs.changes.outputs.memory`).
+  # An empty/label-only commit will NOT run the server bench — the toy smoke
+  # still runs, but the labeled subset is skipped. To (re)capture a baseline,
+  # the PR must touch a path under the `memory` filter AND carry the subset label.
   # LoCoMo intentionally has no subset labels: without question timestamps, even
   # tiny QA subsets replay large full conversations, so only full/manual-style
   # runs are worth interpreting.
