@@ -467,70 +467,6 @@
       "prNumber": 1076
     },
     {
-      "runId": "2026-06-03T09-21-30-119Z-2brvt1i8",
-      "timestamp": "2026-06-03T10:24:28.300Z",
-      "commit": "57c088c",
-      "dirty": false,
-      "datasets": [
-        "locomo"
-      ],
-      "subset": "full",
-      "limit": null,
-      "category": null,
-      "corpusHash": "f9cf2279e3e18aae",
-      "caseSetHash": "7f800148c03b2f36",
-      "runtimeMs": 3757884,
-      "costUsd": 36.6948820000001,
-      "models": {
-        "extraction": "anthropic/claude-haiku-4.5",
-        "answerer": "anthropic/claude-opus-4.8",
-        "judge": "anthropic/claude-opus-4.6"
-      },
-      "scores": [
-        {
-          "dataset": "locomo",
-          "category": "adversarial",
-          "qa": 0.043721973094170405,
-          "recall": 0.7466367713004485,
-          "n": 446
-        },
-        {
-          "dataset": "locomo",
-          "category": "multi_hop",
-          "qa": 0.5851063829787234,
-          "recall": 0.738186704942024,
-          "n": 282
-        },
-        {
-          "dataset": "locomo",
-          "category": "open_domain",
-          "qa": 0.6468489892984542,
-          "recall": 0.8816884661117717,
-          "n": 841
-        },
-        {
-          "dataset": "locomo",
-          "category": "single_hop",
-          "qa": 0.3925233644859813,
-          "recall": 0.7834890965732089,
-          "n": 321
-        },
-        {
-          "dataset": "locomo",
-          "category": "temporal",
-          "qa": 0.34375,
-          "recall": 0.6598084886128364,
-          "n": 96
-        }
-      ],
-      "overall": {
-        "qa": 0.4468781470292044,
-        "recall": 0.8046776144026396,
-        "n": 1986
-      },
-      "prNumber": 1092
-    },
-    {
       "runId": "2026-06-03T17-41-34-806Z-9fw0qik8",
       "timestamp": "2026-06-03T17:55:36.883Z",
       "commit": "0e3fb13",
@@ -669,6 +605,70 @@
         "qa": 0.7444444444444445,
         "recall": 0.9166666666666666,
         "n": 180
+      },
+      "prNumber": 1096
+    },
+    {
+      "runId": "2026-06-04T17-35-35-382Z-0f373go5",
+      "timestamp": "2026-06-04T18:50:27.647Z",
+      "commit": "d284163",
+      "dirty": false,
+      "datasets": [
+        "locomo"
+      ],
+      "subset": "full",
+      "limit": null,
+      "category": null,
+      "corpusHash": "f9cf2279e3e18aae",
+      "caseSetHash": "7f800148c03b2f36",
+      "runtimeMs": 4469049,
+      "costUsd": 37.923755000000284,
+      "models": {
+        "extraction": "anthropic/claude-haiku-4.5",
+        "answerer": "anthropic/claude-opus-4.8",
+        "judge": "anthropic/claude-opus-4.6"
+      },
+      "scores": [
+        {
+          "dataset": "locomo",
+          "category": "adversarial",
+          "qa": 0.04708520179372197,
+          "recall": 0.7443946188340808,
+          "n": 446
+        },
+        {
+          "dataset": "locomo",
+          "category": "multi_hop",
+          "qa": 0.5070921985815603,
+          "recall": 0.7353568614206911,
+          "n": 282
+        },
+        {
+          "dataset": "locomo",
+          "category": "open_domain",
+          "qa": 0.6766109785202864,
+          "recall": 0.8852556480380499,
+          "n": 841
+        },
+        {
+          "dataset": "locomo",
+          "category": "single_hop",
+          "qa": 0.3115264797507788,
+          "recall": 0.7907580477673936,
+          "n": 321
+        },
+        {
+          "dataset": "locomo",
+          "category": "temporal",
+          "qa": 0.3854166666666667,
+          "recall": 0.7025750517598344,
+          "n": 96
+        }
+      ],
+      "overall": {
+        "qa": 0.437720625315179,
+        "recall": 0.8084464545993305,
+        "n": 1983
       },
       "prNumber": 1096
     }
