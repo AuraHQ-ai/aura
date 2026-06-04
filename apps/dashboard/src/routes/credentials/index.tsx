@@ -35,7 +35,7 @@ import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Plus, Search, Check, ChevronsUpDown } from "lucide-react";
 
 const SCOPE_LABELS: Record<
@@ -118,11 +118,24 @@ function CredentialsPage() {
       ? session.name || session.slackUserId
       : null);
 
-  useEffect(() => {
-    if (showCreate && session?.slackUserId && !newOwnerId) {
-      setNewOwnerId(session.slackUserId);
-    }
-  }, [showCreate, session?.slackUserId, newOwnerId]);
+  const resetCreateForm = useCallback(() => {
+    setNewName("");
+    setNewType("token");
+    setNewValue("");
+    setNewOwnerId(session?.slackUserId ?? "");
+    setNewScope("member");
+    setOwnerPickerOpen(false);
+  }, [session?.slackUserId]);
+
+  const openCreateDialog = () => {
+    resetCreateForm();
+    setShowCreate(true);
+  };
+
+  const handleCreateOpenChange = (open: boolean) => {
+    setShowCreate(open);
+    if (!open) resetCreateForm();
+  };
 
   const createMutation = useMutation({
     mutationFn: (payload: {
@@ -135,11 +148,7 @@ function CredentialsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["credentials"] });
       setShowCreate(false);
-      setNewName("");
-      setNewType("token");
-      setNewValue("");
-      setNewOwnerId("");
-      setNewScope("member");
+      resetCreateForm();
     },
   });
 
@@ -175,7 +184,7 @@ function CredentialsPage() {
             className="pl-9"
           />
         </div>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
+        <Button size="sm" onClick={openCreateDialog}>
           <Plus className="h-4 w-4" /> Add Credential
         </Button>
       </div>
@@ -240,7 +249,7 @@ function CredentialsPage() {
 
       <Pagination total={total} pageSize={PAGE_SIZE} page={page} onPageChange={setPage} />
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+      <Dialog open={showCreate} onOpenChange={handleCreateOpenChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Credential</DialogTitle>
@@ -354,7 +363,7 @@ function CredentialsPage() {
             <div className="flex justify-end gap-2 pt-1">
               <Button
                 variant="outline"
-                onClick={() => setShowCreate(false)}
+                onClick={() => handleCreateOpenChange(false)}
               >
                 Cancel
               </Button>
