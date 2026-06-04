@@ -19,38 +19,34 @@ import type { BenchCase } from "./types.js";
 import { resolveBenchJudgeModel } from "./models.js";
 import type { UsageLike } from "./cost-meter.js";
 
-export const judgeSchema = z.object({
-  verdict: z
-    .enum(["correct", "partial", "incorrect", "abstain_ok"])
-    .describe(
-      "correct = matches gold. partial = captures the right idea but misses a detail. incorrect = wrong/unsupported. abstain_ok = used only for abstention cases when the model correctly refused.",
-    ),
-  confidence: z
-    .number()
-    .min(0)
-    .max(1)
-    .describe("0..1 — how sure are you about the verdict."),
-  rationale: z
-    .string()
-    .describe("One concise sentence explaining the verdict."),
-});
-
-export type JudgeResult = z.infer<typeof judgeSchema>;
+/**
+ * Verdict type. We grade BINARY (correct/incorrect, plus abstain_ok for
+ * abstention cases) to match the published evaluators — official LongMemEval
+ * (`evaluate_qa.py`, GPT-4o yes/no) and mem0 (`llm_judge.py`, CORRECT/WRONG).
+ * `partial` is retained ONLY in the type for backward-compat with historical
+ * `history.jsonl` rows; the judge no longer emits it (the schemas below are
+ * binary), so new runs are directly comparable to published numbers instead of
+ * silently half-crediting via `partial` = 0.5 in `score.ts`.
+ */
+export type JudgeResult = {
+  verdict: "correct" | "partial" | "incorrect" | "abstain_ok";
+  confidence: number;
+  rationale: string;
+};
 
 /**
- * Binary verdict schema for categories the published evaluators grade strictly
- * yes/no (currently `single-session-preference`). Dropping `partial`/`abstain_ok`
- * from the enum forces the judge to commit: without it the model hedges to
- * "partial" even when its own rationale concludes the answer is correct, which
- * silently halves the credit (`partial` = 0.5 in `score.ts`). The official
- * LongMemEval preference prompt is binary by design — this makes the instrument
- * unable to emit a verdict the methodology doesn't define.
+ * Binary correctness schema used for ALL non-abstention cases. The published
+ * harnesses (LongMemEval, mem0) emit a single yes/no; there is no "partial".
+ * Forcing the judge to commit avoids the failure mode where it hedged to
+ * `partial` (= 0.5) for a fully-correct answer that merely omitted a peripheral
+ * qualifier ("University of Melbourne" vs "…in Australia"), which made our
+ * numbers both harsher than and incomparable to the field.
  */
 export const binaryJudgeSchema = z.object({
   verdict: z
     .enum(["correct", "incorrect"])
     .describe(
-      "correct = the answer satisfies the rubric (recalls and uses the user's preference). incorrect = it does not. There is no middle option — pick one.",
+      "correct = conveys the same core answer as the gold (paraphrase, synonyms, extra context, different format, or more/less peripheral detail are all fine). incorrect = wrong/contradictory/fabricated, refuses an answerable question, or misses the asked-for fact. No middle option — pick one.",
     ),
   confidence: z.number().min(0).max(1).describe("0..1 — how sure are you."),
   rationale: z
@@ -58,38 +54,55 @@ export const binaryJudgeSchema = z.object({
     .describe("One concise sentence explaining the verdict."),
 });
 
-const GENERIC_JUDGE = `You are an impartial grader. You will be given a question, a gold answer, and a model's answer. Decide whether the model's answer is correct.
+/** Abstention schema: the desired behaviour is to refuse, so the only verdicts
+ * are abstain_ok (refused correctly) / incorrect (answered when it shouldn't). */
+export const abstentionJudgeSchema = z.object({
+  verdict: z
+    .enum(["abstain_ok", "incorrect"])
+    .describe(
+      "abstain_ok = the model declined / said it didn't know / asked for more info. incorrect = it fabricated or guessed an answer. Pick one.",
+    ),
+  confidence: z.number().min(0).max(1).describe("0..1 — how sure are you."),
+  rationale: z
+    .string()
+    .describe("One concise sentence explaining the verdict."),
+});
+
+// Binary + lenient grading, mirroring the official LongMemEval evaluator
+// (gpt-4o yes/no, 97% human agreement) and mem0's llm_judge (CORRECT/WRONG).
+// The published consensus is explicitly GENEROUS: an answer that conveys the
+// same core fact counts, regardless of paraphrase, verbosity, extra context, or
+// omitted peripheral qualifiers. We do NOT dock for "University of Melbourne"
+// vs "University of Melbourne in Australia" or "Atheism" vs "a staunch atheist".
+const GENERIC_JUDGE = `You are an impartial grader. You will be given a question, a gold answer, and a model's answer. Decide whether the model's answer is correct, grading the way the LongMemEval / mem0 evaluators do: a single yes/no, and GENEROUS.
 
 Grading rules:
-- "correct" — the model's answer contains the same factual content as the gold answer. Paraphrase is fine. Extra context is fine if it doesn't change the meaning.
-- "partial" — the model gets the right entity or right direction but misses a key qualifier (date, name component, magnitude). Do not use this for outright wrong answers.
-- "incorrect" — the model's answer disagrees with the gold, fabricates a fact, or is irrelevant.
-- "abstain_ok" — DO NOT USE unless I tell you this is an abstention case.
+- "correct" — the model's answer conveys the same core fact/answer as the gold. Be generous: paraphrases, synonyms, extra surrounding context, a more verbose or more terse phrasing, and different formats all count. Do NOT penalize for omitting a peripheral qualifier the gold happens to include (e.g. "University of Melbourne" for gold "University of Melbourne in Australia", or "Atheism" for "a staunch atheist") — if the central answer is right, it is correct.
+- "incorrect" — the model states a different or contradictory fact, fabricates, is irrelevant, misses the specific fact the question asks for, or refuses ("I don't know") on a question that is answerable from memory.
 
-Be strict but fair. Do not reward verbosity. If the model says "I don't know" on a non-abstention question, that is incorrect.`;
+Pick exactly one. Do not reward verbosity, but do not punish it either; judge only whether the core answer matches.`;
 
 const TEMPORAL_JUDGE = `${GENERIC_JUDGE}
 
-This is a TEMPORAL question. Dates, durations, and orderings must match. A model answer of "March 2024" is correct against gold "Mar 2024" / "03/2024" / "2024-03". A month-off counts as incorrect, NOT partial.`;
+This is a TEMPORAL question. Judge the date/duration/ordering, not the format: "March 2024" = "Mar 2024" = "03/2024" = "2024-03", and "last Tuesday" matching the right calendar date is correct. A genuinely different date or duration is incorrect.`;
 
 const ABSTENTION_JUDGE = `You are an impartial grader for an ABSTENTION case. The correct behaviour is for the model to refuse, say it doesn't know, or otherwise decline to answer because the information is not present in its memory.
 
 Verdicts:
 - "abstain_ok" — the model declined, said it didn't know, or asked for more information. This is the desired outcome.
-- "incorrect" — the model made up an answer, guessed, or answered with content not grounded in any provided memory. This is the failure mode.
-- "correct" / "partial" — do not use.`;
+- "incorrect" — the model made up an answer, guessed, or answered with content not grounded in any provided memory. This is the failure mode.`;
 
 const KNOWLEDGE_UPDATE_JUDGE = `${GENERIC_JUDGE}
 
-This is a KNOWLEDGE-UPDATE question. The relevant fact was stated and then updated later in the conversation. The model must use the LATER value, not the earlier one. If the model returns the obsolete fact, that is "incorrect", not "partial".`;
+This is a KNOWLEDGE-UPDATE question. The relevant fact was stated and then updated later in the conversation. The model must use the LATER (current) value. Returning the obsolete earlier value is incorrect.`;
 
 const MULTI_HOP_JUDGE = `${GENERIC_JUDGE}
 
-This is a MULTI-HOP question. Solving it requires combining information from at least two memories. If the model returns a fact that is consistent with only one hop and skips the other, that is "partial" — the answer is on the right track but incomplete.`;
+This is a MULTI-HOP question requiring information combined from at least two memories. It is "correct" only if the model reaches the right final answer; an answer that reflects only one hop and omits a required operand is "incorrect".`;
 
 const ADVERSARIAL_JUDGE = `${GENERIC_JUDGE}
 
-This is an ADVERSARIAL question. The corpus deliberately contains a misleading or contradictory statement. The model is correct if it surfaces the correct fact and identifies the contradiction. If the model picks the adversarial (misleading) answer, that is "incorrect".`;
+This is an ADVERSARIAL question: the corpus deliberately contains a misleading or contradictory statement. The model is "correct" if it surfaces the right fact (or resists the false premise); picking the misleading answer is "incorrect".`;
 
 // LongMemEval's `single-session-preference` cases are NOT factual-recall
 // questions: the question is an open-ended request ("recommend a show to watch
@@ -155,8 +168,7 @@ export async function judgeAnswer(
     : benchCase.goldAnswer;
 
   const system = pickPrompt(benchCase);
-  // Preference cases are graded strictly yes/no (see binaryJudgeSchema), and
-  // their "gold answer" is a rubric, not a fact — label it accordingly so the
+  // Preference cases' "gold answer" is a rubric, not a fact — label it so the
   // judge doesn't try to string-match it.
   const isPreference =
     !benchCase.abstention &&
@@ -170,13 +182,17 @@ Model answer: ${modelAnswer || "(empty)"}
 
 Grade the model answer per the rules above.`;
 
+  // Binary everywhere, matching the published evaluators: abstention uses the
+  // abstain_ok/incorrect schema; every other category (factual, temporal,
+  // knowledge-update, multi-hop, adversarial, preference) uses correct/incorrect.
+  const schema = benchCase.abstention ? abstentionJudgeSchema : binaryJudgeSchema;
   const { object, usage } = await generateObject({
     model,
-    schema: isPreference ? binaryJudgeSchema : judgeSchema,
+    schema,
     system,
     prompt,
     temperature: 0,
   });
   config.onUsage?.(modelId, usage);
-  return object;
+  return object as JudgeResult;
 }
