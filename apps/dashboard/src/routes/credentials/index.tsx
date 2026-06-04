@@ -34,7 +34,8 @@ import {
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate } from "@/lib/utils";
-import { useState, useMemo } from "react";
+import { useAuth } from "@/lib/auth";
+import { useState, useMemo, useEffect } from "react";
 import { Plus, Search, Check, ChevronsUpDown } from "lucide-react";
 
 const SCOPE_LABELS: Record<
@@ -72,6 +73,7 @@ const PAGE_SIZE = 100;
 
 function CredentialsPage() {
   const queryClient = useQueryClient();
+  const { session } = useAuth();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
@@ -109,6 +111,18 @@ function CredentialsPage() {
     () => users.find((u) => u.slackUserId === newOwnerId),
     [users, newOwnerId],
   );
+  const ownerLabel =
+    selectedOwner?.displayName ||
+    selectedOwner?.slackUserId ||
+    (newOwnerId === session?.slackUserId
+      ? session.name || session.slackUserId
+      : null);
+
+  useEffect(() => {
+    if (showCreate && session?.slackUserId && !newOwnerId) {
+      setNewOwnerId(session.slackUserId);
+    }
+  }, [showCreate, session?.slackUserId, newOwnerId]);
 
   const createMutation = useMutation({
     mutationFn: (payload: {
@@ -256,10 +270,7 @@ function CredentialsPage() {
                     aria-expanded={ownerPickerOpen}
                     className="w-full justify-between font-normal"
                   >
-                    {selectedOwner
-                      ? selectedOwner.displayName ||
-                        selectedOwner.slackUserId
-                      : "Select owner…"}
+                    {ownerLabel || "Select owner…"}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
