@@ -118,12 +118,12 @@ function CredentialsPage() {
     [users, newOwnerId],
   );
 
-  const selectedOwnerLabel = useMemo(() => {
-    if (!newOwnerId) return "Select owner…";
-    if (selectedOwner) return selectedOwner.displayName || selectedOwner.slackUserId;
-    if (session?.slackUserId === newOwnerId) return session.name || newOwnerId;
-    return newOwnerId;
-  }, [newOwnerId, selectedOwner, session?.slackUserId, session?.name]);
+  const ownerLabel =
+    selectedOwner?.displayName ||
+    selectedOwner?.slackUserId ||
+    (newOwnerId === session?.slackUserId
+      ? session.name || session.slackUserId
+      : null);
 
   const createMutation = useMutation({
     mutationFn: (payload: {
@@ -271,7 +271,7 @@ function CredentialsPage() {
                     aria-expanded={ownerPickerOpen}
                     className="w-full justify-between font-normal"
                   >
-                    {selectedOwnerLabel}
+                    {ownerLabel || "Select owner…"}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
