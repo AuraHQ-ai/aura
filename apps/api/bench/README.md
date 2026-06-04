@@ -13,26 +13,41 @@ file plus the snapshot in the root `README.md`. See the `aura-memory-bench` skil
 
 ## Current
 
-Latest baseline: `f877bc5` · 2026-06-02 18:28 UTC.
+Latest baseline: `9f4f249` · 2026-06-04 12:46 UTC.
 
 ### `longmemeval/medium`
 
-- scope: `longmemeval/medium` · corpus `b178d604c01a` · cases `a0018f6e9f0fccb4` · runtime 153m51s · cost $20.61
+- scope: `longmemeval/medium` · corpus `b178d604c01a` · cases `a0018f6e9f0fccb4` · runtime 111m24s · cost $20.46
 - models: extraction `anthropic/claude-haiku-4.5` · answerer `anthropic/claude-opus-4.8` · judge `anthropic/claude-opus-4.6`
-- overall: QA 72% · recall@15 92% (n=180)
+- overall: QA 68% · recall@15 93% (n=180)
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| longmemeval | knowledge-update | 68% | 93% | 30 |
-| longmemeval | multi-session | 72% | 92% | 30 |
-| longmemeval | single-session-assistant | 80% | 83% | 30 |
-| longmemeval | single-session-preference | 53% | 100% | 30 |
-| longmemeval | single-session-user | 87% | 100% | 30 |
-| longmemeval | temporal-reasoning | 70% | 85% | 30 |
+| longmemeval | knowledge-update | 62% | 88% | 30 |
+| longmemeval | multi-session | 72% | 93% | 30 |
+| longmemeval | single-session-assistant | 82% | 87% | 30 |
+| longmemeval | single-session-preference | 37% | 100% | 30 |
+| longmemeval | single-session-user | 78% | 100% | 30 |
+| longmemeval | temporal-reasoning | 80% | 88% | 30 |
 
 ## Evolution
 
 Overall QA accuracy and recall@15 over time, grouped by scope so every row in a table is comparable. Newest first.
+
+### `longmemeval/medium`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-06-04 | `9f4f249` | 68% | 93% | 180 | $20.46 | 111m24s |
+| 2026-06-02 | `f877bc5` | 72% | 92% | 180 | $20.61 | 153m51s |
+| 2026-06-02 | `e16d3d0` | 66% | 93% | 180 | $20.57 | 144m55s |
+| 2026-06-02 | `772e8fb` | 65% | 93% | 179 | $21.71 | 138m27s |
+| 2026-06-02 | `6452709` | 61% | 89% | 179 | $13.29 | 98m12s |
+| 2026-06-01 | `0d311e5` | 59% | 89% | 180 | $13.05 | 99m10s |
+| 2026-06-01 | `9cdfda1` | 60% | 90% | 180 | $12.32 | 104m15s |
+| 2026-06-01 | `e0bb4c8` | 54% | 86% | 180 | $12.28 | 75m19s |
+| 2026-05-31 | `8099713-dirty` | 55% | 88% | 180 | $12.03 | 80m31s |
+| 2026-05-30 | `84515ad` | 53% | 85% | 180 | $12.39 | 76m13s |
 
 ### `longmemeval/toy`
 
@@ -53,20 +68,6 @@ Overall QA accuracy and recall@15 over time, grouped by scope so every row in a 
 |---|---|---:|---:|---:|---:|---:|
 | 2026-06-03 | `57c088c` | 45% | 80% | 1986 | $36.69 | 62m38s |
 | 2026-06-02 | `deb43d8` | 37% | 70% | 1986 | $70.26 | 105m30s |
-
-### `longmemeval/medium`
-
-| date | commit | QA | recall@15 | n | cost | runtime |
-|---|---|---:|---:|---:|---:|---:|
-| 2026-06-02 | `f877bc5` | 72% | 92% | 180 | $20.61 | 153m51s |
-| 2026-06-02 | `e16d3d0` | 66% | 93% | 180 | $20.57 | 144m55s |
-| 2026-06-02 | `772e8fb` | 65% | 93% | 179 | $21.71 | 138m27s |
-| 2026-06-02 | `6452709` | 61% | 89% | 179 | $13.29 | 98m12s |
-| 2026-06-01 | `0d311e5` | 59% | 89% | 180 | $13.05 | 99m10s |
-| 2026-06-01 | `9cdfda1` | 60% | 90% | 180 | $12.32 | 104m15s |
-| 2026-06-01 | `e0bb4c8` | 54% | 86% | 180 | $12.28 | 75m19s |
-| 2026-05-31 | `8099713-dirty` | 55% | 88% | 180 | $12.03 | 80m31s |
-| 2026-05-30 | `84515ad` | 53% | 85% | 180 | $12.39 | 76m13s |
 
 ### `locomo/toy`
 
