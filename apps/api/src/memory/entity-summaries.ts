@@ -5,6 +5,7 @@ import { db } from "../db/client.js";
 import { entities, memories, memoryEntities, users } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 
 const MAX_MEMORIES_PER_ENTITY = 50;
 const MIN_RELEVANCE_SCORE = 0.1;
@@ -159,6 +160,7 @@ export async function generateEntitySummary(
     schema: z.object({ summary: z.string() }),
     system: getSystemPrompt(entity.canonicalName, entity.type ?? "unknown"),
     prompt: `${profileContext ? `${profileContext}\n\n` : ""}Memories:\n${memoriesText}`,
+    experimental_telemetry: aiTelemetry("entity-summary"),
   });
 
   const now = new Date();

@@ -1,6 +1,7 @@
 import { embed, embedMany } from "ai";
 import { getEmbeddingModel } from "./ai.js";
 import { logger } from "./logger.js";
+import { aiTelemetry } from "./langfuse.js";
 
 const EXPECTED_DIMENSIONS = 1536;
 
@@ -39,7 +40,11 @@ export async function embedText(text: string): Promise<number[]> {
   const start = Date.now();
   try {
     const model = await getEmbeddingModel();
-    const result = await embed({ model, value: text });
+    const result = await embed({
+      model,
+      value: text,
+      experimental_telemetry: aiTelemetry("embed-text"),
+    });
     const validated = validateEmbedding(
       result.embedding,
       "embedText",
@@ -70,7 +75,11 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   const start = Date.now();
   try {
     const model = await getEmbeddingModel();
-    const result = await embedMany({ model, values: texts });
+    const result = await embedMany({
+      model,
+      values: texts,
+      experimental_telemetry: aiTelemetry("embed-texts", { count: texts.length }),
+    });
 
     if (!result.embeddings || !Array.isArray(result.embeddings)) {
       throw new Error(

@@ -12,6 +12,7 @@ import { createInteractivePrepareStep } from "./prepare-step.js";
 import { buildCachedSystemMessages, getEscalationModel } from "../lib/ai.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
 import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
+import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 
 /**
  * Channel-agnostic agentic stream.
@@ -82,19 +83,40 @@ export function createAgenticStream(options: AgenticStreamOptions) {
     options.dynamicContext,
   );
 
-  return streamText({
-    model: options.model,
-    system,
-    messages: options.messages,
-    tools: options.tools,
-    prepareStep,
-    stopWhen: stepCountIs(options.maxSteps ?? 250),
-    onFinish: options.onFinish
-      ? (event) =>
-          options.onFinish?.({
-            ...event,
-            stepModelIds: [...stepModelIds],
-          })
-      : undefined,
-  });
+  // Group every AI SDK span for this turn into one Langfuse trace. sessionId
+  // links the turns of a conversation in the Sessions view; userId enables
+  // per-user analysis; tags make traces filterable. Attributes propagate to the
+  // GenAI spans created synchronously when streamText() is invoked below.
+  return withTrace(
+    {
+      traceName: `${options.channelId ?? "agent"}-chat`,
+      sessionId: options.threadTs ?? options.channelId ?? undefined,
+      userId: options.userId,
+      tags: [
+        `channel:${options.channelId ?? "unknown"}`,
+        `model:${options.modelId}`,
+      ],
+    },
+    () =>
+      streamText({
+        model: options.model,
+        system,
+        messages: options.messages,
+        tools: options.tools,
+        prepareStep,
+        stopWhen: stepCountIs(options.maxSteps ?? 250),
+        experimental_telemetry: aiTelemetry("agent-chat", {
+          modelId: options.modelId,
+          channelId: options.channelId ?? "unknown",
+          ...(options.invocationId ? { invocationId: options.invocationId } : {}),
+        }),
+        onFinish: options.onFinish
+          ? (event) =>
+              options.onFinish?.({
+                ...event,
+                stepModelIds: [...stepModelIds],
+              })
+          : undefined,
+      }),
+  );
 }

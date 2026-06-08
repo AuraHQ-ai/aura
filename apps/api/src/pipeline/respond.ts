@@ -17,6 +17,7 @@ import {
 import { getDetachedCommandSuspendState, getSlackMeta } from "../lib/tool.js";
 import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { InvocationSupersededError } from "./prepare-step.js";
 import { cleanupScratchpad } from "../tools/scratchpad.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
@@ -1757,6 +1758,7 @@ export async function generateResponse(
           system: retrySystemMessages,
           prompt: retryPrompt,
           abortSignal: retryAbortController.signal,
+          experimental_telemetry: aiTelemetry("slack-chat-retry"),
         });
         let retryText = "";
 

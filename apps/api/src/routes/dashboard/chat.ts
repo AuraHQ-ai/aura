@@ -13,6 +13,7 @@ import { db } from "../../db/client.js";
 import { getMainModel, getMainModelId, withAnthropicFallback, type WrappableModel } from "../../lib/ai.js";
 import { buildCorePrompt } from "../../pipeline/core-prompt.js";
 import { createAgenticStream } from "../../pipeline/generate.js";
+import { flushLangfuse } from "../../lib/langfuse.js";
 import { createCoreTools } from "../../tools/core.js";
 import { executionContext } from "../../lib/tool.js";
 import { extractMemories } from "../../memory/extract.js";
@@ -475,6 +476,8 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
               logger.error("persistDashboardConversation rejected", { error: String(err) });
             }),
           );
+          // Drain this turn's Langfuse spans before the function instance freezes.
+          waitUntil(flushLangfuse());
         },
       }),
     );

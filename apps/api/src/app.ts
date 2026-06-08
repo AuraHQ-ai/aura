@@ -33,6 +33,9 @@ import { resolveConfirmation } from "./lib/confirmation.js";
 import { executionContext, type ExecutionContext } from "./lib/tool.js";
 import { setSetting, getConfig } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
+// Import for side effect: registers the Langfuse OpenTelemetry provider before
+// any AI SDK call runs. Also re-exported helpers for flushing spans.
+import { flushLangfuse, isLangfuseEnabled } from "./lib/langfuse.js";
 import { resolveSlackDestination } from "./tools/slack.js";
 import { recordError } from "./lib/metrics.js";
 import { safePostMessage } from "./lib/slack-messaging.js";
@@ -125,6 +128,17 @@ if (!globalForProcessHooks.__auraProcessErrorHooksRegistered) {
 // ── Hono App ────────────────────────────────────────────────────────────────
 
 export const app = new Hono();
+
+// Serverless flush: after a request's handler resolves, drain any Langfuse spans
+// produced synchronously within it (e.g. crons, dashboard non-stream routes)
+// before the function instance can freeze. Background work dispatched via
+// `waitUntil` (Slack pipeline) flushes itself at its own completion point.
+app.use("*", async (c, next) => {
+  await next();
+  if (isLangfuseEnabled()) {
+    waitUntil(flushLangfuse());
+  }
+});
 
 // Health check
 app.get("/", (c) => {
@@ -353,7 +367,8 @@ app.post("/api/slack/events", async (c) => {
       if (latestInFlightContext === eventExecutionContext) {
         latestInFlightContext = null;
       }
-    });
+    // Flush Langfuse spans for this turn before the keep-alive window closes.
+    }).finally(() => flushLangfuse());
 
     // Keep the function alive after the response is sent so the
     // pipeline can finish (LLM call, Slack reply, memory extraction).

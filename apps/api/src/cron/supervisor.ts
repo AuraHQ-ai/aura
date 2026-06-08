@@ -6,6 +6,7 @@ import { db } from "../db/client.js";
 import { getFastModel } from "../lib/ai.js";
 import { getCredential } from "../lib/credentials.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { jobExecutions, jobOutcomes, jobs } from "@aura/db/schema";
 import { sendJobFailureDm, truncateJobFailureText } from "./job-notifications.js";
 
@@ -139,6 +140,7 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
     const { object } = await generateObject({
       model,
       schema: supervisorDecisionSchema,
+      experimental_telemetry: aiTelemetry("supervisor-decision"),
       system:
         "You are Aura's job execution supervisor. Make one conservative decision from the provided fixed enum. Return only the structured object. Do not call tools.",
       prompt: truncateForPrompt(`Review this completed job outcome and decide the next action.

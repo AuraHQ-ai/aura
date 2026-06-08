@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { TOOL_IO_EVENT_TYPE } from "./respond.js";
 import { formatTimestamp } from "../lib/temporal.js";
 
@@ -393,6 +394,7 @@ export async function formatConversationContext(
           model: fastModel,
           prompt: `These are messages from an ongoing conversation (${droppedMessages.length} messages). Summarize the key decisions, facts, tasks completed/merged, and open threads in 3-5 sentences. Focus on: what was decided, what was built or merged, what tasks were assigned, what is still pending.\n\nMessages:\n${droppedText.slice(0, 8000)}`,
           maxOutputTokens: 200,
+          experimental_telemetry: aiTelemetry("thread-summary"),
         });
 
         summaryEntry = `[Context: ${droppedMessages.length} earlier messages summarized: ${summary.trim()}]`;

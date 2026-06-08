@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { defineTool, binaryToModelOutput, registerToolNames, filterToolsByCredentials } from "../lib/tool.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
 import { createCoreTools } from "./core.js";
@@ -408,6 +409,7 @@ export async function resolveUserByName(
         "Given a list of team members and a possibly misspelled or speech-transcribed name, return ONLY the user ID (e.g. U066V1AN6) of the best match. If no reasonable match exists, return 'NONE'. Do not explain.",
       prompt: `Team members:\n${userListStr}\n\nFind: "${cleaned}"`,
       maxOutputTokens: 50,
+      experimental_telemetry: aiTelemetry("resolve-user-name"),
     });
 
     const matchedId = text.trim();
