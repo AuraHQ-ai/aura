@@ -4,6 +4,7 @@ import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
 import { supervisorApp } from "./cron/supervisor.js";
+import { evalFunnelApp } from "./cron/eval-funnel.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { createSandboxCommandWebhookApp } from "./webhook/sandbox-command.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
@@ -159,6 +160,7 @@ app.get("/api/health", (c) => {
 app.route("/", cronApp);
 app.route("/", heartbeatApp);
 app.route("/", supervisorApp);
+app.route("/", evalFunnelApp);
 
 // Mount ElevenLabs voice webhook routes
 app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);

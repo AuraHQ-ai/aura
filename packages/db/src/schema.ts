@@ -84,6 +84,24 @@ export const modelCatalogCategoryEnum = pgEnum("model_catalog_category", [
   "escalation",
 ]);
 
+// Eval funnel (Machine A): atomic per-response verdicts produced by the
+// windowed LLM judge. See `eval_response_scores` below.
+export const evalVerdictEnum = pgEnum("eval_verdict", [
+  "fulfilled",
+  "partial",
+  "failed",
+]);
+
+export const evalFailureClassEnum = pgEnum("eval_failure_class", [
+  "missing_cred",
+  "bad_memory",
+  "bad_harness",
+  "missing_tool",
+  "reasoning",
+  "latency",
+  "none",
+]);
+
 // Helper for timestamptz columns
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
@@ -853,6 +871,95 @@ export const conversationParts = pgTable(
   ],
 );
 
+// ── Eval Response Scores (Machine A: score every assistant response) ─────────
+//
+// One row per atomic assistant response (the SCORING grain). The windowed
+// Sonnet judge emits a verdict per assistant turn; humans adjudicate in the
+// dashboard (note / gold_answer / rubric / ratified_by). There is deliberately
+// NO thread-level verdict table — a thread fails in many ways at once, so
+// everything that would sit on a thread row lives on the response instead.
+// Thread/intent/funnel rollups are DERIVED views (GROUP BY), never materialized.
+//
+// Three grains, three jobs (never conflate them):
+//   - message_id / part_id = SCORING grain (the response being judged)
+//   - trace_id              = ATTRIBUTION grain (native joins to user/channel/
+//                             model/cost only; owns no verdict)
+//   - thread_ts             = FILTER grain (UI grouping only; NO FK; owns no
+//                             verdict — one thread_ts fans out to many traces)
+
+export const evalResponseScores = pgTable(
+  "eval_response_scores",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    // SCORING grain: the assistant response being judged.
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => conversationMessages.id, { onDelete: "cascade" }),
+    // The exact text part judged. Nullable: a scorable=false turn (ack /
+    // tool-relay) may have no text part to point at.
+    partId: uuid("part_id").references(() => conversationParts.id, {
+      onDelete: "cascade",
+    }),
+    // ATTRIBUTION grain: native joins to user / channel / model / cost ONLY.
+    traceId: uuid("trace_id").references(() => conversationTraces.id, {
+      onDelete: "cascade",
+    }),
+    // FILTER grain: a bare Slack thread string for UI grouping. NO FK — there
+    // is nothing to FK to, and it owns no verdict.
+    threadTs: text("thread_ts"),
+    // Judge attributes the response to the nearest open user request in the
+    // window. Free-text → groups fuzzily; rollups are derived views.
+    servingIntent: text("serving_intent"),
+    // "This turn hedged but the intent closed two turns later." Separates
+    // honest hedging (PASS) from confident confabulation (FAIL).
+    resolvedInWindow: boolean("resolved_in_window"),
+    // Null when scorable=false (the judge declined to force a verdict).
+    verdict: evalVerdictEnum("verdict"),
+    scorable: boolean("scorable").notNull().default(false),
+    failureClass: evalFailureClassEnum("failure_class").notNull().default("none"),
+    note: text("note"),
+    // Human-authored. Anti-circularity: the model that authors gold must not be
+    // the model that judges against it.
+    goldAnswer: text("gold_answer"),
+    rubric: jsonb("rubric").$type<{
+      mustDo?: string[];
+      mustNotDo?: string[];
+    } | null>(),
+    // Set on a SPECIFIC failed response, never "a thread".
+    ratifiedBy: text("ratified_by"),
+    judgeModel: text("judge_model"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Idempotency: score each response exactly once. Re-score only on harness
+    // change or explicit human request, never on dashboard load.
+    uniqueIndex("eval_response_scores_workspace_message_idx").on(
+      table.workspaceId,
+      table.messageId,
+    ),
+    // Funnel views: aggregate by verdict / failure_class.
+    index("eval_response_scores_verdict_idx").on(
+      table.workspaceId,
+      table.verdict,
+    ),
+    index("eval_response_scores_failure_class_idx").on(
+      table.workspaceId,
+      table.failureClass,
+    ),
+    // UI grouping by thread.
+    index("eval_response_scores_thread_ts_idx").on(table.threadTs),
+    // Render scores next to the trace viewer.
+    index("eval_response_scores_trace_idx").on(table.traceId),
+    // Feeds #1106: ratified `failed` rows are bench-case candidates.
+    index("eval_response_scores_ratified_idx")
+      .on(table.ratifiedBy)
+      .where(sql`ratified_by IS NOT NULL`),
+  ],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(
@@ -1340,3 +1447,7 @@ export type ConversationPart = typeof conversationParts.$inferSelect;
 export type NewConversationPart = typeof conversationParts.$inferInsert;
 export type ModelPricing = typeof modelPricing.$inferSelect;
 export type NewModelPricing = typeof modelPricing.$inferInsert;
+export type EvalResponseScore = typeof evalResponseScores.$inferSelect;
+export type NewEvalResponseScore = typeof evalResponseScores.$inferInsert;
+export type EvalVerdict = (typeof evalVerdictEnum.enumValues)[number];
+export type EvalFailureClass = (typeof evalFailureClassEnum.enumValues)[number];
