@@ -1,18 +1,21 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   convertToModelMessages,
+  createUIMessageStreamResponse,
   type UIMessage,
   type StepResult,
   type LanguageModelUsage,
 } from "ai";
 import { waitUntil } from "@vercel/functions";
-import { eq, and, sql, asc, inArray } from "drizzle-orm";
-import { conversationTraces, conversationMessages, conversationParts, users } from "@aura/db/schema";
+import { eq, and, sql, asc, desc, inArray } from "drizzle-orm";
+import { conversationTraces, conversationMessages, conversationParts, users, chatRuns } from "@aura/db/schema";
 import { gateway } from "@ai-sdk/gateway";
 import { db } from "../../db/client.js";
 import { getMainModel, getMainModelId, withAnthropicFallback, type WrappableModel } from "../../lib/ai.js";
 import { buildCorePrompt } from "../../pipeline/core-prompt.js";
 import { createAgenticStream } from "../../pipeline/generate.js";
+import { dbRunStore } from "../../pipeline/run-store-db.js";
+import { consumeAndPersist, createReplayStream } from "../../pipeline/run-store.js";
 import { flushLangfuse } from "../../lib/langfuse.js";
 import { createCoreTools } from "../../tools/core.js";
 import { executionContext } from "../../lib/tool.js";
@@ -31,6 +34,28 @@ import { errorSchema, createDashboardApp } from "./schemas.js";
 
 export const dashboardChatApp = createDashboardApp();
 
+/**
+ * Same-instance fast path for explicit "stop": if the run's writer is alive in
+ * this serverless instance, abort it immediately. Cross-instance stops are
+ * handled durably by the writer polling the run's status in the DB.
+ */
+const liveRunAborts = new Map<string, AbortController>();
+
+/** Extract the last user-authored text from a persisted UIMessage[] payload. */
+function lastUserTextFromInput(inputMessages: unknown): string | null {
+  if (!Array.isArray(inputMessages)) return null;
+  for (let i = inputMessages.length - 1; i >= 0; i--) {
+    const msg = inputMessages[i] as { role?: string; parts?: Array<{ type?: string; text?: string }> };
+    if (msg?.role !== "user") continue;
+    const text = (msg.parts ?? [])
+      .filter((p) => p?.type === "text" && typeof p.text === "string")
+      .map((p) => p.text)
+      .join("");
+    return text || null;
+  }
+  return null;
+}
+
 // ── List dashboard chat threads ─────────────────────────────────────────────
 
 const listChatThreadsRoute = createRoute({
@@ -48,6 +73,7 @@ const listChatThreadsRoute = createRoute({
               preview: z.string().nullable(),
               lastActivityAt: z.string().nullable(),
               messageCount: z.number(),
+              status: z.enum(["idle", "generating"]),
             })),
           }),
         },
@@ -105,12 +131,69 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
       }
     }
 
-    const threads = threadRows.map((row) => ({
-      threadId: row.threadTs,
-      preview: previews[row.firstTraceId] ?? null,
-      lastActivityAt: row.lastActivityAt,
-      messageCount: row.traceCount,
-    }));
+    // Merge in chat_runs so threads that are mid-generation (or whose run
+    // finished but hasn't persisted a trace yet) appear immediately, and so
+    // every thread carries a server-anchored generating/idle status (R2).
+    const runRows = await db
+      .select({
+        threadId: chatRuns.threadId,
+        status: chatRuns.status,
+        inputMessages: chatRuns.inputMessages,
+        createdAt: sql<string>`${chatRuns.createdAt}::text`,
+      })
+      .from(chatRuns)
+      .orderBy(desc(chatRuns.createdAt))
+      .limit(100);
+
+    type ThreadEntry = {
+      threadId: string | null;
+      preview: string | null;
+      lastActivityAt: string | null;
+      messageCount: number;
+      status: "idle" | "generating";
+    };
+    const byThread = new Map<string, ThreadEntry>();
+
+    for (const row of threadRows) {
+      if (!row.threadTs) continue;
+      byThread.set(row.threadTs, {
+        threadId: row.threadTs,
+        preview: previews[row.firstTraceId] ?? null,
+        lastActivityAt: row.lastActivityAt,
+        messageCount: row.traceCount,
+        status: "idle",
+      });
+    }
+
+    const seenRunThreads = new Set<string>();
+    for (const run of runRows) {
+      const existing = byThread.get(run.threadId);
+      if (existing) {
+        if (run.status === "running") existing.status = "generating";
+        if (run.createdAt && (!existing.lastActivityAt || run.createdAt > existing.lastActivityAt)) {
+          existing.lastActivityAt = run.createdAt;
+        }
+        continue;
+      }
+      // Thread has runs but no persisted trace yet (e.g. its first turn is
+      // still generating). Surface it from the run row.
+      if (seenRunThreads.has(run.threadId)) {
+        if (run.status === "running") byThread.get(run.threadId)!.status = "generating";
+        continue;
+      }
+      seenRunThreads.add(run.threadId);
+      byThread.set(run.threadId, {
+        threadId: run.threadId,
+        preview: lastUserTextFromInput(run.inputMessages),
+        lastActivityAt: run.createdAt,
+        messageCount: 0,
+        status: run.status === "running" ? "generating" : "idle",
+      });
+    }
+
+    const threads = [...byThread.values()]
+      .sort((a, b) => (b.lastActivityAt ?? "").localeCompare(a.lastActivityAt ?? ""))
+      .slice(0, 50);
 
     return c.json({ threads } as any, 200);
   } catch (error) {
@@ -396,9 +479,12 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
 
   const userId = (body.userId as string) || "dashboard-admin";
   const userName = (body.userName as string) || undefined;
-  const threadId = (body.threadId as string) || null;
+  const threadId = (body.threadId as string) || crypto.randomUUID();
   const requestedModelId = (body.modelId as string) || null;
 
+  // Declared outside the try so the catch can mark the run errored if setup
+  // (prompt build / tool wiring) throws after the run row was created.
+  let runId: string | undefined;
   try {
     let model: WrappableModel;
     let modelId: string;
@@ -413,6 +499,21 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
       modelId = await getMainModelId();
       logger.info("Dashboard chat using default model", { modelId });
     }
+
+    // Anchor the run server-side as early as possible. The run owns the stream:
+    // every UI-message chunk is persisted so a client can detach (tab close,
+    // refresh, device hop, new-chat) and re-attach without losing or canceling
+    // generation. Creating it before the (slower) prompt/tool setup also lets
+    // the thread show a "generating" spinner immediately (R2). This is the WDK
+    // resumable-streams contract on our own stack.
+    runId = await dbRunStore.createRun({
+      threadId,
+      userId,
+      modelId,
+      // Persist the user-visible turn so a fresh session that never saw the
+      // request can reconstruct the in-flight user bubble when resuming.
+      inputMessages: messages,
+    });
 
     const lastUserMessage = [...messages]
       .reverse()
@@ -444,6 +545,13 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
     const sanitizedMessages = sanitizeAssistantPartOrder(messages);
     const modelMessages = await convertToModelMessages(sanitizedMessages);
 
+    const activeRunId = runId;
+
+    // Explicit-stop only. NEVER wire the browser/request abort signal here, or
+    // a disconnect would cancel generation and leave nothing to resume.
+    const genAbort = new AbortController();
+    liveRunAborts.set(activeRunId, genAbort);
+
     const result = executionContext.run(
       { triggeredBy: userId, triggerType: "user_message", callingUserId: userId, channelId: "dashboard" },
       () => createAgenticStream({
@@ -457,11 +565,12 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
         messages: modelMessages,
         maxSteps: 20,
         channelId: "dashboard",
-        threadTs: threadId ?? undefined,
+        threadTs: threadId,
         userId,
         userName,
+        abortSignal: genAbort.signal,
         onFinish: ({ steps, stepModelIds, totalUsage, text }) => {
-          logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
+          logger.info("Dashboard chat onFinish fired", { runId: activeRunId, threadId, userId, messageId, textLen: text.length });
           const fullSystemPrompt = [prompt.stablePrefix, prompt.environmentContext, prompt.conversationContext, prompt.dynamicContext].filter(Boolean).join("\n\n");
           waitUntil(
             persistDashboardConversation({
@@ -485,22 +594,173 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
       }),
     );
 
-    return result.toUIMessageStreamResponse({
+    // The model's UI-message stream is consumed and persisted by a single
+    // background writer (kept alive past the HTTP response via waitUntil). The
+    // runId is stamped into the `start` chunk metadata so the client can store
+    // it for reconnects.
+    const uiStream = result.toUIMessageStream({
       originalMessages: messages,
       sendReasoning: true,
       messageMetadata: ({ part }) => {
-        if (part.type === "start") {
-          return { modelId };
-        }
+        if (part.type === "start") return { modelId, runId: activeRunId };
       },
+    });
+
+    waitUntil(
+      consumeAndPersist(dbRunStore, activeRunId, uiStream, {
+        abortController: genAbort,
+        onError: (err) =>
+          logger.error("Dashboard run writer error", { runId: activeRunId, error: String(err) }),
+      }).finally(() => liveRunAborts.delete(activeRunId)),
+    );
+
+    // The client (this POST and any later reconnect) is a pure reader of the
+    // persisted stream. Its abort signal only detaches the reader.
+    return createUIMessageStreamResponse({
+      stream: createReplayStream(dbRunStore, activeRunId, {
+        startIndex: 0,
+        pollMs: 150,
+        signal: c.req.raw.signal,
+      }),
+      headers: { "x-workflow-run-id": activeRunId },
     });
   } catch (error) {
     logger.error("Dashboard chat error", {
       error: error instanceof Error ? error.stack ?? error.message : String(error),
       name: error instanceof Error ? error.name : undefined,
     });
+    if (runId) {
+      liveRunAborts.delete(runId);
+      await dbRunStore
+        .finishRun(runId, "error", error instanceof Error ? error.message : String(error))
+        .catch(() => {});
+    }
     return c.json({ error: "Internal server error" }, 500);
   }
+});
+
+// ── Reconnect to a run's stream (resumable streams) ─────────────────────────
+
+const reconnectStreamRoute = createRoute({
+  method: "get",
+  path: "/{runId}/stream",
+  tags: ["Chat"],
+  summary: "Reconnect to a chat run's stream (replay missed chunks + tail live)",
+  request: {
+    params: z.object({
+      runId: z.string().openapi({ param: { name: "runId", in: "path" } }),
+    }),
+    query: z.object({
+      startIndex: z.string().optional().openapi({ param: { name: "startIndex", in: "query" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "text/event-stream": { schema: z.any() } },
+      description: "Streaming response (replayed + live)",
+    },
+    204: { description: "No active stream for this run" },
+  },
+});
+
+dashboardChatApp.openapi(reconnectStreamRoute, async (c) => {
+  const runId = c.req.param("runId");
+  const run = await dbRunStore.getRun(runId);
+  if (!run) {
+    // No such run: tell the transport there's nothing to resume.
+    return new Response(null, { status: 204 });
+  }
+
+  const startIndexParam = c.req.query("startIndex");
+  let startIndex = startIndexParam ? parseInt(startIndexParam, 10) : 0;
+  if (Number.isNaN(startIndex)) startIndex = 0;
+  // Resolve negative (from-end) indices against the current tail.
+  const tailIndex = await dbRunStore.getTailIndex(runId);
+  if (startIndex < 0) startIndex = Math.max(0, tailIndex + startIndex);
+
+  return createUIMessageStreamResponse({
+    stream: createReplayStream(dbRunStore, runId, {
+      startIndex,
+      pollMs: 200,
+      signal: c.req.raw.signal,
+    }),
+    headers: { "x-workflow-stream-tail-index": String(tailIndex) },
+  });
+});
+
+// ── Explicit stop (the ONLY path that cancels a run server-side) ────────────
+
+const stopRunRoute = createRoute({
+  method: "post",
+  path: "/{runId}/stop",
+  tags: ["Chat"],
+  summary: "Cancel a chat run (explicit user stop)",
+  request: {
+    params: z.object({
+      runId: z.string().openapi({ param: { name: "runId", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: { content: { "application/json": { schema: z.object({ ok: z.boolean() }) } }, description: "Canceled" },
+  },
+});
+
+dashboardChatApp.openapi(stopRunRoute, async (c) => {
+  const runId = c.req.param("runId");
+  // Durable cancel: flip status so the writer (here or in another instance)
+  // observes it and aborts generation.
+  await dbRunStore.requestCancel(runId);
+  // Same-instance fast path.
+  liveRunAborts.get(runId)?.abort();
+  return c.json({ ok: true }, 200);
+});
+
+// ── Active run for a thread (server-anchored thread↔run mapping, R4) ─────────
+
+const threadRunRoute = createRoute({
+  method: "get",
+  path: "/threads/{threadId}/run",
+  tags: ["Chat"],
+  summary: "Get the active (generating) run for a thread, if any",
+  request: {
+    params: z.object({
+      threadId: z.string().openapi({ param: { name: "threadId", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            run: z
+              .object({
+                runId: z.string(),
+                status: z.enum(["running", "done", "error", "canceled"]),
+                userText: z.string().nullable(),
+              })
+              .nullable(),
+          }),
+        },
+      },
+      description: "Success",
+    },
+  },
+});
+
+dashboardChatApp.openapi(threadRunRoute, async (c) => {
+  const threadId = c.req.param("threadId");
+  const run = await dbRunStore.getActiveRunForThread(threadId);
+  if (!run) return c.json({ run: null } as any, 200);
+  return c.json(
+    {
+      run: {
+        runId: run.id,
+        status: run.status,
+        userText: lastUserTextFromInput(run.inputMessages),
+      },
+    } as any,
+    200,
+  );
 });
 
 async function persistDashboardConversation(params: {
