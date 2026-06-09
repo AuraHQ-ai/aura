@@ -3,7 +3,7 @@ import { generateText } from "ai";
 import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
-import { aiTelemetry } from "../lib/langfuse.js";
+import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { resolveChannelById } from "../tools/slack.js";
 
 // ── Slack Event Types ────────────────────────────────────────────────────────
@@ -324,13 +324,25 @@ async function llmShouldRespond(
     const userMessage = `Recent conversation:\n${conversationText}\n\nLatest message from ${senderName}:\n${context.text}\n\nShould Aura respond?`;
 
     const model = await getFastModel();
-    const result = await generateText({
-      model,
-      system: withCacheControl(systemPrompt),
-      prompt: userMessage,
-      maxOutputTokens: 5,
-      experimental_telemetry: aiTelemetry("should-respond"),
-    });
+    // Share the turn's sessionId (thread) so the gate decision groups with the
+    // rest of the conversation in Langfuse's Sessions view. The gate runs before
+    // the user's display name is resolved and for messages that may get no
+    // response, so it stays its own trace rather than nesting under slack-chat.
+    const result = await withTrace(
+      {
+        sessionId: context.threadTs ?? context.messageTs ?? context.channelId,
+        userId: context.userId,
+        tags: [`channel:${context.channelType ?? "unknown"}`, "stage:should-respond"],
+      },
+      () =>
+        generateText({
+          model,
+          system: withCacheControl(systemPrompt),
+          prompt: userMessage,
+          maxOutputTokens: 5,
+          experimental_telemetry: aiTelemetry("should-respond"),
+        }),
+    );
 
     const answer = result.text.trim().toUpperCase();
     const shouldReply = answer.startsWith("RESPOND");

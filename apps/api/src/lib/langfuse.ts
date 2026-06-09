@@ -32,7 +32,7 @@ import {
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { propagateAttributes } from "@langfuse/tracing";
+import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
 import type { Context } from "@opentelemetry/api";
 import { logger } from "./logger.js";
 
@@ -80,6 +80,26 @@ function normalizeGenAIModelAttributes(span: ReadableSpan): void {
 }
 
 /**
+ * Opt-in noise control. Single embeddings (`embed()`) dominate trace volume —
+ * each call emits a standalone root trace (`ai.embed` SPAN + `ai.embed.doEmbed`
+ * child). When `LANGFUSE_DROP_ORPHAN_EMBEDDINGS=true`, we skip exporting BOTH
+ * spans of every single-embed operation so the trace list stays focused on
+ * reasoning calls. Batch embeddings (`ai.embedMany`) are always kept.
+ *
+ * We match on the AI SDK `ai.operationId` attribute (falling back to span name)
+ * and drop the whole operation — never just the root — so we never leave an
+ * orphaned `doEmbed` child behind.
+ */
+const DROP_SINGLE_EMBEDDING_SPANS =
+  process.env.LANGFUSE_DROP_ORPHAN_EMBEDDINGS === "true";
+
+function isSingleEmbeddingSpan(span: ReadableSpan): boolean {
+  const operationId = span.attributes["ai.operationId"];
+  const marker = typeof operationId === "string" ? operationId : span.name;
+  return marker.startsWith("ai.embed") && !marker.startsWith("ai.embedMany");
+}
+
+/**
  * Central pre-export hygiene for Langfuse spans. The delegate keeps Langfuse's
  * smart GenAI span filter, masking, media handling, and serverless flush
  * behavior unchanged; we only canonicalize model slugs before it sees the span.
@@ -93,6 +113,7 @@ class LangfuseHygieneSpanProcessor implements SpanProcessor {
 
   onEnd(span: ReadableSpan): void {
     normalizeGenAIModelAttributes(span);
+    if (DROP_SINGLE_EMBEDDING_SPANS && isSingleEmbeddingSpan(span)) return;
     this.delegate.onEnd(span);
   }
 
@@ -274,6 +295,28 @@ export function withTrace<T>(attrs: TraceAttributes, fn: () => T): T {
     },
     fn,
   );
+}
+
+/**
+ * Like {@link withTrace}, but also opens an explicit parent span named `name`
+ * around `fn`. Because the parent span is active for the duration of `fn`, every
+ * AI SDK GenAI span created inside (sequential `generateText`/`generateObject`/
+ * `embed` calls that would otherwise each become their own root trace) nests
+ * under it — yielding a SINGLE Langfuse trace per logical unit of work (one Slack
+ * turn, one memory job, …) instead of a scatter of orphan traces.
+ *
+ * The parent span's name becomes the trace name; session/user/tag attributes are
+ * applied to it via `propagateAttributes` so they show up trace-level. The span
+ * auto-ends when `fn`'s returned promise settles. No-op passthrough when tracing
+ * is off.
+ */
+export function withTraceSpan<T>(
+  name: string,
+  attrs: TraceAttributes,
+  fn: () => T,
+): T {
+  if (!spanProcessor) return fn();
+  return startActiveObservation(name, () => withTrace(attrs, fn)) as T;
 }
 
 /**

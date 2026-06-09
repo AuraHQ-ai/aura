@@ -33,7 +33,7 @@ import {
 import { downloadEventFiles } from "../lib/files.js";
 import { getSettingJSON } from "../lib/settings.js";
 import { logger } from "../lib/logger.js";
-import { withTrace } from "../lib/langfuse.js";
+import { withTraceSpan } from "../lib/langfuse.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
@@ -425,56 +425,86 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         context.channelType,
       );
     }
-    const retrievalStart = Date.now();
-    const { stablePrefix, environmentContext, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
-      { ...context, text: messageText },
-      conversation,
-      client,
-    );
-    const retrievalMs = Date.now() - retrievalStart;
-
-    capturedSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
-    capturedUserPrompt = messageText;
-
-    // 5. Call LLM (streams response directly to Slack via chat.update)
-    const llmStart = Date.now();
-    // Group every AI SDK span for this Slack turn into one Langfuse trace.
-    // sessionId = thread links a conversation in the Sessions view; userId
-    // enables per-user analysis. Propagates to the agent's GenAI spans.
-    const response = await withTrace(
+    // Bind the now-resolved conversation to a const so its non-undefined
+    // narrowing survives into the trace-span closure below.
+    const resolvedConversation = conversation;
+    // Steps 4 + 5 run inside a single parent span so every AI SDK call for this
+    // Slack turn — memory retrieval, thread summary, query embeddings, and the
+    // agent stream — nests under ONE Langfuse trace instead of scattering into
+    // orphan root traces. sessionId = thread links a conversation in the
+    // Sessions view; userId enables per-user analysis.
+    const turn = await withTraceSpan(
+      "slack-chat",
       {
-        traceName: "slack-chat",
         sessionId: replyThreadTs ?? context.channelId,
         userId: context.userId,
         userName: displayName,
         tags: [`channel:${context.channelType ?? "unknown"}`],
         metadata: { slackUserId: context.userId },
       },
-      () => generateResponse({
-        stablePrefix,
-        environmentContext,
-        conversationContext,
-        dynamicContext,
-        userMessage: messageText,
-        slackClient: client,
-        context: {
-          userId: context.userId,
+      async () => {
+        const retrievalStart = Date.now();
+        const { stablePrefix, environmentContext, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
+          { ...context, text: messageText },
+          resolvedConversation,
+          client,
+        );
+        const retrievalMs = Date.now() - retrievalStart;
+
+        capturedSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+        capturedUserPrompt = messageText;
+
+        // 5. Call LLM (streams response directly to Slack via chat.update)
+        const llmStart = Date.now();
+        const response = await generateResponse({
+          stablePrefix,
+          environmentContext,
+          conversationContext,
+          dynamicContext,
+          userMessage: messageText,
+          slackClient: client,
+          context: {
+            userId: context.userId,
+            channelId: context.channelId,
+            threadTs: replyThreadTs,
+            workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+            timezone: userTimezone,
+          },
+          files: fileParts,
           channelId: context.channelId,
           threadTs: replyThreadTs,
-          workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
-          timezone: userTimezone,
-        },
-        files: fileParts,
-        channelId: context.channelId,
-        threadTs: replyThreadTs,
-        teamId,
-        recipientUserId: context.userId,
-        channelType: context.channelType,
-        invocationId,
-      }),
+          teamId,
+          recipientUserId: context.userId,
+          channelType: context.channelType,
+          invocationId,
+        });
+        const llmMs = Date.now() - llmStart;
+        capturedResponse = response;
+
+        return {
+          response,
+          stablePrefix,
+          environmentContext,
+          conversationContext,
+          dynamicContext,
+          memories,
+          conversations,
+          retrievalMs,
+          llmMs,
+        };
+      },
     );
-    const llmMs = Date.now() - llmStart;
-    capturedResponse = response;
+    const {
+      response,
+      stablePrefix,
+      environmentContext,
+      conversationContext,
+      dynamicContext,
+      memories,
+      conversations,
+      retrievalMs,
+      llmMs,
+    } = turn;
 
     if (response.interrupted) {
       logger.info("Pipeline interrupted — invocation superseded", {
