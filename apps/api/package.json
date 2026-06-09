@@ -14,6 +14,7 @@
     "content:index": "tsx scripts/index-content.ts",
     "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings",
     "backfill:canonical-model-ids": "tsx scripts/backfill-canonical-model-ids.ts",
+    "backfill:response-scores": "tsx src/scripts/backfill-response-scores.ts",
     "bench:memory": "tsx src/scripts/bench-memory.ts",
     "bench:memory:i": "tsx src/scripts/bench-memory.ts --interactive",
     "bench:fetch-corpus": "tsx bench/scripts/fetch-corpus.ts",
