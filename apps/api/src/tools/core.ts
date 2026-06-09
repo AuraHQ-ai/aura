@@ -63,7 +63,7 @@ export async function createCoreTools(
   try {
     const userCreds = preResolvedCreds ?? await resolveUserCredentials(context?.userId);
     const filteredTools = filterToolsByCredentials(allTools, userCreds);
-    await applyAnthropicToolDiscovery(filteredTools, modelId);
+    await applyAnthropicToolDiscovery(filteredTools, modelId, context);
     return registerToolNames(filteredTools);
   } catch (e: any) {
     logger.warn("createCoreTools: credential resolution failed, returning ungated tools only", {
@@ -71,7 +71,7 @@ export async function createCoreTools(
       error: e.message,
     });
     const filteredTools = filterToolsByCredentials(allTools, new Set());
-    await applyAnthropicToolDiscovery(filteredTools, modelId);
+    await applyAnthropicToolDiscovery(filteredTools, modelId, context);
     return registerToolNames(filteredTools);
   }
 }

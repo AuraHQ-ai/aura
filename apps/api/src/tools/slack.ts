@@ -3017,7 +3017,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     if (!(k in filteredTools)) delete tools[k];
   }
 
-  await applyAnthropicToolDiscovery(tools, modelId);
+  await applyAnthropicToolDiscovery(tools, modelId, context);
 
   return registerToolNames(tools);
 }

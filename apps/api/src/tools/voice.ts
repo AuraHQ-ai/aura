@@ -32,6 +32,268 @@ function getLanguageConfig(lang: string): LanguageConfig {
 }
 
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
+const DEFAULT_VOICE_NOTE_HOURLY_LIMIT = 10;
+const VOICE_NOTE_HOURLY_LIMIT_SETTING = "voice_note_hourly_limit";
+
+export interface VoiceNoteQuota {
+  used: number;
+  limit: number;
+  remaining: number;
+  window: "1h";
+  retry_after_seconds?: number;
+  retry_after_at?: string;
+}
+
+interface VoiceNoteQuotaState {
+  quota: VoiceNoteQuota;
+  oldestCreatedAt: Date | null;
+}
+
+function parsePositiveIntegerSetting(
+  raw: string,
+  fallback: number,
+  key: string,
+): number {
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  logger.warn("Invalid numeric setting, using fallback", { key, raw, fallback });
+  return fallback;
+}
+
+async function getVoiceNoteHourlyLimit(): Promise<number> {
+  const raw = await getConfig(
+    VOICE_NOTE_HOURLY_LIMIT_SETTING,
+    String(DEFAULT_VOICE_NOTE_HOURLY_LIMIT),
+  );
+  return parsePositiveIntegerSetting(
+    raw,
+    DEFAULT_VOICE_NOTE_HOURLY_LIMIT,
+    VOICE_NOTE_HOURLY_LIMIT_SETTING,
+  );
+}
+
+function toDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addRetryAfter(
+  quota: VoiceNoteQuota,
+  oldestCreatedAt: Date | null,
+): VoiceNoteQuota {
+  if (!oldestCreatedAt || quota.used < quota.limit) return quota;
+  const retryAt = new Date(oldestCreatedAt.getTime() + 60 * 60 * 1000);
+  return {
+    ...quota,
+    retry_after_seconds: Math.max(0, Math.ceil((retryAt.getTime() - Date.now()) / 1000)),
+    retry_after_at: retryAt.toISOString(),
+  };
+}
+
+async function getVoiceNoteQuotaState(limit = DEFAULT_VOICE_NOTE_HOURLY_LIMIT): Promise<VoiceNoteQuotaState> {
+  const rows = await db
+    .select({
+      count: sql`count(*)`,
+      oldestCreatedAt: sql`min(${voiceCalls.createdAt})`,
+    })
+    .from(voiceCalls)
+    .where(
+      and(
+        gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
+        eq(voiceCalls.direction, "voice_note"),
+      ),
+    );
+
+  const used = Number(rows[0]?.count || 0);
+  const oldestCreatedAt = toDate(rows[0]?.oldestCreatedAt);
+  const quota = addRetryAfter(
+    {
+      used,
+      limit,
+      remaining: Math.max(0, limit - used),
+      window: "1h",
+    },
+    oldestCreatedAt,
+  );
+  return { quota, oldestCreatedAt };
+}
+
+async function enforceVoiceNoteQuota(): Promise<
+  | { ok: true; limit: number; quota: VoiceNoteQuota }
+  | { ok: false; limit: number; quota: VoiceNoteQuota }
+> {
+  const limit = await getVoiceNoteHourlyLimit();
+  const { quota } = await getVoiceNoteQuotaState(limit);
+  if (quota.used >= limit) return { ok: false, limit, quota };
+  return { ok: true, limit, quota };
+}
+
+interface RecordVoiceNoteUsageInput {
+  fileId: string;
+  text: string;
+  voiceId: string;
+  language?: string;
+  channelId?: string;
+  threadTs?: string;
+  context?: ScheduleContext;
+  durationEstimate: number;
+  limit: number;
+}
+
+/**
+ * Shared voice-note accounting path.
+ *
+ * Raw ElevenLabs curl + Slack upload_file calls that bypass this helper still
+ * cannot be counted here. Future internal voice-note senders should use
+ * generateAndUploadVoiceNote() so quota accounting is not skipped.
+ */
+export async function recordVoiceNoteUsage({
+  fileId,
+  text,
+  voiceId,
+  language,
+  channelId,
+  threadTs,
+  context,
+  durationEstimate,
+  limit,
+}: RecordVoiceNoteUsageInput): Promise<VoiceNoteQuota> {
+  try {
+    await db
+      .insert(voiceCalls)
+      .values({
+        conversationId: `voice_note_${fileId}`,
+        direction: "voice_note",
+        slackUserId: context?.userId ?? null,
+        status: "completed",
+        callContext: text.substring(0, 500),
+        metadata: {
+          voiceId,
+          language: language ?? null,
+          channelId: channelId ?? null,
+          threadTs: threadTs ?? null,
+          durationEstimate,
+        },
+      })
+      .onConflictDoNothing({ target: voiceCalls.conversationId });
+  } catch (dbError: any) {
+    logger.error("send_voice_note DB insert failed (voice note was sent)", {
+      error: dbError.message,
+      fileId,
+    });
+  }
+
+  return (await getVoiceNoteQuotaState(limit)).quota;
+}
+
+interface GenerateAndUploadVoiceNoteInput {
+  client: WebClient;
+  apiKey: string;
+  text: string;
+  voiceId: string;
+  language?: string;
+  channelId: string;
+  threadTs?: string;
+  context?: ScheduleContext;
+  limit: number;
+}
+
+export async function generateAndUploadVoiceNote({
+  client,
+  apiKey,
+  text,
+  voiceId,
+  language,
+  channelId,
+  threadTs,
+  context,
+  limit,
+}: GenerateAndUploadVoiceNoteInput): Promise<{
+  fileId: string;
+  fileUrl: string | null;
+  durationEstimate: number;
+  quota: VoiceNoteQuota;
+}> {
+  const ttsBody: Record<string, unknown> = {
+    text,
+    // multilingual_v2 + high stability: turbo_v2_5 at stability 0.5 produced
+    // wildly inconsistent renders of the same voice (perceived "different voice"
+    // between notes). High stability trades expressiveness for consistency.
+    model_id: "eleven_multilingual_v2",
+    voice_settings: { stability: 0.75, similarity_boost: 0.75 },
+  };
+  if (language) {
+    ttsBody.language_code = language;
+  }
+
+  const ttsResponse = await fetch(
+    `${ELEVENLABS_API_BASE}/text-to-speech/${voiceId}`,
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+        Accept: "audio/mpeg",
+      },
+      body: JSON.stringify(ttsBody),
+    },
+  );
+
+  if (!ttsResponse.ok) {
+    const errorText = await ttsResponse.text();
+    logger.error("send_voice_note TTS error", {
+      status: ttsResponse.status,
+      body: errorText.substring(0, 500),
+    });
+    throw new Error(`ElevenLabs TTS error (${ttsResponse.status}): ${errorText.substring(0, 200)}`);
+  }
+
+  const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
+  const uploadUrlResp = await client.files.getUploadURLExternal({
+    filename: "voice_note.mp3",
+    length: audioBuffer.length,
+  });
+  const uploadUrl = uploadUrlResp.upload_url!;
+  const fileId = uploadUrlResp.file_id!;
+
+  const uploadResp = await fetch(uploadUrl, {
+    method: "POST",
+    body: audioBuffer,
+    headers: { "Content-Type": "application/octet-stream" },
+  });
+  if (!uploadResp.ok) {
+    throw new Error(`Slack file upload failed: ${uploadResp.status} ${uploadResp.statusText}`);
+  }
+
+  const completeParams: Record<string, unknown> = {
+    files: [{ id: fileId, title: "Voice Note" }],
+    channel_id: channelId,
+  };
+  if (threadTs) completeParams.thread_ts = threadTs;
+
+  const completeResp = await client.files.completeUploadExternal(
+    completeParams as any,
+  );
+  const fileUrl =
+    (completeResp as any).files?.[0]?.permalink ?? null;
+
+  const durationEstimate = Math.round(text.length / 15);
+  const quota = await recordVoiceNoteUsage({
+    fileId,
+    text,
+    voiceId,
+    language,
+    channelId,
+    threadTs,
+    context,
+    durationEstimate,
+    limit,
+  });
+
+  return { fileId, fileUrl, durationEstimate, quota };
+}
 
 // ── ElevenLabs Discovery Cache ──────────────────────────────────────────────
 
@@ -652,19 +914,14 @@ export function createVoiceTools(client?: WebClient, context?: ScheduleContext):
           .describe("Thread timestamp to attach the voice note to a specific thread."),
       }),
       execute: async ({ text, voice_id, language, channel, thread_ts }) => {
-        const recentNotes = await db
-          .select({ count: sql`count(*)` })
-          .from(voiceCalls)
-          .where(
-            and(
-              gt(voiceCalls.createdAt, sql`now() - interval '1 hour'`),
-              eq(voiceCalls.direction, "voice_note"),
-            ),
-          );
-        if (Number(recentNotes[0]?.count || 0) >= 10) {
+        const quotaCheck = await enforceVoiceNoteQuota();
+        if (!quotaCheck.ok) {
           return {
             ok: false,
             error: "Rate limit: too many voice notes in the last hour.",
+            quota: quotaCheck.quota,
+            retry_after_seconds: quotaCheck.quota.retry_after_seconds,
+            retry_after_at: quotaCheck.quota.retry_after_at,
           };
         }
 
@@ -702,97 +959,22 @@ export function createVoiceTools(client?: WebClient, context?: ScheduleContext):
             };
           }
 
-          // 2. Generate speech via ElevenLabs TTS
-          const ttsBody: Record<string, unknown> = {
+          const {
+            fileId,
+            fileUrl,
+            durationEstimate,
+            quota,
+          } = await generateAndUploadVoiceNote({
+            client,
+            apiKey,
             text,
-            // multilingual_v2 + high stability: turbo_v2_5 at stability 0.5 produced
-            // wildly inconsistent renders of the same voice (perceived "different voice"
-            // between notes). High stability trades expressiveness for consistency.
-            model_id: "eleven_multilingual_v2",
-            voice_settings: { stability: 0.75, similarity_boost: 0.75 },
-          };
-          if (language) {
-            ttsBody.language_code = language;
-          }
-
-          const ttsResponse = await fetch(
-            `${ELEVENLABS_API_BASE}/text-to-speech/${resolvedVoiceId}`,
-            {
-              method: "POST",
-              headers: {
-                "xi-api-key": apiKey,
-                "Content-Type": "application/json",
-                Accept: "audio/mpeg",
-              },
-              body: JSON.stringify(ttsBody),
-            },
-          );
-
-          if (!ttsResponse.ok) {
-            const errorText = await ttsResponse.text();
-            logger.error("send_voice_note TTS error", {
-              status: ttsResponse.status,
-              body: errorText.substring(0, 500),
-            });
-            return {
-              ok: false,
-              error: `ElevenLabs TTS error (${ttsResponse.status}): ${errorText.substring(0, 200)}`,
-            };
-          }
-
-          const audioBuffer = Buffer.from(await ttsResponse.arrayBuffer());
-
-          // 3. Upload mp3 to Slack via 3-step upload API
-          const uploadUrlResp = await client.files.getUploadURLExternal({
-            filename: "voice_note.mp3",
-            length: audioBuffer.length,
+            voiceId: resolvedVoiceId,
+            language,
+            channelId,
+            threadTs: resolvedThreadTs,
+            context,
+            limit: quotaCheck.limit,
           });
-          const uploadUrl = uploadUrlResp.upload_url!;
-          const fileId = uploadUrlResp.file_id!;
-
-          const uploadResp = await fetch(uploadUrl, {
-            method: "POST",
-            body: audioBuffer,
-            headers: { "Content-Type": "application/octet-stream" },
-          });
-          if (!uploadResp.ok) {
-            return {
-              ok: false,
-              error: `Slack file upload failed: ${uploadResp.status} ${uploadResp.statusText}`,
-            };
-          }
-
-          const completeParams: Record<string, unknown> = {
-            files: [{ id: fileId, title: "Voice Note" }],
-          };
-          if (channelId) completeParams.channel_id = channelId;
-          if (resolvedThreadTs) completeParams.thread_ts = resolvedThreadTs;
-
-          const completeResp = await client.files.completeUploadExternal(
-            completeParams as any,
-          );
-          const fileUrl =
-            (completeResp as any).files?.[0]?.permalink ?? null;
-
-          const durationEstimate = Math.round(text.length / 15);
-
-          try {
-            await db
-              .insert(voiceCalls)
-              .values({
-                conversationId: `voice_note_${fileId}`,
-                direction: "voice_note",
-                slackUserId: context?.userId ?? null,
-                status: "completed",
-                callContext: text.substring(0, 500),
-              })
-              .onConflictDoNothing({ target: voiceCalls.conversationId });
-          } catch (dbError: any) {
-            logger.error("send_voice_note DB insert failed (voice note was sent)", {
-              error: dbError.message,
-              fileId,
-            });
-          }
 
           logger.info("send_voice_note tool called", {
             channel: resolvedChannel,
@@ -806,6 +988,7 @@ export function createVoiceTools(client?: WebClient, context?: ScheduleContext):
             file_id: fileId,
             file_url: fileUrl,
             duration_estimate: durationEstimate,
+            quota,
           };
         } catch (error: any) {
           logger.error("send_voice_note tool failed", { error: error.message });
