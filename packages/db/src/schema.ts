@@ -853,6 +853,61 @@ export const conversationParts = pgTable(
   ],
 );
 
+// ── Eval Response Scores ────────────────────────────────────────────────────
+//
+// One row per assistant text response part. The verdict is atomic at part_id;
+// trace_id/thread_ts are denormalized only for attribution and filtering.
+
+export const evalResponseScores = pgTable(
+  "eval_response_scores",
+  {
+    workspaceId: workspaceId().references(() => workspaces.id),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => conversationMessages.id, { onDelete: "cascade" }),
+    partId: uuid("part_id")
+      .notNull()
+      .references(() => conversationParts.id, { onDelete: "cascade" }),
+    traceId: uuid("trace_id")
+      .notNull()
+      .references(() => conversationTraces.id, { onDelete: "cascade" }),
+    threadTs: text("thread_ts"),
+    servingIntent: text("serving_intent"),
+    resolvedInWindow: boolean("resolved_in_window").notNull().default(false),
+    verdict: text("verdict").notNull(),
+    scorable: boolean("scorable").notNull(),
+    failureClass: text("failure_class").notNull().default("none"),
+    note: text("note"),
+    goldAnswer: text("gold_answer"),
+    rubric: jsonb("rubric").$type<{
+      must_do?: string[];
+      must_not_do?: string[];
+    } | null>(),
+    ratifiedBy: text("ratified_by"),
+    judgeModel: text("judge_model").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("eval_response_scores_workspace_part_idx").on(
+      table.workspaceId,
+      table.partId,
+    ),
+    index("eval_response_scores_message_idx").on(table.messageId),
+    index("eval_response_scores_trace_idx").on(table.traceId),
+    index("eval_response_scores_thread_idx").on(table.threadTs),
+    index("eval_response_scores_failure_class_idx").on(table.failureClass),
+    index("eval_response_scores_serving_intent_idx").on(table.servingIntent),
+    check(
+      "eval_response_scores_verdict_check",
+      sql`${table.verdict} IN ('fulfilled', 'partial', 'failed')`,
+    ),
+    check(
+      "eval_response_scores_failure_class_check",
+      sql`${table.failureClass} IN ('missing_cred', 'bad_memory', 'bad_harness', 'missing_tool', 'reasoning', 'latency', 'none')`,
+    ),
+  ],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(
@@ -1338,5 +1393,7 @@ export type ConversationMessage = typeof conversationMessages.$inferSelect;
 export type NewConversationMessage = typeof conversationMessages.$inferInsert;
 export type ConversationPart = typeof conversationParts.$inferSelect;
 export type NewConversationPart = typeof conversationParts.$inferInsert;
+export type EvalResponseScore = typeof evalResponseScores.$inferSelect;
+export type NewEvalResponseScore = typeof evalResponseScores.$inferInsert;
 export type ModelPricing = typeof modelPricing.$inferSelect;
 export type NewModelPricing = typeof modelPricing.$inferInsert;

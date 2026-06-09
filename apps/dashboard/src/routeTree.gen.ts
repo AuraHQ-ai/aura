@@ -19,6 +19,7 @@ import { Route as NotesIndexRouteImport } from "./routes/notes/index"
 import { Route as MemoriesIndexRouteImport } from "./routes/memories/index"
 import { Route as JobsIndexRouteImport } from "./routes/jobs/index"
 import { Route as ErrorsIndexRouteImport } from "./routes/errors/index"
+import { Route as EvalIndexRouteImport } from "./routes/eval/index"
 import { Route as CredentialsIndexRouteImport } from "./routes/credentials/index"
 import { Route as ConversationsIndexRouteImport } from "./routes/conversations/index"
 import { Route as ConsumptionIndexRouteImport } from "./routes/consumption/index"
@@ -84,6 +85,11 @@ const JobsIndexRoute = JobsIndexRouteImport.update({
 const ErrorsIndexRoute = ErrorsIndexRouteImport.update({
   id: "/errors/",
   path: "/errors/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvalIndexRoute = EvalIndexRouteImport.update({
+  id: "/eval/",
+  path: "/eval/",
   getParentRoute: () => rootRouteImport,
 } as any)
 const CredentialsIndexRoute = CredentialsIndexRouteImport.update({
@@ -187,6 +193,7 @@ export interface FileRoutesByFullPath {
   "/consumption/": typeof ConsumptionIndexRoute
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
+  "/eval/": typeof EvalIndexRoute
   "/errors/": typeof ErrorsIndexRoute
   "/jobs/": typeof JobsIndexRoute
   "/memories/": typeof MemoriesIndexRoute
@@ -215,6 +222,7 @@ export interface FileRoutesByTo {
   "/consumption": typeof ConsumptionIndexRoute
   "/conversations": typeof ConversationsIndexRoute
   "/credentials": typeof CredentialsIndexRoute
+  "/eval": typeof EvalIndexRoute
   "/errors": typeof ErrorsIndexRoute
   "/jobs": typeof JobsIndexRoute
   "/memories": typeof MemoriesIndexRoute
@@ -244,6 +252,7 @@ export interface FileRoutesById {
   "/consumption/": typeof ConsumptionIndexRoute
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
+  "/eval/": typeof EvalIndexRoute
   "/errors/": typeof ErrorsIndexRoute
   "/jobs/": typeof JobsIndexRoute
   "/memories/": typeof MemoriesIndexRoute
@@ -274,6 +283,7 @@ export interface FileRouteTypes {
     | "/consumption/"
     | "/conversations/"
     | "/credentials/"
+    | "/eval/"
     | "/errors/"
     | "/jobs/"
     | "/memories/"
@@ -302,6 +312,7 @@ export interface FileRouteTypes {
     | "/consumption"
     | "/conversations"
     | "/credentials"
+    | "/eval"
     | "/errors"
     | "/jobs"
     | "/memories"
@@ -330,6 +341,7 @@ export interface FileRouteTypes {
     | "/consumption/"
     | "/conversations/"
     | "/credentials/"
+    | "/eval/"
     | "/errors/"
     | "/jobs/"
     | "/memories/"
@@ -359,6 +371,7 @@ export interface RootRouteChildren {
   ConsumptionIndexRoute: typeof ConsumptionIndexRoute
   ConversationsIndexRoute: typeof ConversationsIndexRoute
   CredentialsIndexRoute: typeof CredentialsIndexRoute
+  EvalIndexRoute: typeof EvalIndexRoute
   ErrorsIndexRoute: typeof ErrorsIndexRoute
   JobsIndexRoute: typeof JobsIndexRoute
   MemoriesIndexRoute: typeof MemoriesIndexRoute
@@ -447,6 +460,13 @@ declare module "@tanstack/react-router" {
       path: "/credentials"
       fullPath: "/credentials/"
       preLoaderRoute: typeof CredentialsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/eval/": {
+      id: "/eval/"
+      path: "/eval"
+      fullPath: "/eval/"
+      preLoaderRoute: typeof EvalIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/conversations/": {
@@ -575,6 +595,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConsumptionIndexRoute: ConsumptionIndexRoute,
   ConversationsIndexRoute: ConversationsIndexRoute,
   CredentialsIndexRoute: CredentialsIndexRoute,
+  EvalIndexRoute: EvalIndexRoute,
   ErrorsIndexRoute: ErrorsIndexRoute,
   JobsIndexRoute: JobsIndexRoute,
   MemoriesIndexRoute: MemoriesIndexRoute,

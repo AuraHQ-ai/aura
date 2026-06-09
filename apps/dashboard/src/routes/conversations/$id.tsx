@@ -9,6 +9,10 @@ import {
   UnifiedTimeline,
   type ConversationMessageWithParts,
 } from "@/components/unified-timeline";
+import {
+  EvalScorePanel,
+  type EvalResponseScore,
+} from "@/components/eval-score-panel";
 import { formatDate } from "@/lib/utils";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 
@@ -42,6 +46,7 @@ interface Trace {
 export interface ConversationData {
   trace: Trace;
   conversation: ConversationMessageWithParts[];
+  evalScores: EvalResponseScore[];
   jobName: string | null;
   jobId: string | null;
 }
@@ -162,7 +167,7 @@ export function ConversationDetailView({
   data: ConversationData;
   embedded?: boolean;
 }) {
-  const { trace, conversation, jobName, jobId } = data;
+  const { trace, conversation, evalScores, jobName, jobId } = data;
 
   return (
     <>
@@ -203,7 +208,10 @@ export function ConversationDetailView({
 
       <ConversationMetadataCards trace={trace} jobName={jobName} />
 
-      <UnifiedTimeline conversation={conversation} />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <UnifiedTimeline conversation={conversation} />
+        <EvalScorePanel traceId={trace.id} scores={evalScores ?? []} />
+      </div>
     </>
   );
 }

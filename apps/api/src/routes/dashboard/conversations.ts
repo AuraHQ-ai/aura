@@ -4,6 +4,7 @@ import {
   conversationTraces,
   conversationMessages,
   conversationParts,
+  evalResponseScores,
   jobs,
   jobExecutions,
   users,
@@ -384,6 +385,12 @@ dashboardConversationsApp.openapi(getConversationRoute, async (c) => {
       parts: parts.filter((p) => p.messageId === msg.id),
     }));
 
+    const evalScores = await db
+      .select()
+      .from(evalResponseScores)
+      .where(eq(evalResponseScores.traceId, id))
+      .orderBy(asc(evalResponseScores.createdAt));
+
     const [cumulative] = await db
       .select({
         inputTokens: sql<number>`coalesce(sum((token_usage->>'inputTokens')::int), 0)::int`,
@@ -414,7 +421,7 @@ dashboardConversationsApp.openapi(getConversationRoute, async (c) => {
       }
     }
 
-    return c.json({ trace: traceWithTokens, conversation, jobName, jobId } as any, 200);
+    return c.json({ trace: traceWithTokens, conversation, evalScores, jobName, jobId } as any, 200);
   } catch (error) {
     logger.error("Failed to get conversation", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -494,10 +501,16 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
       ? await db.select().from(conversationParts).where(sql`${conversationParts.messageId} IN ${allMsgIds}`).orderBy(asc(conversationParts.orderIndex))
       : [];
 
+    const allScores = traceIds.length > 0
+      ? await db.select().from(evalResponseScores).where(sql`${evalResponseScores.traceId} IN ${traceIds}`).orderBy(asc(evalResponseScores.createdAt))
+      : [];
+
     const messagesByConv: Record<string, typeof allMessages> = {};
     for (const msg of allMessages) (messagesByConv[msg.conversationId] ??= []).push(msg);
     const partsByMsg: Record<string, typeof allParts> = {};
     for (const part of allParts) (partsByMsg[part.messageId] ??= []).push(part);
+    const scoresByTrace: Record<string, typeof allScores> = {};
+    for (const score of allScores) (scoresByTrace[score.traceId] ??= []).push(score);
 
     const conversationsByTrace: Record<string, Array<(typeof allMessages)[0] & { parts: typeof allParts }>> = {};
     for (const traceId of traceIds) {
@@ -551,6 +564,7 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
       return {
         trace: traceWithTokens,
         conversation: conversationsByTrace[trace.id] ?? [],
+        evalScores: scoresByTrace[trace.id] ?? [],
         jobName: jobInfo?.jobName ?? null,
         jobId: jobInfo?.jobId ?? null,
       };

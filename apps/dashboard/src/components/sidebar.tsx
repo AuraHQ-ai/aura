@@ -51,6 +51,7 @@ const navItems = [
   { href: "/resources", label: "Resources", icon: FileText },
   { href: "/consumption", label: "Consumption", icon: BarChart3 },
   { href: "/adoption", label: "Adoption", icon: TrendingUp },
+  { href: "/eval", label: "Eval", icon: BarChart3 },
   { href: "/credentials", label: "Credentials", icon: KeyRound },
 ] as const;
 
