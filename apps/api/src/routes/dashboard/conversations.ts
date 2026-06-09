@@ -4,6 +4,7 @@ import {
   conversationTraces,
   conversationMessages,
   conversationParts,
+  evalResponseScores,
   jobs,
   jobExecutions,
   users,
@@ -371,17 +372,23 @@ dashboardConversationsApp.openapi(getConversationRoute, async (c) => {
 
     const msgIds = msgs.map((m) => m.id);
     let parts: (typeof conversationParts.$inferSelect)[] = [];
+    let evalScores: (typeof evalResponseScores.$inferSelect)[] = [];
     if (msgIds.length > 0) {
       parts = await db
         .select()
         .from(conversationParts)
         .where(sql`${conversationParts.messageId} IN ${msgIds}`)
         .orderBy(asc(conversationParts.orderIndex));
+      evalScores = await db
+        .select()
+        .from(evalResponseScores)
+        .where(sql`${evalResponseScores.messageId} IN ${msgIds}`);
     }
 
     const conversation = msgs.map((msg) => ({
       ...msg,
       parts: parts.filter((p) => p.messageId === msg.id),
+      evalScore: evalScores.find((s) => s.messageId === msg.id) ?? null,
     }));
 
     const [cumulative] = await db
@@ -493,17 +500,23 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
     const allParts = allMsgIds.length > 0
       ? await db.select().from(conversationParts).where(sql`${conversationParts.messageId} IN ${allMsgIds}`).orderBy(asc(conversationParts.orderIndex))
       : [];
+    const allEvalScores = allMsgIds.length > 0
+      ? await db.select().from(evalResponseScores).where(sql`${evalResponseScores.messageId} IN ${allMsgIds}`)
+      : [];
 
     const messagesByConv: Record<string, typeof allMessages> = {};
     for (const msg of allMessages) (messagesByConv[msg.conversationId] ??= []).push(msg);
     const partsByMsg: Record<string, typeof allParts> = {};
     for (const part of allParts) (partsByMsg[part.messageId] ??= []).push(part);
+    const evalScoreByMsg: Record<string, (typeof allEvalScores)[0]> = {};
+    for (const score of allEvalScores) evalScoreByMsg[score.messageId] = score;
 
-    const conversationsByTrace: Record<string, Array<(typeof allMessages)[0] & { parts: typeof allParts }>> = {};
+    const conversationsByTrace: Record<string, Array<(typeof allMessages)[0] & { parts: typeof allParts; evalScore: (typeof allEvalScores)[0] | null }>> = {};
     for (const traceId of traceIds) {
       conversationsByTrace[traceId] = (messagesByConv[traceId] ?? []).map((msg) => ({
         ...msg,
         parts: partsByMsg[msg.id] ?? [],
+        evalScore: evalScoreByMsg[msg.id] ?? null,
       }));
     }
 
