@@ -84,6 +84,7 @@ interface ChatThread {
   preview: string | null;
   lastActivityAt: string;
   messageCount: number;
+  status?: "idle" | "generating";
 }
 
 interface ChatPanelProps {
@@ -98,8 +99,76 @@ function getAuthHeaders(): Record<string, string> {
   return {};
 }
 
+// ── Server-anchored run tracking ────────────────────────────────────────────
+// The server owns each generation as a "run". We remember the active runId per
+// thread so a refresh / tab-close / device-hop can reconnect to the live stream
+// (resumable streams). The map is only a hint — the server's run status is the
+// source of truth, so stale entries are pruned whenever a run lookup says the
+// run is no longer generating.
+
+const THREAD_KEY = "aura_chat_thread";
+const RUNS_KEY = "aura_chat_runs";
+
+function readRunMap(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(RUNS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function getRunId(threadId: string): string | null {
+  return readRunMap()[threadId] ?? null;
+}
+
+function setRunId(threadId: string, runId: string): void {
+  try {
+    const map = readRunMap();
+    if (map[threadId] === runId) return;
+    map[threadId] = runId;
+    localStorage.setItem(RUNS_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function clearRunId(threadId: string): void {
+  try {
+    const map = readRunMap();
+    if (!(threadId in map)) return;
+    delete map[threadId];
+    localStorage.setItem(RUNS_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+interface ActiveRun {
+  runId: string;
+  status: "running" | "done" | "error" | "canceled";
+  userText: string | null;
+}
+
+async function fetchActiveRun(threadId: string): Promise<ActiveRun | null> {
+  try {
+    const res = await fetch(
+      `/api/dashboard/chat/threads/${encodeURIComponent(threadId)}/run`,
+      { headers: getAuthHeaders() },
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.run ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
-  const [currentThreadId, setCurrentThreadId] = useState<string>(() => crypto.randomUUID());
+  // Persist the open thread so a page refresh lands back in it and can resume
+  // any in-flight run (resumable streams, T3).
+  const [currentThreadId, setCurrentThreadId] = useState<string>(
+    () => localStorage.getItem(THREAD_KEY) || crypto.randomUUID(),
+  );
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -111,17 +180,29 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
   const selectedModelRef = useRef(selectedModel);
   selectedModelRef.current = selectedModel;
 
+  useEffect(() => {
+    localStorage.setItem(THREAD_KEY, currentThreadId);
+  }, [currentThreadId]);
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: "/api/dashboard/chat",
         headers: () => getAuthHeaders(),
         body: () => ({ threadId: threadIdRef.current, userId, userName, modelId: selectedModelRef.current }),
+        // On reconnect, point at the run's durable stream instead of starting a
+        // new generation. The runId is the one we captured from the start chunk
+        // (or, after a refresh, from localStorage).
+        prepareReconnectToStreamRequest: () => {
+          const runId = getRunId(threadIdRef.current);
+          if (!runId) throw new Error("No active run to reconnect to");
+          return { api: `/api/dashboard/chat/${encodeURIComponent(runId)}/stream` };
+        },
       }),
     [userId, userName],
   );
 
-  const { messages, sendMessage, status, error, stop, setMessages } = useChat({
+  const { messages, sendMessage, status, error, stop, setMessages, resumeStream } = useChat({
     transport,
   });
 
@@ -168,6 +249,56 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
     }
   }, [status, messages.length, fetchThreads]);
 
+  // Capture the server's runId from the in-flight assistant message so we can
+  // reconnect to this exact run after a disconnect / refresh.
+  useEffect(() => {
+    if (status !== "streaming" && status !== "submitted") return;
+    const last = messages[messages.length - 1];
+    if (last?.role !== "assistant") return;
+    const runId = (last as { metadata?: { runId?: string } }).metadata?.runId;
+    if (runId) setRunId(threadIdRef.current, runId);
+  }, [messages, status]);
+
+  // Attach to a thread's live run, replaying what we missed and tailing the
+  // rest. Reconstructs the in-flight user bubble (the run's input) since it
+  // isn't persisted until the turn finishes.
+  const attachToRun = useCallback(
+    (run: ActiveRun, hasUserBubble: boolean) => {
+      setRunId(threadIdRef.current, run.runId);
+      if (!hasUserBubble && run.userText) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `resumed-user-${run.runId}`,
+            role: "user",
+            parts: [{ type: "text", text: run.userText as string }],
+          } as UIMessage,
+        ]);
+      }
+      void resumeStream();
+    },
+    [setMessages, resumeStream],
+  );
+
+  // On mount, if the open thread has a run still generating server-side, resume
+  // it (covers page refresh / fresh session, T3).
+  const mountResumeDone = useRef(false);
+  useEffect(() => {
+    if (mountResumeDone.current) return;
+    mountResumeDone.current = true;
+    const threadId = threadIdRef.current;
+    if (!getRunId(threadId)) return;
+    void (async () => {
+      const run = await fetchActiveRun(threadId);
+      if (run && run.status === "running") {
+        attachToRun(run, messages.some((m) => m.role === "user"));
+      } else {
+        clearRunId(threadId);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSubmit = useCallback(
     (msg: PromptInputMessage) => {
       if (!msg.text.trim()) return;
@@ -177,12 +308,40 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
     [sendMessage],
   );
 
+  // Explicit stop is the ONLY thing that cancels a run server-side (T5). It
+  // detaches this client immediately and tells the server to abort generation.
+  const handleStop = useCallback(() => {
+    const runId = getRunId(threadIdRef.current);
+    stop();
+    if (runId) {
+      clearRunId(threadIdRef.current);
+      void fetch(`/api/dashboard/chat/${encodeURIComponent(runId)}/stop`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      })
+        .catch(() => {})
+        .finally(() => fetchThreads());
+    }
+  }, [stop, fetchThreads]);
+
+  // Keep history fresh while it's open so generating spinners appear/clear in
+  // near-real-time from the server's run status (R2).
+  useEffect(() => {
+    if (!showHistory) return;
+    const id = setInterval(fetchThreads, 3000);
+    return () => clearInterval(id);
+  }, [showHistory, fetchThreads]);
+
   const handleNewChat = useCallback(() => {
+    // Detach from any in-flight run WITHOUT canceling it — stop() only aborts
+    // this client's reader; the run keeps generating server-side and can be
+    // resumed from history (R1, T1). The orphaned-run state is now impossible.
+    stop();
     const newId = crypto.randomUUID();
     setCurrentThreadId(newId);
     setMessages([]);
     setShowHistory(false);
-  }, [setMessages]);
+  }, [stop, setMessages]);
 
   const handleCopyChat = useCallback(async () => {
     if (messages.length === 0) return;
@@ -213,11 +372,15 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
         return;
       }
 
+      // Detach (don't cancel) the current thread's stream before hopping away.
+      stop();
       setLoadingThread(true);
       setShowHistory(false);
       setCurrentThreadId(threadId);
+      threadIdRef.current = threadId;
       setMessages([]);
 
+      let loadedMessages: UIMessage[] = [];
       try {
         const res = await fetch(
           `/api/dashboard/chat/threads/${encodeURIComponent(threadId)}/messages`,
@@ -225,15 +388,25 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
         );
         if (res.ok) {
           const data = await res.json();
-          setMessages(data.messages ?? []);
+          loadedMessages = (data.messages ?? []) as UIMessage[];
+          setMessages(loadedMessages);
         }
       } catch {
         // silently ignore
       } finally {
         setLoadingThread(false);
       }
+
+      // If this thread is still generating server-side, replay missed chunks
+      // and continue streaming live — the seam is invisible (R3, T1, T4).
+      const run = await fetchActiveRun(threadId);
+      if (run && run.status === "running") {
+        attachToRun(run, loadedMessages.some((m) => m.role === "user"));
+      } else {
+        clearRunId(threadId);
+      }
     },
-    [currentThreadId, setMessages],
+    [currentThreadId, stop, setMessages, attachToRun],
   );
 
   return (
@@ -289,7 +462,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
           onNewChat={handleNewChat}
         />
       ) : isEmpty ? (
-        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
+        <EmptyState onSubmit={handleSubmit} status={status} onStop={handleStop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
       ) : (
         <>
           <Conversation className="flex-1">
@@ -325,7 +498,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             <ConversationScrollButton />
           </Conversation>
 
-          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
+          <ChatInput onSubmit={handleSubmit} status={status} onStop={handleStop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
         </>
       )}
     </div>
@@ -526,11 +699,16 @@ function ThreadList({
               : "hover:bg-muted/50",
           )}
         >
-          <span className="text-[13px] truncate">
-            {thread.preview || "Empty chat"}
+          <span className="flex items-center gap-1.5 text-[13px] truncate">
+            {thread.status === "generating" && (
+              <Spinner className="h-3 w-3 shrink-0 text-muted-foreground" />
+            )}
+            <span className="truncate">{thread.preview || "Empty chat"}</span>
           </span>
           <span className="text-[11px] text-muted-foreground">
-            {formatRelativeTime(thread.lastActivityAt)}
+            {thread.status === "generating"
+              ? "Generating…"
+              : formatRelativeTime(thread.lastActivityAt)}
             {thread.messageCount > 1 &&
               ` · ${thread.messageCount} exchanges`}
           </span>
