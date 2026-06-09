@@ -1,4 +1,4 @@
-import { eq, and, or, isNull, inArray, sql } from "drizzle-orm";
+import { eq, and, isNull, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   credentials,
@@ -164,136 +164,10 @@ export async function storeApiCredential(
   return row;
 }
 
-/** Shared credential fetch + permission check. Returns the full row or null. */
-async function fetchAndAuthorize(
-  name: string,
-  ownerId: string,
-  requestingUserId: string,
-  intent: "read" | "write",
-): Promise<typeof credentials.$inferSelect | null> {
-  validateKey();
-  validateName(name);
-
-  const rows = await db
-    .select()
-    .from(credentials)
-    .where(and(eq(credentials.ownerId, ownerId), eq(credentials.name, name)))
-    .limit(1);
-
-  const cred = rows[0];
-  if (!cred) return null;
-
-  if (cred.expiresAt && cred.expiresAt < new Date()) {
-    await audit(cred.id, name, requestingUserId, "expired_access_attempt");
-    await notifyOwnerExpired(cred.ownerId, name).catch(() => {});
-    return null;
-  }
-
-  const allowed = await hasPermission(ownerId, cred.id, requestingUserId, intent);
-  if (!allowed) {
-    await audit(cred.id, name, requestingUserId, intent, "access_denied");
-    throw new Error(`Access denied: ${requestingUserId} cannot ${intent} credential "${name}" owned by ${ownerId}`);
-  }
-
-  await audit(cred.id, name, requestingUserId, "read");
-  return cred;
-}
-
-export async function getApiCredential(
-  name: string,
-  ownerId: string,
-  requestingUserId: string,
-  intent: "read" | "write",
-): Promise<string | null> {
-  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
-  if (!cred) return null;
-  return decryptCredential(cred.value);
-}
-
-export async function getApiCredentialWithType(
-  name: string,
-  ownerId: string,
-  requestingUserId: string,
-  intent: "read" | "write",
-): Promise<{ value: string; type: string; access_token?: string; expires_in?: number } | null> {
-  const cred = await fetchAndAuthorize(name, ownerId, requestingUserId, intent);
-  if (!cred) return null;
-
-  const decrypted = decryptCredential(cred.value);
-
-  if (cred.type === "oauth_client" && cred.tokenUrl) {
-    let parsed: { client_id: string; client_secret: string };
-    try {
-      parsed = JSON.parse(decrypted);
-    } catch {
-      throw new Error(`oauth_client credential "${name}" has invalid JSON value`);
-    }
-    if (!parsed.client_id || !parsed.client_secret) {
-      throw new Error(`oauth_client credential "${name}" missing client_id or client_secret`);
-    }
-    const tokenResponse = await exchangeOAuthToken(
-      cred.tokenUrl,
-      parsed.client_id,
-      parsed.client_secret,
-    );
-    return {
-      value: tokenResponse.access_token,
-      type: cred.type,
-      access_token: tokenResponse.access_token,
-      expires_in: tokenResponse.expires_in,
-    };
-  }
-
-  return { value: decrypted, type: cred.type };
-}
-
-async function exchangeOAuthToken(
-  tokenUrl: string,
-  clientId: string,
-  clientSecret: string,
-): Promise<{ access_token: string; expires_in?: number }> {
-  let resp: Response;
-  try {
-    resp = await fetch(tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
-    });
-  } catch (err: any) {
-    throw new Error(`Token exchange failed: could not reach ${tokenUrl}: ${err.message}`);
-  }
-
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "");
-    throw new Error(
-      `Token exchange failed: ${tokenUrl} returned ${resp.status}${body ? `: ${body}` : ""}`,
-    );
-  }
-
-  let data: any;
-  try {
-    data = await resp.json();
-  } catch {
-    throw new Error(`Token exchange failed: ${tokenUrl} returned non-JSON response`);
-  }
-
-  if (!data.access_token || typeof data.access_token !== "string") {
-    throw new Error(
-      `Token exchange failed: response from ${tokenUrl} missing access_token field`,
-    );
-  }
-
-  return {
-    access_token: data.access_token,
-    expires_in: typeof data.expires_in === "number" ? data.expires_in : undefined,
-  };
-}
-
 /**
  * Retrieve a credential for a scheduled job. Returns raw decrypted value.
- * NOTE: Does not auto-exchange oauth_client tokens — jobs get raw client_id/client_secret JSON.
+ * NOTE: Does not auto-exchange oauth_client tokens -- jobs get raw client_id/client_secret JSON.
  * This is intentional: jobs may need different exchange flows or caching strategies.
- * Use getApiCredentialWithType for interactive tool calls that need auto-exchange.
  */
 export async function getJobApiCredential(
   name: string,
@@ -522,48 +396,6 @@ export async function revokeApiCredentialAccess(
     );
 
   await audit(credentialId, cred.name, revokerId, "revoke", `grantee:${granteeId}`);
-}
-
-function scrubValue(error: unknown, plaintext: string): Error {
-  const msg =
-    error instanceof Error ? error.message : String(error);
-  const stack =
-    error instanceof Error ? error.stack ?? "" : "";
-  const scrubbed = new Error(msg.replaceAll(plaintext, "[REDACTED]"));
-  scrubbed.stack = stack.replaceAll(plaintext, "[REDACTED]");
-  return scrubbed;
-}
-
-export async function withApiCredential<T>(
-  name: string,
-  ownerId: string,
-  requestingUserId: string,
-  intent: "read" | "write",
-  fn: (value: string) => Promise<T>,
-): Promise<T> {
-  const plaintext = await getApiCredential(name, ownerId, requestingUserId, intent);
-  if (plaintext === null) {
-    throw new Error(`Credential "${name}" not found`);
-  }
-
-  try {
-    const result = await fn(plaintext);
-
-    const rows = await db
-      .select({ id: credentials.id })
-      .from(credentials)
-      .where(
-        and(eq(credentials.ownerId, ownerId), eq(credentials.name, name)),
-      )
-      .limit(1);
-    if (rows[0]) {
-      await audit(rows[0].id, name, requestingUserId, "use");
-    }
-
-    return result;
-  } catch (error) {
-    throw scrubValue(error, plaintext);
-  }
 }
 
 export function maskApiCredential(value: string): string {
