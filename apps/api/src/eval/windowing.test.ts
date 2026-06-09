@@ -153,46 +153,62 @@ describe("buildTurns", () => {
 describe("buildWindows", () => {
   it("returns a single window owning everything for short conversations", () => {
     const turns = [userTurn(0), assistantTurn(1), userTurn(2), assistantTurn(3)];
-    const windows = buildWindows(turns, 20, 4);
+    const windows = buildWindows(turns);
 
     expect(windows).toHaveLength(1);
     expect(windows[0].turns).toHaveLength(4);
     expect(windows[0].ownedPartIds).toEqual(["p1", "p3"]);
   });
 
-  it("assigns every assistant turn to exactly one window with overlap as context", () => {
+  it("assigns every assistant turn to exactly one window", () => {
     // 50 alternating turns: user, assistant, user, assistant...
     const turns: EvalTurn[] = [];
     for (let i = 0; i < 50; i++) {
       turns.push(i % 2 === 0 ? userTurn(i) : assistantTurn(i));
     }
 
-    const windows = buildWindows(turns, 20, 4);
+    const windows = buildWindows(turns);
     const allOwned = windows.flatMap((w) => w.ownedPartIds);
     const expected = turns.filter((t) => t.role === "assistant").map((t) => t.partId);
 
     // Each assistant turn owned exactly once.
     expect([...allOwned].sort()).toEqual([...(expected as string[])].sort());
     expect(new Set(allOwned).size).toBe(allOwned.length);
-
-    // Later windows carry overlap turns from the previous window as context.
     expect(windows.length).toBeGreaterThan(1);
-    const w0Last = windows[0].turns[windows[0].turns.length - 1];
-    expect(windows[1].turns).toContain(w0Last);
-    // ...but never own them again.
-    const w1OwnedSet = new Set(windows[1].ownedPartIds);
-    for (const partId of windows[0].ownedPartIds) {
-      expect(w1OwnedSet.has(partId)).toBe(false);
+  });
+
+  it("gives owned turns leading AND trailing context across boundaries", () => {
+    const turns: EvalTurn[] = [];
+    for (let i = 0; i < 50; i++) {
+      turns.push(i % 2 === 0 ? userTurn(i) : assistantTurn(i));
     }
+
+    const windows = buildWindows(turns, { stride: 14, lead: 3, trail: 3 });
+    const middle = windows[1];
+
+    // The second window's commit region is turns [14, 28); its slice must
+    // start 3 turns earlier (the antecedent) and end 3 turns later (the
+    // resolution `resolved_in_window` needs).
+    expect(middle.turns[0]).toBe(turns[11]);
+    expect(middle.turns[middle.turns.length - 1]).toBe(turns[30]);
+    // Context extends beyond the owned region on both sides...
+    expect(middle.turns.length).toBeGreaterThan(14);
+    // ...but lead/trail turns are never owned by this window.
+    const owned = new Set(middle.ownedPartIds);
+    expect(owned.has(turns[13].partId!)).toBe(false); // lead (owned by window 0)
+    expect(owned.has(turns[29].partId!)).toBe(false); // trail (owned by window 2)
+    expect(owned.has(turns[15].partId!)).toBe(true); // inside commit region
   });
 
   it("skips windows that would own no assistant turns", () => {
     const turns = [userTurn(0), userTurn(1), userTurn(2)];
-    expect(buildWindows(turns, 2, 1)).toHaveLength(0);
+    expect(buildWindows(turns, { stride: 2, lead: 1, trail: 1 })).toHaveLength(0);
   });
 
-  it("rejects window sizes that cannot advance", () => {
-    expect(() => buildWindows([], 4, 4)).toThrow();
+  it("clamps degenerate stride/lead/trail values instead of looping forever", () => {
+    const turns = [userTurn(0), assistantTurn(1)];
+    const windows = buildWindows(turns, { stride: 0, lead: -2, trail: -2 });
+    expect(windows.flatMap((w) => w.ownedPartIds)).toEqual(["p1"]);
   });
 });
 

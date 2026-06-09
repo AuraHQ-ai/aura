@@ -2,9 +2,10 @@
  * Sliding-window construction for the eval response judge (Machine A).
  *
  * The scoring unit is the atomic assistant response (one conversation_messages
- * row with a text part); the context unit is a dumb N-turn sliding window with
- * a few turns of overlap so a response near a window boundary still sees its
- * antecedent. There is deliberately NO topic/time segmenter here — the judge's
+ * row with a text part); the context unit is a dumb sliding window: each
+ * window owns a `stride` of turns and sees a few `lead` turns before (the
+ * antecedent ask) and `trail` turns after (did an honest hedge get resolved?).
+ * There is deliberately NO topic/time segmenter here — the judge's
  * `serving_intent` output attributes each response to the nearest open user
  * ask, which makes topic switches need zero detection.
  */
@@ -31,8 +32,14 @@ export interface EvalWindow {
   ownedPartIds: string[];
 }
 
-export const WINDOW_TURNS = 20;
-export const WINDOW_OVERLAP = 4;
+/** Turns committed (owned) per window step. */
+export const WINDOW_STRIDE = 14;
+/** Leading context turns prepended so a boundary response sees its antecedent. */
+export const WINDOW_LEAD = 3;
+/** Trailing context turns appended so `resolved_in_window` can see a hedge
+ * resolve a few turns later — even for responses at the end of a commit
+ * region. lead + stride + trail ≈ the 20-turn Sonnet batch from the spec. */
+export const WINDOW_TRAIL = 3;
 
 /** Minimal shapes needed from the conversation_* tables (kept structural so
  * tests don't need full Drizzle row objects). */
@@ -158,37 +165,44 @@ export function buildTurns(
   return turns;
 }
 
+export interface WindowOptions {
+  /** Turns committed (owned) per window step. */
+  stride?: number;
+  /** Leading context turns prepended to each window slice. */
+  lead?: number;
+  /** Trailing context turns appended to each window slice. */
+  trail?: number;
+}
+
 /**
- * Tile the turn list into sliding windows of `windowSize` turns advancing by
- * `windowSize - overlap`, so each window (after the first) carries `overlap`
- * turns of preceding context. Every assistant turn is OWNED by exactly one
- * window (the first that covers it) — the overlap turns reappear later only
- * as context, never as scoring targets, so verdicts stay atomic.
+ * Tile the turn list into consecutive commit regions of `stride` turns; each
+ * window's context slice extends `lead` turns before and `trail` turns after
+ * its region, so a boundary response still sees both its antecedent (what was
+ * asked) and its resolution (`resolved_in_window`). Ownership is EXCLUSIVE:
+ * every assistant turn is owned by exactly one window — the lead/trail turns
+ * reappear elsewhere only as context, never as scoring targets, so verdicts
+ * stay atomic.
  */
 export function buildWindows(
   turns: EvalTurn[],
-  windowSize = WINDOW_TURNS,
-  overlap = WINDOW_OVERLAP,
+  opts: WindowOptions = {},
 ): EvalWindow[] {
-  if (windowSize <= overlap) {
-    throw new Error("windowSize must be greater than overlap");
-  }
-  const step = windowSize - overlap;
+  const stride = Math.max(1, opts.stride ?? WINDOW_STRIDE);
+  const lead = Math.max(0, opts.lead ?? WINDOW_LEAD);
+  const trail = Math.max(0, opts.trail ?? WINDOW_TRAIL);
   const windows: EvalWindow[] = [];
-  let ownedFrom = 0;
 
-  for (let start = 0; start < turns.length; start += step) {
-    const end = Math.min(start + windowSize, turns.length);
+  for (let start = 0; start < turns.length; start += stride) {
+    const commitEnd = Math.min(start + stride, turns.length);
     const ownedPartIds = turns
-      .slice(ownedFrom, end)
+      .slice(start, commitEnd)
       .filter((t) => t.role === "assistant" && t.partId)
       .map((t) => t.partId!);
+    if (ownedPartIds.length === 0) continue;
 
-    if (ownedPartIds.length > 0) {
-      windows.push({ turns: turns.slice(start, end), ownedPartIds });
-    }
-    ownedFrom = end;
-    if (end >= turns.length) break;
+    const sliceStart = Math.max(0, start - lead);
+    const sliceEnd = Math.min(turns.length, commitEnd + trail);
+    windows.push({ turns: turns.slice(sliceStart, sliceEnd), ownedPartIds });
   }
 
   return windows;

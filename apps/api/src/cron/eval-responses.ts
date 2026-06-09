@@ -271,6 +271,11 @@ evalResponsesApp.get("/api/cron/eval-responses", async (c) => {
       }
     }
 
+    // "done" only when the backlog is exhausted (nothing settled remains
+    // unscored) — lets a backfill driver loop until the walk completes.
+    const remaining = await findUnscoredGroups(1);
+    const done = remaining.length === 0;
+
     const duration = Date.now() - start;
     logger.info("Cron: eval-responses finished", {
       duration,
@@ -278,6 +283,7 @@ evalResponsesApp.get("/api/cron/eval-responses", async (c) => {
       windowsJudged,
       responsesScored,
       omitted,
+      done,
     });
 
     return c.json({
@@ -288,6 +294,7 @@ evalResponsesApp.get("/api/cron/eval-responses", async (c) => {
       windowsJudged,
       responsesScored,
       omitted,
+      done,
     });
   } catch (error) {
     logger.error("Cron: eval-responses failed", {
