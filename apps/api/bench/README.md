@@ -38,6 +38,7 @@ Overall QA accuracy and recall@15 over time, grouped by scope so every row in a 
 
 | date | commit | QA | recall@15 | n | cost | runtime |
 |---|---|---:|---:|---:|---:|---:|
+| 2026-06-09 | `eef4a15` | 75% | 88% | 12 | $0.99 | 13m43s |
 | 2026-06-08 | `c50ebb0` | 83% | 83% | 12 | $0.96 | 11m46s |
 | 2026-06-03 | `0e3fb13` | 79% | 88% | 12 | $1.00 | 13m58s |
 | 2026-06-03 | `26a54c6` | 71% | 92% | 12 | $0.96 | 10m48s |
