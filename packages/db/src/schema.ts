@@ -853,6 +853,63 @@ export const conversationParts = pgTable(
   ],
 );
 
+// ── Dashboard Chat Runs (resumable stream metadata) ─────────────────────────
+
+export const dashboardChatRuns = pgTable(
+  "dashboard_chat_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    threadId: text("thread_id").notNull(),
+    status: text("status").notNull().default("generating"),
+    userId: text("user_id").notNull(),
+    userName: text("user_name"),
+    messageId: text("message_id").notNull(),
+    prompt: text("prompt").notNull(),
+    modelId: text("model_id"),
+    error: text("error"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+    completedAt: timestamptz("completed_at"),
+  },
+  (table) => [
+    index("dashboard_chat_runs_thread_status_idx").on(
+      table.workspaceId,
+      table.threadId,
+      table.status,
+    ),
+    index("dashboard_chat_runs_updated_idx").on(table.updatedAt),
+    check(
+      "dashboard_chat_runs_status_check",
+      sql`${table.status} IN ('generating', 'completed', 'failed', 'cancelled')`,
+    ),
+  ],
+);
+
+export const dashboardChatChunks = pgTable(
+  "dashboard_chat_chunks",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    runId: text("run_id")
+      .notNull()
+      .references(() => dashboardChatRuns.id, { onDelete: "cascade" }),
+    chunkIndex: integer("chunk_index").notNull(),
+    chunk: jsonb("chunk").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("dashboard_chat_chunks_workspace_run_idx").on(
+      table.workspaceId,
+      table.runId,
+      table.chunkIndex,
+    ),
+    index("dashboard_chat_chunks_run_idx").on(table.runId, table.chunkIndex),
+  ],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(

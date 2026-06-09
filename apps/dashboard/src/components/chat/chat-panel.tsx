@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { WorkflowChatTransport } from "@workflow/ai";
 import type { UIMessage, DynamicToolUIPart, ToolUIPart } from "ai";
 import {
   X,
@@ -82,8 +82,10 @@ interface ModelCatalogResponse {
 interface ChatThread {
   threadId: string;
   preview: string | null;
-  lastActivityAt: string;
+  lastActivityAt: string | null;
   messageCount: number;
+  status: "generating" | "idle";
+  runId: string | null;
 }
 
 interface ChatPanelProps {
@@ -98,8 +100,37 @@ function getAuthHeaders(): Record<string, string> {
   return {};
 }
 
+function mergeHeaders(headers?: HeadersInit): Record<string, string> {
+  const merged: Record<string, string> = {};
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => {
+      merged[key] = value;
+    });
+  } else if (Array.isArray(headers)) {
+    for (const [key, value] of headers) {
+      merged[key] = value;
+    }
+  } else if (headers) {
+    Object.assign(merged, headers);
+  }
+  return merged;
+}
+
+const CURRENT_THREAD_STORAGE_KEY = "aura_dashboard_current_thread_id";
+const runStorageKey = (threadId: string) => `aura_dashboard_chat_run:${threadId}`;
+
+function getInitialThreadId(): string {
+  return localStorage.getItem(CURRENT_THREAD_STORAGE_KEY) || crypto.randomUUID();
+}
+
+function getStoredRunId(threadId: string): string | null {
+  return localStorage.getItem(runStorageKey(threadId));
+}
+
 export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
-  const [currentThreadId, setCurrentThreadId] = useState<string>(() => crypto.randomUUID());
+  const initialThreadId = useMemo(() => getInitialThreadId(), []);
+  const [currentThreadId, setCurrentThreadId] = useState<string>(initialThreadId);
+  const [activeRunId, setActiveRunId] = useState<string | null>(() => getStoredRunId(initialThreadId));
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -108,20 +139,63 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
   const [modelOptions, setModelOptions] = useState<ModelAutocompleteOption[]>([]);
   const threadIdRef = useRef(currentThreadId);
   threadIdRef.current = currentThreadId;
+  const activeRunIdRef = useRef(activeRunId);
+  activeRunIdRef.current = activeRunId;
   const selectedModelRef = useRef(selectedModel);
   selectedModelRef.current = selectedModel;
 
   const transport = useMemo(
     () =>
-      new DefaultChatTransport({
+      new WorkflowChatTransport({
         api: "/api/dashboard/chat",
-        headers: () => getAuthHeaders(),
-        body: () => ({ threadId: threadIdRef.current, userId, userName, modelId: selectedModelRef.current }),
+        prepareSendMessagesRequest: ({ api, messages, body, headers }) => ({
+          api,
+          headers: {
+            ...mergeHeaders(headers),
+            ...getAuthHeaders(),
+            "Content-Type": "application/json",
+          },
+          body: {
+            ...body,
+            messages,
+            threadId: threadIdRef.current,
+            userId,
+            userName,
+            modelId: selectedModelRef.current,
+          },
+        }),
+        prepareReconnectToStreamRequest: ({ headers }) => {
+          const runId = activeRunIdRef.current || getStoredRunId(threadIdRef.current);
+          if (!runId) throw new Error("No active dashboard chat run to resume");
+          return {
+            api: `/api/dashboard/chat/runs/${encodeURIComponent(runId)}/stream`,
+            headers: {
+              ...mergeHeaders(headers),
+              ...getAuthHeaders(),
+            },
+          };
+        },
+        onChatSendMessage: (response) => {
+          const runId = response.headers.get("x-workflow-run-id");
+          const threadId = response.headers.get("x-aura-thread-id") || threadIdRef.current;
+          if (!runId) return;
+          localStorage.setItem(CURRENT_THREAD_STORAGE_KEY, threadId);
+          localStorage.setItem(runStorageKey(threadId), runId);
+          threadIdRef.current = threadId;
+          activeRunIdRef.current = runId;
+          setCurrentThreadId(threadId);
+          setActiveRunId(runId);
+        },
+        onChatEnd: () => {
+          localStorage.removeItem(runStorageKey(threadIdRef.current));
+          activeRunIdRef.current = null;
+          setActiveRunId(null);
+        },
       }),
     [userId, userName],
   );
 
-  const { messages, sendMessage, status, error, stop, setMessages } = useChat({
+  const { messages, sendMessage, status, error, stop, setMessages, resumeStream } = useChat({
     transport,
   });
 
@@ -168,6 +242,67 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
     }
   }, [status, messages.length, fetchThreads]);
 
+  useEffect(() => {
+    fetchThreads();
+  }, [activeRunId, fetchThreads]);
+
+  useEffect(() => {
+    localStorage.setItem(CURRENT_THREAD_STORAGE_KEY, currentThreadId);
+  }, [currentThreadId]);
+
+  useEffect(() => {
+    if (!threads.some((thread) => thread.status === "generating")) return;
+    const interval = window.setInterval(() => {
+      void fetchThreads();
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [threads, fetchThreads]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreInitialThread() {
+      const storedRunId = getStoredRunId(currentThreadId);
+      if (!storedRunId && messages.length > 0) return;
+
+      setLoadingThread(true);
+      try {
+        const res = await fetch(
+          `/api/dashboard/chat/threads/${encodeURIComponent(currentThreadId)}/messages`,
+          { headers: getAuthHeaders() },
+        );
+        if (!res.ok || cancelled) return;
+
+        const data = await res.json();
+        setMessages(data.messages ?? []);
+
+        const runId = data.activeRunId ?? storedRunId;
+        if (runId && data.runStatus === "generating") {
+          localStorage.setItem(runStorageKey(currentThreadId), runId);
+          activeRunIdRef.current = runId;
+          setActiveRunId(runId);
+          void resumeStream();
+        } else {
+          localStorage.removeItem(runStorageKey(currentThreadId));
+          activeRunIdRef.current = null;
+          setActiveRunId(null);
+        }
+      } catch {
+        // silently ignore
+      } finally {
+        if (!cancelled) setLoadingThread(false);
+      }
+    }
+
+    void restoreInitialThread();
+
+    return () => {
+      cancelled = true;
+    };
+    // Run once for the thread id restored from localStorage on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSubmit = useCallback(
     (msg: PromptInputMessage) => {
       if (!msg.text.trim()) return;
@@ -178,11 +313,15 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
   );
 
   const handleNewChat = useCallback(() => {
+    stop();
     const newId = crypto.randomUUID();
     setCurrentThreadId(newId);
+    setActiveRunId(null);
+    activeRunIdRef.current = null;
+    localStorage.setItem(CURRENT_THREAD_STORAGE_KEY, newId);
     setMessages([]);
     setShowHistory(false);
-  }, [setMessages]);
+  }, [setMessages, stop]);
 
   const handleCopyChat = useCallback(async () => {
     if (messages.length === 0) return;
@@ -215,7 +354,9 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
 
       setLoadingThread(true);
       setShowHistory(false);
+      stop();
       setCurrentThreadId(threadId);
+      localStorage.setItem(CURRENT_THREAD_STORAGE_KEY, threadId);
       setMessages([]);
 
       try {
@@ -226,6 +367,17 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
         if (res.ok) {
           const data = await res.json();
           setMessages(data.messages ?? []);
+          const runId = data.activeRunId ?? getStoredRunId(threadId);
+          if (runId && data.runStatus === "generating") {
+            localStorage.setItem(runStorageKey(threadId), runId);
+            activeRunIdRef.current = runId;
+            setActiveRunId(runId);
+            void resumeStream();
+          } else {
+            localStorage.removeItem(runStorageKey(threadId));
+            activeRunIdRef.current = null;
+            setActiveRunId(null);
+          }
         }
       } catch {
         // silently ignore
@@ -233,7 +385,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
         setLoadingThread(false);
       }
     },
-    [currentThreadId, setMessages],
+    [currentThreadId, resumeStream, setMessages, stop],
   );
 
   return (
@@ -526,11 +678,12 @@ function ThreadList({
               : "hover:bg-muted/50",
           )}
         >
-          <span className="text-[13px] truncate">
-            {thread.preview || "Empty chat"}
+          <span className="flex items-center gap-1.5 text-[13px]">
+            {thread.status === "generating" && <Spinner className="size-3" />}
+            <span className="truncate">{thread.preview || "Empty chat"}</span>
           </span>
           <span className="text-[11px] text-muted-foreground">
-            {formatRelativeTime(thread.lastActivityAt)}
+            {thread.status === "generating" ? "Generating" : formatRelativeTime(thread.lastActivityAt)}
             {thread.messageCount > 1 &&
               ` · ${thread.messageCount} exchanges`}
           </span>
@@ -637,7 +790,8 @@ function formatToolName(name: string): string {
   return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatRelativeTime(isoString: string): string {
+function formatRelativeTime(isoString: string | null): string {
+  if (!isoString) return "just now";
   const date = new Date(isoString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
