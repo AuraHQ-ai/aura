@@ -3,6 +3,7 @@ import { generateText } from "ai";
 import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { resolveChannelById } from "../tools/slack.js";
 
 // ── Slack Event Types ────────────────────────────────────────────────────────
@@ -328,6 +329,7 @@ async function llmShouldRespond(
       system: withCacheControl(systemPrompt),
       prompt: userMessage,
       maxOutputTokens: 5,
+      experimental_telemetry: aiTelemetry("should-respond"),
     });
 
     const answer = result.text.trim().toUpperCase();

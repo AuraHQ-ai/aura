@@ -10,6 +10,7 @@ import {
 } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { ensureSlackUserEntityLink } from "./entity-link.js";
 
 /**
@@ -173,6 +174,7 @@ export async function updateProfileFromConversation(
 
     const { output: object } = await generateText({
       model,
+      experimental_telemetry: aiTelemetry("profile-update"),
       output: Output.object({ schema: profileUpdateSchema }),
       system: `You are analyzing a user's communication style and extracting facts about them. Based on the conversation below and their existing profile, provide an updated assessment.
 
@@ -280,6 +282,7 @@ async function consolidateCategory(
     schema: consolidatedSchema,
     system: `You are consolidating a user profile's "${category}" list. Merge semantically similar items, remove noise and overly granular entries, and keep genuinely distinct items. Preserve the most important/recent items. Return at most ${cap} items.`,
     prompt: `Consolidate these ${items.length} items:\n\n${items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`,
+    experimental_telemetry: aiTelemetry("profile-consolidate"),
   });
 
   return object.consolidated.slice(0, cap);

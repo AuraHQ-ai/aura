@@ -33,6 +33,7 @@ import {
 import { downloadEventFiles } from "../lib/files.js";
 import { getSettingJSON } from "../lib/settings.js";
 import { logger } from "../lib/logger.js";
+import { withTrace, formatTraceUser } from "../lib/langfuse.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
@@ -437,28 +438,40 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
 
     // 5. Call LLM (streams response directly to Slack via chat.update)
     const llmStart = Date.now();
-    const response = await generateResponse({
-      stablePrefix,
-      environmentContext,
-      conversationContext,
-      dynamicContext,
-      userMessage: messageText,
-      slackClient: client,
-      context: {
-        userId: context.userId,
+    // Group every AI SDK span for this Slack turn into one Langfuse trace.
+    // sessionId = thread links a conversation in the Sessions view; userId
+    // enables per-user analysis. Propagates to the agent's GenAI spans.
+    const response = await withTrace(
+      {
+        traceName: "slack-chat",
+        sessionId: replyThreadTs ?? context.channelId,
+        userId: formatTraceUser(context.userId, displayName),
+        tags: [`channel:${context.channelType ?? "unknown"}`],
+        metadata: { slackUserId: context.userId },
+      },
+      () => generateResponse({
+        stablePrefix,
+        environmentContext,
+        conversationContext,
+        dynamicContext,
+        userMessage: messageText,
+        slackClient: client,
+        context: {
+          userId: context.userId,
+          channelId: context.channelId,
+          threadTs: replyThreadTs,
+          workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+          timezone: userTimezone,
+        },
+        files: fileParts,
         channelId: context.channelId,
         threadTs: replyThreadTs,
-        workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
-        timezone: userTimezone,
-      },
-      files: fileParts,
-      channelId: context.channelId,
-      threadTs: replyThreadTs,
-      teamId,
-      recipientUserId: context.userId,
-      channelType: context.channelType,
-      invocationId,
-    });
+        teamId,
+        recipientUserId: context.userId,
+        channelType: context.channelType,
+        invocationId,
+      }),
+    );
     const llmMs = Date.now() - llmStart;
     capturedResponse = response;
 

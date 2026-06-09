@@ -2,6 +2,7 @@ import { generateText, generateObject, Output } from "ai";
 import { gateway } from "@ai-sdk/gateway";
 import { z } from "zod";
 import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
@@ -832,6 +833,7 @@ async function runReconciliationCore(
     output: Output.object({ schema: reconciliationSchema }),
     system: systemPrompt,
     prompt: threadContext,
+    experimental_telemetry: aiTelemetry("memory-reconcile"),
   });
   context.onUsage?.(
     context.extractionModelId ?? (model as any)?.modelId ?? "extraction",
@@ -989,6 +991,7 @@ async function detectContradictions(
         schema: contradictionResultSchema,
         system: CONTRADICTION_PROMPT,
         prompt: `NEW MEMORY: ${newMem.content}\n\nEXISTING CANDIDATE MEMORIES:\n${candidateList}`,
+        experimental_telemetry: aiTelemetry("memory-contradiction"),
         temperature: 0,
       });
       onUsage?.(modelId ?? (model as any)?.modelId ?? "extraction", usage);
@@ -1236,6 +1239,7 @@ async function extractSingleExchange(
     output: Output.object({ schema: extractedMemoriesSchema }),
     system: EXTRACTION_PROMPT,
     prompt: conversationText,
+    experimental_telemetry: aiTelemetry("memory-extract"),
   });
   context.onUsage?.(
     context.extractionModelId ?? (model as any)?.modelId ?? "extraction",

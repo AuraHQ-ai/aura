@@ -89,6 +89,7 @@ interface ChatThread {
 interface ChatPanelProps {
   onClose: () => void;
   userId?: string;
+  userName?: string;
 }
 
 function getAuthHeaders(): Record<string, string> {
@@ -97,7 +98,7 @@ function getAuthHeaders(): Record<string, string> {
   return {};
 }
 
-export function ChatPanel({ onClose, userId }: ChatPanelProps) {
+export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
   const [currentThreadId, setCurrentThreadId] = useState<string>(() => crypto.randomUUID());
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -115,9 +116,9 @@ export function ChatPanel({ onClose, userId }: ChatPanelProps) {
       new DefaultChatTransport({
         api: "/api/dashboard/chat",
         headers: () => getAuthHeaders(),
-        body: () => ({ threadId: threadIdRef.current, userId, modelId: selectedModelRef.current }),
+        body: () => ({ threadId: threadIdRef.current, userId, userName, modelId: selectedModelRef.current }),
       }),
-    [userId],
+    [userId, userName],
   );
 
   const { messages, sendMessage, status, error, stop, setMessages } = useChat({

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { aiTelemetry } from "../lib/langfuse.js";
 
 const MAX_TITLE_CHARS = 100;
 
@@ -77,6 +78,7 @@ async function generateStructuredTitle(params: {
     system: params.system,
     prompt: params.prompt,
     temperature: 0,
+    experimental_telemetry: aiTelemetry("dm-title"),
   });
 
   return selectDmThreadTitle(object);

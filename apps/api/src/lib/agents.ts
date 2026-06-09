@@ -16,6 +16,7 @@ import {
   STEP_LIMIT,
   HEADLESS_STEP_LIMIT,
 } from "../pipeline/prepare-step.js";
+import { aiTelemetry } from "./langfuse.js";
 
 // ── Interactive Agent ────────────────────────────────────────────────────────
 // Used by respond.ts for streaming Slack conversations.
@@ -64,6 +65,11 @@ export async function createInteractiveAgent(
     tools,
     instructions: systemMessages,
     stopWhen: stepCountIs(STEP_LIMIT),
+    experimental_telemetry: aiTelemetry("slack-chat", {
+      modelId,
+      ...(options.channelId ? { channelId: options.channelId } : {}),
+      ...(options.invocationId ? { invocationId: options.invocationId } : {}),
+    }),
     prepareStep: createInteractivePrepareStep({
       stablePrefix: options.stablePrefix,
       environmentContext,
@@ -109,6 +115,10 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
     tools,
     instructions: withCacheControl(systemPrompt),
     stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
+    experimental_telemetry: aiTelemetry("headless-job", {
+      modelId,
+      ...(options.invocationId ? { invocationId: options.invocationId } : {}),
+    }),
     prepareStep: createHeadlessPrepareStep({
       stablePrefix: systemPrompt,
       modelId,
@@ -145,5 +155,6 @@ export function createSubAgent(options: SubagentAgentOptions) {
     tools: options.tools,
     instructions: systemPrompt,
     stopWhen: stepCountIs(options.maxSteps ?? 50),
+    experimental_telemetry: aiTelemetry("subagent"),
   });
 }
