@@ -18,6 +18,7 @@ import { Route as ResourcesIndexRouteImport } from "./routes/resources/index"
 import { Route as NotesIndexRouteImport } from "./routes/notes/index"
 import { Route as MemoriesIndexRouteImport } from "./routes/memories/index"
 import { Route as JobsIndexRouteImport } from "./routes/jobs/index"
+import { Route as EvalIndexRouteImport } from "./routes/eval/index"
 import { Route as ErrorsIndexRouteImport } from "./routes/errors/index"
 import { Route as CredentialsIndexRouteImport } from "./routes/credentials/index"
 import { Route as ConversationsIndexRouteImport } from "./routes/conversations/index"
@@ -79,6 +80,11 @@ const MemoriesIndexRoute = MemoriesIndexRouteImport.update({
 const JobsIndexRoute = JobsIndexRouteImport.update({
   id: "/jobs/",
   path: "/jobs/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvalIndexRoute = EvalIndexRouteImport.update({
+  id: "/eval/",
+  path: "/eval/",
   getParentRoute: () => rootRouteImport,
 } as any)
 const ErrorsIndexRoute = ErrorsIndexRouteImport.update({
@@ -188,6 +194,7 @@ export interface FileRoutesByFullPath {
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
   "/errors/": typeof ErrorsIndexRoute
+  "/eval/": typeof EvalIndexRoute
   "/jobs/": typeof JobsIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
@@ -216,6 +223,7 @@ export interface FileRoutesByTo {
   "/conversations": typeof ConversationsIndexRoute
   "/credentials": typeof CredentialsIndexRoute
   "/errors": typeof ErrorsIndexRoute
+  "/eval": typeof EvalIndexRoute
   "/jobs": typeof JobsIndexRoute
   "/memories": typeof MemoriesIndexRoute
   "/notes": typeof NotesIndexRoute
@@ -245,6 +253,7 @@ export interface FileRoutesById {
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
   "/errors/": typeof ErrorsIndexRoute
+  "/eval/": typeof EvalIndexRoute
   "/jobs/": typeof JobsIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
@@ -275,6 +284,7 @@ export interface FileRouteTypes {
     | "/conversations/"
     | "/credentials/"
     | "/errors/"
+    | "/eval/"
     | "/jobs/"
     | "/memories/"
     | "/notes/"
@@ -303,6 +313,7 @@ export interface FileRouteTypes {
     | "/conversations"
     | "/credentials"
     | "/errors"
+    | "/eval"
     | "/jobs"
     | "/memories"
     | "/notes"
@@ -331,6 +342,7 @@ export interface FileRouteTypes {
     | "/conversations/"
     | "/credentials/"
     | "/errors/"
+    | "/eval/"
     | "/jobs/"
     | "/memories/"
     | "/notes/"
@@ -360,6 +372,7 @@ export interface RootRouteChildren {
   ConversationsIndexRoute: typeof ConversationsIndexRoute
   CredentialsIndexRoute: typeof CredentialsIndexRoute
   ErrorsIndexRoute: typeof ErrorsIndexRoute
+  EvalIndexRoute: typeof EvalIndexRoute
   JobsIndexRoute: typeof JobsIndexRoute
   MemoriesIndexRoute: typeof MemoriesIndexRoute
   NotesIndexRoute: typeof NotesIndexRoute
@@ -433,6 +446,13 @@ declare module "@tanstack/react-router" {
       path: "/jobs"
       fullPath: "/jobs/"
       preLoaderRoute: typeof JobsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/eval/": {
+      id: "/eval/"
+      path: "/eval"
+      fullPath: "/eval/"
+      preLoaderRoute: typeof EvalIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/errors/": {
@@ -576,6 +596,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConversationsIndexRoute: ConversationsIndexRoute,
   CredentialsIndexRoute: CredentialsIndexRoute,
   ErrorsIndexRoute: ErrorsIndexRoute,
+  EvalIndexRoute: EvalIndexRoute,
   JobsIndexRoute: JobsIndexRoute,
   MemoriesIndexRoute: MemoriesIndexRoute,
   NotesIndexRoute: NotesIndexRoute,

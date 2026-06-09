@@ -9,6 +9,7 @@ import {
   UnifiedTimeline,
   type ConversationMessageWithParts,
 } from "@/components/unified-timeline";
+import { EvalScorePanel } from "@/components/eval-score-panel";
 import { formatDate } from "@/lib/utils";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 
@@ -202,6 +203,8 @@ export function ConversationDetailView({
       </div>
 
       <ConversationMetadataCards trace={trace} jobName={jobName} />
+
+      <EvalScorePanel traceId={trace.id} />
 
       <UnifiedTimeline conversation={conversation} />
     </>
