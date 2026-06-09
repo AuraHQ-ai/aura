@@ -21,6 +21,7 @@
     "@streamdown/mermaid": "^1.0.2",
     "@tanstack/react-query": "^5",
     "@tanstack/react-router": "^1",
+    "@workflow/ai": "^5.0.0",
     "@xyflow/react": "^12.10.1",
     "ai": "^6.0.138",
     "ansi-to-react": "^6.2.6",

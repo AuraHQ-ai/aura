@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { WorkflowChatTransport } from "@workflow/ai";
 import type { UIMessage, DynamicToolUIPart, ToolUIPart } from "ai";
 import {
   X,
@@ -184,19 +184,40 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
     localStorage.setItem(THREAD_KEY, currentThreadId);
   }, [currentThreadId]);
 
+  // The vendor WorkflowChatTransport owns the resumable-stream client logic:
+  // it captures the runId from the x-workflow-run-id header, auto-reconnects if
+  // the live stream is interrupted before "finish", and resumes via our
+  // /:runId/stream endpoint. (Platform-first: we don't re-implement this.)
   const transport = useMemo(
     () =>
-      new DefaultChatTransport({
+      new WorkflowChatTransport({
         api: "/api/dashboard/chat",
-        headers: () => getAuthHeaders(),
-        body: () => ({ threadId: threadIdRef.current, userId, userName, modelId: selectedModelRef.current }),
-        // On reconnect, point at the run's durable stream instead of starting a
-        // new generation. The runId is the one we captured from the start chunk
-        // (or, after a refresh, from localStorage).
-        prepareReconnectToStreamRequest: () => {
+        prepareSendMessagesRequest: ({ api, messages, body, headers }) => ({
+          api,
+          headers: { ...(headers as Record<string, string>), ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: {
+            ...body,
+            messages,
+            threadId: threadIdRef.current,
+            userId,
+            userName,
+            modelId: selectedModelRef.current,
+          },
+        }),
+        prepareReconnectToStreamRequest: ({ headers }) => {
           const runId = getRunId(threadIdRef.current);
           if (!runId) throw new Error("No active run to reconnect to");
-          return { api: `/api/dashboard/chat/${encodeURIComponent(runId)}/stream` };
+          return {
+            api: `/api/dashboard/chat/${encodeURIComponent(runId)}/stream`,
+            headers: { ...(headers as Record<string, string>), ...getAuthHeaders() },
+          };
+        },
+        onChatSendMessage: (response) => {
+          const runId = response.headers.get("x-workflow-run-id");
+          if (runId) setRunId(threadIdRef.current, runId);
+        },
+        onChatEnd: () => {
+          clearRunId(threadIdRef.current);
         },
       }),
     [userId, userName],
@@ -248,16 +269,6 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
       fetchThreads();
     }
   }, [status, messages.length, fetchThreads]);
-
-  // Capture the server's runId from the in-flight assistant message so we can
-  // reconnect to this exact run after a disconnect / refresh.
-  useEffect(() => {
-    if (status !== "streaming" && status !== "submitted") return;
-    const last = messages[messages.length - 1];
-    if (last?.role !== "assistant") return;
-    const runId = (last as { metadata?: { runId?: string } }).metadata?.runId;
-    if (runId) setRunId(threadIdRef.current, runId);
-  }, [messages, status]);
 
   // Attach to a thread's live run, replaying what we missed and tailing the
   // rest. Reconstructs the in-flight user bubble (the run's input) since it
