@@ -12,6 +12,8 @@
  *   pnpm backfill:response-scores --prod                # production DB
  *   pnpm backfill:response-scores --limit=10            # groups per batch
  *   pnpm backfill:response-scores --max-batches=3       # stop after N batches
+ *   pnpm backfill:response-scores --concurrency=4       # parallel thread groups
+ *   pnpm backfill:response-scores --until=2026-04-01    # stop once the walk passes a date
  */
 import { config } from "dotenv";
 import { resolve } from "path";
@@ -31,15 +33,30 @@ function readNumberFlag(name: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
+function readStringFlag(name: string): string | undefined {
+  const prefix = `--${name}=`;
+  const arg = process.argv.find((value) => value.startsWith(prefix));
+  return arg ? arg.slice(prefix.length) : undefined;
+}
+
 const groupsPerBatch = readNumberFlag("limit", 25);
 const maxBatches = readNumberFlag("max-batches", Number.MAX_SAFE_INTEGER);
+const concurrency = Math.max(1, Math.min(readNumberFlag("concurrency", 1), 8));
+const untilFlag = readStringFlag("until");
+const until = untilFlag ? new Date(untilFlag) : null;
+if (until && Number.isNaN(until.getTime())) {
+  console.error(`Invalid --until date: ${untilFlag}`);
+  process.exit(1);
+}
 
 const { findUnscoredGroups, scoreGroup } = await import(
   "../cron/eval-responses.js"
 );
+const { pool } = await import("../lib/pool.js");
 
 console.log("=== Eval Response Score Backfill ===");
-console.log(`Groups per batch: ${groupsPerBatch}`);
+console.log(`Groups per batch: ${groupsPerBatch}, concurrency: ${concurrency}`);
+if (until) console.log(`Walking until corpus date: ${until.toISOString()}`);
 
 let batch = 0;
 let totalGroups = 0;
@@ -55,9 +72,19 @@ while (batch < maxBatches) {
     console.log("\nBacklog exhausted — every settled response is scored.");
     break;
   }
+  if (until && groups[0].firstAt.getTime() >= until.getTime()) {
+    console.log(
+      `\nWalk reached ${groups[0].firstAt.toISOString()} — past --until cutoff, stopping.`,
+    );
+    break;
+  }
 
-  console.log(`\n--- Batch ${batch}: ${groups.length} thread group(s) ---`);
-  for (const group of groups) {
+  const eligible = until
+    ? groups.filter((g) => g.firstAt.getTime() < until.getTime())
+    : groups;
+
+  console.log(`\n--- Batch ${batch}: ${eligible.length} thread group(s) ---`);
+  await pool(eligible, concurrency, async (group) => {
     const label = group.threadTs
       ? `${group.channelId ?? "?"} :: ${group.threadTs}`
       : `trace ${group.soleTraceId}`;
@@ -78,7 +105,7 @@ while (batch < maxBatches) {
         `  ${label}: FAILED (will retry on a future run) — ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }
+  });
 }
 
 console.log("\n=== Summary ===");
