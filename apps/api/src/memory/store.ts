@@ -566,15 +566,40 @@ export async function findContradictionCandidates(
  * Batch store multiple memories.
  * Automatically sets status='current' and validFrom=now() on all new memories.
  */
-export async function storeMemories(newMemories: NewMemory[]): Promise<string[]> {
+type StoreMemoryInput = NewMemory & {
+  /**
+   * Escape hatch for event/open_thread memories that are intentionally durable.
+   * This is extraction-only metadata; it is stripped before inserting.
+   */
+  durable?: boolean;
+};
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function defaultValidUntil(memory: StoreMemoryInput, validFrom: Date): Date | undefined {
+  if (memory.durable || memory.validUntil !== undefined) return undefined;
+  if (memory.type === "event") return addDays(validFrom, 14);
+  if (memory.type === "open_thread") return addDays(validFrom, 30);
+  return undefined;
+}
+
+export async function storeMemories(newMemories: StoreMemoryInput[]): Promise<string[]> {
   if (newMemories.length === 0) return [];
 
   const now = new Date();
-  const memoriesWithDefaults = newMemories.map((m) => ({
-    ...m,
-    status: m.status ?? ("current" as const),
-    validFrom: m.validFrom ?? now,
-  }));
+  const memoriesWithDefaults = newMemories.map((m) => {
+    const { durable: _durable, ...memory } = m;
+    const validFrom = memory.validFrom ?? now;
+    const validUntil = defaultValidUntil(m, validFrom);
+    return {
+      ...memory,
+      status: memory.status ?? ("current" as const),
+      validFrom,
+      ...(validUntil !== undefined && { validUntil }),
+    };
+  });
 
   try {
     const inserted = await db
