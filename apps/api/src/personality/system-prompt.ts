@@ -390,9 +390,11 @@ function formatCapabilities(
     : null;
   const covered = new Set<string>();
   const lines: string[] = [
-    "You have access to these systems from the sandbox environment. Credential names are identifiers only -- never paste or log values. Prefer typed Aura tools and safe CLIs before raw HTTP/API calls.",
+    "Scoped secrets are available as environment variables in the sandbox. The names below are identifiers only -- never paste or log secret values. There is no `get_credential` or `http_request` tool.",
     "",
-    "Hard rule: Seeing a credential name is not a reason to use it -- it's a reason to check if a typed tool wraps it. Before `curl` with a secret, run `tool_search_tool_bm25` for the domain.",
+    "To call external APIs, use sandbox `curl`, `python`, or `typescript` and read the key from its env var (for example: `-H \"X-Claap-Key: $CLAAP_API_KEY\"`). For workflows that need a real browser, use `browse` (Browserbase) with stealth mode. Prefer typed Aura tools and safe CLIs when they exist.",
+    "",
+    "Hard rule: handle secret names only; never print env var values, echo secrets, or include them in logs or chat.",
     "",
   ];
 
@@ -415,7 +417,7 @@ function formatCapabilities(
   const uncategorized = names.filter((name) => !covered.has(name));
   if (uncategorized.length > 0) {
     lines.push(
-      `- Other available credentials: ${uncategorized.map((name) => `\`${name}\``).join(", ")} -- search typed tools for the relevant domain before raw API use`,
+      `- Other available credentials: ${uncategorized.map((name) => `\`${name}\``).join(", ")} -- use from sandbox env vars when no typed tool or safe CLI fits`,
     );
   }
 
