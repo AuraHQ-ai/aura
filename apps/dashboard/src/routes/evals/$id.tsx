@@ -24,20 +24,27 @@ interface EvalScoreDetail extends EvalScore {
   respondedAt: string;
 }
 
+function linesToList(value: string): string[] {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
   const queryClient = useQueryClient();
   const [note, setNote] = useState(score.note ?? "");
   const [goldAnswer, setGoldAnswer] = useState(score.goldAnswer ?? "");
-  const [rubricText, setRubricText] = useState(
-    score.rubric ? JSON.stringify(score.rubric, null, 2) : "",
+  const [mustDo, setMustDo] = useState((score.rubric?.must_do ?? []).join("\n"));
+  const [mustNotDo, setMustNotDo] = useState(
+    (score.rubric?.must_not_do ?? []).join("\n"),
   );
-  const [rubricError, setRubricError] = useState<string | null>(null);
 
   useEffect(() => {
     setNote(score.note ?? "");
     setGoldAnswer(score.goldAnswer ?? "");
-    setRubricText(score.rubric ? JSON.stringify(score.rubric, null, 2) : "");
-    setRubricError(null);
+    setMustDo((score.rubric?.must_do ?? []).join("\n"));
+    setMustNotDo((score.rubric?.must_not_do ?? []).join("\n"));
   }, [score.id]);
 
   const mutation = useMutation({
@@ -51,16 +58,15 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
   });
 
   function save() {
-    let rubric: unknown = null;
-    if (rubricText.trim()) {
-      try {
-        rubric = JSON.parse(rubricText);
-        setRubricError(null);
-      } catch {
-        setRubricError("Rubric must be valid JSON ({ must_do: [], must_not_do: [] })");
-        return;
-      }
-    }
+    const mustDoList = linesToList(mustDo);
+    const mustNotDoList = linesToList(mustNotDo);
+    const rubric =
+      mustDoList.length > 0 || mustNotDoList.length > 0
+        ? {
+            ...(mustDoList.length > 0 ? { must_do: mustDoList } : {}),
+            ...(mustNotDoList.length > 0 ? { must_not_do: mustNotDoList } : {}),
+          }
+        : null;
     mutation.mutate({
       note: note.trim() || null,
       goldAnswer: goldAnswer.trim() || null,
@@ -94,19 +100,31 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
             className="mt-1"
           />
         </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">
-            Rubric (JSON: must_do / must_not_do)
-          </label>
-          <Textarea
-            value={rubricText}
-            onChange={(e) => setRubricText(e.target.value)}
-            rows={4}
-            className="mt-1 font-mono text-xs"
-          />
-          {rubricError && (
-            <p className="text-xs text-destructive mt-1">{rubricError}</p>
-          )}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">
+              Rubric: must do (one per line)
+            </label>
+            <Textarea
+              value={mustDo}
+              onChange={(e) => setMustDo(e.target.value)}
+              rows={4}
+              className="mt-1"
+              placeholder={"honor the stated preference\ncite the tool output"}
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">
+              Rubric: must not do (one per line)
+            </label>
+            <Textarea
+              value={mustNotDo}
+              onChange={(e) => setMustNotDo(e.target.value)}
+              rows={4}
+              className="mt-1"
+              placeholder={"claim context was lost\ninvent numbers"}
+            />
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button size="sm" onClick={save} disabled={mutation.isPending}>
