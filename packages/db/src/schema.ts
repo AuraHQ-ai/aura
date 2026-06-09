@@ -870,6 +870,13 @@ export const dashboardChatRuns = pgTable(
     threadId: text("thread_id").notNull(),
     runId: text("run_id").notNull(),
     userId: text("user_id").notNull(),
+    /**
+     * The user message that started this turn. The conversation trace is only
+     * persisted when the turn completes, so this is what lets a fresh browser
+     * session render the in-flight user bubble (and a thread preview) while
+     * the run is still generating.
+     */
+    userMessage: text("user_message"),
     status: text("status").notNull().default("running"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     completedAt: timestamptz("completed_at"),

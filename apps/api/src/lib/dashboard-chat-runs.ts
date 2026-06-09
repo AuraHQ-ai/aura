@@ -10,11 +10,15 @@ export async function recordDashboardChatRun(params: {
   threadId: string;
   runId: string;
   userId: string;
+  /** The user message starting this turn — rendered as the in-flight user
+   * bubble (and thread preview) for sessions that attach mid-generation. */
+  userMessage?: string;
 }): Promise<void> {
   await db.insert(dashboardChatRuns).values({
     threadId: params.threadId,
     runId: params.runId,
     userId: params.userId,
+    userMessage: params.userMessage ?? null,
     status: "running",
   });
 }
@@ -42,6 +46,7 @@ export interface ThreadRunInfo {
   threadId: string;
   runId: string;
   status: DashboardChatRunStatus;
+  userMessage: string | null;
 }
 
 /**
@@ -60,6 +65,7 @@ export async function getLatestRunsForThreads(
       threadId: dashboardChatRuns.threadId,
       runId: dashboardChatRuns.runId,
       status: dashboardChatRuns.status,
+      userMessage: dashboardChatRuns.userMessage,
       createdAt: dashboardChatRuns.createdAt,
     })
     .from(dashboardChatRuns)
@@ -72,6 +78,7 @@ export async function getLatestRunsForThreads(
       threadId: row.threadId,
       runId: row.runId,
       status: row.status as DashboardChatRunStatus,
+      userMessage: row.userMessage,
     });
   }
 

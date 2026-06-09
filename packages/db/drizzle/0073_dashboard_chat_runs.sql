@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS "dashboard_chat_runs" (
 	"thread_id" text NOT NULL,
 	"run_id" text NOT NULL,
 	"user_id" text NOT NULL,
+	"user_message" text,
 	"status" text DEFAULT 'running' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"completed_at" timestamp with time zone,

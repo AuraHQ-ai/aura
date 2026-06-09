@@ -16,6 +16,7 @@ import {
   dashboardChatWorkflow,
   type DashboardChatWorkflowInput,
 } from "../../../workflows/dashboard-chat.js";
+import { appendPendingUserMessage } from "../../pipeline/dashboard-messages.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
 
@@ -121,7 +122,7 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
         const generating = run?.status === "running";
         return {
           threadId: row.threadTs,
-          preview: previews[row.firstTraceId] ?? null,
+          preview: previews[row.firstTraceId] ?? run?.userMessage ?? null,
           lastActivityAt: row.lastActivityAt,
           messageCount: row.traceCount,
           runStatus: generating ? ("generating" as const) : ("idle" as const),
@@ -165,7 +166,8 @@ async function resolveThreadRuns(knownThreadIds: Set<string>) {
     .map((row) => ({
       threadId: row.threadId,
       runId: runsByThread.get(row.threadId)!.runId,
-      preview: null as string | null,
+      // No persisted trace yet — the run's recorded user message is the preview.
+      preview: runsByThread.get(row.threadId)!.userMessage,
       lastActivityAt: row.createdAt,
     }));
 
@@ -228,10 +230,14 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
     // to attach to. The run's stream replays the whole current turn, so the
     // persisted history (completed turns only) never overlaps the live tail.
     const latestRun = await getLatestRunForThread(threadId);
-    const activeRunId = latestRun?.status === "running" ? latestRun.runId : null;
+    const activeRun = latestRun?.status === "running" ? latestRun : null;
+    const activeRunId = activeRun?.runId ?? null;
 
     if (traces.length === 0) {
-      return c.json({ messages: [], activeRunId } as any, 200);
+      const messages = activeRun
+        ? appendPendingUserMessage([], activeRun.userMessage, activeRun.runId)
+        : [];
+      return c.json({ messages, activeRunId } as any, 200);
     }
 
     const traceIds = traces.map((t) => t.id);
@@ -288,7 +294,13 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
       }
     }
 
-    return c.json({ messages: uiMessages, activeRunId } as any, 200);
+    // Sessions attaching mid-generation need the in-flight turn's user bubble
+    // (the trace for the current turn is only persisted when it completes).
+    const messagesWithPending = activeRun
+      ? appendPendingUserMessage(uiMessages, activeRun.userMessage, activeRun.runId)
+      : uiMessages;
+
+    return c.json({ messages: messagesWithPending, activeRunId } as any, 200);
   } catch (error) {
     logger.error("Failed to load thread messages", { error: String(error), threadId });
     return c.json({ error: "Internal server error" }, 500);
@@ -414,9 +426,21 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
     // The workflow owns the generation. This request only starts it and
     // attaches a reader — dropping the response (tab close, refresh) never
     // aborts the model call (T5).
+    const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+    const pendingUserMessage =
+      lastUserMessage?.parts
+        ?.filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join("") || null;
+
     const run = await start(dashboardChatWorkflow, [input]);
 
-    await recordDashboardChatRun({ threadId, runId: run.runId, userId }).catch(
+    await recordDashboardChatRun({
+      threadId,
+      runId: run.runId,
+      userId,
+      userMessage: pendingUserMessage ?? undefined,
+    }).catch(
       (error) => {
         logger.error("Failed to record dashboard chat run", {
           runId: run.runId,

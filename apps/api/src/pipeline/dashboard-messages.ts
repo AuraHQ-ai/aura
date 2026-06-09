@@ -1,6 +1,44 @@
 import type { UIMessage } from "ai";
 
 /**
+ * Append the in-flight turn's user bubble to a restored transcript.
+ *
+ * Conversation traces are persisted when a turn COMPLETES, so while a run is
+ * generating, the persisted history doesn't contain the user message that
+ * started it (and the run's stream only replays assistant chunks). Sessions
+ * attaching mid-generation would render the assistant answering nothing.
+ *
+ * The pending text is recorded on the run row at start time; this merges it
+ * in unless the transcript already ends with that exact user message (the
+ * originating tab, which appended it locally before sending).
+ */
+export function appendPendingUserMessage(
+  messages: UIMessage[],
+  pendingUserMessage: string | null | undefined,
+  runId: string,
+): UIMessage[] {
+  if (!pendingUserMessage) return messages;
+
+  const last = messages[messages.length - 1];
+  if (last?.role === "user") {
+    const lastText = (last.parts ?? [])
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+    if (lastText === pendingUserMessage) return messages;
+  }
+
+  return [
+    ...messages,
+    {
+      id: `pending-user-${runId}`,
+      role: "user",
+      parts: [{ type: "text", text: pendingUserMessage }],
+    } as UIMessage,
+  ];
+}
+
+/**
  * Anthropic rejects assistant messages where tool_use blocks are followed by
  * text in the same message, because the next message must immediately start
  * with tool_result. Reorder parts so text comes before tool-invocations.
