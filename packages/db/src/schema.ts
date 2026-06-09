@@ -853,6 +853,62 @@ export const conversationParts = pgTable(
   ],
 );
 
+// ── Dashboard chat runs (server-owned resumable streams) ────────────────────
+
+// A "run" is one assistant turn whose UI-message stream is owned by the server
+// and persisted chunk-by-chunk, so a client can disconnect / refresh / hop to
+// another device and re-attach to the live (or completed) stream. This mirrors
+// the Vercel WDK resumable-streams contract (runId + replay-by-index) without
+// requiring the WDK build toolchain.
+export const chatRunStatusEnum = pgEnum("chat_run_status", [
+  "running",
+  "done",
+  "error",
+  "canceled",
+]);
+
+export const chatRuns = pgTable(
+  "chat_runs",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    // Client-anchored conversation id (maps to conversation_traces.thread_ts).
+    threadId: text("thread_id").notNull(),
+    userId: text("user_id"),
+    modelId: text("model_id"),
+    status: chatRunStatusEnum("status").notNull().default("running"),
+    // The user-visible UIMessage[] that started this run, so a fresh session
+    // that never saw the request can reconstruct the in-flight user turn.
+    inputMessages: jsonb("input_messages"),
+    error: text("error"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+    finishedAt: timestamptz("finished_at"),
+  },
+  (table) => [
+    index("idx_chat_runs_thread").on(table.threadId, table.createdAt),
+    index("idx_chat_runs_status").on(table.status),
+  ],
+);
+
+// Append-only, ordered UI-message-stream chunks for a run. (run_id, seq) is the
+// stable cursor used to replay missed chunks and tail live output.
+export const chatRunChunks = pgTable(
+  "chat_run_chunks",
+  {
+    workspaceId: workspaceId().references(() => workspaces.id),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => chatRuns.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    chunk: jsonb("chunk").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.runId, table.seq] })],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(
