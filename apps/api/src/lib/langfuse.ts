@@ -148,6 +148,28 @@ export function aiTelemetry(
   return { isEnabled: true, functionId, metadata };
 }
 
+/**
+ * Build the `userId` Langfuse should display for a trace.
+ *
+ * Langfuse's Users view shows the raw `userId` string verbatim, so a bare Slack
+ * ID (`U0678NQJ2`) is unreadable when scanning. We format it as
+ * `"Display Name (U0678NQJ2)"` — the name is what humans scan for, and the
+ * stable Slack ID stays embedded so the same person maps to one Langfuse user
+ * (names/handles can change, the ID can't) and remains greppable.
+ *
+ * Use this everywhere a trace's `userId` is set (Slack, dashboard, …) so a given
+ * person is a single user across channels. Falls back to the bare id when no
+ * name is available, and returns undefined when there's no id at all.
+ */
+export function formatTraceUser(
+  id: string | undefined,
+  name?: string | null,
+): string | undefined {
+  if (!id) return undefined;
+  const trimmed = name?.trim();
+  return trimmed ? `${trimmed} (${id})` : id;
+}
+
 export interface TraceAttributes {
   /** Human-readable trace name, e.g. "slack-chat" or "memory-extract". */
   traceName?: string;

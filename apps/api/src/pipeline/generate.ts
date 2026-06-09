@@ -12,7 +12,7 @@ import { createInteractivePrepareStep } from "./prepare-step.js";
 import { buildCachedSystemMessages, getEscalationModel } from "../lib/ai.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
 import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
-import { aiTelemetry, withTrace } from "../lib/langfuse.js";
+import { aiTelemetry, withTrace, formatTraceUser } from "../lib/langfuse.js";
 
 /**
  * Channel-agnostic agentic stream.
@@ -41,6 +41,8 @@ export interface AgenticStreamOptions {
   maxSteps?: number;
   thinkingBudget?: number;
   userId?: string;
+  /** Human-readable name for the user, rendered in Langfuse's Users view. */
+  userName?: string;
   channelId?: string;
   threadTs?: string;
   invocationId?: string;
@@ -91,11 +93,12 @@ export function createAgenticStream(options: AgenticStreamOptions) {
     {
       traceName: `${options.channelId ?? "agent"}-chat`,
       sessionId: options.threadTs ?? options.channelId ?? undefined,
-      userId: options.userId,
+      userId: formatTraceUser(options.userId, options.userName),
       tags: [
         `channel:${options.channelId ?? "unknown"}`,
         `model:${options.modelId}`,
       ],
+      ...(options.userId ? { metadata: { slackUserId: options.userId } } : {}),
     },
     () =>
       streamText({

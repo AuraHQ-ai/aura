@@ -352,6 +352,7 @@ const postChatRoute = createRoute({
           schema: z.object({
             messages: z.array(z.any()),
             userId: z.string().optional(),
+            userName: z.string().optional(),
             threadId: z.string().nullable().optional(),
             modelId: z.string().nullable().optional(),
           }),
@@ -394,6 +395,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
   }
 
   const userId = (body.userId as string) || "dashboard-admin";
+  const userName = (body.userName as string) || undefined;
   const threadId = (body.threadId as string) || null;
   const requestedModelId = (body.modelId as string) || null;
 
@@ -457,6 +459,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
         channelId: "dashboard",
         threadTs: threadId ?? undefined,
         userId,
+        userName,
         onFinish: ({ steps, stepModelIds, totalUsage, text }) => {
           logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
           const fullSystemPrompt = [prompt.stablePrefix, prompt.environmentContext, prompt.conversationContext, prompt.dynamicContext].filter(Boolean).join("\n\n");

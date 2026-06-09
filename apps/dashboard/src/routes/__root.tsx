@@ -89,7 +89,7 @@ function RootLayout() {
           <>
             <Separator className="w-[3px] bg-border hover:bg-accent transition-colors" />
             <Panel id="chat" minSize="20%" defaultSize="30%">
-              <ChatPanel onClose={toggleChat} userId={session?.slackUserId} />
+              <ChatPanel onClose={toggleChat} userId={session?.slackUserId} userName={session?.name} />
             </Panel>
           </>
         )}
