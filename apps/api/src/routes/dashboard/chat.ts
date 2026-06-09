@@ -1,37 +1,38 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  convertToModelMessages,
-  type UIMessage,
-  type StepResult,
-  type LanguageModelUsage,
-} from "ai";
-import { waitUntil } from "@vercel/functions";
+import { createUIMessageStreamResponse, type UIMessage } from "ai";
 import { eq, and, sql, asc, inArray } from "drizzle-orm";
-import { conversationTraces, conversationMessages, conversationParts, users } from "@aura/db/schema";
-import { gateway } from "@ai-sdk/gateway";
+import { conversationTraces, conversationMessages, conversationParts, dashboardChatRuns } from "@aura/db/schema";
+import { start, getRun } from "workflow/api";
 import { db } from "../../db/client.js";
-import { getMainModel, getMainModelId, withAnthropicFallback, type WrappableModel } from "../../lib/ai.js";
-import { buildCorePrompt } from "../../pipeline/core-prompt.js";
-import { createAgenticStream } from "../../pipeline/generate.js";
-import { flushLangfuse } from "../../lib/langfuse.js";
-import { createCoreTools } from "../../tools/core.js";
-import { executionContext } from "../../lib/tool.js";
-import { extractMemories } from "../../memory/extract.js";
+import { getMainModelId } from "../../lib/ai.js";
 import {
-  createConversationTrace,
-  persistConversationInputs,
-  persistConversationSteps,
-  updateConversationTraceUsage,
-  buildConversationSteps,
-} from "../../cron/persist-conversation.js";
-import { storeMessage } from "../../memory/store.js";
-import { buildStepUsages } from "../../lib/cost-calculator.js";
+  recordDashboardChatRun,
+  getLatestRunsForThreads,
+  getLatestRunForThread,
+  getDashboardChatRun,
+  markDashboardChatRunFinished,
+} from "../../lib/dashboard-chat-runs.js";
+import {
+  dashboardChatWorkflow,
+  type DashboardChatWorkflowInput,
+} from "../../../workflows/dashboard-chat.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
 
 export const dashboardChatApp = createDashboardApp();
 
 // ── List dashboard chat threads ─────────────────────────────────────────────
+
+const threadSchema = z.object({
+  threadId: z.string().nullable(),
+  preview: z.string().nullable(),
+  lastActivityAt: z.string().nullable(),
+  messageCount: z.number(),
+  /** "generating" while a workflow run is active for this thread (R2). */
+  runStatus: z.enum(["generating", "idle"]),
+  /** runId of the in-flight run, if any — used by clients to attach (R3). */
+  activeRunId: z.string().nullable(),
+});
 
 const listChatThreadsRoute = createRoute({
   method: "get",
@@ -42,14 +43,7 @@ const listChatThreadsRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            threads: z.array(z.object({
-              threadId: z.string().nullable(),
-              preview: z.string().nullable(),
-              lastActivityAt: z.string().nullable(),
-              messageCount: z.number(),
-            })),
-          }),
+          schema: z.object({ threads: z.array(threadSchema) }),
         },
       },
       description: "Success",
@@ -105,12 +99,36 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
       }
     }
 
-    const threads = threadRows.map((row) => ({
-      threadId: row.threadTs,
-      preview: previews[row.firstTraceId] ?? null,
-      lastActivityAt: row.lastActivityAt,
-      messageCount: row.traceCount,
-    }));
+    // Threads with an active run may not have a persisted trace yet (the
+    // trace is written by the workflow's final step) — include them so a
+    // fresh browser session sees in-flight conversations (R2, T2).
+    const knownThreadIds = new Set(
+      threadRows.map((r) => r.threadTs).filter((t): t is string => Boolean(t)),
+    );
+    const { activeOnlyThreads, runsByThread } = await resolveThreadRuns(knownThreadIds);
+
+    const threads = [
+      ...activeOnlyThreads.map((info) => ({
+        threadId: info.threadId,
+        preview: info.preview,
+        lastActivityAt: info.lastActivityAt,
+        messageCount: 0,
+        runStatus: "generating" as const,
+        activeRunId: info.runId,
+      })),
+      ...threadRows.map((row) => {
+        const run = row.threadTs ? runsByThread.get(row.threadTs) : undefined;
+        const generating = run?.status === "running";
+        return {
+          threadId: row.threadTs,
+          preview: previews[row.firstTraceId] ?? null,
+          lastActivityAt: row.lastActivityAt,
+          messageCount: row.traceCount,
+          runStatus: generating ? ("generating" as const) : ("idle" as const),
+          activeRunId: generating ? run!.runId : null,
+        };
+      }),
+    ];
 
     return c.json({ threads } as any, 200);
   } catch (error) {
@@ -118,6 +136,41 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
     return c.json({ error: "Internal server error" }, 500);
   }
 });
+
+async function resolveThreadRuns(knownThreadIds: Set<string>) {
+  // Latest runs for the known threads + any recent running threads that have
+  // no persisted trace yet.
+  const runningRows = await db
+    .select({
+      threadId: dashboardChatRuns.threadId,
+      userId: dashboardChatRuns.userId,
+      createdAt: sql<string>`${dashboardChatRuns.createdAt}::text`,
+    })
+    .from(dashboardChatRuns)
+    .where(eq(dashboardChatRuns.status, "running"))
+    .orderBy(sql`${dashboardChatRuns.createdAt} DESC`)
+    .limit(50);
+
+  const allThreadIds = new Set<string>(knownThreadIds);
+  for (const row of runningRows) allThreadIds.add(row.threadId);
+
+  const runsByThread = await getLatestRunsForThreads([...allThreadIds]);
+
+  const activeOnlyThreads = runningRows
+    .filter(
+      (row) =>
+        !knownThreadIds.has(row.threadId) &&
+        runsByThread.get(row.threadId)?.status === "running",
+    )
+    .map((row) => ({
+      threadId: row.threadId,
+      runId: runsByThread.get(row.threadId)!.runId,
+      preview: null as string | null,
+      lastActivityAt: row.createdAt,
+    }));
+
+  return { activeOnlyThreads, runsByThread };
+}
 
 // ── Load messages for a dashboard chat thread ───────────────────────────────
 
@@ -137,6 +190,7 @@ const getThreadMessagesRoute = createRoute({
         "application/json": {
           schema: z.object({
             messages: z.array(z.record(z.string(), z.unknown())),
+            activeRunId: z.string().nullable(),
           }),
         },
       },
@@ -170,8 +224,14 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
       )
       .orderBy(asc(conversationTraces.createdAt));
 
+    // R3: when this thread has an in-flight run, tell the client which run
+    // to attach to. The run's stream replays the whole current turn, so the
+    // persisted history (completed turns only) never overlaps the live tail.
+    const latestRun = await getLatestRunForThread(threadId);
+    const activeRunId = latestRun?.status === "running" ? latestRun.runId : null;
+
     if (traces.length === 0) {
-      return c.json({ messages: [] } as any, 200);
+      return c.json({ messages: [], activeRunId } as any, 200);
     }
 
     const traceIds = traces.map((t) => t.id);
@@ -228,69 +288,12 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
       }
     }
 
-    return c.json({ messages: uiMessages } as any, 200);
+    return c.json({ messages: uiMessages, activeRunId } as any, 200);
   } catch (error) {
     logger.error("Failed to load thread messages", { error: String(error), threadId });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
-
-/**
- * Anthropic rejects assistant messages where tool_use blocks are followed by
- * text in the same message, because the next message must immediately start
- * with tool_result. Reorder parts so text comes before tool-invocations.
- * Also strip reasoning parts from non-final messages (they require signed
- * provider metadata that we don't persist).
- */
-function sanitizeAssistantPartOrder(messages: UIMessage[]): UIMessage[] {
-  let lastAssistantIndex = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role === "assistant") {
-      lastAssistantIndex = i;
-      break;
-    }
-  }
-
-  return messages.map((msg, index) => {
-    if (msg.role !== "assistant" || !msg.parts) return msg;
-    const isLastAssistantMessage = index === lastAssistantIndex;
-    const rawParts = msg.parts as any[];
-    const hasToolParts = rawParts.some(
-      (part) =>
-        part.type === "dynamic-tool" ||
-        (typeof part.type === "string" && part.type.startsWith("tool-")),
-    );
-
-    if (!hasToolParts) {
-      const filteredParts = rawParts.filter((part) => {
-        if (part.type === "step-start") return false;
-        if (part.type === "reasoning" && !isLastAssistantMessage) return false;
-        return true;
-      });
-      return filteredParts.length === rawParts.length
-        ? msg
-        : ({ ...msg, parts: filteredParts } as UIMessage);
-    }
-
-    const textParts: any[] = [];
-    const toolParts: any[] = [];
-    const otherParts: any[] = [];
-
-    for (const part of rawParts) {
-      if (part.type === "text") textParts.push(part);
-      else if (part.type === "dynamic-tool" || (typeof part.type === "string" && part.type.startsWith("tool-")))
-        toolParts.push(part);
-      else if (part.type === "reasoning") {
-        // Preserve reasoning on the final assistant message so the dashboard can render it.
-        if (isLastAssistantMessage) otherParts.push(part);
-      } else if (part.type === "step-start") {
-        // drop: step-start is UI-only
-      } else otherParts.push(part);
-    }
-
-    return { ...msg, parts: [...otherParts, ...textParts, ...toolParts] } as UIMessage;
-  });
-}
 
 function partsToUIParts(
   parts: (typeof conversationParts.$inferSelect)[],
@@ -338,13 +341,13 @@ function partsToUIParts(
   return [...textParts, ...toolParts];
 }
 
-// ── Dashboard chat (streaming) ──────────────────────────────────────────────
+// ── Dashboard chat (durable workflow run) ───────────────────────────────────
 
 const postChatRoute = createRoute({
   method: "post",
   path: "/",
   tags: ["Chat"],
-  summary: "Send a chat message (streaming response)",
+  summary: "Send a chat message (starts a durable workflow run, streams response)",
   request: {
     body: {
       content: {
@@ -368,7 +371,7 @@ const postChatRoute = createRoute({
           schema: z.any(),
         },
       },
-      description: "Streaming response",
+      description: "Streaming response (x-workflow-run-id header identifies the run)",
     },
     400: {
       content: { "application/json": { schema: errorSchema } },
@@ -396,102 +399,44 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
 
   const userId = (body.userId as string) || "dashboard-admin";
   const userName = (body.userName as string) || undefined;
-  const threadId = (body.threadId as string) || null;
+  const threadId = (body.threadId as string) || crypto.randomUUID();
   const requestedModelId = (body.modelId as string) || null;
 
   try {
-    let model: WrappableModel;
-    let modelId: string;
-
-    if (requestedModelId) {
-      modelId = requestedModelId;
-      model = withAnthropicFallback(gateway(modelId), modelId);
-      logger.info("Dashboard chat using requested model", { modelId });
-    } else {
-      const resolved = await getMainModel();
-      model = resolved.model;
-      modelId = await getMainModelId();
-      logger.info("Dashboard chat using default model", { modelId });
-    }
-
-    const lastUserMessage = [...messages]
-      .reverse()
-      .find((m) => m.role === "user");
-    const messageText =
-      lastUserMessage?.parts
-        ?.filter(
-          (p): p is { type: "text"; text: string } => p.type === "text",
-        )
-        .map((p) => p.text)
-        .join("") || "Hello";
-    const messageId = lastUserMessage?.id ?? crypto.randomUUID();
-
-    const prompt = await buildCorePrompt({
-      channel: "dashboard",
+    const input: DashboardChatWorkflowInput = {
+      messages,
       userId,
-      conversationId: "dashboard",
-      messageText,
-      isDirectMessage: true,
-      modelIdOverride: modelId,
+      userName,
+      threadId,
+      requestedModelId,
+    };
+
+    // The workflow owns the generation. This request only starts it and
+    // attaches a reader — dropping the response (tab close, refresh) never
+    // aborts the model call (T5).
+    const run = await start(dashboardChatWorkflow, [input]);
+
+    await recordDashboardChatRun({ threadId, runId: run.runId, userId }).catch(
+      (error) => {
+        logger.error("Failed to record dashboard chat run", {
+          runId: run.runId,
+          threadId,
+          error: String(error),
+        });
+      },
+    );
+
+    logger.info("Dashboard chat workflow started", {
+      runId: run.runId,
+      threadId,
+      modelId: requestedModelId ?? (await getMainModelId().catch(() => "default")),
     });
 
-    const tools = await createCoreTools(
-      { userId, channelId: "dashboard" },
-      undefined,
-      modelId,
-    );
-
-    const sanitizedMessages = sanitizeAssistantPartOrder(messages);
-    const modelMessages = await convertToModelMessages(sanitizedMessages);
-
-    const result = executionContext.run(
-      { triggeredBy: userId, triggerType: "user_message", callingUserId: userId, channelId: "dashboard" },
-      () => createAgenticStream({
-        model,
-        modelId,
-        tools,
-        stablePrefix: prompt.stablePrefix,
-        environmentContext: prompt.environmentContext,
-        conversationContext: prompt.conversationContext,
-        dynamicContext: prompt.dynamicContext,
-        messages: modelMessages,
-        maxSteps: 20,
-        channelId: "dashboard",
-        threadTs: threadId ?? undefined,
-        userId,
-        userName,
-        onFinish: ({ steps, stepModelIds, totalUsage, text }) => {
-          logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, textLen: text.length });
-          const fullSystemPrompt = [prompt.stablePrefix, prompt.environmentContext, prompt.conversationContext, prompt.dynamicContext].filter(Boolean).join("\n\n");
-          waitUntil(
-            persistDashboardConversation({
-              userId,
-              messageId,
-              modelId,
-              threadId,
-              userMessage: messageText,
-              assistantText: text,
-              systemPrompt: fullSystemPrompt,
-              steps,
-              stepModelIds,
-              totalUsage,
-            }).catch((err) => {
-              logger.error("persistDashboardConversation rejected", { error: String(err) });
-            }),
-          );
-          // Drain this turn's Langfuse spans before the function instance freezes.
-          waitUntil(flushLangfuse());
-        },
-      }),
-    );
-
-    return result.toUIMessageStreamResponse({
-      originalMessages: messages,
-      sendReasoning: true,
-      messageMetadata: ({ part }) => {
-        if (part.type === "start") {
-          return { modelId };
-        }
+    return createUIMessageStreamResponse({
+      stream: run.readable as ReadableStream<any>,
+      headers: {
+        "x-workflow-run-id": run.runId,
+        "x-thread-id": threadId,
       },
     });
   } catch (error) {
@@ -503,127 +448,115 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
   }
 });
 
-async function persistDashboardConversation(params: {
-  userId: string;
-  messageId: string;
-  modelId: string;
-  threadId: string | null;
-  userMessage: string;
-  assistantText: string;
-  systemPrompt: string;
-  steps: StepResult<any>[];
-  stepModelIds: string[];
-  totalUsage: LanguageModelUsage;
-}): Promise<void> {
-  const { userId, messageId, modelId, threadId, userMessage, assistantText, systemPrompt, steps, stepModelIds, totalUsage } = params;
+// ── Stream reconnection (resumable streams) ─────────────────────────────────
+
+const getRunStreamRoute = createRoute({
+  method: "get",
+  path: "/runs/{runId}/stream",
+  tags: ["Chat"],
+  summary: "Reattach to an in-flight (or replay a finished) chat run stream",
+  request: {
+    params: z.object({
+      runId: z.string().openapi({ param: { name: "runId", in: "path" } }),
+    }),
+    query: z.object({
+      startIndex: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "text/event-stream": { schema: z.any() } },
+      description: "Stream replay from startIndex (default 0)",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Unknown run",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardChatApp.openapi(getRunStreamRoute, async (c) => {
+  const runId = c.req.param("runId");
+  const startIndexParam = c.req.query("startIndex");
+  const startIndex = startIndexParam ? parseInt(startIndexParam, 10) : undefined;
 
   try {
-    logger.info("persistDashboardConversation started", { threadId, messageId });
-    const userExternalId = `dashboard-${userId}-${messageId}`;
-    const assistantExternalId = `${userExternalId}-aura`;
+    // Only allow reattaching to runs we started (defense in depth on top of
+    // the dashboard auth middleware).
+    const row = await getDashboardChatRun(runId);
+    if (!row) return c.json({ error: "Unknown run" }, 404);
 
-    // Best-effort message storage: memory extraction should still run even if one insert fails.
-    let userMessageId: string | undefined;
-    try {
-      userMessageId = await storeMessage({
-        externalId: userExternalId,
-        channelId: "dashboard",
-        channelType: "dashboard",
-        slackThreadTs: threadId,
-        userId,
-        role: "user",
-        content: userMessage,
-      });
-    } catch (error) {
-      logger.error("Failed to store dashboard user message (continuing)", {
-        error: String(error),
-        externalId: userExternalId,
-        threadId,
-      });
-    }
-
-    try {
-      await storeMessage({
-        externalId: assistantExternalId,
-        channelId: "dashboard",
-        channelType: "dashboard",
-        slackThreadTs: threadId,
-        userId: "aura",
-        role: "assistant",
-        content: assistantText,
-        tokenUsage: {
-          inputTokens: totalUsage.inputTokens ?? 0,
-          outputTokens: totalUsage.outputTokens ?? 0,
-          totalTokens: totalUsage.totalTokens ?? 0,
-        },
-        model: modelId,
-      });
-    } catch (error) {
-      logger.error("Failed to store dashboard assistant message (continuing)", {
-        error: String(error),
-        externalId: assistantExternalId,
-        threadId,
-      });
-    }
-
-    try {
-      await extractMemories({
-        userMessage,
-        assistantResponse: assistantText,
-        userId,
-        channelType: "dashboard",
-        sourceMessageId: userMessageId,
-        channelId: "dashboard",
-        threadTs: threadId ?? undefined,
-        displayName: await resolveDashboardDisplayName(userId),
-      });
-    } catch (extractErr: any) {
-      logger.warn("Memory extraction failed (non-fatal)", {
-        error: extractErr?.message || String(extractErr),
-      });
-    }
-
-    const traceId = await createConversationTrace({
-      sourceType: "interactive",
-      source: "dashboard",
-      channelId: "dashboard",
-      threadTs: threadId ?? undefined,
-      userId,
-      modelId,
+    const run = getRun(runId);
+    const readable = run.getReadable({
+      ...(startIndex !== undefined && Number.isFinite(startIndex) ? { startIndex } : {}),
     });
 
-    if (traceId) {
-      const orderIndex = await persistConversationInputs(traceId, systemPrompt, userMessage);
+    // The tail index lets the transport resolve negative startIndex values
+    // into absolute positions for retries.
+    const tailIndex = await readable.getTailIndex();
 
-      const conversationSteps = buildConversationSteps(steps, stepModelIds, modelId);
-      await persistConversationSteps(traceId, conversationSteps, orderIndex);
-
-      const stepUsages = buildStepUsages(steps, stepModelIds, modelId);
-      await updateConversationTraceUsage(traceId, {
-        inputTokens: totalUsage.inputTokens ?? 0,
-        outputTokens: totalUsage.outputTokens ?? 0,
-        totalTokens: totalUsage.totalTokens ?? 0,
-      }, stepUsages);
-    }
-
-    logger.info("Dashboard conversation persisted", { traceId, threadId });
+    return createUIMessageStreamResponse({
+      stream: readable as ReadableStream<any>,
+      headers: {
+        "x-workflow-run-id": runId,
+        "x-workflow-stream-tail-index": String(tailIndex),
+      },
+    });
   } catch (error) {
-    logger.error("Failed to persist dashboard conversation", {
-      error: error instanceof Error ? error.stack ?? error.message : String(error),
-      threadId,
+    logger.error("Dashboard chat stream reattach failed", {
+      runId,
+      error: String(error),
     });
+    return c.json({ error: "Internal server error" }, 500);
   }
-}
+});
 
-async function resolveDashboardDisplayName(userId: string): Promise<string> {
+// ── Explicit cancel (the ONLY path that stops generation) ────────────────────
+
+const cancelRunRoute = createRoute({
+  method: "post",
+  path: "/runs/{runId}/cancel",
+  tags: ["Chat"],
+  summary: "Cancel an in-flight chat run (explicit user stop)",
+  request: {
+    params: z.object({
+      runId: z.string().openapi({ param: { name: "runId", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.object({ ok: z.boolean() }) } },
+      description: "Cancelled",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Unknown run",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardChatApp.openapi(cancelRunRoute, async (c) => {
+  const runId = c.req.param("runId");
   try {
-    const [row] = await db
-      .select({ displayName: users.displayName })
-      .from(users)
-      .where(eq(users.slackUserId, userId))
-      .limit(1);
-    return row?.displayName || userId;
-  } catch {
-    return userId;
+    const row = await getDashboardChatRun(runId);
+    if (!row) return c.json({ error: "Unknown run" }, 404);
+
+    await getRun(runId).cancel();
+    await markDashboardChatRunFinished(runId, "cancelled");
+    return c.json({ ok: true } as any, 200);
+  } catch (error) {
+    logger.error("Dashboard chat run cancel failed", {
+      runId,
+      error: String(error),
+    });
+    return c.json({ error: "Internal server error" }, 500);
   }
-}
+});
