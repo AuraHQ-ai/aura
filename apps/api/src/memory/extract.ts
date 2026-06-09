@@ -2,7 +2,7 @@ import { generateText, generateObject, Output } from "ai";
 import { gateway } from "@ai-sdk/gateway";
 import { z } from "zod";
 import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
-import { aiTelemetry } from "../lib/langfuse.js";
+import { aiTelemetry, withTraceSpan } from "../lib/langfuse.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
@@ -642,13 +642,26 @@ export async function extractMemories(context: ExtractionContext): Promise<void>
   const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
 
   try {
-    const useReconciliation = !!(context.channelId && context.threadTs);
+    // One parent span per extraction job so every AI SDK call inside (extract,
+    // contradiction, reconcile, entity resolution + their embeds) nests into a
+    // single Langfuse trace, grouped with the conversation via sessionId.
+    await withTraceSpan(
+      "memory-extract-job",
+      {
+        sessionId: context.threadTs ?? context.channelId ?? context.userId,
+        userId: context.userId,
+        tags: ["job:memory-extract"],
+      },
+      async () => {
+        const useReconciliation = !!(context.channelId && context.threadTs);
 
-    if (useReconciliation) {
-      await extractWithReconciliation(context, workspaceId, extractionSourceRole, start);
-    } else {
-      await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
-    }
+        if (useReconciliation) {
+          await extractWithReconciliation(context, workspaceId, extractionSourceRole, start);
+        } else {
+          await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
+        }
+      },
+    );
   } catch (error) {
     logger.error("Memory extraction failed", {
       error: String(error).slice(0, 200),
@@ -692,12 +705,21 @@ export async function extractMemoriesFromTranscript(
   }
 
   try {
-    await extractWithReconciliationFromTranscript(
-      threadMessages,
-      context,
-      workspaceId,
-      extractionSourceRole,
-      start,
+    await withTraceSpan(
+      "memory-extract-job",
+      {
+        sessionId: context.threadTs ?? context.channelId ?? context.userId,
+        userId: context.userId,
+        tags: ["job:memory-extract", "source:transcript"],
+      },
+      () =>
+        extractWithReconciliationFromTranscript(
+          threadMessages,
+          context,
+          workspaceId,
+          extractionSourceRole,
+          start,
+        ),
     );
   } catch (error) {
     logger.error("Transcript-based memory extraction failed", {

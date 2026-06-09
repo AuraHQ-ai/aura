@@ -10,7 +10,7 @@ import {
 } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { logger } from "../lib/logger.js";
-import { aiTelemetry } from "../lib/langfuse.js";
+import { aiTelemetry, withTraceSpan } from "../lib/langfuse.js";
 import { ensureSlackUserEntityLink } from "./entity-link.js";
 
 /**
@@ -172,7 +172,14 @@ export async function updateProfileFromConversation(
 
     const model = await getFastModel();
 
-    const { output: object } = await generateText({
+    const { output: object } = await withTraceSpan(
+      "profile-update-job",
+      {
+        sessionId: slackUserId,
+        userId: slackUserId,
+        tags: ["job:profile-update"],
+      },
+      () => generateText({
       model,
       experimental_telemetry: aiTelemetry("profile-update"),
       output: Output.object({ schema: profileUpdateSchema }),
@@ -190,7 +197,8 @@ Analyze the user's message style:
 Also extract any new facts you can identify — role, team, interests, personal details, or preferences.
 Only include new facts that are clearly stated or strongly implied. Don't speculate.`,
       prompt: `User message: ${userMessage}\n\nAura's response: ${assistantResponse}`,
-    });
+    }),
+    );
 
     if (!object) {
       logger.debug("Profile update failed: model output did not match schema");
@@ -333,54 +341,66 @@ export async function consolidateProfiles(): Promise<{
     const consolidated: KnownFacts = { ...facts };
 
     try {
-      totalBefore += beforeCount;
-      if (interests.length > CAPS.interests) {
-        consolidated.interests = await consolidateCategory(
-          model,
-          "interests",
-          interests,
-          CAPS.interests,
-        );
-      }
+      // One trace per profile so its (up to 3) category consolidations group
+      // together rather than scattering across the daily batch.
+      await withTraceSpan(
+        "profile-consolidate-job",
+        {
+          sessionId: profile.slackUserId ?? undefined,
+          userId: profile.slackUserId ?? undefined,
+          tags: ["job:profile-consolidate"],
+        },
+        async () => {
+          totalBefore += beforeCount;
+          if (interests.length > CAPS.interests) {
+            consolidated.interests = await consolidateCategory(
+              model,
+              "interests",
+              interests,
+              CAPS.interests,
+            );
+          }
 
-      if (preferences.length > CAPS.preferences) {
-        consolidated.preferences = await consolidateCategory(
-          model,
-          "preferences",
-          preferences,
-          CAPS.preferences,
-        );
-      }
+          if (preferences.length > CAPS.preferences) {
+            consolidated.preferences = await consolidateCategory(
+              model,
+              "preferences",
+              preferences,
+              CAPS.preferences,
+            );
+          }
 
-      if (personalDetails.length > CAPS.personalDetails) {
-        consolidated.personalDetails = await consolidateCategory(
-          model,
-          "personalDetails",
-          personalDetails,
-          CAPS.personalDetails,
-        );
-      }
+          if (personalDetails.length > CAPS.personalDetails) {
+            consolidated.personalDetails = await consolidateCategory(
+              model,
+              "personalDetails",
+              personalDetails,
+              CAPS.personalDetails,
+            );
+          }
 
-      const afterCount =
-        (consolidated.interests?.length || 0) +
-        (consolidated.preferences?.length || 0) +
-        (consolidated.personalDetails?.length || 0);
-      totalAfter += afterCount;
+          const afterCount =
+            (consolidated.interests?.length || 0) +
+            (consolidated.preferences?.length || 0) +
+            (consolidated.personalDetails?.length || 0);
+          totalAfter += afterCount;
 
-      await db
-        .update(users)
-        .set({
-          knownFacts: consolidated,
-          lastProfileConsolidation: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, profile.id));
+          await db
+            .update(users)
+            .set({
+              knownFacts: consolidated,
+              lastProfileConsolidation: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, profile.id));
 
-      logger.info("Consolidated user profile", {
-        slackUserId: profile.slackUserId,
-        before: beforeCount,
-        after: afterCount,
-      });
+          logger.info("Consolidated user profile", {
+            slackUserId: profile.slackUserId,
+            before: beforeCount,
+            after: afterCount,
+          });
+        },
+      );
     } catch (error) {
       logger.error("Failed to consolidate profile", {
         slackUserId: profile.slackUserId,
