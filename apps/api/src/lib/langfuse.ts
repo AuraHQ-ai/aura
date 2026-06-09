@@ -25,13 +25,85 @@
  * no-op, so local/dev environments without keys run unaffected.
  */
 
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import {
+  NodeTracerProvider,
+  type ReadableSpan,
+  type Span,
+  type SpanProcessor,
+} from "@opentelemetry/sdk-trace-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { propagateAttributes } from "@langfuse/tracing";
+import type { Context } from "@opentelemetry/api";
 import { logger } from "./logger.js";
 
 let provider: NodeTracerProvider | null = null;
 let spanProcessor: LangfuseSpanProcessor | null = null;
+
+const GEN_AI_MODEL_ATTRIBUTES = [
+  "gen_ai.request.model",
+  "gen_ai.response.model",
+  // AI SDK also keeps its pre-GenAI attributes. Langfuse currently prices from
+  // GenAI attributes, but normalizing both prevents future drift.
+  "ai.model.id",
+  "ai.response.model",
+];
+
+/**
+ * Convert AI Gateway/provider-qualified model IDs into the bare slugs Langfuse's
+ * pricing table matches against.
+ *
+ * Examples:
+ * - anthropic/claude-opus-4.8 -> claude-opus-4-8
+ * - claude-sonnet-4-6 -> claude-sonnet-4-6
+ * - openai/gpt-5.1 -> gpt-5-1
+ */
+export function normalizeLangfuseModelSlug(
+  modelId: string | undefined,
+): string | undefined {
+  const trimmed = modelId?.trim();
+  if (!trimmed) return undefined;
+
+  const bareSlug = trimmed.split("/").pop() ?? trimmed;
+  return bareSlug.replace(/\./g, "-");
+}
+
+function normalizeGenAIModelAttributes(span: ReadableSpan): void {
+  for (const attributeName of GEN_AI_MODEL_ATTRIBUTES) {
+    const value = span.attributes[attributeName];
+    if (typeof value !== "string") continue;
+
+    const normalized = normalizeLangfuseModelSlug(value);
+    if (normalized) {
+      span.attributes[attributeName] = normalized;
+    }
+  }
+}
+
+/**
+ * Central pre-export hygiene for Langfuse spans. The delegate keeps Langfuse's
+ * smart GenAI span filter, masking, media handling, and serverless flush
+ * behavior unchanged; we only canonicalize model slugs before it sees the span.
+ */
+class LangfuseHygieneSpanProcessor implements SpanProcessor {
+  constructor(private readonly delegate: LangfuseSpanProcessor) {}
+
+  onStart(span: Span, parentContext: Context): void {
+    this.delegate.onStart(span, parentContext);
+  }
+
+  onEnd(span: ReadableSpan): void {
+    normalizeGenAIModelAttributes(span);
+    this.delegate.onEnd(span);
+  }
+
+  forceFlush(): Promise<void> {
+    return this.delegate.forceFlush();
+  }
+
+  shutdown(): Promise<void> {
+    return this.delegate.shutdown();
+  }
+}
 
 /**
  * Redact obvious secrets before any input/output/metadata leaves the process.
@@ -116,7 +188,7 @@ export function initLangfuseTracing(): boolean {
   });
 
   provider = new NodeTracerProvider({
-    spanProcessors: [spanProcessor],
+    spanProcessors: [new LangfuseHygieneSpanProcessor(spanProcessor)],
   });
   provider.register();
 
@@ -175,8 +247,10 @@ export interface TraceAttributes {
   traceName?: string;
   /** Groups related turns into one conversation in the Sessions view. */
   sessionId?: string;
-  /** Enables per-user cost/quality analysis and filtering. */
+  /** Raw stable user id. Formatted centrally before propagation to Langfuse. */
   userId?: string;
+  /** Human-readable name rendered with the stable id in Langfuse's Users view. */
+  userName?: string | null;
   /** Filterable labels, e.g. ["channel:slack", "model:..."]. */
   tags?: string[];
   /** Arbitrary trace-level metadata. */
@@ -192,7 +266,14 @@ export interface TraceAttributes {
  */
 export function withTrace<T>(attrs: TraceAttributes, fn: () => T): T {
   if (!spanProcessor) return fn();
-  return propagateAttributes(attrs, fn);
+  const { userName, ...traceAttrs } = attrs;
+  return propagateAttributes(
+    {
+      ...traceAttrs,
+      userId: formatTraceUser(attrs.userId, userName),
+    },
+    fn,
+  );
 }
 
 /**

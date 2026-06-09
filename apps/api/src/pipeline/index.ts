@@ -33,7 +33,7 @@ import {
 import { downloadEventFiles } from "../lib/files.js";
 import { getSettingJSON } from "../lib/settings.js";
 import { logger } from "../lib/logger.js";
-import { withTrace, formatTraceUser } from "../lib/langfuse.js";
+import { withTrace } from "../lib/langfuse.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
@@ -445,7 +445,8 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       {
         traceName: "slack-chat",
         sessionId: replyThreadTs ?? context.channelId,
-        userId: formatTraceUser(context.userId, displayName),
+        userId: context.userId,
+        userName: displayName,
         tags: [`channel:${context.channelType ?? "unknown"}`],
         metadata: { slackUserId: context.userId },
       },

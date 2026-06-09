@@ -12,7 +12,7 @@ import { createInteractivePrepareStep } from "./prepare-step.js";
 import { buildCachedSystemMessages, getEscalationModel } from "../lib/ai.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
 import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
-import { aiTelemetry, withTrace, formatTraceUser } from "../lib/langfuse.js";
+import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 
 /**
  * Channel-agnostic agentic stream.
@@ -93,7 +93,8 @@ export function createAgenticStream(options: AgenticStreamOptions) {
     {
       traceName: `${options.channelId ?? "agent"}-chat`,
       sessionId: options.threadTs ?? options.channelId ?? undefined,
-      userId: formatTraceUser(options.userId, options.userName),
+      userId: options.userId,
+      userName: options.userName,
       tags: [
         `channel:${options.channelId ?? "unknown"}`,
         `model:${options.modelId}`,
