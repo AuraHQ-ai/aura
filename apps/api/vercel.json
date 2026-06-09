@@ -1,40 +1,13 @@
 {
   "framework": null,
-  "buildCommand": "pnpm --filter @aura/db build && pnpm --filter @aura/db db:migrate && pnpm --filter aura-dashboard build && rm -rf public && cp -r ../dashboard/dist public",
+  "buildCommand": "pnpm --filter @aura/db build && pnpm --filter @aura/db db:migrate && pnpm --filter aura-dashboard build && rm -rf public && cp -r ../dashboard/dist public && pnpm build:vercel",
   "regions": [
     "fra1"
-  ],
-  "functions": {
-    "api/**/*.ts": {
-      "maxDuration": 800
-    }
-  },
-  "rewrites": [
-    {
-      "source": "/slack/events",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/health",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
   ],
   "crons": [
     {
       "path": "/api/cron/consolidate",
       "schedule": "0 4 * * *"
-    },
-    {
-      "path": "/api/cron/eval-responses",
-      "schedule": "0 2 * * *"
     },
     {
       "path": "/api/cron/heartbeat",
