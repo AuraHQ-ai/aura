@@ -3,7 +3,9 @@ import type { UIMessageChunk } from "ai";
 import {
   consumeAndPersist,
   createReplayStream,
+  isRunStale,
   isTerminal,
+  RUN_STALE_MS,
   type ChatRunRecord,
   type ChatRunStatus,
   type RunStore,
@@ -14,14 +16,17 @@ import {
 function makeMemoryStore(): RunStore & {
   _runs: Map<string, ChatRunRecord>;
   _chunks: Map<string, StoredChunk[]>;
+  _touched: Map<string, number>;
 } {
   const runs = new Map<string, ChatRunRecord>();
   const chunks = new Map<string, StoredChunk[]>();
+  const touched = new Map<string, number>();
   let counter = 0;
 
   return {
     _runs: runs,
     _chunks: chunks,
+    _touched: touched,
     async createRun(input) {
       const id = `run-${++counter}`;
       runs.set(id, {
@@ -51,6 +56,9 @@ function makeMemoryStore(): RunStore & {
     },
     async getRun(runId) {
       return runs.get(runId) ?? null;
+    },
+    async touchRun(runId) {
+      touched.set(runId, (touched.get(runId) ?? 0) + 1);
     },
     async finishRun(runId, status, error) {
       const run = runs.get(runId);
@@ -234,5 +242,29 @@ describe("run-store: helpers", () => {
       ["canceled", true],
     ];
     for (const [status, expected] of cases) expect(isTerminal(status)).toBe(expected);
+  });
+
+  it("flags a run as stale only past the heartbeat threshold (dead-writer guard)", () => {
+    const now = 1_000_000;
+    expect(isRunStale(now - 1000, now)).toBe(false); // 1s ago — alive
+    expect(isRunStale(now - (RUN_STALE_MS - 1), now)).toBe(false); // just under threshold
+    expect(isRunStale(now - (RUN_STALE_MS + 1), now)).toBe(true); // just over — stale
+    expect(isRunStale(new Date(now - RUN_STALE_MS - 5000), now)).toBe(true); // accepts Date
+    expect(isRunStale("not-a-date", now)).toBe(false); // never reap on bad input
+  });
+
+  it("heartbeats while the writer is alive so liveness != chunk cadence", async () => {
+    const store = makeMemoryStore();
+    const runId = await store.createRun({ threadId: "t1" });
+    // A long, quiet stream (one chunk, then a 60ms gap before close).
+    const slow = new ReadableStream<UIMessageChunk>({
+      async pull(controller) {
+        await new Promise((r) => setTimeout(r, 60));
+        controller.close();
+      },
+    });
+    await consumeAndPersist(store, runId, slow, { heartbeatMs: 10 });
+    // It heartbeat several times despite producing no chunks.
+    expect(store._touched.get(runId) ?? 0).toBeGreaterThan(2);
   });
 });

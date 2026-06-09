@@ -6,7 +6,12 @@ import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { UIMessageChunk } from "ai";
 import { chatRuns, chatRunChunks } from "@aura/db/schema";
 import { db } from "../db/client.js";
-import type { ChatRunRecord, ChatRunStatus, RunStore, StoredChunk } from "./run-store.js";
+import { RUN_STALE_MS, type ChatRunRecord, type ChatRunStatus, type RunStore, type StoredChunk } from "./run-store.js";
+
+// A run only counts as actively generating if its writer heartbeat is recent.
+// Expressed in seconds for the Postgres interval literal.
+const STALE_SECONDS = Math.ceil(RUN_STALE_MS / 1000);
+const liveRunningClause = sql`${chatRuns.status} = 'running' AND ${chatRuns.updatedAt} > now() - (${STALE_SECONDS} * interval '1 second')`;
 
 function toRecord(row: typeof chatRuns.$inferSelect): ChatRunRecord {
   return {
@@ -65,6 +70,13 @@ export const dbRunStore: RunStore = {
     return row ? toRecord(row) : null;
   },
 
+  async touchRun(runId) {
+    await db
+      .update(chatRuns)
+      .set({ updatedAt: new Date() })
+      .where(and(eq(chatRuns.id, runId), eq(chatRuns.status, "running")));
+  },
+
   async finishRun(runId, status, error) {
     await db
       .update(chatRuns)
@@ -88,7 +100,7 @@ export const dbRunStore: RunStore = {
     const [row] = await db
       .select()
       .from(chatRuns)
-      .where(and(eq(chatRuns.threadId, runThreadId), eq(chatRuns.status, "running")))
+      .where(and(eq(chatRuns.threadId, runThreadId), liveRunningClause))
       .orderBy(desc(chatRuns.createdAt))
       .limit(1);
     return row ? toRecord(row) : null;
@@ -99,7 +111,7 @@ export const dbRunStore: RunStore = {
     const rows = await db
       .selectDistinct({ threadId: chatRuns.threadId })
       .from(chatRuns)
-      .where(and(inArray(chatRuns.threadId, threadIds), eq(chatRuns.status, "running")));
+      .where(and(inArray(chatRuns.threadId, threadIds), liveRunningClause));
     return new Set(rows.map((r) => r.threadId));
   },
 };

@@ -64,6 +64,8 @@ export interface RunStore {
   /** Largest persisted `seq + 1` (i.e. where the next chunk will land). */
   getTailIndex(runId: string): Promise<number>;
   getRun(runId: string): Promise<ChatRunRecord | null>;
+  /** Liveness heartbeat — bumps the run's `updatedAt` while the writer is alive. */
+  touchRun(runId: string): Promise<void>;
   /** Set status only if the run is still `running` (so terminal states stick). */
   finishRun(runId: string, status: ChatRunStatus, error?: string | null): Promise<void>;
   /** Request cancellation; no-op if already terminal. */
@@ -76,6 +78,26 @@ export interface RunStore {
 
 const DEFAULT_POLL_MS = 400;
 const DEFAULT_CANCEL_POLL_MS = 1000;
+const DEFAULT_HEARTBEAT_MS = 5000;
+
+/**
+ * A run is "alive" only if its writer has heartbeat recently. We key liveness
+ * off the heartbeat (not chunk cadence) so a legitimately long, quiet step
+ * (e.g. a 75s tool call) is NOT mistaken for a dead writer. If the serverless
+ * instance running the writer is hard-killed, the heartbeat stops and the run
+ * goes stale, so it no longer shows a spinner or accepts resume attempts.
+ */
+export const RUN_STALE_MS = 30_000;
+
+export function isRunStale(
+  updatedAt: Date | string | number,
+  now: number = Date.now(),
+  thresholdMs: number = RUN_STALE_MS,
+): boolean {
+  const ts = updatedAt instanceof Date ? updatedAt.getTime() : new Date(updatedAt).getTime();
+  if (Number.isNaN(ts)) return false;
+  return now - ts > thresholdMs;
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -107,11 +129,13 @@ export async function consumeAndPersist(
   options: {
     abortController?: AbortController;
     cancelPollMs?: number;
+    heartbeatMs?: number;
     onError?: (error: unknown) => void;
   } = {},
 ): Promise<void> {
   const { abortController, onError } = options;
   const cancelPollMs = options.cancelPollMs ?? DEFAULT_CANCEL_POLL_MS;
+  const heartbeatMs = options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
 
   let canceled = false;
   let cancelPoll: ReturnType<typeof setInterval> | undefined;
@@ -128,6 +152,12 @@ export async function consumeAndPersist(
         .catch(() => {});
     }, cancelPollMs);
   }
+
+  // Liveness heartbeat: while this writer is alive, keep the run "fresh" so a
+  // hard-killed instance becomes detectable (see isRunStale).
+  const heartbeat = setInterval(() => {
+    void store.touchRun(runId).catch(() => {});
+  }, heartbeatMs);
 
   const reader = uiStream.getReader();
   let seq = 0;
@@ -150,6 +180,7 @@ export async function consumeAndPersist(
     }
   } finally {
     if (cancelPoll) clearInterval(cancelPoll);
+    clearInterval(heartbeat);
     reader.releaseLock();
   }
 }

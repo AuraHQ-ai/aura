@@ -15,7 +15,7 @@ import { getMainModel, getMainModelId, withAnthropicFallback, type WrappableMode
 import { buildCorePrompt } from "../../pipeline/core-prompt.js";
 import { createAgenticStream } from "../../pipeline/generate.js";
 import { dbRunStore } from "../../pipeline/run-store-db.js";
-import { consumeAndPersist, createReplayStream } from "../../pipeline/run-store.js";
+import { consumeAndPersist, createReplayStream, isRunStale } from "../../pipeline/run-store.js";
 import { flushLangfuse } from "../../lib/langfuse.js";
 import { createCoreTools } from "../../tools/core.js";
 import { executionContext } from "../../lib/tool.js";
@@ -140,6 +140,7 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
         status: chatRuns.status,
         inputMessages: chatRuns.inputMessages,
         createdAt: sql<string>`${chatRuns.createdAt}::text`,
+        updatedAt: sql<string>`${chatRuns.updatedAt}::text`,
       })
       .from(chatRuns)
       .orderBy(desc(chatRuns.createdAt))
@@ -165,11 +166,16 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
       });
     }
 
+    const now = Date.now();
+    const isGenerating = (status: string, updatedAt: string | null) =>
+      status === "running" && !isRunStale(updatedAt ?? 0, now);
+
     const seenRunThreads = new Set<string>();
     for (const run of runRows) {
+      const generating = isGenerating(run.status, run.updatedAt);
       const existing = byThread.get(run.threadId);
       if (existing) {
-        if (run.status === "running") existing.status = "generating";
+        if (generating) existing.status = "generating";
         if (run.createdAt && (!existing.lastActivityAt || run.createdAt > existing.lastActivityAt)) {
           existing.lastActivityAt = run.createdAt;
         }
@@ -178,7 +184,7 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
       // Thread has runs but no persisted trace yet (e.g. its first turn is
       // still generating). Surface it from the run row.
       if (seenRunThreads.has(run.threadId)) {
-        if (run.status === "running") byThread.get(run.threadId)!.status = "generating";
+        if (generating) byThread.get(run.threadId)!.status = "generating";
         continue;
       }
       seenRunThreads.add(run.threadId);
@@ -187,7 +193,7 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
         preview: lastUserTextFromInput(run.inputMessages),
         lastActivityAt: run.createdAt,
         messageCount: 0,
-        status: run.status === "running" ? "generating" : "idle",
+        status: generating ? "generating" : "idle",
       });
     }
 
