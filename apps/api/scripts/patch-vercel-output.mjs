@@ -1,14 +1,15 @@
 /**
  * Post-process the Nitro-generated Build Output API config:
  *
- * 1. SPA fallback — the previous filesystem-functions deploy used a
- *    vercel.json rewrite of /(.*) → /index.html. With the Build Output API,
- *    routing comes from .vercel/output/config.json, so we insert an
- *    equivalent fallback (after the filesystem handler, before the catch-all
- *    to the server function) for non-API browser navigation paths.
+ * SPA fallback — the previous filesystem-functions deploy used a vercel.json
+ * rewrite of /(.*) → /index.html. With the Build Output API, routing comes
+ * from .vercel/output/config.json, so we insert an equivalent fallback
+ * (after the filesystem handler, before the catch-all to the server
+ * function) for non-API browser navigation paths.
  *
- * 2. Crons — declared in the Build Output config so they survive the move
- *    away from vercel.json-driven builds.
+ * Crons intentionally live ONLY in vercel.json: Vercel merges crons from
+ * vercel.json and the Build Output config, and rejects the deployment when
+ * the same path+schedule appears in both ("duplicated cron job").
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -42,10 +43,5 @@ if (!alreadyPatched) {
   }
 }
 
-config.crons = [
-  { path: "/api/cron/consolidate", schedule: "0 4 * * *" },
-  { path: "/api/cron/heartbeat", schedule: "*/30 * * * *" },
-];
-
 writeFileSync(configPath, JSON.stringify(config, null, 2));
-console.log("Patched .vercel/output/config.json (SPA fallback + crons)");
+console.log("Patched .vercel/output/config.json (SPA fallback)");
