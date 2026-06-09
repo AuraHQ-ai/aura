@@ -35,6 +35,11 @@ function memory(overrides: Partial<StoreMemoryInput> = {}): StoreMemoryInput {
   } as StoreMemoryInput;
 }
 
+function insertedValues(): StoreMemoryInput[] {
+  const calls = dbMocks.values.mock.calls as unknown as Array<[StoreMemoryInput[]]>;
+  return calls[0][0];
+}
+
 describe("memory provenance authority", () => {
   it("ranks user/tool/unknown above assistant", () => {
     expect(memoryAuthority("user")).toBe(2);
@@ -100,7 +105,7 @@ describe("storeMemories temporal defaults", () => {
       memory({ type: "fact" }),
     ]);
 
-    const inserted = dbMocks.values.mock.calls[0][0] as StoreMemoryInput[];
+    const inserted = insertedValues();
 
     expect(inserted[0].validFrom).toEqual(now);
     expect(inserted[0].validUntil).toEqual(new Date("2026-06-23T08:00:00.000Z"));
@@ -119,7 +124,7 @@ describe("storeMemories temporal defaults", () => {
       memory({ type: "event", validUntil: null }),
     ]);
 
-    const inserted = dbMocks.values.mock.calls[0][0] as StoreMemoryInput[];
+    const inserted = insertedValues();
 
     expect(inserted[0].validUntil).toBe(explicitValidUntil);
     expect(inserted[1]).not.toHaveProperty("validUntil");
@@ -132,7 +137,7 @@ describe("storeMemories temporal defaults", () => {
 
     await storeMemories([memory({ type: "event", validFrom })]);
 
-    const inserted = dbMocks.values.mock.calls[0][0] as StoreMemoryInput[];
+    const inserted = insertedValues();
 
     expect(inserted[0].validFrom).toBe(validFrom);
     expect(inserted[0].validUntil).toEqual(new Date("2026-01-15T12:00:00.000Z"));
