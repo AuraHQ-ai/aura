@@ -312,6 +312,22 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
     [sendMessage],
   );
 
+  const handleStop = useCallback(() => {
+    const runId = activeRunIdRef.current || getStoredRunId(threadIdRef.current);
+    stop();
+    if (!runId) return;
+
+    localStorage.removeItem(runStorageKey(threadIdRef.current));
+    activeRunIdRef.current = null;
+    setActiveRunId(null);
+    void fetch(`/api/dashboard/chat/runs/${encodeURIComponent(runId)}/stop`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+    })
+      .catch(() => {})
+      .finally(() => fetchThreads());
+  }, [fetchThreads, stop]);
+
   const handleNewChat = useCallback(() => {
     stop();
     const newId = crypto.randomUUID();
@@ -441,7 +457,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
           onNewChat={handleNewChat}
         />
       ) : isEmpty ? (
-        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
+        <EmptyState onSubmit={handleSubmit} status={status} onStop={handleStop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
       ) : (
         <>
           <Conversation className="flex-1">
@@ -477,7 +493,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             <ConversationScrollButton />
           </Conversation>
 
-          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
+          <ChatInput onSubmit={handleSubmit} status={status} onStop={handleStop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
         </>
       )}
     </div>

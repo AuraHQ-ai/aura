@@ -3,7 +3,6 @@ import {
   createUIMessageStreamResponse,
   convertToModelMessages,
   type UIMessage,
-  type UIMessageChunk,
   type StepResult,
   type LanguageModelUsage,
 } from "ai";
@@ -13,7 +12,6 @@ import {
   conversationTraces,
   conversationMessages,
   conversationParts,
-  dashboardChatChunks,
   dashboardChatRuns,
   users,
 } from "@aura/db/schema";
@@ -36,26 +34,20 @@ import {
 import { storeMessage } from "../../memory/store.js";
 import { buildStepUsages } from "../../lib/cost-calculator.js";
 import { logger } from "../../lib/logger.js";
+import { dbDashboardRunStore } from "../../pipeline/dashboard-run-store-db.js";
+import {
+  consumeAndPersistDashboardRun,
+  createDashboardReplayStream,
+} from "../../pipeline/dashboard-run-store.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
 
 export const dashboardChatApp = createDashboardApp();
 
 const WORKSPACE_ID = process.env.DEFAULT_WORKSPACE_ID || "default";
-const RUN_STREAM_POLL_MS = 750;
-
-type DashboardRunStatus = "generating" | "completed" | "failed" | "cancelled";
+const liveRunAborts = new Map<string, AbortController>();
 
 function toThreadStatus(status?: string | null): "generating" | "idle" {
   return status === "generating" ? "generating" : "idle";
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ── List dashboard chat threads ─────────────────────────────────────────────
@@ -531,19 +523,7 @@ const getRunStreamRoute = createRoute({
 });
 
 async function getRunTailIndex(runId: string): Promise<number> {
-  const [row] = await db
-    .select({
-      tailIndex: sql<number>`coalesce(max(${dashboardChatChunks.chunkIndex}), -1)::int`,
-    })
-    .from(dashboardChatChunks)
-    .where(
-      and(
-        eq(dashboardChatChunks.workspaceId, WORKSPACE_ID),
-        eq(dashboardChatChunks.runId, runId),
-      ),
-    );
-
-  return row?.tailIndex ?? -1;
+  return dbDashboardRunStore.getTailIndex(runId);
 }
 
 async function resolveStartIndex(runId: string, rawStartIndex: string | undefined): Promise<{
@@ -563,65 +543,18 @@ async function resolveStartIndex(runId: string, rawStartIndex: string | undefine
   return { startIndex: Math.max(0, parsed), tailIndex };
 }
 
-function createRunChunkStream(runId: string, startIndex: number): ReadableStream<UIMessageChunk> {
-  let cancelled = false;
-  let nextIndex = startIndex;
-
-  return new ReadableStream<UIMessageChunk>({
-    start(controller) {
-      void (async () => {
-        while (!cancelled) {
-          const chunks = await db
-            .select({
-              chunkIndex: dashboardChatChunks.chunkIndex,
-              chunk: dashboardChatChunks.chunk,
-            })
-            .from(dashboardChatChunks)
-            .where(
-              and(
-                eq(dashboardChatChunks.workspaceId, WORKSPACE_ID),
-                eq(dashboardChatChunks.runId, runId),
-                sql`${dashboardChatChunks.chunkIndex} >= ${nextIndex}`,
-              ),
-            )
-            .orderBy(asc(dashboardChatChunks.chunkIndex))
-            .limit(100);
-
-          for (const row of chunks) {
-            if (cancelled) break;
-            controller.enqueue(row.chunk as UIMessageChunk);
-            nextIndex = row.chunkIndex + 1;
-          }
-
-          const [run] = await db
-            .select({ status: dashboardChatRuns.status })
-            .from(dashboardChatRuns)
-            .where(
-              and(
-                eq(dashboardChatRuns.workspaceId, WORKSPACE_ID),
-                eq(dashboardChatRuns.id, runId),
-              ),
-            )
-            .limit(1);
-
-          if (!run || (run.status !== "generating" && chunks.length === 0)) {
-            controller.close();
-            return;
-          }
-
-          await delay(RUN_STREAM_POLL_MS);
-        }
-      })().catch((error) => controller.error(error));
-    },
-    cancel() {
-      cancelled = true;
-    },
-  });
-}
-
-function runStreamResponse(runId: string, startIndex: number, tailIndex: number, headers?: Record<string, string>): Response {
+function runStreamResponse(
+  runId: string,
+  startIndex: number,
+  tailIndex: number,
+  headers?: Record<string, string>,
+  signal?: AbortSignal,
+): Response {
   return createUIMessageStreamResponse({
-    stream: createRunChunkStream(runId, startIndex),
+    stream: createDashboardReplayStream(dbDashboardRunStore, runId, {
+      startIndex,
+      signal,
+    }),
     headers: {
       "x-workflow-run-id": runId,
       "x-workflow-stream-tail-index": String(tailIndex),
@@ -649,7 +582,36 @@ dashboardChatApp.openapi(getRunStreamRoute, async (c) => {
     runId,
     c.req.query("startIndex"),
   );
-  return runStreamResponse(runId, startIndex, tailIndex);
+  return runStreamResponse(runId, startIndex, tailIndex, undefined, c.req.raw.signal);
+});
+
+const stopRunRoute = createRoute({
+  method: "post",
+  path: "/runs/{runId}/stop",
+  tags: ["Chat"],
+  summary: "Cancel a dashboard chat run",
+  request: {
+    params: z.object({
+      runId: z.string().openapi({ param: { name: "runId", in: "path" } }),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ ok: z.boolean() }),
+        },
+      },
+      description: "Canceled",
+    },
+  },
+});
+
+dashboardChatApp.openapi(stopRunRoute, async (c) => {
+  const runId = c.req.param("runId");
+  await dbDashboardRunStore.requestCancel(runId);
+  liveRunAborts.get(runId)?.abort();
+  return c.json({ ok: true }, 200);
 });
 
 dashboardChatApp.openapi(postChatRoute, async (c) => {
@@ -682,17 +644,13 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
         .map((p) => p.text)
         .join("") || "Hello";
     const messageId = lastUserMessage?.id ?? crypto.randomUUID();
-    const runId = crypto.randomUUID();
-
-    await db.insert(dashboardChatRuns).values({
-      id: runId,
-      workspaceId: WORKSPACE_ID,
+    const runId = await dbDashboardRunStore.createRun({
       threadId,
-      status: "generating",
       userId,
       userName,
       messageId,
       prompt: messageText,
+      inputMessages: messages,
       modelId: requestedModelId,
     });
 
@@ -724,45 +682,6 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
   }
 });
 
-async function persistRunChunk(runId: string, chunkIndex: number, chunk: UIMessageChunk): Promise<void> {
-  await db
-    .insert(dashboardChatChunks)
-    .values({
-      workspaceId: WORKSPACE_ID,
-      runId,
-      chunkIndex,
-      chunk,
-    })
-    .onConflictDoNothing();
-
-  await db
-    .update(dashboardChatRuns)
-    .set({ updatedAt: sql`now()` })
-    .where(
-      and(
-        eq(dashboardChatRuns.workspaceId, WORKSPACE_ID),
-        eq(dashboardChatRuns.id, runId),
-      ),
-    );
-}
-
-async function updateRunStatus(runId: string, status: DashboardRunStatus, error?: string): Promise<void> {
-  await db
-    .update(dashboardChatRuns)
-    .set({
-      status,
-      error,
-      updatedAt: sql`now()`,
-      completedAt: status === "generating" ? null : sql`now()`,
-    })
-    .where(
-      and(
-        eq(dashboardChatRuns.workspaceId, WORKSPACE_ID),
-        eq(dashboardChatRuns.id, runId),
-      ),
-    );
-}
-
 async function runDashboardChat(params: {
   runId: string;
   messages: UIMessage[];
@@ -784,8 +703,6 @@ async function runDashboardChat(params: {
     messageId,
   } = params;
 
-  let chunkIndex = 0;
-
   try {
     let model: WrappableModel;
     let modelId: string;
@@ -801,15 +718,7 @@ async function runDashboardChat(params: {
       logger.info("Dashboard chat using default model", { modelId, runId });
     }
 
-    await db
-      .update(dashboardChatRuns)
-      .set({ modelId, updatedAt: sql`now()` })
-      .where(
-        and(
-          eq(dashboardChatRuns.workspaceId, WORKSPACE_ID),
-          eq(dashboardChatRuns.id, runId),
-        ),
-      );
+    await dbDashboardRunStore.updateModelId(runId, modelId);
 
     const prompt = await buildCorePrompt({
       channel: "dashboard",
@@ -829,6 +738,8 @@ async function runDashboardChat(params: {
     const sanitizedMessages = sanitizeAssistantPartOrder(messages);
     const modelMessages = await convertToModelMessages(sanitizedMessages);
     let persistPromise: Promise<void> | undefined;
+    const abortController = new AbortController();
+    liveRunAborts.set(runId, abortController);
 
     const result = executionContext.run(
       { triggeredBy: userId, triggerType: "user_message", callingUserId: userId, channelId: "dashboard", threadTs: threadId },
@@ -846,6 +757,7 @@ async function runDashboardChat(params: {
         threadTs: threadId,
         userId,
         userName,
+        abortSignal: abortController.signal,
         onFinish: ({ steps, stepModelIds, totalUsage, text }) => {
           logger.info("Dashboard chat onFinish fired", { threadId, userId, messageId, runId, textLen: text.length });
           const fullSystemPrompt = [prompt.stablePrefix, prompt.environmentContext, prompt.conversationContext, prompt.dynamicContext].filter(Boolean).join("\n\n");
@@ -872,30 +784,31 @@ async function runDashboardChat(params: {
       sendReasoning: true,
       messageMetadata: ({ part }) => {
         if (part.type === "start") {
-          return { modelId };
+          return { modelId, runId };
         }
       },
     });
 
-    for await (const chunk of uiStream) {
-      await persistRunChunk(runId, chunkIndex++, chunk as UIMessageChunk);
-    }
-
-    if (persistPromise) {
-      await persistPromise;
-    }
-
-    await flushLangfuse();
-    await updateRunStatus(runId, "completed");
+    await consumeAndPersistDashboardRun(dbDashboardRunStore, runId, uiStream, {
+      abortController,
+      onDone: async () => {
+        if (persistPromise) {
+          await persistPromise;
+        }
+        await flushLangfuse();
+      },
+      onError: (error) => {
+        logger.error("Dashboard chat run writer error", { runId, error: String(error) });
+      },
+    });
   } catch (error) {
-    const message = errorMessage(error);
-    await persistRunChunk(runId, chunkIndex++, {
-      type: "error",
-      errorText: message,
-    } as UIMessageChunk);
-    await updateRunStatus(runId, "failed", message);
+    await dbDashboardRunStore
+      .finishRun(runId, "failed", error instanceof Error ? error.message : String(error))
+      .catch(() => {});
     await flushLangfuse();
     throw error;
+  } finally {
+    liveRunAborts.delete(runId);
   }
 }
 

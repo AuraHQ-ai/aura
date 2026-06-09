@@ -46,6 +46,11 @@ export interface AgenticStreamOptions {
   channelId?: string;
   threadTs?: string;
   invocationId?: string;
+  /**
+   * Server-side cancellation hook. Use this only for explicit user stop; never
+   * pass a browser/request disconnect signal or resumable streams cannot resume.
+   */
+  abortSignal?: AbortSignal;
   onFinish?: (event: {
     steps: StepResult<any>[];
     stepModelIds: string[];
@@ -108,6 +113,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
         messages: options.messages,
         tools: options.tools,
         prepareStep,
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         stopWhen: stepCountIs(options.maxSteps ?? 250),
         experimental_telemetry: aiTelemetry("agent-chat", {
           modelId: options.modelId,

@@ -7,6 +7,7 @@ CREATE TABLE "dashboard_chat_runs" (
 	"user_name" text,
 	"message_id" text NOT NULL,
 	"prompt" text NOT NULL,
+	"input_messages" jsonb,
 	"model_id" text,
 	"error" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

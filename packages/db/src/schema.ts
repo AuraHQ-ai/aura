@@ -866,6 +866,7 @@ export const dashboardChatRuns = pgTable(
     userName: text("user_name"),
     messageId: text("message_id").notNull(),
     prompt: text("prompt").notNull(),
+    inputMessages: jsonb("input_messages"),
     modelId: text("model_id"),
     error: text("error"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
