@@ -22,8 +22,12 @@ const config = JSON.parse(readFileSync(configPath, "utf8"));
 config.routes ??= [];
 
 const SPA_FALLBACK = {
-  src: "^/(?!api/|slack/|health$|\\.well-known/).*",
+  src: "^/(?!api/|slack/|health$|\\.well-known/|index\\.html$).*",
   dest: "/index.html",
+  // Re-enter routing after the rewrite so the filesystem handler can serve
+  // the static /index.html. Without this, the rewritten path falls through
+  // to the catch-all and hits the Hono function, which 404s non-API paths.
+  check: true,
 };
 
 const alreadyPatched = config.routes.some(
