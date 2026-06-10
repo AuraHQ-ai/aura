@@ -367,7 +367,10 @@ function ActiveChat({
         api: "/api/dashboard/chat",
         prepareSendMessagesRequest: ({ api, messages }) => ({
           api,
-          headers: getAuthHeaders(),
+          // WorkflowChatTransport does not set a content type on its POST
+          // (DefaultChatTransport did) — without it the browser sends
+          // text/plain and the zod-openapi body validator rejects the request.
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
           body: {
             messages,
             threadId,
