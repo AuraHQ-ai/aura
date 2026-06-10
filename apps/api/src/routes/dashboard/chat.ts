@@ -22,6 +22,15 @@ import { errorSchema, createDashboardApp } from "./schemas.js";
 
 export const dashboardChatApp = createDashboardApp();
 
+/**
+ * Slack user id from the verified session JWT (set by the dashboard auth
+ * middleware). Undefined for DASHBOARD_API_SECRET callers (server-side /
+ * scripts), which are trusted admin access and see all threads.
+ */
+function getSessionUserId(c: { get: (key: never) => unknown }): string | undefined {
+  return c.get("userId" as never) as string | undefined;
+}
+
 // ── List dashboard chat threads ─────────────────────────────────────────────
 
 const threadSchema = z.object({
@@ -58,6 +67,7 @@ const listChatThreadsRoute = createRoute({
 
 dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
   try {
+    const sessionUserId = getSessionUserId(c);
     const threadRows = await db
       .select({
         threadTs: conversationTraces.threadTs,
@@ -70,6 +80,8 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
         and(
           sql`${conversationTraces}."source" = 'dashboard'`,
           sql`${conversationTraces.threadTs} IS NOT NULL`,
+          // User sessions only see their own threads; API-secret callers see all.
+          sessionUserId ? eq(conversationTraces.userId, sessionUserId) : undefined,
         ),
       )
       .groupBy(conversationTraces.threadTs)
@@ -106,7 +118,10 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
     const knownThreadIds = new Set(
       threadRows.map((r) => r.threadTs).filter((t): t is string => Boolean(t)),
     );
-    const { activeOnlyThreads, runsByThread } = await resolveThreadRuns(knownThreadIds);
+    const { activeOnlyThreads, runsByThread } = await resolveThreadRuns(
+      knownThreadIds,
+      sessionUserId,
+    );
 
     const threads = [
       ...activeOnlyThreads.map((info) => ({
@@ -138,7 +153,7 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
   }
 });
 
-async function resolveThreadRuns(knownThreadIds: Set<string>) {
+async function resolveThreadRuns(knownThreadIds: Set<string>, sessionUserId?: string) {
   // Latest runs for the known threads + any recent running threads that have
   // no persisted trace yet.
   const runningRows = await db
@@ -148,7 +163,12 @@ async function resolveThreadRuns(knownThreadIds: Set<string>) {
       createdAt: sql<string>`${dashboardChatRuns.createdAt}::text`,
     })
     .from(dashboardChatRuns)
-    .where(eq(dashboardChatRuns.status, "running"))
+    .where(
+      and(
+        eq(dashboardChatRuns.status, "running"),
+        sessionUserId ? eq(dashboardChatRuns.userId, sessionUserId) : undefined,
+      ),
+    )
     .orderBy(sql`${dashboardChatRuns.createdAt} DESC`)
     .limit(50);
 
@@ -214,6 +234,7 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
   if (!threadId) return c.json({ error: "threadId is required" }, 400);
 
   try {
+    const sessionUserId = getSessionUserId(c);
     const traces = await db
       .select({ id: conversationTraces.id })
       .from(conversationTraces)
@@ -222,6 +243,8 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
           sql`${conversationTraces}."source" = 'dashboard'`,
           eq(conversationTraces.channelId, "dashboard"),
           eq(conversationTraces.threadTs, threadId),
+          // User sessions can only read their own threads.
+          sessionUserId ? eq(conversationTraces.userId, sessionUserId) : undefined,
         ),
       )
       .orderBy(asc(conversationTraces.createdAt));
@@ -230,7 +253,8 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
     // to attach to. The run's stream replays the whole current turn, so the
     // persisted history (completed turns only) never overlaps the live tail.
     const latestRun = await getLatestRunForThread(threadId);
-    const activeRun = latestRun?.status === "running" ? latestRun : null;
+    const ownsRun = !sessionUserId || latestRun?.userId === sessionUserId;
+    const activeRun = latestRun?.status === "running" && ownsRun ? latestRun : null;
     const activeRunId = activeRun?.runId ?? null;
 
     if (traces.length === 0) {
@@ -389,6 +413,10 @@ const postChatRoute = createRoute({
       content: { "application/json": { schema: errorSchema } },
       description: "Bad request",
     },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Thread not found (or owned by another user)",
+    },
     500: {
       content: { "application/json": { schema: errorSchema } },
       description: "Error",
@@ -409,12 +437,34 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
     return c.json({ error: "'messages' array is required" }, 400);
   }
 
-  const userId = (body.userId as string) || "dashboard-admin";
-  const userName = (body.userName as string) || undefined;
+  // Identity comes from the verified session JWT, never from the body (a
+  // client could otherwise write turns under another user). Body values are
+  // only honored for trusted DASHBOARD_API_SECRET callers (no session user).
+  const sessionUserId = getSessionUserId(c);
+  const userId = sessionUserId || (body.userId as string) || "dashboard-admin";
+  const userName = sessionUserId
+    ? (c.get("userName" as never) as string | undefined) || undefined
+    : (body.userName as string) || undefined;
   const threadId = (body.threadId as string) || crypto.randomUUID();
   const requestedModelId = (body.modelId as string) || null;
 
   try {
+    // Continuing an existing thread requires owning it.
+    if (sessionUserId && body.threadId) {
+      const [foreign] = await db
+        .select({ id: conversationTraces.id })
+        .from(conversationTraces)
+        .where(
+          and(
+            sql`${conversationTraces}."source" = 'dashboard'`,
+            eq(conversationTraces.threadTs, threadId),
+            sql`${conversationTraces.userId} IS DISTINCT FROM ${sessionUserId}`,
+          ),
+        )
+        .limit(1);
+      if (foreign) return c.json({ error: "Thread not found" }, 404);
+    }
+
     const input: DashboardChatWorkflowInput = {
       messages,
       userId,
@@ -509,10 +559,13 @@ dashboardChatApp.openapi(getRunStreamRoute, async (c) => {
   const startIndex = startIndexParam ? parseInt(startIndexParam, 10) : undefined;
 
   try {
-    // Only allow reattaching to runs we started (defense in depth on top of
-    // the dashboard auth middleware).
+    // Only allow reattaching to runs we started, and only by their owner
+    // (defense in depth on top of the dashboard auth middleware).
     const row = await getDashboardChatRun(runId);
-    if (!row) return c.json({ error: "Unknown run" }, 404);
+    const sessionUserId = getSessionUserId(c);
+    if (!row || (sessionUserId && row.userId !== sessionUserId)) {
+      return c.json({ error: "Unknown run" }, 404);
+    }
 
     const run = getRun(runId);
     const readable = run.getReadable({
@@ -571,7 +624,10 @@ dashboardChatApp.openapi(cancelRunRoute, async (c) => {
   const runId = c.req.param("runId");
   try {
     const row = await getDashboardChatRun(runId);
-    if (!row) return c.json({ error: "Unknown run" }, 404);
+    const sessionUserId = getSessionUserId(c);
+    if (!row || (sessionUserId && row.userId !== sessionUserId)) {
+      return c.json({ error: "Unknown run" }, 404);
+    }
 
     await getRun(runId).cancel();
     await markDashboardChatRunFinished(runId, "cancelled");

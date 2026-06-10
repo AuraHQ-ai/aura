@@ -45,6 +45,7 @@ export async function markDashboardChatRunFinished(
 export interface ThreadRunInfo {
   threadId: string;
   runId: string;
+  userId: string;
   status: DashboardChatRunStatus;
   userMessage: string | null;
 }
@@ -64,6 +65,7 @@ export async function getLatestRunsForThreads(
     .select({
       threadId: dashboardChatRuns.threadId,
       runId: dashboardChatRuns.runId,
+      userId: dashboardChatRuns.userId,
       status: dashboardChatRuns.status,
       userMessage: dashboardChatRuns.userMessage,
       createdAt: dashboardChatRuns.createdAt,
@@ -77,6 +79,7 @@ export async function getLatestRunsForThreads(
     result.set(row.threadId, {
       threadId: row.threadId,
       runId: row.runId,
+      userId: row.userId,
       status: row.status as DashboardChatRunStatus,
       userMessage: row.userMessage,
     });
