@@ -178,6 +178,8 @@ export interface LLMResponse {
   stepModelIds?: string[];
   /** Whether the response was interrupted by a newer invocation */
   interrupted?: boolean;
+  /** Whether the turn was delegated to the durable WDK workflow (issue #1111) */
+  workflowDelegated?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
