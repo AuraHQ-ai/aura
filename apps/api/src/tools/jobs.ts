@@ -279,12 +279,12 @@ export function createJobTools(
 
     list_jobs: defineTool({
       description:
-        "List jobs by status. See what's pending, completed, or failed. Shows both one-shot tasks and recurring jobs.",
+        "List jobs. Always includes enabled recurring jobs regardless of their last execution status, with last/next run info. Filter one-shots by status, or use status:'all'. For execution history of a specific job, use read_job_trace with the job name.",
       inputSchema: z.object({
         status: z
-          .enum(["pending", "running", "completed", "failed", "cancelled"])
+          .enum(["pending", "running", "completed", "failed", "cancelled", "all"])
           .default("pending")
-          .describe("Filter by status"),
+          .describe("Filter by status, or use 'all' to include every job"),
         recurring_only: z
           .boolean()
           .default(false)
@@ -298,42 +298,67 @@ export function createJobTools(
       }),
       execute: async ({ status, recurring_only, limit }) => {
         try {
-          const conditions = [eq(jobs.status, status)];
+          const recurringCondition = and(
+            isNotNull(jobs.cronSchedule),
+            ne(jobs.cronSchedule, ""),
+          )!;
+          const enabledRecurringCondition = and(
+            eq(jobs.enabled, 1),
+            recurringCondition,
+          )!;
+          const conditions: Array<ReturnType<typeof eq>> = [];
+          if (status !== "all") {
+            conditions.push(or(eq(jobs.status, status), enabledRecurringCondition)!);
+          }
           if (recurring_only) {
-            conditions.push(
-              and(isNotNull(jobs.cronSchedule), ne(jobs.cronSchedule, ""))!,
-            );
+            conditions.push(recurringCondition);
           }
 
-          const rows = await db
-            .select()
-            .from(jobs)
-            .where(and(...conditions))
+          const query = db.select().from(jobs);
+          const rows = await (conditions.length > 0
+            ? query.where(and(...conditions))
+            : query
+          )
             .orderBy(desc(jobs.createdAt))
             .limit(limit);
 
           const filtered = rows;
 
           const tz = context?.timezone;
-          const result = filtered.map((j) => ({
-            id: j.id,
-            name: j.name,
-            description: j.description.substring(0, 120),
-            enabled: j.enabled === 1,
-            is_recurring: !!j.cronSchedule,
-            cron_schedule: j.cronSchedule,
-            frequency_config: j.frequencyConfig,
-            execute_at: formatTimestamp(j.executeAt, tz) || null,
-            channel_id: j.channelId || null,
-            requested_by: j.requestedBy,
-            priority: j.priority,
-            status: j.status,
-            retries: j.retries,
-            last_executed_at: formatTimestamp(j.lastExecutedAt, tz) || null,
-            execution_count: j.executionCount,
-            has_playbook: !!j.playbook,
-            last_result: j.lastResult ? j.lastResult.substring(0, 200) : null,
-          }));
+          const result = filtered.map((j) => {
+            let nextRunAt: string | null = null;
+            if (j.cronSchedule) {
+              try {
+                const next = CronExpressionParser.parse(j.cronSchedule, {
+                  tz: j.timezone ?? "UTC",
+                }).next().toDate();
+                nextRunAt = formatTimestamp(next, tz) || null;
+              } catch {
+                nextRunAt = null;
+              }
+            }
+
+            return {
+              id: j.id,
+              name: j.name,
+              description: j.description.substring(0, 120),
+              enabled: j.enabled === 1,
+              is_recurring: !!j.cronSchedule,
+              cron_schedule: j.cronSchedule,
+              frequency_config: j.frequencyConfig,
+              execute_at: formatTimestamp(j.executeAt, tz) || null,
+              next_run_at: nextRunAt,
+              channel_id: j.channelId || null,
+              requested_by: j.requestedBy,
+              priority: j.priority,
+              status: j.status,
+              retries: j.retries,
+              last_executed_at: formatTimestamp(j.lastExecutedAt, tz) || null,
+              execution_count: j.executionCount,
+              has_playbook: !!j.playbook,
+              last_result: j.lastResult ? j.lastResult.substring(0, 200) : null,
+            };
+          });
 
           logger.info("list_jobs tool called", { status, count: result.length });
 
