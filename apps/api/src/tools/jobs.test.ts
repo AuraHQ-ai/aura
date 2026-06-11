@@ -210,8 +210,8 @@ describe("list_jobs", () => {
       status: "completed",
       enabled: true,
       is_recurring: true,
-      last_executed_at: "2026-05-19T09:00:00Z",
-      next_run_at: "2026-05-20T09:00:00Z",
+      last_executed_at: "2026-05-19T09:00:00+00:00",
+      next_run_at: "2026-05-20T09:00:00+00:00",
       execution_count: 42,
       last_result: "ok",
     });
@@ -268,7 +268,7 @@ describe("list_jobs", () => {
     expect(result.jobs).toEqual([
       expect.objectContaining({
         name: "valid-recurring",
-        next_run_at: "2026-05-20T09:00:00Z",
+        next_run_at: "2026-05-20T09:00:00+00:00",
       }),
       expect.objectContaining({
         name: "invalid-recurring",
