@@ -9,6 +9,8 @@ Aura can dispatch [Cursor](https://cursor.sh) Cloud Agents for complex multi-fil
 
 **Required env vars:** `CURSOR_API_KEY`
 
+**Optional env vars:** `CURSOR_DEFAULT_MODEL` sets the default Cursor model for new dispatches when the tool call does not specify `model`.
+
 **Admin-only.** All Cursor agent tools require admin permissions.
 
 ---
@@ -19,17 +21,55 @@ Dispatch an async agent to work on a code task. Returns immediately with an agen
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `issue_description` | string | **yes** | Detailed description of the task |
+| `issue` | number | no | GitHub issue number in the target repo. Preferred path: fetches title/body and embeds the body verbatim as the canonical spec |
+| `issue_description` | string | required iff `issue` absent | Detailed description of the task. When `issue` is present, appended as additional dispatch notes |
+| `model` | string | no | Cursor model to use, e.g. `claude-sonnet-4.5`, `gpt-5`, `composer-1.5`. Explicit value overrides `CURSOR_DEFAULT_MODEL` |
 | `branch_prefix` | string | no | Branch prefix (default `cursor`) — agent creates `cursor/{slug}` |
 | `ref` | string | no | Git ref to base work on (default `main`) |
 | `key_files` | string[] | no | Key files for the agent to focus on |
 | `cursor_rules` | string | no | Additional `.cursor/rules` content injected for this task |
 | `repo` | string | no | GitHub repo (default: `AuraHQ-ai/aura`) |
 
+### Preferred issue dispatch
+
+Use `issue` when a GitHub issue is the source of truth:
+
+```json
+{ "issue": 1031, "model": "gpt-5" }
+```
+
+Aura fetches `GET /repos/{owner}/{repo}/issues/{issue}` with `GITHUB_TOKEN` / the `github_token` credential, rejects missing issues, PRs, and closed issues, then builds a pointer prompt:
+
+```text
+Implement GitHub issue #N in owner/repo exactly as written: {title}
+
+Read the full issue body below carefully before writing any code. It is the canonical spec — do not re-synthesize or reinterpret it.
+
+When you open the PR, the PR body MUST start with the line: Fixes #N
+
+--- ISSUE BODY ---
+{body}
+```
+
+The issue body is embedded verbatim so the agent works from the exact spec snapshot at dispatch time. If both `issue` and `issue_description` are provided, the issue body stays primary and `issue_description` is appended under `--- ADDITIONAL DISPATCH NOTES ---`; durable guardrails and acceptance criteria should go in the issue body.
+
+On completion, the webhook checks the PR body for `Fixes #N`, `Closes #N`, or `Resolves #N` and prepends `Fixes #N` if the line is missing.
+
+### Model selection
+
+Model resolution order:
+
+1. Non-empty `model` argument
+2. Non-empty `CURSOR_DEFAULT_MODEL`
+3. Omit the `model` field entirely so Cursor auto-selects
+
+Do not pass `""` or `"auto"` as a Cursor API model value; the tool omits the field instead.
+
 **Best practices:**
 - Always specify `key_files` to reduce agent wandering
 - Include `cursor_rules` for project-specific conventions (e.g. Drizzle migration breakpoints)
-- Say "create a PR" explicitly in the description — agents sometimes finish without opening one
+- Prefer `issue` over paraphrasing a well-specified GitHub issue
+- Say "create a PR" explicitly in the description when dispatching without `issue` — agents sometimes finish without opening one
 
 ---
 

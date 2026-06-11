@@ -21,6 +21,7 @@ export interface LaunchCursorAgentParams {
   /** Full GitHub URL, e.g. "https://github.com/owner/repo" */
   repository: string;
   ref?: string;
+  model?: string;
   branchName?: string;
   autoCreatePr?: boolean;
   webhookUrl?: string;
@@ -60,11 +61,68 @@ export interface GitHubPullRequestRef {
   number: number;
 }
 
+export interface GitHubIssueSnapshot {
+  number: number;
+  title: string;
+  body: string;
+  state: string;
+  htmlUrl?: string;
+}
+
 export type MarkPullRequestReadyResult =
   | "marked"
   | "already_ready"
   | "skipped"
   | "failed";
+
+export type EnsurePullRequestFixesIssueResult =
+  | "patched"
+  | "already_present"
+  | "skipped"
+  | "failed";
+
+export function normalizeCursorModel(
+  model: string | null | undefined,
+): string | undefined {
+  const trimmed = model?.trim();
+  if (!trimmed || trimmed.toLowerCase() === "auto") return undefined;
+  return trimmed;
+}
+
+export function resolveCursorModel({
+  explicitModel,
+  envDefault = process.env.CURSOR_DEFAULT_MODEL,
+}: {
+  explicitModel?: string | null;
+  envDefault?: string | null;
+}): string | undefined {
+  return normalizeCursorModel(explicitModel) ?? normalizeCursorModel(envDefault);
+}
+
+export function buildCursorIssuePrompt({
+  repo,
+  issueNumber,
+  title,
+  body,
+  additionalNotes,
+}: {
+  repo: string;
+  issueNumber: number;
+  title: string;
+  body: string;
+  additionalNotes?: string;
+}): string {
+  const notes = additionalNotes?.trim();
+  return [
+    `Implement GitHub issue #${issueNumber} in ${repo} exactly as written: ${title}`,
+    `Read the full issue body below carefully before writing any code. It is the canonical spec — do not re-synthesize or reinterpret it. Follow the repo's existing conventions and run the checks named in the issue's acceptance criteria.`,
+    `When you open the PR, the PR body MUST start with the line: Fixes #${issueNumber}`,
+    `--- ISSUE BODY ---\n${body}`,
+    notes ? `--- ADDITIONAL DISPATCH NOTES ---\n${notes}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
 
 interface GitHubGraphqlResponse<T> {
   data?: T;
@@ -93,6 +151,68 @@ export function parseGitHubPullRequestUrl(
   } catch {
     return null;
   }
+}
+
+export async function fetchGitHubIssueSnapshot({
+  repo,
+  issueNumber,
+  githubToken,
+  fetchImpl = fetch,
+}: {
+  repo: string;
+  issueNumber: number;
+  githubToken?: string | null;
+  fetchImpl?: typeof fetch;
+}): Promise<GitHubIssueSnapshot> {
+  if (!githubToken) {
+    throw new Error(
+      `GitHub token is required to fetch issue #${issueNumber} from ${repo} (configure GITHUB_TOKEN or github_token credential)`,
+    );
+  }
+
+  const response = await fetchImpl(
+    `https://api.github.com/repos/${repo}/issues/${issueNumber}`,
+    {
+      headers: {
+        Authorization: `token ${githubToken}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "Aura",
+      },
+    },
+  );
+
+  let body: any;
+  try {
+    body = await response.json();
+  } catch {
+    body = undefined;
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `GitHub issue #${issueNumber} fetch failed (${response.status}): ${
+        body?.message || "unknown error"
+      }`,
+    );
+  }
+
+  if (body?.pull_request) {
+    throw new Error(
+      `GitHub item #${issueNumber} in ${repo} is a pull request, not an issue`,
+    );
+  }
+
+  if (body?.state === "closed") {
+    throw new Error(`GitHub issue #${issueNumber} in ${repo} is closed`);
+  }
+
+  return {
+    number: Number(body?.number ?? issueNumber),
+    title: String(body?.title ?? ""),
+    body: typeof body?.body === "string" ? body.body : "",
+    state: String(body?.state ?? ""),
+    htmlUrl: typeof body?.html_url === "string" ? body.html_url : undefined,
+  };
 }
 
 async function githubGraphql<T>({
@@ -238,6 +358,98 @@ export async function markPullRequestReadyForReview({
   }
 }
 
+export async function ensurePullRequestFixesIssue({
+  prUrl,
+  issueNumber,
+  githubToken,
+  fetchImpl = fetch,
+}: {
+  prUrl: string;
+  issueNumber: number | undefined;
+  githubToken: string | null | undefined;
+  fetchImpl?: typeof fetch;
+}): Promise<EnsurePullRequestFixesIssueResult> {
+  if (!issueNumber || !githubToken) return "skipped";
+
+  const pr = parseGitHubPullRequestUrl(prUrl);
+  if (!pr) return "skipped";
+
+  const fixesLinePattern = new RegExp(
+    `(?:^|\\n)\\s*(?:fixes|closes|resolves)\\s+#${issueNumber}\\b`,
+    "i",
+  );
+
+  try {
+    const headers = {
+      Authorization: `token ${githubToken}`,
+      Accept: "application/vnd.github.v3+json",
+      "Content-Type": "application/json",
+      "User-Agent": "Aura",
+    };
+
+    const pullUrl = `https://api.github.com/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`;
+    const response = await fetchImpl(pullUrl, { headers });
+    let body: any;
+    try {
+      body = await response.json();
+    } catch {
+      body = undefined;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `GitHub PR #${pr.number} fetch failed (${response.status}): ${
+          body?.message || "unknown error"
+        }`,
+      );
+    }
+
+    const currentBody = typeof body?.body === "string" ? body.body : "";
+    if (fixesLinePattern.test(currentBody)) {
+      return "already_present";
+    }
+
+    const patchedBody = `Fixes #${issueNumber}\n\n${currentBody}`;
+    const patchResponse = await fetchImpl(pullUrl, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ body: patchedBody }),
+    });
+
+    let patchBody: any;
+    try {
+      patchBody = await patchResponse.json();
+    } catch {
+      patchBody = undefined;
+    }
+
+    if (!patchResponse.ok) {
+      throw new Error(
+        `GitHub PR #${pr.number} patch failed (${patchResponse.status}): ${
+          patchBody?.message || "unknown error"
+        }`,
+      );
+    }
+
+    logger.info("Cursor agent webhook: patched missing PR Fixes line", {
+      owner: pr.owner,
+      repo: pr.repo,
+      number: pr.number,
+      issueNumber,
+    });
+    return "patched";
+  } catch (error) {
+    logger.warn("Cursor agent webhook: failed to enforce PR Fixes line", {
+      owner: pr.owner,
+      repo: pr.repo,
+      number: pr.number,
+      issueNumber,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "failed";
+  }
+}
+
 export async function resolveCursorAgentPrUrl({
   prUrl,
   branchName,
@@ -286,6 +498,9 @@ export async function launchCursorAgent(
       ...(params.ref && { ref: params.ref }),
     },
   };
+
+  const model = normalizeCursorModel(params.model);
+  if (model) body.model = model;
 
   const target: Record<string, unknown> = {};
   if (params.branchName) target.branchName = params.branchName;

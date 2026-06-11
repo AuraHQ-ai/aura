@@ -929,6 +929,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       let channelId = "";
       let threadTs = "";
       let repo = process.env.AURA_REPO_DEFAULT || "AuraHQ-ai/aura";
+      let issueNumber: number | undefined;
 
       if (agentId) {
         const trackingRows = await db
@@ -945,12 +946,14 @@ app.post("/api/webhook/cursor-agent", async (c) => {
           const channelMatch = content.match(/\*\*Channel\*\*:\s*(\S+)/);
           const threadMatch = content.match(/\*\*Thread\*\*:\s*(\S+)/);
           const repoMatch = content.match(/\*\*Repo\*\*:\s*(\S+)/);
+          const issueMatch = content.match(/\*\*Issue\*\*:\s*#?(\d+)/);
           if (requesterMatch && requesterMatch[1] !== "unknown")
             requester = requesterMatch[1];
           if (channelMatch) channelId = channelMatch[1];
           if (threadMatch && threadMatch[1] !== "none")
             threadTs = threadMatch[1];
           if (repoMatch) repo = repoMatch[1];
+          if (issueMatch) issueNumber = Number(issueMatch[1]);
         }
       }
 
@@ -993,12 +996,20 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       if (isFinished && resolvedPrUrl) {
         try {
           const { getCredential } = await import("./lib/credentials.js");
-          const { markPullRequestReadyForReview } = await import(
+          const {
+            ensurePullRequestFixesIssue,
+            markPullRequestReadyForReview,
+          } = await import(
             "./lib/cursor-agent.js"
           );
           const ghToken = await getCredential("github_token");
           await markPullRequestReadyForReview({
             prUrl: resolvedPrUrl,
+            githubToken: ghToken,
+          });
+          await ensurePullRequestFixesIssue({
+            prUrl: resolvedPrUrl,
+            issueNumber,
             githubToken: ghToken,
           });
         } catch (error) {
