@@ -87,6 +87,18 @@ Manage the encrypted credential store:
 - Manage grants — add or remove user access via a user picker dropdown
 - Monitor usage and last-accessed timestamps
 
+### Evals
+
+Review the automated response-quality funnel:
+
+- Every assistant response is scored overnight by a fast-tier judge (cron `/api/cron/eval-responses`, 2 AM UTC) using 20-turn sliding windows over each thread
+- Each response gets an atomic verdict: **fulfilled**, **partial**, or **failed** (plus a scorable flag) -- stored once, never overwritten on re-runs
+- Funnel cards aggregate verdicts by failure class, serving intent, and user, with estimated cost per failure class
+- Detail pages support human adjudication: add a note, a gold answer, a must-do / must-not-do rubric, and ratify the verdict
+- Ratified failures, deduped by failure class, feed the curated regression bench
+
+Verdict badges also appear inline on assistant messages in the Conversations timeline, linking to the corresponding eval detail page.
+
 ### Errors
 
 Track production errors:
