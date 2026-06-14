@@ -35,12 +35,17 @@ interface DetachedCommandStatus {
 }
 
 type DetachedCommandDbStatus = "running" | "completed" | "failed" | "killed";
+type CommandRunResult = { exitCode?: number; stdout?: string; stderr?: string; error?: string };
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function backgroundPath(id: string, suffix: "out" | "err" | "pid" | "status" | "started_at") {
+  return `${BACKGROUND_COMMAND_DIR}/${id}.${suffix}`;
+}
+
+function backgroundFile(id: string, suffix: string) {
   return `${BACKGROUND_COMMAND_DIR}/${id}.${suffix}`;
 }
 
@@ -193,7 +198,12 @@ function statusFromDbRow(row: DetachedCommand, tailLineCount: number): DetachedC
   };
 }
 
-export function buildDetachedScript(id: string, command: string, startedAtEpoch: number): string {
+export function buildDetachedScript(
+  id: string,
+  command: string,
+  startedAtEpoch: number,
+  cwd = "/home/user",
+): string {
   const stdoutPath = backgroundPath(id, "out");
   const stderrPath = backgroundPath(id, "err");
   const pidPath = backgroundPath(id, "pid");
@@ -202,17 +212,18 @@ export function buildDetachedScript(id: string, command: string, startedAtEpoch:
   const payloadPath = `${BACKGROUND_COMMAND_DIR}/${id}.callback.json`;
   const signaturePath = `${BACKGROUND_COMMAND_DIR}/${id}.callback.sig`;
   const callbackUrl = `${getPublicUrl()}/api/webhook/sandbox-command`;
+  const commandInCwd = `cd ${shellQuote(cwd)} && exec bash -c ${shellQuote(command)}`;
 
   return [
-    `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)}`,
-    `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)}`,
-    `printf '%s\\n' ${shellQuote(String(startedAtEpoch))} > ${shellQuote(startedAtPath)}`,
-    `nohup bash -c ${shellQuote(command)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
+    `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)} || exit $?`,
+    `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)} || exit $?`,
+    `printf '%s\\n' ${shellQuote(String(startedAtEpoch))} > ${shellQuote(startedAtPath)} || exit $?`,
+    `nohup bash -c ${shellQuote(commandInCwd)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
     "pid=$!",
-    `printf '%s\\n' "$pid" > ${shellQuote(pidPath)}`,
+    `printf '%s\\n' "$pid" > ${shellQuote(pidPath)} || exit $?`,
     "wait \"$pid\"",
     "exit_code=$?",
-    `printf '%s\\n' "$exit_code" > ${shellQuote(statusPath)}`,
+    `printf '%s\\n' "$exit_code" > ${shellQuote(statusPath)} || exit $?`,
     `if [ -n "\${AURA_PUBLIC_URL:-}" ] && [ -n "\${SANDBOX_WEBHOOK_SECRET:-}" ]; then`,
     `  AURA_COMMAND_ID=${shellQuote(id)} AURA_EXIT_CODE="$exit_code" AURA_STDOUT_PATH=${shellQuote(stdoutPath)} AURA_STDERR_PATH=${shellQuote(stderrPath)} AURA_PAYLOAD_PATH=${shellQuote(payloadPath)} AURA_SIGNATURE_PATH=${shellQuote(signaturePath)} python3 - <<'PY'`,
     "import hashlib",
@@ -254,11 +265,176 @@ export function buildDetachedScript(id: string, command: string, startedAtEpoch:
   ].join("\n");
 }
 
-async function readDetachedPid(sandbox: Sandbox, id: string, envs: CommandEnv): Promise<number> {
+export function buildDetachedLaunchScript(
+  id: string,
+  command: string,
+  startedAtEpoch: number,
+  cwd = "/home/user",
+): string {
+  const stdoutPath = backgroundPath(id, "out");
+  const stderrPath = backgroundPath(id, "err");
+  const pidPath = backgroundPath(id, "pid");
+  const statusPath = backgroundPath(id, "status");
+  const startedAtPath = backgroundPath(id, "started_at");
+  const payloadPath = backgroundFile(id, "callback.json");
+  const signaturePath = backgroundFile(id, "callback.sig");
+  const launchOutPath = backgroundFile(id, "launch.out");
+  const launchErrPath = backgroundFile(id, "launch.err");
+  const launchPidPath = backgroundFile(id, "launch.pid");
+  const launchScriptPath = backgroundFile(id, "launch.sh");
+  const heredocMarker = `AURA_DETACHED_${id.toUpperCase()}_SCRIPT`;
+
+  return [
+    "set -u",
+    `if ! mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)}; then echo "failed to create ${BACKGROUND_COMMAND_DIR}" >&2; exit 1; fi`,
+    `if ! rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)} ${shellQuote(launchOutPath)} ${shellQuote(launchErrPath)} ${shellQuote(launchPidPath)} ${shellQuote(launchScriptPath)}; then echo "failed to clear previous command files in ${BACKGROUND_COMMAND_DIR}" >&2; exit 1; fi`,
+    `cat > ${shellQuote(launchScriptPath)} <<'${heredocMarker}'`,
+    buildDetachedScript(id, command, startedAtEpoch, cwd),
+    heredocMarker,
+    `if ! chmod 700 ${shellQuote(launchScriptPath)}; then echo "failed to chmod launch script ${launchScriptPath}" >&2; exit 1; fi`,
+    "if command -v setsid >/dev/null 2>&1; then",
+    `  if ! setsid -f bash ${shellQuote(launchScriptPath)} > ${shellQuote(launchOutPath)} 2> ${shellQuote(launchErrPath)} < /dev/null; then`,
+    `    echo "setsid failed to launch supervisor: $(cat ${shellQuote(launchErrPath)} 2>/dev/null)" >&2`,
+    "    exit 1",
+    "  fi",
+    `  printf '%s\\n' "setsid" > ${shellQuote(launchPidPath)}`,
+    "else",
+    `  nohup bash ${shellQuote(launchScriptPath)} > ${shellQuote(launchOutPath)} 2> ${shellQuote(launchErrPath)} < /dev/null &`,
+    "  launcher_pid=$!",
+    "  disown \"$launcher_pid\" 2>/dev/null || true",
+    `  printf '%s\\n' "$launcher_pid" > ${shellQuote(launchPidPath)}`,
+    "fi",
+    "exit 0",
+  ].join("\n");
+}
+
+function formatCommandRunResult(result: CommandRunResult | undefined): string {
+  if (!result) return "";
+  const parts: string[] = [];
+  if (typeof result.exitCode === "number") parts.push(`exit code ${result.exitCode}`);
+  const error = truncateOutput((result.error || "").trim(), 1000);
+  const stderr = truncateOutput((result.stderr || "").trim(), 1000);
+  const stdout = truncateOutput((result.stdout || "").trim(), 1000);
+  if (error) parts.push(`error: ${error}`);
+  if (stderr) parts.push(`stderr: ${stderr}`);
+  if (stdout) parts.push(`stdout: ${stdout}`);
+  return parts.join("; ");
+}
+
+function commandRunResultFromError(error: any): CommandRunResult {
+  return {
+    exitCode: typeof error?.exitCode === "number" ? error.exitCode : undefined,
+    stdout: typeof error?.stdout === "string" ? error.stdout : "",
+    stderr: typeof error?.stderr === "string" ? error.stderr : "",
+    error: error?.message ? String(error.message) : String(error),
+  };
+}
+
+async function runCommandWithCapturedOutput(
+  sandbox: Sandbox,
+  command: string,
+  options: {
+    cwd?: string;
+    timeoutMs?: number;
+    envs: CommandEnv;
+  },
+): Promise<CommandRunResult> {
+  let stdout = "";
+  let stderr = "";
+  try {
+    return await sandbox.commands.run(command, {
+      ...options,
+      onStdout: (chunk: string) => {
+        stdout += chunk;
+      },
+      onStderr: (chunk: string) => {
+        stderr += chunk;
+      },
+    } as any);
+  } catch (error: any) {
+    const result = commandRunResultFromError(error);
+    result.stdout ||= stdout;
+    result.stderr ||= stderr;
+    throw Object.assign(
+      new Error(formatCommandRunResult(result) || result.error || "command failed"),
+      result,
+    );
+  }
+}
+
+async function readDetachedLaunchDiagnostics(
+  sandbox: Sandbox,
+  id: string,
+  envs: CommandEnv,
+): Promise<string> {
+  const diagnosticsScript = `python3 - <<'PY'
+import json
+import os
+
+command_id = os.environ["AURA_COMMAND_ID"]
+base = f"${BACKGROUND_COMMAND_DIR}/{command_id}"
+
+def read_snippet(path, max_bytes=2000):
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as file:
+            if size <= max_bytes:
+                data = file.read()
+            else:
+                file.seek(-max_bytes, os.SEEK_END)
+                data = file.read()
+        return data.decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+print(json.dumps({
+    "launcher_pid": read_snippet(f"{base}.launch.pid", 200).strip(),
+    "launch_stdout": read_snippet(f"{base}.launch.out").strip(),
+    "launch_stderr": read_snippet(f"{base}.launch.err").strip(),
+    "user_stdout": read_snippet(f"{base}.out").strip(),
+    "user_stderr": read_snippet(f"{base}.err").strip(),
+    "status": read_snippet(f"{base}.status", 200).strip(),
+}))
+PY`;
+
+  const result = await sandbox.commands.run(diagnosticsScript, {
+    timeoutMs: 2_000,
+    envs: {
+      ...envs,
+      AURA_COMMAND_ID: id,
+      AURA_LAUNCH_DIAGNOSTICS: "1",
+    },
+  });
+
+  const parsed = JSON.parse((result.stdout || "{}").trim()) as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const [label, key] of [
+    ["launcher pid", "launcher_pid"],
+    ["launch stderr", "launch_stderr"],
+    ["launch stdout", "launch_stdout"],
+    ["user stderr", "user_stderr"],
+    ["user stdout", "user_stdout"],
+    ["status", "status"],
+  ] as const) {
+    const value = parsed[key];
+    if (typeof value === "string" && value.trim()) {
+      parts.push(`${label}: ${truncateOutput(value.trim(), 1000)}`);
+    }
+  }
+
+  return parts.join("; ");
+}
+
+async function readDetachedPid(
+  sandbox: Sandbox,
+  id: string,
+  envs: CommandEnv,
+  launchResult?: CommandRunResult,
+): Promise<number> {
   const pidPath = backgroundPath(id, "pid");
   const readPidCommand = `if [ -s ${shellQuote(pidPath)} ]; then cat ${shellQuote(pidPath)}; else exit 1; fi`;
 
-  for (const delayMs of [0, 50, 100, 200, 400, 800]) {
+  for (const delayMs of [0, 50, 100, 200, 400, 800, 1_200, 1_800, 2_500, 3_500]) {
     if (delayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
@@ -275,7 +451,19 @@ async function readDetachedPid(sandbox: Sandbox, id: string, envs: CommandEnv): 
     }
   }
 
-  throw new Error(`Detached command ${id} did not write a pid file`);
+  const details: string[] = [];
+  const launchSummary = formatCommandRunResult(launchResult);
+  if (launchSummary) details.push(`launch result: ${launchSummary}`);
+  try {
+    const diagnostics = await readDetachedLaunchDiagnostics(sandbox, id, envs);
+    if (diagnostics) details.push(diagnostics);
+  } catch (error: any) {
+    details.push(`diagnostics failed: ${error.message}`);
+  }
+
+  throw new Error(
+    `Detached command ${id} did not write a pid file${details.length ? ` (${details.join("; ")})` : ""}`,
+  );
 }
 
 async function startDetachedCommand(options: {
@@ -288,13 +476,35 @@ async function startDetachedCommand(options: {
   const startedAtEpoch = Math.floor(Date.now() / 1000);
   const started_at = new Date(startedAtEpoch * 1000).toISOString();
 
-  await options.sandbox.commands.run(buildDetachedScript(id, options.command, startedAtEpoch), {
-    cwd: options.cwd,
-    background: true,
-    envs: options.envs,
-  });
+  const launchCommand = buildDetachedLaunchScript(id, options.command, startedAtEpoch, options.cwd);
+  let launchResult: CommandRunResult;
+  try {
+    launchResult = await runCommandWithCapturedOutput(options.sandbox, launchCommand, {
+      cwd: "/tmp",
+      timeoutMs: 10_000,
+      envs: options.envs,
+    });
+  } catch (error: any) {
+    const launchError = commandRunResultFromError(error);
+    let diagnostics = "";
+    try {
+      diagnostics = await readDetachedLaunchDiagnostics(options.sandbox, id, options.envs);
+    } catch (diagnosticError: any) {
+      diagnostics = `diagnostics failed: ${diagnosticError.message}`;
+    }
+    const detail = [formatCommandRunResult(launchError), diagnostics].filter(Boolean).join("; ");
+    throw new Error(
+      `Detached command ${id} launch command failed${detail ? ` (${detail})` : ""}`,
+    );
+  }
+  if (typeof launchResult.exitCode === "number" && launchResult.exitCode !== 0) {
+    const detail = formatCommandRunResult(launchResult);
+    throw new Error(
+      `Detached command ${id} launch failed before pid file${detail ? ` (${detail})` : ""}`,
+    );
+  }
 
-  const pid = await readDetachedPid(options.sandbox, id, options.envs);
+  const pid = await readDetachedPid(options.sandbox, id, options.envs, launchResult);
 
   return { id, pid, started_at };
 }
@@ -664,7 +874,7 @@ export function createSandboxTools(context?: ScheduleContext) {
         try {
           const sandbox = await getOrCreateSandbox(userId);
           const envs = await getSandboxEnvs(userId);
-          const userHome = "/home/user";
+          const userHome = await ensureUserHome(sandbox, userId, envs);
           const commandEnv = {
             ...envs,
             ...(env ?? {}),
