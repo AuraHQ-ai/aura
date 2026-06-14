@@ -205,6 +205,10 @@ export function buildDetachedScript(id: string, command: string, startedAtEpoch:
 
   return [
     `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)}`,
+    // Prune stale bookkeeping from prior commands so this dir can't accumulate tens of
+    // thousands of files and exhaust disk/inodes over the sandbox's lifetime. 12h is far
+    // beyond the longest detached job (max 750s) plus any polling/webhook window.
+    `find ${shellQuote(BACKGROUND_COMMAND_DIR)} -maxdepth 1 -type f -mmin +720 -delete 2>/dev/null || true`,
     `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)}`,
     `printf '%s\\n' ${shellQuote(String(startedAtEpoch))} > ${shellQuote(startedAtPath)}`,
     `nohup bash -c ${shellQuote(command)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
@@ -275,7 +279,22 @@ async function readDetachedPid(sandbox: Sandbox, id: string, envs: CommandEnv): 
     }
   }
 
-  throw new Error(`Detached command ${id} did not write a pid file`);
+  // The most common real-world cause of a missing pid file is a full root
+  // filesystem -- the launcher can't even write its bookkeeping. Surface disk
+  // state so the failure is diagnosable instead of opaque.
+  let diskHint = "";
+  try {
+    const df = await sandbox.commands.run(
+      `df -kP / | awk 'NR==2 {print $5" used, "$4" KiB free"}'`,
+      { timeoutMs: 3_000, envs },
+    );
+    const line = (df.stdout || "").trim();
+    if (line) diskHint = ` (sandbox root disk: ${line})`;
+  } catch {
+    // best-effort diagnostics only
+  }
+
+  throw new Error(`Detached command ${id} did not write a pid file${diskHint}`);
 }
 
 async function startDetachedCommand(options: {
