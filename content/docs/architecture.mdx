@@ -5,14 +5,14 @@ description: "How Aura's message pipeline, memory system, tools, and self-improv
 
 # Architecture
 
-Aura is a Hono-based application deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses LLMs (Claude, Grok) for reasoning via the Vercel AI SDK.
+Aura is a Nitro-based application with Hono routing, deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses LLMs (Claude, Grok) for reasoning via the Vercel AI SDK.
 
 ## Monorepo Structure
 
 ```
 aura/
 ├── apps/
-│   ├── api/            # Core agent (Hono + Vercel Functions)
+│   ├── api/            # Core agent (Nitro + Hono, Vercel Functions)
 │   │   └── src/
 │   │       ├── pipeline/    # Message processing, prompt assembly
 │   │       ├── tools/       # 25 tool modules (Slack, email, BigQuery, etc.)
@@ -43,7 +43,7 @@ aura/
 ## System Overview
 
 ```
-Slack Event → Vercel Function → Hono Router → Message Pipeline → LLM (Vercel AI SDK)
+Slack Event → Vercel Function → Nitro + Hono Router → Message Pipeline → LLM (Vercel AI SDK)
                                                       ↕
                                               PostgreSQL + pgvector
                                       (memories, messages, conversations, notes, jobs)
@@ -77,6 +77,10 @@ Every conversation is persisted with full detail:
 - **Metadata** — Channel, thread, user, model, duration
 
 The [Dashboard](/dashboard) provides a UI for browsing conversation traces, filtering by user/channel, and analyzing costs.
+
+## Durable Execution (Vercel Workflow DevKit)
+
+Aura uses the Vercel Workflow DevKit for durable execution in the Nitro API, with `"use workflow"` and `"use step"` directives defining resumable workflow boundaries. Dashboard chat always runs as a workflow in `apps/api/workflows/dashboard-chat.ts`: the server owns generation, the browser is only a stream reader, and streams can be resumed after disconnects. Slack respond has a flag-gated durable path in `apps/api/workflows/slack-respond.ts`, enabled by `AURA_WDK_SLACK_RESPOND=1` or the `wdk_slack_respond` dashboard setting. This path lets Slack message responses resume after function interruption while the legacy in-process responder remains the default when the flag is off.
 
 ## Tool System
 
