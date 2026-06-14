@@ -279,22 +279,36 @@ async function readDetachedPid(sandbox: Sandbox, id: string, envs: CommandEnv): 
     }
   }
 
-  // The most common real-world cause of a missing pid file is a full root
-  // filesystem -- the launcher can't even write its bookkeeping. Surface disk
-  // state so the failure is diagnosable instead of opaque.
-  let diskHint = "";
+  // A missing pid file almost always means the launcher couldn't even write its
+  // bookkeeping (most often a full root filesystem). Surface the *actual* OS
+  // error string -- e.g. "No space left on device" -- instead of an opaque
+  // message, by probing a real write to the background dir and reading disk
+  // state. The probe captures stderr even when the disk is full (output goes to
+  // the pipe, not a file), so it generalizes to any launch failure.
+  const probePath = `${BACKGROUND_COMMAND_DIR}/${id}.probe`;
+  const diagnosticCommand = [
+    `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)} 2>/dev/null`,
+    `write_err=$({ : > ${shellQuote(probePath)}; } 2>&1)`,
+    `rm -f ${shellQuote(probePath)} 2>/dev/null`,
+    `disk=$(df -kP / | awk 'NR==2 {print $5" used, "$4" KiB free"}')`,
+    `printf '%s\\n%s\\n' "$write_err" "$disk"`,
+  ].join("; ");
+
+  let launchError = "";
+  let diskInfo = "";
   try {
-    const df = await sandbox.commands.run(
-      `df -kP / | awk 'NR==2 {print $5" used, "$4" KiB free"}'`,
-      { timeoutMs: 3_000, envs },
-    );
-    const line = (df.stdout || "").trim();
-    if (line) diskHint = ` (sandbox root disk: ${line})`;
+    const diag = await sandbox.commands.run(diagnosticCommand, { timeoutMs: 4_000, envs });
+    const lines = (diag.stdout || "").split("\n");
+    launchError = (lines[0] || "").trim();
+    diskInfo = lines.slice(1).join(" ").trim();
   } catch {
     // best-effort diagnostics only
   }
 
-  throw new Error(`Detached command ${id} did not write a pid file${diskHint}`);
+  const parts = [`Detached command ${id} did not write a pid file`];
+  if (launchError) parts.push(`launch error: ${launchError}`);
+  if (diskInfo) parts.push(`sandbox root disk: ${diskInfo}`);
+  throw new Error(parts.join("; "));
 }
 
 async function startDetachedCommand(options: {
