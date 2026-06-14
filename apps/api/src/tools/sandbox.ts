@@ -874,7 +874,7 @@ export function createSandboxTools(context?: ScheduleContext) {
         try {
           const sandbox = await getOrCreateSandbox(userId);
           const envs = await getSandboxEnvs(userId);
-          const userHome = "/home/user";
+          const userHome = await ensureUserHome(sandbox, userId, envs);
           const commandEnv = {
             ...envs,
             ...(env ?? {}),

@@ -210,6 +210,46 @@ describe("sandbox command tools", () => {
     expect(result.error).toContain("Call check_command({id: '");
   });
 
+  it("returns stdout and exit code 0 for a trivial command", async () => {
+    mockCommandLifecycle({
+      inspectStatus: "exited",
+      exitCode: 0,
+      stdout: "hello\n",
+      stderr: "",
+    });
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
+
+    const result = await tool.execute(tool.inputSchema.parse({ command: "echo hello" }));
+
+    expect(result).toEqual({
+      ok: true,
+      exit_code: 0,
+      stdout: "hello\n",
+      stderr: undefined,
+    });
+  });
+
+  it("returns stderr and non-zero exit code for a failing command", async () => {
+    mockCommandLifecycle({
+      inspectStatus: "exited",
+      exitCode: 1,
+      stdout: "",
+      stderr: "real failure\n",
+    });
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
+
+    const result = await tool.execute(
+      tool.inputSchema.parse({ command: "printf 'real failure\\n' >&2; exit 1" }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      exit_code: 1,
+      stdout: "",
+      stderr: "real failure\n",
+    });
+  });
+
   it("starts detached commands and returns id, pid, and started_at", async () => {
     const tool = createSandboxTools({
       userId: "U123",
