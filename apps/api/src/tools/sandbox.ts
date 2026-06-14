@@ -35,7 +35,7 @@ interface DetachedCommandStatus {
 }
 
 type DetachedCommandDbStatus = "running" | "completed" | "failed" | "killed";
-type CommandRunResult = { exitCode?: number; stdout?: string; stderr?: string };
+type CommandRunResult = { exitCode?: number; stdout?: string; stderr?: string; error?: string };
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -198,7 +198,12 @@ function statusFromDbRow(row: DetachedCommand, tailLineCount: number): DetachedC
   };
 }
 
-export function buildDetachedScript(id: string, command: string, startedAtEpoch: number): string {
+export function buildDetachedScript(
+  id: string,
+  command: string,
+  startedAtEpoch: number,
+  cwd = "/home/user",
+): string {
   const stdoutPath = backgroundPath(id, "out");
   const stderrPath = backgroundPath(id, "err");
   const pidPath = backgroundPath(id, "pid");
@@ -207,12 +212,13 @@ export function buildDetachedScript(id: string, command: string, startedAtEpoch:
   const payloadPath = `${BACKGROUND_COMMAND_DIR}/${id}.callback.json`;
   const signaturePath = `${BACKGROUND_COMMAND_DIR}/${id}.callback.sig`;
   const callbackUrl = `${getPublicUrl()}/api/webhook/sandbox-command`;
+  const commandInCwd = `cd ${shellQuote(cwd)} && exec bash -c ${shellQuote(command)}`;
 
   return [
     `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)} || exit $?`,
     `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)} || exit $?`,
     `printf '%s\\n' ${shellQuote(String(startedAtEpoch))} > ${shellQuote(startedAtPath)} || exit $?`,
-    `nohup bash -c ${shellQuote(command)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
+    `nohup bash -c ${shellQuote(commandInCwd)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
     "pid=$!",
     `printf '%s\\n' "$pid" > ${shellQuote(pidPath)} || exit $?`,
     "wait \"$pid\"",
@@ -259,7 +265,12 @@ export function buildDetachedScript(id: string, command: string, startedAtEpoch:
   ].join("\n");
 }
 
-export function buildDetachedLaunchScript(id: string, command: string, startedAtEpoch: number): string {
+export function buildDetachedLaunchScript(
+  id: string,
+  command: string,
+  startedAtEpoch: number,
+  cwd = "/home/user",
+): string {
   const stdoutPath = backgroundPath(id, "out");
   const stderrPath = backgroundPath(id, "err");
   const pidPath = backgroundPath(id, "pid");
@@ -274,16 +285,26 @@ export function buildDetachedLaunchScript(id: string, command: string, startedAt
   const heredocMarker = `AURA_DETACHED_${id.toUpperCase()}_SCRIPT`;
 
   return [
-    "set -eu",
-    `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)}`,
-    `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)} ${shellQuote(launchOutPath)} ${shellQuote(launchErrPath)} ${shellQuote(launchPidPath)} ${shellQuote(launchScriptPath)}`,
+    "set -u",
+    `if ! mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)}; then echo "failed to create ${BACKGROUND_COMMAND_DIR}" >&2; exit 1; fi`,
+    `if ! rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)} ${shellQuote(launchOutPath)} ${shellQuote(launchErrPath)} ${shellQuote(launchPidPath)} ${shellQuote(launchScriptPath)}; then echo "failed to clear previous command files in ${BACKGROUND_COMMAND_DIR}" >&2; exit 1; fi`,
     `cat > ${shellQuote(launchScriptPath)} <<'${heredocMarker}'`,
-    buildDetachedScript(id, command, startedAtEpoch),
+    buildDetachedScript(id, command, startedAtEpoch, cwd),
     heredocMarker,
-    `chmod 700 ${shellQuote(launchScriptPath)}`,
-    `nohup bash ${shellQuote(launchScriptPath)} > ${shellQuote(launchOutPath)} 2> ${shellQuote(launchErrPath)} < /dev/null &`,
-    "launcher_pid=$!",
-    `printf '%s\\n' "$launcher_pid" > ${shellQuote(launchPidPath)}`,
+    `if ! chmod 700 ${shellQuote(launchScriptPath)}; then echo "failed to chmod launch script ${launchScriptPath}" >&2; exit 1; fi`,
+    "if command -v setsid >/dev/null 2>&1; then",
+    `  if ! setsid -f bash ${shellQuote(launchScriptPath)} > ${shellQuote(launchOutPath)} 2> ${shellQuote(launchErrPath)} < /dev/null; then`,
+    `    echo "setsid failed to launch supervisor: $(cat ${shellQuote(launchErrPath)} 2>/dev/null)" >&2`,
+    "    exit 1",
+    "  fi",
+    `  printf '%s\\n' "setsid" > ${shellQuote(launchPidPath)}`,
+    "else",
+    `  nohup bash ${shellQuote(launchScriptPath)} > ${shellQuote(launchOutPath)} 2> ${shellQuote(launchErrPath)} < /dev/null &`,
+    "  launcher_pid=$!",
+    "  disown \"$launcher_pid\" 2>/dev/null || true",
+    `  printf '%s\\n' "$launcher_pid" > ${shellQuote(launchPidPath)}`,
+    "fi",
+    "exit 0",
   ].join("\n");
 }
 
@@ -291,11 +312,54 @@ function formatCommandRunResult(result: CommandRunResult | undefined): string {
   if (!result) return "";
   const parts: string[] = [];
   if (typeof result.exitCode === "number") parts.push(`exit code ${result.exitCode}`);
+  const error = truncateOutput((result.error || "").trim(), 1000);
   const stderr = truncateOutput((result.stderr || "").trim(), 1000);
   const stdout = truncateOutput((result.stdout || "").trim(), 1000);
+  if (error) parts.push(`error: ${error}`);
   if (stderr) parts.push(`stderr: ${stderr}`);
   if (stdout) parts.push(`stdout: ${stdout}`);
   return parts.join("; ");
+}
+
+function commandRunResultFromError(error: any): CommandRunResult {
+  return {
+    exitCode: typeof error?.exitCode === "number" ? error.exitCode : undefined,
+    stdout: typeof error?.stdout === "string" ? error.stdout : "",
+    stderr: typeof error?.stderr === "string" ? error.stderr : "",
+    error: error?.message ? String(error.message) : String(error),
+  };
+}
+
+async function runCommandWithCapturedOutput(
+  sandbox: Sandbox,
+  command: string,
+  options: {
+    cwd?: string;
+    timeoutMs?: number;
+    envs: CommandEnv;
+  },
+): Promise<CommandRunResult> {
+  let stdout = "";
+  let stderr = "";
+  try {
+    return await sandbox.commands.run(command, {
+      ...options,
+      onStdout: (chunk: string) => {
+        stdout += chunk;
+      },
+      onStderr: (chunk: string) => {
+        stderr += chunk;
+      },
+    } as any);
+  } catch (error: any) {
+    const result = commandRunResultFromError(error);
+    result.stdout ||= stdout;
+    result.stderr ||= stderr;
+    throw Object.assign(
+      new Error(formatCommandRunResult(result) || result.error || "command failed"),
+      result,
+    );
+  }
 }
 
 async function readDetachedLaunchDiagnostics(
@@ -412,14 +476,27 @@ async function startDetachedCommand(options: {
   const startedAtEpoch = Math.floor(Date.now() / 1000);
   const started_at = new Date(startedAtEpoch * 1000).toISOString();
 
-  const launchResult = await options.sandbox.commands.run(
-    buildDetachedLaunchScript(id, options.command, startedAtEpoch),
-    {
-      cwd: options.cwd,
-      timeoutMs: 5_000,
+  const launchCommand = buildDetachedLaunchScript(id, options.command, startedAtEpoch, options.cwd);
+  let launchResult: CommandRunResult;
+  try {
+    launchResult = await runCommandWithCapturedOutput(options.sandbox, launchCommand, {
+      cwd: "/tmp",
+      timeoutMs: 10_000,
       envs: options.envs,
-    },
-  );
+    });
+  } catch (error: any) {
+    const launchError = commandRunResultFromError(error);
+    let diagnostics = "";
+    try {
+      diagnostics = await readDetachedLaunchDiagnostics(options.sandbox, id, options.envs);
+    } catch (diagnosticError: any) {
+      diagnostics = `diagnostics failed: ${diagnosticError.message}`;
+    }
+    const detail = [formatCommandRunResult(launchError), diagnostics].filter(Boolean).join("; ");
+    throw new Error(
+      `Detached command ${id} launch command failed${detail ? ` (${detail})` : ""}`,
+    );
+  }
   if (typeof launchResult.exitCode === "number" && launchResult.exitCode !== 0) {
     const detail = formatCommandRunResult(launchResult);
     throw new Error(
