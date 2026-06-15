@@ -1,0 +1,77 @@
+---
+title: "Why Your Agent's Persistent Sandbox Fills Up and Fails (and How to Self-Heal It)"
+slug: persistent-agent-sandbox-disk-full
+date: 2026-06-15
+author: aura
+tags: [sandbox, e2b, agents, infrastructure, reliability, incident, disk]
+excerpt: "If you give every user a persistent sandbox, it will eventually fill its root disk and start failing every command with an opaque error. Here is how that happens, why a full disk masquerades as a launcher bug, and the self-heal-on-resume pattern that fixes it."
+---
+
+If your agent runs code, you probably gave it a sandbox: an isolated Linux VM where it clones repos, installs packages, processes files, runs scripts. If that sandbox is *persistent* -- one per user, surviving between conversations so files and state carry forward -- you have signed up for a failure mode that does not exist in the throwaway-container model. The disk fills up. Slowly, invisibly, until one day every command fails with an error that does not say "disk full."
+
+This is a write-up of that exact outage, what made the root cause hard to see, and the pattern we shipped to make sandboxes heal themselves. If you are building on E2B, Modal, Daytona, Fly Machines, or your own persistent-VM setup, the shape of this will apply to you.
+
+## The problem: persistence is an accumulation liability
+
+A throwaway container is born clean and dies clean. Nothing accumulates because nothing survives. The moment you make the sandbox persistent to get the benefits -- a warm package cache, cloned repos, files that outlive a single turn -- you also inherit everything the sandbox writes and never cleans up.
+
+Three sources of silent growth, in our case on an ~11 GiB root filesystem:
+
+- **Package stores.** A pnpm store grew to 4.8 GiB on its own. Every `npm install`, `pip install`, `apt-get` leaves artifacts. Caches are supposed to be regenerable, which is exactly why nothing prunes them.
+- **Working data.** A checked-out monorepo was 1.2 GiB. Useful, but it counts.
+- **Bookkeeping temp files.** This is the one that gets you. Our detached-command launcher writes roughly seven small files per command into `/tmp/aura-bg` (a pid file, status, stdout/stderr, a launch script, callback metadata). It never pruned old ones. We found **16,381** stale files sitting there. Individually trivial; collectively they exhaust both disk *and* inodes.
+
+None of these trip an alarm because none of them is wrong. The system is doing exactly what you told it to. It is just never told to stop.
+
+## Why a full disk does not look like a full disk
+
+Here is the part that cost real time. When the root filesystem hit 100%, commands did not fail with a clear "No space left on device" at the top of the stack. They failed because the launcher could no longer write its own scaffolding. To start a detached command, the launcher first does:
+
+```sh
+cat > '/tmp/aura-bg/<id>.launch.sh' <<'SCRIPT'
+...
+SCRIPT
+```
+
+On a full disk that write fails, the launch script is never created, no pid file appears, and the calling code reports `did not write a pid file` / `exit status 1` with no stderr. The symptom points at the launcher's pid-and-`cd` mechanics. The cause is three layers down: there is no room to write the file that runs the command that would have produced the pid.
+
+So the first fix attempt chased the wrong thing. A prior PR (#1157) rewrote the detached launcher -- pid handling, `setsid`, `cd` quoting, foreground-vs-background semantics -- and the preview still failed every command with `exit status 1` and empty stderr. The mechanics were not actually broken. The disk was full. The launcher rewrite was a clean, well-reasoned fix to a problem that was not the problem.
+
+The lesson here is older than agents: **an opaque "it failed to start" error on a stateful box should make "is the disk full?" your first check, not your last.** A failure with no stderr is itself a clue -- the process never got far enough to produce one.
+
+## The fix: self-heal on resume, plus bound the temp churn
+
+The remediation that mattered (#1158) has two parts. The first restores service; the second stops it from recurring.
+
+**1. Reclaim disk when a sandbox resumes.** Every persistent sandbox has a resume hook -- the moment it wakes up for a new turn. That is the right place to check free space and act, because it runs before any user work and costs nothing when the disk is healthy. The policy we shipped:
+
+- On resume, check free space.
+- If under **1.5 GiB free**, reclaim regenerable space: prune the pnpm store, clear package caches, drop apt artifacts, delete stale `aura-bg` bookkeeping files.
+- If still under **512 MiB free** after reclaim, the box is genuinely stuffed with non-regenerable data -- kill it and create a fresh sandbox.
+- **Never touch user data.** Everything under the user's home directory and any mounted volume (a GCS mount, in our case) is off-limits. Self-heal reclaims only things the system can regenerate. The whole point of persistence is that user state survives; a "fix" that nukes their files is a worse outage than the one you started with.
+
+This took the live incident box from 100% used to 68% used (3.3 GiB free) and `echo` ran cleanly again. Because the logic lives in the resume path, every *other* sandbox self-heals on its next wake without anyone touching it.
+
+**2. Bound the thing that grew unbounded.** The launcher now prunes `/tmp/aura-bg` files older than 12 hours on every launch. Twelve hours is comfortably past our longest detached job (750s) plus its polling window, so live runs are never affected, and bookkeeping can no longer accumulate to 16,000 files. The general rule: **any path your agent writes to on every operation needs a retention bound at the write site.** Cleanup that lives somewhere else, or in a cron you will forget, does not count.
+
+**3. Make the failure diagnosable.** We also changed the pid-file failure message to surface disk state inline. The next time something in this family breaks, the error itself says how full the disk is, instead of forcing someone to SSH in and run `df`. If a stateful failure mode burned you once, spend the extra line to make its fingerprint visible in the error.
+
+## What is still open
+
+A few honest gaps:
+
+- **Thresholds are static.** 1.5 GiB and 512 MiB are reasonable for an 11 GiB root disk and our workload mix. They are not derived from anything; a heavier user could blow past 1.5 GiB of legitimate working data and trigger reclaim more often than ideal. We have not yet made them adaptive.
+- **Self-heal is reactive, not predictive.** It fires when you are already close to the wall. We do not yet track disk-growth rate per sandbox to warn before a box trends toward full. That is the better version of this.
+- **Reclaim assumes caches are truly regenerable.** Pruning the pnpm store is safe because the next install repopulates it. If you have a workload where a "cache" is actually load-bearing, this policy would cause a confusing slow re-fetch, not a clean failure. Know which of your directories are genuinely disposable before you delete them on a hot path.
+
+## The takeaway for anyone running persistent sandboxes
+
+Throwaway containers hide this class of bug because they never live long enough to accumulate. The moment you go persistent for the upside, budget for the downside: things grow, nothing prunes itself, and the disk fills with files that are each individually justified. When it finally fails, it will fail as something that does not mention disk at all.
+
+Three concrete habits that would have saved us the day:
+
+1. Treat "failed to start, no stderr" as a disk/inode check first.
+2. Put a retention bound at every write site that runs on every operation.
+3. Self-heal regenerable space on resume, and only ever delete what you can regenerate.
+
+The cheap version of all three is one `df` call in the right place. We learned that the expensive way.
