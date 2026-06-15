@@ -255,11 +255,44 @@ describe("supervisor cron", () => {
     });
     getCredentialMock.mockResolvedValue("gh-token");
     sendJobFailureDmMock.mockResolvedValue(true);
-    fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/123" }),
-      text: async () => "",
-    }));
+    fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (method === "GET" && url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")) {
+        return {
+          ok: true,
+          json: async () => [],
+          text: async () => "",
+        };
+      }
+
+      if (method === "POST" && url === "https://api.github.com/repos/AuraHQ-ai/aura/issues") {
+        return {
+          ok: true,
+          json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/123" }),
+          text: async () => "",
+        };
+      }
+
+      if (
+        method === "POST" &&
+        url === "https://api.github.com/repos/AuraHQ-ai/aura/issues/456/comments"
+      ) {
+        return {
+          ok: true,
+          json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1" }),
+          text: async () => "",
+        };
+      }
+
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+        text: async () => `Unhandled fetch ${method} ${url}`,
+      };
+    });
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -374,6 +407,94 @@ describe("supervisor cron", () => {
       });
     },
   );
+
+  it("comments on a matching open supervisor issue instead of creating a duplicate", async () => {
+    generateObjectMock.mockResolvedValue({
+      object: {
+        decision: "retry_with_fix",
+        reasoning: "The configured model does not exist.",
+        user_message: "I queued the job to retry after a fix.",
+      },
+    });
+    const outcomeError =
+      "Model claude-4.6-sonnet-20260613 failed at 2026-06-13T10:11:12.123Z for request 11111111-1111-4111-8111-111111111111 after 31 attempts";
+    queueDbResults(
+      [baseOutcome({ error: outcomeError })],
+      [baseJob({ name: "evening sync" })],
+      [baseExecution({ error: outcomeError })],
+    );
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (method === "GET" && url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")) {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              number: 456,
+              html_url: "https://github.com/AuraHQ-ai/aura/issues/456",
+              title: "Supervisor fix needed: morning sync",
+              body: [
+                "## Deduplication",
+                "- normalized_error_signature: `model claude-<number>-sonnet-<number> failed at <timestamp> for request <uuid> after <number> attempts`",
+              ].join("\n"),
+              created_at: "2026-05-20T08:30:00.000Z",
+            },
+          ],
+          text: async () => "",
+        };
+      }
+
+      if (
+        method === "POST" &&
+        url === "https://api.github.com/repos/AuraHQ-ai/aura/issues/456/comments"
+      ) {
+        return {
+          ok: true,
+          json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1" }),
+          text: async () => "",
+        };
+      }
+
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+        text: async () => `Unexpected fetch ${method} ${url}`,
+      };
+    });
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^https:\/\/api\.github\.com\/repos\/AuraHQ-ai\/aura\/issues\?/),
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "https://api.github.com/repos/AuraHQ-ai/aura/issues",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/repos/AuraHQ-ai/aura/issues/456/comments",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("00000000-0000-4000-8000-000000000001"),
+      }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/repos/AuraHQ-ai/aura/issues/456/comments",
+      expect.objectContaining({
+        body: expect.stringContaining(outcomeError),
+      }),
+    );
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("https://github.com/AuraHQ-ai/aura/issues/456"),
+      }),
+    );
+  });
 
   it.each([
     {
