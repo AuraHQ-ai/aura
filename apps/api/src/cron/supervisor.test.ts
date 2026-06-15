@@ -57,6 +57,13 @@ const generateObjectMock = vi.hoisted(() => vi.fn());
 const getCredentialMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 
+type MockFetchResponse = {
+  ok: boolean;
+  status?: number;
+  json: () => Promise<unknown>;
+  text: () => Promise<string>;
+};
+
 vi.mock("../db/client.js", () => ({
   db: {
     select: dbMock.select,
@@ -255,44 +262,46 @@ describe("supervisor cron", () => {
     });
     getCredentialMock.mockResolvedValue("gh-token");
     sendJobFailureDmMock.mockResolvedValue(true);
-    fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
+    fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<MockFetchResponse> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
 
-      if (method === "GET" && url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")) {
+        if (method === "GET" && url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")) {
+          return {
+            ok: true,
+            json: async () => [],
+            text: async () => "",
+          };
+        }
+
+        if (method === "POST" && url === "https://api.github.com/repos/AuraHQ-ai/aura/issues") {
+          return {
+            ok: true,
+            json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/123" }),
+            text: async () => "",
+          };
+        }
+
+        if (
+          method === "POST" &&
+          url === "https://api.github.com/repos/AuraHQ-ai/aura/issues/456/comments"
+        ) {
+          return {
+            ok: true,
+            json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1" }),
+            text: async () => "",
+          };
+        }
+
         return {
-          ok: true,
-          json: async () => [],
-          text: async () => "",
+          ok: false,
+          status: 404,
+          json: async () => ({}),
+          text: async () => `Unhandled fetch ${method} ${url}`,
         };
-      }
-
-      if (method === "POST" && url === "https://api.github.com/repos/AuraHQ-ai/aura/issues") {
-        return {
-          ok: true,
-          json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/123" }),
-          text: async () => "",
-        };
-      }
-
-      if (
-        method === "POST" &&
-        url === "https://api.github.com/repos/AuraHQ-ai/aura/issues/456/comments"
-      ) {
-        return {
-          ok: true,
-          json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1" }),
-          text: async () => "",
-        };
-      }
-
-      return {
-        ok: false,
-        status: 404,
-        json: async () => ({}),
-        text: async () => `Unhandled fetch ${method} ${url}`,
-      };
-    });
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -423,47 +432,49 @@ describe("supervisor cron", () => {
       [baseJob({ name: "evening sync" })],
       [baseExecution({ error: outcomeError })],
     );
-    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
+    fetchMock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit): Promise<MockFetchResponse> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
 
-      if (method === "GET" && url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")) {
+        if (method === "GET" && url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")) {
+          return {
+            ok: true,
+            json: async () => [
+              {
+                number: 456,
+                html_url: "https://github.com/AuraHQ-ai/aura/issues/456",
+                title: "Supervisor fix needed: morning sync",
+                body: [
+                  "## Deduplication",
+                  "- normalized_error_signature: `model claude-<number>-sonnet-<number> failed at <timestamp> for request <uuid> after <number> attempts`",
+                ].join("\n"),
+                created_at: "2026-05-20T08:30:00.000Z",
+              },
+            ],
+            text: async () => "",
+          };
+        }
+
+        if (
+          method === "POST" &&
+          url === "https://api.github.com/repos/AuraHQ-ai/aura/issues/456/comments"
+        ) {
+          return {
+            ok: true,
+            json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1" }),
+            text: async () => "",
+          };
+        }
+
         return {
-          ok: true,
-          json: async () => [
-            {
-              number: 456,
-              html_url: "https://github.com/AuraHQ-ai/aura/issues/456",
-              title: "Supervisor fix needed: morning sync",
-              body: [
-                "## Deduplication",
-                "- normalized_error_signature: `model claude-<number>-sonnet-<number> failed at <timestamp> for request <uuid> after <number> attempts`",
-              ].join("\n"),
-              created_at: "2026-05-20T08:30:00.000Z",
-            },
-          ],
-          text: async () => "",
+          ok: false,
+          status: 500,
+          json: async () => ({}),
+          text: async () => `Unexpected fetch ${method} ${url}`,
         };
-      }
-
-      if (
-        method === "POST" &&
-        url === "https://api.github.com/repos/AuraHQ-ai/aura/issues/456/comments"
-      ) {
-        return {
-          ok: true,
-          json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1" }),
-          text: async () => "",
-        };
-      }
-
-      return {
-        ok: false,
-        status: 500,
-        json: async () => ({}),
-        text: async () => `Unexpected fetch ${method} ${url}`,
-      };
-    });
+      },
+    );
 
     const response = await invokeSupervisor();
 
