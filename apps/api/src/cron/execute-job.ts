@@ -19,6 +19,7 @@ import {
 import { detectScriptOutputError } from "./script-output.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
+import { withTrace } from "../lib/langfuse.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 import {
   extractLastNSteps,
@@ -390,7 +391,20 @@ export async function executeJob(
         callingUserId: job.requestedBy,
         jobId: job.id,
       },
-      () => agent.generate({ prompt }),
+      () =>
+        withTrace(
+          {
+            traceName: "headless-job",
+            sessionId: job.threadTs || job.channelId || job.id,
+            userId: job.requestedBy,
+            tags: [
+              "channel:scheduled-job",
+              ...(job.channelId ? [`slack-channel:${job.channelId}`] : []),
+            ],
+            metadata: { slackUserId: job.requestedBy, jobId: job.id },
+          },
+          () => agent.generate({ prompt }),
+        ),
     );
 
     const { text, steps, totalUsage: usage } = generateResult;

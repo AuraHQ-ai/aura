@@ -8,6 +8,7 @@ import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
 import { resolveEntityReadOnly } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 
 interface RetrievalOptions {
   /** The user's current message text */
@@ -115,6 +116,7 @@ Entity types: person, company, project, product, channel, technology, concept, l
 
 Message: "${query}"`,
       temperature: 0,
+      experimental_telemetry: aiTelemetry("memory-query-entities"),
     });
     onUsage?.((model as any)?.modelId ?? "retrieve", usage);
     return object.entities;
@@ -163,6 +165,7 @@ If, and only if, answering requires multiple independent facts, also return 2-4 
 
 Message: "${query}"`,
       temperature: 0,
+      experimental_telemetry: aiTelemetry("memory-plan-query"),
     });
     onUsage?.((model as any)?.modelId ?? "retrieve", usage);
     const rewritten = object.rewritten?.trim() || query;

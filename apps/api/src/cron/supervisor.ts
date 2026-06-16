@@ -6,6 +6,7 @@ import { db } from "../db/client.js";
 import { getFastModel } from "../lib/ai.js";
 import { getCredential } from "../lib/credentials.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { jobExecutions, jobOutcomes, jobs } from "@aura/db/schema";
 import { sendJobFailureDm, truncateJobFailureText } from "./job-notifications.js";
 
@@ -136,12 +137,29 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
   const timer = setTimeout(() => abortController.abort(), SUPERVISOR_LLM_TIMEOUT_MS);
 
   try {
-    const { object } = await generateObject({
-      model,
-      schema: supervisorDecisionSchema,
-      system:
-        "You are Aura's job execution supervisor. Make one conservative decision from the provided fixed enum. Return only the structured object. Do not call tools.",
-      prompt: truncateForPrompt(`Review this completed job outcome and decide the next action.
+    const { object } = await withTrace(
+      {
+        traceName: "supervisor-decision",
+        sessionId: context.job.threadTs || context.job.channelId || context.job.id,
+        userId: context.job.requestedBy,
+        tags: [
+          "channel:supervisor",
+          ...(context.job.channelId ? [`slack-channel:${context.job.channelId}`] : []),
+        ],
+        metadata: {
+          slackUserId: context.job.requestedBy,
+          jobId: context.job.id,
+          outcomeId: context.outcome.id,
+        },
+      },
+      () =>
+        generateObject({
+          model,
+          schema: supervisorDecisionSchema,
+          experimental_telemetry: aiTelemetry("supervisor-decision"),
+          system:
+            "You are Aura's job execution supervisor. Make one conservative decision from the provided fixed enum. Return only the structured object. Do not call tools.",
+          prompt: truncateForPrompt(`Review this completed job outcome and decide the next action.
 
 Decision meanings:
 - silent_success: outcome succeeded cleanly and should be resolved with no DM. This is the default for routine recurring runs when cron_schedule is set and notify_on_success is false.
@@ -187,9 +205,10 @@ ${jsonForPrompt({
     error: execution.error,
   })),
 })}`),
-      temperature: 0,
-      abortSignal: abortController.signal,
-    });
+          temperature: 0,
+          abortSignal: abortController.signal,
+        }),
+    );
 
     return object;
   } finally {
