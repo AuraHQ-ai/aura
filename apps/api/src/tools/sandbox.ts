@@ -216,6 +216,10 @@ export function buildDetachedScript(
 
   return [
     `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)} || exit $?`,
+    // Prune stale bookkeeping from prior commands so this dir can't accumulate tens of
+    // thousands of files and exhaust disk/inodes over the sandbox's lifetime. 12h is far
+    // beyond the longest detached job (max 750s) plus any polling/webhook window.
+    `find ${shellQuote(BACKGROUND_COMMAND_DIR)} -maxdepth 1 -type f -mmin +720 -delete 2>/dev/null || true`,
     `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)} || exit $?`,
     `printf '%s\\n' ${shellQuote(String(startedAtEpoch))} > ${shellQuote(startedAtPath)} || exit $?`,
     `nohup bash -c ${shellQuote(commandInCwd)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
@@ -451,6 +455,10 @@ async function readDetachedPid(
     }
   }
 
+  // Gather both: (1) the launcher's own pid/stdout/stderr bookkeeping files (catches a
+  // command that started but died before writing its pid), and (2) a live disk-full probe
+  // -- a missing pid file most often means the launcher couldn't even write bookkeeping
+  // because the root filesystem is full ("No space left on device").
   const details: string[] = [];
   const launchSummary = formatCommandRunResult(launchResult);
   if (launchSummary) details.push(`launch result: ${launchSummary}`);
@@ -459,6 +467,27 @@ async function readDetachedPid(
     if (diagnostics) details.push(diagnostics);
   } catch (error: any) {
     details.push(`diagnostics failed: ${error.message}`);
+  }
+
+  // Probe a real write to surface the actual OS error (e.g. "No space left on device")
+  // and current disk state. The probe captures stderr even when the disk is full.
+  const probePath = `${BACKGROUND_COMMAND_DIR}/${id}.probe`;
+  const diagnosticCommand = [
+    `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)} 2>/dev/null`,
+    `write_err=$({ : > ${shellQuote(probePath)}; } 2>&1)`,
+    `rm -f ${shellQuote(probePath)} 2>/dev/null`,
+    `disk=$(df -kP / | awk 'NR==2 {print $5" used, "$4" KiB free"}')`,
+    `printf '%s\\n%s\\n' "$write_err" "$disk"`,
+  ].join("; ");
+  try {
+    const diag = await sandbox.commands.run(diagnosticCommand, { timeoutMs: 4_000, envs });
+    const lines = (diag.stdout || "").split("\n");
+    const launchError = (lines[0] || "").trim();
+    const diskInfo = lines.slice(1).join(" ").trim();
+    if (launchError) details.push(`launch error: ${launchError}`);
+    if (diskInfo) details.push(`sandbox root disk: ${diskInfo}`);
+  } catch {
+    // best-effort diagnostics only
   }
 
   throw new Error(

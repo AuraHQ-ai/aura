@@ -11,6 +11,35 @@ const sandboxTemplateKey = (userId?: string) =>
   userId ? `e2b_sandbox_template_id:${userId}` : "e2b_sandbox_template_id";
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour -- autoPause handles inactivity
 const TOOLS_REPO_SETTING_KEY = "tools_repo";
+
+// Background-command bookkeeping dir (mirrors BACKGROUND_COMMAND_DIR in tools/sandbox.ts).
+// The launcher writes ~7 files per command here; without pruning it accumulates tens of
+// thousands of stale files over the lifetime of a long-lived sandbox.
+const BACKGROUND_COMMAND_DIR = "/tmp/aura-bg";
+
+// Disk-space self-heal thresholds for the persistent per-user sandbox. The root
+// filesystem is ~11 GiB; over weeks the pnpm store, package caches, repo checkouts and
+// /tmp bookkeeping fill it to 100%, after which every command fails at launch with
+// "No space left on device" (it can't even write the launcher script). On resume we
+// reclaim space when free disk drops below SOFT, and recreate the sandbox from scratch
+// if reclaim can't get it back above HARD.
+const DISK_RECLAIM_SOFT_KB = 1.5 * 1024 * 1024; // < 1.5 GiB free -> run reclaim
+const DISK_RECLAIM_HARD_KB = 512 * 1024; // < 512 MiB free after reclaim -> recreate
+
+// Best-effort, non-destructive disk reclamation. Only removes regenerable caches,
+// unreferenced pnpm store entries, apt artifacts, and stale background-command files.
+// User data under /home/user (repos, projects) and the GCS mount are left untouched.
+const DISK_RECLAIM_SCRIPT = [
+  "set +e",
+  `find ${BACKGROUND_COMMAND_DIR} -maxdepth 1 -type f -mmin +720 -delete 2>/dev/null`,
+  `rm -rf "$HOME/.cache/pip" "$HOME/.cache/pnpm" "$HOME/.cache/node" "$HOME/.cache/uv" "$HOME/.cache/ms-playwright" "$HOME/.cache/puppeteer" "$HOME/.npm/_cacache" 2>/dev/null`,
+  "if command -v pnpm >/dev/null 2>&1; then pnpm store prune >/dev/null 2>&1; fi",
+  "if command -v npm >/dev/null 2>&1; then npm cache clean --force >/dev/null 2>&1; fi",
+  "sudo apt-get clean >/dev/null 2>&1",
+  "sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /var/log/*.gz /var/log/*.1 2>/dev/null",
+  "true",
+].join("\n");
+
 const TOOLS_REPO_CHECKOUT_DIR_NAME = ["aura", "tools"].join("-");
 const TOOLS_REPO_CHECKOUT_PATH = `/home/user/${TOOLS_REPO_CHECKOUT_DIR_NAME}`;
 
@@ -101,6 +130,70 @@ export function clearCachedSandbox(): void {
 async function loadE2B() {
   const { Sandbox } = await import("e2b");
   return Sandbox;
+}
+
+/**
+ * Return free space on the sandbox root filesystem in KiB, or null if it
+ * can't be measured (in which case callers must not take destructive action).
+ */
+async function getRootDiskAvailKB(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<number | null> {
+  try {
+    const result = await sandbox.commands.run("df -kP / | awk 'NR==2 {print $4}'", {
+      timeoutMs: 8_000,
+      envs,
+    });
+    const kb = Number.parseInt((result.stdout || "").trim(), 10);
+    return Number.isFinite(kb) ? kb : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort reclamation of regenerable disk space (caches, pnpm store,
+ * apt artifacts, stale /tmp/aura-bg bookkeeping). Never touches user data.
+ * Exported for reuse/testing.
+ */
+export async function reclaimSandboxDiskSpace(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<void> {
+  try {
+    await sandbox.commands.run(DISK_RECLAIM_SCRIPT, { timeoutMs: 120_000, envs });
+  } catch (error: any) {
+    logger.warn("Sandbox disk reclaim command failed", { error: error.message });
+  }
+}
+
+/**
+ * Ensure the resumed sandbox has usable disk space. Reclaims regenerable space
+ * when free disk is low and reports whether the sandbox is usable afterwards.
+ * Returns false only when, after reclaiming, free space is still critically low
+ * (the caller should then recreate the sandbox from scratch).
+ */
+async function ensureSandboxDiskSpace(
+  sandbox: any,
+  envs: Record<string, string>,
+): Promise<boolean> {
+  const availBefore = await getRootDiskAvailKB(sandbox, envs);
+  if (availBefore === null) return true; // can't measure -> don't destroy a working sandbox
+  if (availBefore >= DISK_RECLAIM_SOFT_KB) return true;
+
+  logger.warn("Sandbox low on disk, reclaiming space", {
+    availMB: Math.round(availBefore / 1024),
+  });
+  await reclaimSandboxDiskSpace(sandbox, envs);
+
+  const availAfter = await getRootDiskAvailKB(sandbox, envs);
+  logger.info("Sandbox disk reclaim complete", {
+    beforeMB: Math.round(availBefore / 1024),
+    afterMB: availAfter === null ? null : Math.round(availAfter / 1024),
+  });
+  if (availAfter === null) return true;
+  return availAfter >= DISK_RECLAIM_HARD_KB;
 }
 
 function resolveSandboxEnvName(row: SandboxCredentialRow): string {
@@ -548,9 +641,28 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
     }
 
     if (cachedSandbox) {
-      await setupSandboxFilesystem(cachedSandbox, envs);
-      await bootstrapToolsRepo(cachedSandbox, envs);
-      return cachedSandbox;
+      const diskOk = await ensureSandboxDiskSpace(cachedSandbox, envs);
+      if (diskOk) {
+        await setupSandboxFilesystem(cachedSandbox, envs);
+        await bootstrapToolsRepo(cachedSandbox, envs);
+        return cachedSandbox;
+      }
+
+      // Disk is still critically full after reclaiming regenerable space, so the
+      // resumed sandbox is effectively unusable (commands fail at launch with
+      // "No space left on device"). Discard it and fall through to create a fresh one.
+      logger.warn("Resumed sandbox disk unrecoverable, recreating from scratch", {
+        savedId,
+      });
+      try {
+        await Sandbox.kill(savedId, { apiKey });
+      } catch (e: any) {
+        logger.warn("Failed to kill disk-full sandbox (best-effort)", { error: e.message });
+      }
+      cachedSandbox = null;
+      cachedSandboxUserId = undefined;
+      userHomeReady.clear();
+      savedId = null;
     }
   }
 
