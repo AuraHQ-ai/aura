@@ -602,9 +602,9 @@
       "prNumber": 1096
     },
     {
-      "runId": "2026-06-10T07-15-45-678Z-co7bz7pq",
-      "timestamp": "2026-06-10T07:28:47.064Z",
-      "commit": "ed773662",
+      "runId": "2026-06-23T08-10-01-186Z-bp6vt0vb",
+      "timestamp": "2026-06-23T08:22:38.046Z",
+      "commit": "d72ae629",
       "dirty": false,
       "datasets": [
         "longmemeval"
@@ -614,8 +614,8 @@
       "category": null,
       "corpusHash": "b178d604c01afa4a",
       "caseSetHash": "0785d34e2111c176",
-      "runtimeMs": 777665,
-      "costUsd": 0.9735419999999996,
+      "runtimeMs": 752457,
+      "costUsd": 0.9968579999999997,
       "models": {
         "extraction": "anthropic/claude-haiku-4.5",
         "answerer": "anthropic/claude-opus-4.8",
@@ -633,7 +633,7 @@
           "dataset": "longmemeval",
           "category": "multi-session",
           "qa": 1,
-          "recall": 0.5,
+          "recall": 1,
           "n": 2
         },
         {
@@ -667,10 +667,10 @@
       ],
       "overall": {
         "qa": 0.9166666666666666,
-        "recall": 0.8333333333333334,
+        "recall": 0.9166666666666666,
         "n": 12
       },
-      "prNumber": 1116
+      "prNumber": 1114
     }
   ]
 }
