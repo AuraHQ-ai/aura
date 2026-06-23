@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { WorkflowChatTransport } from "@workflow/ai";
 import type { UIMessage, DynamicToolUIPart, ToolUIPart } from "ai";
 import {
   X,
@@ -84,6 +84,9 @@ interface ChatThread {
   preview: string | null;
   lastActivityAt: string;
   messageCount: number;
+  /** "generating" while a workflow run is in flight for this thread (R2). */
+  runStatus: "generating" | "idle";
+  activeRunId: string | null;
 }
 
 interface ChatPanelProps {
@@ -92,6 +95,13 @@ interface ChatPanelProps {
   userName?: string;
 }
 
+interface LoadedThread {
+  messages: UIMessage[];
+  activeRunId: string | null;
+}
+
+const THREAD_STORAGE_KEY = "aura_chat_thread";
+
 function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem("aura_session");
   if (token) return { Authorization: `Bearer ${token}` };
@@ -99,34 +109,33 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
-  const [currentThreadId, setCurrentThreadId] = useState<string>(() => crypto.randomUUID());
+  // Thread identity survives refresh (T3): land back in the same thread and
+  // resume its stream if a run is still generating.
+  const [currentThreadId, setCurrentThreadId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(THREAD_STORAGE_KEY) || crypto.randomUUID();
+    } catch {
+      return crypto.randomUUID();
+    }
+  });
+  // null = loading persisted messages for the selected thread.
+  const [loadedThread, setLoadedThread] = useState<LoadedThread | null>(null);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [loadingThread, setLoadingThread] = useState(false);
   const [copied, setCopied] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelAutocompleteOption[]>([]);
-  const threadIdRef = useRef(currentThreadId);
-  threadIdRef.current = currentThreadId;
-  const selectedModelRef = useRef(selectedModel);
-  selectedModelRef.current = selectedModel;
+  // Local run-state overlay so spinners are correct between thread refreshes.
+  const [localRunState, setLocalRunState] = useState<Record<string, "generating" | "idle">>({});
+  const exportRef = useRef<() => void>(() => {});
 
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport({
-        api: "/api/dashboard/chat",
-        headers: () => getAuthHeaders(),
-        body: () => ({ threadId: threadIdRef.current, userId, userName, modelId: selectedModelRef.current }),
-      }),
-    [userId, userName],
-  );
-
-  const { messages, sendMessage, status, error, stop, setMessages } = useChat({
-    transport,
-  });
-
-  const isStreaming = status === "streaming";
-  const isEmpty = messages.length === 0 && !loadingThread;
+  useEffect(() => {
+    try {
+      localStorage.setItem(THREAD_STORAGE_KEY, currentThreadId);
+    } catch {
+      // ignore storage failures
+    }
+  }, [currentThreadId]);
 
   useEffect(() => {
     fetch("/api/dashboard/models", { headers: getAuthHeaders() })
@@ -162,78 +171,82 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
     fetchThreads();
   }, [fetchThreads]);
 
+  // Keep run-status spinners live while the history panel is open or any
+  // thread is generating (T1: spinner clears when generation finishes).
+  const anyGenerating =
+    threads.some((t) => t.runStatus === "generating") ||
+    Object.values(localRunState).includes("generating");
   useEffect(() => {
-    if (status === "ready" && messages.length > 0) {
-      fetchThreads();
-    }
-  }, [status, messages.length, fetchThreads]);
+    if (!showHistory && !anyGenerating) return;
+    const interval = setInterval(fetchThreads, 5_000);
+    return () => clearInterval(interval);
+  }, [showHistory, anyGenerating, fetchThreads]);
 
-  const handleSubmit = useCallback(
-    (msg: PromptInputMessage) => {
-      if (!msg.text.trim()) return;
-      setShowHistory(false);
-      sendMessage({ text: msg.text.trim(), files: msg.files });
-    },
-    [sendMessage],
-  );
-
-  const handleNewChat = useCallback(() => {
-    const newId = crypto.randomUUID();
-    setCurrentThreadId(newId);
-    setMessages([]);
-    setShowHistory(false);
-  }, [setMessages]);
-
-  const handleCopyChat = useCallback(async () => {
-    if (messages.length === 0) return;
-    try {
-      const payload = {
-        threadId: currentThreadId,
-        exportedAt: new Date().toISOString(),
-        messages: messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          parts: m.parts,
-          metadata: (m as { metadata?: unknown }).metadata,
-        })),
-      };
-      const json = JSON.stringify(payload, null, 2);
-      await navigator.clipboard.writeText(json);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard API may fail in insecure contexts; silently ignore
-    }
-  }, [messages, currentThreadId]);
-
-  const handleSelectThread = useCallback(
-    async (threadId: string) => {
-      if (threadId === currentThreadId) {
-        setShowHistory(false);
-        return;
-      }
-
-      setLoadingThread(true);
-      setShowHistory(false);
-      setCurrentThreadId(threadId);
-      setMessages([]);
-
+  // Load the persisted messages (and in-flight run, if any) for the current
+  // thread. Runs on mount (refresh recovery) and on every thread switch.
+  useEffect(() => {
+    let cancelled = false;
+    setLoadedThread(null);
+    (async () => {
       try {
         const res = await fetch(
-          `/api/dashboard/chat/threads/${encodeURIComponent(threadId)}/messages`,
+          `/api/dashboard/chat/threads/${encodeURIComponent(currentThreadId)}/messages`,
           { headers: getAuthHeaders() },
         );
+        if (cancelled) return;
         if (res.ok) {
           const data = await res.json();
-          setMessages(data.messages ?? []);
+          setLoadedThread({
+            messages: data.messages ?? [],
+            activeRunId: data.activeRunId ?? null,
+          });
+        } else {
+          setLoadedThread({ messages: [], activeRunId: null });
         }
       } catch {
-        // silently ignore
-      } finally {
-        setLoadingThread(false);
+        if (!cancelled) setLoadedThread({ messages: [], activeRunId: null });
       }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentThreadId]);
+
+  const handleRunStateChange = useCallback(
+    (threadId: string, state: "generating" | "idle") => {
+      setLocalRunState((prev) => ({ ...prev, [threadId]: state }));
+      if (state === "idle") fetchThreads();
     },
-    [currentThreadId, setMessages],
+    [fetchThreads],
+  );
+
+  // R1: starting a new chat only detaches the reader (the ActiveChat below
+  // unmounts). The previous thread's workflow run keeps generating
+  // server-side; no abort signal ever reaches the model call.
+  const handleNewChat = useCallback(() => {
+    setCurrentThreadId(crypto.randomUUID());
+    setShowHistory(false);
+  }, []);
+
+  const handleSelectThread = useCallback(
+    (threadId: string) => {
+      setShowHistory(false);
+      if (threadId === currentThreadId) return;
+      setCurrentThreadId(threadId);
+    },
+    [currentThreadId],
+  );
+
+  const threadsWithLocalState = useMemo(
+    () =>
+      threads.map((t) => {
+        const local = localRunState[t.threadId];
+        if (local === "generating" && t.runStatus === "idle") {
+          return { ...t, runStatus: "generating" as const };
+        }
+        return t;
+      }),
+    [threads, localRunState],
   );
 
   return (
@@ -261,9 +274,8 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             <Clock className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={handleCopyChat}
-            disabled={messages.length === 0}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+            onClick={() => exportRef.current()}
+            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             title={copied ? "Copied!" : "Copy chat as JSON"}
           >
             {copied ? (
@@ -283,52 +295,235 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
 
       {showHistory ? (
         <ThreadList
-          threads={threads}
+          threads={threadsWithLocalState}
           currentThreadId={currentThreadId}
           onSelect={handleSelectThread}
           onNewChat={handleNewChat}
         />
-      ) : isEmpty ? (
-        <EmptyState onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
+      ) : loadedThread === null ? (
+        <div className="flex flex-1 items-center justify-center">
+          <Spinner />
+        </div>
       ) : (
-        <>
-          <Conversation className="flex-1">
-            <ConversationContent className="gap-4 px-3 py-3">
-              {loadingThread && (
-                <div className="flex h-full items-center justify-center">
-                  <Spinner />
-                </div>
-              )}
-              {messages.map((message) => (
-                <MessageItem
-                  key={message.id}
-                  message={message}
-                  isStreaming={
-                    isStreaming &&
-                    message.id === messages[messages.length - 1]?.id
-                  }
-                />
-              ))}
-              {error && (
-                <div className="rounded-md bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
-                  {error.message || "Something went wrong"}
-                </div>
-              )}
-              {status === "submitted" && (
-                <Message from="assistant">
-                  <MessageContent>
-                    <Shimmer>Thinking...</Shimmer>
-                  </MessageContent>
-                </Message>
-              )}
-            </ConversationContent>
-            <ConversationScrollButton />
-          </Conversation>
-
-          <ChatInput onSubmit={handleSubmit} status={status} onStop={stop} selectedModel={selectedModel} onModelChange={setSelectedModel} modelOptions={modelOptions} />
-        </>
+        <ActiveChat
+          // Remount per thread: detaches the previous reader without
+          // cancelling its server-side run (R1/R5).
+          key={currentThreadId}
+          threadId={currentThreadId}
+          initialMessages={loadedThread.messages}
+          initialActiveRunId={loadedThread.activeRunId}
+          userId={userId}
+          userName={userName}
+          selectedModel={selectedModel}
+          onModelChange={setSelectedModel}
+          modelOptions={modelOptions}
+          onRunStateChange={handleRunStateChange}
+          onCopied={() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          exportRef={exportRef}
+        />
       )}
     </div>
+  );
+}
+
+function ActiveChat({
+  threadId,
+  initialMessages,
+  initialActiveRunId,
+  userId,
+  userName,
+  selectedModel,
+  onModelChange,
+  modelOptions,
+  onRunStateChange,
+  onCopied,
+  exportRef,
+}: {
+  threadId: string;
+  initialMessages: UIMessage[];
+  initialActiveRunId: string | null;
+  userId?: string;
+  userName?: string;
+  selectedModel: string;
+  onModelChange: (value: string) => void;
+  modelOptions: ModelAutocompleteOption[];
+  onRunStateChange: (threadId: string, state: "generating" | "idle") => void;
+  onCopied: () => void;
+  exportRef: React.MutableRefObject<() => void>;
+}) {
+  // The runId of the in-flight workflow run for this thread. Server-anchored
+  // (R4): seeded from the API on mount, updated from the x-workflow-run-id
+  // response header on each send.
+  const activeRunIdRef = useRef<string | null>(initialActiveRunId);
+  const selectedModelRef = useRef(selectedModel);
+  selectedModelRef.current = selectedModel;
+
+  const transport = useMemo(
+    () =>
+      new WorkflowChatTransport<UIMessage>({
+        api: "/api/dashboard/chat",
+        prepareSendMessagesRequest: ({ api, messages }) => ({
+          api,
+          // WorkflowChatTransport does not set a content type on its POST
+          // (DefaultChatTransport did) — without it the browser sends
+          // text/plain and the zod-openapi body validator rejects the request.
+          headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+          body: {
+            messages,
+            threadId,
+            userId,
+            userName,
+            modelId: selectedModelRef.current,
+          },
+        }),
+        onChatSendMessage: (response) => {
+          const runId = response.headers.get("x-workflow-run-id");
+          if (runId) {
+            activeRunIdRef.current = runId;
+            onRunStateChange(threadId, "generating");
+          }
+        },
+        onChatEnd: () => {
+          activeRunIdRef.current = null;
+          onRunStateChange(threadId, "idle");
+        },
+        // R3/T3: reconnect (resume-on-mount, network drop, function timeout)
+        // replays the in-flight run's stream and continues with the live tail.
+        prepareReconnectToStreamRequest: ({ api: _api, ...rest }) => {
+          const runId = activeRunIdRef.current;
+          if (!runId) throw new Error("No active workflow run to reconnect to");
+          return {
+            ...rest,
+            headers: getAuthHeaders(),
+            api: `/api/dashboard/chat/runs/${encodeURIComponent(runId)}/stream`,
+          };
+        },
+      }),
+    [threadId, userId, userName, onRunStateChange],
+  );
+
+  const { messages, sendMessage, status, error, setMessages } = useChat({
+    id: threadId,
+    messages: initialMessages,
+    // T2/T3: attach to the in-flight run on mount.
+    resume: Boolean(initialActiveRunId),
+    transport,
+  });
+
+  useEffect(() => {
+    if (initialActiveRunId) onRunStateChange(threadId, "generating");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // T5: the stop button is the ONLY path that cancels generation. Detaches
+  // locally AND cancels the workflow run out-of-band.
+  const handleStop = useCallback(async () => {
+    const runId = activeRunIdRef.current;
+    if (runId) {
+      try {
+        await fetch(`/api/dashboard/chat/runs/${encodeURIComponent(runId)}/cancel`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+        });
+      } catch {
+        // best-effort cancel
+      }
+      activeRunIdRef.current = null;
+      onRunStateChange(threadId, "idle");
+    }
+  }, [threadId, onRunStateChange]);
+
+  const handleSubmit = useCallback(
+    (msg: PromptInputMessage) => {
+      if (!msg.text.trim()) return;
+      sendMessage({ text: msg.text.trim(), files: msg.files });
+    },
+    [sendMessage],
+  );
+
+  useEffect(() => {
+    exportRef.current = async () => {
+      if (messages.length === 0) return;
+      try {
+        const payload = {
+          threadId,
+          exportedAt: new Date().toISOString(),
+          messages: messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            parts: m.parts,
+            metadata: (m as { metadata?: unknown }).metadata,
+          })),
+        };
+        await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+        onCopied();
+      } catch {
+        // clipboard API may fail in insecure contexts; silently ignore
+      }
+    };
+  }, [messages, threadId, onCopied, exportRef]);
+
+  // Keep the local transcript tidy if the server restored nothing but the
+  // stream got detached previously (no-op in the normal path).
+  void setMessages;
+
+  const isStreaming = status === "streaming";
+  const isEmpty = messages.length === 0;
+
+  if (isEmpty) {
+    return (
+      <EmptyState
+        onSubmit={handleSubmit}
+        status={status}
+        onStop={handleStop}
+        selectedModel={selectedModel}
+        onModelChange={onModelChange}
+        modelOptions={modelOptions}
+      />
+    );
+  }
+
+  return (
+    <>
+      <Conversation className="flex-1">
+        <ConversationContent className="gap-4 px-3 py-3">
+          {messages.map((message) => (
+            <MessageItem
+              key={message.id}
+              message={message}
+              isStreaming={
+                isStreaming && message.id === messages[messages.length - 1]?.id
+              }
+            />
+          ))}
+          {error && (
+            <div className="rounded-md bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+              {error.message || "Something went wrong"}
+            </div>
+          )}
+          {status === "submitted" && (
+            <Message from="assistant">
+              <MessageContent>
+                <Shimmer>Thinking...</Shimmer>
+              </MessageContent>
+            </Message>
+          )}
+        </ConversationContent>
+        <ConversationScrollButton />
+      </Conversation>
+
+      <ChatInput
+        onSubmit={handleSubmit}
+        status={status}
+        onStop={handleStop}
+        selectedModel={selectedModel}
+        onModelChange={onModelChange}
+        modelOptions={modelOptions}
+      />
+    </>
   );
 }
 
@@ -526,8 +721,13 @@ function ThreadList({
               : "hover:bg-muted/50",
           )}
         >
-          <span className="text-[13px] truncate">
-            {thread.preview || "Empty chat"}
+          <span className="flex items-center gap-1.5 text-[13px]">
+            {thread.runStatus === "generating" && (
+              <span title="Aura is generating...">
+                <Spinner className="size-3 shrink-0 text-muted-foreground" />
+              </span>
+            )}
+            <span className="truncate">{thread.preview || (thread.runStatus === "generating" ? "Generating..." : "Empty chat")}</span>
           </span>
           <span className="text-[11px] text-muted-foreground">
             {formatRelativeTime(thread.lastActivityAt)}

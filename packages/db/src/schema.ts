@@ -853,6 +853,51 @@ export const conversationParts = pgTable(
   ],
 );
 
+// ── Dashboard Chat Runs (workflow run ↔ thread mapping) ─────────────────────
+// One row per dashboard chat turn executed as a durable workflow run. The
+// thread↔run mapping is server-anchored so any browser session can reconnect
+// to an in-flight generation. `status` mirrors the workflow run state and is
+// finalized by the workflow itself; the workflow backend stays the source of
+// truth for rows still marked "running".
+
+export const dashboardChatRuns = pgTable(
+  "dashboard_chat_runs",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    threadId: text("thread_id").notNull(),
+    runId: text("run_id").notNull(),
+    userId: text("user_id").notNull(),
+    /**
+     * The user message that started this turn. The conversation trace is only
+     * persisted when the turn completes, so this is what lets a fresh browser
+     * session render the in-flight user bubble (and a thread preview) while
+     * the run is still generating.
+     */
+    userMessage: text("user_message"),
+    status: text("status").notNull().default("running"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    completedAt: timestamptz("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("dashboard_chat_runs_workspace_run_idx").on(
+      table.workspaceId,
+      table.runId,
+    ),
+    index("dashboard_chat_runs_thread_idx").on(
+      table.workspaceId,
+      table.threadId,
+      table.createdAt,
+    ),
+    check(
+      "dashboard_chat_runs_status_check",
+      sql`${table.status} IN ('running', 'completed', 'failed', 'cancelled')`,
+    ),
+  ],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(
@@ -1452,5 +1497,7 @@ export type ConversationMessage = typeof conversationMessages.$inferSelect;
 export type NewConversationMessage = typeof conversationMessages.$inferInsert;
 export type ConversationPart = typeof conversationParts.$inferSelect;
 export type NewConversationPart = typeof conversationParts.$inferInsert;
+export type DashboardChatRun = typeof dashboardChatRuns.$inferSelect;
+export type NewDashboardChatRun = typeof dashboardChatRuns.$inferInsert;
 export type ModelPricing = typeof modelPricing.$inferSelect;
 export type NewModelPricing = typeof modelPricing.$inferInsert;
