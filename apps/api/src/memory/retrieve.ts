@@ -8,6 +8,7 @@ import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
 import { resolveEntityReadOnly } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 
 interface RetrievalOptions {
   /** The user's current message text */
@@ -115,6 +116,7 @@ Entity types: person, company, project, product, channel, technology, concept, l
 
 Message: "${query}"`,
       temperature: 0,
+      experimental_telemetry: aiTelemetry("memory-query-entities"),
     });
     onUsage?.((model as any)?.modelId ?? "retrieve", usage);
     return object.entities;
@@ -163,6 +165,7 @@ If, and only if, answering requires multiple independent facts, also return 2-4 
 
 Message: "${query}"`,
       temperature: 0,
+      experimental_telemetry: aiTelemetry("memory-plan-query"),
     });
     onUsage?.((model as any)?.modelId ?? "retrieve", usage);
     const rewritten = object.rewritten?.trim() || query;
@@ -294,7 +297,7 @@ async function fetchEntityMatchedMemories(
     // Step 4: Fetch memories linked to resolved entities, tracking which entity each memory came from
     const privacyFilter = currentUserId
       ? sql`AND (
-          m.source_channel_type != 'dm'
+          m.source_channel_type NOT IN ('dm', 'mpim')
           OR m.shareable = 1
           OR m.related_user_ids @> ARRAY[${currentUserId}]::text[]
         )`
@@ -425,6 +428,23 @@ export function mergeRoundRobin(lists: Memory[][], limit: number): Memory[] {
   return merged;
 }
 
+export function isMemoryVisibleToParticipant(params: {
+  sourceChannelType: string | null | undefined;
+  shareable: number | boolean | null | undefined;
+  relatedUserIds: string[] | null | undefined;
+  currentUserId: string;
+}): boolean {
+  const { sourceChannelType, shareable, relatedUserIds, currentUserId } = params;
+  const isParticipantScoped =
+    sourceChannelType === "dm" || sourceChannelType === "mpim";
+  return (
+    !isParticipantScoped ||
+    shareable === 1 ||
+    shareable === true ||
+    (relatedUserIds ?? []).includes(currentUserId)
+  );
+}
+
 /**
  * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
  *
@@ -503,7 +523,7 @@ async function retrieveSingleQuery(
     const privacyFilter = adminMode
       ? sql`TRUE`
       : sql`(
-        ${memories.sourceChannelType} != 'dm'
+        ${memories.sourceChannelType} NOT IN ('dm', 'mpim')
         OR ${memories.shareable} = 1
         OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
       )`;

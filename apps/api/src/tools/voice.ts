@@ -705,8 +705,11 @@ export function createVoiceTools(client?: WebClient, context?: ScheduleContext):
           // 2. Generate speech via ElevenLabs TTS
           const ttsBody: Record<string, unknown> = {
             text,
-            model_id: "eleven_turbo_v2_5",
-            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+            // multilingual_v2 + high stability: turbo_v2_5 at stability 0.5 produced
+            // wildly inconsistent renders of the same voice (perceived "different voice"
+            // between notes). High stability trades expressiveness for consistency.
+            model_id: "eleven_multilingual_v2",
+            voice_settings: { stability: 0.75, similarity_boost: 0.75 },
           };
           if (language) {
             ttsBody.language_code = language;

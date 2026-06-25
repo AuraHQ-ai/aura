@@ -5,6 +5,7 @@ import { db } from "../db/client.js";
 import { emailsRaw } from "@aura/db/schema";
 import { getFastModel } from "./ai.js";
 import { logger } from "./logger.js";
+import { aiTelemetry } from "./langfuse.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -253,6 +254,7 @@ export async function computeThreadStates(
         schema: threadStateSchema,
         prompt,
         maxOutputTokens: 200,
+        experimental_telemetry: aiTelemetry("email-triage"),
       });
 
       pendingUpdates.push({

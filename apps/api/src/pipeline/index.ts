@@ -9,6 +9,11 @@ import {
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
 import { generateResponse, type LLMResponse } from "./respond.js";
+import {
+  isWdkSlackRespondEnabled,
+  isWorkflowEligible,
+  startSlackRespondWorkflow,
+} from "./slack-workflow.js";
 import { InvocationSupersededError } from "./prepare-step.js";
 import { buildMessageText } from "./message-text.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -33,6 +38,7 @@ import {
 import { downloadEventFiles } from "../lib/files.js";
 import { getSettingJSON } from "../lib/settings.js";
 import { logger } from "../lib/logger.js";
+import { withTraceSpan } from "../lib/langfuse.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
 import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
@@ -40,6 +46,10 @@ import {
   generateInitialDmThreadTitle,
   generateUpdatedDmThreadTitle,
 } from "./dm-title.js";
+import {
+  BARE_MENTION_WITH_CONTEXT_PROMPT,
+  shouldGreetAndBailForEmptyMessage,
+} from "./empty-message.js";
 import {
   createConversationTrace,
   persistConversationInputs,
@@ -208,6 +218,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       context.channelId,
       botUserId,
       context.threadTs,
+      context.channelType,
     );
     alwaysProcessChannels = new Set(
       (await getSettingJSON<string[]>("always_process_channels", [])) ?? [],
@@ -269,17 +280,57 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   let capturedResponse: LLMResponse | undefined;
   let capturedSystemPrompt: string | undefined;
   let capturedUserPrompt: string | undefined;
+  let bareMentionWithContext = false;
 
   try {
     // ── Edge case: empty or near-empty message (but allow image-only) ───
     const hasFiles = Array.isArray((event as any).files) && (event as any).files.length > 0;
     if (context.text.trim().length === 0 && !hasFiles) {
-      await safePostMessage(client, {
-        channel: context.channelId,
-        text: "Hey. What's up?",
-        thread_ts: replyThreadTs,
+      if (context.isMentioned && !conversation) {
+        conversation = await fetchConversationContext(
+          client,
+          context.channelId,
+          botUserId,
+          context.threadTs,
+          context.channelType,
+        );
+      }
+
+      if (shouldGreetAndBailForEmptyMessage(context, conversation)) {
+        await safePostMessage(client, {
+          channel: context.channelId,
+          text: "Hey. What's up?",
+          thread_ts: replyThreadTs,
+        });
+        const tracePromise = persistConversationTrace({
+          channelId: context.channelId,
+          threadTs: replyThreadTs,
+          userId: context.userId,
+          modelId: "greet-and-bail",
+          systemPrompt: "Greet-and-bail guard: empty message with no surrounding Slack context.",
+          userPrompt: context.isMentioned ? "(bare mention)" : "(empty message)",
+        }).catch((error: any) => {
+          logger.error("Failed to persist greet-and-bail trace", {
+            channelId: context.channelId,
+            error: error?.message || String(error),
+          });
+        });
+        if (waitUntil) {
+          waitUntil(tracePromise);
+        } else {
+          await tracePromise;
+        }
+        return;
+      }
+
+      bareMentionWithContext = true;
+      context.useSurroundingContext = true;
+      logger.info("Bare mention has surrounding context; continuing through pipeline", {
+        channelId: context.channelId,
+        channelType: context.channelType,
+        threadTs: context.threadTs,
+        messageTs: context.messageTs,
       });
-      return;
     }
 
     // Set assistant thread status — triggers the shimmer animation on
@@ -313,7 +364,9 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     }
 
     // ── Edge case: extremely long message ────────────────────────────────
-    let messageText = buildMessageText(context.text, hasFiles, voiceTranscripts);
+    let messageText = bareMentionWithContext
+      ? BARE_MENTION_WITH_CONTEXT_PROMPT
+      : buildMessageText(context.text, hasFiles, voiceTranscripts);
     if (messageText.length > MAX_MESSAGE_LENGTH) {
       const originalLength = messageText.length;
       messageText = messageText.substring(0, MAX_MESSAGE_LENGTH);
@@ -374,45 +427,157 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         context.channelId,
         botUserId,
         context.threadTs,
+        context.channelType,
       );
     }
-    const retrievalStart = Date.now();
-    const { stablePrefix, environmentContext, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
-      { ...context, text: messageText },
-      conversation,
-      client,
+    // Bind the now-resolved conversation to a const so its non-undefined
+    // narrowing survives into the trace-span closure below.
+    const resolvedConversation = conversation;
+    // Steps 4 + 5 run inside a single parent span so every AI SDK call for this
+    // Slack turn — memory retrieval, thread summary, query embeddings, and the
+    // agent stream — nests under ONE Langfuse trace instead of scattering into
+    // orphan root traces. sessionId = thread links a conversation in the
+    // Sessions view; userId enables per-user analysis.
+    const turn = await withTraceSpan(
+      "slack-chat",
+      {
+        sessionId: replyThreadTs ?? context.channelId,
+        userId: context.userId,
+        userName: displayName,
+        tags: [`channel:${context.channelType ?? "unknown"}`],
+        metadata: { slackUserId: context.userId },
+      },
+      async () => {
+        const retrievalStart = Date.now();
+        const { stablePrefix, environmentContext, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
+          { ...context, text: messageText },
+          resolvedConversation,
+          client,
+        );
+        const retrievalMs = Date.now() - retrievalStart;
+
+        capturedSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+        capturedUserPrompt = messageText;
+
+        // 5a. Durable respond path (issue #1111, flag-gated): delegate the
+        // agent loop to a WDK workflow. The workflow owns Slack delivery AND
+        // persistence (runBackgroundTasks runs as its final step), so when
+        // delegation succeeds this invocation's job is done — a SIGKILL of
+        // this function no longer kills the turn.
+        if (
+          (await isWdkSlackRespondEnabled()) &&
+          isWorkflowEligible({ channelType: context.channelType })
+        ) {
+          const runId = await startSlackRespondWorkflow({
+            stablePrefix,
+            environmentContext,
+            conversationContext,
+            dynamicContext,
+            userMessage: messageText,
+            files: fileParts,
+            channelId: context.channelId,
+            threadTs: replyThreadTs,
+            teamId,
+            recipientUserId: context.userId,
+            userId: context.userId,
+            workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+            timezone: userTimezone,
+            invocationId,
+            background: {
+              context: { ...context, text: messageText },
+              event: event as unknown as Record<string, unknown>,
+              displayName,
+              threadMessageCount: resolvedConversation.thread?.length ?? 0,
+              ...(() => {
+                const all = (resolvedConversation.thread ?? resolvedConversation.recentMessages)
+                  .map((m) => ({ displayName: m.displayName, text: m.text }));
+                if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
+                return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
+              })(),
+              systemPrompt: capturedSystemPrompt,
+            },
+          });
+          if (runId) {
+            return {
+              response: {
+                raw: "",
+                alreadyPosted: true,
+                toolCalls: [],
+                workflowDelegated: true,
+              } as LLMResponse,
+              stablePrefix,
+              environmentContext,
+              conversationContext,
+              dynamicContext,
+              memories,
+              conversations,
+              retrievalMs,
+              llmMs: 0,
+            };
+          }
+          // start() failed — fall through to the legacy in-process path.
+        }
+
+        // 5. Call LLM (streams response directly to Slack via chat.update)
+        const llmStart = Date.now();
+        const response = await generateResponse({
+          stablePrefix,
+          environmentContext,
+          conversationContext,
+          dynamicContext,
+          userMessage: messageText,
+          slackClient: client,
+          context: {
+            userId: context.userId,
+            channelId: context.channelId,
+            threadTs: replyThreadTs,
+            workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+            timezone: userTimezone,
+          },
+          files: fileParts,
+          channelId: context.channelId,
+          threadTs: replyThreadTs,
+          teamId,
+          recipientUserId: context.userId,
+          channelType: context.channelType,
+          invocationId,
+        });
+        const llmMs = Date.now() - llmStart;
+        capturedResponse = response;
+
+        return {
+          response,
+          stablePrefix,
+          environmentContext,
+          conversationContext,
+          dynamicContext,
+          memories,
+          conversations,
+          retrievalMs,
+          llmMs,
+        };
+      },
     );
-    const retrievalMs = Date.now() - retrievalStart;
-
-    capturedSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
-    capturedUserPrompt = messageText;
-
-    // 5. Call LLM (streams response directly to Slack via chat.update)
-    const llmStart = Date.now();
-    const response = await generateResponse({
+    const {
+      response,
       stablePrefix,
       environmentContext,
       conversationContext,
       dynamicContext,
-      userMessage: messageText,
-      slackClient: client,
-      context: {
-        userId: context.userId,
+      memories,
+      conversations,
+      retrievalMs,
+      llmMs,
+    } = turn;
+
+    if (response.workflowDelegated) {
+      // The durable workflow owns delivery + persistence from here on.
+      logger.info("Pipeline delegated to durable Slack respond workflow", {
         channelId: context.channelId,
-        threadTs: replyThreadTs,
-        workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
-        timezone: userTimezone,
-      },
-      files: fileParts,
-      channelId: context.channelId,
-      threadTs: replyThreadTs,
-      teamId,
-      recipientUserId: context.userId,
-      channelType: context.channelType,
-      invocationId,
-    });
-    const llmMs = Date.now() - llmStart;
-    capturedResponse = response;
+        totalMs: Date.now() - pipelineStart,
+      });
+      return;
+    }
 
     if (response.interrupted) {
       logger.info("Pipeline interrupted — invocation superseded", {
@@ -802,7 +967,7 @@ async function storeUserMessage(context: MessageContext, event: SlackEvent): Pro
 /**
  * Run background tasks after responding.
  */
-async function runBackgroundTasks(params: {
+export async function runBackgroundTasks(params: {
   context: MessageContext;
   event: SlackEvent;
   response: string;

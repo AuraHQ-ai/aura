@@ -39,20 +39,49 @@ interface Manifest {
   datasets: Record<string, ManifestEntry>;
 }
 
-async function tryFetch(url: string): Promise<Buffer | null> {
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "aura-bench-fetch-corpus" },
-    });
-    if (!res.ok) {
-      console.error(`  ${url} -> HTTP ${res.status} ${res.statusText}`);
-      return null;
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Fetch a URL with retry + exponential backoff on transient failures. The
+ * corpus hosts (HuggingFace especially) intermittently return 429 Too Many
+ * Requests — which previously failed the whole bench (toy on #1093/#1095, the
+ * medium LME run on #1096) because the fetch step had no retry. Retries on 429
+ * and 5xx (honouring `Retry-After`) and on network errors; gives up after
+ * `attempts` tries and returns null so the caller can try a fallback URL.
+ */
+async function tryFetch(url: string, attempts = 5): Promise<Buffer | null> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const last = attempt === attempts;
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": "aura-bench-fetch-corpus" },
+      });
+      if (res.ok) return Buffer.from(await res.arrayBuffer());
+
+      const retryable = res.status === 429 || res.status >= 500;
+      console.error(
+        `  ${url} -> HTTP ${res.status} ${res.statusText}${retryable && !last ? " (retrying)" : ""}`,
+      );
+      if (!retryable || last) return null;
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const backoff =
+        Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : Math.min(30_000, 2_000 * 2 ** (attempt - 1));
+      await sleep(backoff + Math.floor(Math.random() * 1_000));
+    } catch (error) {
+      console.error(
+        `  ${url} -> ${String(error).slice(0, 200)}${last ? "" : " (retrying)"}`,
+      );
+      if (last) return null;
+      await sleep(
+        Math.min(30_000, 2_000 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 1_000),
+      );
     }
-    return Buffer.from(await res.arrayBuffer());
-  } catch (error) {
-    console.error(`  ${url} -> ${String(error).slice(0, 200)}`);
-    return null;
   }
+  return null;
 }
 
 async function fetchOne(name: string, entry: ManifestEntry): Promise<void> {

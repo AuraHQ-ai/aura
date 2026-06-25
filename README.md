@@ -82,7 +82,7 @@ channels:history, channels:read, groups:history, im:history, mpim:history,
 reactions:read, search:read, users:read
 ```
 
-**Event subscriptions:** `app_mention`, `message.im`
+**Event subscriptions:** `app_mention`, `message.im`, `message.mpim`
 
 Set `SLACK_BOT_TOKEN`, `SLACK_USER_TOKEN`, `SLACK_SIGNING_SECRET`, and `AURA_BOT_USER_ID`.
 
@@ -132,16 +132,16 @@ The harness in `apps/api/bench/` makes memory changes falsifiable. It replays ve
 <!-- BENCH_SNAPSHOT:START -->
 <!-- Generated from apps/api/bench/history.jsonl — do not edit by hand. -->
 
-Current codebase (as of `f877bc5`, scope `longmemeval/medium`): **QA 72%** · **recall@15 92%** across 180 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
+Current codebase (as of `c94fcae`, scope `longmemeval/medium`): **QA 74%** · **recall@15 92%** across 180 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
 
 | dataset | category | QA acc | recall@15 | n |
 |---|---|---:|---:|---:|
-| longmemeval | knowledge-update | 68% | 93% | 30 |
-| longmemeval | multi-session | 72% | 92% | 30 |
-| longmemeval | single-session-assistant | 80% | 83% | 30 |
-| longmemeval | single-session-preference | 53% | 100% | 30 |
-| longmemeval | single-session-user | 87% | 100% | 30 |
-| longmemeval | temporal-reasoning | 70% | 85% | 30 |
+| longmemeval | knowledge-update | 77% | 95% | 30 |
+| longmemeval | multi-session | 60% | 93% | 30 |
+| longmemeval | single-session-assistant | 83% | 90% | 30 |
+| longmemeval | single-session-preference | 50% | 93% | 30 |
+| longmemeval | single-session-user | 100% | 93% | 30 |
+| longmemeval | temporal-reasoning | 77% | 85% | 30 |
 
 <!-- BENCH_SNAPSHOT:END -->
 

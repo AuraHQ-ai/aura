@@ -16,9 +16,20 @@
     "bench:report": "pnpm --filter aura-api bench:report"
   },
   "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ],
     "overrides": {
       "e2b>chalk": "4.1.2",
       "@types/react": "19.2.14"
+    },
+    "packageExtensions": {
+      "playwright-core": {
+        "dependencies": {
+          "chromium-bidi": "^7.3.1"
+        }
+      }
     }
   },
   "devDependencies": {

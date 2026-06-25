@@ -205,6 +205,10 @@ export function buildDetachedScript(id: string, command: string, startedAtEpoch:
 
   return [
     `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)}`,
+    // Prune stale bookkeeping from prior commands so this dir can't accumulate tens of
+    // thousands of files and exhaust disk/inodes over the sandbox's lifetime. 12h is far
+    // beyond the longest detached job (max 750s) plus any polling/webhook window.
+    `find ${shellQuote(BACKGROUND_COMMAND_DIR)} -maxdepth 1 -type f -mmin +720 -delete 2>/dev/null || true`,
     `rm -f ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)} ${shellQuote(pidPath)} ${shellQuote(statusPath)} ${shellQuote(startedAtPath)} ${shellQuote(payloadPath)} ${shellQuote(signaturePath)}`,
     `printf '%s\\n' ${shellQuote(String(startedAtEpoch))} > ${shellQuote(startedAtPath)}`,
     `nohup bash -c ${shellQuote(command)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
@@ -275,7 +279,36 @@ async function readDetachedPid(sandbox: Sandbox, id: string, envs: CommandEnv): 
     }
   }
 
-  throw new Error(`Detached command ${id} did not write a pid file`);
+  // A missing pid file almost always means the launcher couldn't even write its
+  // bookkeeping (most often a full root filesystem). Surface the *actual* OS
+  // error string -- e.g. "No space left on device" -- instead of an opaque
+  // message, by probing a real write to the background dir and reading disk
+  // state. The probe captures stderr even when the disk is full (output goes to
+  // the pipe, not a file), so it generalizes to any launch failure.
+  const probePath = `${BACKGROUND_COMMAND_DIR}/${id}.probe`;
+  const diagnosticCommand = [
+    `mkdir -p ${shellQuote(BACKGROUND_COMMAND_DIR)} 2>/dev/null`,
+    `write_err=$({ : > ${shellQuote(probePath)}; } 2>&1)`,
+    `rm -f ${shellQuote(probePath)} 2>/dev/null`,
+    `disk=$(df -kP / | awk 'NR==2 {print $5" used, "$4" KiB free"}')`,
+    `printf '%s\\n%s\\n' "$write_err" "$disk"`,
+  ].join("; ");
+
+  let launchError = "";
+  let diskInfo = "";
+  try {
+    const diag = await sandbox.commands.run(diagnosticCommand, { timeoutMs: 4_000, envs });
+    const lines = (diag.stdout || "").split("\n");
+    launchError = (lines[0] || "").trim();
+    diskInfo = lines.slice(1).join(" ").trim();
+  } catch {
+    // best-effort diagnostics only
+  }
+
+  const parts = [`Detached command ${id} did not write a pid file`];
+  if (launchError) parts.push(`launch error: ${launchError}`);
+  if (diskInfo) parts.push(`sandbox root disk: ${diskInfo}`);
+  throw new Error(parts.join("; "));
 }
 
 async function startDetachedCommand(options: {

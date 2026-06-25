@@ -18,6 +18,7 @@ import { Route as ResourcesIndexRouteImport } from "./routes/resources/index"
 import { Route as NotesIndexRouteImport } from "./routes/notes/index"
 import { Route as MemoriesIndexRouteImport } from "./routes/memories/index"
 import { Route as JobsIndexRouteImport } from "./routes/jobs/index"
+import { Route as EvalsIndexRouteImport } from "./routes/evals/index"
 import { Route as ErrorsIndexRouteImport } from "./routes/errors/index"
 import { Route as CredentialsIndexRouteImport } from "./routes/credentials/index"
 import { Route as ConversationsIndexRouteImport } from "./routes/conversations/index"
@@ -29,6 +30,7 @@ import { Route as NotesIdRouteImport } from "./routes/notes/$id"
 import { Route as MemoriesEntitiesRouteImport } from "./routes/memories/entities"
 import { Route as MemoriesIdRouteImport } from "./routes/memories/$id"
 import { Route as JobsIdRouteImport } from "./routes/jobs/$id"
+import { Route as EvalsIdRouteImport } from "./routes/evals/$id"
 import { Route as ErrorsIdRouteImport } from "./routes/errors/$id"
 import { Route as CredentialsIdRouteImport } from "./routes/credentials/$id"
 import { Route as ConversationsInvocationsRouteImport } from "./routes/conversations/invocations"
@@ -79,6 +81,11 @@ const MemoriesIndexRoute = MemoriesIndexRouteImport.update({
 const JobsIndexRoute = JobsIndexRouteImport.update({
   id: "/jobs/",
   path: "/jobs/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvalsIndexRoute = EvalsIndexRouteImport.update({
+  id: "/evals/",
+  path: "/evals/",
   getParentRoute: () => rootRouteImport,
 } as any)
 const ErrorsIndexRoute = ErrorsIndexRouteImport.update({
@@ -136,6 +143,11 @@ const JobsIdRoute = JobsIdRouteImport.update({
   path: "/jobs/$id",
   getParentRoute: () => rootRouteImport,
 } as any)
+const EvalsIdRoute = EvalsIdRouteImport.update({
+  id: "/evals/$id",
+  path: "/evals/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ErrorsIdRoute = ErrorsIdRouteImport.update({
   id: "/errors/$id",
   path: "/errors/$id",
@@ -177,6 +189,7 @@ export interface FileRoutesByFullPath {
   "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
+  "/evals/$id": typeof EvalsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
   "/memories/entities": typeof MemoriesEntitiesRoute
@@ -188,6 +201,7 @@ export interface FileRoutesByFullPath {
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
   "/errors/": typeof ErrorsIndexRoute
+  "/evals/": typeof EvalsIndexRoute
   "/jobs/": typeof JobsIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
@@ -205,6 +219,7 @@ export interface FileRoutesByTo {
   "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
+  "/evals/$id": typeof EvalsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
   "/memories/entities": typeof MemoriesEntitiesRoute
@@ -216,6 +231,7 @@ export interface FileRoutesByTo {
   "/conversations": typeof ConversationsIndexRoute
   "/credentials": typeof CredentialsIndexRoute
   "/errors": typeof ErrorsIndexRoute
+  "/evals": typeof EvalsIndexRoute
   "/jobs": typeof JobsIndexRoute
   "/memories": typeof MemoriesIndexRoute
   "/notes": typeof NotesIndexRoute
@@ -234,6 +250,7 @@ export interface FileRoutesById {
   "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
+  "/evals/$id": typeof EvalsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
   "/memories/entities": typeof MemoriesEntitiesRoute
@@ -245,6 +262,7 @@ export interface FileRoutesById {
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
   "/errors/": typeof ErrorsIndexRoute
+  "/evals/": typeof EvalsIndexRoute
   "/jobs/": typeof JobsIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
@@ -264,6 +282,7 @@ export interface FileRouteTypes {
     | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
+    | "/evals/$id"
     | "/jobs/$id"
     | "/memories/$id"
     | "/memories/entities"
@@ -275,6 +294,7 @@ export interface FileRouteTypes {
     | "/conversations/"
     | "/credentials/"
     | "/errors/"
+    | "/evals/"
     | "/jobs/"
     | "/memories/"
     | "/notes/"
@@ -292,6 +312,7 @@ export interface FileRouteTypes {
     | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
+    | "/evals/$id"
     | "/jobs/$id"
     | "/memories/$id"
     | "/memories/entities"
@@ -303,6 +324,7 @@ export interface FileRouteTypes {
     | "/conversations"
     | "/credentials"
     | "/errors"
+    | "/evals"
     | "/jobs"
     | "/memories"
     | "/notes"
@@ -320,6 +342,7 @@ export interface FileRouteTypes {
     | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
+    | "/evals/$id"
     | "/jobs/$id"
     | "/memories/$id"
     | "/memories/entities"
@@ -331,6 +354,7 @@ export interface FileRouteTypes {
     | "/conversations/"
     | "/credentials/"
     | "/errors/"
+    | "/evals/"
     | "/jobs/"
     | "/memories/"
     | "/notes/"
@@ -349,6 +373,7 @@ export interface RootRouteChildren {
   ConversationsInvocationsRoute: typeof ConversationsInvocationsRoute
   CredentialsIdRoute: typeof CredentialsIdRoute
   ErrorsIdRoute: typeof ErrorsIdRoute
+  EvalsIdRoute: typeof EvalsIdRoute
   JobsIdRoute: typeof JobsIdRoute
   MemoriesIdRoute: typeof MemoriesIdRoute
   MemoriesEntitiesRoute: typeof MemoriesEntitiesRoute
@@ -360,6 +385,7 @@ export interface RootRouteChildren {
   ConversationsIndexRoute: typeof ConversationsIndexRoute
   CredentialsIndexRoute: typeof CredentialsIndexRoute
   ErrorsIndexRoute: typeof ErrorsIndexRoute
+  EvalsIndexRoute: typeof EvalsIndexRoute
   JobsIndexRoute: typeof JobsIndexRoute
   MemoriesIndexRoute: typeof MemoriesIndexRoute
   NotesIndexRoute: typeof NotesIndexRoute
@@ -433,6 +459,13 @@ declare module "@tanstack/react-router" {
       path: "/jobs"
       fullPath: "/jobs/"
       preLoaderRoute: typeof JobsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/evals/": {
+      id: "/evals/"
+      path: "/evals"
+      fullPath: "/evals/"
+      preLoaderRoute: typeof EvalsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/errors/": {
@@ -512,6 +545,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof JobsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/evals/$id": {
+      id: "/evals/$id"
+      path: "/evals/$id"
+      fullPath: "/evals/$id"
+      preLoaderRoute: typeof EvalsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/errors/$id": {
       id: "/errors/$id"
       path: "/errors/$id"
@@ -565,6 +605,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConversationsInvocationsRoute: ConversationsInvocationsRoute,
   CredentialsIdRoute: CredentialsIdRoute,
   ErrorsIdRoute: ErrorsIdRoute,
+  EvalsIdRoute: EvalsIdRoute,
   JobsIdRoute: JobsIdRoute,
   MemoriesIdRoute: MemoriesIdRoute,
   MemoriesEntitiesRoute: MemoriesEntitiesRoute,
@@ -576,6 +617,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConversationsIndexRoute: ConversationsIndexRoute,
   CredentialsIndexRoute: CredentialsIndexRoute,
   ErrorsIndexRoute: ErrorsIndexRoute,
+  EvalsIndexRoute: EvalsIndexRoute,
   JobsIndexRoute: JobsIndexRoute,
   MemoriesIndexRoute: MemoriesIndexRoute,
   NotesIndexRoute: NotesIndexRoute,

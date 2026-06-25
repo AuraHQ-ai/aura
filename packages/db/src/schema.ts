@@ -26,6 +26,7 @@ import { z } from "zod";
 
 export const channelTypeEnum = pgEnum("channel_type", [
   "dm",
+  "mpim",
   "public_channel",
   "private_channel",
   "dashboard",
@@ -852,6 +853,51 @@ export const conversationParts = pgTable(
   ],
 );
 
+// ── Dashboard Chat Runs (workflow run ↔ thread mapping) ─────────────────────
+// One row per dashboard chat turn executed as a durable workflow run. The
+// thread↔run mapping is server-anchored so any browser session can reconnect
+// to an in-flight generation. `status` mirrors the workflow run state and is
+// finalized by the workflow itself; the workflow backend stays the source of
+// truth for rows still marked "running".
+
+export const dashboardChatRuns = pgTable(
+  "dashboard_chat_runs",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    threadId: text("thread_id").notNull(),
+    runId: text("run_id").notNull(),
+    userId: text("user_id").notNull(),
+    /**
+     * The user message that started this turn. The conversation trace is only
+     * persisted when the turn completes, so this is what lets a fresh browser
+     * session render the in-flight user bubble (and a thread preview) while
+     * the run is still generating.
+     */
+    userMessage: text("user_message"),
+    status: text("status").notNull().default("running"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    completedAt: timestamptz("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("dashboard_chat_runs_workspace_run_idx").on(
+      table.workspaceId,
+      table.runId,
+    ),
+    index("dashboard_chat_runs_thread_idx").on(
+      table.workspaceId,
+      table.threadId,
+      table.createdAt,
+    ),
+    check(
+      "dashboard_chat_runs_status_check",
+      sql`${table.status} IN ('running', 'completed', 'failed', 'cancelled')`,
+    ),
+  ],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(
@@ -1331,11 +1377,106 @@ export const benchRuns = pgTable(
 
 export type BenchRun = typeof benchRuns.$inferSelect;
 export type NewBenchRun = typeof benchRuns.$inferInsert;
+
+// ── Eval Response Scores (production observability funnel) ──────────────────
+//
+// One row per atomic assistant response judged by the overnight LLM batch
+// judge (Machine A). Three grains, three jobs:
+//   - SCORING grain: message_id / part_id — the response being judged.
+//   - ATTRIBUTION grain: trace_id — native joins to user/channel/model/cost ONLY.
+//   - FILTER grain: thread_ts — bare text for UI grouping. NO FK, owns no verdict.
+// Thread/intent rollups are derived (GROUP BY), never materialized.
+
+export const evalVerdicts = ["fulfilled", "partial", "failed"] as const;
+export type EvalVerdict = (typeof evalVerdicts)[number];
+
+export const evalFailureClasses = [
+  "missing_cred",
+  "bad_memory",
+  "bad_harness",
+  "missing_tool",
+  "reasoning",
+  "latency",
+  "none",
+] as const;
+export type EvalFailureClass = (typeof evalFailureClasses)[number];
+
+export interface EvalRubric {
+  must_do?: string[];
+  must_not_do?: string[];
+}
+
+export const evalResponseScores = pgTable(
+  "eval_response_scores",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    /** SCORING grain: the atomic assistant response being judged. */
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => conversationMessages.id, { onDelete: "cascade" }),
+    /** The exact text part judged (echoed back by the judge as [R:part_id]). */
+    partId: uuid("part_id")
+      .notNull()
+      .references(() => conversationParts.id, { onDelete: "cascade" }),
+    /** ATTRIBUTION grain: joins to user/channel/model/cost ONLY. Owns no verdict. */
+    traceId: uuid("trace_id")
+      .notNull()
+      .references(() => conversationTraces.id, { onDelete: "cascade" }),
+    /** FILTER grain: UI grouping only. A Slack string, not a relation — NO FK. */
+    threadTs: text("thread_ts"),
+    /** Judge attributes the response to the nearest open user ask in the window. */
+    servingIntent: text("serving_intent"),
+    /** True when a hedge in this turn was resolved later within the window. */
+    resolvedInWindow: boolean("resolved_in_window").notNull().default(false),
+    /** Null when scorable=false (acks, clarifying questions, tool-relay turns). */
+    verdict: text("verdict").$type<EvalVerdict | null>(),
+    scorable: boolean("scorable").notNull(),
+    failureClass: text("failure_class")
+      .$type<EvalFailureClass>()
+      .notNull()
+      .default("none"),
+    note: text("note"),
+    /** Human-authored during adjudication. */
+    goldAnswer: text("gold_answer"),
+    rubric: jsonb("rubric").$type<EvalRubric | null>(),
+    /** Set on a SPECIFIC failed response during human ratification, never "a thread". */
+    ratifiedBy: text("ratified_by"),
+    judgeModel: text("judge_model").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("eval_response_scores_workspace_message_idx").on(
+      table.workspaceId,
+      table.messageId,
+    ),
+    index("eval_response_scores_part_idx").on(table.partId),
+    index("eval_response_scores_trace_idx").on(table.traceId),
+    index("eval_response_scores_thread_ts_idx").on(table.threadTs),
+    index("eval_response_scores_verdict_idx").on(table.verdict, table.failureClass),
+    index("eval_response_scores_created_at_idx").on(table.createdAt),
+    check(
+      "ers_verdict_check",
+      sql`${table.verdict} IS NULL OR ${table.verdict} IN ('fulfilled', 'partial', 'failed')`,
+    ),
+    check(
+      "ers_failure_class_check",
+      sql`${table.failureClass} IN ('missing_cred', 'bad_memory', 'bad_harness', 'missing_tool', 'reasoning', 'latency', 'none')`,
+    ),
+  ],
+);
+
+export type EvalResponseScore = typeof evalResponseScores.$inferSelect;
+export type NewEvalResponseScore = typeof evalResponseScores.$inferInsert;
 export type ConversationTrace = typeof conversationTraces.$inferSelect;
 export type NewConversationTrace = typeof conversationTraces.$inferInsert;
 export type ConversationMessage = typeof conversationMessages.$inferSelect;
 export type NewConversationMessage = typeof conversationMessages.$inferInsert;
 export type ConversationPart = typeof conversationParts.$inferSelect;
 export type NewConversationPart = typeof conversationParts.$inferInsert;
+export type DashboardChatRun = typeof dashboardChatRuns.$inferSelect;
+export type NewDashboardChatRun = typeof dashboardChatRuns.$inferInsert;
 export type ModelPricing = typeof modelPricing.$inferSelect;
 export type NewModelPricing = typeof modelPricing.$inferInsert;

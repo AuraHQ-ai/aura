@@ -157,7 +157,7 @@ export function defineTool<TInput, TOutput>(config: {
             triggerType: ctx.triggerType,
             triggeredBy: ctx.triggeredBy,
             jobId: ctx.jobId ?? null,
-            credentialName: (input as any)?.credential_name ?? null,
+            credentialName: null,
             status: "executed",
           })
           .returning({ id: actionLog.id });

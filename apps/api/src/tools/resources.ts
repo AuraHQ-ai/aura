@@ -9,6 +9,7 @@ import type { ScheduleContext } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { tavily } from "@tavily/core";
 import { BROWSER_UA, isPrivateUrl } from "../lib/ssrf.js";
 import { defineTool } from "../lib/tool.js";
@@ -209,6 +210,7 @@ async function summarizeResource(input: {
   const { text } = await generateText({
     model,
     maxOutputTokens: 320,
+    experimental_telemetry: aiTelemetry("resource-summary"),
     prompt: `Summarize this resource in ~200 words for fast retrieval.
 
 Focus on:
