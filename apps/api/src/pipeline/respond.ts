@@ -1095,7 +1095,7 @@ export async function generateResponse(
         pendingToolCount: pendingToolInputs.size,
         thresholdMs: LONG_TOOL_SPLIT_MS,
       });
-      if (!await splitToNewStream("long_tool") && streamingFailed) {
+      if (!(await splitToNewStream("long_tool")) && streamingFailed) {
         fallbackStartIdx = accumulatedText.length;
       }
     } finally {
@@ -1132,7 +1132,7 @@ export async function generateResponse(
       pendingToolCount: pendingToolInputs.size,
       toolCallCount: toolCallRecords.length,
     });
-    if (!await splitToNewStream("stream_age") && streamingFailed) {
+    if (!(await splitToNewStream("stream_age")) && streamingFailed) {
       fallbackStartIdx = accumulatedText.length;
     }
   }
@@ -1196,7 +1196,7 @@ export async function generateResponse(
       latestResult = result;
       stepsPromises.push(result.steps);
 
-      for await (const chunk of result.fullStream) {
+      for await (const chunk of result.stream) {
         resetTimer();
 
         switch (chunk.type) {
@@ -1363,7 +1363,7 @@ export async function generateResponse(
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
-            if (!await splitToNewStream() && streamingFailed) {
+            if (!(await splitToNewStream()) && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
             }
           }
@@ -1410,7 +1410,7 @@ export async function generateResponse(
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
-            if (!await splitToNewStream() && streamingFailed) {
+            if (!(await splitToNewStream()) && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
             }
           }
@@ -1876,14 +1876,14 @@ export async function generateResponse(
         );
         const retryResult = streamText({
           model: retryModel,
-          system: retrySystemMessages,
+          instructions: retrySystemMessages,
           prompt: retryPrompt,
           abortSignal: retryAbortController.signal,
-          experimental_telemetry: aiTelemetry("slack-chat-retry"),
+          telemetry: aiTelemetry("slack-chat-retry"),
         });
         let retryText = "";
 
-        for await (const chunk of retryResult.fullStream) {
+        for await (const chunk of retryResult.stream) {
           clearTimeout(retryInactivityTimer);
           retryInactivityTimer = setTimeout(() => {
             logger.warn("LLM retry inactivity timeout (180s), aborting");

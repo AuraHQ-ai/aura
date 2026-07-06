@@ -43,7 +43,7 @@ export async function embedText(text: string): Promise<number[]> {
     const result = await embed({
       model,
       value: text,
-      experimental_telemetry: aiTelemetry("embed-text"),
+      telemetry: aiTelemetry("embed-text"),
     });
     const validated = validateEmbedding(
       result.embedding,
@@ -78,7 +78,7 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
     const result = await embedMany({
       model,
       values: texts,
-      experimental_telemetry: aiTelemetry("embed-texts", { count: texts.length }),
+      telemetry: aiTelemetry("embed-texts", { count: texts.length }),
     });
 
     if (!result.embeddings || !Array.isArray(result.embeddings)) {

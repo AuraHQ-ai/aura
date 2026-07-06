@@ -170,8 +170,8 @@ export async function judgeWindow(
         generate({
           model,
           schema: judgeWindowSchema,
-          experimental_telemetry: aiTelemetry("eval-response-judge"),
-          system: JUDGE_SYSTEM_PROMPT,
+          telemetry: aiTelemetry("eval-response-judge"),
+          instructions: JUDGE_SYSTEM_PROMPT,
           prompt: `Score the marked assistant responses in this transcript window.\n\nThe responses to score are: ${window.ownedPartIds.map((id) => `[R:${id}]`).join(", ")}\n\n<transcript>\n${transcript}\n</transcript>`,
           temperature: 0,
           abortSignal: abortController.signal,

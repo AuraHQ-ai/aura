@@ -246,12 +246,9 @@ async function normalizeUserReferences(
       const mention = ref.match(/^<@([UW][A-Z0-9]+)>$/);
       if (mention) return mention[1];
       const lower = ref.toLowerCase().trim().replace(/^@/, "");
-      return (
-        directory[lower] ??
-        directory[lower.replace(/_/g, " ")] ??
-        directory[lower.replace(/\s+/g, "_")] ??
-        ref
-      );
+      return (directory[lower] ??
+      directory[lower.replace(/_/g, " ")] ??
+      directory[lower.replace(/\s+/g, "_")] ?? ref);
     });
   }
 
@@ -886,9 +883,9 @@ async function runReconciliationCore(
   const { output: result, usage } = await generateText({
     model,
     output: Output.object({ schema: reconciliationSchema }),
-    system: systemPrompt,
+    instructions: systemPrompt,
     prompt: threadContext,
-    experimental_telemetry: aiTelemetry("memory-reconcile"),
+    telemetry: aiTelemetry("memory-reconcile"),
   });
   context.onUsage?.(
     context.extractionModelId ?? (model as any)?.modelId ?? "extraction",
@@ -1044,9 +1041,9 @@ async function detectContradictions(
       const { object, usage } = await generateObject({
         model,
         schema: contradictionResultSchema,
-        system: CONTRADICTION_PROMPT,
+        instructions: CONTRADICTION_PROMPT,
         prompt: `NEW MEMORY: ${newMem.content}\n\nEXISTING CANDIDATE MEMORIES:\n${candidateList}`,
-        experimental_telemetry: aiTelemetry("memory-contradiction"),
+        telemetry: aiTelemetry("memory-contradiction"),
         temperature: 0,
       });
       onUsage?.(modelId ?? (model as any)?.modelId ?? "extraction", usage);
@@ -1293,9 +1290,9 @@ async function extractSingleExchange(
   const { output: object, usage } = await generateText({
     model,
     output: Output.object({ schema: extractedMemoriesSchema }),
-    system: EXTRACTION_PROMPT,
+    instructions: EXTRACTION_PROMPT,
     prompt: conversationText,
-    experimental_telemetry: aiTelemetry("memory-extract"),
+    telemetry: aiTelemetry("memory-extract"),
   });
   context.onUsage?.(
     context.extractionModelId ?? (model as any)?.modelId ?? "extraction",

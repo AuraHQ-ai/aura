@@ -124,7 +124,7 @@ async function toContentPart(
   name: string,
 ): Promise<FileContentPart> {
   if (IMAGE_MIME_TYPES.has(mimeType)) {
-    return { type: "image", image: data, mediaType: mimeType };
+    return { type: "file", data, mediaType: mimeType, filename: name };
   }
 
   if (SPREADSHEET_MIME_TYPES.has(mimeType)) {

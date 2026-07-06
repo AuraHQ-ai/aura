@@ -3,7 +3,7 @@
  *
  * Wires the Vercel AI SDK's built-in OpenTelemetry spans into Langfuse via the
  * `LangfuseSpanProcessor`. The AI SDK emits GenAI spans whenever a call passes
- * `experimental_telemetry: { isEnabled: true }`; the processor's default smart
+ * `telemetry: { isEnabled: true }`; the processor's default smart
  * filter only exports Langfuse/GenAI/LLM spans, so unrelated HTTP/DB spans never
  * reach Langfuse (and never count toward billable units).
  *
@@ -227,7 +227,7 @@ export function isLangfuseEnabled(): boolean {
 }
 
 /**
- * `experimental_telemetry` config for an AI SDK call (`streamText`,
+ * `telemetry` config for an AI SDK call (`streamText`,
  * `generateText`, `generateObject`, `embed`, the `Agent`/`ToolLoopAgent`
  * constructor, …). Pass a descriptive `functionId` so generations are findable
  * and filterable in Langfuse. Returns `{ isEnabled: false }` when tracing is
