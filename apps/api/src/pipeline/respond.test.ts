@@ -92,7 +92,7 @@ function createSlackClient(streamers: Array<{ append: any; stop: any }>) {
 }
 
 function createAgentStreamResult(
-  fullStream: AsyncIterable<any>,
+  stream: AsyncIterable<any>,
   options: {
     text?: string;
     finishReason?: string;
@@ -102,7 +102,7 @@ function createAgentStreamResult(
   } = {},
 ) {
   return {
-    fullStream,
+    stream,
     usage: Promise.resolve(options.usage ?? { inputTokens: 1, outputTokens: 1 }),
     finishReason: Promise.resolve(options.finishReason ?? "stop"),
     text: Promise.resolve(options.text ?? ""),
@@ -135,10 +135,10 @@ function mockAgentStreams(results: any[]) {
 }
 
 function mockAgentStream(
-  fullStream: AsyncIterable<any>,
+  stream: AsyncIterable<any>,
   options: Parameters<typeof createAgentStreamResult>[1] = {},
 ) {
-  return mockAgentStreams([createAgentStreamResult(fullStream, options)]);
+  return mockAgentStreams([createAgentStreamResult(stream, options)]);
 }
 
 function baseOptions(slackClient: any) {
@@ -1047,7 +1047,7 @@ describe("generateResponse Slack stream handling", () => {
     agentMocks.createInteractiveAgent.mockResolvedValue({
       agent: {
         stream: vi.fn().mockImplementation(async (options: { abortSignal: AbortSignal }) => ({
-          fullStream: (async function* () {
+          stream: (async function* () {
             await new Promise<void>((_resolve, reject) => {
               if (options.abortSignal.aborted) {
                 reject(abortError);

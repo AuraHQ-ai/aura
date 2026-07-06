@@ -63,7 +63,7 @@ export function selectDmThreadTitle(result: DmThreadTitleResult): string | null 
 }
 
 async function generateStructuredTitle(params: {
-  system: string;
+  instructions: string;
   prompt: string;
 }): Promise<string | null> {
   const [{ generateObject }, { getFastModel }] = await Promise.all([
@@ -75,10 +75,10 @@ async function generateStructuredTitle(params: {
   const { object } = await generateObject({
     model: fastModel,
     schema: dmThreadTitleSchema,
-    system: params.system,
+    instructions: params.instructions,
     prompt: params.prompt,
     temperature: 0,
-    experimental_telemetry: aiTelemetry("dm-title"),
+    telemetry: aiTelemetry("dm-title"),
   });
 
   return selectDmThreadTitle(object);
@@ -90,7 +90,7 @@ export async function generateInitialDmThreadTitle(params: {
 }): Promise<string | null> {
   const { userMessage, assistantResponse } = params;
   return generateStructuredTitle({
-    system: INITIAL_TITLE_SYSTEM,
+    instructions: INITIAL_TITLE_SYSTEM,
     prompt: `User message:
 ${userMessage.slice(0, 600)}
 
@@ -136,7 +136,7 @@ export async function generateUpdatedDmThreadTitle(params: {
   });
 
   return generateStructuredTitle({
-    system: UPDATE_TITLE_SYSTEM,
+    instructions: UPDATE_TITLE_SYSTEM,
     prompt: `Conversation:
 ${messagesContext}
 

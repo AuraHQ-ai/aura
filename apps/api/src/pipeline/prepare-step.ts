@@ -287,7 +287,7 @@ export function createPrepareStep(opts: {
 
     return {
       messages: prunedMessages,
-      ...(systemOverride && { system: systemOverride }),
+      ...(systemOverride && { instructions: systemOverride }),
       ...(providerOptions && { providerOptions }),
       ...(modelOverride && { model: modelOverride }),
     };

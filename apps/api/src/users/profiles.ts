@@ -181,9 +181,9 @@ export async function updateProfileFromConversation(
       },
       () => generateText({
       model,
-      experimental_telemetry: aiTelemetry("profile-update"),
+      telemetry: aiTelemetry("profile-update"),
       output: Output.object({ schema: profileUpdateSchema }),
-      system: `You are analyzing a user's communication style and extracting facts about them. Based on the conversation below and their existing profile, provide an updated assessment.
+      instructions: `You are analyzing a user's communication style and extracting facts about them. Based on the conversation below and their existing profile, provide an updated assessment.
 
 Existing communication style: ${JSON.stringify(existingStyle)}
 Existing known facts: ${JSON.stringify(existingFacts)}
@@ -288,9 +288,9 @@ async function consolidateCategory(
   const { object } = await generateObject({
     model,
     schema: consolidatedSchema,
-    system: `You are consolidating a user profile's "${category}" list. Merge semantically similar items, remove noise and overly granular entries, and keep genuinely distinct items. Preserve the most important/recent items. Return at most ${cap} items.`,
+    instructions: `You are consolidating a user profile's "${category}" list. Merge semantically similar items, remove noise and overly granular entries, and keep genuinely distinct items. Preserve the most important/recent items. Return at most ${cap} items.`,
     prompt: `Consolidate these ${items.length} items:\n\n${items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`,
-    experimental_telemetry: aiTelemetry("profile-consolidate"),
+    telemetry: aiTelemetry("profile-consolidate"),
   });
 
   return object.consolidated.slice(0, cap);
