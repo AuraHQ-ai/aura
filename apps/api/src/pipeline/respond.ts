@@ -6,7 +6,6 @@ import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { formatForSlack, prettifyAndWrapTable } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
-import { CHART_BLOCK_KEY } from "../tools/chart.js";
 import {
   safePostMessage,
   isChannelTypeNotSupported,
@@ -310,10 +309,6 @@ function toBlocksChunk(blocks: Record<string, any>[]): SlackStreamChunk {
     type: "blocks",
     blocks,
   };
-}
-
-function fallbackTextForNativeBlock(block: Record<string, any>) {
-  return block.type === "data_visualization" ? "Here's a chart:" : "Here's a table:";
 }
 
 function asAppendPayload(payload: {
@@ -739,7 +734,7 @@ export async function generateResponse(
   let currentStreamLength = 0;
   let fallbackStartIdx = 0;
   let streamedRawIdx = 0;
-  let pendingNativeBlock: Record<string, any> | null = null;
+  let pendingTableBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
@@ -1308,26 +1303,18 @@ export async function generateResponse(
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
 
-          // Capture native Slack blocks from draw_table/draw_chart tools.
+          // Capture native Slack table block from draw_table tool
           if (
             output && typeof output === "object" &&
             TABLE_BLOCK_KEY in output && output[TABLE_BLOCK_KEY]
           ) {
-            pendingNativeBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
-          } else if (
-            output && typeof output === "object" &&
-            CHART_BLOCK_KEY in output && output[CHART_BLOCK_KEY]
-          ) {
-            pendingNativeBlock = output[CHART_BLOCK_KEY] as Record<string, any>;
-          }
-
-          if (pendingNativeBlock) {
+            pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
             if (!streamingFailed) {
-              const streamedNativeBlock = await tryStreamAppend(asAppendPayload({
-                chunks: [toBlocksChunk([pendingNativeBlock])],
+              const streamedTable = await tryStreamAppend(asAppendPayload({
+                chunks: [toBlocksChunk([pendingTableBlock])],
               }));
-              if (streamedNativeBlock) {
-                pendingNativeBlock = null;
+              if (streamedTable) {
+                pendingTableBlock = null;
               }
             }
           }
@@ -1597,8 +1584,8 @@ export async function generateResponse(
           expand: true,
         });
       }
-      if (pendingNativeBlock) {
-        blocks.push(pendingNativeBlock);
+      if (pendingTableBlock) {
+        blocks.push(pendingTableBlock);
       }
 
       blocks.push({
@@ -1668,7 +1655,7 @@ export async function generateResponse(
     } else {
       // Happy path: finalize the stream on Slack's side.
       // Attach tool I/O metadata (invisible to users) for follow-up context,
-      // and inject native table/chart blocks if present.
+      // and inject table blocks from draw_table if present.
       const feedbackBlock = {
         type: "context_actions",
         elements: [{
@@ -1681,7 +1668,7 @@ export async function generateResponse(
 
       const toolMeta = buildToolMetadata(toolCallRecords);
       const stopBlocks: any[] = [];
-      if (pendingNativeBlock) stopBlocks.push(pendingNativeBlock);
+      if (pendingTableBlock) stopBlocks.push(pendingTableBlock);
       stopBlocks.push(feedbackBlock);
       const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
@@ -1707,21 +1694,21 @@ export async function generateResponse(
           } catch {
             // Stream may already be finalized
           }
-          // Deliver the native block via chat.postMessage as a follow-up
+          // Deliver the table block via chat.postMessage as a follow-up
           // when the stream rejected it (e.g. MPIMs, some channel types).
-          if (pendingNativeBlock) {
+          if (pendingTableBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: fallbackTextForNativeBlock(pendingNativeBlock),
-                blocks: [pendingNativeBlock as any],
+                text: "Here's a table:",
+                blocks: [pendingTableBlock as any],
                 thread_ts: threadTs,
               });
-              pendingNativeBlock = null;
-            } catch (nativeBlockPostErr: any) {
-              logger.warn("Failed to post native block via chat.postMessage fallback", {
+              pendingTableBlock = null;
+            } catch (tablePostErr: any) {
+              logger.warn("Failed to post table block via chat.postMessage fallback", {
                 channelId,
-                error: nativeBlockPostErr?.message,
+                error: tablePostErr?.message,
               });
             }
           }
@@ -1738,19 +1725,19 @@ export async function generateResponse(
             context: { currentStreamLength },
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
-          if (pendingNativeBlock) {
+          if (pendingTableBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: fallbackTextForNativeBlock(pendingNativeBlock),
-                blocks: [pendingNativeBlock as any],
+                text: "Here's a table:",
+                blocks: [pendingTableBlock as any],
                 thread_ts: threadTs,
               });
-              pendingNativeBlock = null;
-            } catch (nativeBlockPostErr: any) {
-              logger.warn("Failed to post native block via chat.postMessage fallback", {
+              pendingTableBlock = null;
+            } catch (tablePostErr: any) {
+              logger.warn("Failed to post table block via chat.postMessage fallback", {
                 channelId,
-                error: nativeBlockPostErr?.message,
+                error: tablePostErr?.message,
               });
             }
           }
@@ -1760,19 +1747,19 @@ export async function generateResponse(
             channelId,
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
-          if (pendingNativeBlock) {
+          if (pendingTableBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: fallbackTextForNativeBlock(pendingNativeBlock),
-                blocks: [pendingNativeBlock as any],
+                text: "Here's a table:",
+                blocks: [pendingTableBlock as any],
                 thread_ts: threadTs,
               });
-              pendingNativeBlock = null;
-            } catch (nativeBlockPostErr: any) {
-              logger.warn("Failed to post native block via chat.postMessage fallback", {
+              pendingTableBlock = null;
+            } catch (tablePostErr: any) {
+              logger.warn("Failed to post table block via chat.postMessage fallback", {
                 channelId,
-                error: nativeBlockPostErr?.message,
+                error: tablePostErr?.message,
               });
             }
           }

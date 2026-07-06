@@ -54,10 +54,6 @@ vi.mock("../tools/table.js", () => ({
   TABLE_BLOCK_KEY: "__table_block",
 }));
 
-vi.mock("../tools/chart.js", () => ({
-  CHART_BLOCK_KEY: "__chart_block",
-}));
-
 vi.mock("./prepare-step.js", () => ({
   InvocationSupersededError: class InvocationSupersededError extends Error {
     invocationId = "test-invocation";
@@ -163,48 +159,6 @@ describe("generateResponse Slack stream handling", () => {
 
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it("streams native chart blocks returned by draw_chart inline mode", async () => {
-    const chartBlock = {
-      type: "data_visualization",
-      title: "Weekly Sales",
-      chart: {
-        type: "line",
-        series: [{
-          name: "Online",
-          data: [{ label: "Week 1", value: 12 }],
-        }],
-        axis_config: { categories: ["Week 1"] },
-      },
-    };
-    const streamer = {
-      append: vi.fn().mockResolvedValue(undefined),
-      stop: vi.fn().mockResolvedValue(undefined),
-    };
-    const slackClient = createSlackClient([streamer]);
-
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "draw_chart",
-        output: { ok: true, __chart_block: chartBlock },
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
-
-    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
-      raw: "Done.",
-      alreadyPosted: true,
-    });
-
-    expect(streamer.append).toHaveBeenCalledWith({
-      chunks: [{
-        type: "blocks",
-        blocks: [chartBlock],
-      }],
-    });
   });
 
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {

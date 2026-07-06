@@ -8,7 +8,6 @@ import { createCoreTools } from "./core.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
 import { createTableTools } from "./table.js";
-import { createChartTools } from "./chart.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createEmailSyncTools } from "./email-sync.js";
@@ -3007,7 +3006,6 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     ...createJobTools(client, context),
     ...createEmailSyncTools(client, context),
     ...createTableTools(client, context),
-    ...createChartTools(client, context),
     ...createSubagentTools(client, context),
     ...createVoiceTools(client, context),
     ...createScratchpadTools(invocationId ?? crypto.randomUUID()),
