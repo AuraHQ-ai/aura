@@ -1,10 +1,10 @@
 /**
  * Manual backfill driver for the eval response funnel.
  *
- * Runs the same forward walk as the overnight cron (oldest unscored thread
+ * Runs the same forward walk as the scheduled cron (oldest unscored thread
  * groups first), but loops batch after batch until the backlog is exhausted —
  * useful for the initial walk from corpus start (March 12) without waiting
- * for nightly cron invocations. Fully idempotent: safe to interrupt and
+ * for scheduled cron invocations. Fully idempotent: safe to interrupt and
  * re-run; already-scored responses are never re-judged.
  *
  * Usage:
