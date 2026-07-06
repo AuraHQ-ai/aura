@@ -21,7 +21,7 @@ import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importanc
 import { db } from "../db/client.js";
 import { users, memoryEntities } from "@aura/db/schema";
 import { inArray, eq } from "drizzle-orm";
-import type { Memory } from "@aura/db/schema";
+import type { Memory, NewMemory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
 import type { ThreadMessage } from "./store.js";
@@ -327,11 +327,6 @@ const extractedMemoriesSchema = z.object({
         .describe(
           "Who the fact originated from. Use 'assistant' ONLY for a concrete, grounded result or explicit recommendation Aura surfaced (backed by a tool result/computation), phrased with attribution ('Aura found...', 'Aura recommended...'). Use 'user' for everything the user (or a person in the thread) stated. Default 'user'.",
         ),
-      durable: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Set true only for event/open_thread memories that pass the 30-day durability test and should not auto-expire. Leave false for ordinary transient events/tasks."),
       entities: z
         .array(extractedEntitySchema)
         .optional()
@@ -388,8 +383,6 @@ POSITIVE examples -- keep these:
 - Role/capability facts: "Maria owns the mobile release process."
 - Explicit decisions: "The team decided to use Postgres instead of MongoDB."
 - Real incidents with lasting consequence: "Production went down on March 10 due to a migration bug."
-
-For rare event/open_thread memories that pass this 30-day test and should not auto-expire, set \`durable=true\`. Do not set \`durable=true\` for routine status, current-thread activity, or in-flight tasks.
 
 DO NOT save:
 - Things already in the agent's persistent notes or self-directive (those are always in context)
@@ -469,11 +462,6 @@ const createOperationSchema = z.object({
     .describe(
       "Who the fact originated from. Use 'assistant' ONLY for a concrete, grounded result or explicit recommendation Aura surfaced (backed by a tool result/computation), phrased with attribution ('Aura found...', 'Aura recommended...'). Use 'user' for everything a person in the thread stated. Default 'user'.",
     ),
-  durable: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe("Set true only for event/open_thread memories that pass the 30-day durability test and should not auto-expire. Leave false for ordinary transient events/tasks."),
   entities: z.array(extractedEntitySchema).optional().default([]),
 });
 
@@ -558,7 +546,7 @@ Aggressive scoring guidance:
 ## Durability Test for event/open_thread
 Before creating an **event** or **open_thread**, ask: "Will this still be true and useful in 30 days?" If it is just a transcript of what happened in this thread or current work in progress ("X is preparing Y", "Z requested a report", "A is drafting B"), do NOT create it.
 
-Keep durable positives: preferences, role/capability facts, explicit decisions, and real incidents/outcomes with lasting consequence. For rare event/open_thread create operations that pass this test and should not auto-expire, set \`durable=true\`. Do not set \`durable=true\` for routine status, current-thread activity, or in-flight tasks.
+Keep durable positives: preferences, role/capability facts, explicit decisions, and real incidents/outcomes with lasting consequence. Do not create routine status, current-thread activity, or in-flight tasks.
 
 ## Capturing what Aura surfaced (assistant-sourced facts)
 
@@ -1171,7 +1159,7 @@ async function processCreateOperations(
     return;
   }
 
-  const newMemories = survivingIndices.map((i) => {
+  const newMemories: NewMemory[] = survivingIndices.map((i) => {
     // Per-memory attribution: the LLM tags each memory with the role it
     // originated from. The trigger role (extractionSourceRole) is the fallback
     // when the LLM doesn't specify. Assistant-sourced facts get lower trust
@@ -1198,7 +1186,6 @@ async function processCreateOperations(
     importance: normalizedMemories[i].importance,
     relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
     extractionSourceRole: memorySourceRole,
-    ...(normalizedMemories[i].durable && { durable: true }),
     ...(confidence !== undefined && { confidence }),
     // Bench replay stamps corpus time on the full temporal triplet so as-of
     // retrieval can place the memory on the replayed timeline. validFrom is what
