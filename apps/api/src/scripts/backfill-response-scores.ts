@@ -62,13 +62,12 @@ let batch = 0;
 let totalGroups = 0;
 let totalWindows = 0;
 let totalScored = 0;
-let totalPrefiltered = 0;
 let totalOmitted = 0;
 let totalErrors = 0;
 
 while (batch < maxBatches) {
   batch++;
-  const groups = await findUnscoredGroups(groupsPerBatch, "asc");
+  const groups = await findUnscoredGroups(groupsPerBatch);
   if (groups.length === 0) {
     console.log("\nBacklog exhausted — every settled response is scored.");
     break;
@@ -95,11 +94,9 @@ while (batch < maxBatches) {
       totalGroups++;
       totalWindows += result.windowsJudged;
       totalScored += result.responsesScored;
-      totalPrefiltered += result.prefiltered;
       totalOmitted += result.omitted;
       console.log(
         `  ${label}: ${result.responsesScored} scored across ${result.windowsJudged} window(s)` +
-          (result.prefiltered > 0 ? ` (${result.prefiltered} prefiltered)` : "") +
           (result.omitted > 0 ? ` (${result.omitted} omitted)` : ""),
       );
     } catch (error) {
@@ -116,7 +113,6 @@ console.log(`Batches: ${batch}`);
 console.log(`Thread groups processed: ${totalGroups}`);
 console.log(`Windows judged: ${totalWindows}`);
 console.log(`Responses scored: ${totalScored}`);
-console.log(`Prefiltered non-scorable: ${totalPrefiltered}`);
 console.log(`Judge omissions (stored non-scorable): ${totalOmitted}`);
 console.log(`Group errors: ${totalErrors}`);
 

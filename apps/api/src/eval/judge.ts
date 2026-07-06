@@ -89,8 +89,6 @@ Per response, decide:
 
 4. **resolved_in_window** — true when THIS turn hedged or said it couldn't do something yet, but the intent visibly closed later within the window (e.g. the user supplied missing context two turns later and the work got done). An honest hedge that resolves is fulfilled/partial, NOT failed. A confident answer that sounds fine but is unsupported is failed even if nobody complained.
 
-Honest refusals and capability boundaries are not failures by themselves. When Aura accurately says it cannot do something because it lacks a visible credential, permission, tool, or capability, score the turn as fulfilled or partial with failure_class = missing_cred or missing_tool as appropriate. Use failed only for incorrect, silent, or confabulated behavior: claiming the task was done when it was not, refusing something the visible tools could do, or hiding the real limitation.
-
 5. **failure_class** (for partial/failed):
    - missing_cred — lacked credentials/permissions/access to a system it needed.
    - bad_memory — forgot, misremembered, or failed to recall context it had been given.
