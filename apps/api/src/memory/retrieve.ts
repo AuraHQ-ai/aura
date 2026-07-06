@@ -29,10 +29,10 @@ interface RetrievalOptions {
    * Bi-temporal "as-of" instant. When set, retrieval returns the memories that
    * were valid at this point in time — `valid_from <= asOf AND (valid_until IS
    * NULL OR valid_until > asOf)` — instead of the live `status IN
-   * ('current','disputed')` pool. A memory superseded/archived AFTER `asOf` is
-   * still included (it was current then); one closed out at or before `asOf` is
-   * excluded. Useful for replaying historical timelines without exposing future
-   * facts. Production passes nothing — live status filtering is unchanged.
+   * ('current','disputed') AND not expired` pool. A memory superseded/archived
+   * AFTER `asOf` is still included (it was current then); one closed out at or
+   * before `asOf` is excluded. Useful for replaying historical timelines
+   * without exposing future facts.
    */
   asOf?: Date;
   /**
@@ -306,10 +306,11 @@ async function fetchEntityMatchedMemories(
     const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
 
     // Historical as-of retrieval: temporal validity replaces the live status
-    // filter so callers can replay the memory state at a prior instant.
+    // filter so callers can replay the memory state at a prior instant. Live
+    // retrieval keeps current/disputed rows but excludes TTL-expired memories.
     const lifecycleFilter = asOf
       ? sql`AND m.valid_from <= ${asOf} AND (m.valid_until IS NULL OR m.valid_until > ${asOf})`
-      : sql`AND m.status IN ('current', 'disputed')`;
+      : sql`AND m.status IN ('current', 'disputed') AND (m.valid_until IS NULL OR m.valid_until > NOW())`;
 
     const entityIdList = sql.join(entityIds.map(id => sql`${id}`), sql`, `);
 
@@ -428,6 +429,11 @@ export function mergeRoundRobin(lists: Memory[][], limit: number): Memory[] {
   return merged;
 }
 
+function isTemporallyLive(memory: Memory, now: Date): boolean {
+  if (!memory.validUntil) return true;
+  return new Date(memory.validUntil).getTime() > now.getTime();
+}
+
 export function isMemoryVisibleToParticipant(params: {
   sourceChannelType: string | null | undefined;
   shareable: number | boolean | null | undefined;
@@ -529,10 +535,11 @@ async function retrieveSingleQuery(
       )`;
 
     // Historical as-of retrieval: the hybrid lane keys on temporal validity
-    // instead of live status. Production (no asOf) keeps the live status filter.
+    // instead of live status. Production (no asOf) keeps current/disputed rows
+    // while excluding TTL-expired memories.
     const statusFilter = asOf
       ? sql`${memories.validFrom} <= ${asOf} AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > ${asOf})`
-      : sql`${memories.status} IN ('current', 'disputed')`;
+      : sql`${memories.status} IN ('current', 'disputed') AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > NOW())`;
     // Multi-tenancy: scope the hybrid SQL lane to the workspace when one is
     // supplied. Without this, the vector + full-text RRF query would see
     // every workspace's memories. The entity-first lane already filters by
@@ -682,11 +689,16 @@ async function retrieveSingleQuery(
         entityBoost: entityBoostScore(m.id),
       }));
 
-    const results = hybridResults.map((r) => ({
+    let results = hybridResults.map((r) => ({
       ...r,
       entityBoost: entityBoostScore(r.memory.id),
     }));
     results.push(...entityOnlyMemories);
+
+    if (!asOf) {
+      const liveNow = new Date();
+      results = results.filter((r) => isTemporallyLive(r.memory, liveNow));
+    }
 
     if (entityMemories.length > 0) {
       logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
