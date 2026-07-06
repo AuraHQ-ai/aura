@@ -123,6 +123,8 @@ export function resolveProviderThinkingOptions(
     case "none":
       return {};
   }
+
+  return {};
 }
 
 export async function getProviderThinkingOptions(

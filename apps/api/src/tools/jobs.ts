@@ -156,10 +156,11 @@ export function createJobTools(
               .where(eq(jobs.name, name))
               .limit(1);
 
-            if (existing.length > 0 && existing[0].cronSchedule) {
-              recurring = existing[0].cronSchedule;
+            const inheritedRecurring = existing[0]?.cronSchedule;
+            if (inheritedRecurring) {
+              recurring = inheritedRecurring;
               const tz = timezone || existing[0].timezone || "UTC";
-              const interval = CronExpressionParser.parse(recurring, {
+              const interval = CronExpressionParser.parse(inheritedRecurring, {
                 currentDate: new Date(),
                 tz,
               });
