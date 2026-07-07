@@ -127,9 +127,9 @@ export async function disambiguateFuzzyMatches(
 
   const { output } = await generateText({
     model,
-    experimental_telemetry: aiTelemetry("entity-disambiguate"),
+    telemetry: aiTelemetry("entity-disambiguate"),
     output: Output.object({ schema: disambiguationSchema }),
-    system: `You are disambiguating entity names. Given a new entity name and a list of existing entities with similar names, determine if the new name refers to the SAME real-world entity as any candidate.
+    instructions: `You are disambiguating entity names. Given a new entity name and a list of existing entities with similar names, determine if the new name refers to the SAME real-world entity as any candidate.
 
 Return match_index (0-based) of the matching candidate, or null if none match.
 

@@ -156,8 +156,8 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
         generateObject({
           model,
           schema: supervisorDecisionSchema,
-          experimental_telemetry: aiTelemetry("supervisor-decision"),
-          system:
+          telemetry: aiTelemetry("supervisor-decision"),
+          instructions:
             "You are Aura's job execution supervisor. Make one conservative decision from the provided fixed enum. Return only the structured object. Do not call tools.",
           prompt: truncateForPrompt(`Review this completed job outcome and decide the next action.
 

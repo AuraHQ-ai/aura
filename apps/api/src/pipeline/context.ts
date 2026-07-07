@@ -337,10 +337,10 @@ async function llmShouldRespond(
       () =>
         generateText({
           model,
-          system: withCacheControl(systemPrompt),
+          instructions: withCacheControl(systemPrompt),
           prompt: userMessage,
           maxOutputTokens: 5,
-          experimental_telemetry: aiTelemetry("should-respond"),
+          telemetry: aiTelemetry("should-respond"),
         }),
     );
 

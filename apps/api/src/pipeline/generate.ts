@@ -1,7 +1,7 @@
 import {
   streamText,
   convertToModelMessages,
-  stepCountIs,
+  isStepCount,
   type LanguageModel,
   type ModelMessage,
   type UIMessage,
@@ -104,17 +104,17 @@ export function createAgenticStream(options: AgenticStreamOptions) {
     () =>
       streamText({
         model: options.model,
-        system,
+        instructions: system,
         messages: options.messages,
         tools: options.tools,
         prepareStep,
-        stopWhen: stepCountIs(options.maxSteps ?? 250),
-        experimental_telemetry: aiTelemetry("agent-chat", {
+        stopWhen: isStepCount(options.maxSteps ?? 250),
+        telemetry: aiTelemetry("agent-chat", {
           modelId: options.modelId,
           channelId: options.channelId ?? "unknown",
           ...(options.invocationId ? { invocationId: options.invocationId } : {}),
         }),
-        onFinish: options.onFinish
+        onEnd: options.onFinish
           ? (event) =>
               options.onFinish?.({
                 ...event,

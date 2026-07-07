@@ -115,7 +115,7 @@ export async function evaluateQA(
   try {
     const result = await generateText({
       model,
-      system: ANSWERER_SYSTEM,
+      instructions: ANSWERER_SYSTEM,
       prompt: userPrompt,
       temperature: 0,
     });

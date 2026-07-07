@@ -116,7 +116,7 @@ Entity types: person, company, project, product, channel, technology, concept, l
 
 Message: "${query}"`,
       temperature: 0,
-      experimental_telemetry: aiTelemetry("memory-query-entities"),
+      telemetry: aiTelemetry("memory-query-entities"),
     });
     onUsage?.((model as any)?.modelId ?? "retrieve", usage);
     return object.entities;
@@ -165,7 +165,7 @@ If, and only if, answering requires multiple independent facts, also return 2-4 
 
 Message: "${query}"`,
       temperature: 0,
-      experimental_telemetry: aiTelemetry("memory-plan-query"),
+      telemetry: aiTelemetry("memory-plan-query"),
     });
     onUsage?.((model as any)?.modelId ?? "retrieve", usage);
     const rewritten = object.rewritten?.trim() || query;
@@ -883,7 +883,7 @@ export async function retrieveConversations(
   const start = Date.now();
 
   try {
-    const queryEmbedding = precomputed ?? await embedText(query);
+    const queryEmbedding = precomputed ?? (await embedText(query));
     const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
     // Find the most similar messages
