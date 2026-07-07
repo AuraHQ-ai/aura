@@ -1689,18 +1689,27 @@ export async function generateResponse(
       try {
         await streamer.stop(stopArgs);
       } catch (stopErr: any) {
-        if (isInvalidBlocks(stopErr)) {
+        if (isInvalidBlocks(stopErr) || isInvalidArguments(stopErr)) {
+          // Slack rejects a block payload at stop with either `invalid_blocks`
+          // or `invalid_arguments` depending on which validation layer trips
+          // (same asymmetry as the append path). Both are recoverable: retry
+          // the stop without blocks, then deliver the native block via
+          // chat.postMessage.
+          const stopErrCode = stopErr?.data?.error ||
+            (isInvalidArguments(stopErr) ? "invalid_arguments" : "invalid_blocks");
           logger.warn("streamer.stop() rejected blocks, retrying without them", {
             channelId,
             slackError: stopErr?.data?.error,
             blockTypes: stopBlocks.map((b: any) => b.type),
           });
           logError({
-            errorName: "StreamStopInvalidBlocks",
-            errorMessage: stopErr?.message || "invalid_blocks on streamer.stop()",
-            errorCode: stopErr?.data?.error || "invalid_blocks",
+            errorName: isInvalidArguments(stopErr)
+              ? "StreamStopInvalidArguments"
+              : "StreamStopInvalidBlocks",
+            errorMessage: stopErr?.message || `${stopErrCode} on streamer.stop()`,
+            errorCode: stopErrCode,
             channelId,
-            context: { blockTypes: stopBlocks.map((b: any) => b.type) },
+            context: { phase: "stop", blockTypes: stopBlocks.map((b: any) => b.type) },
           });
           try {
             await streamer.stop();
