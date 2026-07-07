@@ -2,7 +2,7 @@ import * as nodePath from "node:path";
 import { getSetting, setSetting } from "./settings.js";
 import { decryptCredential } from "./credentials.js";
 import { db } from "../db/client.js";
-import { credentials, credentialGrants } from "@aura/db/schema";
+import { credentials, credentialGrants, users } from "@aura/db/schema";
 import { logger } from "./logger.js";
 
 const sandboxNoteKey = (userId?: string) =>
@@ -350,16 +350,91 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
   return envs;
 }
 
+/** Ownership/provenance metadata for one sandbox env var. Never carries values. */
+export interface SandboxEnvVarInfo {
+  envName: string;
+  /** Credential scope: owner | per_user | member | power_user | admin */
+  scope: string;
+  /**
+   * Display name of the credential's owner. Resolved only for caller-scoped
+   * rows (owner/per_user) -- null for role-tier/shared rows and when the
+   * owner has no users row.
+   */
+  ownerDisplayName: string | null;
+}
+
+const CALLER_SCOPED_SCOPES = new Set(["owner", "per_user"]);
+
 /**
- * Return the sandbox env var names available to the user.
+ * Return the sandbox env vars available to the user, with ownership metadata.
  *
- * Mirrors getSandboxEnvs() access control without selecting, decrypting, or
- * returning credential values. Used to make the LLM aware of available
- * sandbox capabilities without exposing secrets.
+ * Mirrors getSandboxEnvs() access control and collision handling (caller-owned
+ * rows win env name collisions) without selecting, decrypting, or returning
+ * credential values. Used to make the LLM aware of available sandbox
+ * capabilities -- and, for caller-scoped credentials, WHOSE credential the env
+ * var resolves from -- without exposing secrets.
  */
-export async function getSandboxEnvNames(userId?: string): Promise<string[]> {
+export async function getSandboxEnvNames(
+  userId?: string,
+): Promise<SandboxEnvVarInfo[]> {
   const rows = await resolveSandboxCredentialRows(userId, false);
-  return [...new Set(rows.map(resolveSandboxEnvName))].sort();
+
+  // Mirror getSandboxEnvs(): caller-owned credentials always win env name
+  // collisions; otherwise the last processed row wins.
+  const byEnvName = new Map<string, SandboxCredentialRow>();
+  const envOwnedByCaller = new Set<string>();
+  for (const row of rows) {
+    const envName = resolveSandboxEnvName(row);
+    const ownedByCaller = !!userId && row.ownerId === userId;
+    if (byEnvName.has(envName) && envOwnedByCaller.has(envName) && !ownedByCaller) {
+      continue;
+    }
+    byEnvName.set(envName, row);
+    if (ownedByCaller) envOwnedByCaller.add(envName);
+  }
+
+  // Resolve owner display names for caller-scoped rows only -- provenance for
+  // attribution. Shared/role-tier rows render as bare names downstream.
+  const ownerIds = [
+    ...new Set(
+      [...byEnvName.values()]
+        .filter((row) => CALLER_SCOPED_SCOPES.has(row.scope || "member"))
+        .map((row) => row.ownerId),
+    ),
+  ];
+  const displayNames = new Map<string, string>();
+  if (ownerIds.length > 0) {
+    try {
+      const { inArray } = await import("drizzle-orm");
+      const ownerRows = await db
+        .select({
+          slackUserId: users.slackUserId,
+          displayName: users.displayName,
+        })
+        .from(users)
+        .where(inArray(users.slackUserId, ownerIds));
+      for (const owner of ownerRows) {
+        if (owner.slackUserId) displayNames.set(owner.slackUserId, owner.displayName);
+      }
+    } catch (e: any) {
+      logger.warn("getSandboxEnvNames: owner display name lookup failed", {
+        error: e.message,
+      });
+    }
+  }
+
+  return [...byEnvName.entries()]
+    .map(([envName, row]) => {
+      const scope = row.scope || "member";
+      return {
+        envName,
+        scope,
+        ownerDisplayName: CALLER_SCOPED_SCOPES.has(scope)
+          ? displayNames.get(row.ownerId) ?? null
+          : null,
+      };
+    })
+    .sort((a, b) => a.envName.localeCompare(b.envName));
 }
 
 /**
