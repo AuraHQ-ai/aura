@@ -207,6 +207,66 @@ describe("generateResponse Slack stream handling", () => {
     });
   });
 
+  it("recovers when streamer.stop() rejects the block payload with invalid_arguments", async () => {
+    const tableBlock = {
+      type: "table",
+      rows: [[{ type: "raw_text", text: "cell" }]],
+    };
+    const invalidArgumentsError = () =>
+      Object.assign(new Error("An API error occurred: invalid_arguments"), {
+        data: { error: "invalid_arguments" },
+      });
+    const streamer = {
+      // Reject the inline blocks-chunk append so the table stays queued as a
+      // pending native block and rides on the stop() payload.
+      append: vi.fn(async (payload: any) => {
+        if (payload?.chunks?.some((c: any) => c?.type === "blocks")) {
+          throw invalidArgumentsError();
+        }
+      }),
+      stop: vi.fn()
+        .mockRejectedValueOnce(invalidArgumentsError())
+        .mockResolvedValueOnce(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_table",
+        output: { ok: true, __table_block: tableBlock },
+      };
+      yield { type: "text-delta", text: "Here is the table." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Here is the table.",
+      alreadyPosted: true,
+    });
+
+    // First stop attempt carries the blocks; the retry finalizes without them.
+    expect(streamer.stop).toHaveBeenCalledTimes(2);
+    expect(streamer.stop.mock.calls[0][0]).toMatchObject({
+      blocks: expect.arrayContaining([tableBlock]),
+    });
+    expect(streamer.stop.mock.calls[1]).toEqual([]);
+
+    // The stripped table block is delivered via the chat.postMessage fallback.
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C123",
+      text: "Here's a table:",
+      blocks: [tableBlock],
+    }));
+
+    // The original error is logged instead of rethrown.
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      errorName: "StreamStopInvalidArguments",
+      errorCode: "invalid_arguments",
+      context: expect.objectContaining({ phase: "stop" }),
+    }));
+  });
+
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {
     vi.useFakeTimers();
     const finishTool = deferred<void>();
