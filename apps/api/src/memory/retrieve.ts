@@ -307,7 +307,7 @@ async function fetchEntityMatchedMemories(
 
     // Historical as-of retrieval: temporal validity replaces the live status
     // filter so callers can replay the memory state at a prior instant. Live
-    // retrieval keeps current/disputed rows but excludes TTL-expired memories.
+    // retrieval keeps current/disputed rows but excludes valid_until-expired memories.
     const lifecycleFilter = asOf
       ? sql`AND m.valid_from <= ${asOf} AND (m.valid_until IS NULL OR m.valid_until > ${asOf})`
       : sql`AND m.status IN ('current', 'disputed') AND (m.valid_until IS NULL OR m.valid_until > NOW())`;
@@ -536,7 +536,7 @@ async function retrieveSingleQuery(
 
     // Historical as-of retrieval: the hybrid lane keys on temporal validity
     // instead of live status. Production (no asOf) keeps current/disputed rows
-    // while excluding TTL-expired memories.
+    // while excluding valid_until-expired memories.
     const statusFilter = asOf
       ? sql`${memories.validFrom} <= ${asOf} AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > ${asOf})`
       : sql`${memories.status} IN ('current', 'disputed') AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > NOW())`;

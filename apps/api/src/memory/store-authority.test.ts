@@ -82,7 +82,7 @@ describe("toDbChannelType", () => {
   });
 });
 
-describe("storeMemories temporal defaults", () => {
+describe("storeMemories temporal fields", () => {
   const now = new Date("2026-06-09T08:00:00.000Z");
 
   beforeEach(() => {
@@ -98,7 +98,7 @@ describe("storeMemories temporal defaults", () => {
     vi.useRealTimers();
   });
 
-  it("defaults event/open_thread validUntil while leaving durable types unexpired", async () => {
+  it("defaults validFrom but never synthesizes validUntil for event/open_thread", async () => {
     await storeMemories([
       memory({ type: "event" }),
       memory({ type: "open_thread" }),
@@ -108,31 +108,30 @@ describe("storeMemories temporal defaults", () => {
     const inserted = insertedValues();
 
     expect(inserted[0].validFrom).toEqual(now);
-    expect(inserted[0].validUntil).toEqual(new Date("2026-06-23T08:00:00.000Z"));
+    expect(inserted[0]).not.toHaveProperty("validUntil");
     expect(inserted[1].validFrom).toEqual(now);
-    expect(inserted[1].validUntil).toEqual(new Date("2026-07-09T08:00:00.000Z"));
+    expect(inserted[1]).not.toHaveProperty("validUntil");
     expect(inserted[2].validFrom).toEqual(now);
     expect(inserted[2]).not.toHaveProperty("validUntil");
   });
 
-  it("respects explicit durable and validUntil escape hatches", async () => {
+  it("respects explicit validUntil values", async () => {
     const explicitValidUntil = new Date("2026-12-31T00:00:00.000Z");
 
     await storeMemories([
       memory({ type: "event", validUntil: explicitValidUntil }),
-      memory({ type: "open_thread", durable: true }),
+      memory({ type: "open_thread", validUntil: null }),
       memory({ type: "event", validUntil: null }),
     ]);
 
     const inserted = insertedValues();
 
     expect(inserted[0].validUntil).toBe(explicitValidUntil);
-    expect(inserted[1]).not.toHaveProperty("validUntil");
-    expect(inserted[1]).not.toHaveProperty("durable");
+    expect(inserted[1].validUntil).toBeNull();
     expect(inserted[2].validUntil).toBeNull();
   });
 
-  it("bases TTLs on an explicit validFrom when replay/backfill callers provide one", async () => {
+  it("preserves explicit validFrom without deriving validUntil from it", async () => {
     const validFrom = new Date("2026-01-01T12:00:00.000Z");
 
     await storeMemories([memory({ type: "event", validFrom })]);
@@ -140,6 +139,6 @@ describe("storeMemories temporal defaults", () => {
     const inserted = insertedValues();
 
     expect(inserted[0].validFrom).toBe(validFrom);
-    expect(inserted[0].validUntil).toEqual(new Date("2026-01-15T12:00:00.000Z"));
+    expect(inserted[0]).not.toHaveProperty("validUntil");
   });
 });
