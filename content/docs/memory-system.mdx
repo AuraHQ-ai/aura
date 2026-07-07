@@ -116,6 +116,7 @@ After every conversation turn, Aura extracts new memories:
 
 1. The recent messages are sent to Claude with a structured extraction prompt
 2. Claude identifies facts, decisions, preferences, events, open threads, and entity mentions
+   - `event` and `open_thread` candidates must pass a **durability test**: "will this still be true and useful in 30 days?" In-flight tasks and current-thread activity are not extracted
 3. Each extraction is checked for duplicates against existing memories
 4. New memories are embedded and stored
 5. Extracted entities are resolved and linked to their memories (see below)
@@ -177,6 +178,8 @@ Each memory carries a `confidence` score (0.0 -- 1.0, default 0.8) representing 
 ### Temporal validity
 
 Memories can have `valid_from` and `valid_until` timestamps to represent time-bounded facts. For example, "Joan is on vacation until March 15" gets a `valid_until` of March 15. By default, `valid_from` is set to the memory's creation time.
+
+Transient memory types also get a **default TTL** at storage time: `event` memories expire 14 days after `valid_from`, and `open_thread` memories expire 30 days after. An explicit `valid_until` from extraction takes precedence, and the extractor can mark an event or open thread as `durable` to skip the TTL entirely (e.g. a launch date with lasting consequence).
 
 ### Supersession chains
 
