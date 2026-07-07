@@ -158,9 +158,9 @@ export async function generateEntitySummary(
   const { object } = await generateObject({
     model,
     schema: z.object({ summary: z.string() }),
-    system: getSystemPrompt(entity.canonicalName, entity.type ?? "unknown"),
+    instructions: getSystemPrompt(entity.canonicalName, entity.type ?? "unknown"),
     prompt: `${profileContext ? `${profileContext}\n\n` : ""}Memories:\n${memoriesText}`,
-    experimental_telemetry: aiTelemetry("entity-summary"),
+    telemetry: aiTelemetry("entity-summary"),
   });
 
   const now = new Date();
