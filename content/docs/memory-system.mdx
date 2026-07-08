@@ -179,8 +179,6 @@ Each memory carries a `confidence` score (0.0 -- 1.0, default 0.8) representing 
 
 Memories can have `valid_from` and `valid_until` timestamps to represent time-bounded facts. For example, "Joan is on vacation until March 15" gets a `valid_until` of March 15. By default, `valid_from` is set to the memory's creation time.
 
-Transient memory types also get a **default TTL** at storage time: `event` memories expire 14 days after `valid_from`, and `open_thread` memories expire 30 days after. An explicit `valid_until` from extraction takes precedence, and the extractor can mark an event or open thread as `durable` to skip the TTL entirely (e.g. a launch date with lasting consequence).
-
 ### Supersession chains
 
 When a new memory replaces an old one (e.g., "the project deadline moved from April to May"), the old memory is marked `superseded` with:
