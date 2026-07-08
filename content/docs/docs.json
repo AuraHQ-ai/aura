@@ -75,6 +75,7 @@
               "tools/people",
               "tools/lists",
               "tools/tables",
+              "tools/charts",
               "tools/subagents",
               "tools/voice",
               "tools/cursor-agent",
