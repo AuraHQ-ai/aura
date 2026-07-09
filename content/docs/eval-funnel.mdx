@@ -1,0 +1,60 @@
+---
+title: "Eval Funnel"
+description: "How every assistant response is automatically scored, adjudicated by humans, and fed into a regression bench."
+---
+
+# Eval Funnel
+
+Aura scores every assistant response she sends. The funnel has two machines: **Machine A** (an automated LLM judge that batch-scores responses) and **Machine B** (a human-ratified gold set that feeds a curated regression bench). The goal is a continuously growing, evidence-backed picture of where responses fail and why.
+
+## Scoring pipeline (Machine A)
+
+An hourly cron (`/api/cron/eval-responses`) scores settled, not-yet-scored assistant responses exactly once:
+
+1. **Settle** -- threads active in the last 30 minutes are skipped. A turn that just hedged may resolve a moment later; the thread gets time to settle first.
+2. **Prefilter** -- a deterministic, zero-LLM-cost prefilter (`prefilter-v1`) marks obvious non-scorable turns: pure acks ("done", "on it"), emoji-only reactions, waiting phrases, progress pings, and operational status narration. It is intentionally conservative: terse completions like "yes, merged, commit be511f4" still go to the judge.
+3. **Window** -- each thread is split into sliding windows of roughly 20 turns (stride 14, plus 3 leading and 3 trailing context turns) so a response at a window boundary still sees its antecedent, and a hedge can be observed resolving a few turns later.
+4. **Judge** -- one cheap fast-tier structured call per window. The single question per response: *was the user's intent fulfilled?* Assistant turns carry stable `[R:<part_id>]` markers, and verdicts are mapped back by the echoed `part_id` -- never by array position, which would silently score the wrong response when the judge merges or splits turns.
+5. **Store** -- one row per response in `eval_response_scores`. A unique `(workspace_id, message_id)` index plus `onConflictDoNothing` makes re-runs idempotent: verdicts are never duplicated or overwritten. Re-scoring only happens via explicit human or harness action.
+
+The cron prioritizes newest threads while trickling historical backfill, judges up to 8 thread groups concurrently, and stops at a soft wall-clock budget (~11 minutes) well inside the Vercel function limit.
+
+## Verdicts and failure classes
+
+Each scorable response gets an atomic verdict:
+
+| Verdict | Meaning |
+|---------|---------|
+| `fulfilled` | The serving intent was met |
+| `partial` | Met with meaningful gaps (e.g. the answer buried under hedges) |
+| `failed` | The intent was not fulfilled |
+
+Non-scorable turns (acks, clarifying questions, status updates, tool-relay turns) get `scorable: false` and a null verdict.
+
+Failures carry a failure class for aggregation: `missing_cred`, `bad_memory`, `bad_harness`, `missing_tool`, `reasoning`, `latency`, or `none`. The judge also records the `serving_intent` (the nearest open user ask the response serves) and `resolved_in_window` (a hedge in this turn was resolved later in the window -- separating honest hedging from confident confabulation).
+
+### Data grains
+
+The score row references three distinct grains, deliberately kept apart:
+
+- **Scoring grain**: `message_id` / `part_id` -- the atomic response being judged. Owns the verdict.
+- **Attribution grain**: `trace_id` -- joins to user, channel, model, and cost. Owns no verdict.
+- **Filter grain**: `thread_ts` -- UI grouping only; a Slack string, not a relation.
+
+## Human ratification (Machine A → Machine B)
+
+Failed and partial responses are candidates for the gold set. Ratification happens per specific response -- never "a thread" -- via the CLI:
+
+```bash
+pnpm ratify:gold-set --list --limit 25
+pnpm ratify:gold-set --list --failure-class bad_memory
+pnpm ratify:gold-set --ratify <row_id> --gold "Expected answer" \
+  --rubric '{"must_do":["..."],"must_not_do":["..."]}' --by "Name"
+pnpm ratify:gold-set --export > ratified-eval-cases.json
+```
+
+A ratified row carries a human-authored `gold_answer`, an optional `must_do` / `must_not_do` rubric, and `ratified_by`. Ratified failures, deduped by failure class, feed the curated regression bench used to test harness and prompt changes.
+
+## Dashboard
+
+The `/evals` dashboard page shows funnel rollups (verdicts by failure class, serving intent, and user, with estimated cost per failure class) and per-response detail pages with adjudication controls. Verdict badges also appear inline on assistant messages in the Conversations timeline. See [Dashboard](/dashboard#evals).
