@@ -61,6 +61,7 @@ const dbMock = vi.hoisted(() => {
 const executeJobMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 const safePostMessageMock = vi.hoisted(() => vi.fn());
+const resolveSlackDestinationMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../db/client.js", () => ({
   db: {
@@ -85,6 +86,8 @@ vi.mock("./execute-job.js", () => ({
   executeJob: executeJobMock,
 }));
 
+// sendJobOpsNotice stays REAL so its env-driven routing ladder (ops channel →
+// founder DM → requester DM) is exercised through the mocked Slack layer below.
 vi.mock("./job-notifications.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./job-notifications.js")>();
   return {
@@ -95,6 +98,10 @@ vi.mock("./job-notifications.js", async (importOriginal) => {
 
 vi.mock("../lib/slack-messaging.js", () => ({
   safePostMessage: safePostMessageMock,
+}));
+
+vi.mock("../tools/slack.js", () => ({
+  resolveSlackDestination: resolveSlackDestinationMock,
 }));
 
 function queueDbResults(...results: unknown[][]) {
@@ -148,11 +155,14 @@ function baseJob(overrides: Record<string, unknown>) {
 describe("heartbeat stale running recovery", () => {
   const originalCronSecret = process.env.CRON_SECRET;
   const originalFounderUserId = process.env.FOUNDER_USER_ID;
+  const originalAuraOpsChannel = process.env.AURA_OPS_CHANNEL;
   const originalAuraAdminUserIds = process.env.AURA_ADMIN_USER_IDS;
   const originalAuraPublicUrl = process.env.AURA_PUBLIC_URL;
 
   beforeEach(() => {
     process.env.CRON_SECRET = "test-secret";
+    delete process.env.FOUNDER_USER_ID;
+    delete process.env.AURA_OPS_CHANNEL;
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-20T08:59:00.000Z"));
     dbMock.results = [];
@@ -160,6 +170,10 @@ describe("heartbeat stale running recovery", () => {
     vi.clearAllMocks();
     sendJobFailureDmMock.mockResolvedValue(true);
     safePostMessageMock.mockResolvedValue({ ok: true });
+    resolveSlackDestinationMock.mockImplementation(
+      async (_client: unknown, destination: string) =>
+        destination.startsWith("U") ? `D_${destination}` : destination,
+    );
   });
 
   afterEach(() => {
@@ -174,6 +188,11 @@ describe("heartbeat stale running recovery", () => {
       delete process.env.FOUNDER_USER_ID;
     } else {
       process.env.FOUNDER_USER_ID = originalFounderUserId;
+    }
+    if (originalAuraOpsChannel === undefined) {
+      delete process.env.AURA_OPS_CHANNEL;
+    } else {
+      process.env.AURA_OPS_CHANNEL = originalAuraOpsChannel;
     }
     if (originalAuraAdminUserIds === undefined) {
       delete process.env.AURA_ADMIN_USER_IDS;
@@ -463,7 +482,8 @@ describe("heartbeat stale running recovery", () => {
     );
   });
 
-  it("sweep marks in_progress outcomes as skipped + DMs when attempts >= 3", async () => {
+  it("sweep marks in_progress outcomes as skipped + posts retry-exhausted notice to the ops channel when attempts >= 3", async () => {
+    process.env.AURA_OPS_CHANNEL = "C_OPS";
     queueDbResults(
       [],
       [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1", supervisorAttempts: 3 }],
@@ -484,10 +504,73 @@ describe("heartbeat stale running recovery", () => {
         }),
       ]),
     );
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
     expect(safePostMessageMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        channel: "U_REQUESTER",
+        channel: "C_OPS",
+        text: expect.stringContaining(
+          "Supervisor for job stuck supervisor job exhausted retries; manual intervention needed",
+        ),
+      }),
+    );
+    expect(safePostMessageMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "U_REQUESTER" }),
+    );
+    expect(safePostMessageMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "D_U_REQUESTER" }),
+    );
+  });
+
+  it("routes the retry-exhausted notice to the founder DM when only FOUNDER_USER_ID is set", async () => {
+    process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    queueDbResults(
+      [],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1", supervisorAttempts: 3 }],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1" }],
+      [{ id: "job-1", name: "stuck supervisor job", requestedBy: "U_REQUESTER" }],
+      [],
+    );
+
+    const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
+    const result = await sweepOrphanedOutcomes();
+
+    expect(result.inProgressSkipped).toBe(1);
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(expect.anything(), "U_FOUNDER");
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "D_U_FOUNDER",
+        text: expect.stringContaining("exhausted retries"),
+      }),
+    );
+    expect(safePostMessageMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "D_U_REQUESTER" }),
+    );
+  });
+
+  it("falls back to the requester DM for the retry-exhausted notice only when no ops destination is configured", async () => {
+    queueDbResults(
+      [],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1", supervisorAttempts: 3 }],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1" }],
+      [{ id: "job-1", name: "stuck supervisor job", requestedBy: "U_REQUESTER" }],
+      [],
+    );
+
+    const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
+    const result = await sweepOrphanedOutcomes();
+
+    expect(result.inProgressSkipped).toBe(1);
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(expect.anything(), "U_REQUESTER");
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "D_U_REQUESTER",
         text: "Supervisor for job stuck supervisor job exhausted retries; manual intervention needed",
       }),
     );
