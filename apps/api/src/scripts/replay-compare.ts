@@ -275,7 +275,7 @@ async function runCase(c: CaseRow): Promise<CaseResult | null> {
   const { object: judged } = await generateObject({
     model: fastModel,
     schema: pairwiseSchema,
-    system: `You compare two candidate replies from an AI assistant in a Slack conversation and pick the one that better FULFILLS the user's intent: more correct, grounded in the provided evidence (no fabricated facts), complete, and actionable. Tone/length only break ties. Declare "tie" when neither is meaningfully better. You do not know which candidate is newer — judge only quality.`,
+    instructions: `You compare two candidate replies from an AI assistant in a Slack conversation and pick the one that better FULFILLS the user's intent: more correct, grounded in the provided evidence (no fabricated facts), complete, and actionable. Tone/length only break ties. Declare "tie" when neither is meaningfully better. You do not know which candidate is newer — judge only quality.`,
     prompt: `${ctx.contextBlock}\n\n<candidate_A>\n${clip(A, MAX_RESPONSE_CHARS)}\n</candidate_A>\n\n<candidate_B>\n${clip(B, MAX_RESPONSE_CHARS)}\n</candidate_B>\n\nWhich candidate better fulfills the user's intent?`,
     temperature: 0,
   });

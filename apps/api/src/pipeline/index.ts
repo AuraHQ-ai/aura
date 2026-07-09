@@ -9,6 +9,11 @@ import {
 } from "./context.js";
 import { assemblePrompt } from "./prompt.js";
 import { generateResponse, type LLMResponse } from "./respond.js";
+import {
+  isWdkSlackRespondEnabled,
+  isWorkflowEligible,
+  startSlackRespondWorkflow,
+} from "./slack-workflow.js";
 import { InvocationSupersededError } from "./prepare-step.js";
 import { buildMessageText } from "./message-text.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -454,6 +459,65 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         capturedSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
         capturedUserPrompt = messageText;
 
+        // 5a. Durable respond path (issue #1111, flag-gated): delegate the
+        // agent loop to a WDK workflow. The workflow owns Slack delivery AND
+        // persistence (runBackgroundTasks runs as its final step), so when
+        // delegation succeeds this invocation's job is done — a SIGKILL of
+        // this function no longer kills the turn.
+        if (
+          (await isWdkSlackRespondEnabled()) &&
+          isWorkflowEligible({ channelType: context.channelType })
+        ) {
+          const runId = await startSlackRespondWorkflow({
+            stablePrefix,
+            environmentContext,
+            conversationContext,
+            dynamicContext,
+            userMessage: messageText,
+            files: fileParts,
+            channelId: context.channelId,
+            threadTs: replyThreadTs,
+            teamId,
+            recipientUserId: context.userId,
+            userId: context.userId,
+            workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+            timezone: userTimezone,
+            invocationId,
+            background: {
+              context: { ...context, text: messageText },
+              event: event as unknown as Record<string, unknown>,
+              displayName,
+              threadMessageCount: resolvedConversation.thread?.length ?? 0,
+              ...(() => {
+                const all = (resolvedConversation.thread ?? resolvedConversation.recentMessages)
+                  .map((m) => ({ displayName: m.displayName, text: m.text }));
+                if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
+                return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
+              })(),
+              systemPrompt: capturedSystemPrompt,
+            },
+          });
+          if (runId) {
+            return {
+              response: {
+                raw: "",
+                alreadyPosted: true,
+                toolCalls: [],
+                workflowDelegated: true,
+              } as LLMResponse,
+              stablePrefix,
+              environmentContext,
+              conversationContext,
+              dynamicContext,
+              memories,
+              conversations,
+              retrievalMs,
+              llmMs: 0,
+            };
+          }
+          // start() failed — fall through to the legacy in-process path.
+        }
+
         // 5. Call LLM (streams response directly to Slack via chat.update)
         const llmStart = Date.now();
         const response = await generateResponse({
@@ -505,6 +569,15 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       retrievalMs,
       llmMs,
     } = turn;
+
+    if (response.workflowDelegated) {
+      // The durable workflow owns delivery + persistence from here on.
+      logger.info("Pipeline delegated to durable Slack respond workflow", {
+        channelId: context.channelId,
+        totalMs: Date.now() - pipelineStart,
+      });
+      return;
+    }
 
     if (response.interrupted) {
       logger.info("Pipeline interrupted — invocation superseded", {
@@ -894,7 +967,7 @@ async function storeUserMessage(context: MessageContext, event: SlackEvent): Pro
 /**
  * Run background tasks after responding.
  */
-async function runBackgroundTasks(params: {
+export async function runBackgroundTasks(params: {
   context: MessageContext;
   event: SlackEvent;
   response: string;

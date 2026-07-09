@@ -54,6 +54,10 @@ vi.mock("../tools/table.js", () => ({
   TABLE_BLOCK_KEY: "__table_block",
 }));
 
+vi.mock("../tools/chart.js", () => ({
+  CHART_BLOCK_KEY: "__chart_block",
+}));
+
 vi.mock("./prepare-step.js", () => ({
   InvocationSupersededError: class InvocationSupersededError extends Error {
     invocationId = "test-invocation";
@@ -88,7 +92,7 @@ function createSlackClient(streamers: Array<{ append: any; stop: any }>) {
 }
 
 function createAgentStreamResult(
-  fullStream: AsyncIterable<any>,
+  stream: AsyncIterable<any>,
   options: {
     text?: string;
     finishReason?: string;
@@ -98,7 +102,7 @@ function createAgentStreamResult(
   } = {},
 ) {
   return {
-    fullStream,
+    stream,
     usage: Promise.resolve(options.usage ?? { inputTokens: 1, outputTokens: 1 }),
     finishReason: Promise.resolve(options.finishReason ?? "stop"),
     text: Promise.resolve(options.text ?? ""),
@@ -131,10 +135,10 @@ function mockAgentStreams(results: any[]) {
 }
 
 function mockAgentStream(
-  fullStream: AsyncIterable<any>,
+  stream: AsyncIterable<any>,
   options: Parameters<typeof createAgentStreamResult>[1] = {},
 ) {
-  return mockAgentStreams([createAgentStreamResult(fullStream, options)]);
+  return mockAgentStreams([createAgentStreamResult(stream, options)]);
 }
 
 function baseOptions(slackClient: any) {
@@ -159,6 +163,108 @@ describe("generateResponse Slack stream handling", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("streams native chart blocks returned by draw_chart inline mode", async () => {
+    const chartBlock = {
+      type: "data_visualization",
+      title: "Weekly Sales",
+      chart: {
+        type: "line",
+        series: [{
+          name: "Online",
+          data: [{ label: "Week 1", value: 12 }],
+        }],
+        axis_config: { categories: ["Week 1"] },
+      },
+    };
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_chart",
+        output: { ok: true, __chart_block: chartBlock },
+      };
+      yield { type: "text-delta", text: "Done." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Done.",
+      alreadyPosted: true,
+    });
+
+    expect(streamer.append).toHaveBeenCalledWith({
+      chunks: [{
+        type: "blocks",
+        blocks: [chartBlock],
+      }],
+    });
+  });
+
+  it("recovers when streamer.stop() rejects the block payload with invalid_arguments", async () => {
+    const tableBlock = {
+      type: "table",
+      rows: [[{ type: "raw_text", text: "cell" }]],
+    };
+    const invalidArgumentsError = () =>
+      Object.assign(new Error("An API error occurred: invalid_arguments"), {
+        data: { error: "invalid_arguments" },
+      });
+    const streamer = {
+      // Reject the inline blocks-chunk append so the table stays queued as a
+      // pending native block and rides on the stop() payload.
+      append: vi.fn(async (payload: any) => {
+        if (payload?.chunks?.some((c: any) => c?.type === "blocks")) {
+          throw invalidArgumentsError();
+        }
+      }),
+      stop: vi.fn()
+        .mockRejectedValueOnce(invalidArgumentsError())
+        .mockResolvedValueOnce(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_table",
+        output: { ok: true, __table_block: tableBlock },
+      };
+      yield { type: "text-delta", text: "Here is the table." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Here is the table.",
+      alreadyPosted: true,
+    });
+
+    // First stop attempt carries the blocks; the retry finalizes without them.
+    expect(streamer.stop).toHaveBeenCalledTimes(2);
+    expect(streamer.stop.mock.calls[0][0]).toMatchObject({
+      blocks: expect.arrayContaining([tableBlock]),
+    });
+    expect(streamer.stop.mock.calls[1]).toEqual([]);
+
+    // The stripped table block is delivered via the chat.postMessage fallback.
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C123",
+      text: "Here's a table:",
+      blocks: [tableBlock],
+    }));
+
+    // The original error is logged instead of rethrown.
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      errorName: "StreamStopInvalidArguments",
+      errorCode: "invalid_arguments",
+      context: expect.objectContaining({ phase: "stop" }),
+    }));
   });
 
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {
@@ -234,6 +340,81 @@ describe("generateResponse Slack stream handling", () => {
         status: "complete",
       })],
     });
+  });
+
+  it("splits to a fresh stream when total stream age exceeds 60s across sequential short tools", async () => {
+    vi.useFakeTimers();
+    const gate = deferred<void>();
+    const firstStream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const secondStream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([firstStream, secondStream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "echo one" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+      };
+      // Wall-clock time passes between short tools — no single tool ever
+      // stays pending past LONG_TOOL_SPLIT_MS, but the stream still ages.
+      await gate.promise;
+      yield {
+        type: "tool-call",
+        toolCallId: "call-2",
+        toolName: "run_command",
+        input: { command: "echo two" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-2",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+      };
+      yield { type: "text-delta", text: "Done." };
+    })());
+
+    const responsePromise = generateResponse(baseOptions(slackClient));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
+
+    gate.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(responsePromise).resolves.toMatchObject({
+      raw: "Done.",
+      alreadyPosted: true,
+    });
+
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
+    expect(firstStream.stop).toHaveBeenCalled();
+    expect(secondStream.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: "Done.",
+      })],
+    });
+    expect(logger.info).toHaveBeenCalledWith(
+      "Slack stream exceeded max age; splitting to a fresh stream",
+      expect.objectContaining({
+        channelId: "C123",
+        thresholdMs: 60_000,
+      }),
+    );
   });
 
   it("emits an optimistic tool card on tool-input-start and updates it on tool-call", async () => {
@@ -386,7 +567,7 @@ describe("generateResponse Slack stream handling", () => {
     }));
   });
 
-  it("does not log message_not_in_streaming_state when postMessage fallback succeeds", async () => {
+  it("logs message_not_in_streaming_state as recovered when postMessage fallback succeeds", async () => {
     const stream = {
       append: vi.fn().mockRejectedValueOnce(Object.assign(new Error("message_not_in_streaming_state"), {
         data: { error: "message_not_in_streaming_state" },
@@ -401,7 +582,18 @@ describe("generateResponse Slack stream handling", () => {
 
     await generateResponse(baseOptions(slackClient));
 
-    expect(logError).not.toHaveBeenCalled();
+    const mnisLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "message_not_in_streaming_state",
+    );
+    expect(mnisLogs).toHaveLength(1);
+    expect(mnisLogs[0]?.[0]).toMatchObject({
+      errorName: "MessageNotInStreamingState",
+      channelId: "C123",
+      context: expect.objectContaining({
+        fallback: "postMessage",
+        fallbackRecovered: true,
+      }),
+    });
     expect(logger.warn).toHaveBeenCalledWith(
       "chatStream append left streaming state, falling back to postMessage",
       expect.objectContaining({
@@ -422,6 +614,61 @@ describe("generateResponse Slack stream handling", () => {
       thread_ts: "1710000000.000000",
       text: expect.stringContaining("Recovered fallback text."),
     }));
+  });
+
+  it("posts an interruption stub when the stream dies with an empty unsent buffer", async () => {
+    const stream = {
+      append: vi.fn()
+        .mockResolvedValueOnce(undefined) // intro text streams fine
+        .mockRejectedValueOnce(Object.assign(new Error("message_not_in_streaming_state"), {
+          data: { error: "message_not_in_streaming_state" },
+        })),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Intro." };
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "true" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+      };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    // Everything visible already streamed before the freeze and the post-tool
+    // tail is empty — the fallback must post a stub, not an empty block list.
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C123",
+      thread_ts: "1710000000.000000",
+      text: "_Turn interrupted after 1 tool call — rerun?_",
+      blocks: expect.arrayContaining([
+        expect.objectContaining({
+          type: "section",
+          text: expect.objectContaining({
+            text: "_Turn interrupted after 1 tool call — rerun?_",
+          }),
+        }),
+      ]),
+    }));
+
+    const mnisLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "message_not_in_streaming_state",
+    );
+    expect(mnisLogs).toHaveLength(1);
+    expect(mnisLogs[0]?.[0]).toMatchObject({
+      errorName: "MessageNotInStreamingState",
+      context: expect.objectContaining({ fallbackRecovered: true, toolCallCount: 0 }),
+    });
   });
 
   it("does not record an error event when channel_type_not_supported fallback succeeds", async () => {
@@ -696,7 +943,7 @@ describe("generateResponse Slack stream handling", () => {
     }));
   });
 
-  it("does not error-log or relaunch superseded empty completions", async () => {
+  it("logs a supersede observability row but never relaunches or logs empty completions when superseded", async () => {
     const stream = {
       append: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
@@ -754,6 +1001,22 @@ describe("generateResponse Slack stream handling", () => {
         channelId: "C123",
       }),
     );
+
+    // Issue #1121: supersede recovery is preserved, but the event itself is
+    // now always visible in error_events with the abort reason.
+    const supersededLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "superseded_while_streaming",
+    );
+    expect(supersededLogs).toHaveLength(1);
+    expect(supersededLogs[0]?.[0]).toMatchObject({
+      errorName: "InvocationSupersededDuringStream",
+      channelId: "C123",
+      context: expect.objectContaining({
+        invocationId: "test-invocation",
+        abortReason: "unknown",
+        toolCallCount: 1,
+      }),
+    });
   });
 
   it("logs empty completions for tool-error-only continuation segments", async () => {
@@ -844,7 +1107,7 @@ describe("generateResponse Slack stream handling", () => {
     agentMocks.createInteractiveAgent.mockResolvedValue({
       agent: {
         stream: vi.fn().mockImplementation(async (options: { abortSignal: AbortSignal }) => ({
-          fullStream: (async function* () {
+          stream: (async function* () {
             await new Promise<void>((_resolve, reject) => {
               if (options.abortSignal.aborted) {
                 reject(abortError);
@@ -872,6 +1135,19 @@ describe("generateResponse Slack stream handling", () => {
     await vi.advanceTimersByTimeAsync(180_000);
 
     await responseExpectation;
+
+    const inactivityLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "stream_inactivity_abort",
+    );
+    expect(inactivityLogs).toHaveLength(1);
+    expect(inactivityLogs[0]?.[0]).toMatchObject({
+      errorName: "StreamInactivityAbort",
+      channelId: "C123",
+      context: expect.objectContaining({
+        accumulatedTextLength: 0,
+        toolCallCount: 0,
+      }),
+    });
 
     const abortLogs = vi.mocked(logError).mock.calls.filter(
       ([entry]) => entry.errorCode === "stream_aborted_by_watchdog",

@@ -66,7 +66,7 @@ async function processBatch(
     const { output: result } = await generateText({
       model,
       output: Output.object({ schema: extractionSchema }),
-      system: SYSTEM_PROMPT,
+      instructions: SYSTEM_PROMPT,
       prompt: `Memories:\n${JSON.stringify(memoriesPayload)}`,
     });
 

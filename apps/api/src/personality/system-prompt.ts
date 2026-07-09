@@ -6,6 +6,7 @@ import { getCurrentTimeContext } from "../lib/temporal.js";
 import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
+import type { SandboxEnvVarInfo } from "../lib/sandbox.js";
 
 export interface PersonProfile {
   slackUserId: string;
@@ -142,6 +143,7 @@ Each tool's description explains when and how to use it. These rules apply acros
 - **Tabular data**: always use draw_table for tables in Slack -- never markdown tables.
 - **Email**: never send without being asked or having a clear reason; DM privacy applies.
 - **Data warehouse**: BigQuery is Standard SQL. Debug with the recovery ladder (bq_list_datasets -> bq_list_tables -> bq_inspect_table -> SELECT COUNT(*) -> SELECT * LIMIT 5 -> the real query). Don't infer IAM problems from one complex failing query; retry the smallest valid query after inspection. Maintain a "data-warehouse-map" note.
+- **Credentials**: Sandbox credentials are caller-scoped: the same env name resolves to a different secret depending on who initiated the conversation. An auth failure (401/403) on a caller-scoped credential means the CALLER's credential is broken -- attribute it to the credential owner shown in the capabilities block and route the fix to them. Never report it as "Aura's token" or ask an admin to rotate a shared token.
 - **Agents & subagents**: dispatch_cursor_agent is async -- dispatch and move on; results arrive via webhook DM. Use run_subagent to fan out independent work in parallel (call it multiple times in one block); don't use it for sequential dependent work.
 - **Jobs**: use create_job for reminders, recurring work, follow-ups, monitoring, and digests, each with a playbook and frequency limits; prefer update_job over cancel + recreate. Escalate immediately if something looks urgent mid-job.
 
@@ -378,11 +380,37 @@ function formatToolList(toolNames: string[]): string {
   return toolNames.map((name) => `\`${name}\``).join(" / ");
 }
 
+/** Accept bare names (shared credentials) or full provenance metadata. */
+type SandboxEnvVarEntry = string | SandboxEnvVarInfo;
+
+function normalizeEnvVar(entry: SandboxEnvVarEntry): SandboxEnvVarInfo {
+  return typeof entry === "string"
+    ? { envName: entry, scope: "member", ownerDisplayName: null }
+    : entry;
+}
+
+/**
+ * Render one credential for the capabilities block. Caller-scoped rows
+ * (owner/per_user) get a short provenance parenthetical so auth failures can
+ * be attributed to the credential owner; shared rows stay bare names.
+ */
+function formatEnvVar(info: SandboxEnvVarInfo): string {
+  const base = `\`${info.envName}\``;
+  if (info.scope !== "owner" && info.scope !== "per_user") return base;
+  const scopeLabel = info.scope === "owner" ? "owner-scoped" : "per-user-scoped";
+  const owner = info.ownerDisplayName ? `: ${info.ownerDisplayName}` : "";
+  return `${base} (${scopeLabel}, resolved for caller${owner})`;
+}
+
 function formatCapabilities(
-  envNames: string[],
+  envVars: SandboxEnvVarInfo[],
   availableToolNames?: string[],
 ): string {
-  const names = [...new Set(envNames)].sort();
+  const byName = new Map<string, SandboxEnvVarInfo>();
+  for (const envVar of envVars) {
+    if (!byName.has(envVar.envName)) byName.set(envVar.envName, envVar);
+  }
+  const names = [...byName.keys()].sort();
   if (names.length === 0) return "";
 
   const availableTools = availableToolNames
@@ -410,14 +438,14 @@ function formatCapabilities(
       ? ` -> ${formatToolList(presentWrappers)}`
       : "";
     lines.push(
-      `- ${domain.label}: ${presentEnvNames.map((name) => `\`${name}\``).join(" / ")}${wrapperText} -- ${domain.guidance}`,
+      `- ${domain.label}: ${presentEnvNames.map((name) => formatEnvVar(byName.get(name)!)).join(" / ")}${wrapperText} -- ${domain.guidance}`,
     );
   }
 
   const uncategorized = names.filter((name) => !covered.has(name));
   if (uncategorized.length > 0) {
     lines.push(
-      `- Other available credentials: ${uncategorized.map((name) => `\`${name}\``).join(", ")} -- use from sandbox env vars when no typed tool or safe CLI fits`,
+      `- Other available credentials: ${uncategorized.map((name) => formatEnvVar(byName.get(name)!)).join(", ")} -- use from sandbox env vars when no typed tool or safe CLI fits`,
     );
   }
 
@@ -642,20 +670,19 @@ export async function buildSystemPrompt(
  * uncached runtime tail. Returns "" when there's nothing to inject.
  */
 export function buildEnvironmentContext(context: {
-  sandboxEnvNames?: string[];
+  sandboxEnvNames?: SandboxEnvVarEntry[];
   availableToolNames?: string[];
   deferredTools?: DeferredToolSummary[];
   immediateToolNames?: string[];
 }): string {
   const parts: string[] = [];
 
-  const capabilities = formatCapabilities(
-    context.sandboxEnvNames ?? [],
-    context.availableToolNames,
-  );
+  const envVars = (context.sandboxEnvNames ?? []).map(normalizeEnvVar);
+
+  const capabilities = formatCapabilities(envVars, context.availableToolNames);
   if (capabilities) parts.push(capabilities);
 
-  const storage = formatStorage(context.sandboxEnvNames ?? []);
+  const storage = formatStorage(envVars.map((envVar) => envVar.envName));
   if (storage) parts.push(storage);
 
   const deferredTools = formatDeferredTools(

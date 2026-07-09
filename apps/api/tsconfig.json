@@ -30,6 +30,7 @@
   },
   "include": [
     "src/**/*.ts",
+    "workflows/**/*.ts",
     "bench/**/*.ts",
     "bench/**/*.tsx"
   ],

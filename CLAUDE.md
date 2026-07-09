@@ -89,6 +89,13 @@ All `db:*` scripts use `./scripts/env.sh` which loads `.env.local` by default. P
 - Channel connectors handle delivery only — NEVER configure model behavior (providerOptions, thinking) in connector code
 - New channels must use `createAgenticStream()`, not raw `streamText()`
 
+## Durable Execution (Vercel Workflow DevKit)
+- The API is built with **Nitro** (`apps/api/nitro.config.ts`) so the Workflow DevKit can compile `"use workflow"` / `"use step"` directives. Workflows live in `apps/api/workflows/`.
+- **Dashboard chat** runs as one workflow run per turn (`workflows/dashboard-chat.ts`): the server owns the generation, the browser is just a reader. Streams are resumable via `GET /api/dashboard/chat/runs/:runId/stream`; the `dashboard_chat_runs` table maps threads ↔ runs. A client disconnect must NEVER cancel generation — explicit stop goes through `POST /api/dashboard/chat/runs/:runId/cancel`.
+- **Slack respond** has a flag-gated durable path (`workflows/slack-respond.ts`, enabled via `AURA_WDK_SLACK_RESPOND` or the `wdk_slack_respond` setting): one step per model-call + Slack-append cycle, so a SIGKILL resumes the turn instead of killing it. The legacy in-process path in `respond.ts` is still the default.
+- Step inputs/outputs must be **serializable** (no zod schemas, model instances, or clients across the step boundary — rebuild them inside steps).
+- Local dev: `nitro dev` runs workflows against the Local World (`.workflow-data/`). Inspect with `npx workflow inspect runs` / `npx workflow web`. On Vercel, runs use the managed Vercel World (queue-triggered functions emitted by the build).
+
 ## Drizzle migration rules (CRITICAL)
 - **Every SQL migration file with multiple statements MUST have `--> statement-breakpoint` appended to the END of each statement line (same line, not a separate line).**
 - The journal has `breakpoints: true`, so Drizzle uses these markers to split the file into individual SQL commands.

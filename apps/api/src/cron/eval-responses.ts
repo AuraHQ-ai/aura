@@ -1,17 +1,17 @@
 /**
- * Overnight eval batch (Machine A of the eval funnel).
+ * Eval response batch scorer (Machine A of the eval funnel).
  *
- * Walks forward from the start of the conversation corpus and scores every
- * not-yet-scored assistant response exactly once: thread → turns → 20-turn
- * sliding windows → one fast-tier judge call per window → one
- * eval_response_scores row per response, mapped by echoed part_id.
+ * Scores settled, not-yet-scored assistant responses exactly once. The hourly
+ * cron prioritizes newest threads while trickling historical backfill:
+ * thread -> turns -> 20-turn sliding windows -> one fast-tier judge call per
+ * window -> one eval_response_scores row per response, mapped by echoed part_id.
  *
  * Idempotent: a unique (workspace_id, message_id) index + onConflictDoNothing
  * means re-runs never duplicate or overwrite verdicts. Re-scoring happens only
  * via explicit human/harness action (delete the rows), never on read.
  */
 import { Hono } from "hono";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   conversationMessages,
   conversationParts,
@@ -22,31 +22,52 @@ import {
 import { db } from "../db/client.js";
 import { logger } from "../lib/logger.js";
 import { judgeWindow } from "../eval/judge.js";
+import { PREFILTER_JUDGE_MODEL, prefilterNotScorable } from "../eval/prefilter.js";
 import { buildTurns, buildWindows, type EvalTurn } from "../eval/windowing.js";
 
 export const evalResponsesApp = new Hono();
 
-/** Max thread groups processed per nightly invocation. */
-const DEFAULT_MAX_GROUPS = 40;
+/** Max thread groups considered per invocation; wall-clock budget is the real safety rail. */
+export const DEFAULT_MAX_GROUPS = 200;
+/** Max thread groups judged concurrently. */
+const JUDGE_CONCURRENCY = 8;
 /** Soft wall-clock budget; Vercel maxDuration is 800s, leave headroom. */
 const TIME_BUDGET_MS = 11 * 60_000;
 /** Don't judge threads that were active in the last 30 minutes — a turn that
  * just hedged may resolve in a moment; let the thread settle first. */
 const SETTLE_MS = 30 * 60_000;
 
-interface UnscoredGroup {
+export interface UnscoredGroup {
   channelId: string | null;
   threadTs: string | null;
   soleTraceId: string;
   firstAt: Date;
 }
 
+type ScoringDirection = "asc" | "desc";
+
+function groupIdentity(group: UnscoredGroup): string {
+  return `${group.channelId ?? ""}::${group.threadTs ?? group.soleTraceId}`;
+}
+
+export function splitGroupBudget(maxGroups: number): {
+  newest: number;
+  oldest: number;
+} {
+  const newest = Math.max(1, Math.floor(maxGroups * 0.8));
+  return { newest, oldest: Math.max(0, maxGroups - newest) };
+}
+
 /**
  * Find thread groups (channel_id + thread_ts, or the bare trace for
  * thread-less invocations like job executions) that still contain unscored
- * assistant responses, oldest first — the forward walk from corpus start.
+ * assistant responses, newest first for the hourly scorer or oldest first for
+ * the historical backfill trickle.
  */
-export async function findUnscoredGroups(limit: number): Promise<UnscoredGroup[]> {
+export async function findUnscoredGroups(
+  limit: number,
+  direction: ScoringDirection = "asc",
+): Promise<UnscoredGroup[]> {
   const groupKey = sql<string>`coalesce(${conversationTraces.channelId}, '') || '::' || coalesce(${conversationTraces.threadTs}, ${conversationTraces.id}::text)`;
   const settledBefore = new Date(Date.now() - SETTLE_MS);
 
@@ -80,7 +101,11 @@ export async function findUnscoredGroups(limit: number): Promise<UnscoredGroup[]
     )
     .groupBy(groupKey)
     .having(sql`max(${conversationMessages.createdAt}) < ${settledBefore.toISOString()}`)
-    .orderBy(sql`min(${conversationTraces.createdAt}) asc`)
+    .orderBy(
+      direction === "asc"
+        ? asc(sql`min(${conversationTraces.createdAt})`)
+        : desc(sql`min(${conversationTraces.createdAt})`),
+    )
     .limit(limit);
 
   return rows.map((row) => ({
@@ -91,9 +116,38 @@ export async function findUnscoredGroups(limit: number): Promise<UnscoredGroup[]
   }));
 }
 
+export async function findUnscoredGroupsForRun(
+  maxGroups: number,
+): Promise<UnscoredGroup[]> {
+  const { newest, oldest } = splitGroupBudget(maxGroups);
+  const [newestGroups, oldestGroups] = await Promise.all([
+    findUnscoredGroups(newest, "desc"),
+    oldest > 0 ? findUnscoredGroups(oldest, "asc") : Promise.resolve([]),
+  ]);
+
+  const seen = new Set<string>();
+  const groups: UnscoredGroup[] = [];
+  for (const group of [...newestGroups, ...oldestGroups]) {
+    const key = groupIdentity(group);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push(group);
+  }
+  return groups;
+}
+
 interface GroupResult {
   windowsJudged: number;
   responsesScored: number;
+  prefiltered: number;
+  omitted: number;
+}
+
+interface ScoringTotals {
+  groupsProcessed: number;
+  windowsJudged: number;
+  responsesScored: number;
+  prefiltered: number;
   omitted: number;
 }
 
@@ -118,7 +172,8 @@ export async function scoreGroup(
         .from(conversationTraces)
         .where(eq(conversationTraces.id, group.soleTraceId));
 
-  if (traces.length === 0) return { windowsJudged: 0, responsesScored: 0, omitted: 0 };
+  if (traces.length === 0)
+    return { windowsJudged: 0, responsesScored: 0, prefiltered: 0, omitted: 0 };
   const traceById = new Map(traces.map((t) => [t.id, t]));
   const traceIds = traces.map((t) => t.id);
 
@@ -134,7 +189,8 @@ export async function scoreGroup(
     .orderBy(asc(conversationMessages.orderIndex));
 
   const messageIds = messages.map((m) => m.id);
-  if (messageIds.length === 0) return { windowsJudged: 0, responsesScored: 0, omitted: 0 };
+  if (messageIds.length === 0)
+    return { windowsJudged: 0, responsesScored: 0, prefiltered: 0, omitted: 0 };
 
   const parts = await db
     .select({
@@ -169,7 +225,42 @@ export async function scoreGroup(
     ? `${group.channelId ?? ""}::${group.threadTs}`
     : group.soleTraceId;
 
-  const result: GroupResult = { windowsJudged: 0, responsesScored: 0, omitted: 0 };
+  const result: GroupResult = {
+    windowsJudged: 0,
+    responsesScored: 0,
+    prefiltered: 0,
+    omitted: 0,
+  };
+
+  const prefilterRows: NewEvalResponseScore[] = [];
+  for (const turn of turns) {
+    if (!turn.partId || scoredMessageIds.has(turn.messageId)) continue;
+    const prefilter = prefilterNotScorable(turn);
+    if (!prefilter) continue;
+
+    const trace = traceById.get(turn.traceId);
+    prefilterRows.push({
+      workspaceId: trace?.workspaceId ?? "default",
+      messageId: turn.messageId,
+      partId: turn.partId,
+      traceId: turn.traceId,
+      threadTs: trace?.threadTs ?? null,
+      servingIntent: null,
+      resolvedInWindow: false,
+      verdict: null,
+      scorable: false,
+      failureClass: "none",
+      note: prefilter.note,
+      judgeModel: PREFILTER_JUDGE_MODEL,
+    });
+  }
+
+  if (prefilterRows.length > 0) {
+    await db.insert(evalResponseScores).values(prefilterRows).onConflictDoNothing();
+    for (const row of prefilterRows) scoredMessageIds.add(row.messageId);
+    result.responsesScored += prefilterRows.length;
+    result.prefiltered += prefilterRows.length;
+  }
 
   for (const window of buildWindows(turns)) {
     // Only score responses that don't already own a verdict; previously
@@ -220,9 +311,56 @@ export async function scoreGroup(
   return result;
 }
 
+export async function scoreGroupsWithBudget(
+  groups: UnscoredGroup[],
+  deadline: number,
+  score: (group: UnscoredGroup, deadline: number) => Promise<GroupResult> = scoreGroup,
+): Promise<ScoringTotals> {
+  const totals: ScoringTotals = {
+    groupsProcessed: 0,
+    windowsJudged: 0,
+    responsesScored: 0,
+    prefiltered: 0,
+    omitted: 0,
+  };
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      if (Date.now() > deadline) return;
+      const group = groups[nextIndex++];
+      if (!group) return;
+
+      try {
+        const result = await score(group, deadline);
+        totals.groupsProcessed += 1;
+        totals.windowsJudged += result.windowsJudged;
+        totals.responsesScored += result.responsesScored;
+        totals.prefiltered += result.prefiltered;
+        totals.omitted += result.omitted;
+      } catch (error) {
+        // One broken thread must not block the forward walk.
+        logger.error("eval-responses: group failed", {
+          channelId: group.channelId,
+          threadTs: group.threadTs,
+          soleTraceId: group.soleTraceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(JUDGE_CONCURRENCY, groups.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return totals;
+}
+
 /**
- * Vercel Cron handler for the overnight eval batch.
- * Runs daily at 2:00 AM UTC (configured in vercel.json).
+ * Vercel Cron handler for the eval response batch.
+ * Runs hourly (configured in vercel.json).
  * Protected by CRON_SECRET. Optional `?limit=` caps thread groups per run.
  */
 evalResponsesApp.get("/api/cron/eval-responses", async (c) => {
@@ -244,32 +382,36 @@ evalResponsesApp.get("/api/cron/eval-responses", async (c) => {
   const deadline = start + TIME_BUDGET_MS;
 
   try {
-    const groups = await findUnscoredGroups(maxGroups);
+    const groups = await findUnscoredGroupsForRun(maxGroups);
     logger.info("Cron: eval-responses starting", { groups: groups.length, maxGroups });
 
-    let groupsProcessed = 0;
-    let windowsJudged = 0;
-    let responsesScored = 0;
-    let omitted = 0;
+    if (groups.length === 0) {
+      const duration = Date.now() - start;
+      logger.info("Cron: eval-responses finished", {
+        duration,
+        groupsProcessed: 0,
+        windowsJudged: 0,
+        responsesScored: 0,
+        prefiltered: 0,
+        omitted: 0,
+        done: true,
+      });
 
-    for (const group of groups) {
-      if (Date.now() > deadline) break;
-      try {
-        const result = await scoreGroup(group, deadline);
-        groupsProcessed += 1;
-        windowsJudged += result.windowsJudged;
-        responsesScored += result.responsesScored;
-        omitted += result.omitted;
-      } catch (error) {
-        // One broken thread must not block the forward walk.
-        logger.error("eval-responses: group failed", {
-          channelId: group.channelId,
-          threadTs: group.threadTs,
-          soleTraceId: group.soleTraceId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      return c.json({
+        ok: true,
+        duration,
+        groupsFound: 0,
+        groupsProcessed: 0,
+        windowsJudged: 0,
+        responsesScored: 0,
+        prefiltered: 0,
+        omitted: 0,
+        done: true,
+      });
     }
+
+    const { groupsProcessed, windowsJudged, responsesScored, prefiltered, omitted } =
+      await scoreGroupsWithBudget(groups, deadline);
 
     // "done" only when the backlog is exhausted (nothing settled remains
     // unscored) — lets a backfill driver loop until the walk completes.
@@ -282,6 +424,7 @@ evalResponsesApp.get("/api/cron/eval-responses", async (c) => {
       groupsProcessed,
       windowsJudged,
       responsesScored,
+      prefiltered,
       omitted,
       done,
     });
@@ -293,6 +436,7 @@ evalResponsesApp.get("/api/cron/eval-responses", async (c) => {
       groupsProcessed,
       windowsJudged,
       responsesScored,
+      prefiltered,
       omitted,
       done,
     });

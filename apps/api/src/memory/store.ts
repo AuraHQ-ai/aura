@@ -565,6 +565,7 @@ export async function findContradictionCandidates(
 /**
  * Batch store multiple memories.
  * Automatically sets status='current' and validFrom=now() on all new memories.
+ * validUntil is persisted only when explicitly supplied by the caller.
  */
 export async function storeMemories(newMemories: NewMemory[]): Promise<string[]> {
   if (newMemories.length === 0) return [];

@@ -117,7 +117,7 @@ export function defineTool<TInput, TOutput>(config: {
   inputSchema: ZodType<TInput, any, any>;
   execute: (input: TInput) => PromiseLike<TOutput>;
   slack?: SlackToolMetadata<TInput, TOutput>;
-  toModelOutput?: Tool<TInput, TOutput>["toModelOutput"];
+  toModelOutput?: Tool<TInput, TOutput, any>["toModelOutput"];
   requiredCredentials?: string[];
 }) {
   const { slack, requiredCredentials, ...rest } = config;
@@ -198,8 +198,8 @@ export function defineTool<TInput, TOutput>(config: {
   };
 
   const toolConfig = { ...rest, execute: auditedExecute };
-  const t = tool<TInput, TOutput>(
-    toolConfig as unknown as Tool<TInput, TOutput>,
+  const t = tool<TInput, TOutput, any>(
+    toolConfig as unknown as Tool<TInput, TOutput, any>,
   );
   if (slack) {
     (t as any).slack = slack;
@@ -209,7 +209,7 @@ export function defineTool<TInput, TOutput>(config: {
     (t as any).__requiredCredentials = requiredCredentials;
   }
 
-  return t as Tool<TInput, TOutput> & {
+  return t as Tool<TInput, TOutput, any> & {
     slack?: SlackToolMetadata<TInput, TOutput>;
   };
 }

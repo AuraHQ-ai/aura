@@ -254,7 +254,7 @@ export async function computeThreadStates(
         schema: threadStateSchema,
         prompt,
         maxOutputTokens: 200,
-        experimental_telemetry: aiTelemetry("email-triage"),
+        telemetry: aiTelemetry("email-triage"),
       });
 
       pendingUpdates.push({

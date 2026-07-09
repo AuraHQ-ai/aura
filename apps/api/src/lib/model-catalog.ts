@@ -25,6 +25,10 @@ export const MODEL_CATEGORIES = [
 
 export type ModelCategory = (typeof MODEL_CATEGORIES)[number];
 
+function isModelCategory(value: unknown): value is ModelCategory {
+  return typeof value === "string" && MODEL_CATEGORIES.includes(value as ModelCategory);
+}
+
 export interface ModelOption {
   value: string;
   label: string;
@@ -442,19 +446,21 @@ export async function getModelCatalogResponse(
         lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
       };
 
-    if (row.selectionCategory && row.selectionEnabled) {
-      if (!item.enabledCategories.includes(row.selectionCategory)) {
-        item.enabledCategories.push(row.selectionCategory);
+    if (isModelCategory(row.selectionCategory) && row.selectionEnabled) {
+      const category = row.selectionCategory;
+
+      if (!item.enabledCategories.includes(category)) {
+        item.enabledCategories.push(category);
       }
 
       const option = { value: row.modelId, label: row.name };
-      grouped[row.selectionCategory].push(option);
+      grouped[category].push(option);
 
       if (row.selectionDefault) {
-        if (!item.defaultCategories.includes(row.selectionCategory)) {
-          item.defaultCategories.push(row.selectionCategory);
+        if (!item.defaultCategories.includes(category)) {
+          item.defaultCategories.push(category);
         }
-        defaults[row.selectionCategory] = row.modelId;
+        defaults[category] = row.modelId;
       }
     }
 

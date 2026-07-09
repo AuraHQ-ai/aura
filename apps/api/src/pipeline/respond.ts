@@ -6,6 +6,7 @@ import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { formatForSlack, prettifyAndWrapTable } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
+import { CHART_BLOCK_KEY } from "../tools/chart.js";
 import {
   safePostMessage,
   isChannelTypeNotSupported,
@@ -178,6 +179,8 @@ export interface LLMResponse {
   stepModelIds?: string[];
   /** Whether the response was interrupted by a newer invocation */
   interrupted?: boolean;
+  /** Whether the turn was delegated to the durable WDK workflow (issue #1111) */
+  workflowDelegated?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -206,6 +209,16 @@ const STREAM_THRESHOLD_WHITESPACE = 9_000;
 const STREAM_HARD_LIMIT = 9_500;
 const MAX_CONTINUATIONS = 5;
 const LONG_TOOL_SPLIT_MS = 75_000;
+// Slack's chat.stream transport enforces a hard cap (~3 minutes) on the TOTAL
+// lifetime of a single stream, independent of activity. Keepalive appends only
+// beat the ~30s idle timeout — they do NOT extend the lifetime cap — and
+// LONG_TOOL_SPLIT_MS only covers a single tool staying pending past 75s. Turns
+// made of many sequential short tool calls (20-40s each) accumulate past the
+// cap, the stream dies at the transport layer, and composed text never flushes
+// (issue #1121). We proactively split to a fresh stream once the current one
+// exceeds this wall-clock age, checked at safe boundaries (text-delta and
+// tool-result/tool-error handling) — never mid-append.
+const STREAM_MAX_AGE_MS = 60_000;
 const STREAM_CONTINUATION_TOMBSTONE = "_(continuing in a new message...)_";
 const TOOL_CONTINUATION_OUTPUT = "continuing in a new message...";
 const EMPTY_COMPLETION_RELAUNCH_PROMPT = "(continue - you ended without responding. Summarize what you found.)";
@@ -297,6 +310,10 @@ function toBlocksChunk(blocks: Record<string, any>[]): SlackStreamChunk {
     type: "blocks",
     blocks,
   };
+}
+
+function fallbackTextForNativeBlock(block: Record<string, any>) {
+  return block.type === "data_visualization" ? "Here's a chart:" : "Here's a table:";
 }
 
 function asAppendPayload(payload: {
@@ -398,6 +415,10 @@ export async function generateResponse(
   if (options.recipientUserId) streamParams.recipient_user_id = options.recipientUserId;
 
   let streamer: any = null;
+  // Wall-clock start time of the CURRENT Slack stream. Reset whenever
+  // splitToNewStream() creates a fresh stream — NOT between tool results —
+  // so it tracks total stream age for the STREAM_MAX_AGE_MS check.
+  let streamStartedAt = Date.now();
 
   // ── Streaming fallback ──────────────────────────────────────────────
   // Some channel types (e.g. Slack List internal channels) don't support
@@ -428,6 +449,22 @@ export async function generateResponse(
       },
     });
     pendingChannelTypeUnsupportedFallback = null;
+  }
+
+  /**
+   * Write the stashed message_not_in_streaming_state error to error_events.
+   * Always logged regardless of fallback outcome (issue #1121); the
+   * `fallbackRecovered` tag lets dashboards separate recovered from
+   * unrecovered occurrences.
+   */
+  function flushPendingMessageNotInStreamingStateError(recovered: boolean): void {
+    if (!pendingMessageNotInStreamingStateError) return;
+    const pending = pendingMessageNotInStreamingStateError;
+    pendingMessageNotInStreamingStateError = null;
+    logError({
+      ...pending,
+      context: { ...(pending.context ?? {}), fallbackRecovered: recovered },
+    });
   }
 
   async function tryStreamAppend(
@@ -527,21 +564,22 @@ export async function generateResponse(
       } else {
         // Unknown streaming error — don't kill the response, fall back gracefully
         streamingFailed = true;
-        const errorLog = {
-          errorName: "UnexpectedStreamError",
-          errorMessage: err?.message || "unexpected error on stream append",
-          errorCode: err?.data?.error || "unknown",
-          channelId,
-          context: {
-            fallback: "postMessage",
-            ...(err?.data?.error === "message_not_in_streaming_state" && {
-              isFallbackRecovery: true,
-            }),
-          },
-        };
 
         if (err?.data?.error === "message_not_in_streaming_state") {
-          pendingMessageNotInStreamingStateError = errorLog;
+          // Stash for finalize: always written to error_events once the
+          // fallback outcome is known, tagged recovered/unrecovered
+          // (issue #1121 — previously swallowed when the fallback succeeded).
+          pendingMessageNotInStreamingStateError = {
+            errorName: "MessageNotInStreamingState",
+            errorMessage: err?.message || "message_not_in_streaming_state on stream append",
+            errorCode: "message_not_in_streaming_state",
+            channelId,
+            context: {
+              fallback: "postMessage",
+              streamAgeMs: Date.now() - streamStartedAt,
+              toolCallCount: toolCallRecords.length,
+            },
+          };
           logger.warn("chatStream append left streaming state, falling back to postMessage", {
             channelId,
             slackError: err?.data?.error,
@@ -553,7 +591,13 @@ export async function generateResponse(
             slackError: err?.data?.error,
             message: err?.message,
           });
-          logError(errorLog);
+          logError({
+            errorName: "UnexpectedStreamError",
+            errorMessage: err?.message || "unexpected error on stream append",
+            errorCode: err?.data?.error || "unknown",
+            channelId,
+            context: { fallback: "postMessage" },
+          });
         }
       }
       if (streamingFailed) {
@@ -565,7 +609,7 @@ export async function generateResponse(
 
   // ── Inactivity timeout ───────────────────────────────────────────────
   type StreamAbortReason = "inactivity" | "long_tool" | "superseded" | "unknown";
-  type ContinuationReason = "length" | "long_tool";
+  type ContinuationReason = "length" | "long_tool" | "stream_age";
 
   const abortController = new AbortController();
   let inactivityTimer: ReturnType<typeof setTimeout> = undefined as any;
@@ -576,6 +620,21 @@ export async function generateResponse(
     inactivityTimer = setTimeout(() => {
       logger.warn("LLM inactivity timeout (180s), aborting");
       lastAbortReason = "inactivity";
+      // Log at the point of abort: the abort doesn't always surface as a
+      // thrown AbortError (the SDK may end the stream gracefully), so the
+      // catch-side StreamAborted log alone can miss these (issue #1121).
+      logError({
+        errorName: "StreamInactivityAbort",
+        errorMessage: "LLM stream aborted after 180s of inactivity",
+        errorCode: "stream_inactivity_abort",
+        channelId,
+        context: {
+          accumulatedTextLength: accumulatedText.length,
+          toolCallCount: toolCallRecords.length,
+          segmentIndex: currentSegmentIndex,
+          streamAgeMs: Date.now() - streamStartedAt,
+        },
+      });
       abortController.abort("inactivity");
     }, 180_000);
   };
@@ -609,6 +668,7 @@ export async function generateResponse(
 
   if (!skipStreaming) {
     streamer = slackClient.chatStream(streamParams as any);
+    streamStartedAt = Date.now();
   }
 
   let supersededDuringStream = false;
@@ -679,7 +739,7 @@ export async function generateResponse(
   let currentStreamLength = 0;
   let fallbackStartIdx = 0;
   let streamedRawIdx = 0;
-  let pendingTableBlock: Record<string, any> | null = null;
+  let pendingNativeBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
@@ -903,6 +963,8 @@ export async function generateResponse(
 
   async function appendTextDelta(text: string): Promise<void> {
     if (!text) return;
+    // Age-based split happens at the delta boundary, before any append.
+    await splitForStreamAge();
     accumulatedText += text;
     currentSegmentTextLength += text.length;
     let remaining = processChunkForTables(text);
@@ -986,7 +1048,9 @@ export async function generateResponse(
       segmentEnd: "split",
     });
 
-    if (reason === "long_tool") {
+    // Close out dangling in-progress tool cards on the old stream before
+    // abandoning it (age splits can happen while tools are still pending).
+    if (reason === "long_tool" || (reason === "stream_age" && pendingToolInputs.size > 0)) {
       await appendStreamTombstone();
     }
 
@@ -1000,6 +1064,7 @@ export async function generateResponse(
 
     try {
       streamer = slackClient.chatStream(streamParams as any);
+      streamStartedAt = Date.now();
       currentStreamLength = 0;
       streamTombstoneSent = false;
       continuationCount++;
@@ -1035,7 +1100,7 @@ export async function generateResponse(
         pendingToolCount: pendingToolInputs.size,
         thresholdMs: LONG_TOOL_SPLIT_MS,
       });
-      if (!await splitToNewStream("long_tool") && streamingFailed) {
+      if (!(await splitToNewStream("long_tool")) && streamingFailed) {
         fallbackStartIdx = accumulatedText.length;
       }
     } finally {
@@ -1043,6 +1108,37 @@ export async function generateResponse(
       if (!streamingFailed && pendingToolInputs.size > 0) {
         startLongToolSplitTimer();
       }
+    }
+  }
+
+  function streamAgeExceeded(): boolean {
+    return (
+      !streamingFailed &&
+      streamer != null &&
+      continuationCount < MAX_CONTINUATIONS &&
+      Date.now() - streamStartedAt >= STREAM_MAX_AGE_MS
+    );
+  }
+
+  /**
+   * Split to a fresh Slack stream when the current one is approaching the
+   * ~3-minute total stream lifetime cap (see STREAM_MAX_AGE_MS). Independent
+   * of pendingToolInputs — sequential short tools never trigger the
+   * LONG_TOOL_SPLIT_MS mechanism but still age the stream past the cap.
+   * Must only be called at safe boundaries (between deltas / after tool
+   * results), never mid-append.
+   */
+  async function splitForStreamAge(): Promise<void> {
+    if (!streamAgeExceeded()) return;
+    logger.info("Slack stream exceeded max age; splitting to a fresh stream", {
+      channelId,
+      streamAgeMs: Date.now() - streamStartedAt,
+      thresholdMs: STREAM_MAX_AGE_MS,
+      pendingToolCount: pendingToolInputs.size,
+      toolCallCount: toolCallRecords.length,
+    });
+    if (!(await splitToNewStream("stream_age")) && streamingFailed) {
+      fallbackStartIdx = accumulatedText.length;
     }
   }
 
@@ -1105,7 +1201,7 @@ export async function generateResponse(
       latestResult = result;
       stepsPromises.push(result.steps);
 
-      for await (const chunk of result.fullStream) {
+      for await (const chunk of result.stream) {
         resetTimer();
 
         switch (chunk.type) {
@@ -1212,18 +1308,26 @@ export async function generateResponse(
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
 
-          // Capture native Slack table block from draw_table tool
+          // Capture native Slack blocks from draw_table/draw_chart tools.
           if (
             output && typeof output === "object" &&
             TABLE_BLOCK_KEY in output && output[TABLE_BLOCK_KEY]
           ) {
-            pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
+            pendingNativeBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
+          } else if (
+            output && typeof output === "object" &&
+            CHART_BLOCK_KEY in output && output[CHART_BLOCK_KEY]
+          ) {
+            pendingNativeBlock = output[CHART_BLOCK_KEY] as Record<string, any>;
+          }
+
+          if (pendingNativeBlock) {
             if (!streamingFailed) {
-              const streamedTable = await tryStreamAppend(asAppendPayload({
-                chunks: [toBlocksChunk([pendingTableBlock])],
+              const streamedNativeBlock = await tryStreamAppend(asAppendPayload({
+                chunks: [toBlocksChunk([pendingNativeBlock])],
               }));
-              if (streamedTable) {
-                pendingTableBlock = null;
+              if (streamedNativeBlock) {
+                pendingNativeBlock = null;
               }
             }
           }
@@ -1272,10 +1376,11 @@ export async function generateResponse(
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
-            if (!await splitToNewStream() && streamingFailed) {
+            if (!(await splitToNewStream()) && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
             }
           }
+          await splitForStreamAge();
           break;
         }
 
@@ -1318,10 +1423,11 @@ export async function generateResponse(
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
-            if (!await splitToNewStream() && streamingFailed) {
+            if (!(await splitToNewStream()) && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
             }
           }
+          await splitForStreamAge();
           break;
         }
         }
@@ -1468,6 +1574,14 @@ export async function generateResponse(
         : finalText;
       const blocks: any[] = [];
       const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
+      // Issue #1121: when the stream died after everything visible had
+      // already been streamed (pure tool-call tail), the unsent buffer is
+      // empty and the fallback would post an effectively empty block list.
+      // Post a short stub instead so the user knows the turn was cut short.
+      const interruptedStubText =
+        !emptyCompletionDetected && !formattedUnsent && toolCallRecords.length > 0
+          ? `_Turn interrupted after ${toolCallRecords.length} tool call${toolCallRecords.length === 1 ? "" : "s"} — rerun?_`
+          : null;
       if (formattedUnsent) {
         for (let i = 0; i < formattedUnsent.length; i += 3000) {
           blocks.push({
@@ -1476,9 +1590,15 @@ export async function generateResponse(
             expand: true,
           });
         }
+      } else if (interruptedStubText) {
+        blocks.push({
+          type: "section",
+          text: { type: "mrkdwn", text: interruptedStubText },
+          expand: true,
+        });
       }
-      if (pendingTableBlock) {
-        blocks.push(pendingTableBlock);
+      if (pendingNativeBlock) {
+        blocks.push(pendingNativeBlock);
       }
 
       blocks.push({
@@ -1494,7 +1614,7 @@ export async function generateResponse(
       const toolMeta = buildToolMetadata(toolCallRecords);
       const fallbackText = emptyCompletionDetected
         ? emptyCompletionFallbackText
-        : formattedUnsent || "_I processed your request but had nothing to say._";
+        : interruptedStubText ?? (formattedUnsent || "_I processed your request but had nothing to say._");
 
       try {
         const fallbackResult = await safePostMessage(slackClient, {
@@ -1506,9 +1626,7 @@ export async function generateResponse(
         });
 
         if (!fallbackResult.ok) {
-          if (pendingMessageNotInStreamingStateError) {
-            logError(pendingMessageNotInStreamingStateError);
-          }
+          flushPendingMessageNotInStreamingStateError(false);
           logger.warn("LLM response lost — channel does not support posting", {
             channelId,
             rawLength: finalText.length,
@@ -1516,6 +1634,7 @@ export async function generateResponse(
           });
           logChannelTypeUnsupportedFallbackFailure("safePostMessage_returned_not_ok");
         } else {
+          flushPendingMessageNotInStreamingStateError(true);
           pendingChannelTypeUnsupportedFallback = null;
           logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
             rawLength: finalText.length,
@@ -1524,9 +1643,7 @@ export async function generateResponse(
           });
         }
       } catch (fallbackErr: any) {
-        if (pendingMessageNotInStreamingStateError) {
-          logError(pendingMessageNotInStreamingStateError);
-        }
+        flushPendingMessageNotInStreamingStateError(false);
         logger.error("Fallback safePostMessage also failed — posting plain text", {
           channelId,
           error: fallbackErr?.message || String(fallbackErr),
@@ -1551,7 +1668,7 @@ export async function generateResponse(
     } else {
       // Happy path: finalize the stream on Slack's side.
       // Attach tool I/O metadata (invisible to users) for follow-up context,
-      // and inject table blocks from draw_table if present.
+      // and inject native table/chart blocks if present.
       const feedbackBlock = {
         type: "context_actions",
         elements: [{
@@ -1564,7 +1681,7 @@ export async function generateResponse(
 
       const toolMeta = buildToolMetadata(toolCallRecords);
       const stopBlocks: any[] = [];
-      if (pendingTableBlock) stopBlocks.push(pendingTableBlock);
+      if (pendingNativeBlock) stopBlocks.push(pendingNativeBlock);
       stopBlocks.push(feedbackBlock);
       const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
@@ -1572,39 +1689,48 @@ export async function generateResponse(
       try {
         await streamer.stop(stopArgs);
       } catch (stopErr: any) {
-        if (isInvalidBlocks(stopErr)) {
+        if (isInvalidBlocks(stopErr) || isInvalidArguments(stopErr)) {
+          // Slack rejects a block payload at stop with either `invalid_blocks`
+          // or `invalid_arguments` depending on which validation layer trips
+          // (same asymmetry as the append path). Both are recoverable: retry
+          // the stop without blocks, then deliver the native block via
+          // chat.postMessage.
+          const stopErrCode = stopErr?.data?.error ||
+            (isInvalidArguments(stopErr) ? "invalid_arguments" : "invalid_blocks");
           logger.warn("streamer.stop() rejected blocks, retrying without them", {
             channelId,
             slackError: stopErr?.data?.error,
             blockTypes: stopBlocks.map((b: any) => b.type),
           });
           logError({
-            errorName: "StreamStopInvalidBlocks",
-            errorMessage: stopErr?.message || "invalid_blocks on streamer.stop()",
-            errorCode: stopErr?.data?.error || "invalid_blocks",
+            errorName: isInvalidArguments(stopErr)
+              ? "StreamStopInvalidArguments"
+              : "StreamStopInvalidBlocks",
+            errorMessage: stopErr?.message || `${stopErrCode} on streamer.stop()`,
+            errorCode: stopErrCode,
             channelId,
-            context: { blockTypes: stopBlocks.map((b: any) => b.type) },
+            context: { phase: "stop", blockTypes: stopBlocks.map((b: any) => b.type) },
           });
           try {
             await streamer.stop();
           } catch {
             // Stream may already be finalized
           }
-          // Deliver the table block via chat.postMessage as a follow-up
+          // Deliver the native block via chat.postMessage as a follow-up
           // when the stream rejected it (e.g. MPIMs, some channel types).
-          if (pendingTableBlock) {
+          if (pendingNativeBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: "Here's a table:",
-                blocks: [pendingTableBlock as any],
+                text: fallbackTextForNativeBlock(pendingNativeBlock),
+                blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
-              pendingTableBlock = null;
-            } catch (tablePostErr: any) {
-              logger.warn("Failed to post table block via chat.postMessage fallback", {
+              pendingNativeBlock = null;
+            } catch (nativeBlockPostErr: any) {
+              logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
-                error: tablePostErr?.message,
+                error: nativeBlockPostErr?.message,
               });
             }
           }
@@ -1621,19 +1747,19 @@ export async function generateResponse(
             context: { currentStreamLength },
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
-          if (pendingTableBlock) {
+          if (pendingNativeBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: "Here's a table:",
-                blocks: [pendingTableBlock as any],
+                text: fallbackTextForNativeBlock(pendingNativeBlock),
+                blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
-              pendingTableBlock = null;
-            } catch (tablePostErr: any) {
-              logger.warn("Failed to post table block via chat.postMessage fallback", {
+              pendingNativeBlock = null;
+            } catch (nativeBlockPostErr: any) {
+              logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
-                error: tablePostErr?.message,
+                error: nativeBlockPostErr?.message,
               });
             }
           }
@@ -1643,19 +1769,19 @@ export async function generateResponse(
             channelId,
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
-          if (pendingTableBlock) {
+          if (pendingNativeBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: "Here's a table:",
-                blocks: [pendingTableBlock as any],
+                text: fallbackTextForNativeBlock(pendingNativeBlock),
+                blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
-              pendingTableBlock = null;
-            } catch (tablePostErr: any) {
-              logger.warn("Failed to post table block via chat.postMessage fallback", {
+              pendingNativeBlock = null;
+            } catch (nativeBlockPostErr: any) {
+              logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
-                error: tablePostErr?.message,
+                error: nativeBlockPostErr?.message,
               });
             }
           }
@@ -1697,6 +1823,23 @@ export async function generateResponse(
       logger.info("Stream interrupted — invocation superseded", {
         invocationId: error.invocationId,
         channelId,
+      });
+
+      // Observability only — supersede recovery semantics (PR #1000) are
+      // unchanged. Without this row, 0-token hangs that get superseded by a
+      // user follow-up never appear in error_events (issue #1121).
+      logError({
+        errorName: "InvocationSupersededDuringStream",
+        errorMessage: error?.message || "Invocation superseded while streaming",
+        errorCode: "superseded_while_streaming",
+        channelId,
+        context: {
+          invocationId: error.invocationId,
+          abortReason: lastAbortReason,
+          accumulatedTextLength: accumulatedText.length,
+          toolCallCount: toolCallRecords.length,
+          streamAgeMs: Date.now() - streamStartedAt,
+        },
       });
 
       if (streamer && !streamingFailed) {
@@ -1755,14 +1898,14 @@ export async function generateResponse(
         );
         const retryResult = streamText({
           model: retryModel,
-          system: retrySystemMessages,
+          instructions: retrySystemMessages,
           prompt: retryPrompt,
           abortSignal: retryAbortController.signal,
-          experimental_telemetry: aiTelemetry("slack-chat-retry"),
+          telemetry: aiTelemetry("slack-chat-retry"),
         });
         let retryText = "";
 
-        for await (const chunk of retryResult.fullStream) {
+        for await (const chunk of retryResult.stream) {
           clearTimeout(retryInactivityTimer);
           retryInactivityTimer = setTimeout(() => {
             logger.warn("LLM retry inactivity timeout (180s), aborting");
