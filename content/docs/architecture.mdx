@@ -91,10 +91,14 @@ Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `to
 | **Code** | Sandbox (shell), GitHub CLI, subagents | Code execution and development |
 | **Memory** | Notes, conversations, people | Knowledge management |
 | **Scheduling** | Jobs, datetime | Autonomous task scheduling |
-| **Integration** | HTTP requests, credentials, Cursor agents | External API access |
+| **Integration** | Credentials, Cursor agents | Credential management and async coding agents |
 | **Communication** | Voice, resources | Phone calls, content ingestion |
 
 Each tool has a description that guides the LLM on when and how to use it -- these descriptions are a critical part of Aura's behavior.
+
+### Deferred tool loading
+
+Not every tool schema is sent to the model on every turn. Frequently used tools (Slack messaging, sandbox commands, notes, memories) are loaded eagerly; infrequent ones (Calendar, Canvas, Gmail triage, Cursor agents, voice, and ~60 others listed in `apps/api/src/tools/deferred.ts`) are marked with Anthropic's `deferLoading` provider option. Their full schemas are omitted from the prompt and replaced by a one-line manifest, and the model loads them on demand via the native `tool_search_tool_bm25` meta-tool. This keeps the prompt small without shrinking the toolset. Deferred loading only applies to Anthropic models; other providers receive the full schemas.
 
 ## Heartbeat & Cron
 
@@ -170,5 +174,5 @@ Users store API keys and OAuth credentials through Aura's Slack App Home. Creden
 
 - Encrypted at rest (AES-256-GCM)
 - Scoped per user -- Aura can only access credentials the owner has stored
-- Injected server-side into HTTP requests (the LLM never sees raw keys)
+- Injected as environment variables into the caller's sandbox, scoped per user (the LLM never sees raw values -- see [Credentials](/tools/credentials))
 - Support both static tokens and OAuth client credentials with automatic token refresh
