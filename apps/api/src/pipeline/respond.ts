@@ -16,6 +16,11 @@ import {
   isMsgTooLong,
 } from "../lib/slack-messaging.js";
 import { getDetachedCommandSuspendState, getSlackMeta } from "../lib/tool.js";
+import {
+  startTurnMarker,
+  finishTurnMarker,
+  type TurnMarkerTerminalStatus,
+} from "../lib/turn-markers.js";
 import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 import { aiTelemetry } from "../lib/langfuse.js";
@@ -150,6 +155,8 @@ interface RespondOptions {
   files?: FileContentPart[];
   channelId: string;
   threadTs?: string;
+  /** ts of the user message this turn responds to (turn marker bookkeeping) */
+  messageTs?: string;
   /** Slack team ID — required for chatStream in channels */
   teamId?: string;
   /** Slack user ID of the message author — required for chatStream in channels */
@@ -391,6 +398,30 @@ export async function generateResponse(
   const { slackClient, channelId, threadTs } = options;
   const hasFiles = options.files && options.files.length > 0;
   const invocationId = options.invocationId ?? crypto.randomUUID();
+
+  // ── Turn marker (stream-death watchdog, issue #1109) ────────────────
+  // Ground-truth "turn started" row, marked terminal on every in-process
+  // exit path below. If the process is hard-killed (Vercel maxDuration
+  // SIGKILL), the row stays in "started" and the heartbeat watchdog posts
+  // a recovery message. Headless/job turns are excluded — jobs have their
+  // own stale-running recovery in the heartbeat.
+  // startTurnMarker is fail-soft: a marker failure never breaks the turn.
+  const trackTurnMarker = options.isHeadless !== true;
+  // Terminal status recorded in the finally block. Defaults to "failed" so
+  // any exit that doesn't explicitly flip it (thrown errors handled by the
+  // caller's pipeline catch) is still terminal — the watchdog only acts on
+  // rows stuck in "started".
+  let turnMarkerStatus: TurnMarkerTerminalStatus = "failed";
+  if (trackTurnMarker) {
+    await startTurnMarker({
+      invocationId,
+      channelId,
+      threadTs,
+      messageTs: options.messageTs,
+      userId: options.context?.userId,
+      workspaceId: options.context?.workspaceId,
+    });
+  }
 
   // ── Smart routing: skip streaming when it's known to fail ──────────
   const skipStreaming =
@@ -1796,6 +1827,7 @@ export async function generateResponse(
       });
     }
 
+    turnMarkerStatus = "completed";
     return {
       raw: finalText,
       alreadyPosted: true,
@@ -1856,6 +1888,7 @@ export async function generateResponse(
         }
       }
 
+      turnMarkerStatus = "completed";
       return {
         raw: accumulatedText + "\n\n_[interrupted — new message received]_",
         alreadyPosted: true,
@@ -1935,6 +1968,7 @@ export async function generateResponse(
           });
         }
 
+        turnMarkerStatus = "completed";
         return {
           raw: retryText,
           alreadyPosted: true,
@@ -2055,6 +2089,7 @@ export async function generateResponse(
           thread_ts: threadTs,
         });
         if (fallbackResult.ok) {
+          turnMarkerStatus = "completed";
           return {
             raw: accumulatedText,
             alreadyPosted: true,
@@ -2073,5 +2108,10 @@ export async function generateResponse(
     throw error;
   } finally {
     cleanupScratchpad(invocationId);
+    if (trackTurnMarker) {
+      // Fail-soft; a hard kill skips this entirely — that's what the
+      // heartbeat watchdog detects.
+      await finishTurnMarker(invocationId, turnMarkerStatus);
+    }
   }
 }

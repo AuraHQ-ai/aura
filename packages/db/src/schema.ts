@@ -937,6 +937,45 @@ export const conversationLocks = pgTable(
   ],
 );
 
+// ── Turn Markers (stream-death watchdog, issue #1109) ────────────────────────
+// Ground-truth record that a Slack respond turn started. Written early in the
+// respond pipeline and marked terminal on every in-process exit path. Rows
+// stuck in "started" mean the process was hard-killed (e.g. Vercel maxDuration
+// SIGKILL) — the heartbeat watchdog detects them and posts a recovery message.
+
+export const turnMarkers = pgTable(
+  "turn_markers",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    invocationId: text("invocation_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts"),
+    /** ts of the user message this turn is responding to */
+    messageTs: text("message_ts"),
+    userId: text("user_id"),
+    status: text("status").notNull().default("started"),
+    startedAt: timestamptz("started_at").notNull().defaultNow(),
+    endedAt: timestamptz("ended_at"),
+  },
+  (table) => [
+    uniqueIndex("turn_markers_workspace_invocation_idx").on(
+      table.workspaceId,
+      table.invocationId,
+    ),
+    index("turn_markers_status_started_at_idx").on(
+      table.status,
+      table.startedAt,
+    ),
+    check(
+      "turn_markers_status_check",
+      sql`${table.status} IN ('started', 'completed', 'failed', 'recovered')`,
+    ),
+  ],
+);
+
 // ── Error Events ────────────────────────────────────────────────────────────
 
 export const errorEvents = pgTable(
@@ -1144,6 +1183,8 @@ export type EventLock = typeof eventLocks.$inferSelect;
 export type NewEventLock = typeof eventLocks.$inferInsert;
 export type ConversationLock = typeof conversationLocks.$inferSelect;
 export type NewConversationLock = typeof conversationLocks.$inferInsert;
+export type TurnMarker = typeof turnMarkers.$inferSelect;
+export type NewTurnMarker = typeof turnMarkers.$inferInsert;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type NewErrorEvent = typeof errorEvents.$inferInsert;
 export type JobExecution = typeof jobExecutions.$inferSelect;

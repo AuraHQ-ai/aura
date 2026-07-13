@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { executeJob, MAX_RETRIES } from "./execute-job.js";
 import { computeNextCronTick } from "./cron-utils.js";
 import { persistJobOutcome, triggerSupervisorReview } from "./job-outcomes.js";
+import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 
 /** Max jobs to process per heartbeat sweep */
@@ -305,6 +306,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let inProgressOutcomesReset = 0;
   let inProgressOutcomesSkipped = 0;
   let dequeuedWithoutExecutionRecovered = 0;
+  let staleTurnsDetected = 0;
+  let staleTurnsRecovered = 0;
 
   try {
     const now = new Date();
@@ -594,6 +597,13 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
+    // ── 6. Stream-death watchdog: recover hard-killed Slack turns ───────
+    // (issue #1109 — see cron/turn-watchdog.ts; never throws)
+
+    const turnWatchdogResult = await sweepStaleTurnMarkers(slackClient, now);
+    staleTurnsDetected = turnWatchdogResult.detected;
+    staleTurnsRecovered = turnWatchdogResult.recovered;
+
     // ── Done ─────────────────────────────────────────────────────────────
 
     const duration = Date.now() - sweepStart;
@@ -607,6 +617,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       inProgressOutcomesReset,
       inProgressOutcomesSkipped,
       dequeuedWithoutExecutionRecovered,
+      staleTurnsDetected,
+      staleTurnsRecovered,
     });
 
     return c.json({
@@ -620,6 +632,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       inProgressOutcomesReset,
       inProgressOutcomesSkipped,
       dequeuedWithoutExecutionRecovered,
+      staleTurnsDetected,
+      staleTurnsRecovered,
       duration,
     });
   } catch (error: any) {
