@@ -33,6 +33,64 @@ describe("draw_table inline mode", () => {
     expect(result[TABLE_BLOCK_KEY].rows).toHaveLength(3);
   });
 
+  it("reports the table as queued, not delivered (issue #1180)", async () => {
+    const fakeClient = {} as any;
+    const tools = createTableTools(fakeClient);
+    const result = await (tools.draw_table as any).execute({
+      rows: [
+        ["Name", "Score"],
+        ["Alice", "95"],
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    // Inline mode only queues the block — delivery happens later in the
+    // pipeline and can fail, so the result must not claim delivery.
+    expect(result.message).toMatch(/queued/i);
+    expect(result.message).toMatch(/do not claim the user has seen it/i);
+    expect(result.message).not.toMatch(/rendered|posted|sent/i);
+    expect(result.ts).toBeUndefined();
+
+    const output = (tools.draw_table as any).slack.output(result);
+    expect(output).toBe("Table queued for delivery with the reply");
+  });
+
+  it("keeps affirmative wording for reply mode (synchronous post)", async () => {
+    const fakeClient = {
+      chat: {
+        postMessage: vi.fn().mockResolvedValue({ ok: true, ts: "1710000001.000100" }),
+      },
+    } as any;
+    const context = { channelId: "C123", threadTs: "1234.5678", timezone: "UTC" };
+    const tools = createTableTools(fakeClient, context as any);
+    const result = await (tools.draw_table as any).execute({
+      rows: [
+        ["Name", "Score"],
+        ["Alice", "95"],
+      ],
+      send_as_reply: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.ts).toBe("1710000001.000100");
+    expect(result.message).toBe("Table posted as a thread reply.");
+
+    const output = (tools.draw_table as any).slack.output(result);
+    expect(output).toBe("Table rendered");
+  });
+
+  it("surfaces errors through slack output", async () => {
+    const fakeClient = {} as any;
+    const tools = createTableTools(fakeClient);
+    const result = await (tools.draw_table as any).execute({
+      rows: [["only-header"]],
+    });
+
+    expect(result.ok).toBe(false);
+    const output = (tools.draw_table as any).slack.output(result);
+    expect(output).toBe(result.error);
+  });
+
   it("returns a native table block regardless of channel type context", async () => {
     const fakeClient = {} as any;
     // Simulate MPIM context
