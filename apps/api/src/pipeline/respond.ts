@@ -1713,13 +1713,13 @@ export async function generateResponse(
         } else {
           flushPendingMessageNotInStreamingStateError(true);
           pendingChannelTypeUnsupportedFallback = null;
-          if (pendingNativeBlock) {
+          if (pendingNativeBlocks.length > 0) {
             logger.info("NativeBlockDelivered", {
-              toolCallId: pendingNativeBlockToolCallId,
+              toolCallIds: pendingNativeBlockToolCallIds,
               path: "post_message_fallback",
             });
-            pendingNativeBlock = null;
-            pendingNativeBlockToolCallId = null;
+            pendingNativeBlocks = [];
+            pendingNativeBlockToolCallIds = [];
           }
           logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
             rawLength: finalText.length,
@@ -1773,13 +1773,13 @@ export async function generateResponse(
 
       try {
         await streamer.stop(stopArgs);
-        if (pendingNativeBlock) {
+        if (pendingNativeBlocks.length > 0) {
           logger.info("NativeBlockDelivered", {
-            toolCallId: pendingNativeBlockToolCallId,
+            toolCallIds: pendingNativeBlockToolCallIds,
             path: "stop_blocks",
           });
-          pendingNativeBlock = null;
-          pendingNativeBlockToolCallId = null;
+          pendingNativeBlocks = [];
+          pendingNativeBlockToolCallIds = [];
         }
       } catch (stopErr: any) {
         if (isInvalidBlocks(stopErr) || isInvalidArguments(stopErr)) {
@@ -1837,13 +1837,13 @@ export async function generateResponse(
                 errorCode: "native_block_dropped",
                 channelId,
                 context: {
-                  toolCallId: pendingNativeBlockToolCallId,
+                  toolCallIds: pendingNativeBlockToolCallIds,
                   path: "post_message_fallback",
                   error: nativeBlockPostErr?.message || String(nativeBlockPostErr),
                 },
               });
-              pendingNativeBlock = null;
-              pendingNativeBlockToolCallId = null;
+              pendingNativeBlocks = [];
+              pendingNativeBlockToolCallIds = [];
             }
           }
         } else if (isMsgTooLong(stopErr)) {
@@ -1885,13 +1885,13 @@ export async function generateResponse(
                 errorCode: "native_block_dropped",
                 channelId,
                 context: {
-                  toolCallId: pendingNativeBlockToolCallId,
+                  toolCallIds: pendingNativeBlockToolCallIds,
                   path: "post_message_fallback",
                   error: nativeBlockPostErr?.message || String(nativeBlockPostErr),
                 },
               });
-              pendingNativeBlock = null;
-              pendingNativeBlockToolCallId = null;
+              pendingNativeBlocks = [];
+              pendingNativeBlockToolCallIds = [];
             }
           }
         } else if (isChannelTypeNotSupported(stopErr)) {
@@ -1926,13 +1926,13 @@ export async function generateResponse(
                 errorCode: "native_block_dropped",
                 channelId,
                 context: {
-                  toolCallId: pendingNativeBlockToolCallId,
+                  toolCallIds: pendingNativeBlockToolCallIds,
                   path: "post_message_fallback",
                   error: nativeBlockPostErr?.message || String(nativeBlockPostErr),
                 },
               });
-              pendingNativeBlock = null;
-              pendingNativeBlockToolCallId = null;
+              pendingNativeBlocks = [];
+              pendingNativeBlockToolCallIds = [];
             }
           }
         } else {
