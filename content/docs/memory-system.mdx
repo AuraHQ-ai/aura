@@ -116,6 +116,7 @@ After every conversation turn, Aura extracts new memories:
 
 1. The recent messages are sent to Claude with a structured extraction prompt
 2. Claude identifies facts, decisions, preferences, events, open threads, and entity mentions
+   - `event` and `open_thread` candidates must pass a **durability test**: "will this still be true and useful in 30 days?" In-flight tasks and current-thread activity are not extracted
 3. Each extraction is checked for duplicates against existing memories
 4. New memories are embedded and stored
 5. Extracted entities are resolved and linked to their memories (see below)
