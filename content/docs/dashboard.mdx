@@ -156,6 +156,8 @@ A copy-to-clipboard button in the chat header exports the current conversation (
 
 Each chat message carries its own `modelId` / `resolvedModelId` metadata, so the exported JSON records which model actually produced each turn even when the selection changes mid-conversation.
 
+Chat generation is durable: each send starts a server-side workflow run (tracked in the `dashboard_chat_runs` table), and the browser is just a stream reader. Refreshing, switching threads, or reconnecting from another session reattaches to the live stream instead of killing the run -- only the Stop button (a server-side cancel endpoint) actually stops generation. Threads are scoped to the signed-in user's session.
+
 ## Navigation
 
 Account controls (settings, account menu) live in the sidebar footer, following the Cursor navigation pattern. The header stays focused on page actions. Theme selection (light/dark/system) is inside Settings rather than the header.

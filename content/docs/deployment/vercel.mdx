@@ -27,26 +27,29 @@ Each `apps/*` project deploys as a separate Vercel project.
 
 ## Architecture
 
-- **Runtime:** Node.js serverless functions
+- **Runtime:** Node.js serverless functions, emitted via the Build Output API by a Nitro build
 - **Framework:** Hono for HTTP routing
-- **Entry point:** `apps/api/src/app.ts` exports the Hono app; `apps/api/api/index.ts` is the Vercel handler
-- **Build:** `tsc` compiles TypeScript, then `pnpm --filter @aura/db db:migrate` runs pending Drizzle migrations
+- **Entry point:** `apps/api/src/app.ts` exports the Hono app; `apps/api/src/nitro-app.ts` is the Nitro server entry that routes all HTTP traffic to it (`apps/api/nitro.config.ts`)
+- **Workflows:** the `workflow/nitro` module compiles `"use workflow"` / `"use step"` directives in `apps/api/workflows/` (durable Slack respond, dashboard chat) into dedicated queue-triggered functions and registers the `/.well-known/workflow/v1/*` handler routes
+- **Build:** the `buildCommand` in `apps/api/vercel.json` runs migrations, builds the dashboard into `public/`, then `nitro build --preset vercel` followed by `scripts/patch-vercel-output.mjs` (restores the SPA fallback rewrite in `.vercel/output/config.json`)
+
+There are no filesystem function entrypoints anymore -- the legacy `apps/api/api/index.ts` and `apps/api/api/cron/*` handlers were removed when the Nitro build landed (PR #1116). Cron schedules live **only** in `apps/api/vercel.json`; defining the same cron in the Build Output config too makes Vercel reject the deployment ("duplicated cron job").
 
 ## Deployment Flow
 
 ```
-Push to main → Vercel Build → tsc → Run Migrations → Deploy
+Push to main → Vercel Build → Run Migrations → Dashboard Build → nitro build (Build Output API) → Deploy
 ```
 
-The `vercel-build` script in `apps/api/package.json`:
+The `buildCommand` in `apps/api/vercel.json`:
 
 ```json
 {
-  "scripts": {
-    "vercel-build": "pnpm --filter @aura/db db:migrate"
-  }
+  "buildCommand": "pnpm --filter @aura/db build && pnpm --filter @aura/db db:migrate && pnpm --filter aura-dashboard build && rm -rf public && cp -r ../dashboard/dist public && pnpm build:vercel"
 }
 ```
+
+Local development: `pnpm dev` in `apps/api` runs `nitro dev` (workflows run in the Local World); the legacy tsx watcher is still available as `pnpm dev:node`.
 
 ## Important Rules
 
