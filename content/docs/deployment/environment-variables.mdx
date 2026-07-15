@@ -49,6 +49,12 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `CURSOR_API_KEY` | Cursor API key for dispatching Cursor cloud agents |
 | `CURSOR_WEBHOOK_SECRET` | Secret for verifying Cursor agent webhook callbacks |
 | `COHERE_API_KEY` | Cohere API key for reranking search results |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key -- enables LLM tracing when set together with the secret key |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key (tracing is disabled if either key is missing) |
+| `LANGFUSE_BASE_URL` | Langfuse host URL (for self-hosted or EU/US region instances) |
+| `LANGFUSE_TRACING_ENVIRONMENT` | Override the tracing environment label. Defaults to `VERCEL_ENV` (production/preview), then `NODE_ENV` |
+| `LANGFUSE_RELEASE` | Release identifier attached to traces. Defaults to `VERCEL_GIT_COMMIT_SHA` |
+| `LANGFUSE_DROP_ORPHAN_EMBEDDINGS` | Set to `true` to skip exporting orphan embedding spans |
 | `VERCEL_TOKEN` | Vercel token (injected into sandbox for deployments) |
 
 ## Dashboard
