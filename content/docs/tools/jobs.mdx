@@ -1,6 +1,6 @@
 ---
 title: "Jobs & Scheduling Tools"
-description: "One-shot reminders, recurring cron jobs, script execution, headless dispatch, and background tasks — 6 tools."
+description: "One-shot reminders, recurring cron jobs, script execution, headless dispatch, working scratchpad, and background tasks — 8 tools."
 ---
 
 # Jobs & Scheduling Tools
@@ -137,6 +137,24 @@ Dispatch a task for immediate headless execution. Creates a job and triggers it 
 | `playbook` | string | no | Detailed execution guide |
 | `callback_channel` | string | no | Channel to post results in (defaults to current channel) |
 | `callback_thread_ts` | string | no | Thread to post results in |
+
+---
+
+## `scratchpad_write` / `scratchpad_read`
+
+An invocation-scoped working memory for long-running work. During a job (or any single conversation turn), Aura can save intermediate results — running tallies, findings, checklists — into named sections and read them back later, instead of re-reading tool results from many steps earlier.
+
+| Tool | Param | Type | Required | Description |
+|------|-------|------|----------|-------------|
+| `scratchpad_write` | `key` | string | **yes** | Section name, e.g. `findings`, `running-total` |
+| `scratchpad_write` | `content` | string | **yes** | Content to write (markdown). Writing to an existing key overwrites it. |
+| `scratchpad_read` | `key` | string | no | Specific section to read. Omit to read all sections. |
+
+Key properties:
+
+- **Scoped to one invocation.** The scratchpad lives in memory for the duration of a single job execution or response turn, keyed by invocation ID. It does not persist across invocations — use [notes](/tools/notes) for anything that should survive.
+- **Persisted into the execution trace.** When a job finishes, non-empty scratchpad contents are saved into the execution trace (visible via `read_job_trace` with `include_steps: true`), so intermediate findings survive for debugging even though the live scratchpad is discarded.
+- **Cleaned up automatically** at the end of each invocation to prevent memory leaks.
 
 ---
 
