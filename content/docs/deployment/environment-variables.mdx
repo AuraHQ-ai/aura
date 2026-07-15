@@ -28,6 +28,11 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `AURA_ADMIN_USER_IDS` | Comma-separated Slack user IDs with admin access. Fallback for users without a DB role — see [Permissions](/permissions) |
 | `DASHBOARD_SESSION_TTL` | Optional dashboard session JWT lifetime. Defaults to `365d`; accepts duration strings like `30d`, `365d`, or `12h`. |
 | `E2B_API_KEY` | E2B API key for sandbox access |
+| `E2B_TEMPLATE_ID` | Custom E2B sandbox template ID (kept current automatically by the `sandbox-build` GitHub Action) |
+| `AURA_PUBLIC_URL` | Public base URL of the API deployment. Used to build webhook callback URLs (detached sandbox commands, supervisor self-invocation). Falls back to `VERCEL_PROJECT_PRODUCTION_URL` |
+| `SANDBOX_WEBHOOK_SECRET` | Secret for verifying sandbox detached-command completion webhooks. Together with `AURA_PUBLIC_URL`, enables the suspend/resume flow for `run_command_detached` -- see [Sandbox](/tools/sandbox) |
+| `FOUNDER_USER_ID` | Slack user ID DM'd by the job supervisor's `escalate` outcome (falls back to the job requester) -- see [Jobs](/tools/jobs) |
+| `DEFAULT_WORKSPACE_ID` | Workspace/tenant ID for memory extraction and model catalog scoping. Defaults to `default` |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings and audio transcription |
 | `AURA_BOT_USER_ID` | Aura's own Slack bot user ID |
 
@@ -55,9 +60,10 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 
 | Variable | Description |
 |----------|-------------|
-| `NEXT_PUBLIC_APP_URL` | Dashboard base URL (defaults to `http://localhost:3000`) |
 | `SLACK_CLIENT_ID` | Slack OAuth client ID for dashboard login |
 | `SLACK_CLIENT_SECRET` | Slack OAuth client secret for dashboard login |
+| `DASHBOARD_URL` | Production origin used for the Slack OAuth `redirect_uri` (defaults to `https://app.aurahq.ai`) |
+| `TRUSTED_ORIGINS` | Comma-separated extra origins allowed for dashboard auth, in addition to the built-in `localhost`, `.aurahq.ai`, and `.vercel.app` allowlist |
 
 ## Branding / Identity
 
