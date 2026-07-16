@@ -5,9 +5,17 @@ description: "Monitor and manage your Aura instance through the admin dashboard.
 
 # Dashboard
 
-The admin dashboard is a Vite + React application (with TanStack Router and TanStack Query) that provides full visibility into Aura's operation. It's deployed alongside the API as a single Vercel project and accessible to workspace admins.
+The admin dashboard is a Vite + React application (with TanStack Router and TanStack Query) that provides full visibility into Aura's operation. It's deployed alongside the API as a single Vercel project. Access requires the `power_user` role or higher (see [Access & Authentication](#access--authentication)).
 
 ## Pages
+
+### Overview
+
+The landing page shows at-a-glance instance health:
+
+- Count cards: notes, memories, users, active jobs, errors in the last 24h
+- Recent errors list with resolution status
+- Recent job executions with trigger and status
 
 ### Conversations
 
@@ -110,18 +118,19 @@ Track production errors:
 
 ### Users
 
-View workspace member profiles:
+View and manage workspace member profiles:
 
-- Communication preferences Aura has learned
-- Interaction history and frequency
-- Timezone and language settings
+- Interaction count, last-active time, timezone, and learned communication style (verbosity, formality, emoji usage, preferred format)
+- **Role management**: assign `owner`, `admin`, `power_user`, or `member` directly from the user detail page -- this is how new members get dashboard access
+- Editable person fields: job title, preferred language, gender, and free-form notes
+- A Memories tab listing every memory linked to that user
 
 ### Resources
 
 Manage ingested content:
 
-- URLs, PDFs, and YouTube videos Aura has processed
-- Extraction status and content previews
+- Source types: web pages, GitHub, docs, YouTube, Notion, PDFs, and Slack content
+- Filter by source and extraction status (ready / error / pending), with content previews
 
 ### Settings
 
@@ -149,6 +158,8 @@ The callback issues a session JWT (HS256, `DASHBOARD_SESSION_TTL` or `365d` by d
 ## Chat
 
 The dashboard includes an embedded chat interface for interacting with Aura directly from the admin UI -- useful for testing and debugging without switching to Slack.
+
+Chat streams are resumable: if the page reloads, the network drops, or a serverless function times out mid-response, the client reconnects to the in-flight run's stream and replays it, continuing with the live tail instead of losing the response.
 
 The model picker in the chat panel uses the same searchable autocomplete as the Settings page, grouped by provider. Both stay in sync -- changing the model in one place updates the other.
 
