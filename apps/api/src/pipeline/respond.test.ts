@@ -205,6 +205,12 @@ describe("generateResponse Slack stream handling", () => {
         blocks: [chartBlock],
       }],
     });
+
+    // Delivery receipt: the block landed via the stream append path.
+    expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
+      toolCallId: "call-1",
+      path: "stream_append",
+    }));
   });
 
   it("recovers when streamer.stop() rejects the block payload with invalid_arguments", async () => {
@@ -265,6 +271,120 @@ describe("generateResponse Slack stream handling", () => {
       errorCode: "invalid_arguments",
       context: expect.objectContaining({ phase: "stop" }),
     }));
+
+    // Delivery receipt: the block landed via the postMessage fallback.
+    expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
+      toolCallId: "call-1",
+      path: "post_message_fallback",
+    }));
+    expect(logError).not.toHaveBeenCalledWith(expect.objectContaining({
+      errorName: "NativeBlockDropped",
+    }));
+  });
+
+  it("logs NativeBlockDelivered via stop_blocks when the block rides on streamer.stop()", async () => {
+    const tableBlock = {
+      type: "table",
+      rows: [[{ type: "raw_text", text: "cell" }]],
+    };
+    const invalidArgumentsError = () =>
+      Object.assign(new Error("An API error occurred: invalid_arguments"), {
+        data: { error: "invalid_arguments" },
+      });
+    const streamer = {
+      // Reject the inline blocks-chunk append so the block stays pending and
+      // is delivered on the stop() payload instead.
+      append: vi.fn(async (payload: any) => {
+        if (payload?.chunks?.some((c: any) => c?.type === "blocks")) {
+          throw invalidArgumentsError();
+        }
+      }),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_table",
+        output: { ok: true, __table_block: tableBlock },
+      };
+      yield { type: "text-delta", text: "Here is the table." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Here is the table.",
+      alreadyPosted: true,
+    });
+
+    expect(streamer.stop.mock.calls[0][0]).toMatchObject({
+      blocks: expect.arrayContaining([tableBlock]),
+    });
+    expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
+      toolCallId: "call-1",
+      path: "stop_blocks",
+    }));
+    expect(logError).not.toHaveBeenCalledWith(expect.objectContaining({
+      errorName: "NativeBlockDropped",
+    }));
+  });
+
+  it("logs NativeBlockDropped when the postMessage fallback for a native block rejects", async () => {
+    const tableBlock = {
+      type: "table",
+      rows: [[{ type: "raw_text", text: "cell" }]],
+    };
+    const invalidArgumentsError = () =>
+      Object.assign(new Error("An API error occurred: invalid_arguments"), {
+        data: { error: "invalid_arguments" },
+      });
+    const streamer = {
+      append: vi.fn(async (payload: any) => {
+        if (payload?.chunks?.some((c: any) => c?.type === "blocks")) {
+          throw invalidArgumentsError();
+        }
+      }),
+      stop: vi.fn()
+        .mockRejectedValueOnce(invalidArgumentsError())
+        .mockResolvedValueOnce(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+    slackClient.chat.postMessage.mockRejectedValue(new Error("channel_not_found"));
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_table",
+        output: { ok: true, __table_block: tableBlock },
+      };
+      yield { type: "text-delta", text: "Here is the table." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Here is the table.",
+      alreadyPosted: true,
+    });
+
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      errorName: "NativeBlockDropped",
+      errorCode: "native_block_dropped",
+      context: expect.objectContaining({
+        toolCallId: "call-1",
+        path: "post_message_fallback",
+        error: "channel_not_found",
+      }),
+    }));
+    // The drop is recorded exactly once — no duplicate turn_end event.
+    const droppedCalls = vi.mocked(logError).mock.calls.filter(
+      ([params]) => params.errorName === "NativeBlockDropped",
+    );
+    expect(droppedCalls).toHaveLength(1);
+    expect(logger.info).not.toHaveBeenCalledWith(
+      "NativeBlockDelivered",
+      expect.anything(),
+    );
   });
 
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {

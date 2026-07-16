@@ -740,6 +740,10 @@ export async function generateResponse(
   let fallbackStartIdx = 0;
   let streamedRawIdx = 0;
   let pendingNativeBlock: Record<string, any> | null = null;
+  // Delivery receipt tracking for issue #1180: remember which tool call
+  // produced the pending block so NativeBlockDelivered / NativeBlockDropped
+  // events can be tied back to the draw_table/draw_chart invocation.
+  let pendingNativeBlockToolCallId: string | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
@@ -1314,11 +1318,13 @@ export async function generateResponse(
             TABLE_BLOCK_KEY in output && output[TABLE_BLOCK_KEY]
           ) {
             pendingNativeBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
+            pendingNativeBlockToolCallId = chunk.toolCallId;
           } else if (
             output && typeof output === "object" &&
             CHART_BLOCK_KEY in output && output[CHART_BLOCK_KEY]
           ) {
             pendingNativeBlock = output[CHART_BLOCK_KEY] as Record<string, any>;
+            pendingNativeBlockToolCallId = chunk.toolCallId;
           }
 
           if (pendingNativeBlock) {
@@ -1327,7 +1333,12 @@ export async function generateResponse(
                 chunks: [toBlocksChunk([pendingNativeBlock])],
               }));
               if (streamedNativeBlock) {
+                logger.info("NativeBlockDelivered", {
+                  toolCallId: pendingNativeBlockToolCallId,
+                  path: "stream_append",
+                });
                 pendingNativeBlock = null;
+                pendingNativeBlockToolCallId = null;
               }
             }
           }
@@ -1636,6 +1647,14 @@ export async function generateResponse(
         } else {
           flushPendingMessageNotInStreamingStateError(true);
           pendingChannelTypeUnsupportedFallback = null;
+          if (pendingNativeBlock) {
+            logger.info("NativeBlockDelivered", {
+              toolCallId: pendingNativeBlockToolCallId,
+              path: "post_message_fallback",
+            });
+            pendingNativeBlock = null;
+            pendingNativeBlockToolCallId = null;
+          }
           logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
             rawLength: finalText.length,
             channelId,
@@ -1688,6 +1707,14 @@ export async function generateResponse(
 
       try {
         await streamer.stop(stopArgs);
+        if (pendingNativeBlock) {
+          logger.info("NativeBlockDelivered", {
+            toolCallId: pendingNativeBlockToolCallId,
+            path: "stop_blocks",
+          });
+          pendingNativeBlock = null;
+          pendingNativeBlockToolCallId = null;
+        }
       } catch (stopErr: any) {
         if (isInvalidBlocks(stopErr) || isInvalidArguments(stopErr)) {
           // Slack rejects a block payload at stop with either `invalid_blocks`
@@ -1726,12 +1753,31 @@ export async function generateResponse(
                 blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
+              logger.info("NativeBlockDelivered", {
+                toolCallId: pendingNativeBlockToolCallId,
+                path: "post_message_fallback",
+              });
               pendingNativeBlock = null;
+              pendingNativeBlockToolCallId = null;
             } catch (nativeBlockPostErr: any) {
               logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
                 error: nativeBlockPostErr?.message,
               });
+              logError({
+                errorName: "NativeBlockDropped",
+                errorMessage: nativeBlockPostErr?.message ||
+                  "chat.postMessage fallback failed for native block",
+                errorCode: "native_block_dropped",
+                channelId,
+                context: {
+                  toolCallId: pendingNativeBlockToolCallId,
+                  path: "post_message_fallback",
+                  error: nativeBlockPostErr?.message || String(nativeBlockPostErr),
+                },
+              });
+              pendingNativeBlock = null;
+              pendingNativeBlockToolCallId = null;
             }
           }
         } else if (isMsgTooLong(stopErr)) {
@@ -1755,12 +1801,31 @@ export async function generateResponse(
                 blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
+              logger.info("NativeBlockDelivered", {
+                toolCallId: pendingNativeBlockToolCallId,
+                path: "post_message_fallback",
+              });
               pendingNativeBlock = null;
+              pendingNativeBlockToolCallId = null;
             } catch (nativeBlockPostErr: any) {
               logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
                 error: nativeBlockPostErr?.message,
               });
+              logError({
+                errorName: "NativeBlockDropped",
+                errorMessage: nativeBlockPostErr?.message ||
+                  "chat.postMessage fallback failed for native block",
+                errorCode: "native_block_dropped",
+                channelId,
+                context: {
+                  toolCallId: pendingNativeBlockToolCallId,
+                  path: "post_message_fallback",
+                  error: nativeBlockPostErr?.message || String(nativeBlockPostErr),
+                },
+              });
+              pendingNativeBlock = null;
+              pendingNativeBlockToolCallId = null;
             }
           }
         } else if (isChannelTypeNotSupported(stopErr)) {
@@ -1777,12 +1842,31 @@ export async function generateResponse(
                 blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
+              logger.info("NativeBlockDelivered", {
+                toolCallId: pendingNativeBlockToolCallId,
+                path: "post_message_fallback",
+              });
               pendingNativeBlock = null;
+              pendingNativeBlockToolCallId = null;
             } catch (nativeBlockPostErr: any) {
               logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
                 error: nativeBlockPostErr?.message,
               });
+              logError({
+                errorName: "NativeBlockDropped",
+                errorMessage: nativeBlockPostErr?.message ||
+                  "chat.postMessage fallback failed for native block",
+                errorCode: "native_block_dropped",
+                channelId,
+                context: {
+                  toolCallId: pendingNativeBlockToolCallId,
+                  path: "post_message_fallback",
+                  error: nativeBlockPostErr?.message || String(nativeBlockPostErr),
+                },
+              });
+              pendingNativeBlock = null;
+              pendingNativeBlockToolCallId = null;
             }
           }
         } else {
@@ -1794,6 +1878,23 @@ export async function generateResponse(
         rawLength: finalText.length,
         usage: { inputTokens, outputTokens, totalTokens },
       });
+    }
+
+    // Issue #1180: a native block that survived every delivery attempt was
+    // silently dropped — record it so the gap is visible in error_events.
+    if (pendingNativeBlock) {
+      logError({
+        errorName: "NativeBlockDropped",
+        errorMessage: "Turn finished with an undelivered native table/chart block",
+        errorCode: "native_block_dropped",
+        channelId,
+        context: {
+          toolCallId: pendingNativeBlockToolCallId,
+          path: "turn_end",
+        },
+      });
+      pendingNativeBlock = null;
+      pendingNativeBlockToolCallId = null;
     }
 
     return {

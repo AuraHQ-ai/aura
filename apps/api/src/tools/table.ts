@@ -158,7 +158,16 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
             columns: colCount,
             rows: rows.length - 1,
           });
-          return { ok: true, [TABLE_BLOCK_KEY]: tableBlock };
+          // Inline blocks are only QUEUED here — actual delivery happens
+          // later in the pipeline (stream append, stop payload, or a
+          // postMessage fallback) and can still fail. Don't claim delivery.
+          return {
+            ok: true,
+            [TABLE_BLOCK_KEY]: tableBlock,
+            message:
+              "Table queued — it will be attached when this reply is delivered. " +
+              "Do not claim the user has seen it yet.",
+          };
         }
 
         // ── Reply mode: post in the current conversation thread ──────
@@ -238,7 +247,17 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
           return { ok: false, error: `Failed to send table: ${err.message}` };
         }
       },
-      slack: { status: "Drawing table...", output: (r) => r.ok !== false ? 'Table rendered' : r.error },
+      slack: {
+        status: "Drawing table...",
+        // Posted results (reply/targeted) carry a real message `ts`; inline
+        // results only queue the block for delivery with the reply.
+        output: (r: any) =>
+          r.ok === false
+            ? r.error
+            : r.ts
+              ? "Table rendered"
+              : "Table queued for delivery with the reply",
+      },
     }),
   };
 }

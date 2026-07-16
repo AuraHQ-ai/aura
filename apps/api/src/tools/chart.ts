@@ -335,7 +335,16 @@ export function createChartTools(client: WebClient, context?: ScheduleContext) {
             chartType: chart_type,
             dataCount,
           });
-          return { ok: true, [CHART_BLOCK_KEY]: chartBlock };
+          // Inline blocks are only QUEUED here — actual delivery happens
+          // later in the pipeline (stream append, stop payload, or a
+          // postMessage fallback) and can still fail. Don't claim delivery.
+          return {
+            ok: true,
+            [CHART_BLOCK_KEY]: chartBlock,
+            message:
+              "Chart queued — it will be attached when this reply is delivered. " +
+              "Do not claim the user has seen it yet.",
+          };
         }
 
         // ── Reply mode: post in the current conversation thread ──────
@@ -415,7 +424,17 @@ export function createChartTools(client: WebClient, context?: ScheduleContext) {
           return { ok: false, error: `Failed to send chart: ${err.message}` };
         }
       },
-      slack: { status: "Drawing chart...", output: (r) => r.ok !== false ? "Chart rendered" : r.error },
+      slack: {
+        status: "Drawing chart...",
+        // Posted results (reply/targeted) carry a real message `ts`; inline
+        // results only queue the block for delivery with the reply.
+        output: (r: any) =>
+          r.ok === false
+            ? r.error
+            : r.ts
+              ? "Chart rendered"
+              : "Chart queued for delivery with the reply",
+      },
     }),
   };
 }
