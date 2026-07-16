@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { WebClient } from "@slack/web-api";
 import { eq, and, lt, lte, gte, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
@@ -9,7 +8,7 @@ import { logger } from "../lib/logger.js";
 import { executeJob, MAX_RETRIES } from "./execute-job.js";
 import { computeNextCronTick } from "./cron-utils.js";
 import { persistJobOutcome, triggerSupervisorReview } from "./job-outcomes.js";
-import { safePostMessage } from "../lib/slack-messaging.js";
+import { sendJobOpsNotice } from "./job-notifications.js";
 
 /** Max jobs to process per heartbeat sweep */
 const MAX_JOBS_PER_SWEEP = 10;
@@ -22,8 +21,6 @@ const PENDING_REVIEW_ORPHAN_THRESHOLD_MS = 5 * 60 * 1000;
 const IN_PROGRESS_ORPHAN_THRESHOLD_MS = 10 * 60 * 1000;
 const DEQUEUED_WITHOUT_EXECUTION_THRESHOLD_MS = 10 * 60 * 1000;
 const MAX_SUPERVISOR_ATTEMPTS = 3;
-
-const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN || "");
 
 // ── Job Eligibility (recurring jobs) ─────────────────────────────────────────
 
@@ -87,26 +84,21 @@ type OrphanSweepResult = {
 };
 
 async function notifySupervisorRetriesExhausted(job: Pick<typeof jobs.$inferSelect, "id" | "name" | "requestedBy">): Promise<void> {
-  if (!job.requestedBy) return;
+  // Internal ops notice — routed to the ops channel / founder DM, never the
+  // end user's DM when an ops destination is configured.
+  const result = await sendJobOpsNotice({
+    jobId: job.id,
+    jobName: job.name,
+    requestedBy: job.requestedBy,
+    text: `Supervisor for job ${job.name} exhausted retries; manual intervention needed`,
+    logContext: { event: "orphan_sweep_supervisor_retry_exhausted" },
+  });
 
-  const text = `Supervisor for job ${job.name} exhausted retries; manual intervention needed`;
-  try {
-    const result = await safePostMessage(slackClient, {
-      channel: job.requestedBy,
-      text,
-    });
-
-    if (!result.ok) {
-      logger.warn("orphan_sweep_supervisor_retry_exhausted_dm_failed", {
-        jobId: job.id,
-        requestedBy: job.requestedBy,
-      });
-    }
-  } catch (error: unknown) {
-    logger.warn("orphan_sweep_supervisor_retry_exhausted_dm_error", {
+  if (!result.ok) {
+    logger.warn("orphan_sweep_supervisor_retry_exhausted_notice_failed", {
       jobId: job.id,
       requestedBy: job.requestedBy,
-      error: error instanceof Error ? error.message : String(error),
+      target: result.target,
     });
   }
 }

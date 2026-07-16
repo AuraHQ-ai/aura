@@ -8,7 +8,12 @@ import { getCredential } from "../lib/credentials.js";
 import { logger } from "../lib/logger.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { jobExecutions, jobOutcomes, jobs } from "@aura/db/schema";
-import { sendJobFailureDm, truncateJobFailureText } from "./job-notifications.js";
+import {
+  sendJobFailureDm,
+  sendJobOpsNotice,
+  truncateJobFailureText,
+  type SendJobOpsNoticeResult,
+} from "./job-notifications.js";
 
 const SUPERVISOR_LLM_TIMEOUT_MS = 60_000;
 const MAX_SUPERVISOR_ATTEMPTS = 3;
@@ -216,6 +221,7 @@ ${jsonForPrompt({
   }
 }
 
+/** User-facing supervisor messages (report_success / report_failure) — these ARE deliverables for the requester. */
 async function sendSupervisorDm(
   job: JobRow,
   text: string,
@@ -223,6 +229,21 @@ async function sendSupervisorDm(
 ): Promise<void> {
   await sendJobFailureDm({
     jobId: job.id,
+    requestedBy: job.requestedBy,
+    text,
+    logContext: { event: "job_supervisor", ...logContext },
+  });
+}
+
+/** Internal lifecycle notices (retries, escalations, disable) — routed to the ops channel / founder, never the requester's DM when an ops destination is configured. */
+async function sendSupervisorOpsNotice(
+  job: JobRow,
+  text: string,
+  logContext: Record<string, unknown> = {},
+): Promise<SendJobOpsNoticeResult> {
+  return sendJobOpsNotice({
+    jobId: job.id,
+    jobName: job.name,
     requestedBy: job.requestedBy,
     text,
     logContext: { event: "job_supervisor", ...logContext },
@@ -340,9 +361,9 @@ async function applySupervisorDecision(
         .update(jobs)
         .set({ status: "pending", retries: 0, executeAt: now, updatedAt: now })
         .where(eq(jobs.id, context.job.id));
-      await sendSupervisorDm(
+      await sendSupervisorOpsNotice(
         context.job,
-        `${buildUserMessage(decision, `Job \`${context.job.name}\` looked retryable, so I queued it to run again now.`)}\n\nDetails: ${link}`,
+        `${buildUserMessage(decision, `Job \`${context.job.name}\` looked retryable, so I queued it to run again now.`)}\n\nDecision: retry_as_is\nDetails: ${link}`,
         { outcomeId: context.outcome.id, decision: decision.decision },
       );
       return;
@@ -354,21 +375,25 @@ async function applySupervisorDecision(
         .set({ status: "pending", retries: 0, executeAt: now, updatedAt: now })
         .where(eq(jobs.id, context.job.id));
       const issueUrl = await createSupervisorFixIssue(context, decision);
-      await sendSupervisorDm(
+      await sendSupervisorOpsNotice(
         context.job,
-        `${buildUserMessage(decision, `Job \`${context.job.name}\` was queued to retry and I opened an engineering follow-up.`)}\n\nIssue: ${issueUrl}\nDetails: ${link}`,
+        `${buildUserMessage(decision, `Job \`${context.job.name}\` was queued to retry and I opened an engineering follow-up.`)}\n\nDecision: retry_with_fix\nIssue: ${issueUrl}\nDetails: ${link}`,
         { outcomeId: context.outcome.id, decision: decision.decision, issueUrl },
       );
       return;
     }
 
     case "escalate": {
-      const text = `${buildUserMessage(decision, `Job \`${context.job.name}\` needs human review.`)}\n\nReason: ${decision.reasoning}\nDetails: ${link}`;
-      await sendSupervisorDm(context.job, text, {
+      const text = `${buildUserMessage(decision, `Job \`${context.job.name}\` needs human review.`)}\n\nDecision: escalate\nReason: ${decision.reasoning}\nDetails: ${link}`;
+      const opsResult = await sendSupervisorOpsNotice(context.job, text, {
         outcomeId: context.outcome.id,
         decision: decision.decision,
       });
-      await sendFounderDm(context.job, text);
+      // Dedupe: if the ops notice already went to the founder DM (no ops
+      // channel configured), don't double-send the founder escalation.
+      if (opsResult.target !== "founder_dm") {
+        await sendFounderDm(context.job, text);
+      }
       return;
     }
 
@@ -377,9 +402,9 @@ async function applySupervisorDecision(
         .update(jobs)
         .set({ enabled: 0, updatedAt: now })
         .where(eq(jobs.id, context.job.id));
-      await sendSupervisorDm(
+      await sendSupervisorOpsNotice(
         context.job,
-        `${buildUserMessage(decision, `Job \`${context.job.name}\` was disabled by the supervisor.`)}\n\nReason: ${decision.reasoning}\nDetails: ${link}`,
+        `${buildUserMessage(decision, `Job \`${context.job.name}\` was disabled by the supervisor.`)}\n\nDecision: disable_job\nReason: ${decision.reasoning}\nDetails: ${link}`,
         { outcomeId: context.outcome.id, decision: decision.decision },
       );
       return;
