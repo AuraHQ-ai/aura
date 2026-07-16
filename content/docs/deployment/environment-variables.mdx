@@ -28,6 +28,8 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `AURA_ADMIN_USER_IDS` | Comma-separated Slack user IDs with admin access. Fallback for users without a DB role — see [Permissions](/permissions) |
 | `DASHBOARD_SESSION_TTL` | Optional dashboard session JWT lifetime. Defaults to `365d`; accepts duration strings like `30d`, `365d`, or `12h`. |
 | `E2B_API_KEY` | E2B API key for sandbox access |
+| `AURA_PUBLIC_URL` | Public base URL of the API deployment. Used for sandbox completion webhooks and supervisor callbacks. |
+| `SANDBOX_WEBHOOK_SECRET` | Secret for signing sandbox completion webhooks (`run_command_detached` resume). Both this and `AURA_PUBLIC_URL` must be set for detached commands to resume conversations. |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings and audio transcription |
 | `AURA_BOT_USER_ID` | Aura's own Slack bot user ID |
 
@@ -84,13 +86,25 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 
 Models are normally resolved from database settings first, then the DB-backed model catalog defaults. The environment variable defaults are legacy/local-development references; admins can refresh the live catalog from Vercel AI Gateway in Settings without redeploying.
 
+## Observability (Langfuse)
+
+| Variable | Description |
+|----------|-------------|
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key. Tracing is disabled unless both keys are set. |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key |
+| `LANGFUSE_BASE_URL` | Langfuse instance base URL |
+| `LANGFUSE_TRACING_ENVIRONMENT` | Environment label for traces (defaults from Vercel env) |
+| `LANGFUSE_RELEASE` | Release identifier (defaults to `VERCEL_GIT_COMMIT_SHA`) |
+| `LANGFUSE_DROP_ORPHAN_EMBEDDINGS` | Set to `"true"` to skip exporting orphaned embedding spans |
+
 ## Debugging
 
 | Variable | Description |
 |----------|-------------|
 | `LOG_LEVEL` | Logging verbosity |
 | `SHOW_REASONING_IN_SLACK` | Set to `"true"` to post extended thinking traces as thread replies |
-| `AURA_WDK_SLACK_RESPOND` | Set to `1`/`true` to route Slack responses through the durable Workflow DevKit pipeline (off by default; also settable via the `wdk_slack_respond` workspace setting) |
+| `AURA_WDK_SLACK_RESPOND` | Set to `1`/`true` to force the durable Workflow DevKit Slack respond pipeline (highest priority; otherwise resolved from the `wdk_slack_respond` workspace setting) |
+| `TRUSTED_ORIGINS` | Extra comma-separated origins allowed for dashboard OAuth callbacks (preview deploys) |
 
 ## Adding Variables via CLI
 

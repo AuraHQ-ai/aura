@@ -1,11 +1,11 @@
 ---
 title: "Vercel Deployment"
-description: "How Aura runs on Vercel serverless functions with automatic deploys from main."
+description: "How Aura runs on Vercel with Nitro + the Workflow DevKit, with automatic deploys from main."
 ---
 
 # Vercel Deployment
 
-Aura's backend runs on Vercel serverless functions. Merging to `main` triggers an automatic production deploy.
+Aura's backend runs on Vercel. Merging to `main` triggers an automatic production deploy.
 
 ## Monorepo Structure
 
@@ -14,8 +14,9 @@ Aura is a pnpm monorepo with multiple packages:
 ```
 aura/
 ├── apps/
-│   ├── api/          # Backend API (Hono, serverless functions)
-│   ├── dashboard/    # Admin dashboard (Next.js)
+│   ├── api/          # Backend API (Hono, built with Nitro)
+│   │   └── workflows/  # Durable workflows (Workflow DevKit)
+│   ├── dashboard/    # Admin dashboard (Vite + React SPA)
 │   └── web/          # Landing page + blog (Next.js)
 ├── packages/
 │   └── db/           # Shared database schema (Drizzle ORM)
@@ -23,31 +24,52 @@ aura/
     └── docs/         # Documentation (Mintlify)
 ```
 
-Each `apps/*` project deploys as a separate Vercel project.
+The API and the dashboard deploy together as **one** Vercel project; only `apps/web` is a separate project.
 
 ## Architecture
 
-- **Runtime:** Node.js serverless functions, emitted via the Build Output API by a Nitro build
-- **Framework:** Hono for HTTP routing
-- **Entry point:** `apps/api/src/app.ts` exports the Hono app; `apps/api/src/nitro-app.ts` is the Nitro server entry that routes all HTTP traffic to it (`apps/api/nitro.config.ts`)
-- **Workflows:** the `workflow/nitro` module compiles `"use workflow"` / `"use step"` directives in `apps/api/workflows/` (durable Slack respond, dashboard chat) into dedicated queue-triggered functions and registers the `/.well-known/workflow/v1/*` handler routes
-- **Build:** the `buildCommand` in `apps/api/vercel.json` runs migrations, builds the dashboard into `public/`, then `nitro build --preset vercel` followed by `scripts/patch-vercel-output.mjs` (restores the SPA fallback rewrite in `.vercel/output/config.json`)
+- **Runtime:** Node.js serverless functions, region `fra1`, max duration 800 seconds
+- **Framework:** Hono for HTTP routing, compiled and served by [Nitro](https://nitro.build)
+- **Entry point:** `apps/api/src/app.ts` exports the Hono app; `apps/api/src/nitro-app.ts` is the Nitro server entry that routes all HTTP traffic (`/**`) to it (see `apps/api/nitro.config.ts`)
+- **Workflows:** the `workflow/nitro` module compiles `apps/api/workflows/**` (`"use workflow"` / `"use step"` directives) and emits them as dedicated queue-triggered functions via the Build Output API. Current workflows: `slack-respond.ts` (durable Slack respond pipeline, gated by `AURA_WDK_SLACK_RESPOND`) and `dashboard-chat.ts` (resumable dashboard streams)
+- **Dashboard:** built with Vite and copied into the API's `public/` directory as static files; an SPA fallback route (inserted by `scripts/patch-vercel-output.mjs`) serves `index.html` for non-API browser paths
 
-There are no filesystem function entrypoints anymore -- the legacy `apps/api/api/index.ts` and `apps/api/api/cron/*` handlers were removed when the Nitro build landed (PR #1116). Cron schedules live **only** in `apps/api/vercel.json`; defining the same cron in the Build Output config too makes Vercel reject the deployment ("duplicated cron job").
+There are no filesystem function entrypoints anymore -- the legacy `apps/api/api/index.ts` and `apps/api/api/cron/*` handlers were removed when the Nitro build landed (PR #1116).
 
 ## Deployment Flow
 
+The `buildCommand` in `apps/api/vercel.json` runs the whole pipeline:
+
 ```
-Push to main → Vercel Build → Run Migrations → Dashboard Build → nitro build (Build Output API) → Deploy
+Push to main
+  → build @aura/db → run Drizzle migrations
+  → build dashboard (Vite) → copy dist into public/
+  → nitro build --preset vercel
+  → patch-vercel-output.mjs (SPA fallback route)
+  → Deploy
 ```
 
-The `buildCommand` in `apps/api/vercel.json`:
+The full `buildCommand` in `apps/api/vercel.json`:
 
 ```json
 {
   "buildCommand": "pnpm --filter @aura/db build && pnpm --filter @aura/db db:migrate && pnpm --filter aura-dashboard build && rm -rf public && cp -r ../dashboard/dist public && pnpm build:vercel"
 }
 ```
+
+## Cron Jobs
+
+Defined in `apps/api/vercel.json`:
+
+| Path | Schedule |
+|------|----------|
+| `/api/cron/heartbeat` | `*/30 * * * *` (every 30 min) |
+| `/api/cron/eval-responses` | `0 * * * *` (hourly) |
+| `/api/cron/consolidate` | `0 4 * * *` (daily 4 AM UTC) |
+
+<Warning>
+Crons must live **only** in `vercel.json`. Vercel merges crons from `vercel.json` and the Build Output config, and rejects the deployment when the same path+schedule appears in both ("duplicated cron job"). Never add crons to the Nitro/Build Output config.
+</Warning>
 
 Local development: `pnpm dev` in `apps/api` runs `nitro dev` (workflows run in the Local World); the legacy tsx watcher is still available as `pnpm dev:node`.
 
@@ -56,15 +78,14 @@ Local development: `pnpm dev` in `apps/api` runs `nitro dev` (workflows run in t
 1. **Never push directly to `main`.** Vercel auto-deploys, so any push goes straight to production. Always use feature branches and PRs.
 2. **Migrations run on every deploy.** Drizzle handles idempotency — running the same migration twice is safe.
 3. **Drizzle migration format:** Always include `-->statement-breakpoint` between SQL statements in migration files.
-4. **Serverless = stateless.** In-memory state only lasts for one request. Don't rely on module-level caches persisting.
+4. **Serverless = stateless.** In-memory state only lasts for one request. Don't rely on module-level caches persisting. Durable multi-step work belongs in a workflow (`apps/api/workflows/`).
 5. **Function timeout:** 800 seconds max. Plan long-running tasks accordingly.
 
-## Multiple Projects
+## Vercel Projects
 
 | Project | Domain | Contents |
 |---------|--------|----------|
-| `aura` | `api.aurahq.ai` | Backend API, Slack events, cron |
-| `aura-dashboard` | Dashboard domain | Admin UI (conversations, memories, credentials, errors) |
+| `aura` | `api.aurahq.ai` | Backend API, Slack events, cron, workflow functions, admin dashboard (static SPA) |
 | `aurahq-web` | `aurahq.ai` | Landing page + blog (Next.js) |
 | Mintlify | `docs.aurahq.ai` | Documentation |
 
