@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execFileAsync = promisify(execFile);
 
@@ -70,7 +70,7 @@ vi.mock("../db/client.js", () => ({
   },
 }));
 
-import { buildDetachedScript, createSandboxTools } from "./sandbox.js";
+import { buildDetachedLaunchScript, buildDetachedScript, createSandboxTools } from "./sandbox.js";
 
 function mockCommandLifecycle(options: {
   waitStatus?: "exited" | "not_running" | "timeout";
@@ -92,7 +92,7 @@ function mockCommandLifecycle(options: {
   } = options;
 
   sandboxMocks.commandRun.mockImplementation(async (command: string, runOptions: any = {}) => {
-    if (runOptions.background) {
+    if (command.includes(".launch.sh")) {
       return { exitCode: 0, stdout: "", stderr: "" };
     }
 
@@ -131,6 +131,10 @@ function mockCommandLifecycle(options: {
 }
 
 describe("sandbox command tools", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockCommandLifecycle();
@@ -156,10 +160,10 @@ describe("sandbox command tools", () => {
     await tool.execute(input);
 
     expect(sandboxMocks.commandRun).toHaveBeenCalledWith(
-      expect.stringContaining("nohup bash -c 'true'"),
+      expect.stringContaining("exec bash -c '\\''true'\\''"),
       expect.objectContaining({
-        cwd: "/home/user",
-        background: true,
+        cwd: "/tmp",
+        timeoutMs: 10_000,
       }),
     );
     const waitCall = sandboxMocks.commandRun.mock.calls.find(([, options]) =>
@@ -206,6 +210,46 @@ describe("sandbox command tools", () => {
     expect(result.error).toContain("Call check_command({id: '");
   });
 
+  it("returns stdout and exit code 0 for a trivial command", async () => {
+    mockCommandLifecycle({
+      inspectStatus: "exited",
+      exitCode: 0,
+      stdout: "hello\n",
+      stderr: "",
+    });
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
+
+    const result = await tool.execute(tool.inputSchema.parse({ command: "echo hello" }));
+
+    expect(result).toEqual({
+      ok: true,
+      exit_code: 0,
+      stdout: "hello\n",
+      stderr: undefined,
+    });
+  });
+
+  it("returns stderr and non-zero exit code for a failing command", async () => {
+    mockCommandLifecycle({
+      inspectStatus: "exited",
+      exitCode: 1,
+      stdout: "",
+      stderr: "real failure\n",
+    });
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
+
+    const result = await tool.execute(
+      tool.inputSchema.parse({ command: "printf 'real failure\\n' >&2; exit 1" }),
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      exit_code: 1,
+      stdout: "",
+      stderr: "real failure\n",
+    });
+  });
+
   it("starts detached commands and returns id, pid, and started_at", async () => {
     const tool = createSandboxTools({
       userId: "U123",
@@ -225,10 +269,10 @@ describe("sandbox command tools", () => {
     expect(result.pid).toBe(4321);
     expect(result.started_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(sandboxMocks.commandRun).toHaveBeenCalledWith(
-      expect.stringContaining("nohup bash -c 'sleep 300'"),
+      expect.stringContaining("cd '\\''/home/user/repo'\\'' && exec bash -c '\\''sleep 300'\\''"),
       expect.objectContaining({
-        cwd: "/home/user/repo",
-        background: true,
+        cwd: "/tmp",
+        timeoutMs: 10_000,
         envs: expect.objectContaining({
           FOO: "bar",
           SLACK_USER_ID: "U123",
@@ -246,6 +290,102 @@ describe("sandbox command tools", () => {
       workspaceId: "default",
     }));
     expect(toolMocks.markTurnSuspendedByDetachedCommand).toHaveBeenCalledWith(result.id);
+  });
+
+  it("waits for a slow detached pid file before returning", async () => {
+    let pidReads = 0;
+    sandboxMocks.commandRun.mockImplementation(async (command: string, runOptions: any = {}) => {
+      if (command.includes(".launch.sh")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      if (command.startsWith("if [ -s ")) {
+        pidReads += 1;
+        if (pidReads < 4) {
+          throw new Error("pid not ready");
+        }
+        return { exitCode: 0, stdout: "9876\n", stderr: "" };
+      }
+
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
+
+    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+
+    expect(result.pid).toBe(9876);
+    expect(pidReads).toBe(4);
+  });
+
+  it("includes launch diagnostics when a detached pid file is never written", async () => {
+    vi.useFakeTimers();
+    sandboxMocks.commandRun.mockImplementation(async (command: string, runOptions: any = {}) => {
+      if (command.includes(".launch.sh")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+
+      if (command.startsWith("if [ -s ")) {
+        throw new Error("pid missing");
+      }
+
+      if (runOptions.envs?.AURA_LAUNCH_DIAGNOSTICS) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            launcher_pid: "1234",
+            launch_stderr: "nohup: failed to run command 'bash': Permission denied",
+          }),
+          stderr: "",
+        };
+      }
+
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
+
+    const resultPromise = tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    await vi.advanceTimersByTimeAsync(20_000);
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("did not write a pid file");
+    expect(result.error).toContain("launch stderr: nohup: failed to run command 'bash': Permission denied");
+  });
+
+  it("includes foreground launch stderr when the launcher exits non-zero", async () => {
+    sandboxMocks.commandRun.mockImplementation(async (command: string, runOptions: any = {}) => {
+      if (command.includes(".launch.sh")) {
+        const error = new Error("exit status 1") as Error & {
+          exitCode: number;
+          stdout: string;
+          stderr: string;
+        };
+        error.exitCode = 1;
+        error.stdout = "launch stdout";
+        error.stderr = "launch stderr";
+        throw error;
+      }
+
+      if (runOptions.envs?.AURA_LAUNCH_DIAGNOSTICS) {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({ launch_stderr: "diagnostic stderr" }),
+          stderr: "",
+        };
+      }
+
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
+
+    const result = await tool.execute(tool.inputSchema.parse({ command: "echo hello" }));
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("launch command failed");
+    expect(result.error).toContain("error: exit status 1");
+    expect(result.error).toContain("stderr: launch stderr");
+    expect(result.error).toContain("stdout: launch stdout");
+    expect(result.error).toContain("launch stderr: diagnostic stderr");
   });
 
   it("warns once when detached command webhook env vars are missing", async () => {
@@ -315,6 +455,40 @@ describe("sandbox command tools", () => {
 });
 
 describe("detached command wrapper callback", () => {
+  it("creates the missing background directory from the launch command", async () => {
+    const script = buildDetachedLaunchScript("feedbabe", "printf 'hello'", 1, "/tmp");
+
+    const { stdout } = await execFileAsync("bash", ["-c", `
+rm -rf /tmp/aura-bg
+(
+${script}
+)
+for _ in {1..40}; do
+  if [ -s /tmp/aura-bg/feedbabe.pid ] && [ -s /tmp/aura-bg/feedbabe.status ]; then
+    break
+  fi
+  sleep 0.05
+done
+printf 'pid='
+cat /tmp/aura-bg/feedbabe.pid
+printf 'status='
+cat /tmp/aura-bg/feedbabe.status
+printf 'out='
+cat /tmp/aura-bg/feedbabe.out
+`], {
+      env: {
+        ...process.env,
+        AURA_PUBLIC_URL: "",
+        SANDBOX_WEBHOOK_SECRET: "",
+      },
+      timeout: 5_000,
+    });
+
+    expect(stdout).toMatch(/pid=\d+\n/);
+    expect(stdout).toContain("status=0\n");
+    expect(stdout).toContain("out=hello");
+  });
+
   it("posts signed completion payload with stdout and stderr tails", async () => {
     const secret = "wrapper-secret";
     const received: Array<{ body: string; signature: string }> = [];
@@ -343,7 +517,7 @@ describe("detached command wrapper callback", () => {
 
     const oldPublicUrl = process.env.AURA_PUBLIC_URL;
     process.env.AURA_PUBLIC_URL = `http://127.0.0.1:${address.port}`;
-    const script = buildDetachedScript("deadbeef", "printf 'hello'; printf 'warn' >&2", 1);
+    const script = buildDetachedScript("deadbeef", "printf 'hello'; printf 'warn' >&2", 1, "/tmp");
 
     try {
       await execFileAsync("bash", ["-c", script], {
