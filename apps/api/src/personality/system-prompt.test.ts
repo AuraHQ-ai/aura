@@ -81,6 +81,40 @@ Hard rule: handle secret names only; never print env var values, echo secrets, o
     );
     expect(buildEnvironmentContext({})).toBe("");
   });
+
+  it("annotates caller-scoped credentials with owner provenance", () => {
+    const block = extractCapabilitiesBlock(
+      buildEnvironmentContext({
+        sandboxEnvNames: [
+          { envName: "GITHUB_TOKEN", scope: "owner", ownerDisplayName: "Callan Corrado" },
+          { envName: "NOTION_API_KEY", scope: "per_user", ownerDisplayName: "Nia Otieno" },
+          { envName: "SLACK_BOT_TOKEN", scope: "member", ownerDisplayName: null },
+        ],
+      }),
+    );
+
+    expect(block).toContain(
+      "- GitHub: `GITHUB_TOKEN` (owner-scoped, resolved for caller: Callan Corrado) -- prefer the `gh` CLI",
+    );
+    expect(block).toContain(
+      "`NOTION_API_KEY` (per-user-scoped, resolved for caller: Nia Otieno)",
+    );
+    // Shared/role-tier rows stay bare names.
+    expect(block).toContain("- Slack: `SLACK_BOT_TOKEN` ->");
+    expect(block).not.toContain("`SLACK_BOT_TOKEN` (");
+  });
+
+  it("annotates caller-scoped credentials without a display name using scope only", () => {
+    const block = extractCapabilitiesBlock(
+      buildEnvironmentContext({
+        sandboxEnvNames: [
+          { envName: "GITHUB_TOKEN", scope: "owner", ownerDisplayName: null },
+        ],
+      }),
+    );
+
+    expect(block).toContain("`GITHUB_TOKEN` (owner-scoped, resolved for caller)");
+  });
 });
 
 describe("buildDynamicContext runtime block", () => {

@@ -54,6 +54,10 @@ vi.mock("../tools/table.js", () => ({
   TABLE_BLOCK_KEY: "__table_block",
 }));
 
+vi.mock("../tools/chart.js", () => ({
+  CHART_BLOCK_KEY: "__chart_block",
+}));
+
 vi.mock("./prepare-step.js", () => ({
   InvocationSupersededError: class InvocationSupersededError extends Error {
     invocationId = "test-invocation";
@@ -88,7 +92,7 @@ function createSlackClient(streamers: Array<{ append: any; stop: any }>) {
 }
 
 function createAgentStreamResult(
-  fullStream: AsyncIterable<any>,
+  stream: AsyncIterable<any>,
   options: {
     text?: string;
     finishReason?: string;
@@ -98,7 +102,7 @@ function createAgentStreamResult(
   } = {},
 ) {
   return {
-    fullStream,
+    stream,
     usage: Promise.resolve(options.usage ?? { inputTokens: 1, outputTokens: 1 }),
     finishReason: Promise.resolve(options.finishReason ?? "stop"),
     text: Promise.resolve(options.text ?? ""),
@@ -131,10 +135,10 @@ function mockAgentStreams(results: any[]) {
 }
 
 function mockAgentStream(
-  fullStream: AsyncIterable<any>,
+  stream: AsyncIterable<any>,
   options: Parameters<typeof createAgentStreamResult>[1] = {},
 ) {
-  return mockAgentStreams([createAgentStreamResult(fullStream, options)]);
+  return mockAgentStreams([createAgentStreamResult(stream, options)]);
 }
 
 function baseOptions(slackClient: any) {
@@ -159,6 +163,108 @@ describe("generateResponse Slack stream handling", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("streams native chart blocks returned by draw_chart inline mode", async () => {
+    const chartBlock = {
+      type: "data_visualization",
+      title: "Weekly Sales",
+      chart: {
+        type: "line",
+        series: [{
+          name: "Online",
+          data: [{ label: "Week 1", value: 12 }],
+        }],
+        axis_config: { categories: ["Week 1"] },
+      },
+    };
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_chart",
+        output: { ok: true, __chart_block: chartBlock },
+      };
+      yield { type: "text-delta", text: "Done." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Done.",
+      alreadyPosted: true,
+    });
+
+    expect(streamer.append).toHaveBeenCalledWith({
+      chunks: [{
+        type: "blocks",
+        blocks: [chartBlock],
+      }],
+    });
+  });
+
+  it("recovers when streamer.stop() rejects the block payload with invalid_arguments", async () => {
+    const tableBlock = {
+      type: "table",
+      rows: [[{ type: "raw_text", text: "cell" }]],
+    };
+    const invalidArgumentsError = () =>
+      Object.assign(new Error("An API error occurred: invalid_arguments"), {
+        data: { error: "invalid_arguments" },
+      });
+    const streamer = {
+      // Reject the inline blocks-chunk append so the table stays queued as a
+      // pending native block and rides on the stop() payload.
+      append: vi.fn(async (payload: any) => {
+        if (payload?.chunks?.some((c: any) => c?.type === "blocks")) {
+          throw invalidArgumentsError();
+        }
+      }),
+      stop: vi.fn()
+        .mockRejectedValueOnce(invalidArgumentsError())
+        .mockResolvedValueOnce(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_table",
+        output: { ok: true, __table_block: tableBlock },
+      };
+      yield { type: "text-delta", text: "Here is the table." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Here is the table.",
+      alreadyPosted: true,
+    });
+
+    // First stop attempt carries the blocks; the retry finalizes without them.
+    expect(streamer.stop).toHaveBeenCalledTimes(2);
+    expect(streamer.stop.mock.calls[0][0]).toMatchObject({
+      blocks: expect.arrayContaining([tableBlock]),
+    });
+    expect(streamer.stop.mock.calls[1]).toEqual([]);
+
+    // The stripped table block is delivered via the chat.postMessage fallback.
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C123",
+      text: "Here's a table:",
+      blocks: [tableBlock],
+    }));
+
+    // The original error is logged instead of rethrown.
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      errorName: "StreamStopInvalidArguments",
+      errorCode: "invalid_arguments",
+      context: expect.objectContaining({ phase: "stop" }),
+    }));
   });
 
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {
@@ -1001,7 +1107,7 @@ describe("generateResponse Slack stream handling", () => {
     agentMocks.createInteractiveAgent.mockResolvedValue({
       agent: {
         stream: vi.fn().mockImplementation(async (options: { abortSignal: AbortSignal }) => ({
-          fullStream: (async function* () {
+          stream: (async function* () {
             await new Promise<void>((_resolve, reject) => {
               if (options.abortSignal.aborted) {
                 reject(abortError);

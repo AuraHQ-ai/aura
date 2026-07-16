@@ -178,7 +178,7 @@ function interceptTools(
         log.push({ name, source: "synthesized" });
         const { text } = await generateText({
           model: fastModel,
-          system:
+          instructions:
             "You simulate tool outputs inside a replay harness. Given a tool name, its description, and the call input, produce a SHORT plausible JSON result the real tool could have returned. Prefer empty-but-valid results (empty lists, ok:true acknowledgements) over invented specifics like names, numbers, or quotes. Output ONLY the JSON.",
           prompt: `Tool: ${name}\nDescription: ${clip(String(t.description ?? ""), 600)}\nInput: ${clip(inputJson, 800)}`,
           temperature: 0,
@@ -391,7 +391,7 @@ for (const c of cases) {
     const { object: judged } = await generateObject({
       model: fastModel,
       schema: pairwiseSchema,
-      system:
+      instructions:
         "You compare two candidate replies from an AI assistant in a Slack conversation and pick the one that better FULFILLS the user's intent: more correct, grounded, complete, actionable. Tone/length only break ties. Also flag, for each candidate, whether it claims to lack access, credentials, an API key, or a capability. You do not know which candidate is newer — judge only quality.",
       prompt: `<conversation_so_far>\n${ctx.conversationContext}\n</conversation_so_far>\n\nUSER'S ASK: ${clip(ctx.lastUserText, MAX_TURN_CHARS)}\n\n<candidate_A>\n${clip(A, MAX_RESPONSE_CHARS)}\n</candidate_A>\n\n<candidate_B>\n${clip(B, MAX_RESPONSE_CHARS)}\n</candidate_B>`,
       temperature: 0,

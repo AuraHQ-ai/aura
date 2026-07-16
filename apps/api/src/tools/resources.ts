@@ -210,7 +210,7 @@ async function summarizeResource(input: {
   const { text } = await generateText({
     model,
     maxOutputTokens: 320,
-    experimental_telemetry: aiTelemetry("resource-summary"),
+    telemetry: aiTelemetry("resource-summary"),
     prompt: `Summarize this resource in ~200 words for fast retrieval.
 
 Focus on:
@@ -341,7 +341,7 @@ export function createResourceTools(context?: ScheduleContext) {
           const nextParentUrl = parent_url ?? current?.parentUrl ?? null;
           let nextTitle = title?.trim() || current?.title || null;
 
-          if (/^https?:\/\//i.test(normalizedUrl) && await isPrivateUrl(normalizedUrl)) {
+          if (/^https?:\/\//i.test(normalizedUrl) && (await isPrivateUrl(normalizedUrl))) {
             return { ok: false, error: "Blocked: URL resolves to a private/internal network address" };
           }
 

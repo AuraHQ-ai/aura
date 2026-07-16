@@ -1,0 +1,37 @@
+---
+title: "Charts"
+description: "Render native Slack charts (line, bar, area, pie) for data visualization."
+---
+
+# Slack Charts
+
+When Aura needs to visualize data -- trends, comparisons, distributions -- she renders native Slack charts (`data_visualization` blocks) with the `draw_chart` tool instead of generating PNG images in the sandbox.
+
+## Why Native Charts?
+
+Native Slack charts render instantly, look correct on mobile, and require no file uploads. Sandbox-generated images are only needed for charts that exceed Slack's native limits or need custom styling and annotations.
+
+## Chart Types and Limits
+
+| Type | Data Input | Limits |
+|------|-----------|--------|
+| `line`, `bar`, `area` | `series` + `axis_config` | Up to 6 series, 20 x-axis categories |
+| `pie` | `segments` | 1--6 segments |
+
+Titles are capped at 50 characters; series names, segment labels, and category labels at 20 characters. Every series must include exactly one data point per axis category.
+
+## Delivery Modes
+
+Same three modes as [tables](/tools/tables):
+
+| Mode | When to Use |
+|------|-------------|
+| **Inline** (default) | Single chart attached to the current reply |
+| **Reply** (`send_as_reply`) | Multiple charts in a thread |
+| **Targeted** (`target_channel` / `target_user`) | Post a chart to a different channel or DM |
+
+Inline mode supports one native chart or table block per reply. For anything beyond that, Aura falls back to thread replies.
+
+## When Aura Uses the Sandbox Instead
+
+Requests that don't fit the native limits -- more than 6 series, custom color schemes, annotations, scatter plots, heatmaps -- are rendered as images with Python/matplotlib in the sandbox and shared via file upload.
