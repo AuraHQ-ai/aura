@@ -21,6 +21,7 @@ import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 import { aiTelemetry } from "../lib/langfuse.js";
 import { InvocationSupersededError } from "./prepare-step.js";
 import { cleanupScratchpad } from "../tools/scratchpad.js";
+import { cacheDeferredToolResolutions } from "../tools/deferred.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
 import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
 import { getSettingJSON } from "../lib/settings.js";
@@ -743,6 +744,15 @@ export async function generateResponse(
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
+  let deferredToolCachePersisted = false;
+  const persistDeferredToolCache = async () => {
+    if (deferredToolCachePersisted) return;
+    deferredToolCachePersisted = true;
+    await cacheDeferredToolResolutions(
+      options.context ?? { channelId, threadTs },
+      toolCallRecords.map((record) => record.name),
+    );
+  };
   let continuationCount = 0;
   let currentSegmentIndex = 0;
   let currentSegmentTextLength = 0;
@@ -1796,6 +1806,8 @@ export async function generateResponse(
       });
     }
 
+    await persistDeferredToolCache();
+
     return {
       raw: finalText,
       alreadyPosted: true,
@@ -1855,6 +1867,8 @@ export async function generateResponse(
           // Stream may already be closed
         }
       }
+
+      await persistDeferredToolCache();
 
       return {
         raw: accumulatedText + "\n\n_[interrupted — new message received]_",
@@ -1934,6 +1948,8 @@ export async function generateResponse(
             thread_ts: threadTs,
           });
         }
+
+        await persistDeferredToolCache();
 
         return {
           raw: retryText,
@@ -2055,6 +2071,8 @@ export async function generateResponse(
           thread_ts: threadTs,
         });
         if (fallbackResult.ok) {
+          await persistDeferredToolCache();
+
           return {
             raw: accumulatedText,
             alreadyPosted: true,
@@ -2072,6 +2090,7 @@ export async function generateResponse(
 
     throw error;
   } finally {
+    await persistDeferredToolCache();
     cleanupScratchpad(invocationId);
   }
 }

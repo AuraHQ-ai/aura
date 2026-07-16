@@ -937,6 +937,27 @@ export const conversationLocks = pgTable(
   ],
 );
 
+export const deferredToolThreadCache = pgTable(
+  "deferred_tool_thread_cache",
+  {
+    workspaceId: workspaceId().references(() => workspaces.id),
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts").notNull(),
+    toolName: text("tool_name").notNull(),
+    resolvedAt: timestamptz("resolved_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.workspaceId, table.channelId, table.threadTs, table.toolName],
+    }),
+    index("deferred_tool_thread_cache_thread_idx").on(
+      table.workspaceId,
+      table.channelId,
+      table.threadTs,
+    ),
+  ],
+);
+
 // ── Error Events ────────────────────────────────────────────────────────────
 
 export const errorEvents = pgTable(
