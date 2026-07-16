@@ -5,14 +5,14 @@ description: "How Aura's message pipeline, memory system, tools, and self-improv
 
 # Architecture
 
-Aura is a Hono-based application deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses LLMs (Claude, Grok) for reasoning via the Vercel AI SDK.
+Aura is a Nitro-based application with Hono routing, deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses LLMs (Claude, Grok) for reasoning via the Vercel AI SDK.
 
 ## Monorepo Structure
 
 ```
 aura/
 ├── apps/
-│   ├── api/            # Core agent (Hono + Vercel Functions)
+│   ├── api/            # Core agent (Nitro + Hono, Vercel Functions)
 │   │   └── src/
 │   │       ├── pipeline/    # Message processing, prompt assembly
 │   │       ├── tools/       # 25 tool modules (Slack, email, BigQuery, etc.)
@@ -43,7 +43,7 @@ aura/
 ## System Overview
 
 ```
-Slack Event → Vercel Function → Hono Router → Message Pipeline → LLM (Vercel AI SDK)
+Slack Event → Vercel Function → Nitro + Hono Router → Message Pipeline → LLM (Vercel AI SDK)
                                                       ↕
                                               PostgreSQL + pgvector
                                       (memories, messages, conversations, notes, jobs)
@@ -78,6 +78,10 @@ Every conversation is persisted with full detail:
 
 The [Dashboard](/dashboard) provides a UI for browsing conversation traces, filtering by user/channel, and analyzing costs.
 
+## Durable Execution (Vercel Workflow DevKit)
+
+Aura uses the Vercel Workflow DevKit for durable execution in the Nitro API, with `"use workflow"` and `"use step"` directives defining resumable workflow boundaries. Dashboard chat always runs as a workflow in `apps/api/workflows/dashboard-chat.ts`: the server owns generation, the browser is only a stream reader, and streams can be resumed after disconnects. Slack respond has a flag-gated durable path in `apps/api/workflows/slack-respond.ts`, enabled by `AURA_WDK_SLACK_RESPOND=1` or the `wdk_slack_respond` dashboard setting. This path lets Slack message responses resume after function interruption while the legacy in-process responder remains the default when the flag is off.
+
 ## Tool System
 
 Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `tool()` that adds audit logging and approval policies. Aura has **25 tool modules** organized by domain:
@@ -91,10 +95,14 @@ Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `to
 | **Code** | Sandbox (shell), GitHub CLI, subagents | Code execution and development |
 | **Memory** | Notes, conversations, people | Knowledge management |
 | **Scheduling** | Jobs, datetime | Autonomous task scheduling |
-| **Integration** | HTTP requests, credentials, Cursor agents | External API access |
+| **Integration** | Credentials, Cursor agents | Credential management and async coding agents |
 | **Communication** | Voice, resources | Phone calls, content ingestion |
 
 Each tool has a description that guides the LLM on when and how to use it -- these descriptions are a critical part of Aura's behavior.
+
+### Deferred tool loading
+
+Not every tool schema is sent to the model on every turn. Frequently used tools (Slack messaging, sandbox commands, notes, memories) are loaded eagerly; infrequent ones (Calendar, Canvas, Gmail triage, Cursor agents, voice, and ~60 others listed in `apps/api/src/tools/deferred.ts`) are marked with Anthropic's `deferLoading` provider option. Their full schemas are omitted from the prompt and replaced by a one-line manifest, and the model loads them on demand via the native `tool_search_tool_bm25` meta-tool. This keeps the prompt small without shrinking the toolset. Deferred loading only applies to Anthropic models; other providers receive the full schemas.
 
 ## Heartbeat & Cron
 
@@ -170,5 +178,5 @@ Users store API keys and OAuth credentials through Aura's Slack App Home. Creden
 
 - Encrypted at rest (AES-256-GCM)
 - Scoped per user -- Aura can only access credentials the owner has stored
-- Injected server-side into HTTP requests (the LLM never sees raw keys)
+- Injected as environment variables into the caller's sandbox, scoped per user (the LLM never sees raw values -- see [Credentials](/tools/credentials))
 - Support both static tokens and OAuth client credentials with automatic token refresh

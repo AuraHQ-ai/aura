@@ -58,7 +58,14 @@ vi.mock("../eval/judge.js", () => ({
   judgeWindow: judgeWindowMock,
 }));
 
-import { scoreGroup } from "./eval-responses.js";
+import {
+  DEFAULT_MAX_GROUPS,
+  evalResponsesApp,
+  scoreGroup,
+  scoreGroupsWithBudget,
+  splitGroupBudget,
+  type UnscoredGroup,
+} from "./eval-responses.js";
 
 function traceRow(id: string, minute: number) {
   return {
@@ -120,7 +127,7 @@ describe("scoreGroup", () => {
       ],
       // parts
       [
-        { id: "pt-a1", messageId: "a1", type: "text", orderIndex: 0, textValue: "done", toolName: null },
+        { id: "pt-a1", messageId: "a1", type: "text", orderIndex: 0, textValue: "Here is the completed analysis.", toolName: null },
       ],
       // already-scored rows
       [],
@@ -134,7 +141,7 @@ describe("scoreGroup", () => {
 
     const result = await scoreGroup(GROUP, Date.now() + 60_000);
 
-    expect(result).toEqual({ windowsJudged: 1, responsesScored: 1, omitted: 0 });
+    expect(result).toEqual({ windowsJudged: 1, responsesScored: 1, prefiltered: 0, omitted: 0 });
     expect(dbMock.insertedRows).toHaveLength(1);
     expect(dbMock.insertedRows[0]).toMatchObject({
       workspaceId: "default",
@@ -200,7 +207,7 @@ describe("scoreGroup", () => {
     const result = await scoreGroup(GROUP, Date.now() + 60_000);
 
     expect(judgeWindowMock).not.toHaveBeenCalled();
-    expect(result).toEqual({ windowsJudged: 0, responsesScored: 0, omitted: 0 });
+    expect(result).toEqual({ windowsJudged: 0, responsesScored: 0, prefiltered: 0, omitted: 0 });
     expect(dbMock.insertedRows).toHaveLength(0);
   });
 
@@ -221,5 +228,144 @@ describe("scoreGroup", () => {
 
     expect(judgeWindowMock).not.toHaveBeenCalled();
     expect(result.responsesScored).toBe(0);
+  });
+
+  it("prefilters obvious non-scorable acks but keeps them as judge context", async () => {
+    dbMock.results = [
+      [traceRow("t1", 0)],
+      [
+        messageRow("u1", "t1", "user", 1, "start this"),
+        messageRow("a1", "t1", "assistant", 2),
+        messageRow("u2", "t1", "user", 3, "any update?"),
+        messageRow("a2", "t1", "assistant", 4),
+      ],
+      [
+        { id: "pt-a1", messageId: "a1", type: "text", orderIndex: 0, textValue: "On it.", toolName: null },
+        { id: "pt-a2", messageId: "a2", type: "text", orderIndex: 0, textValue: "The migration is ready in PR 123.", toolName: null },
+      ],
+      [],
+    ];
+    judgeWindowMock.mockImplementation(async (window: { ownedPartIds: string[] }) => ({
+      judged: new Map(window.ownedPartIds.map((id: string) => [id, fulfilledVerdict(id)])),
+      judgeModel: "judge-model",
+      unknownIds: [],
+      omittedIds: [],
+    }));
+
+    const result = await scoreGroup(GROUP, Date.now() + 60_000);
+
+    expect(judgeWindowMock).toHaveBeenCalledTimes(1);
+    const windowArg = judgeWindowMock.mock.calls[0][0];
+    expect(windowArg.ownedPartIds).toEqual(["pt-a2"]);
+    expect(windowArg.turns.map((turn: { text: string }) => turn.text)).toContain("On it.");
+    expect(dbMock.insertedRows).toHaveLength(2);
+    expect(dbMock.insertedRows[0]).toMatchObject({
+      messageId: "a1",
+      partId: "pt-a1",
+      scorable: false,
+      verdict: null,
+      failureClass: "none",
+      judgeModel: "prefilter-v1",
+      note: "prefilter-v1: pure_ack",
+    });
+    expect(result).toEqual({ windowsJudged: 1, responsesScored: 2, prefiltered: 1, omitted: 0 });
+  });
+});
+
+describe("eval-responses group budgeting", () => {
+  it("allocates 80 percent to newest-first scoring and 20 percent to backfill", () => {
+    expect(DEFAULT_MAX_GROUPS).toBe(200);
+    expect(splitGroupBudget(DEFAULT_MAX_GROUPS)).toEqual({ newest: 160, oldest: 40 });
+    expect(splitGroupBudget(10)).toEqual({ newest: 8, oldest: 2 });
+    expect(splitGroupBudget(1)).toEqual({ newest: 1, oldest: 0 });
+  });
+});
+
+describe("scoreGroupsWithBudget", () => {
+  it("does not dispatch a new group after the deadline has passed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const groups: UnscoredGroup[] = Array.from({ length: 12 }, (_, index) => ({
+      channelId: "C123",
+      threadTs: `1700000000.${String(index).padStart(6, "0")}`,
+      soleTraceId: `t${index}`,
+      firstAt: new Date(0),
+    }));
+    const started: string[] = [];
+    const resolveCalls: Array<() => void> = [];
+    const score = vi.fn((group: UnscoredGroup) => {
+      started.push(group.soleTraceId);
+      return new Promise<{
+        windowsJudged: number;
+        responsesScored: number;
+        prefiltered: number;
+        omitted: number;
+      }>((resolve) => {
+        resolveCalls.push(() =>
+          resolve({ windowsJudged: 1, responsesScored: 1, prefiltered: 0, omitted: 0 }),
+        );
+      });
+    });
+
+    try {
+      const run = scoreGroupsWithBudget(groups, 100, score);
+
+      expect(score).toHaveBeenCalledTimes(8);
+      vi.setSystemTime(101);
+      resolveCalls.forEach((resolve) => resolve());
+      const result = await run;
+
+      expect(score).toHaveBeenCalledTimes(8);
+      expect(started).toEqual(groups.slice(0, 8).map((group) => group.soleTraceId));
+      expect(result).toEqual({
+        groupsProcessed: 8,
+        windowsJudged: 8,
+        responsesScored: 8,
+        prefiltered: 0,
+        omitted: 0,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("eval-responses cron handler", () => {
+  it("exits before judging when no settled unscored groups are found", async () => {
+    const previousCronSecret = process.env.CRON_SECRET;
+    process.env.CRON_SECRET = "test-secret";
+    try {
+      dbMock.results = [
+        // newest groups
+        [],
+        // oldest groups
+        [],
+      ];
+
+      const response = await evalResponsesApp.request(
+        "/api/cron/eval-responses",
+        {
+          headers: { authorization: "Bearer test-secret" },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        groupsFound: 0,
+        groupsProcessed: 0,
+        windowsJudged: 0,
+        responsesScored: 0,
+        done: true,
+      });
+      expect(judgeWindowMock).not.toHaveBeenCalled();
+    } finally {
+      if (previousCronSecret === undefined) {
+        delete process.env.CRON_SECRET;
+      } else {
+        process.env.CRON_SECRET = previousCronSecret;
+      }
+    }
   });
 });

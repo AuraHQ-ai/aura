@@ -1,15 +1,44 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // store.ts pulls in the db client + embeddings at module load; stub them so we
 // can unit-test the pure provenance-authority helpers in isolation.
-vi.mock("../db/client.js", () => ({ db: { execute: vi.fn() } }));
+const dbMocks = vi.hoisted(() => {
+  const returning = vi.fn();
+  const values = vi.fn(() => ({ returning }));
+  const insert = vi.fn(() => ({ values }));
+  return { insert, values, returning };
+});
+
+vi.mock("../db/client.js", () => ({
+  db: {
+    execute: vi.fn(),
+    insert: dbMocks.insert,
+  },
+}));
 vi.mock("../db/tx.js", () => ({ withTransaction: vi.fn() }));
 vi.mock("../lib/embeddings.js", () => ({ embedText: vi.fn(), embedTexts: vi.fn() }));
 vi.mock("../lib/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { canSupersede, memoryAuthority, toDbChannelType } from "./store.js";
+import { canSupersede, memoryAuthority, storeMemories, toDbChannelType } from "./store.js";
+
+type StoreMemoryInput = Parameters<typeof storeMemories>[0][number];
+
+function memory(overrides: Partial<StoreMemoryInput> = {}): StoreMemoryInput {
+  return {
+    workspaceId: "workspace-1",
+    content: "Test memory",
+    type: "fact",
+    sourceChannelType: "public_channel",
+    ...overrides,
+  } as StoreMemoryInput;
+}
+
+function insertedValues(): StoreMemoryInput[] {
+  const calls = dbMocks.values.mock.calls as unknown as Array<[StoreMemoryInput[]]>;
+  return calls[0][0];
+}
 
 describe("memory provenance authority", () => {
   it("ranks user/tool/unknown above assistant", () => {
@@ -50,5 +79,66 @@ describe("toDbChannelType", () => {
 
   it("maps virtual Slack List item events to their backing public channel", () => {
     expect(toDbChannelType("slack_list_item")).toBe("public_channel");
+  });
+});
+
+describe("storeMemories temporal fields", () => {
+  const now = new Date("2026-06-09T08:00:00.000Z");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    dbMocks.insert.mockClear();
+    dbMocks.values.mockClear();
+    dbMocks.returning.mockReset();
+    dbMocks.returning.mockResolvedValue([{ id: "memory-1" }, { id: "memory-2" }, { id: "memory-3" }]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("defaults validFrom but never synthesizes validUntil for event/open_thread", async () => {
+    await storeMemories([
+      memory({ type: "event" }),
+      memory({ type: "open_thread" }),
+      memory({ type: "fact" }),
+    ]);
+
+    const inserted = insertedValues();
+
+    expect(inserted[0].validFrom).toEqual(now);
+    expect(inserted[0]).not.toHaveProperty("validUntil");
+    expect(inserted[1].validFrom).toEqual(now);
+    expect(inserted[1]).not.toHaveProperty("validUntil");
+    expect(inserted[2].validFrom).toEqual(now);
+    expect(inserted[2]).not.toHaveProperty("validUntil");
+  });
+
+  it("respects explicit validUntil values", async () => {
+    const explicitValidUntil = new Date("2026-12-31T00:00:00.000Z");
+
+    await storeMemories([
+      memory({ type: "event", validUntil: explicitValidUntil }),
+      memory({ type: "open_thread", validUntil: null }),
+      memory({ type: "event", validUntil: null }),
+    ]);
+
+    const inserted = insertedValues();
+
+    expect(inserted[0].validUntil).toBe(explicitValidUntil);
+    expect(inserted[1].validUntil).toBeNull();
+    expect(inserted[2].validUntil).toBeNull();
+  });
+
+  it("preserves explicit validFrom without deriving validUntil from it", async () => {
+    const validFrom = new Date("2026-01-01T12:00:00.000Z");
+
+    await storeMemories([memory({ type: "event", validFrom })]);
+
+    const inserted = insertedValues();
+
+    expect(inserted[0].validFrom).toBe(validFrom);
+    expect(inserted[0]).not.toHaveProperty("validUntil");
   });
 });

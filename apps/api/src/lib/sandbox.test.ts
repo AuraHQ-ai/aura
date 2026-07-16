@@ -136,7 +136,7 @@ describe("getSandboxEnvNames", () => {
     resolveUserCredentialsMock.mockResolvedValue(new Set<string>());
   });
 
-  it("applies the owner-scoped gate for owned, granted, and ungranted credentials", async () => {
+  it("applies the owner-scoped gate and resolves owner display names", async () => {
     const rows: CredentialRow[] = [
       {
         id: "owned",
@@ -163,14 +163,43 @@ describe("getSandboxEnvNames", () => {
         sandboxEnvName: "LINEAR_API_KEY",
       },
     ];
-    queueDbResults([{ credentialId: "granted" }], rows);
+    queueDbResults(
+      [{ credentialId: "granted" }],
+      rows,
+      [
+        { slackUserId: "U_CALLER", displayName: "Callan Corrado" },
+        { slackUserId: "U_OTHER", displayName: "Nia Otieno" },
+      ],
+    );
     resolveUserCredentialsMock.mockResolvedValue(
       new Set(["github_token", "notion_api_key", "linear_api_key"]),
     );
 
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
-      "GITHUB_TOKEN",
-      "NOTION_API_KEY",
+      { envName: "GITHUB_TOKEN", scope: "owner", ownerDisplayName: "Callan Corrado" },
+      { envName: "NOTION_API_KEY", scope: "owner", ownerDisplayName: "Nia Otieno" },
+    ]);
+  });
+
+  it("returns null ownerDisplayName when the owner has no users row", async () => {
+    queueDbResults(
+      [],
+      [
+        {
+          id: "owned",
+          name: "github_token",
+          value: "owned-secret-value",
+          ownerId: "U_CALLER",
+          scope: "owner",
+          sandboxEnvName: "GITHUB_TOKEN",
+        },
+      ],
+      [], // users lookup returns no rows
+    );
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["github_token"]));
+
+    await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
+      { envName: "GITHUB_TOKEN", scope: "owner", ownerDisplayName: null },
     ]);
   });
 
@@ -189,15 +218,19 @@ describe("getSandboxEnvNames", () => {
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([]);
 
     dbMock.select.mockClear();
-    queueDbResults([{ credentialId: "per-user" }], [perUserCredential]);
+    queueDbResults(
+      [{ credentialId: "per-user" }],
+      [perUserCredential],
+      [{ slackUserId: "U_OWNER", displayName: "Nia Otieno" }],
+    );
     resolveUserCredentialsMock.mockResolvedValue(new Set(["notion_api_key"]));
 
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
-      "NOTION_API_KEY",
+      { envName: "NOTION_API_KEY", scope: "per_user", ownerDisplayName: "Nia Otieno" },
     ]);
   });
 
-  it("honors resolved role-tier credential access and falls back to uppercase names", async () => {
+  it("returns role-tier credentials as global rows without owner metadata", async () => {
     const rows: CredentialRow[] = [
       {
         id: "member",
@@ -230,10 +263,45 @@ describe("getSandboxEnvNames", () => {
     );
 
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
-      "MEMBER_TOKEN",
-      "POWER_TOKEN",
+      { envName: "MEMBER_TOKEN", scope: "member", ownerDisplayName: null },
+      { envName: "POWER_TOKEN", scope: "power_user", ownerDisplayName: null },
     ]);
   });
+
+  it.each([
+    ["caller row first", true],
+    ["caller row last", false],
+  ])(
+    "prefers the caller-owned row's metadata on env name collisions (%s)",
+    async (_label, callerFirst) => {
+      const callerRow: CredentialRow = {
+        id: "cred-caller",
+        name: "github_token",
+        value: "caller-token",
+        ownerId: "U_CALLER",
+        scope: "owner",
+        sandboxEnvName: null,
+      };
+      const sharedRow: CredentialRow = {
+        id: "cred-shared",
+        name: "github_token",
+        value: "shared-token",
+        ownerId: "U_OTHER",
+        scope: "member",
+        sandboxEnvName: null,
+      };
+      queueDbResults(
+        [],
+        callerFirst ? [callerRow, sharedRow] : [sharedRow, callerRow],
+        [{ slackUserId: "U_CALLER", displayName: "Callan Corrado" }],
+      );
+      resolveUserCredentialsMock.mockResolvedValue(new Set(["github_token"]));
+
+      await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
+        { envName: "GITHUB_TOKEN", scope: "owner", ownerDisplayName: "Callan Corrado" },
+      ]);
+    },
+  );
 
   it("does not select or decrypt credential values", async () => {
     queueDbResults(
@@ -248,11 +316,12 @@ describe("getSandboxEnvNames", () => {
           sandboxEnvName: "SECRET_TOKEN",
         },
       ],
+      [{ slackUserId: "U_CALLER", displayName: "Callan Corrado" }],
     );
     resolveUserCredentialsMock.mockResolvedValue(new Set(["secret_token"]));
 
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
-      "SECRET_TOKEN",
+      { envName: "SECRET_TOKEN", scope: "owner", ownerDisplayName: "Callan Corrado" },
     ]);
 
     const selectedValue = dbMock.select.mock.calls.some(([selection]) =>

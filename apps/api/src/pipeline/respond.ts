@@ -6,6 +6,7 @@ import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { formatForSlack, prettifyAndWrapTable } from "../lib/format.js";
 import { TABLE_BLOCK_KEY } from "../tools/table.js";
+import { CHART_BLOCK_KEY } from "../tools/chart.js";
 import {
   safePostMessage,
   isChannelTypeNotSupported,
@@ -309,6 +310,10 @@ function toBlocksChunk(blocks: Record<string, any>[]): SlackStreamChunk {
     type: "blocks",
     blocks,
   };
+}
+
+function fallbackTextForNativeBlock(block: Record<string, any>) {
+  return block.type === "data_visualization" ? "Here's a chart:" : "Here's a table:";
 }
 
 function asAppendPayload(payload: {
@@ -734,7 +739,7 @@ export async function generateResponse(
   let currentStreamLength = 0;
   let fallbackStartIdx = 0;
   let streamedRawIdx = 0;
-  let pendingTableBlock: Record<string, any> | null = null;
+  let pendingNativeBlock: Record<string, any> | null = null;
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
@@ -1095,7 +1100,7 @@ export async function generateResponse(
         pendingToolCount: pendingToolInputs.size,
         thresholdMs: LONG_TOOL_SPLIT_MS,
       });
-      if (!await splitToNewStream("long_tool") && streamingFailed) {
+      if (!(await splitToNewStream("long_tool")) && streamingFailed) {
         fallbackStartIdx = accumulatedText.length;
       }
     } finally {
@@ -1132,7 +1137,7 @@ export async function generateResponse(
       pendingToolCount: pendingToolInputs.size,
       toolCallCount: toolCallRecords.length,
     });
-    if (!await splitToNewStream("stream_age") && streamingFailed) {
+    if (!(await splitToNewStream("stream_age")) && streamingFailed) {
       fallbackStartIdx = accumulatedText.length;
     }
   }
@@ -1196,7 +1201,7 @@ export async function generateResponse(
       latestResult = result;
       stepsPromises.push(result.steps);
 
-      for await (const chunk of result.fullStream) {
+      for await (const chunk of result.stream) {
         resetTimer();
 
         switch (chunk.type) {
@@ -1303,18 +1308,26 @@ export async function generateResponse(
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
 
-          // Capture native Slack table block from draw_table tool
+          // Capture native Slack blocks from draw_table/draw_chart tools.
           if (
             output && typeof output === "object" &&
             TABLE_BLOCK_KEY in output && output[TABLE_BLOCK_KEY]
           ) {
-            pendingTableBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
+            pendingNativeBlock = output[TABLE_BLOCK_KEY] as Record<string, any>;
+          } else if (
+            output && typeof output === "object" &&
+            CHART_BLOCK_KEY in output && output[CHART_BLOCK_KEY]
+          ) {
+            pendingNativeBlock = output[CHART_BLOCK_KEY] as Record<string, any>;
+          }
+
+          if (pendingNativeBlock) {
             if (!streamingFailed) {
-              const streamedTable = await tryStreamAppend(asAppendPayload({
-                chunks: [toBlocksChunk([pendingTableBlock])],
+              const streamedNativeBlock = await tryStreamAppend(asAppendPayload({
+                chunks: [toBlocksChunk([pendingNativeBlock])],
               }));
-              if (streamedTable) {
-                pendingTableBlock = null;
+              if (streamedNativeBlock) {
+                pendingNativeBlock = null;
               }
             }
           }
@@ -1363,7 +1376,7 @@ export async function generateResponse(
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
-            if (!await splitToNewStream() && streamingFailed) {
+            if (!(await splitToNewStream()) && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
             }
           }
@@ -1410,7 +1423,7 @@ export async function generateResponse(
           resetTimer();
 
           if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
-            if (!await splitToNewStream() && streamingFailed) {
+            if (!(await splitToNewStream()) && streamingFailed) {
               fallbackStartIdx = accumulatedText.length;
             }
           }
@@ -1584,8 +1597,8 @@ export async function generateResponse(
           expand: true,
         });
       }
-      if (pendingTableBlock) {
-        blocks.push(pendingTableBlock);
+      if (pendingNativeBlock) {
+        blocks.push(pendingNativeBlock);
       }
 
       blocks.push({
@@ -1655,7 +1668,7 @@ export async function generateResponse(
     } else {
       // Happy path: finalize the stream on Slack's side.
       // Attach tool I/O metadata (invisible to users) for follow-up context,
-      // and inject table blocks from draw_table if present.
+      // and inject native table/chart blocks if present.
       const feedbackBlock = {
         type: "context_actions",
         elements: [{
@@ -1668,7 +1681,7 @@ export async function generateResponse(
 
       const toolMeta = buildToolMetadata(toolCallRecords);
       const stopBlocks: any[] = [];
-      if (pendingTableBlock) stopBlocks.push(pendingTableBlock);
+      if (pendingNativeBlock) stopBlocks.push(pendingNativeBlock);
       stopBlocks.push(feedbackBlock);
       const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
@@ -1676,39 +1689,48 @@ export async function generateResponse(
       try {
         await streamer.stop(stopArgs);
       } catch (stopErr: any) {
-        if (isInvalidBlocks(stopErr)) {
+        if (isInvalidBlocks(stopErr) || isInvalidArguments(stopErr)) {
+          // Slack rejects a block payload at stop with either `invalid_blocks`
+          // or `invalid_arguments` depending on which validation layer trips
+          // (same asymmetry as the append path). Both are recoverable: retry
+          // the stop without blocks, then deliver the native block via
+          // chat.postMessage.
+          const stopErrCode = stopErr?.data?.error ||
+            (isInvalidArguments(stopErr) ? "invalid_arguments" : "invalid_blocks");
           logger.warn("streamer.stop() rejected blocks, retrying without them", {
             channelId,
             slackError: stopErr?.data?.error,
             blockTypes: stopBlocks.map((b: any) => b.type),
           });
           logError({
-            errorName: "StreamStopInvalidBlocks",
-            errorMessage: stopErr?.message || "invalid_blocks on streamer.stop()",
-            errorCode: stopErr?.data?.error || "invalid_blocks",
+            errorName: isInvalidArguments(stopErr)
+              ? "StreamStopInvalidArguments"
+              : "StreamStopInvalidBlocks",
+            errorMessage: stopErr?.message || `${stopErrCode} on streamer.stop()`,
+            errorCode: stopErrCode,
             channelId,
-            context: { blockTypes: stopBlocks.map((b: any) => b.type) },
+            context: { phase: "stop", blockTypes: stopBlocks.map((b: any) => b.type) },
           });
           try {
             await streamer.stop();
           } catch {
             // Stream may already be finalized
           }
-          // Deliver the table block via chat.postMessage as a follow-up
+          // Deliver the native block via chat.postMessage as a follow-up
           // when the stream rejected it (e.g. MPIMs, some channel types).
-          if (pendingTableBlock) {
+          if (pendingNativeBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: "Here's a table:",
-                blocks: [pendingTableBlock as any],
+                text: fallbackTextForNativeBlock(pendingNativeBlock),
+                blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
-              pendingTableBlock = null;
-            } catch (tablePostErr: any) {
-              logger.warn("Failed to post table block via chat.postMessage fallback", {
+              pendingNativeBlock = null;
+            } catch (nativeBlockPostErr: any) {
+              logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
-                error: tablePostErr?.message,
+                error: nativeBlockPostErr?.message,
               });
             }
           }
@@ -1725,19 +1747,19 @@ export async function generateResponse(
             context: { currentStreamLength },
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
-          if (pendingTableBlock) {
+          if (pendingNativeBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: "Here's a table:",
-                blocks: [pendingTableBlock as any],
+                text: fallbackTextForNativeBlock(pendingNativeBlock),
+                blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
-              pendingTableBlock = null;
-            } catch (tablePostErr: any) {
-              logger.warn("Failed to post table block via chat.postMessage fallback", {
+              pendingNativeBlock = null;
+            } catch (nativeBlockPostErr: any) {
+              logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
-                error: tablePostErr?.message,
+                error: nativeBlockPostErr?.message,
               });
             }
           }
@@ -1747,19 +1769,19 @@ export async function generateResponse(
             channelId,
           });
           try { await streamer.stop(); } catch { /* already finalized */ }
-          if (pendingTableBlock) {
+          if (pendingNativeBlock) {
             try {
               await slackClient.chat.postMessage({
                 channel: channelId,
-                text: "Here's a table:",
-                blocks: [pendingTableBlock as any],
+                text: fallbackTextForNativeBlock(pendingNativeBlock),
+                blocks: [pendingNativeBlock as any],
                 thread_ts: threadTs,
               });
-              pendingTableBlock = null;
-            } catch (tablePostErr: any) {
-              logger.warn("Failed to post table block via chat.postMessage fallback", {
+              pendingNativeBlock = null;
+            } catch (nativeBlockPostErr: any) {
+              logger.warn("Failed to post native block via chat.postMessage fallback", {
                 channelId,
-                error: tablePostErr?.message,
+                error: nativeBlockPostErr?.message,
               });
             }
           }
@@ -1876,14 +1898,14 @@ export async function generateResponse(
         );
         const retryResult = streamText({
           model: retryModel,
-          system: retrySystemMessages,
+          instructions: retrySystemMessages,
           prompt: retryPrompt,
           abortSignal: retryAbortController.signal,
-          experimental_telemetry: aiTelemetry("slack-chat-retry"),
+          telemetry: aiTelemetry("slack-chat-retry"),
         });
         let retryText = "";
 
-        for await (const chunk of retryResult.fullStream) {
+        for await (const chunk of retryResult.stream) {
           clearTimeout(retryInactivityTimer);
           retryInactivityTimer = setTimeout(() => {
             logger.warn("LLM retry inactivity timeout (180s), aborting");

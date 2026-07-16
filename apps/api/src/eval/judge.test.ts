@@ -174,4 +174,44 @@ describe("judgeWindow verdict normalization", () => {
     expect(callArgs.prompt).toContain("[R:bbb]");
     expect(callArgs.temperature).toBe(0);
   });
+
+  it("supports honest capability-boundary refusals as partial/fulfilled instead of failed", async () => {
+    const window: EvalWindow = {
+      turns: [
+        {
+          role: "user",
+          messageId: "u1",
+          partId: null,
+          traceId: "t1",
+          text: "Can you pull the private payroll report?",
+          userId: "U123",
+          createdAt: null,
+          toolNames: [],
+        },
+        {
+          ...assistantTurn("aaa"),
+          text: "I can't access payroll because I don't have the required credentials.",
+        },
+      ],
+      ownedPartIds: ["aaa"],
+    };
+    const generate = generateReturning([
+      entry("aaa", {
+        verdict: "partial",
+        failure_class: "missing_cred",
+        note: "Aura honestly identified the missing credential instead of pretending the report was available.",
+      }),
+    ]);
+
+    const result = await judgeWindow(window, { generate });
+
+    expect(result.judged.get("aaa")).toMatchObject({
+      scorable: true,
+      verdict: "partial",
+      failureClass: "missing_cred",
+    });
+    const callArgs = generate.mock.calls[0][0];
+    expect(callArgs.system).toContain("Honest refusals and capability boundaries");
+    expect(callArgs.system).toContain("Use failed only for incorrect, silent, or confabulated behavior");
+  });
 });

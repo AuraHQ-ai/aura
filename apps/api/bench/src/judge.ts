@@ -189,7 +189,7 @@ Grade the model answer per the rules above.`;
   const { object, usage } = await generateObject({
     model,
     schema,
-    system,
+    instructions: system,
     prompt,
     temperature: 0,
   });

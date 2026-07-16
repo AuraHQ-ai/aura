@@ -87,6 +87,18 @@ Manage the encrypted credential store:
 - Manage grants — add or remove user access via a user picker dropdown
 - Monitor usage and last-accessed timestamps
 
+### Evals
+
+Review the automated response-quality funnel:
+
+- Every assistant response is scored by a fast-tier judge (hourly cron `/api/cron/eval-responses`) using ~20-turn sliding windows over each settled thread
+- Each response gets an atomic verdict: **fulfilled**, **partial**, or **failed** (plus a scorable flag) -- stored once, never overwritten on re-runs
+- Funnel cards aggregate verdicts by failure class, serving intent, and user, with estimated cost per failure class
+- Detail pages support human adjudication: add a note, a gold answer, a must-do / must-not-do rubric, and ratify the verdict
+- Ratified failures, deduped by failure class, feed the curated regression bench
+
+Verdict badges also appear inline on assistant messages in the Conversations timeline, linking to the corresponding eval detail page. For how scoring works under the hood, see [Eval Funnel](/eval-funnel).
+
 ### Errors
 
 Track production errors:
@@ -143,6 +155,8 @@ The model picker in the chat panel uses the same searchable autocomplete as the 
 A copy-to-clipboard button in the chat header exports the current conversation (including tool calls, tool results, and reasoning) as JSON -- handy for sharing a repro, filing a bug, or seeding an evaluation case.
 
 Each chat message carries its own `modelId` / `resolvedModelId` metadata, so the exported JSON records which model actually produced each turn even when the selection changes mid-conversation.
+
+Chat generation is durable: each send starts a server-side workflow run (tracked in the `dashboard_chat_runs` table), and the browser is just a stream reader. Refreshing, switching threads, or reconnecting from another session reattaches to the live stream instead of killing the run -- only the Stop button (a server-side cancel endpoint) actually stops generation. Threads are scoped to the signed-in user's session.
 
 ## Navigation
 

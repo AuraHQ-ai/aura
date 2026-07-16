@@ -115,7 +115,7 @@ async function runSlackAgentStep(
   escalate: boolean,
 ): Promise<SlackAgentStepResult> {
   "use step";
-  const { streamText, stepCountIs } = await import("ai");
+  const { streamText, isStepCount } = await import("ai");
   const { WebClient } = await import("@slack/web-api");
   const { gateway } = await import("@ai-sdk/gateway");
   const {
@@ -357,10 +357,10 @@ async function runSlackAgentStep(
       () =>
         streamText({
           model,
-          system: system as any,
+          instructions: system as any,
           messages: prunedMessages,
           tools,
-          stopWhen: stepCountIs(1),
+          stopWhen: isStepCount(1),
           abortSignal: abortController.signal,
           providerOptions: providerOptions as any,
           onError: () => {
@@ -370,7 +370,7 @@ async function runSlackAgentStep(
         }),
     );
 
-    for await (const chunk of result.fullStream) {
+    for await (const chunk of result.stream) {
       resetTimer();
       switch (chunk.type) {
         case "text-delta": {

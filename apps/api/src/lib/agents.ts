@@ -1,4 +1,4 @@
-import { ToolLoopAgent, stepCountIs, type ToolSet, type LanguageModel } from "ai";
+import { ToolLoopAgent, isStepCount, type ToolSet, type LanguageModel } from "ai";
 import type { WebClient } from "@slack/web-api";
 import type { ScheduleContext } from "@aura/db/schema";
 import {
@@ -64,8 +64,8 @@ export async function createInteractiveAgent(
     model,
     tools,
     instructions: systemMessages,
-    stopWhen: stepCountIs(STEP_LIMIT),
-    experimental_telemetry: aiTelemetry("slack-chat", {
+    stopWhen: isStepCount(STEP_LIMIT),
+    telemetry: aiTelemetry("slack-chat", {
       modelId,
       ...(options.channelId ? { channelId: options.channelId } : {}),
       ...(options.invocationId ? { invocationId: options.invocationId } : {}),
@@ -114,8 +114,8 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
     model,
     tools,
     instructions: withCacheControl(systemPrompt),
-    stopWhen: stepCountIs(HEADLESS_STEP_LIMIT),
-    experimental_telemetry: aiTelemetry("headless-job", {
+    stopWhen: isStepCount(HEADLESS_STEP_LIMIT),
+    telemetry: aiTelemetry("headless-job", {
       modelId,
       ...(options.invocationId ? { invocationId: options.invocationId } : {}),
     }),
@@ -154,7 +154,7 @@ export function createSubAgent(options: SubagentAgentOptions) {
     model: options.model,
     tools: options.tools,
     instructions: systemPrompt,
-    stopWhen: stepCountIs(options.maxSteps ?? 50),
-    experimental_telemetry: aiTelemetry("subagent"),
+    stopWhen: isStepCount(options.maxSteps ?? 50),
+    telemetry: aiTelemetry("subagent"),
   });
 }

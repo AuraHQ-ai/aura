@@ -1,18 +1,28 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const retrieveMocks = vi.hoisted(() => ({
+  dbExecute: vi.fn(),
+  embedText: vi.fn(),
+  getFastModel: vi.fn(),
+  getRerankingModel: vi.fn(),
+  generateObject: vi.fn(),
+  rerank: vi.fn(),
+  resolveEntityReadOnly: vi.fn(),
+}));
 
 vi.mock("../db/client.js", () => ({
   db: {
-    execute: vi.fn(),
+    execute: retrieveMocks.dbExecute,
   },
 }));
 
 vi.mock("../lib/embeddings.js", () => ({
-  embedText: vi.fn(),
+  embedText: retrieveMocks.embedText,
 }));
 
 vi.mock("../lib/ai.js", () => ({
-  getFastModel: vi.fn(),
-  getRerankingModel: vi.fn(),
+  getFastModel: retrieveMocks.getFastModel,
+  getRerankingModel: retrieveMocks.getRerankingModel,
 }));
 
 vi.mock("../lib/logger.js", () => ({
@@ -25,8 +35,12 @@ vi.mock("../lib/logger.js", () => ({
 }));
 
 vi.mock("ai", () => ({
-  generateObject: vi.fn(),
-  rerank: vi.fn(),
+  generateObject: retrieveMocks.generateObject,
+  rerank: retrieveMocks.rerank,
+}));
+
+vi.mock("./entity-resolution.js", () => ({
+  resolveEntityReadOnly: retrieveMocks.resolveEntityReadOnly,
 }));
 
 import {
@@ -34,8 +48,55 @@ import {
   isMemoryVisibleToParticipant,
   looksMultiHop,
   mergeRoundRobin,
+  retrieveMemories,
 } from "./retrieve.js";
 import type { Memory } from "@aura/db/schema";
+
+function row(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "memory-active",
+    workspace_id: "workspace-1",
+    content: "Active launch incident",
+    type: "event",
+    source_channel_type: "public_channel",
+    related_user_ids: [],
+    embedding: [0.1, 0.2, 0.3],
+    relevance_score: 1,
+    shareable: 0,
+    status: "current",
+    confidence: 0.8,
+    valid_from: new Date("2026-01-01T00:00:00.000Z"),
+    valid_until: null,
+    created_at: new Date("2026-01-01T00:00:00.000Z"),
+    updated_at: new Date("2026-01-01T00:00:00.000Z"),
+    rrf_score: 0.03,
+    similarity: 0.92,
+    bm25: 0,
+    ...overrides,
+  };
+}
+
+function collectSqlText(value: unknown, seen = new Set<unknown>()): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value !== "object") return "";
+  if (seen.has(value)) return "";
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((item) => collectSqlText(item, seen)).join(" ");
+  }
+
+  const record = value as Record<string, unknown>;
+  const parts: string[] = [];
+  if (record.name) parts.push(String(record.name));
+  if (record.keyAsName) parts.push(String(record.keyAsName));
+  if (record.value) parts.push(collectSqlText(record.value, seen));
+  if (record.queryChunks) parts.push(collectSqlText(record.queryChunks, seen));
+  return parts.join(" ");
+}
 
 describe("hasRetrievalEvidence (#1045 abstention gate)", () => {
   it("treats a resolved entity as evidence regardless of similarity", () => {
@@ -149,5 +210,125 @@ describe("participant-scoped memory visibility", () => {
         currentUserId: "U_current",
       }),
     ).toBe(true);
+  });
+});
+
+describe("retrieveMemories temporal validity", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-09T08:00:00.000Z"));
+    retrieveMocks.dbExecute.mockReset();
+    retrieveMocks.generateObject.mockReset();
+    retrieveMocks.getRerankingModel.mockReset();
+    retrieveMocks.resolveEntityReadOnly.mockReset();
+    retrieveMocks.generateObject.mockResolvedValue({
+      object: { entities: [] },
+      usage: {},
+    });
+    retrieveMocks.getRerankingModel.mockResolvedValue(null);
+    retrieveMocks.resolveEntityReadOnly.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("excludes expired current memories from the live path while keeping non-expired ones", async () => {
+    const expired = row({
+      id: "memory-expired",
+      content: "Expired launch incident",
+      valid_until: new Date("2026-06-01T00:00:00.000Z"),
+      similarity: 0.95,
+    });
+    const active = row({
+      id: "memory-active",
+      content: "Active launch incident",
+      valid_until: new Date("2026-06-20T00:00:00.000Z"),
+      similarity: 0.9,
+    });
+
+    retrieveMocks.dbExecute
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([expired, active]);
+
+    const result = await retrieveMemories({
+      query: "launch incident",
+      queryEmbedding: [0.1, 0.2, 0.3],
+      currentUserId: "U_current",
+      workspaceId: "workspace-1",
+      adminMode: true,
+      abstain: false,
+    });
+
+    expect(result.map((m) => m.id)).toEqual(["memory-active"]);
+
+    const hybridSql = collectSqlText(retrieveMocks.dbExecute.mock.calls[1][0]).toLowerCase();
+    expect(hybridSql).toContain("status");
+    expect(hybridSql).toContain("current");
+    expect(hybridSql).toContain("disputed");
+    expect(hybridSql).toContain("valid_until");
+    expect(hybridSql).toContain("now()");
+  });
+
+  it("applies the live expiration predicate to the entity-first lane", async () => {
+    retrieveMocks.generateObject.mockResolvedValueOnce({
+      object: { entities: [{ name: "Aura", type: "project" }] },
+      usage: {},
+    });
+    retrieveMocks.resolveEntityReadOnly.mockResolvedValueOnce({ entityId: "entity-1" });
+    retrieveMocks.dbExecute
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await retrieveMemories({
+      query: "aura incident",
+      queryEmbedding: [0.1, 0.2, 0.3],
+      currentUserId: "U_current",
+      workspaceId: "workspace-1",
+      adminMode: true,
+      abstain: false,
+    });
+
+    const entitySql = retrieveMocks.dbExecute.mock.calls
+      .map(([query]) => collectSqlText(query).toLowerCase())
+      .find((text) => text.includes("memory_entities"));
+
+    expect(entitySql ?? "").toContain("status");
+    expect(entitySql ?? "").toContain("current");
+    expect(entitySql ?? "").toContain("disputed");
+    expect(entitySql ?? "").toContain("valid_until");
+    expect(entitySql ?? "").toContain("now()");
+  });
+
+  it("leaves the asOf replay path keyed to the requested temporal instant", async () => {
+    const replayVisible = row({
+      id: "memory-visible-as-of",
+      valid_from: new Date("2026-01-01T00:00:00.000Z"),
+      valid_until: new Date("2026-01-15T00:00:00.000Z"),
+    });
+    const asOf = new Date("2026-01-10T00:00:00.000Z");
+
+    retrieveMocks.dbExecute
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([replayVisible]);
+
+    const result = await retrieveMemories({
+      query: "launch incident",
+      queryEmbedding: [0.1, 0.2, 0.3],
+      currentUserId: "U_current",
+      workspaceId: "workspace-1",
+      adminMode: true,
+      abstain: false,
+      asOf,
+    });
+
+    expect(result.map((m) => m.id)).toEqual(["memory-visible-as-of"]);
+
+    const hybridSql = collectSqlText(retrieveMocks.dbExecute.mock.calls[1][0]).toLowerCase();
+    expect(hybridSql).toContain("valid_from");
+    expect(hybridSql).toContain("valid_until");
+    expect(hybridSql).toContain(asOf.toISOString().toLowerCase());
+    expect(hybridSql).not.toContain("now()");
   });
 });
