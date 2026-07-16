@@ -21,7 +21,7 @@ Each memory has a `type` that determines how it's used during retrieval:
 
 ## Storage
 
-Memories are stored in PostgreSQL with a 1536-dimensional vector embedding (OpenAI `text-embedding-3-large`):
+Memories are stored in PostgreSQL with a 1536-dimensional vector embedding. The embedding model is resolved dynamically from the model catalog (the `model_embedding` DB setting takes priority, falling back to the catalog default) and served through the AI Gateway; every embedding is validated to exactly 1536 dimensions before storage:
 
 ```sql
 CREATE TABLE memories (
@@ -67,7 +67,7 @@ Memories are also classified by `category`:
 Not every extracted memory makes it into storage. Before persisting, each candidate goes through:
 
 1. **Utility scoring** -- the extraction LLM rates each memory as high, medium, or low utility. Low-utility memories (greetings, filler) are discarded.
-2. **Embedding-based dedup** -- new memories are compared against existing ones via cosine similarity. Above 0.90 similarity, the new memory is skipped. Between 0.85-0.90, the older memory is soft-superseded (its relevance score is reduced to 0.01).
+2. **Embedding-based dedup** -- new memories are compared against existing ones via cosine similarity. Above 0.90 similarity, the new memory is skipped. Between 0.85-0.90, the older memory is soft-superseded (its relevance score is reduced to 0.001).
 
 This keeps the memory store high-signal and avoids unbounded growth from repetitive conversations.
 
@@ -100,11 +100,11 @@ RRF combines both ranked lists with a smoothing constant of 60, ensuring that me
 
 The top candidates from RRF are passed through [Cohere's `rerank-v3.5`](https://cohere.com/rerank) model. This cross-encoder evaluates each candidate against the full query and re-scores them for fine-grained relevance. This stage catches cases where a keyword match is topically irrelevant, or where a subtle semantic match deserves higher ranking.
 
-**Required env var:** `COHERE_API_KEY`
+**Env var:** `COHERE_API_KEY`. Reranking is optional -- without the key, retrieval falls back to a legacy composite score (normalized RRF, cosine similarity, stored relevance, recency, and entity boost) instead of failing.
 
 ### Stage 3: Privacy Filtering & Scoring
 
-After reranking, memories are filtered based on channel privacy rules and sorted by a composite score combining rerank relevance, original relevance score, and recency.
+After reranking, memories are filtered based on channel privacy rules and sorted by a composite score combining rerank relevance, recency, and entity boost, with a mild confidence tiebreaker so lower-trust assistant-sourced memories don't crowd out equally relevant user-stated facts.
 
 ## Conversation Retrieval
 
@@ -114,12 +114,14 @@ In addition to discrete memory facts, Aura retrieves full conversation threads f
 
 After every conversation turn, Aura extracts new memories:
 
-1. The recent messages are sent to Claude with a structured extraction prompt
-2. Claude identifies facts, decisions, preferences, events, open threads, and entity mentions
+1. The recent messages are sent to the fast model (resolved dynamically from the model catalog) with a structured extraction prompt
+2. The model identifies facts, decisions, preferences, events, open threads, and entity mentions
    - `event` and `open_thread` candidates must pass a **durability test**: "will this still be true and useful in 30 days?" In-flight tasks and current-thread activity are not extracted
 3. Each extraction is checked for duplicates against existing memories
 4. New memories are embedded and stored
 5. Extracted entities are resolved and linked to their memories (see below)
+
+When the conversation has thread context (channel + thread timestamp), extraction runs as **thread-scoped reconciliation** instead of blind appending: existing memories relevant to the thread are retrieved first, and the model emits precise operations -- create new memories, update existing ones, or delete outdated ones -- so repeated conversation in the same thread converges on an accurate memory state rather than accumulating near-duplicates.
 
 ## Entity Extraction & Resolution
 
@@ -205,10 +207,11 @@ The pipeline is conservative by design: refinements, complementary facts, and te
 A nightly consolidation job (4 AM UTC) maintains memory quality:
 
 - **Decay** — relevance scores decrease by 0.5% per day (~50% after 138 days). Only applies to `current` memories.
-- **Merge** — memories with >95% cosine similarity are consolidated. The loser is marked `superseded` with a proper supersession chain linking to the winner.
-- **Strengthen** — frequently accessed memories get relevance boosts
-- **Expire** — `open_thread` memories are resolved or aged out
+- **Merge** — memories with >95% cosine similarity are consolidated. The more recent (or higher-relevance) one is kept; the loser is marked `superseded` with a proper supersession chain linking to the winner.
+- **Profile consolidation** — user profiles whose accumulated `known_facts` lists (interests, facts, etc.) exceed their caps are compacted via LLM to stay bounded
 - **Entity summaries** — regenerate summaries for entities with new linked memories since last run
+
+Time-bounded memories are not expired by the cron: `valid_until` is enforced at retrieval time, so an expired memory simply stops surfacing.
 
 ## Privacy
 
