@@ -1,11 +1,11 @@
 ---
 title: "API Reference"
-description: "Aura's HTTP endpoints for Slack events, health checks, and cron jobs."
+description: "Aura's HTTP endpoints for Slack events, health checks, cron jobs, and webhooks."
 ---
 
 # API Reference
 
-Aura exposes a small set of HTTP endpoints, primarily for Slack integration and operational health.
+Aura exposes a small set of HTTP endpoints, primarily for Slack integration, scheduled work, and operational health.
 
 ## Base URL
 
@@ -17,10 +17,11 @@ Or your custom deployment URL.
 
 ## Authentication
 
-- **Slack events** are verified using the Slack signing secret (`SLACK_SIGNING_SECRET`)
-- **Cron endpoints** are protected by Vercel's `CRON_SECRET` header
+- **Slack events and interactions** are verified using the Slack signing secret (`SLACK_SIGNING_SECRET`)
+- **Cron endpoints** require an `Authorization: Bearer <CRON_SECRET>` header
+- **Webhooks** each verify their own shared secret or HMAC signature
+- **Dashboard API** requires a Bearer token: either the static `DASHBOARD_API_SECRET` (used by the Next.js dashboard's server-side calls) or a user-session JWT signed with `DASHBOARD_SESSION_SECRET`
 - **Health check** is unauthenticated
-- **Dashboard API** uses session-based auth via OAuth
 
 ## Core Endpoints
 
@@ -30,50 +31,82 @@ Webhook endpoint for Slack event subscriptions. Receives all Slack events (messa
 
 **Auth:** Slack signing secret verification on every request.
 
+### `POST /api/slack/interactions`
+
+Handles Slack interactive payloads: App Home settings toggles, credential modals (add/update/share), and confirmation buttons.
+
+**Auth:** Slack signing secret verification.
+
 ### `GET /api/health`
 
-Simple health check. Returns `200 OK` with basic system status.
+Simple health check. Returns `200 OK` with a timestamp. `GET /` returns basic name/version/status info.
 
 **Auth:** None.
+
+## Cron & Job Endpoints
+
+All protected by `Authorization: Bearer <CRON_SECRET>`.
 
 ### `GET /api/cron/heartbeat`
 
 Periodic job execution trigger. Evaluates all pending and recurring jobs, executes what's due. Runs every 30 minutes via Vercel Cron.
 
-**Auth:** `CRON_SECRET` header.
-
 ### `GET /api/cron/consolidate`
 
-Nightly memory consolidation. Decays old memories, merges duplicates, and cleans up stale data. Runs daily at 4 AM UTC.
+Nightly consolidation: memory consolidation, user profile compilation, and stale entity-summary regeneration. Runs daily at 4 AM UTC.
 
-**Auth:** `CRON_SECRET` header.
+### `GET /api/cron/eval-responses`
 
-### `POST /api/chat`
+Scores recent assistant responses through the eval funnel. Runs hourly via Vercel Cron. Accepts an optional `?limit=` to cap thread groups per run.
 
-Streaming chat endpoint for the dashboard's AI Elements chat interface. Accepts messages and returns streamed AI responses.
+### `POST /api/cron/supervisor`
 
-**Auth:** Dashboard session cookie.
+Analyzes failed or problematic job executions and files `auto-supervisor-fix` GitHub issues. Not on a cron schedule — invoked internally after job outcomes are recorded.
 
-### `POST /api/cursor/webhook`
+### `POST /api/execute-now`
 
-Webhook endpoint for Cursor Cloud Agent completion notifications. Receives results when dispatched agents finish their work.
+Immediately executes a specific pending job by `jobId`, bypassing its schedule. Used by the dashboard's "run now" action.
 
-**Auth:** Webhook signature verification.
+## Webhook Endpoints
+
+### `POST /api/webhook/cursor-agent`
+
+Receives Cursor Cloud Agent completion notifications and delivers results (PR link, summary) back to the dispatching conversation.
+
+**Auth:** HMAC signature (`x-webhook-signature`) verified against `CURSOR_WEBHOOK_SECRET`.
+
+### `POST /api/webhook/sandbox-command`
+
+Completion callback for detached sandbox commands (`run_command_detached`). Resumes the originating Slack conversation with the command result.
+
+**Auth:** Shared secret (`SANDBOX_WEBHOOK_SECRET`).
+
+### `POST /api/webhook/elevenlabs/tool/:toolName` and `POST /api/webhook/elevenlabs/post-call`
+
+Server-side tools invoked by ElevenLabs voice agents mid-call, and the post-call transcript webhook.
+
+**Auth:** Shared secret header (`x-webhook-secret`) / ElevenLabs HMAC signature.
+
+## OAuth Endpoints
+
+### `GET /api/oauth/google/auth-url` and `GET /api/oauth/google/callback`
+
+Google OAuth flow for connecting a user's Gmail/Calendar/Drive account to Aura.
 
 ## Dashboard API
 
-The admin dashboard (`apps/dashboard`) has its own API routes for authentication:
+All dashboard data routes live under `/api/dashboard/*`, served by an OpenAPIHono app with full Zod schema validation. Authentication endpoints:
 
-- `GET /api/auth/login` — Initiate OAuth login
-- `GET /api/auth/callback` — OAuth callback handler
-- `POST /api/auth/logout` — End session
+- `GET /api/dashboard/auth/login` — Initiate OAuth login
+- `GET /api/dashboard/auth/callback` — OAuth callback handler
+- `GET /api/dashboard/auth/check-role` — Verify the session user's role
 
-All dashboard data routes are served by an OpenAPIHono app with full Zod schema validation. The API spec is available at:
+Sessions are JWTs issued at login; there is no server-side logout endpoint (logout clears the token client-side).
 
 ### `GET /api/dashboard/openapi.json`
 
 Returns the full OpenAPI 3.1 specification for all dashboard API routes. Useful for generating client SDKs, testing with tools like Swagger UI, or validating request/response shapes.
 
-**Auth:** Dashboard session cookie.
+**Auth:** None (public, like the login/callback routes).
 
-The spec covers 14 route groups: auth, chat, stats, notes, memories, users, conversations, errors, jobs, credentials, resources, consumption, settings, and models.
+The spec covers 17 route groups: auth, chat, stats, notes, memories, users, conversations, errors, jobs, credentials, resources, consumption, adoption, settings, models, entities, and eval.
