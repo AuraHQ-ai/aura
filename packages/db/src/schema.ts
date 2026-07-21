@@ -589,6 +589,7 @@ export const jobs = pgTable(
     todayExecutions: integer("today_executions").notNull().default(0),
     lastExecutionDate: text("last_execution_date"),
     enabled: integer("enabled").notNull().default(1),
+    archivedAt: timestamptz("archived_at"),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
