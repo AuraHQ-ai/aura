@@ -24,7 +24,7 @@ Ask a question in plain language. Aura writes the query, runs it, and gives you 
 - Inspects table schemas before querying (never guesses column names)
 - Handles common traps: cents-to-euros conversion, epoch timestamps, NULL semantics, MRR normalization
 - Cross-references across data sources (BigQuery pipeline data + Stripe billing + Close CRM contacts)
-- Presents results as native Slack tables, not code blocks
+- Presents results as native Slack tables and charts, not code blocks
 - Adds business interpretation ("this is 15% above last month, driven by Spain")
 
 **Built-in guardrails:**
@@ -49,7 +49,7 @@ Not a SQL query. Not a spreadsheet. A business answer.
 
 | Source | Access Method | What You Can Query |
 |--------|--------------|-------------------|
-| BigQuery | Direct SQL via `bq` CLI | Pipeline, leads, valuations, traffic, reviews |
+| BigQuery | `bq_execute_query` tool (read-only SQL) | Pipeline, leads, valuations, traffic, reviews |
 | Stripe | API via stored credentials | Subscriptions, MRR, churn, invoices, failed payments |
 | Close CRM | API via stored credentials | Leads, activities, pipeline stages, rep performance |
 | Google Sheets | Sheets API | Comp models, planning docs, custom trackers |
