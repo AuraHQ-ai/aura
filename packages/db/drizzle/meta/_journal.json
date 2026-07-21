@@ -526,6 +526,13 @@
       "when": 1781080113835,
       "tag": "0074_dashboard_chat_runs_user_message",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1784620800000,
+      "tag": "0075_jobs_archived_at",
+      "breakpoints": true
     }
   ]
 }
