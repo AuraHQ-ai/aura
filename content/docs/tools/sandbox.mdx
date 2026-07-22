@@ -31,7 +31,7 @@ Execute a shell command in the sandboxed Linux VM.
 |-------|------|----------|-------------|
 | `command` | string | **yes** | Shell command to run, e.g. `git clone https://github.com/org/repo.git` |
 | `timeout_seconds` | number | no | Timeout in seconds (default 90, max 750). Explicitly opt in to values above 90s only for headless/batch work or long-running agent commands. |
-| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to `/home/user`. |
+| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to the per-user persistent home (`/mnt/aura-files/users/<user_id>/` when the GCS mount is available, otherwise `/home/user`). |
 
 **Returns:** exit code, stdout, stderr.
 
@@ -57,7 +57,7 @@ Start a command in the background and return immediately.
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `command` | string | **yes** | Shell command to run, e.g. `sleep 300` |
-| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to `/home/user`. |
+| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to the per-user persistent home (`/mnt/aura-files/users/<user_id>/` when the GCS mount is available, otherwise `/home/user`). |
 | `env` | object | no | Additional environment variables for this command. |
 
 **Returns:** `id`, `pid`, `started_at`.
@@ -119,10 +119,11 @@ Install additional packages with `apt-get install` or `pip install`.
 When a sandbox command tool executes, Aura injects environment variables based on the calling user's identity. The function `getSandboxEnvs(userId)` resolves which credentials each user can access:
 
 - **Owner-scoped credentials** (scope = `owner`) are only injected for the credential's owner
+- **Per-user credentials** (scope = `per_user`) are injected for the owner or users with an active explicit grant
 - **Role-scoped credentials** (scope = `admin`, `power_user`, or `member`) are injected for any user meeting the minimum role
 - **Granted credentials** — users with explicit grants receive credentials regardless of scope
 
-This means when Joan runs a `gh` command, she gets her GitHub token. When Callan runs the same command, she gets hers. No cross-contamination.
+This means when one user runs a `gh` command, they get their own GitHub token; a different user running the same command gets theirs. No cross-contamination.
 
 See [Credentials](/tools/credentials) for full access control details.
 
@@ -149,7 +150,7 @@ Clone or pull failures are logged as warnings and do not block sandbox startup. 
 
 ## Persistent storage
 
-In addition to the per-user sandbox filesystem, each user gets a GCS-backed persistent mount via gcsfuse at `/mnt/aura-files/<user_id>/`. The GCS mount survives even if the sandbox itself is destroyed (template upgrade, manual reset, or E2B-side eviction), so it's the right place for anything that must outlive the sandbox lifecycle.
+In addition to the per-user sandbox filesystem, each user gets a GCS-backed persistent mount via gcsfuse at `/mnt/aura-files/users/<user_id>/`. The GCS mount survives even if the sandbox itself is destroyed (template upgrade, manual reset, or E2B-side eviction), so it's the right place for anything that must outlive the sandbox lifecycle.
 
 Use persistent storage for:
 - Long-running work that spans multiple conversations (large datasets, intermediate results)
@@ -175,11 +176,13 @@ When `MONGODB_ATLAS_URI` is configured, Aura has a dedicated schema-less scratch
 - Postgres (`DATABASE_URL`) is the system's mission-critical spine: memories, messages, entities, jobs, notes. Aura does not write DDL or mutate Postgres without explicit owner approval.
 - MongoDB Atlas is Aura's scratch space. Create collections freely.
 
+Every sandbox command also receives `USER_HOME` and `PERSISTENT_HOME` environment variables pointing at the resolved per-user home, so scripts can write portable paths like `$PERSISTENT_HOME/downloads/` without hardcoding the mount.
+
 The mount is set up automatically when a sandbox command tool executes. If the mount isn't available (e.g. GCS credentials not configured), Aura falls back to `/home/user/` with a warning.
 
 Common persistent paths:
-- `/mnt/aura-files/<user_id>/` — per-user persistent root
-- `/mnt/aura-files/<user_id>/downloads/` — persistent downloads
+- `/mnt/aura-files/users/<user_id>/` — per-user persistent root
+- `/mnt/aura-files/users/<user_id>/downloads/` — persistent downloads
 
 ---
 
