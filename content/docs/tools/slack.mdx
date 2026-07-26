@@ -1,11 +1,11 @@
 ---
 title: "Slack Tools"
-description: "Full reference for all 34 Slack tools — channels, DMs, messages, canvases, lists, files, and workspace management."
+description: "Full reference for all 37 Slack tools — channels, DMs, messages, canvases, lists, files, and workspace management."
 ---
 
 # Slack Tools
 
-Aura's primary interface is Slack. She uses the `@slack/web-api` SDK with both a bot token (`SLACK_BOT_TOKEN`) and a user token (`SLACK_USER_TOKEN`). Most tools use the bot token; search and DM listing require the user token.
+Aura's primary interface is Slack. She uses the `@slack/web-api` SDK with both a bot token (`SLACK_BOT_TOKEN`) and a user token (`SLACK_USER_TOKEN`). Most tools use the bot token; only `search_messages` requires the user token (`list_dm_conversations` uses the bot token and is gated on `admin_access` instead).
 
 Aura must **join a channel** before she can read or post. `list_channels` only shows channels she has already joined — use `search_channels` or `join_channel` to find and enter others.
 
@@ -18,7 +18,7 @@ Aura's response decision happens in `apps/api/src/pipeline/index.ts` before any 
 1. **DM** -- always responds.
 2. **Explicit `@Aura` mention** -- always responds.
 3. **Addressed by name** -- always responds.
-4. **LLM gate (thread participant, recent channel activity, or cold observation)** -- a fast model decides whether a response would add value. Fail-closed when in doubt.
+4. **LLM gate (thread participant, recent channel activity, or cold observation)** -- a fast model decides whether a response would add value. If the gate errors, thread-participant checks fail **open** (better to over-respond than drop a thread Aura is part of); recent-activity and cold-observation checks fail **closed**.
 
 Two workspace settings (in the `settings` table, editable via SQL with no redeploy) override these tiers:
 
@@ -39,7 +39,7 @@ DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
 
 ### `always_process_channels`
 
-A JSON array of channel IDs that **bypass the LLM gate** (Tier 4). Aura still runs the pipeline and the LLM decides whether to send a reply, but the cheap fast-model gate that normally suppresses cold-observation responses is skipped.
+A JSON array of channel IDs that **replace the Tier-4 cold-observation gate with an unconditional respond**. For messages that would otherwise reach cold observation, Aura responds deterministically -- no fast-model gate runs at all. Note the override only applies at Tier 4: if Aura is a thread participant or recently active in the channel, the Tier 2/3 LLM gates still run and can decide not to reply.
 
 Typical use: small high-signal channels where every message is worth full processing.
 
@@ -323,7 +323,7 @@ Upload a file to Slack. Two modes: pass `content` for text files (CSV, JSON, cod
 ---
 
 ### `download_slack_file`
-Download a Slack file by its file ID. Returns base64-encoded content by default. Set `save_to_disk` to write to `/home/user/downloads/` for processing with shell tools.
+Download a Slack file by its file ID. Returns base64-encoded content by default. Set `save_to_disk` to write to `/home/user/downloads/` for processing with shell tools. Files over 20 MB are rejected.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
