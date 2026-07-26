@@ -1,11 +1,11 @@
 ---
 title: "Slack Tools"
-description: "Full reference for all 34 Slack tools — channels, DMs, messages, canvases, lists, files, and workspace management."
+description: "Full reference for all 37 Slack tools — channels, DMs, messages, canvases, lists, files, and workspace management."
 ---
 
 # Slack Tools
 
-Aura's primary interface is Slack. She uses the `@slack/web-api` SDK with both a bot token (`SLACK_BOT_TOKEN`) and a user token (`SLACK_USER_TOKEN`). Most tools use the bot token; search and DM listing require the user token.
+Aura's primary interface is Slack. She uses the `@slack/web-api` SDK with both a bot token (`SLACK_BOT_TOKEN`) and a user token (`SLACK_USER_TOKEN`). Most tools use the bot token; only `search_messages` requires the user token (`search:read` scope). `list_dm_conversations` uses the bot token but is gated behind the `admin_access` credential.
 
 Aura must **join a channel** before she can read or post. `list_channels` only shows channels she has already joined — use `search_channels` or `join_channel` to find and enter others.
 
@@ -18,7 +18,7 @@ Aura's response decision happens in `apps/api/src/pipeline/index.ts` before any 
 1. **DM** -- always responds.
 2. **Explicit `@Aura` mention** -- always responds.
 3. **Addressed by name** -- always responds.
-4. **LLM gate (thread participant, recent channel activity, or cold observation)** -- a fast model decides whether a response would add value. Fail-closed when in doubt.
+4. **LLM gate (thread participant, recent channel activity, or cold observation)** -- a fast model decides whether a response would add value. On gate errors, the thread-participant tier fails *open* (better to over-respond than drop a thread Aura is part of); the recently-active and cold-observation tiers fail *closed*.
 
 Two workspace settings (in the `settings` table, editable via SQL with no redeploy) override these tiers:
 
@@ -323,7 +323,7 @@ Upload a file to Slack. Two modes: pass `content` for text files (CSV, JSON, cod
 ---
 
 ### `download_slack_file`
-Download a Slack file by its file ID. Returns base64-encoded content by default. Set `save_to_disk` to write to `/home/user/downloads/` for processing with shell tools.
+Download a Slack file by its file ID. Returns base64-encoded content by default. Set `save_to_disk` to write to `/home/user/downloads/` for processing with shell tools. 20 MB size limit.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
