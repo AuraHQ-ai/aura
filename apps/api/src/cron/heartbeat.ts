@@ -421,6 +421,17 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       .set({
         status: "pending",
         retries: sql`${jobs.retries} + 1`,
+        // Mark for immediate pickup (issue #1244): a concrete past executeAt
+        // makes the job due on the very next sweep via the `executeAt <= now`
+        // branch of the due-job query — the app-side filter short-circuits on
+        // executeAt before evaluating isRecurringJobDue, and `executeAt ASC
+        // NULLS LAST` sorts it ahead of NULL recurring rows. Without this,
+        // recovered recurring jobs stayed invisible until the next cron tick
+        // and then starved behind the MAX_JOBS_PER_SWEEP cap for hours.
+        // Do NOT touch lastExecutedAt here — it is the cron-dedup anchor
+        // (lastExecutedAt >= lastCronTick → not due) and mutating it would
+        // break normal cron scheduling.
+        executeAt: now,
         updatedAt: new Date(),
       })
       .where(

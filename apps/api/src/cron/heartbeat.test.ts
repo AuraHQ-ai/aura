@@ -552,6 +552,147 @@ describe("heartbeat stale running recovery", () => {
     );
   });
 
+  it("marks stale-running recovered jobs for immediate pickup via executeAt (issue #1244)", async () => {
+    queueDbResults(
+      [], // pending jobs
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [{ id: "job-stale-recurring", name: "alicia-lista-prospeccion-diaria", workspaceId: "default" }],
+      [], // no stale exhausted jobs
+      [], // running execution cleanup
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    const recoverySet = updateSets().find(
+      (set) => set.status === "pending" && set.executeAt instanceof Date,
+    );
+    expect(recoverySet).toBeDefined();
+    // executeAt = now → due on the very next sweep via the executeAt <= now branch
+    expect((recoverySet!.executeAt as Date).toISOString()).toBe(
+      "2026-05-20T08:59:00.000Z",
+    );
+    // lastExecutedAt is the cron-dedup anchor and must NOT be mutated on recovery
+    expect(recoverySet).not.toHaveProperty("lastExecutedAt");
+  });
+
+  it("picks up a requeued recurring job with a past executeAt even when cron dedup says not due (issue #1244)", async () => {
+    // Cron "0 10 * * *" at 2026-05-20T08:59Z → lastCronTick = 2026-05-19T10:00Z.
+    // lastExecutedAt >= lastCronTick means isRecurringJobDue() returns false,
+    // but the concrete past executeAt (manual requeue / stale recovery) must win.
+    const requeuedJob = baseJob({
+      status: "pending",
+      cronSchedule: "0 10 * * *",
+      name: "alicia-lista-prospeccion-diaria",
+      retries: 0,
+      executeAt: new Date("2026-05-20T08:30:00.000Z"),
+      lastExecutedAt: new Date("2026-05-20T08:00:00.000Z"),
+    });
+
+    executeJobMock.mockResolvedValue(true);
+    queueDbResults(
+      [requeuedJob], // pending jobs
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "job-1", name: "alicia-lista-prospeccion-diaria" }),
+      "heartbeat",
+    );
+    const body = await response.json();
+    expect(body.executed).toBe(1);
+  });
+
+  it("still skips a normal recurring job whose lastExecutedAt covers the current cron tick (regression)", async () => {
+    // executeAt NULL + lastExecutedAt >= lastCronTick → not due; normal cron
+    // scheduling must be unaffected by the requeue-pickup fix.
+    const upToDateJob = baseJob({
+      status: "pending",
+      cronSchedule: "0 10 * * *",
+      name: "already-ran-this-tick",
+      retries: 0,
+      executeAt: null,
+      lastExecutedAt: new Date("2026-05-20T08:00:00.000Z"),
+    });
+
+    queueDbResults(
+      [upToDateJob], // pending jobs
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.executed).toBe(0);
+  });
+
+  it("still picks up a normal cron-due recurring job with executeAt NULL (regression)", async () => {
+    // lastExecutedAt < lastCronTick (2026-05-19T10:00Z) → cron-due as before.
+    const cronDueJob = baseJob({
+      status: "pending",
+      cronSchedule: "0 10 * * *",
+      name: "cron-due-job",
+      retries: 0,
+      executeAt: null,
+      lastExecutedAt: new Date("2026-05-19T09:00:00.000Z"),
+    });
+
+    executeJobMock.mockResolvedValue(true);
+    queueDbResults(
+      [cronDueJob], // pending jobs
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "job-1", name: "cron-due-job" }),
+      "heartbeat",
+    );
+    const body = await response.json();
+    expect(body.executed).toBe(1);
+  });
+
   it("legacy escalation is no longer called", () => {
     const source = readFileSync(new URL("./heartbeat.ts", import.meta.url), "utf8");
     const legacyFunction = ["maybe", "Escalate", "Consecutive", "Recurring", "Failures"].join("");
