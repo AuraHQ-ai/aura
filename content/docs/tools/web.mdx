@@ -17,12 +17,14 @@ Aura can search the web, read URLs as clean text, and automate browser interacti
 
 Search the web for current information. Powered by [Tavily](https://tavily.com).
 
-**Required env var:** `TAVILY_API_KEY`
+**Required credential:** `tavily_api_key` (Dashboard → Credentials). There is no environment-variable fallback; the tool is hidden from the model until the credential is configured.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `query` | string | **yes** | Search query, e.g. `latest Next.js release notes` |
 | `max_results` | number | no | Results to return (default 5, max 10) |
+
+Returns Tavily's synthesized `answer` (when available) plus up to `max_results` results with title, URL, and a content snippet (truncated to 500 chars each). Uses `basic` search depth.
 
 ---
 
@@ -30,9 +32,18 @@ Search the web for current information. Powered by [Tavily](https://tavily.com).
 
 Fetch a URL and extract its readable text content. Use when someone pastes a link and asks "what does this say?". Faster than `browse` for simple text extraction.
 
+If the `tavily_api_key` credential is configured, tries Tavily extract first (cleaner results) and falls back to a raw fetch + HTML stripping on failure. The response includes a `source` field (`tavily` or `fetch`) indicating which path was used.
+
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `url` | string | **yes** | The URL to fetch and read |
+
+Behavior and limits:
+
+- **SSRF guard** — URLs resolving to private/internal network addresses are blocked, and each redirect hop (up to 10) is re-validated.
+- **Truncation** — extracted content is capped at 4,000 chars.
+- **Timeout** — the raw-fetch path times out after 10 seconds.
+- **Bot protection** — on HTTP 403 the error suggests retrying with `browse` (a real browser) instead.
 
 ---
 
