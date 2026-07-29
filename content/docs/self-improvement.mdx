@@ -19,8 +19,12 @@ Gaps surface naturally during operation:
 - A tool returns an error
 - A user asks a question Aura can't answer
 - Memory retrieval returns irrelevant results
-- A user gives negative feedback (thumbs down reaction)
+- A user gives corrective feedback in conversation
 - A recurring job fails repeatedly
+
+Two automated systems also feed the loop:
+- The **job supervisor** (see [Jobs](/tools/jobs)) reviews every job outcome. When it diagnoses a likely code or config bug, it opens a GitHub issue labelled `auto-supervisor-fix` automatically -- no human or Aura action required.
+- The **eval funnel** (see [Eval Funnel](/eval-funnel)) scores every assistant response and tags failures with a failure class (`missing_tool`, `bad_memory`, `reasoning`, ...), giving an aggregate view of where to improve next.
 
 ### 2. Explore Source
 
@@ -71,7 +75,7 @@ Examples of self-identified and self-fixed issues:
 - All code changes go through pull requests
 - PRs require human approval before merging
 - Self-edits to the system prompt are flagged explicitly in the PR
-- User roles control who can approve changes (see [Permissions](/permissions)). The `AURA_ADMIN_USER_IDS` env var is a fallback
+- PR review and merge are enforced by GitHub -- branch protection and repo permissions, not Aura's role system. Aura's roles (see [Permissions](/permissions)) gate which users can direct her to make code changes; `AURA_ADMIN_USER_IDS` is a hard override checked before the DB role
 - Vercel auto-deploys from `main`, so merging = deploying
 
 ## The Compounding Effect
