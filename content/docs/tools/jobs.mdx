@@ -33,6 +33,8 @@ After every job execution finishes (success, error, or interruption), the heartb
 
 Each outcome can be processed up to **3 times** (`MAX_SUPERVISOR_ATTEMPTS`). After that the outcome is marked `skipped` and the requester gets a fallback DM.
 
+`notify_on_success` is a per-job database flag (`jobs.notify_on_success`, default `false`) read by the supervisor. It is not currently exposed as a parameter on `create_job` or `update_job` -- it can only be set directly in the database.
+
 ### Orphan sweeps
 
 The heartbeat also reaps supervisor invocations that never completed:
@@ -61,7 +63,6 @@ Create a one-shot task, recurring job, or follow-up.
 | `priority` | enum | no | `high`, `normal` (default), or `low` |
 | `max_per_day` | number | no | Max executions per day (recurring jobs) |
 | `min_interval_hours` | number | no | Minimum hours between executions |
-| `notify_on_success` | boolean | no | If `true`, the supervisor reports successful runs via DM. Defaults to `false` -- routine recurring successes are silent. |
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
 
 ---
@@ -94,7 +95,7 @@ List jobs by status.
 
 ## `cancel_job`
 
-Cancel a pending one-shot job, or disable a recurring job (preserves its definition).
+Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later).
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -128,7 +129,7 @@ When a cron schedule or timezone is updated, the next execution time is automati
 
 ## `dispatch_headless`
 
-Dispatch a task for immediate headless execution. Creates a job and triggers it NOW — no waiting for the heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. Results are posted to the callback channel/thread when done.
+**Admin-only** (requires the `admin_access` credential). Dispatch a task for immediate headless execution. Creates a job and triggers it NOW — no waiting for the heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. Results are posted to the callback channel/thread when done.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
