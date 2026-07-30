@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { executeJob, MAX_RETRIES } from "./execute-job.js";
 import { computeNextCronTick } from "./cron-utils.js";
 import { persistJobOutcome, triggerSupervisorReview } from "./job-outcomes.js";
+import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 
 /** Max jobs to process per heartbeat sweep */
@@ -305,6 +306,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let inProgressOutcomesReset = 0;
   let inProgressOutcomesSkipped = 0;
   let dequeuedWithoutExecutionRecovered = 0;
+  let staleTurnsDetected = 0;
+  let staleTurnsRecovered = 0;
 
   try {
     const now = new Date();
@@ -421,6 +424,17 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       .set({
         status: "pending",
         retries: sql`${jobs.retries} + 1`,
+        // Mark for immediate pickup (issue #1244): a concrete past executeAt
+        // makes the job due on the very next sweep via the `executeAt <= now`
+        // branch of the due-job query — the app-side filter short-circuits on
+        // executeAt before evaluating isRecurringJobDue, and `executeAt ASC
+        // NULLS LAST` sorts it ahead of NULL recurring rows. Without this,
+        // recovered recurring jobs stayed invisible until the next cron tick
+        // and then starved behind the MAX_JOBS_PER_SWEEP cap for hours.
+        // Do NOT touch lastExecutedAt here — it is the cron-dedup anchor
+        // (lastExecutedAt >= lastCronTick → not due) and mutating it would
+        // break normal cron scheduling.
+        executeAt: now,
         updatedAt: new Date(),
       })
       .where(
@@ -594,6 +608,13 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
+    // ── 6. Stream-death watchdog: recover hard-killed Slack turns ───────
+    // (issue #1109 — see cron/turn-watchdog.ts; never throws)
+
+    const turnWatchdogResult = await sweepStaleTurnMarkers(slackClient, now);
+    staleTurnsDetected = turnWatchdogResult.detected;
+    staleTurnsRecovered = turnWatchdogResult.recovered;
+
     // ── Done ─────────────────────────────────────────────────────────────
 
     const duration = Date.now() - sweepStart;
@@ -607,6 +628,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       inProgressOutcomesReset,
       inProgressOutcomesSkipped,
       dequeuedWithoutExecutionRecovered,
+      staleTurnsDetected,
+      staleTurnsRecovered,
     });
 
     return c.json({
@@ -620,6 +643,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       inProgressOutcomesReset,
       inProgressOutcomesSkipped,
       dequeuedWithoutExecutionRecovered,
+      staleTurnsDetected,
+      staleTurnsRecovered,
       duration,
     });
   } catch (error: any) {

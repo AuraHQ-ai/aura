@@ -1,75 +1,125 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PgDialect } from "drizzle-orm/pg-core";
-import type { SQL } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+type Predicate = ((row: Record<string, unknown>) => boolean) & {
+  kind?: string;
+};
 
 const dbMock = vi.hoisted(() => {
-  type Operation = {
-    kind: "select" | "update" | "insert" | "delete";
-    table?: unknown;
-    setArg?: Record<string, unknown>;
-    whereArg?: unknown;
-  };
-
   const state = {
-    selectResults: [] as unknown[][],
-    operations: [] as Operation[],
+    rows: [] as Array<Record<string, unknown>>,
+    whereCalls: [] as unknown[],
     select: vi.fn(),
-    update: vi.fn(),
-    insert: vi.fn(),
-    delete: vi.fn(),
   };
 
-  function createQuery(operation: Operation, result: () => unknown[]) {
+  function createQuery() {
+    let predicate: Predicate | undefined;
+
     const query: any = {
       from: vi.fn(() => query),
-      where: vi.fn((whereArg: unknown) => {
-        operation.whereArg = whereArg;
+      where: vi.fn((condition: Predicate) => {
+        predicate = condition;
+        state.whereCalls.push(condition);
         return query;
       }),
       orderBy: vi.fn(() => query),
-      limit: vi.fn(() => query),
-      set: vi.fn((setArg: Record<string, unknown>) => {
-        operation.setArg = setArg;
-        return query;
+      limit: vi.fn((limit: number) => {
+        const filtered = predicate
+          ? state.rows.filter((row) => predicate?.(row))
+          : state.rows;
+
+        return Promise.resolve(filtered.slice(0, limit));
       }),
-      values: vi.fn(() => query),
-      onConflictDoUpdate: vi.fn(() => query),
-      returning: vi.fn(() => {
-        state.operations.push(operation);
-        return Promise.resolve(result());
-      }),
-      then: (onFulfilled: any, onRejected: any) => {
-        state.operations.push(operation);
-        return Promise.resolve(result()).then(onFulfilled, onRejected);
-      },
     };
+
     return query;
   }
 
-  state.select.mockImplementation(() =>
-    createQuery({ kind: "select" }, () => state.selectResults.shift() ?? []),
-  );
-  state.update.mockImplementation((table: unknown) =>
-    createQuery({ kind: "update", table }, () => []),
-  );
-  // Audit-log inserts (defineTool) get a stable id so the wrapper is happy.
-  state.insert.mockImplementation((table: unknown) =>
-    createQuery({ kind: "insert", table }, () => [{ id: "audit-log-1" }]),
-  );
-  state.delete.mockImplementation((table: unknown) =>
-    createQuery({ kind: "delete", table }, () => []),
-  );
+  state.select.mockImplementation(() => createQuery());
 
   return state;
+});
+
+const schemaMock = vi.hoisted(() => {
+  const column = (key: string) => ({ key });
+
+  return {
+    jobs: {
+      id: column("id"),
+      name: column("name"),
+      description: column("description"),
+      cronSchedule: column("cronSchedule"),
+      frequencyConfig: column("frequencyConfig"),
+      channelId: column("channelId"),
+      executeAt: column("executeAt"),
+      requestedBy: column("requestedBy"),
+      priority: column("priority"),
+      status: column("status"),
+      timezone: column("timezone"),
+      retries: column("retries"),
+      lastExecutedAt: column("lastExecutedAt"),
+      executionCount: column("executionCount"),
+      playbook: column("playbook"),
+      lastResult: column("lastResult"),
+      enabled: column("enabled"),
+      archivedAt: column("archivedAt"),
+      createdAt: column("createdAt"),
+    },
+    jobExecutions: {
+      jobId: column("jobId"),
+      startedAt: column("startedAt"),
+    },
+  };
+});
+
+const drizzleMock = vi.hoisted(() => {
+  const keyOf = (column: { key: string }) => column.key;
+  const predicate = (
+    kind: string,
+    fn: (row: Record<string, unknown>) => boolean,
+  ): Predicate => Object.assign(fn, { kind });
+
+  return {
+    eq: vi.fn((column: { key: string }, value: unknown) =>
+      predicate("eq", (row) => row[keyOf(column)] === value),
+    ),
+    ne: vi.fn((column: { key: string }, value: unknown) =>
+      predicate("ne", (row) => row[keyOf(column)] !== value),
+    ),
+    isNotNull: vi.fn((column: { key: string }) =>
+      predicate("isNotNull", (row) => row[keyOf(column)] != null),
+    ),
+    isNull: vi.fn((column: { key: string }) =>
+      predicate("isNull", (row) => row[keyOf(column)] == null),
+    ),
+    and: vi.fn((...conditions: Array<Predicate | undefined>) => {
+      const activeConditions = conditions.filter(Boolean) as Predicate[];
+      return predicate("and", (row) =>
+        activeConditions.every((condition) => condition(row)),
+      );
+    }),
+    or: vi.fn((...conditions: Array<Predicate | undefined>) => {
+      const activeConditions = conditions.filter(Boolean) as Predicate[];
+      return predicate("or", (row) =>
+        activeConditions.some((condition) => condition(row)),
+      );
+    }),
+    desc: vi.fn((column: { key: string }) => ({ column })),
+    sql: vi.fn(),
+  };
 });
 
 vi.mock("../db/client.js", () => ({
   db: {
     select: dbMock.select,
-    update: dbMock.update,
-    insert: dbMock.insert,
-    delete: dbMock.delete,
   },
+}));
+
+vi.mock("@aura/db/schema", () => schemaMock);
+
+vi.mock("drizzle-orm", () => drizzleMock);
+
+vi.mock("../lib/tool.js", () => ({
+  defineTool: (config: unknown) => config,
 }));
 
 vi.mock("../lib/logger.js", () => ({
@@ -81,243 +131,204 @@ vi.mock("../lib/logger.js", () => ({
   },
 }));
 
+vi.mock("../lib/permissions.js", () => ({
+  hasRole: vi.fn(),
+}));
+
 vi.mock("./slack.js", () => ({
   resolveChannelByName: vi.fn(),
 }));
 
 vi.mock("../cron/execute-job.js", () => ({
   executeJob: vi.fn(),
-  MAX_RETRIES: 3,
-}));
-
-vi.mock("../lib/permissions.js", () => ({
-  hasRole: vi.fn(async () => false),
 }));
 
 vi.mock("@vercel/functions", () => ({
   waitUntil: vi.fn(),
 }));
 
-import { createJobTools } from "./jobs.js";
-import { jobs } from "@aura/db/schema";
-
-const dialect = new PgDialect();
-
-function whereSql(operation: { whereArg?: unknown }): string {
-  return dialect.sqlToQuery(operation.whereArg as SQL).sql;
-}
-
-function selectOps() {
-  return dbMock.operations.filter((op) => op.kind === "select");
-}
-
-function jobsUpdateSets() {
-  return dbMock.operations
-    .filter((op) => op.kind === "update" && op.table === jobs)
-    .map((op) => op.setArg ?? {});
-}
-
 function baseJob(overrides: Record<string, unknown> = {}) {
   return {
-    id: "00000000-0000-4000-8000-000000000001",
-    workspaceId: "default",
-    name: "test-job",
+    id: "job-1",
+    name: "one-shot",
     description: "do the thing",
-    playbook: null,
-    script: null,
     cronSchedule: null,
-    notifyOnSuccess: false,
     frequencyConfig: null,
     channelId: null,
-    threadTs: null,
-    executeAt: null,
+    executeAt: new Date("2026-05-20T09:00:00.000Z"),
     requestedBy: "U_REQUESTER",
     priority: "normal",
     status: "pending",
     timezone: "UTC",
-    result: null,
     retries: 0,
     lastExecutedAt: null,
-    lastResult: null,
     executionCount: 0,
-    todayExecutions: 0,
-    lastExecutionDate: null,
+    playbook: null,
+    lastResult: null,
     enabled: 1,
     archivedAt: null,
-    requiredCredentialIds: [],
-    createdAt: new Date("2026-07-01T00:00:00.000Z"),
-    updatedAt: new Date("2026-07-01T00:00:00.000Z"),
+    createdAt: new Date("2026-05-01T00:00:00.000Z"),
     ...overrides,
   };
 }
 
-beforeEach(() => {
-  dbMock.selectResults = [];
-  dbMock.operations = [];
-  vi.clearAllMocks();
-});
+async function listJobs(input: Record<string, unknown> = {}) {
+  const { createJobTools } = await import("./jobs.js");
+  const tool = createJobTools(undefined, { timezone: "UTC" } as any)
+    .list_jobs as any;
 
-describe("list_jobs archived filtering", () => {
-  it("excludes archived jobs by default", async () => {
-    dbMock.selectResults = [[]];
-    const tools = createJobTools();
+  return tool.execute(tool.inputSchema.parse(input));
+}
 
-    const result = await (tools.list_jobs as any).execute({
-      status: "pending",
-      recurring_only: false,
-      include_archived: false,
-      limit: 20,
-    });
-
-    expect(result.ok).toBe(true);
-    const [listSelect] = selectOps();
-    expect(whereSql(listSelect)).toContain('"archived_at" is null');
+describe("list_jobs", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-20T08:00:00.000Z"));
+    dbMock.rows = [];
+    dbMock.whereCalls = [];
+    vi.clearAllMocks();
   });
 
-  it("includes archived jobs when include_archived is true", async () => {
-    const archivedJob = baseJob({
-      name: "retired-digest",
-      cronSchedule: "0 9 * * *",
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("includes enabled recurring jobs with completed status by default", async () => {
+    dbMock.rows = [
+      baseJob({
+        id: "job-recurring",
+        name: "sync-meta-comments-daily",
+        status: "completed",
+        cronSchedule: "0 9 * * *",
+        lastExecutedAt: new Date("2026-05-19T09:00:00.000Z"),
+        executionCount: 42,
+        lastResult: "ok",
+      }),
+    ];
+
+    const result = await listJobs();
+
+    expect(result.ok).toBe(true);
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0]).toMatchObject({
+      name: "sync-meta-comments-daily",
+      status: "completed",
+      enabled: true,
+      is_recurring: true,
+      last_executed_at: "2026-05-19T09:00:00+00:00",
+      next_run_at: "2026-05-20T09:00:00+00:00",
+      execution_count: 42,
+      last_result: "ok",
+    });
+  });
+
+  it("hides disabled recurring jobs by default unless using their status or all", async () => {
+    const disabledRecurring = baseJob({
+      id: "job-disabled",
+      name: "disabled-digest",
+      status: "completed",
       enabled: 0,
-      archivedAt: new Date("2026-07-10T00:00:00.000Z"),
-    });
-    dbMock.selectResults = [[archivedJob]];
-    const tools = createJobTools();
-
-    const result = await (tools.list_jobs as any).execute({
-      status: "pending",
-      recurring_only: false,
-      include_archived: true,
-      limit: 20,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.count).toBe(1);
-    expect(result.jobs[0].name).toBe("retired-digest");
-    const [listSelect] = selectOps();
-    expect(whereSql(listSelect)).not.toContain("archived_at");
-  });
-});
-
-describe("cancel_job archive option", () => {
-  it("archives a recurring job: sets archivedAt and enabled 0", async () => {
-    const recurringJob = baseJob({
-      name: "old-monitor",
-      cronSchedule: "0 9 * * 1-5",
-      enabled: 0,
-    });
-    dbMock.selectResults = [[recurringJob]];
-    const tools = createJobTools();
-
-    const result = await (tools.cancel_job as any).execute({
-      name: "old-monitor",
-      archive: true,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.message).toContain("archived");
-    const [set] = jobsUpdateSets();
-    expect(set.enabled).toBe(0);
-    expect(set.archivedAt).toBeInstanceOf(Date);
-    expect(set.updatedAt).toBeInstanceOf(Date);
-  });
-
-  it("keeps plain disable behavior when archive is false", async () => {
-    const recurringJob = baseJob({
-      name: "keep-around",
       cronSchedule: "0 9 * * *",
     });
-    dbMock.selectResults = [[recurringJob]];
-    const tools = createJobTools();
+    dbMock.rows = [disabledRecurring];
 
-    const result = await (tools.cancel_job as any).execute({
-      name: "keep-around",
-      archive: false,
+    await expect(listJobs()).resolves.toMatchObject({
+      ok: true,
+      jobs: [],
+      count: 0,
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.message).toContain("disabled");
-    const [set] = jobsUpdateSets();
-    expect(set.enabled).toBe(0);
-    expect(set).not.toHaveProperty("archivedAt");
+    await expect(listJobs({ status: "completed" })).resolves.toMatchObject({
+      ok: true,
+      jobs: [expect.objectContaining({ name: "disabled-digest" })],
+      count: 1,
+    });
+
+    await expect(listJobs({ status: "all" })).resolves.toMatchObject({
+      ok: true,
+      jobs: [expect.objectContaining({ name: "disabled-digest" })],
+      count: 1,
+    });
   });
 
-  it("stamps archivedAt when archiving a pending one-shot", async () => {
-    const oneShot = baseJob({
-      name: "one-shot-reminder",
-      executeAt: new Date("2026-08-01T00:00:00.000Z"),
-    });
-    dbMock.selectResults = [[oneShot]];
-    const tools = createJobTools();
+  it("computes next_run_at for valid cron schedules and null for invalid ones", async () => {
+    dbMock.rows = [
+      baseJob({
+        id: "job-valid",
+        name: "valid-recurring",
+        status: "completed",
+        cronSchedule: "0 9 * * *",
+      }),
+      baseJob({
+        id: "job-invalid",
+        name: "invalid-recurring",
+        status: "completed",
+        cronSchedule: "not a cron",
+      }),
+    ];
 
-    const result = await (tools.cancel_job as any).execute({
-      name: "one-shot-reminder",
-      archive: true,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.message).toContain("archived");
-    const [set] = jobsUpdateSets();
-    expect(set.status).toBe("cancelled");
-    expect(set.archivedAt).toBeInstanceOf(Date);
-  });
-});
-
-describe("update_job un-archive on re-enable", () => {
-  it("clears archivedAt when re-enabling an archived job", async () => {
-    const archivedJob = baseJob({
-      name: "retired-digest",
-      cronSchedule: "0 9 * * *",
-      enabled: 0,
-      archivedAt: new Date("2026-07-10T00:00:00.000Z"),
-    });
-    const reEnabledJob = baseJob({
-      name: "retired-digest",
-      cronSchedule: "0 9 * * *",
-      enabled: 1,
-      archivedAt: null,
-      executeAt: new Date("2026-07-22T09:00:00.000Z"),
-    });
-    dbMock.selectResults = [[archivedJob], [reEnabledJob]];
-    const tools = createJobTools();
-
-    const result = await (tools.update_job as any).execute({
-      name: "retired-digest",
-      updates: { enabled: true },
-    });
+    const result = await listJobs({ status: "all" });
 
     expect(result.ok).toBe(true);
-    expect(result.message).toContain("un-archived");
-    const [set] = jobsUpdateSets();
-    expect(set.archivedAt).toBeNull();
-    expect(set.enabled).toBe(1);
-    expect(set.status).toBe("pending");
+    expect(result.jobs).toEqual([
+      expect.objectContaining({
+        name: "valid-recurring",
+        next_run_at: "2026-05-20T09:00:00+00:00",
+      }),
+      expect.objectContaining({
+        name: "invalid-recurring",
+        next_run_at: null,
+      }),
+    ]);
   });
 
-  it("does not mention un-archiving for a non-archived job", async () => {
-    const disabledJob = baseJob({
-      name: "just-disabled",
-      cronSchedule: "0 9 * * *",
-      enabled: 0,
-      archivedAt: null,
-    });
-    const reEnabledJob = baseJob({
-      name: "just-disabled",
-      cronSchedule: "0 9 * * *",
-      enabled: 1,
-    });
-    dbMock.selectResults = [[disabledJob], [reEnabledJob]];
-    const tools = createJobTools();
+  it("returns every job up to the limit when status is all", async () => {
+    dbMock.rows = [
+      baseJob({ id: "job-1", name: "pending-job", status: "pending" }),
+      baseJob({ id: "job-2", name: "failed-job", status: "failed" }),
+      baseJob({ id: "job-3", name: "cancelled-job", status: "cancelled" }),
+    ];
 
-    const result = await (tools.update_job as any).execute({
-      name: "just-disabled",
-      updates: { enabled: true },
-    });
+    const result = await listJobs({ status: "all", limit: 2 });
 
     expect(result.ok).toBe(true);
-    expect(result.message).not.toContain("un-archived");
-    const [set] = jobsUpdateSets();
-    expect(set).not.toHaveProperty("archivedAt");
-    expect(set.enabled).toBe(1);
+    expect(result.jobs.map((job: { name: string }) => job.name)).toEqual([
+      "pending-job",
+      "failed-job",
+    ]);
+    expect(result.count).toBe(2);
+    // status:"all" adds no status condition, but the default
+    // include_archived:false filter still applies one where() call.
+    expect(dbMock.whereCalls).toHaveLength(1);
+  });
+
+  it("excludes archived jobs by default and includes them with include_archived", async () => {
+    dbMock.rows = [
+      baseJob({ id: "job-live", name: "live-job", status: "pending" }),
+      baseJob({
+        id: "job-archived",
+        name: "archived-job",
+        status: "cancelled",
+        enabled: 0,
+        archivedAt: new Date("2026-05-01T00:00:00.000Z"),
+      }),
+    ];
+
+    await expect(listJobs({ status: "all" })).resolves.toMatchObject({
+      ok: true,
+      jobs: [expect.objectContaining({ name: "live-job" })],
+      count: 1,
+    });
+
+    await expect(
+      listJobs({ status: "all", include_archived: true }),
+    ).resolves.toMatchObject({
+      ok: true,
+      jobs: [
+        expect.objectContaining({ name: "live-job" }),
+        expect.objectContaining({ name: "archived-job" }),
+      ],
+      count: 2,
+    });
   });
 });

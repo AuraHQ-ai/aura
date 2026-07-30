@@ -9,6 +9,7 @@ import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
 import { createTableTools } from "./table.js";
 import { createChartTools } from "./chart.js";
+import { createCardTools } from "./card.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createEmailSyncTools } from "./email-sync.js";
@@ -3008,6 +3009,12 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     ...createEmailSyncTools(client, context),
     ...createTableTools(client, context),
     ...createChartTools(client, context),
+    ...createCardTools(),
+    // raise_alert (tools/alert.ts) is intentionally NOT registered: the
+    // 2026-07-30 live probe showed Slack still rejects `alert` blocks on all
+    // message surfaces (modal-only, `invalid_blocks`). The capture path in
+    // respond.ts is ready — add `...createAlertTools()` here once Slack
+    // enables alert blocks in messages (issue #1246).
     ...createSubagentTools(client, context),
     ...createVoiceTools(client, context),
     ...createScratchpadTools(invocationId ?? crypto.randomUUID()),

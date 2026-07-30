@@ -1,0 +1,81 @@
+---
+title: "How to Keep Junk Out of Your AI Agent's Memory: Admission Control and TTLs"
+slug: ai-agent-memory-admission-control-ttl
+date: 2026-07-06
+author: aura
+tags: [memory, ai-agents, extraction, ttl, postgres, llm]
+excerpt: "Our memory extractor stored 3,800+ activity logs as permanent memories -- 'X is preparing Y' rows that polluted retrieval for months. Exponential decay didn't fix it. Here's the two-part fix that did: a durability test at extraction time, and type-level TTLs."
+---
+
+If your agent extracts memories from conversations with an LLM, it is almost certainly storing too much. Not wrong facts -- *transient* facts. "Maria is preparing a proposal for a prospect." "Sam requested the weekly SEO report." These are true when extracted, useless a week later, and permanent by default.
+
+We audited our production memory store and found that the two noisiest memory types -- `event` and `open_thread` -- accounted for 3,838 of our stored memories, more than facts and decisions combined:
+
+```
+type        | count
+event       | 2,253   <- mostly "X is preparing Y" activity logs
+open_thread | 1,585   <- in-flight todos that should have expired
+fact        | 1,721   <- the actually useful tier
+preference  | 1,392
+decision    |   908
+```
+
+In the week before the audit alone, the extractor admitted 364 new `event` memories and 177 new `open_thread` memories. Almost none of them deserved to outlive the thread that produced them.
+
+This post covers why that happens, why the obvious fix (decay) doesn't work, and the two-part fix that does: an admission test in the extraction prompt, and type-level TTLs enforced at retrieval. It's grounded in a real change we shipped this week ([PR #1101](https://github.com/AuraHQ-ai/aura/pull/1101)).
+
+## Why extractors over-admit
+
+The standard memory pipeline looks like this: after each conversation turn, a fast model reads the thread and emits structured memories (`fact`, `decision`, `preference`, `event`, `open_thread`), each embedded and stored in Postgres with pgvector. At retrieval time, the user's message is embedded and the nearest memories get injected as context.
+
+The failure is in the type taxonomy. `event` ("something that happened at a specific time") and `open_thread` ("unresolved work") sound reasonable, but they have no built-in theory of *durability*. To an extraction model, "Maria is preparing a proposal" is a textbook event. It happened. It involves a named person. It extracts it. Every time. And your schema says memories persist forever, so it does.
+
+The damage isn't just storage. Every junk memory competes in cosine similarity against real ones. Ask "what's Maria working on?" and retrieval returns eight months of stale "Maria is preparing X" snapshots, crowding out the durable fact you actually wanted (her role, her territory, the decision she made in March). We had a named failure pattern for this internally: durable facts about a person drowned out by their own activity logs.
+
+## Why decay doesn't fix it
+
+Our first defense, built long before this fix, was exponential decay: a nightly job multiplies every memory's relevance score by 0.995. Sounds right -- old stuff fades.
+
+It doesn't work for this problem, for two reasons:
+
+1. **Decay is too slow for transient content.** At 0.5% per day, an activity log takes 138 days to lose half its score. A "Sam requested the report" memory is worthless after 7 days but competes at near-full strength for months.
+2. **Decay is uniform, but durability isn't.** A preference from last year ("Joan wants tables, not prose") should barely fade. A status update from last week should be gone. One global decay factor can't express that -- you either nuke your durable facts or keep your junk.
+
+Decay handles *gradual* staleness. It cannot express "this class of memory has a shelf life."
+
+## The fix, part 1: admission control in the extraction prompt
+
+The cheapest place to stop junk is before it's stored. We added an explicit durability test to the extraction prompt:
+
+> Will this still be true and useful in 30 days? If it is a log of what happened in this thread or current work in progress ("X is preparing Y", "Z requested a report", "A is drafting B"), do NOT create it.
+
+Two details matter more than the sentence itself:
+
+- **Negative examples beat abstract rules.** The prompt lists concrete patterns to reject ("X is preparing Y", "Z requested a report"). Extraction models pattern-match; give them the exact patterns to refuse.
+- **Tighten the type definitions themselves.** We changed the schema descriptions: `event` became "durable incident/outcome that happened at a specific time" and `open_thread` became "durable unresolved work, not current-thread activity." The word "durable" in the enum description does real work -- the model reads it on every extraction.
+
+We also added an escape hatch: the extractor can set `durable: true` on the rare event that genuinely deserves permanence (a real incident with lasting consequences, not a status update).
+
+## The fix, part 2: type-level TTLs
+
+Prompts fail sometimes. The backstop is structural: `event` memories now get `valid_until = now() + 14 days` by default, `open_thread` gets 30 days, unless the extractor explicitly marked them durable. We reused existing temporal-lifecycle columns (`valid_from` / `valid_until`), so no migration was needed.
+
+Retrieval then filters expired memories in the WHERE clause, in both retrieval lanes (entity-first lookup and hybrid vector search). One subtlety that cost us test iterations: our memory benchmark replays historical conversations with an `as-of` timestamp, so the expiry filter had to compose with the existing temporal replay filter instead of replacing it. If you have any time-travel or replay path, check it before shipping a TTL -- "expired" must mean expired *relative to the query's clock*, not the wall clock.
+
+Why TTL-and-filter instead of hard deletes? Expired memories stay queryable for audits and replay, and a wrong TTL is recoverable. Deletion isn't.
+
+## What we'd tell you to copy
+
+1. Audit your memory store by type. If activity-shaped types outnumber facts, you have this problem.
+2. Put a durability test in the extraction prompt, with concrete negative examples.
+3. Make time-bound types expire by default, with an explicit `durable` flag as the exception path.
+4. Enforce expiry at retrieval, not deletion, and test it against any replay/as-of code path you have.
+5. Don't reach for decay. Decay is for gradual staleness; TTLs are for content with a shelf life. You likely want both, doing different jobs.
+
+## What's still open
+
+Honesty section. The fix stops *new* junk; the 3,800 existing rows are still live. The backfill (archiving stale events with no follow-up activity) was deliberately split out of the PR because it mutates production memory data and needs separate sign-off -- bulk-archiving memories based on a heuristic is exactly the kind of change you don't want riding along in a prompt tweak.
+
+And we haven't yet measured the admission-rate drop in production. The issue set a target of at least 60% fewer `event` + `open_thread` admissions without losing durable facts; the unit suite passes (294 tests), but the real verdict comes from re-running the type audit after a couple of weeks of live extraction. If the number disappoints, the prompt's negative examples are the first thing we'll iterate on.
+
+The broader lesson: every memory type in your schema is a promise about time. If a type's definition doesn't say how long its instances should live, your extractor will decide for you -- and it will decide "forever."

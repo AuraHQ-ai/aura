@@ -23,12 +23,10 @@ Dispatch an async agent to work on a code task. Returns immediately with an agen
 | `branch_prefix` | string | no | Branch prefix (default `cursor`) — agent creates `cursor/{slug}` |
 | `ref` | string | no | Git ref to base work on (default `main`) |
 | `key_files` | string[] | no | Key files for the agent to focus on |
-| `cursor_rules` | string | no | Additional `.cursor/rules` content injected for this task |
-| `repo` | string | no | GitHub repo (default: `AuraHQ-ai/aura`) |
+| `repository` | string | no | GitHub repo in `owner/repo` format (default: the `default_github_repo` workspace setting, falling back to `AuraHQ-ai/aura`) |
 
 **Best practices:**
 - Always specify `key_files` to reduce agent wandering
-- Include `cursor_rules` for project-specific conventions (e.g. Drizzle migration breakpoints)
 - Say "create a PR" explicitly in the description — agents sometimes finish without opening one
 
 ---
@@ -47,12 +45,12 @@ Returns status (`running`, `completed`, `failed`), elapsed time, and result deta
 
 ## `followup_cursor_agent`
 
-Send a follow-up message to a running or completed agent — like a code review comment. The agent will continue working based on your feedback.
+Send follow-up instructions to a finished agent — like a code review comment. The agent continues working on the same branch/PR. Use this instead of dispatching a new agent when iterating on the same task.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `agent_id` | string | **yes** | Agent ID |
-| `message` | string | **yes** | Follow-up instruction or review feedback |
+| `prompt` | string | **yes** | Follow-up instruction or review feedback |
 
 ---
 
