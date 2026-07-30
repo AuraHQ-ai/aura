@@ -5,9 +5,17 @@ description: "Monitor and manage your Aura instance through the admin dashboard.
 
 # Dashboard
 
-The admin dashboard is a Vite + React application (with TanStack Router and TanStack Query) that provides full visibility into Aura's operation. It's deployed alongside the API as a single Vercel project and accessible to workspace admins.
+The admin dashboard is a Vite + React application (with TanStack Router and TanStack Query) that provides full visibility into Aura's operation. It's deployed alongside the API as a single Vercel project. Access requires the `power_user` role or higher (see [Access & Authentication](#access--authentication)).
 
 ## Pages
+
+### Overview
+
+The landing page shows at-a-glance instance health:
+
+- Count cards: notes, memories, users, active jobs, errors in the last 24h
+- Recent errors list with resolution status
+- Recent job executions with trigger and status
 
 ### Conversations
 
@@ -43,7 +51,7 @@ Browse and search Aura's extracted memories:
 - View category, importance, relevance score, status, and creation time
 - Open a detail dialog or delete stale memories
 
-The **Entities** sub-tab (`/memories/entities`) lists resolved entities (people, companies, projects, technologies) that Aura has extracted from conversations. Each entity has a canonical name, type, alias list, and count of linked memories.
+The **Entities** sub-tab (`/memories/entities`) lists resolved entities (people, companies, projects, products, channels, technologies, concepts, and locations) that Aura has extracted from conversations. Each entity has a canonical name, type, alias list, and count of linked memories.
 
 ### Notes
 
@@ -87,6 +95,18 @@ Manage the encrypted credential store:
 - Manage grants — add or remove user access via a user picker dropdown
 - Monitor usage and last-accessed timestamps
 
+### Evals
+
+Review the automated response-quality funnel:
+
+- Every assistant response is scored by a fast-tier judge (hourly cron `/api/cron/eval-responses`) using ~20-turn sliding windows over each settled thread
+- Each response gets an atomic verdict: **fulfilled**, **partial**, or **failed** (plus a scorable flag) -- stored once, never overwritten on re-runs
+- Funnel cards aggregate verdicts by failure class, serving intent, and user, with estimated cost per failure class
+- Detail pages support human adjudication: add a note, a gold answer, a must-do / must-not-do rubric, and ratify the verdict
+- Ratified failures, deduped by failure class, feed the curated regression bench
+
+Verdict badges also appear inline on assistant messages in the Conversations timeline, linking to the corresponding eval detail page. For how scoring works under the hood, see [Eval Funnel](/eval-funnel).
+
 ### Errors
 
 Track production errors:
@@ -98,18 +118,19 @@ Track production errors:
 
 ### Users
 
-View workspace member profiles:
+View and manage workspace member profiles:
 
-- Communication preferences Aura has learned
-- Interaction history and frequency
-- Timezone and language settings
+- Interaction count, last-active time, timezone, and learned communication style (verbosity, formality, emoji usage, preferred format)
+- **Role management**: assign `owner`, `admin`, `power_user`, or `member` directly from the user detail page -- this is how new members get dashboard access
+- Editable person fields: job title, preferred language, gender, and free-form notes
+- A Memories tab listing every memory linked to that user
 
 ### Resources
 
 Manage ingested content:
 
-- URLs, PDFs, and YouTube videos Aura has processed
-- Extraction status and content previews
+- Source types: web pages, GitHub, docs, YouTube, Notion, PDFs, and Slack content
+- Filter by source and extraction status (ready / error / pending), with content previews
 
 ### Settings
 
@@ -138,11 +159,15 @@ The callback issues a session JWT (HS256, `DASHBOARD_SESSION_TTL` or `365d` by d
 
 The dashboard includes an embedded chat interface for interacting with Aura directly from the admin UI -- useful for testing and debugging without switching to Slack.
 
+Chat streams are resumable: if the page reloads, the network drops, or a serverless function times out mid-response, the client reconnects to the in-flight run's stream and replays it, continuing with the live tail instead of losing the response.
+
 The model picker in the chat panel uses the same searchable autocomplete as the Settings page, grouped by provider. Both stay in sync -- changing the model in one place updates the other.
 
 A copy-to-clipboard button in the chat header exports the current conversation (including tool calls, tool results, and reasoning) as JSON -- handy for sharing a repro, filing a bug, or seeding an evaluation case.
 
 Each chat message carries its own `modelId` / `resolvedModelId` metadata, so the exported JSON records which model actually produced each turn even when the selection changes mid-conversation.
+
+Chat generation is durable: each send starts a server-side workflow run (tracked in the `dashboard_chat_runs` table), and the browser is just a stream reader. Refreshing, switching threads, or reconnecting from another session reattaches to the live stream instead of killing the run -- only the Stop button (a server-side cancel endpoint) actually stops generation. Threads are scoped to the signed-in user's session.
 
 ## Navigation
 

@@ -1,6 +1,6 @@
 ---
 title: "Permissions"
-description: "Role-based access control: user roles, tool permissions, note scoping, and rate limits."
+description: "Role-based access control: user roles, credential-based tool gating, note scoping, and job limits."
 ---
 
 # Permissions
@@ -11,9 +11,9 @@ Aura uses a three-tier role system to control access to tools, notes, and resour
 
 | Role | Level | Description |
 |------|-------|-------------|
-| `member` | 0 | Default role. Can chat with Aura, use basic tools, see shared notes. |
-| `power_user` | 1 | Extended access: sandbox, browser, voice, Cursor agents, subagents. |
-| `admin` | 2 | Full access: cross-user email/Slack, system note editing, job management. Maximum role. |
+| `member` | 0 | Default role. Can chat with Aura, use tools whose credentials are member-scoped, see shared notes. |
+| `power_user` | 1 | Dashboard access plus any credential scoped to `power_user`. |
+| `admin` | 2 | Full access: cross-user email, system note editing, job limit bypass, user/credential management. Maximum role. |
 
 Roles are hierarchical — a user with `admin` automatically has all `power_user` and `member` permissions.
 
@@ -30,28 +30,34 @@ The `hasRole(userId, minimumRole)` function in `apps/api/src/lib/permissions.ts`
 3. If not in the env var, look up `users.role` in the database and compare against the minimum required role
 4. If no DB profile exists (or query fails), default to `member`
 
+The user ID is resolved via the execution context (AsyncLocalStorage) set at the Slack event or job entry point, so permission checks always use the human caller's ID -- never the bot's.
+
 <Warning>
 The env var is checked **before** the database. A user listed in `AURA_ADMIN_USER_IDS` gets `admin` regardless of their DB role. This is intentional -- the env var acts as a hard override to prevent lockouts when DB roles are misconfigured (e.g. after a migration that resets all roles to `member`).
 </Warning>
 
-## Tool Permissions
+## How Tools Are Gated
 
-Each tool category requires a minimum role:
+There is no per-tool role table. Tool access is governed by **credential availability**:
 
-| Tool | Minimum Role |
-|------|-------------|
-| Sandbox (shell commands) | `power_user` |
-| Browser | `power_user` |
-| Cursor Agent | `power_user` |
-| Subagents | `power_user` |
-| Voice | `power_user` |
-| Cross-user email access | `admin` |
-| Cross-user Slack actions | `admin` |
-| Headless job dispatch | `admin` |
-| Job limit bypass | `admin` |
-| System note editing | `admin` |
+1. Each tool can declare `requiredCredentials` (e.g. Cursor agent tools require `cursor_api_key`, voice tools require `elevenlabs_api_key`).
+2. At request time, `resolveUserCredentials()` computes the set of credential names the calling user can access, based on credential **scope** (`member` / `power_user` / `admin` / `owner` / `per_user`) and explicit grants -- see [Credentials](/tools/credentials).
+3. `filterToolsByCredentials()` removes any tool whose required credentials the user cannot access. Tools with no required credentials are available to everyone.
 
-Members have access to Slack messaging, web search, and basic tools.
+So whether a user can dispatch a Cursor agent or send a voice note depends on how the underlying credential is scoped in that deployment, not on a hardcoded role-to-tool mapping. Sandbox environment variables are injected with the same scope logic.
+
+A few actions are role-gated directly in code with `hasRole(..., "admin")`:
+
+| Action | Minimum Role |
+|--------|-------------|
+| Cross-user email access (reading/sending as another user) | `admin` |
+| Creating or editing system notes and skill notes | `admin` |
+| Bypassing the active-job limit | `admin` |
+| Dashboard user/role management, credential submission, model config | `admin` |
+
+## Dashboard Access
+
+Logging into the dashboard (Slack OAuth) requires role `power_user` or `admin` (`ALLOWED_ROLES` in `apps/api/src/routes/dashboard/auth.ts`). Members and users without a profile are rejected with `insufficient_role` / `no_profile`.
 
 ## Note Scoping
 
@@ -63,19 +69,13 @@ Notes have `owner_id` and `visibility` fields:
 
 System topics (`self-directive`, `business-map`, `gaps-log`) are always protected regardless of their visibility column value.
 
-## Rate Limits
+## Job Limits
 
-Default rate limits are seeded per role:
+Non-admin users can have at most **5 active (pending, enabled) jobs** at a time, enforced in `create_job` (`MAX_JOBS_PER_USER` in `apps/api/src/tools/jobs.ts`). Admins and the `aura` system identity are exempt.
 
-| Resource | Member | Power User | Admin |
-|----------|--------|------------|-------|
-| Active jobs | 5 | 20 | 100 |
-| Notes | 20 | 50 | 200 |
-| Sandbox calls/day | 0 | 50 | 200 |
-| Cursor agents/day | 0 | 3 | 10 |
-| Subagent calls/day | 0 | 10 | 50 |
-
-Rate limits are stored in the `rate_limits` table and are workspace-scoped, so different workspaces can have different limits. Admins have no hard ceiling by default.
+<Note>
+Earlier versions had a workspace-scoped `rate_limits` table with per-role quotas (jobs, notes, sandbox calls per day). It was removed in migration 0049 along with the `tool_definitions` and `tool_credential_slots` governance tables. The job cap above is the only resource limit currently enforced.
+</Note>
 
 ## Managing Roles
 
@@ -86,12 +86,10 @@ Roles can be set in two ways:
 
 ## User Bootstrapping
 
-Users are created in `users` when they first log into the dashboard via Slack OAuth:
+- **First user** to log into the dashboard is automatically assigned the `admin` role, but only if no admin exists yet (guarded by a transaction with an advisory lock, so concurrent first logins can't both bootstrap).
+- **Subsequent users** get the `member` role by default (`users.role` defaults to `'member'`) -- which also means they cannot log into the dashboard until an admin promotes them.
 
-- **First user** is automatically assigned the `admin` role (the bootstrapping user is assumed to be the workspace admin)
-- **Subsequent users** get the `member` role by default
-
-Users who interact with Aura in Slack but never log into the dashboard won't have a `users` row. This is fine — the message pipeline identifies users by raw Slack user ID and doesn't require a profile. The pipeline and dashboard are independent systems.
+Users who interact with Aura in Slack but never log into the dashboard get a `users` row created lazily by the message pipeline (`getOrCreateProfile`), with the default `member` role.
 
 ## Migration from `AURA_ADMIN_USER_IDS`
 
@@ -102,7 +100,6 @@ The env var is checked before the DB and acts as a hard override. For new deploy
 The permission system uses these tables:
 
 - **`users.role`** — `text NOT NULL DEFAULT 'member'` on the users table
-- **`tool_definitions`** — Per-tool minimum role configuration (workspace-scoped)
-- **`tool_credential_slots`** — Credential requirements per tool
-- **`rate_limits`** — Per-role resource limits (workspace-scoped, unique on `workspace_id + role + resource`)
+- **`credentials.scope`** — Role-hierarchy-based credential access (`member` / `power_user` / `admin` / `owner` / `per_user`)
+- **`credential_grants`** — Explicit per-user credential grants that override scope
 - **`notes.owner_id`** / **`notes.visibility`** — User scoping for notes

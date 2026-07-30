@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { WebClient } from "@slack/web-api";
 import { eq, and, lt, lte, gte, sql, isNull, or, inArray } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
@@ -9,6 +10,7 @@ import { executeJob, MAX_RETRIES } from "./execute-job.js";
 import { computeNextCronTick } from "./cron-utils.js";
 import { persistJobOutcome, triggerSupervisorReview } from "./job-outcomes.js";
 import { sendJobOpsNotice } from "./job-notifications.js";
+import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 
 /** Max jobs to process per heartbeat sweep */
 const MAX_JOBS_PER_SWEEP = 10;
@@ -21,6 +23,10 @@ const PENDING_REVIEW_ORPHAN_THRESHOLD_MS = 5 * 60 * 1000;
 const IN_PROGRESS_ORPHAN_THRESHOLD_MS = 10 * 60 * 1000;
 const DEQUEUED_WITHOUT_EXECUTION_THRESHOLD_MS = 10 * 60 * 1000;
 const MAX_SUPERVISOR_ATTEMPTS = 3;
+
+// Used by the stream-death watchdog sweep; job lifecycle notices go through
+// sendJobOpsNotice (job-notifications.ts) instead.
+const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN || "");
 
 // ── Job Eligibility (recurring jobs) ─────────────────────────────────────────
 
@@ -297,6 +303,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let inProgressOutcomesReset = 0;
   let inProgressOutcomesSkipped = 0;
   let dequeuedWithoutExecutionRecovered = 0;
+  let staleTurnsDetected = 0;
+  let staleTurnsRecovered = 0;
 
   try {
     const now = new Date();
@@ -413,6 +421,17 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       .set({
         status: "pending",
         retries: sql`${jobs.retries} + 1`,
+        // Mark for immediate pickup (issue #1244): a concrete past executeAt
+        // makes the job due on the very next sweep via the `executeAt <= now`
+        // branch of the due-job query — the app-side filter short-circuits on
+        // executeAt before evaluating isRecurringJobDue, and `executeAt ASC
+        // NULLS LAST` sorts it ahead of NULL recurring rows. Without this,
+        // recovered recurring jobs stayed invisible until the next cron tick
+        // and then starved behind the MAX_JOBS_PER_SWEEP cap for hours.
+        // Do NOT touch lastExecutedAt here — it is the cron-dedup anchor
+        // (lastExecutedAt >= lastCronTick → not due) and mutating it would
+        // break normal cron scheduling.
+        executeAt: now,
         updatedAt: new Date(),
       })
       .where(
@@ -586,6 +605,13 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
+    // ── 6. Stream-death watchdog: recover hard-killed Slack turns ───────
+    // (issue #1109 — see cron/turn-watchdog.ts; never throws)
+
+    const turnWatchdogResult = await sweepStaleTurnMarkers(slackClient, now);
+    staleTurnsDetected = turnWatchdogResult.detected;
+    staleTurnsRecovered = turnWatchdogResult.recovered;
+
     // ── Done ─────────────────────────────────────────────────────────────
 
     const duration = Date.now() - sweepStart;
@@ -599,6 +625,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       inProgressOutcomesReset,
       inProgressOutcomesSkipped,
       dequeuedWithoutExecutionRecovered,
+      staleTurnsDetected,
+      staleTurnsRecovered,
     });
 
     return c.json({
@@ -612,6 +640,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       inProgressOutcomesReset,
       inProgressOutcomesSkipped,
       dequeuedWithoutExecutionRecovered,
+      staleTurnsDetected,
+      staleTurnsRecovered,
       duration,
     });
   } catch (error: any) {
