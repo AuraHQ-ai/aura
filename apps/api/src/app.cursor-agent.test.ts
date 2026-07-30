@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   recordErrorMock: vi.fn(),
   resolveSlackDestinationMock: vi.fn(),
   safePostMessageMock: vi.fn(),
+  selectRowsMock: vi.fn(),
   waitUntilPromises: [] as Array<Promise<unknown>>,
 }));
 
@@ -130,7 +131,7 @@ vi.mock("./db/client.js", () => ({
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({
-          limit: vi.fn(async () => []),
+          limit: mocks.selectRowsMock,
         })),
       })),
     })),
@@ -162,6 +163,7 @@ describe("Cursor agent webhook", () => {
     mocks.getCredentialMock.mockResolvedValue("gh-token");
     mocks.resolveSlackDestinationMock.mockResolvedValue("DADMIN");
     mocks.safePostMessageMock.mockResolvedValue({ ok: true });
+    mocks.selectRowsMock.mockResolvedValue([]);
     mocks.fetchMock.mockImplementation(async (url: string) => {
       if (url === "https://api.github.com/graphql") {
         return {
@@ -215,6 +217,120 @@ describe("Cursor agent webhook", () => {
         channel: "DADMIN",
         text: expect.stringContaining(
           "<https://github.com/AuraHQ-ai/aura/pull/1037|Fix webhook>",
+        ),
+      }),
+    );
+    expect(mocks.recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("patches a missing Fixes line for issue-backed dispatches", async () => {
+    mocks.selectRowsMock.mockResolvedValue([
+      {
+        content: [
+          "## Cursor Agent Dispatch",
+          "- **Agent ID**: agent_issue",
+          "- **Branch**: cursor/issue-1031",
+          "- **Repo**: AuraHQ-ai/aura",
+          "- **Issue**: #1031",
+          "- **Requester**: UREQUESTER",
+          "- **Channel**: C123",
+          "- **Thread**: 1700000000.000000",
+        ].join("\n"),
+      },
+    ]);
+    mocks.resolveSlackDestinationMock.mockResolvedValue("DREQUESTER");
+    mocks.fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "https://api.github.com/graphql") {
+        const body = JSON.parse(String(init?.body));
+        if (String(body.query).includes("repository(owner:")) {
+          return {
+            ok: true,
+            status: 200,
+            json: vi.fn(async () => ({
+              data: {
+                repository: {
+                  pullRequest: {
+                    id: "PR_kwDOExample",
+                    isDraft: false,
+                    number: 1040,
+                  },
+                },
+              },
+            })),
+          } as unknown as Response;
+        }
+      }
+
+      if (
+        url ===
+          "https://api.github.com/repos/AuraHQ-ai/aura/pulls/1040" &&
+        init?.method === "PATCH"
+      ) {
+        const body = JSON.parse(String(init.body));
+        expect(body.body).toBe("Fixes #1031\n\nImplementation details");
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn(async () => ({ body: body.body })),
+        } as unknown as Response;
+      }
+
+      if (url === "https://api.github.com/repos/AuraHQ-ai/aura/pulls/1040") {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn(async () => ({
+            title: "Implement issue dispatch",
+            body: "Implementation details",
+          })),
+        } as unknown as Response;
+      }
+
+      if (url === "https://api.cursor.com/v0/agents/agent_issue/conversation") {
+        return {
+          ok: true,
+          status: 200,
+          json: vi.fn(async () => ({})),
+        } as unknown as Response;
+      }
+
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    const rawBody = JSON.stringify({
+      id: "agent_issue",
+      status: "FINISHED",
+      target: {
+        prUrl: "https://github.com/AuraHQ-ai/aura/pull/1040",
+      },
+    });
+
+    const response = await app.request("/api/webhook/cursor-agent", {
+      method: "POST",
+      headers: {
+        "x-webhook-signature": sign(rawBody),
+        "content-type": "application/json",
+      },
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(200);
+    await Promise.all(mocks.waitUntilPromises);
+
+    expect(mocks.loggerInfoMock).toHaveBeenCalledWith(
+      "Cursor agent webhook: patched missing PR Fixes line",
+      {
+        owner: "AuraHQ-ai",
+        repo: "aura",
+        number: 1040,
+        issueNumber: 1031,
+      },
+    );
+    expect(mocks.safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "DREQUESTER",
+        text: expect.stringContaining(
+          "<https://github.com/AuraHQ-ai/aura/pull/1040|Implement issue dispatch>",
         ),
       }),
     );

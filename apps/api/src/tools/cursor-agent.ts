@@ -7,6 +7,73 @@ import type { ScheduleContext } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { getConfig } from "../lib/settings.js";
 
+const dispatchCursorAgentInputSchema = z
+  .object({
+    issue_description: z
+      .string()
+      .optional()
+      .describe(
+        "Detailed description of the issue or task for the agent to work on. Required only when issue is absent. If issue is provided, this is appended as operational notes; canonical guardrails belong in the GitHub issue body.",
+      ),
+    issue: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        "GitHub issue number in the target repository. Preferred dispatch path: Aura fetches the issue body, embeds it verbatim as the canonical spec, and enforces a Fixes #N PR body line.",
+      ),
+    model: z
+      .string()
+      .optional()
+      .describe(
+        "Cursor model to use, e.g. 'claude-sonnet-4.5', 'gpt-5', 'composer-1.5'. " +
+          "Omit or leave empty to use Cursor's default auto-selection. " +
+          "Defaults to env CURSOR_DEFAULT_MODEL if set.",
+      ),
+    branch_prefix: z
+      .string()
+      .default("cursor")
+      .describe(
+        "Branch name prefix. The agent creates a branch like cursor/{slug}",
+      ),
+    ref: z
+      .string()
+      .optional()
+      .describe("Git ref (branch/tag/SHA) to base work on. Defaults to main"),
+    key_files: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "List of key files for the agent to focus on, e.g. ['src/app.ts', 'src/tools/slack.ts']",
+      ),
+    repository: z
+      .string()
+      .optional()
+      .describe(
+        "GitHub repository in owner/repo format, e.g. 'org/repo'. Defaults to 'AuraHQ-ai/aura'",
+      ),
+  })
+  .refine(
+    (input) =>
+      input.issue !== undefined ||
+      (input.issue_description?.trim().length ?? 0) > 0,
+    {
+      message: "Provide either issue or issue_description",
+      path: ["issue_description"],
+    },
+  );
+
+function slugifyBranchSource(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .slice(0, 40)
+      .replace(/^-+|-+$/g, "") || "cursor-agent-task"
+  );
+}
+
 /**
  * Create Cursor Cloud Agent tools for the AI SDK.
  * Provides async dispatch of Cursor agents for complex multi-file code tasks.
@@ -19,54 +86,62 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         "Dispatch an async Cursor Cloud Agent to work on a code task in the Aura repo. " +
         "Use for complex multi-file changes that would take >5 minutes in the sandbox (refactors, new features, multi-step bug fixes). " +
         "Do NOT use for simple one-line fixes or tasks that run_command handles in <2 minutes. " +
+        "Prefer the issue parameter when dispatching from a GitHub issue; the issue body becomes the canonical spec snapshot, and one-off notes can go in issue_description. Put durable guardrails and acceptance criteria in the issue body. " +
+        "Use model to pin a Cursor model when needed; omit it for CURSOR_DEFAULT_MODEL or Cursor auto-selection. " +
         "The agent runs in the background (3-30 min), creates a branch, makes changes, opens a PR, and results arrive via webhook DM. " +
         "Returns immediately with the agent ID — don't wait for it or poll in a loop. Save the agent ID in your reply so you can reference it later. Admin-only.",
-      inputSchema: z.object({
-        issue_description: z
-          .string()
-          .describe(
-            "Detailed description of the issue or task for the agent to work on",
-          ),
-        branch_prefix: z
-          .string()
-          .default("cursor")
-          .describe(
-            "Branch name prefix. The agent creates a branch like cursor/{slug}",
-          ),
-        ref: z
-          .string()
-          .optional()
-          .describe(
-            "Git ref (branch/tag/SHA) to base work on. Defaults to main",
-          ),
-        key_files: z
-          .array(z.string())
-          .optional()
-          .describe(
-            "List of key files for the agent to focus on, e.g. ['src/app.ts', 'src/tools/slack.ts']",
-          ),
-        repository: z
-          .string()
-          .optional()
-          .describe(
-            "GitHub repository in owner/repo format, e.g. 'org/repo'. Defaults to 'AuraHQ-ai/aura'",
-          ),
-      }),
-      execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {
+      inputSchema: dispatchCursorAgentInputSchema,
+      execute: async ({
+        issue_description,
+        issue,
+        model,
+        branch_prefix,
+        ref,
+        key_files,
+        repository,
+      }) => {
         try {
-          const { launchCursorAgent } = await import(
+          const {
+            buildCursorIssuePrompt,
+            fetchGitHubIssueSnapshot,
+            launchCursorAgent,
+            resolveCursorModel,
+          } = await import(
             "../lib/cursor-agent.js"
           );
 
           const defaultRepo = await getConfig("default_github_repo", "AuraHQ-ai/aura");
           const repo = repository || defaultRepo;
           const repoUrl = `https://github.com/${repo}`;
+          const resolvedModel = resolveCursorModel({ explicitModel: model });
 
-          const slug = issue_description
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .slice(0, 40)
-            .replace(/-$/, "");
+          let taskPrompt: string;
+          let slugSource: string;
+          let issueTitle = "";
+
+          if (issue !== undefined) {
+            const { getCredential } = await import("../lib/credentials.js");
+            const githubToken = await getCredential("github_token");
+            const issueSnapshot = await fetchGitHubIssueSnapshot({
+              repo,
+              issueNumber: issue,
+              githubToken,
+            });
+            issueTitle = issueSnapshot.title;
+            taskPrompt = buildCursorIssuePrompt({
+              repo,
+              issueNumber: issue,
+              title: issueSnapshot.title,
+              body: issueSnapshot.body,
+              additionalNotes: issue_description,
+            });
+            slugSource = `issue-${issue}-${issueSnapshot.title}`;
+          } else {
+            taskPrompt = `## Task\n\n${issue_description}`;
+            slugSource = issue_description || "";
+          }
+
+          const slug = slugifyBranchSource(slugSource);
           const branchName = `${branch_prefix}/${slug}`;
 
           const keyFilesSection =
@@ -88,7 +163,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             : [];
 
           const prompt = [
-            `## Task\n\n${issue_description}`,
+            taskPrompt,
             `## Repository\n\n${repoDescription}`,
             keyFilesSection,
             `## Instructions\n\n${[...instructions, `- Never push directly to main — work on branch \`${branchName}\``, `- Create a PR with a clear description of changes`].join("\n")}`,
@@ -105,6 +180,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             prompt,
             repository: repoUrl,
             ref: ref || "main",
+            model: resolvedModel,
             branchName,
             autoCreatePr: true,
             webhookUrl,
@@ -116,14 +192,21 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             `- **Agent ID**: ${result.id}`,
             `- **Branch**: ${branchName}`,
             `- **Repo**: ${repo}`,
+            `- **Model**: ${resolvedModel || "auto"}`,
+            `- **Issue**: ${issue !== undefined ? `#${issue}` : "none"}`,
+            issueTitle ? `- **Issue Title**: ${issueTitle}` : "",
             `- **Requester**: ${context?.userId || "unknown"}`,
             `- **Channel**: ${context?.channelId || "unknown"}`,
             `- **Thread**: ${context?.threadTs || "none"}`,
             `- **Dispatched**: ${new Date().toISOString()}`,
             ``,
             `## Issue`,
-            issue_description,
-          ].join("\n");
+            issue !== undefined
+              ? `GitHub issue #${issue}${issue_description ? `\n\nAdditional dispatch notes:\n${issue_description}` : ""}`
+              : issue_description,
+          ]
+            .filter((line) => line !== "")
+            .join("\n");
 
           const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
           await db
@@ -172,7 +255,8 @@ export function createCursorAgentTools(context?: ScheduleContext) {
       },
       slack: {
         status: "Dispatching Cursor agent...",
-        detail: (i) => i.issue_description?.slice(0, 60),
+        detail: (i) =>
+          i.issue ? `#${i.issue}` : i.issue_description?.slice(0, 60),
         output: (r) => r.ok === false ? r.error : `Agent ${r.agent_id?.slice(0, 12)}… on \`${r.branch}\``,
       },
     }),

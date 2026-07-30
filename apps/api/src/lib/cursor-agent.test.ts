@@ -10,7 +10,15 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
+vi.mock("./credentials.js", () => ({
+  resolveCredentialValue: vi.fn(async (name: string) =>
+    name === "cursor_api_key" ? "cursor-key" : null,
+  ),
+}));
+
 const {
+  ensurePullRequestFixesIssue,
+  launchCursorAgent,
   markPullRequestReadyForReview,
   parseGitHubPullRequestUrl,
   resolveCursorAgentPrUrl,
@@ -22,11 +30,59 @@ function jsonResponse(data: unknown): Response {
     ok: true,
     status: 200,
     json: vi.fn(async () => data),
+    text: vi.fn(async () => JSON.stringify(data)),
   } as unknown as Response;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe("launchCursorAgent", () => {
+  async function captureLaunchBody(params: {
+    model?: string;
+  } = {}): Promise<Record<string, unknown>> {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body));
+      return jsonResponse({ id: "agent_123", status: "running" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await launchCursorAgent({
+      prompt: "Fix the bug",
+      repository: "https://github.com/AuraHQ-ai/aura",
+      ...params,
+    });
+
+    expect(capturedBody).toBeDefined();
+    return capturedBody!;
+  }
+
+  it("sends model in the request body when provided", async () => {
+    const body = await captureLaunchBody({ model: "claude-sonnet-4.5" });
+
+    expect(body.model).toBe("claude-sonnet-4.5");
+  });
+
+  it("omits model when no model is provided", async () => {
+    const body = await captureLaunchBody();
+
+    expect(body).not.toHaveProperty("model");
+  });
+
+  it("omits model when the model is an empty string", async () => {
+    const body = await captureLaunchBody({ model: "" });
+
+    expect(body).not.toHaveProperty("model");
+  });
+
+  it("omits model when the model is auto", async () => {
+    const body = await captureLaunchBody({ model: "auto" });
+
+    expect(body).not.toHaveProperty("model");
+  });
 });
 
 describe("resolveCursorAgentPrUrl", () => {
@@ -226,5 +282,54 @@ describe("markPullRequestReadyForReview", () => {
         error: "github down",
       },
     );
+  });
+});
+
+describe("ensurePullRequestFixesIssue", () => {
+  it("patches the PR body when the Fixes line is missing", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        expect(body.body).toBe("Fixes #1031\n\nImplementation notes");
+        return jsonResponse({ body: body.body });
+      }
+
+      return jsonResponse({ body: "Implementation notes" });
+    });
+
+    const result = await ensurePullRequestFixesIssue({
+      prUrl: "https://github.com/AuraHQ-ai/aura/pull/1040",
+      issueNumber: 1031,
+      githubToken: "gh-token",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(result).toBe("patched");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(logger.info).toHaveBeenCalledWith(
+      "Cursor agent webhook: patched missing PR Fixes line",
+      {
+        owner: "AuraHQ-ai",
+        repo: "aura",
+        number: 1040,
+        issueNumber: 1031,
+      },
+    );
+  });
+
+  it("does not patch when an accepted closing line is already present", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ body: "Summary\n\nCloses #1031" }),
+    );
+
+    const result = await ensurePullRequestFixesIssue({
+      prUrl: "https://github.com/AuraHQ-ai/aura/pull/1040",
+      issueNumber: 1031,
+      githubToken: "gh-token",
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(result).toBe("already_present");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
