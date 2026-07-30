@@ -6,6 +6,10 @@ const agentMocks = vi.hoisted(() => ({
 const toolStateMocks = vi.hoisted(() => ({
   detachedSuspendState: undefined as { commandId: string } | undefined,
 }));
+const turnMarkerMocks = vi.hoisted(() => ({
+  startTurnMarker: vi.fn().mockResolvedValue(undefined),
+  finishTurnMarker: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock("ai", () => ({
   streamText: vi.fn(),
@@ -45,6 +49,8 @@ vi.mock("../lib/logger.js", () => ({
 vi.mock("../lib/error-logger.js", () => ({
   logError: vi.fn(),
 }));
+
+vi.mock("../lib/turn-markers.js", () => turnMarkerMocks);
 
 vi.mock("../tools/scratchpad.js", () => ({
   cleanupScratchpad: vi.fn().mockResolvedValue(undefined),
@@ -1170,5 +1176,157 @@ describe("generateResponse Slack stream handling", () => {
         text: expect.stringContaining("[stream aborted: inactivity]"),
       })],
     });
+  });
+});
+
+describe("generateResponse turn markers (stream-death watchdog, issue #1109)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    toolStateMocks.detachedSuspendState = undefined;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("writes a turn marker on start and finishes it completed on a clean finish", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "All done." };
+    })());
+
+    await expect(generateResponse({
+      ...baseOptions(slackClient),
+      invocationId: "inv-clean-1",
+      messageTs: "1710000001.000100",
+      context: { userId: "U123", workspaceId: "ws-1" },
+    })).resolves.toMatchObject({
+      raw: "All done.",
+      alreadyPosted: true,
+    });
+
+    expect(turnMarkerMocks.startTurnMarker).toHaveBeenCalledTimes(1);
+    expect(turnMarkerMocks.startTurnMarker).toHaveBeenCalledWith({
+      invocationId: "inv-clean-1",
+      channelId: "C123",
+      threadTs: "1710000000.000000",
+      messageTs: "1710000001.000100",
+      userId: "U123",
+      workspaceId: "ws-1",
+    });
+    expect(turnMarkerMocks.finishTurnMarker).toHaveBeenCalledTimes(1);
+    expect(turnMarkerMocks.finishTurnMarker).toHaveBeenCalledWith("inv-clean-1", "completed");
+  });
+
+  it("writes the marker before the agent stream starts", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    const order: string[] = [];
+    turnMarkerMocks.startTurnMarker.mockImplementationOnce(async () => {
+      order.push("marker");
+    });
+    agentMocks.createInteractiveAgent.mockResolvedValue({
+      agent: {
+        stream: vi.fn().mockImplementation(async () => {
+          order.push("stream");
+          return createAgentStreamResult((async function* () {
+            yield { type: "text-delta", text: "ok" };
+          })());
+        }),
+      },
+      tools: {},
+      modelId: "test-model",
+      getStepModelIds: () => ["test-model"],
+    });
+
+    await generateResponse({ ...baseOptions(slackClient), invocationId: "inv-order-1" });
+
+    expect(order[0]).toBe("marker");
+    expect(order).toContain("stream");
+  });
+
+  it("finishes the marker as failed when the turn throws a handled error", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-input-start",
+        toolCallId: "call-1",
+        toolName: "run_command",
+      };
+      throw new Error("tool input failed");
+    })());
+
+    await expect(generateResponse({
+      ...baseOptions(slackClient),
+      invocationId: "inv-fail-1",
+    })).rejects.toThrow("tool input failed");
+
+    // The error propagates to the pipeline catch (which posts a graceful
+    // message), but the marker MUST already be terminal so the watchdog
+    // never treats this handled failure as a hard kill.
+    expect(turnMarkerMocks.finishTurnMarker).toHaveBeenCalledTimes(1);
+    expect(turnMarkerMocks.finishTurnMarker).toHaveBeenCalledWith("inv-fail-1", "failed");
+  });
+
+  it("finishes the marker as completed on an interrupted (superseded) turn", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const { InvocationSupersededError } = await import("./prepare-step.js");
+
+    agentMocks.createInteractiveAgent.mockResolvedValue({
+      agent: {
+        stream: vi.fn().mockResolvedValue(createAgentStreamResult((async function* () {
+          throw new InvocationSupersededError("inv-superseded-1");
+        })())),
+      },
+      tools: {},
+      modelId: "test-model",
+      getStepModelIds: () => ["test-model"],
+    });
+
+    await expect(generateResponse({
+      ...baseOptions(slackClient),
+      invocationId: "inv-superseded-1",
+    })).resolves.toMatchObject({ interrupted: true });
+
+    expect(turnMarkerMocks.finishTurnMarker).toHaveBeenCalledTimes(1);
+    expect(turnMarkerMocks.finishTurnMarker).toHaveBeenCalledWith("inv-superseded-1", "completed");
+  });
+
+  it("does not track markers for headless turns", async () => {
+    const slackClient = createSlackClient([]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Headless output." };
+    })());
+
+    await expect(generateResponse({
+      ...baseOptions(slackClient),
+      invocationId: "inv-headless-1",
+      isHeadless: true,
+    })).resolves.toMatchObject({
+      raw: "Headless output.",
+      alreadyPosted: true,
+    });
+
+    expect(turnMarkerMocks.startTurnMarker).not.toHaveBeenCalled();
+    expect(turnMarkerMocks.finishTurnMarker).not.toHaveBeenCalled();
   });
 });
