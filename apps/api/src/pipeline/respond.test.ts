@@ -58,6 +58,14 @@ vi.mock("../tools/chart.js", () => ({
   CHART_BLOCK_KEY: "__chart_block",
 }));
 
+vi.mock("../tools/alert.js", () => ({
+  ALERT_BLOCK_KEY: "__alert_block",
+}));
+
+vi.mock("../tools/card.js", () => ({
+  CARD_BLOCK_KEY: "__card_blocks",
+}));
+
 vi.mock("./prepare-step.js", () => ({
   InvocationSupersededError: class InvocationSupersededError extends Error {
     invocationId = "test-invocation";
@@ -205,6 +213,143 @@ describe("generateResponse Slack stream handling", () => {
         blocks: [chartBlock],
       }],
     });
+  });
+
+  it("streams native alert blocks returned by raise_alert inline mode", async () => {
+    const alertBlock = {
+      type: "alert",
+      text: { type: "mrkdwn", text: "*3 jobs failed* — email-delivery cluster degraded" },
+      level: "error",
+    };
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "raise_alert",
+        output: { ok: true, __alert_block: alertBlock },
+      };
+      yield { type: "text-delta", text: "Escalating." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Escalating.",
+      alreadyPosted: true,
+    });
+
+    expect(streamer.append).toHaveBeenCalledWith({
+      chunks: [{
+        type: "blocks",
+        blocks: [alertBlock],
+      }],
+    });
+  });
+
+  it("streams all card blocks returned by draw_cards inline mode in one blocks chunk", async () => {
+    const cardBlocks = [
+      {
+        type: "card",
+        title: { type: "mrkdwn", text: "WINS" },
+        body: { type: "mrkdwn", text: "Two PRs merged." },
+      },
+      {
+        type: "card",
+        title: { type: "mrkdwn", text: "FOLLOW-UPS" },
+        body: { type: "mrkdwn", text: "Check gap-issue sync." },
+      },
+    ];
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_cards",
+        output: { ok: true, __card_blocks: cardBlocks },
+      };
+      yield { type: "text-delta", text: "EOD reflection below." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "EOD reflection below.",
+      alreadyPosted: true,
+    });
+
+    expect(streamer.append).toHaveBeenCalledWith({
+      chunks: [{
+        type: "blocks",
+        blocks: cardBlocks,
+      }],
+    });
+  });
+
+  it("delivers card blocks via chat.postMessage when the stream rejects them", async () => {
+    const cardBlocks = [
+      {
+        type: "card",
+        title: { type: "mrkdwn", text: "WINS" },
+        body: { type: "mrkdwn", text: "Two PRs merged." },
+      },
+      {
+        type: "card",
+        title: { type: "mrkdwn", text: "NOTED" },
+        body: { type: "mrkdwn", text: "SEO W30 flat." },
+      },
+    ];
+    const invalidArgumentsError = () =>
+      Object.assign(new Error("An API error occurred: invalid_arguments"), {
+        data: { error: "invalid_arguments" },
+      });
+    const streamer = {
+      // Reject the inline blocks-chunk append so the cards stay queued as
+      // pending native blocks and ride on the stop() payload.
+      append: vi.fn(async (payload: any) => {
+        if (payload?.chunks?.some((c: any) => c?.type === "blocks")) {
+          throw invalidArgumentsError();
+        }
+      }),
+      stop: vi.fn()
+        .mockRejectedValueOnce(invalidArgumentsError())
+        .mockResolvedValueOnce(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "draw_cards",
+        output: { ok: true, __card_blocks: cardBlocks },
+      };
+      yield { type: "text-delta", text: "Digest below." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Digest below.",
+      alreadyPosted: true,
+    });
+
+    // First stop attempt carries both cards; the retry finalizes without them.
+    expect(streamer.stop).toHaveBeenCalledTimes(2);
+    expect(streamer.stop.mock.calls[0][0]).toMatchObject({
+      blocks: expect.arrayContaining(cardBlocks),
+    });
+
+    // Both stripped cards are delivered via the chat.postMessage fallback.
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "C123",
+      text: "Here's a summary:",
+      blocks: cardBlocks,
+    }));
   });
 
   it("recovers when streamer.stop() rejects the block payload with invalid_arguments", async () => {
