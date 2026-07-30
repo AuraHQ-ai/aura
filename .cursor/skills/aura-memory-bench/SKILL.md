@@ -127,6 +127,17 @@ pnpm bench:memory --dataset=lme --category=temporal --limit=10 --log
   without running the bench (no DB / LLM needed) — handy after a rebase or a
   manual history edit.
 
+**LoCoMo: don't re-extract every iteration.** A full LoCoMo run is ~105 min /
+~$70, almost all of it extraction — but every LoCoMo failure mode is downstream
+of extraction. Seed the 10 conversations once
+(`--dataset=locomo --subset=full --bench-id=locomo --reset --to=extract
+--concurrency=10`), then iterate over a curated 250-case subset:
+`pnpm bench:locomo-fast --emit` → `--corpus-file=/tmp/locomo-fast-corpus.json
+--from=score --bench-id=locomo` (~5–10 min, no extraction; `--from=extract`
+re-seeds after an extraction/schema change). The subset reproduces the full
+per-category QA within ±2pp and covers every failure bucket. Full loop +
+rationale in the `aura-bench-local-iteration` skill.
+
 ## Convention: CI logs + commits results on the PR (don't hand-paste numbers)
 
 Any change that can move the numbers (memory extraction, retrieval,
@@ -267,6 +278,7 @@ parse as UTC in `fixtures.ts`).
 |---|---|
 | CLI / flags | `apps/api/src/scripts/bench-memory.ts` |
 | Failure investigation (`bench:inspect`) | `apps/api/bench/scripts/inspect-run.ts` |
+| LoCoMo fast-iteration subset (`bench:locomo-fast`) | `apps/api/bench/scripts/build-locomo-fast.ts` (+ `apps/api/bench/fast/locomo-fast.json`) |
 | Crash-safe run artifacts (`runs/<id>/`, `runs/latest`) | `apps/api/bench/src/artifacts.ts` |
 | Orchestration | `apps/api/bench/src/runner.ts` |
 | Timeline engine (producer/consumer + watermark) | `apps/api/bench/src/timeline.ts` |
