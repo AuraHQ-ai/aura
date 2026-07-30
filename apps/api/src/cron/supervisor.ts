@@ -15,6 +15,17 @@ const MAX_SUPERVISOR_ATTEMPTS = 3;
 const DEFAULT_PUBLIC_URL = "https://aura-alpha-five.vercel.app";
 const GITHUB_REPO = "AuraHQ-ai/aura";
 const GITHUB_ISSUE_LABEL = "auto-supervisor-fix";
+const DEFAULT_SUPERVISOR_FIX_DEDUP_DAYS = 7;
+const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
+
+type GitHubIssue = {
+  number?: number;
+  html_url?: string;
+  title?: string;
+  body?: string | null;
+  created_at?: string;
+  pull_request?: unknown;
+};
 
 const supervisorRequestSchema = z.object({
   outcomeId: z.string().uuid(),
@@ -80,6 +91,32 @@ function jsonForPrompt(value: unknown): string {
 function truncateForPrompt(value: string, maxChars = 12_000): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}\n... [truncated]`;
+}
+
+export function normalizedErrorSignature(error: string | null | undefined): string {
+  if (!error) return "";
+
+  return error
+    .toLowerCase()
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi,
+      "<uuid>",
+    )
+    .replace(
+      /\b\d{4}-\d{2}-\d{2}(?:[t\s]\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:z|[+-]\d{2}:?\d{2})?)?\b/gi,
+      "<timestamp>",
+    )
+    .replace(/\d+(?:\.\d+)?/g, "<number>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function supervisorFixDedupDays(): number {
+  const configured = Number.parseFloat(process.env.SUPERVISOR_FIX_DEDUP_DAYS ?? "");
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_SUPERVISOR_FIX_DEDUP_DAYS;
 }
 
 function invocationIdFromHeader(headerValue: string | undefined): string {
@@ -245,6 +282,132 @@ function buildUserMessage(decision: SupervisorDecision, fallback: string): strin
   return decision.user_message?.trim() || fallback;
 }
 
+function githubHeaders(ghToken: string): HeadersInit {
+  return {
+    Authorization: `token ${ghToken}`,
+    Accept: "application/vnd.github+json",
+    "Content-Type": "application/json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+}
+
+async function listOpenSupervisorFixIssues(ghToken: string): Promise<GitHubIssue[]> {
+  const url = new URL(`https://api.github.com/repos/${GITHUB_REPO}/issues`);
+  url.searchParams.set("state", "open");
+  url.searchParams.set("labels", GITHUB_ISSUE_LABEL);
+  url.searchParams.set("per_page", "100");
+  url.searchParams.set("sort", "created");
+  url.searchParams.set("direction", "desc");
+
+  const response = await fetch(url.toString(), {
+    headers: githubHeaders(ghToken),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`GitHub issue dedup lookup failed (${response.status}): ${errorText}`);
+  }
+
+  const issues = (await response.json()) as GitHubIssue[];
+  return issues.filter((issue) => !issue.pull_request);
+}
+
+function issueCreatedWithin(issue: GitHubIssue, now: Date, windowMs: number): boolean {
+  if (!issue.created_at) return false;
+  const createdAt = new Date(issue.created_at);
+  if (Number.isNaN(createdAt.getTime())) return false;
+  return now.getTime() - createdAt.getTime() < windowMs;
+}
+
+function issueMatchesJobName(issue: GitHubIssue, jobName: string): boolean {
+  const title = issue.title?.trim() ?? "";
+  const body = issue.body ?? "";
+  return title === `Supervisor fix needed: ${jobName}` || body.includes(`- name: ${jobName}`);
+}
+
+function signatureFromIssueBody(body: string | null | undefined): string {
+  if (!body) return "";
+
+  const explicitSignature = body.match(/normalized_error_signature:\s*`([^`]+)`/i)?.[1]?.trim();
+  if (explicitSignature) return explicitSignature;
+
+  const errorLine = body.match(/^- error:\s*(.+)$/im)?.[1]?.trim();
+  if (!errorLine || errorLine === "none") return "";
+  return normalizedErrorSignature(errorLine);
+}
+
+function findMatchingSupervisorIssue(
+  issues: GitHubIssue[],
+  context: SupervisorContext,
+  errorSignature: string,
+  now: Date,
+): GitHubIssue | null {
+  const dedupWindowMs = supervisorFixDedupDays() * ONE_DAY_MS;
+  const sameJob = (issue: GitHubIssue) => issueMatchesJobName(issue, context.job.name);
+  const recent = (issue: GitHubIssue) => issueCreatedWithin(issue, now, dedupWindowMs);
+  const withinJobRateLimit = (issue: GitHubIssue) =>
+    sameJob(issue) && issueCreatedWithin(issue, now, ONE_DAY_MS);
+
+  return (
+    issues.find(withinJobRateLimit) ??
+    issues.find((issue) => sameJob(issue) && recent(issue)) ??
+    issues.find(
+      (issue) =>
+        errorSignature.length > 0 && recent(issue) && signatureFromIssueBody(issue.body) === errorSignature,
+    ) ??
+    null
+  );
+}
+
+function issueHtmlUrl(issue: GitHubIssue): string {
+  if (issue.html_url) return issue.html_url;
+  if (issue.number) return `https://github.com/${GITHUB_REPO}/issues/${issue.number}`;
+  throw new Error("GitHub issue did not include html_url or number");
+}
+
+async function commentOnSupervisorFixIssue(
+  ghToken: string,
+  issue: GitHubIssue,
+  context: SupervisorContext,
+  decision: SupervisorDecision,
+  errorSignature: string,
+): Promise<string> {
+  if (!issue.number) {
+    throw new Error("GitHub issue match did not include issue number");
+  }
+
+  const commentBody = [
+    "Another supervisor `retry_with_fix` outcome matched this open issue, so no duplicate issue was created.",
+    "",
+    "## New outcome",
+    `- id: ${context.outcome.id}`,
+    `- job_id: ${context.job.id}`,
+    `- job_name: ${context.job.name}`,
+    `- status: ${context.outcome.outcomeStatus}`,
+    `- error: ${context.outcome.error ?? "none"}`,
+    `- normalized_error_signature: \`${errorSignature || "none"}\``,
+    "",
+    "## Supervisor reasoning",
+    decision.reasoning,
+  ].join("\n");
+
+  const response = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/issues/${issue.number}/comments`,
+    {
+      method: "POST",
+      headers: githubHeaders(ghToken),
+      body: JSON.stringify({ body: commentBody }),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`GitHub issue comment failed (${response.status}): ${errorText}`);
+  }
+
+  return issueHtmlUrl(issue);
+}
+
 async function createSupervisorFixIssue(
   context: SupervisorContext,
   decision: SupervisorDecision,
@@ -252,6 +415,18 @@ async function createSupervisorFixIssue(
   const ghToken = await getCredential("github_token");
   if (!ghToken) {
     throw new Error("GitHub token not configured for supervisor fix issue creation");
+  }
+
+  const errorSignature = normalizedErrorSignature(context.outcome.error);
+  const existingIssues = await listOpenSupervisorFixIssues(ghToken);
+  const matchingIssue = findMatchingSupervisorIssue(
+    existingIssues,
+    context,
+    errorSignature,
+    new Date(),
+  );
+  if (matchingIssue) {
+    return commentOnSupervisorFixIssue(ghToken, matchingIssue, context, decision, errorSignature);
   }
 
   const issueBody = [
@@ -270,6 +445,9 @@ async function createSupervisorFixIssue(
     `- status: ${context.outcome.outcomeStatus}`,
     `- error: ${context.outcome.error ?? "none"}`,
     "",
+    "## Deduplication",
+    `- normalized_error_signature: \`${errorSignature || "none"}\``,
+    "",
     "## last_n_steps",
     "```json",
     jsonForPrompt(context.outcome.lastNSteps ?? []),
@@ -278,12 +456,7 @@ async function createSupervisorFixIssue(
 
   const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/issues`, {
     method: "POST",
-    headers: {
-      Authorization: `token ${ghToken}`,
-      Accept: "application/vnd.github+json",
-      "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
+    headers: githubHeaders(ghToken),
     body: JSON.stringify({
       title: `Supervisor fix needed: ${context.job.name}`,
       body: issueBody,
