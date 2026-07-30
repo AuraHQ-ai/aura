@@ -114,6 +114,16 @@ expensive stages (full details + invalidation rules in the `aura-memory-bench` s
 - Retrieval/answer-only iteration: `--bench-id=<key> --from=score` (reuses messages + memories; the watermark starts at +inf so every question is immediately releasable against the final pool).
 - After an extraction or schema change: `--bench-id=<key> --from=extract` (reuses messages, re-extracts).
 
+**LoCoMo specifically** (a full run is ~105 min / ~$70, nearly all of it
+extraction): seed once with `--dataset=locomo --subset=full --bench-id=locomo
+--reset --to=extract --concurrency=10` (~45–60 min), then iterate over a curated
+250-case subset with `pnpm bench:locomo-fast --emit` →
+`--corpus-file=/tmp/locomo-fast-corpus.json --from=score --bench-id=locomo`
+(~5–10 min, no re-extraction). It's faithful because LoCoMo questions resolve to
+end-of-conversation, so `--from=score` retrieves bit-identically to a full run.
+The subset reproduces the full per-**category** QA within ±2pp and covers every
+failure bucket. Full loop in the `aura-bench-local-iteration` skill.
+
 ## "Δ vs prior" only compares like-for-like
 
 Deltas compare against the newest prior run with the **same corpus hash and the

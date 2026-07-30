@@ -17,6 +17,9 @@ if (dryRun) console.log("DRY RUN — will not create/update/delete any memories"
 const limitArg = process.argv.find((a) => a.startsWith("--limit="));
 const threadLimit = limitArg ? parseInt(limitArg.split("=")[1], 10) : Infinity;
 
+const concurrencyArg = process.argv.find((a) => a.startsWith("--concurrency="));
+const concurrency = concurrencyArg ? parseInt(concurrencyArg.split("=")[1], 10) : 3;
+
 const { db } = await import("../db/client.js");
 const { extractMemories } = await import("../memory/extract.js");
 const { ensureSlackUserEntityLink } = await import("../users/entity-link.js");
@@ -25,10 +28,6 @@ type ResultRow = Record<string, unknown>;
 function extractRows(result: unknown): ResultRow[] {
   return ((result as any).rows ?? result) as ResultRow[];
 }
-
-// ── Config ──────────────────────────────────────────────────────────────────
-
-const CONCURRENCY = 3;
 
 // ── Find all threads ────────────────────────────────────────────────────────
 
@@ -41,6 +40,7 @@ interface ThreadInfo {
   lastUserId: string;
   messageCount: number;
   firstMessageAt: Date;
+  lastMessageAt: Date;
 }
 
 interface SlackUserRow {
@@ -59,6 +59,7 @@ async function discoverThreads(): Promise<ThreadInfo[]> {
         tk.channel_type,
         tk.msg_count,
         tk.first_msg_at,
+        tk.last_msg_at,
         last_msg.id AS last_user_message_id,
         last_msg.content AS last_user_message,
         last_msg.user_id AS last_user_id
@@ -68,12 +69,12 @@ async function discoverThreads(): Promise<ThreadInfo[]> {
           COALESCE(slack_thread_ts, slack_ts) AS thread_ts,
           channel_type,
           COUNT(*) AS msg_count,
-          MIN(created_at) AS first_msg_at
+          MIN(created_at) AS first_msg_at,
+          MAX(created_at) AS last_msg_at
         FROM messages
         WHERE role IN ('user', 'assistant')
         GROUP BY channel_id, COALESCE(slack_thread_ts, slack_ts), channel_type
         HAVING COUNT(*) >= 2
-        ORDER BY MAX(created_at) DESC
       ) tk
       CROSS JOIN LATERAL (
         SELECT id, content, user_id
@@ -84,6 +85,10 @@ async function discoverThreads(): Promise<ThreadInfo[]> {
         ORDER BY created_at DESC
         LIMIT 1
       ) last_msg
+      -- Chronological by last activity: a thread's knowledge is as fresh as its
+      -- newest message, so later-active threads must be ingested later for
+      -- supersession to point the right way.
+      ORDER BY tk.last_msg_at ASC
     `),
   );
 
@@ -96,6 +101,7 @@ async function discoverThreads(): Promise<ThreadInfo[]> {
     lastUserId: r.last_user_id as string,
     messageCount: Number(r.msg_count),
     firstMessageAt: new Date(r.first_msg_at as string),
+    lastMessageAt: new Date(r.last_msg_at as string),
   }));
 }
 
@@ -140,48 +146,60 @@ async function processThread(
 async function main() {
   console.log("=== Memory Backfill Script (Thread-Scoped Reconciliation) ===\n");
 
-  console.log("Ensuring person entities exist for Slack users...");
-  const slackUsers = extractRows(
-    await db.execute(sql`
-      SELECT id, workspace_id, slack_user_id, display_name
-      FROM users
-      WHERE slack_user_id IS NOT NULL
-      ORDER BY created_at ASC
-    `),
-  ).map((row) => ({
-    id: String(row.id),
-    workspace_id: String(row.workspace_id),
-    slack_user_id: String(row.slack_user_id),
-    display_name: String(row.display_name),
-  })) as SlackUserRow[];
+  if (dryRun) {
+    console.log("Skipping entity link pass (dry run)");
+  } else {
+    console.log("Ensuring person entities exist for Slack users...");
+    const slackUsers = extractRows(
+      await db.execute(sql`
+        SELECT id, workspace_id, slack_user_id, display_name
+        FROM users
+        WHERE slack_user_id IS NOT NULL
+        ORDER BY created_at ASC
+      `),
+    ).map((row) => ({
+      id: String(row.id),
+      workspace_id: String(row.workspace_id),
+      slack_user_id: String(row.slack_user_id),
+      display_name: String(row.display_name),
+    })) as SlackUserRow[];
 
-  let ensuredUserEntityLinks = 0;
-  let failedUserEntityLinks = 0;
-  for (const user of slackUsers) {
-    try {
-      const linked = await ensureSlackUserEntityLink({
-        userId: user.id,
-        slackUserId: user.slack_user_id,
-        displayName: user.display_name,
-        workspaceId: user.workspace_id,
-      });
-      if (linked) ensuredUserEntityLinks++;
-    } catch (error) {
-      failedUserEntityLinks++;
-      console.error(
-        `  ERROR ensuring entity for user ${user.slack_user_id}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+    let ensuredUserEntityLinks = 0;
+    let failedUserEntityLinks = 0;
+    for (const user of slackUsers) {
+      try {
+        const linked = await ensureSlackUserEntityLink({
+          userId: user.id,
+          slackUserId: user.slack_user_id,
+          displayName: user.display_name,
+          workspaceId: user.workspace_id,
+        });
+        if (linked) ensuredUserEntityLinks++;
+      } catch (error) {
+        failedUserEntityLinks++;
+        console.error(
+          `  ERROR ensuring entity for user ${user.slack_user_id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
+    console.log(
+      `Ensured links for ${ensuredUserEntityLinks}/${slackUsers.length} Slack users` +
+        (failedUserEntityLinks > 0 ? ` (${failedUserEntityLinks} failures)` : ""),
+    );
   }
-  console.log(
-    `Ensured links for ${ensuredUserEntityLinks}/${slackUsers.length} Slack users` +
-      (failedUserEntityLinks > 0 ? ` (${failedUserEntityLinks} failures)` : ""),
-  );
 
   const allThreads = await discoverThreads();
   console.log(`Found ${allThreads.length} threads with >= 2 user/assistant messages`);
+  if (allThreads.length > 0) {
+    const first = allThreads[0];
+    const last = allThreads[allThreads.length - 1];
+    console.log(
+      `Processing chronologically (by last activity): ` +
+        `${first.lastMessageAt.toISOString()} -> ${last.lastMessageAt.toISOString()}`,
+    );
+  }
 
   const threads = threadLimit < Infinity ? allThreads.slice(0, threadLimit) : allThreads;
   if (threadLimit < Infinity) {
@@ -193,17 +211,18 @@ async function main() {
     return;
   }
 
-  console.log(`Concurrency: ${CONCURRENCY}\n`);
+  console.log(`Concurrency: ${concurrency}\n`);
 
   const progress = createProgress(threads.length, { label: "threads", logEvery: 5 });
 
-  await pool(threads, CONCURRENCY, async (thread) => {
+  await pool(threads, concurrency, async (thread) => {
     await processThread(thread, progress);
   });
 
   // Fix entity timestamps: set created_at to earliest linked memory, updated_at to latest
-  console.log("\nFixing entity timestamps from linked memories...");
-  const fixResult = await db.execute(sql`
+  if (!dryRun) {
+    console.log("\nFixing entity timestamps from linked memories...");
+    const fixResult = await db.execute(sql`
     UPDATE entities e
     SET
       created_at = sub.first_memory_at,
@@ -217,10 +236,11 @@ async function main() {
       JOIN memories m ON m.id = me.memory_id
       GROUP BY me.entity_id
     ) sub
-    WHERE e.id = sub.entity_id
-  `);
-  const fixedCount = (fixResult as any).rowCount ?? "?";
-  console.log(`Updated timestamps for ${fixedCount} entities`);
+      WHERE e.id = sub.entity_id
+    `);
+    const fixedCount = (fixResult as any).rowCount ?? "?";
+    console.log(`Updated timestamps for ${fixedCount} entities`);
+  }
 
   console.log(`\n=== Summary ===`);
   progress.done();

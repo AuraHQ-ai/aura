@@ -537,6 +537,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
           files: fileParts,
           channelId: context.channelId,
           threadTs: replyThreadTs,
+          messageTs: context.messageTs,
           teamId,
           recipientUserId: context.userId,
           channelType: context.channelType,
