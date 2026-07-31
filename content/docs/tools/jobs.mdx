@@ -83,13 +83,16 @@ Script-only mode is ideal for jobs that just need to run a command and post the 
 
 ## `list_jobs`
 
-List jobs by status.
+List jobs by status. Enabled recurring jobs are always included regardless of their last execution status (with last/next run info); one-shots are filtered by `status`.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `status` | enum | no | `pending` (default), `running`, `completed`, `failed`, or `cancelled` |
+| `status` | enum | no | `pending` (default), `running`, `completed`, `failed`, `cancelled`, or `all` (every job) |
 | `limit` | number | no | Max jobs to return (default 20, max 50) |
-| `recurring_only` | boolean | no | Show only recurring jobs (default false) |
+| `recurring_only` | boolean | no | Show only recurring jobs, not one-shots (default false) |
+| `include_archived` | boolean | no | Include archived jobs, which are hidden by default (default false) |
+
+Archived jobs are excluded from results unless `include_archived: true` is passed.
 
 ---
 
@@ -101,6 +104,8 @@ Cancel a pending or failed one-shot job, or disable a recurring job (preserves i
 |-------|------|----------|-------------|
 | `job_id` | string | conditional | UUID of the job to cancel |
 | `name` | string | conditional | Name of the job to cancel (alternative to `job_id`) |
+| `archive` | boolean | no | Also archive the job (default false). Archived jobs are hidden from `list_jobs` but keep their execution history. Re-enable via `update_job` with `enabled: true`, which un-archives. Use for retired recurring jobs you don't expect to re-enable. |
+
 ---
 
 ## `update_job`
@@ -123,7 +128,7 @@ Update an existing job's configuration without recreating it. Preserves job ID a
 | `updates.min_interval_hours` | number | no | New minimum hours between executions |
 | `updates.script` | string/null | no | New shell command. Set to `null` to remove an existing script. |
 
-When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time.
+When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time; if the job was archived, it is also un-archived and becomes visible in `list_jobs` again.
 
 ---
 
