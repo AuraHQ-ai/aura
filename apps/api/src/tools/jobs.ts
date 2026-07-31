@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, or, desc, isNotNull, ne, sql } from "drizzle-orm";
+import { eq, and, or, desc, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
@@ -216,6 +216,7 @@ export function createJobTools(
             updatedAt: new Date(),
             status: "pending",
             enabled: 1,
+            archivedAt: null,
             retries: 0,
           };
           if (playbook !== undefined) updateSet.playbook = playbook || null;
@@ -280,7 +281,7 @@ export function createJobTools(
 
     list_jobs: defineTool({
       description:
-        "List jobs. Always includes enabled recurring jobs regardless of their last execution status, with last/next run info. Filter one-shots by status, or use status:'all'. For execution history of a specific job, use read_job_trace with the job name.",
+        "List jobs. Always includes enabled recurring jobs regardless of their last execution status, with last/next run info. Filter one-shots by status, or use status:'all'. Archived jobs are excluded by default; pass include_archived to see them. For execution history of a specific job, use read_job_trace with the job name.",
       inputSchema: z.object({
         status: z
           .enum(["pending", "running", "completed", "failed", "cancelled", "all"])
@@ -290,6 +291,10 @@ export function createJobTools(
           .boolean()
           .default(false)
           .describe("If true, only show recurring jobs (not one-shots)"),
+        include_archived: z
+          .boolean()
+          .default(false)
+          .describe("If true, include archived jobs (hidden by default)"),
         limit: z
           .number()
           .min(1)
@@ -297,7 +302,7 @@ export function createJobTools(
           .default(20)
           .describe("Maximum number of jobs to return"),
       }),
-      execute: async ({ status, recurring_only, limit }) => {
+      execute: async ({ status, recurring_only, include_archived, limit }) => {
         try {
           const recurringCondition = and(
             isNotNull(jobs.cronSchedule),
@@ -313,6 +318,9 @@ export function createJobTools(
           }
           if (recurring_only) {
             conditions.push(recurringCondition);
+          }
+          if (!include_archived) {
+            conditions.push(isNull(jobs.archivedAt));
           }
 
           const query = db.select().from(jobs);
@@ -374,7 +382,7 @@ export function createJobTools(
 
     cancel_job: defineTool({
       description:
-        "Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Accepts a job ID or name.",
+        "Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Pass archive: true to also archive the job — it keeps its execution history but is hidden from list_jobs (re-enable via update_job with enabled: true, which un-archives). Accepts a job ID or name.",
       inputSchema: z.object({
         job_id: z
           .string()
@@ -384,8 +392,14 @@ export function createJobTools(
           .string()
           .optional()
           .describe("The name of the job to cancel (alternative to job_id)"),
+        archive: z
+          .boolean()
+          .default(false)
+          .describe(
+            "If true, also archive the job: it is excluded from job listings but keeps its history. Use for retired recurring jobs you don't expect to re-enable.",
+          ),
       }),
-      execute: async ({ job_id, name }) => {
+      execute: async ({ job_id, name, archive }) => {
         try {
           if (!job_id && !name) {
             return { ok: false, error: "Provide either job_id or name." };
@@ -409,6 +423,19 @@ export function createJobTools(
 
           if (job.cronSchedule) {
             // Recurring job: disable instead of cancelling (preserves definition)
+            if (archive) {
+              await db
+                .update(jobs)
+                .set({ enabled: 0, archivedAt: new Date(), updatedAt: new Date() })
+                .where(condition);
+
+              logger.info("cancel_job: archived recurring job", { name: job.name });
+              return {
+                ok: true,
+                message: `Recurring job "${job.name}" archived. It is excluded from job listings (pass include_archived to list_jobs to see it). Re-enable via update_job with enabled: true, which un-archives it.`,
+              };
+            }
+
             await db
               .update(jobs)
               .set({ enabled: 0, updatedAt: new Date() })
@@ -430,13 +457,17 @@ export function createJobTools(
 
             await db
               .update(jobs)
-              .set({ status: "cancelled", updatedAt: new Date() })
+              .set({
+                status: "cancelled",
+                ...(archive ? { archivedAt: new Date() } : {}),
+                updatedAt: new Date(),
+              })
               .where(condition);
 
-            logger.info("cancel_job: cancelled one-shot", { name: job.name });
+            logger.info("cancel_job: cancelled one-shot", { name: job.name, archived: archive });
             return {
               ok: true,
-              message: `Job "${job.name}" cancelled.`,
+              message: `Job "${job.name}" cancelled${archive ? " and archived" : ""}.`,
             };
           }
         } catch (error: any) {
@@ -449,7 +480,7 @@ export function createJobTools(
 
     update_job: defineTool({
       description:
-        "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, or re-enable a disabled job. Accepts job name or ID.",
+        "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, or re-enable a disabled job (setting enabled: true also un-archives an archived job). Accepts job name or ID.",
       inputSchema: z.object({
         job_id: z.string().optional().describe("UUID of the job to update"),
         name: z
@@ -577,7 +608,12 @@ export function createJobTools(
             }
           }
 
-          // Re-enable a disabled job
+          // Re-enable a disabled job (also un-archives if it was archived)
+          let unarchived = false;
+          if (updates.enabled === true && job.archivedAt !== null) {
+            set.archivedAt = null;
+            unarchived = true;
+          }
           if (updates.enabled === true && job.enabled === 0) {
             set.enabled = 1;
             set.status = "pending";
@@ -605,7 +641,7 @@ export function createJobTools(
 
           return {
             ok: true as const,
-            message: `Job "${updated.name}" updated.`,
+            message: `Job "${updated.name}" updated${unarchived ? " and un-archived (visible in job listings again)" : ""}.`,
             job: {
               name: updated.name,
               description: updated.description,

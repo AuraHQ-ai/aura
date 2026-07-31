@@ -61,6 +61,7 @@ const schemaMock = vi.hoisted(() => {
       playbook: column("playbook"),
       lastResult: column("lastResult"),
       enabled: column("enabled"),
+      archivedAt: column("archivedAt"),
       createdAt: column("createdAt"),
     },
     jobExecutions: {
@@ -86,6 +87,9 @@ const drizzleMock = vi.hoisted(() => {
     ),
     isNotNull: vi.fn((column: { key: string }) =>
       predicate("isNotNull", (row) => row[keyOf(column)] != null),
+    ),
+    isNull: vi.fn((column: { key: string }) =>
+      predicate("isNull", (row) => row[keyOf(column)] == null),
     ),
     and: vi.fn((...conditions: Array<Predicate | undefined>) => {
       const activeConditions = conditions.filter(Boolean) as Predicate[];
@@ -162,6 +166,7 @@ function baseJob(overrides: Record<string, unknown> = {}) {
     playbook: null,
     lastResult: null,
     enabled: 1,
+    archivedAt: null,
     createdAt: new Date("2026-05-01T00:00:00.000Z"),
     ...overrides,
   };
@@ -292,6 +297,38 @@ describe("list_jobs", () => {
       "failed-job",
     ]);
     expect(result.count).toBe(2);
-    expect(dbMock.whereCalls).toHaveLength(0);
+    // status:"all" adds no status condition, but the default
+    // include_archived:false filter still applies one where() call.
+    expect(dbMock.whereCalls).toHaveLength(1);
+  });
+
+  it("excludes archived jobs by default and includes them with include_archived", async () => {
+    dbMock.rows = [
+      baseJob({ id: "job-live", name: "live-job", status: "pending" }),
+      baseJob({
+        id: "job-archived",
+        name: "archived-job",
+        status: "cancelled",
+        enabled: 0,
+        archivedAt: new Date("2026-05-01T00:00:00.000Z"),
+      }),
+    ];
+
+    await expect(listJobs({ status: "all" })).resolves.toMatchObject({
+      ok: true,
+      jobs: [expect.objectContaining({ name: "live-job" })],
+      count: 1,
+    });
+
+    await expect(
+      listJobs({ status: "all", include_archived: true }),
+    ).resolves.toMatchObject({
+      ok: true,
+      jobs: [
+        expect.objectContaining({ name: "live-job" }),
+        expect.objectContaining({ name: "archived-job" }),
+      ],
+      count: 2,
+    });
   });
 });
