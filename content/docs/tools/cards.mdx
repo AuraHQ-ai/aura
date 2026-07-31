@@ -1,0 +1,32 @@
+---
+title: "Cards"
+description: "Render native Slack card blocks for structured digest output."
+---
+
+# Slack Cards
+
+When a recurring digest has distinct sections -- EOD reflections, weekly reports, gap/issue syncs -- Aura renders them as native Slack card blocks with the `draw_cards` tool instead of a markdown wall of headings. Each section becomes one titled card.
+
+## Usage
+
+`draw_cards` takes a single input: `sections` (1--10 items), each with:
+
+| Field | Content | Limit |
+|-------|---------|-------|
+| `title` | Card heading, e.g. "WINS" or "FOLLOW-UPS" | 150 chars |
+| `text` | Card body in mrkdwn (bold, inline code, links) | 200 chars |
+
+Card bodies are meant to be scannable summaries. Anything longer belongs in the regular message text.
+
+## Delivery
+
+Cards attach inline to the current reply only -- unlike [tables](/tools/tables) and [charts](/tools/charts), there is no reply or targeted mode. Limited to one native block set (alert / table / chart / cards) per reply.
+
+## When Not to Use
+
+- **Urgent escalations** -- keep those as regular text (the `raise_alert` tool exists but is not registered yet; Slack rejects `alert` blocks on message surfaces, see below).
+- **Tabular data** -- use `draw_table`.
+
+## raise_alert (pending Slack support)
+
+A `raise_alert` tool for severity-tagged escalation blocks exists in the codebase (`tools/alert.ts`) and its capture path in the response pipeline is wired and tested, but it is intentionally **not registered**. As of July 2026 Slack rejects `alert` blocks on all message surfaces with `invalid_blocks` -- they are modal-only. Registration is a one-line flip in `tools/slack.ts` once Slack enables alert blocks in messages.
