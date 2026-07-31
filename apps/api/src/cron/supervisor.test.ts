@@ -56,6 +56,8 @@ const dbMock = vi.hoisted(() => {
 const generateObjectMock = vi.hoisted(() => vi.fn());
 const getCredentialMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
+const safePostMessageMock = vi.hoisted(() => vi.fn());
+const resolveSlackDestinationMock = vi.hoisted(() => vi.fn());
 
 type MockFetchResponse = {
   ok: boolean;
@@ -93,6 +95,8 @@ vi.mock("../lib/credentials.js", () => ({
   getCredential: getCredentialMock,
 }));
 
+// sendJobOpsNotice stays REAL so its env-driven routing ladder (ops channel →
+// founder DM → requester DM) is exercised through the mocked Slack layer below.
 vi.mock("./job-notifications.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./job-notifications.js")>();
   return {
@@ -100,6 +104,14 @@ vi.mock("./job-notifications.js", async (importOriginal) => {
     sendJobFailureDm: sendJobFailureDmMock,
   };
 });
+
+vi.mock("../lib/slack-messaging.js", () => ({
+  safePostMessage: safePostMessageMock,
+}));
+
+vi.mock("../tools/slack.js", () => ({
+  resolveSlackDestination: resolveSlackDestinationMock,
+}));
 
 function queueDbResults(...results: unknown[][]) {
   dbMock.results = [...results];
@@ -242,12 +254,15 @@ async function invokeSupervisor() {
 describe("supervisor cron", () => {
   const originalCronSecret = process.env.CRON_SECRET;
   const originalFounderUserId = process.env.FOUNDER_USER_ID;
+  const originalAuraOpsChannel = process.env.AURA_OPS_CHANNEL;
   const originalAuraPublicUrl = process.env.AURA_PUBLIC_URL;
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     process.env.CRON_SECRET = "test-secret";
     process.env.AURA_PUBLIC_URL = "https://aura.test";
+    delete process.env.FOUNDER_USER_ID;
+    delete process.env.AURA_OPS_CHANNEL;
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-20T09:00:00.000Z"));
     dbMock.results = [];
@@ -262,6 +277,11 @@ describe("supervisor cron", () => {
     });
     getCredentialMock.mockResolvedValue("gh-token");
     sendJobFailureDmMock.mockResolvedValue(true);
+    safePostMessageMock.mockResolvedValue({ ok: true });
+    resolveSlackDestinationMock.mockImplementation(
+      async (_client: unknown, destination: string) =>
+        destination.startsWith("U") ? `D_${destination}` : destination,
+    );
     fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit): Promise<MockFetchResponse> => {
         const url = String(input);
@@ -318,6 +338,11 @@ describe("supervisor cron", () => {
     } else {
       process.env.FOUNDER_USER_ID = originalFounderUserId;
     }
+    if (originalAuraOpsChannel === undefined) {
+      delete process.env.AURA_OPS_CHANNEL;
+    } else {
+      process.env.AURA_OPS_CHANNEL = originalAuraOpsChannel;
+    }
     if (originalAuraPublicUrl === undefined) {
       delete process.env.AURA_PUBLIC_URL;
     } else {
@@ -358,16 +383,17 @@ describe("supervisor cron", () => {
   });
 
   it.each([
-    ["silent_success", { outcomeStatus: "succeeded", error: null }, { dmCount: 0 }],
-    ["report_success", { outcomeStatus: "succeeded", error: null }, { dmCount: 1 }],
-    ["report_failure", {}, { dmCount: 1 }],
-    ["retry_as_is", {}, { dmCount: 1, jobUpdate: { status: "pending", retries: 0 } }],
-    ["retry_with_fix", {}, { dmCount: 1, jobUpdate: { status: "pending", retries: 0 }, issue: true }],
-    ["escalate", {}, { dmCount: 2, founder: true }],
-    ["disable_job", {}, { dmCount: 1, jobUpdate: { enabled: 0 } }],
+    ["silent_success", { outcomeStatus: "succeeded", error: null }, { dmCount: 0, opsCount: 0 }],
+    ["report_success", { outcomeStatus: "succeeded", error: null }, { dmCount: 1, opsCount: 0 }],
+    ["report_failure", {}, { dmCount: 1, opsCount: 0 }],
+    ["retry_as_is", {}, { dmCount: 0, opsCount: 1, jobUpdate: { status: "pending", retries: 0 } }],
+    ["retry_with_fix", {}, { dmCount: 0, opsCount: 1, jobUpdate: { status: "pending", retries: 0 }, issue: true }],
+    ["escalate", {}, { dmCount: 1, opsCount: 1, founder: true }],
+    ["disable_job", {}, { dmCount: 0, opsCount: 1, jobUpdate: { enabled: 0 } }],
   ])(
     "applies %s with the right side effects",
     async (decisionName, outcomeOverrides, expected) => {
+      process.env.AURA_OPS_CHANNEL = "C_OPS";
       if ("founder" in expected && expected.founder) {
         process.env.FOUNDER_USER_ID = "U_FOUNDER";
       }
@@ -384,6 +410,27 @@ describe("supervisor cron", () => {
 
       expect(response.status).toBe(200);
       expect(sendJobFailureDmMock).toHaveBeenCalledTimes(expected.dmCount);
+      expect(safePostMessageMock).toHaveBeenCalledTimes(expected.opsCount);
+      if (expected.opsCount > 0) {
+        // Lifecycle notices go to the ops channel with actionable context,
+        // never to the requester's DM.
+        expect(safePostMessageMock).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            channel: "C_OPS",
+            text: expect.stringContaining("<@U_REQUESTER>"),
+          }),
+        );
+        expect(safePostMessageMock).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            text: expect.stringContaining("daily sync"),
+          }),
+        );
+        expect(sendJobFailureDmMock).not.toHaveBeenCalledWith(
+          expect.objectContaining({ requestedBy: "U_REQUESTER" }),
+        );
+      }
       if ("founder" in expected && expected.founder) {
         expect(sendJobFailureDmMock).toHaveBeenCalledWith(
           expect.objectContaining({ requestedBy: "U_FOUNDER" }),
@@ -404,7 +451,8 @@ describe("supervisor cron", () => {
             body: expect.stringContaining("last_n_steps"),
           }),
         );
-        expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+        expect(safePostMessageMock).toHaveBeenCalledWith(
+          expect.anything(),
           expect.objectContaining({
             text: expect.stringContaining("https://github.com/AuraHQ-ai/aura/issues/123"),
           }),
@@ -416,6 +464,63 @@ describe("supervisor cron", () => {
       });
     },
   );
+
+  it("routes lifecycle notices to the founder DM when only FOUNDER_USER_ID is set", async () => {
+    process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    generateObjectMock.mockResolvedValue({
+      object: { decision: "retry_as_is", reasoning: "transient failure" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(expect.anything(), "U_FOUNDER");
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "D_U_FOUNDER",
+        text: expect.stringContaining("<@U_REQUESTER>"),
+      }),
+    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+
+  it("escalate does not double-DM the founder when the ops notice already went to the founder", async () => {
+    process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    generateObjectMock.mockResolvedValue({
+      object: { decision: "escalate", reasoning: "needs human judgment" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "D_U_FOUNDER" }),
+    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the requester DM as a last resort when no ops destination is configured", async () => {
+    generateObjectMock.mockResolvedValue({
+      object: { decision: "retry_as_is", reasoning: "transient failure" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(expect.anything(), "U_REQUESTER");
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "D_U_REQUESTER" }),
+    );
+  });
 
   it("comments on a matching open supervisor issue instead of creating a duplicate", async () => {
     generateObjectMock.mockResolvedValue({
@@ -500,11 +605,15 @@ describe("supervisor cron", () => {
         body: expect.stringContaining(outcomeError),
       }),
     );
-    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+    // retry_with_fix is an internal lifecycle notice: the issue link now
+    // travels via the ops-notice path (safePostMessage), not the requester DM.
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         text: expect.stringContaining("https://github.com/AuraHQ-ai/aura/issues/456"),
       }),
     );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
   it.each([

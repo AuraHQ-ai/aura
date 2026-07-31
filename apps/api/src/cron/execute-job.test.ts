@@ -352,6 +352,61 @@ describe("executeJob outcome persistence", () => {
     await expect(executeJob(baseJob() as any, "heartbeat")).resolves.toBe(true);
   });
 });
+describe("executeJob reply-routing prompt", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    dbMock.operations = [];
+    vi.clearAllMocks();
+  });
+
+  async function capturePromptForJob(jobOverrides: Record<string, unknown>): Promise<string> {
+    let capturedPrompt = "";
+    createHeadlessAgentMock.mockResolvedValue({
+      agent: {
+        generate: vi.fn(async ({ prompt }: { prompt: string }) => {
+          capturedPrompt = prompt;
+          throw new Error("stop-after-prompt-capture");
+        }),
+      },
+      modelId: "test-model",
+      getStepModelIds: () => [],
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(baseJob({ script: null, ...jobOverrides }) as any, "heartbeat"),
+    ).rejects.toThrow("stop-after-prompt-capture");
+
+    return capturedPrompt;
+  }
+
+  it("includes the silent-success clause in the thread-routing variant", async () => {
+    const { SILENT_SUCCESS_CLAUSE } = await import("./execute-job.js");
+    const prompt = await capturePromptForJob({ channelId: "C123", threadTs: "111.222" });
+
+    expect(prompt).toContain('send_thread_reply(channel="C123", thread_ts="111.222")');
+    expect(prompt).toContain(SILENT_SUCCESS_CLAUSE);
+    expect(prompt).toContain("post NOTHING");
+  });
+
+  it("includes the silent-success clause in the channel-routing variant", async () => {
+    const { SILENT_SUCCESS_CLAUSE } = await import("./execute-job.js");
+    const prompt = await capturePromptForJob({ channelId: "C123", threadTs: null });
+
+    expect(prompt).toContain('Post your results to channel "C123" using send_channel_message');
+    expect(prompt).toContain(SILENT_SUCCESS_CLAUSE);
+    expect(prompt).toContain("post NOTHING");
+  });
+
+  it("does not inject reply-routing for jobs without a channel", async () => {
+    const prompt = await capturePromptForJob({ channelId: null, threadTs: null });
+
+    expect(prompt).not.toContain("Post your results");
+    expect(prompt).not.toContain("post NOTHING");
+  });
+});
+
 describe("detectScriptOutputError", () => {
   it("returns null for clean stdout with no error envelope", () => {
     const output = '{"status": "ok", "count": 42}\nDone processing.';
