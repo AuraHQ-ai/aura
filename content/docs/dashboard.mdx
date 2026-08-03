@@ -27,7 +27,7 @@ Browse every conversation Aura has had. Each conversation shows:
 - Cost per conversation
 - Channel and user context
 
-Filter by user, channel, date range, or search by content.
+Search by channel or user name, and filter by source type (interactive vs. job execution). Thread detail pages live at `/conversations/threads/$channelId/$threadTs`.
 
 The **Invocations** sub-tab (`/conversations/invocations`) shows each individual LLM invocation with its tool calls, token counts, and timing -- useful for debugging multi-step agent work.
 
@@ -65,9 +65,9 @@ View and manage Aura's knowledge base:
 
 Monitor scheduled and recurring jobs:
 
-- View pending, running, completed, and failed jobs
-- See execution history and logs
-- Check cron schedules and frequency limits
+- Search jobs by name and browse the paginated list (status, cron schedule, requester, run count, last run, priority)
+- Enable or disable recurring jobs with the inline toggle
+- Open a job's detail page for its execution history (per-run status, timing, and output)
 
 ### Adoption
 
@@ -136,15 +136,14 @@ Manage ingested content:
 
 Configure instance behavior:
 
-- Admin user IDs
-- Model selection from the DB-backed Vercel AI Gateway catalog (searchable autocomplete grouped by provider)
+- Model selection (main, fast, and embedding) from the DB-backed Vercel AI Gateway catalog (searchable autocomplete grouped by provider)
 - Manual "Refresh Catalog" sync for newly available gateway models
-- Feature flags
+- Arbitrary key-value instance settings (lowercase keys; create and edit)
 - Theme selection (light/dark/system) -- moved here from the header
 
 ## Access & Authentication
 
-The dashboard uses Slack OAuth for login. Access requires at least the `power_user` role (see [Permissions](/permissions)). The `AURA_ADMIN_USER_IDS` env var serves as a fallback for users without a database role.
+The dashboard uses Slack OAuth for login. Access requires at least the `power_user` role (see [Permissions](/permissions)); the role is read from the `users` table at login. If no admin exists yet, the first Slack user to log in is bootstrapped as `admin` automatically.
 
 ### Slack OIDC
 
