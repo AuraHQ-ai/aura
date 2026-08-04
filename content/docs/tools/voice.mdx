@@ -7,7 +7,16 @@ description: "Outbound phone calls, SMS, and voice notes via ElevenLabs and Twil
 
 Aura can make outbound phone calls using [ElevenLabs](https://elevenlabs.io) voice agents and [Twilio](https://twilio.com) for PSTN routing. She can also send SMS messages and generate voice notes (text-to-speech audio) in Slack.
 
-**Required env vars:** `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `ELEVENLABS_VOICE_ID`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
+**Configuration** — API keys are encrypted credentials (Dashboard > Credentials); IDs and numbers are workspace settings (Dashboard > Settings). There is no environment-variable fallback for the API keys.
+
+| Name | Where | Used by |
+|------|-------|---------|
+| `elevenlabs_api_key` | credential store | `list_voice_agents`, `place_call`, `send_voice_note` |
+| `twilio_account_sid`, `twilio_auth_token` | credential store | `send_sms` |
+| `elevenlabs_agent_id` | workspace setting | `place_call` (default agent) |
+| `elevenlabs_voice_id` | workspace setting | `place_call`, `send_voice_note` (default voice) |
+| `elevenlabs_from_number` | workspace setting | `place_call` (default caller number) |
+| `twilio_phone_number` | workspace setting | `send_sms` (sender number) |
 
 ---
 
@@ -61,3 +70,6 @@ Generate a voice note from text using ElevenLabs TTS and upload it to Slack as a
 | `thread_ts` | string | no | Thread timestamp to post in a specific thread |
 | `language` | string | no | Language hint for the TTS model |
 | `voice_id` | string | no | ElevenLabs voice ID override |
+
+**Rate limit:** `send_voice_note` is quota-limited per hour (default **10 voice notes per hour**, workspace-configurable via the `voice_note_hourly_limit` setting). When the quota is exhausted the tool returns an error with `quota` details plus `retry_after_seconds` / `retry_after_at` indicating when the oldest note in the window expires. Usage is counted from the `voice_calls` table over a rolling 1-hour window.
+
