@@ -397,6 +397,7 @@ export async function executeJob(
         triggerType: "scheduled_job",
         callingUserId: job.requestedBy,
         jobId: job.id,
+        jobExecutionId: executionId,
       },
       () =>
         withTrace(

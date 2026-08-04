@@ -708,6 +708,10 @@ export const detachedCommands = pgTable(
     requestedBy: text("requested_by").notNull(),
     channelId: text("channel_id"),
     threadTs: text("thread_ts"),
+    // Link back to the job execution that dispatched this command (issue #1281).
+    // Nullable — interactive turns have no job.
+    jobId: uuid("job_id").references(() => jobs.id),
+    jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
     startedAt: timestamptz("started_at").notNull().defaultNow(),
     completedAt: timestamptz("completed_at"),
     stdoutTail: text("stdout_tail"),
