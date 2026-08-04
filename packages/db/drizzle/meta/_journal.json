@@ -547,6 +547,13 @@
       "when": 1785440000000,
       "tag": "0077_deferred_tool_thread_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1785834655000,
+      "tag": "0078_detached_commands_job_link",
+      "breakpoints": true
     }
   ]
 }
