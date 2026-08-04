@@ -13,6 +13,7 @@ export interface ExecutionContext {
   triggerType: "user_message" | "scheduled_job" | "autonomous";
   callingUserId?: string;
   jobId?: string;
+  jobExecutionId?: string;
   channelId?: string;
   threadTs?: string;
   workspaceId?: string;
