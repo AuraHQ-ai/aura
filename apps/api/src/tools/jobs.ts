@@ -9,6 +9,7 @@ import type { FrequencyConfig, ScheduleContext } from "@aura/db/schema";
 import { waitUntil } from "@vercel/functions";
 import { logger } from "../lib/logger.js";
 import { hasRole } from "../lib/permissions.js";
+import { resolveSlackUserId } from "../lib/resolve-user.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
 import { executeJob } from "../cron/execute-job.js";
@@ -480,7 +481,7 @@ export function createJobTools(
 
     update_job: defineTool({
       description:
-        "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, or re-enable a disabled job (setting enabled: true also un-archives an archived job). Accepts job name or ID.",
+        "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, transfer ownership (requested_by), or re-enable a disabled job (setting enabled: true also un-archives an archived job). Accepts job name or ID.",
       inputSchema: z.object({
         job_id: z.string().optional().describe("UUID of the job to update"),
         name: z
@@ -508,6 +509,12 @@ export function createJobTools(
             .describe("Re-enable a disabled job by setting to true"),
           max_per_day: z.number().optional(),
           min_interval_hours: z.number().optional(),
+          requested_by: z
+            .string()
+            .optional()
+            .describe(
+              "Transfer job ownership to another user (display name, username, or Slack ID). All system notices, retries, and completions route to the new owner. Only the current owner or an admin can transfer.",
+            ),
         }).describe("Fields to update. Only provided fields are changed."),
       }),
       execute: async ({ job_id, name, updates }) => {
@@ -543,6 +550,32 @@ export function createJobTools(
           });
 
           const set: Record<string, unknown> = { updatedAt: new Date() };
+
+          // Ownership transfer: only the current owner, an admin, or anyone for
+          // Aura/system-owned jobs. Every notice path reads jobs.requestedBy live
+          // at send time, so updating the row redirects all system traffic.
+          if (updates.requested_by !== undefined) {
+            const callerId = context?.userId;
+            const allowed =
+              job.requestedBy === "aura" ||
+              (callerId != null && callerId === job.requestedBy) ||
+              (await hasRole(callerId, "admin"));
+            if (!allowed) {
+              return {
+                ok: false as const,
+                error: `Only the current owner (<@${job.requestedBy}>) or an admin can transfer ownership of job "${job.name}".`,
+              };
+            }
+
+            const newOwnerId = await resolveSlackUserId(updates.requested_by);
+            if (!newOwnerId) {
+              return {
+                ok: false as const,
+                error: `Could not resolve "${updates.requested_by}" to a Slack user. Use a display name, username, or Slack ID.`,
+              };
+            }
+            set.requestedBy = newOwnerId;
+          }
 
           if (updates.description !== undefined) set.description = updates.description;
           if (updates.playbook !== undefined) set.playbook = updates.playbook || null;
@@ -647,6 +680,7 @@ export function createJobTools(
               description: updated.description,
               cronSchedule: updated.cronSchedule,
               enabled: updated.enabled === 1,
+              requestedBy: updated.requestedBy,
               nextExecution: updated.executeAt?.toISOString() ?? null,
             },
           };
