@@ -22,6 +22,9 @@ const GITHUB_REPO = "AuraHQ-ai/aura";
 const GITHUB_ISSUE_LABEL = "auto-supervisor-fix";
 const DEFAULT_SUPERVISOR_FIX_DEDUP_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
+// execute-job.ts records successful runs as "completed"; "succeeded" is kept
+// for parity with the job_outcomes success terminology.
+const SUCCESSFUL_EXECUTION_STATUSES = new Set(["completed", "succeeded"]);
 
 type GitHubIssue = {
   number?: number;
@@ -557,6 +560,27 @@ async function applySupervisorDecision(
     }
 
     case "escalate": {
+      // A recovery run that succeeded after this failure was recorded makes
+      // human escalation redundant: resolve silently instead of paging anyone.
+      // (Only escalate is suppressed — report_success / report_failure are
+      // user-facing deliverables and always go out.)
+      const outcomeCreatedAtMs = context.outcome.createdAt.getTime();
+      const newerSuccess = context.executions.find(
+        (execution) =>
+          execution.startedAt.getTime() > outcomeCreatedAtMs &&
+          SUCCESSFUL_EXECUTION_STATUSES.has(execution.status),
+      );
+      if (newerSuccess) {
+        logger.info("job_supervisor_escalation_suppressed_newer_success", {
+          jobId: context.job.id,
+          outcomeId: context.outcome.id,
+          newerExecutionId: newerSuccess.id,
+        });
+        // Same resolution path as silent_success: return without side effects
+        // and let finalizeOutcome mark the outcome resolved.
+        return;
+      }
+
       const text = `${buildUserMessage(decision, `Job \`${context.job.name}\` needs human review.`)}\n\nDecision: escalate\nReason: ${decision.reasoning}\nDetails: ${link}`;
       const opsResult = await sendSupervisorOpsNotice(context.job, text, {
         outcomeId: context.outcome.id,

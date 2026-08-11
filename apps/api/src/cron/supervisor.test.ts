@@ -505,6 +505,82 @@ describe("supervisor cron", () => {
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
+  it("escalate is suppressed when a newer execution completed after the outcome was recorded", async () => {
+    process.env.AURA_OPS_CHANNEL = "C_OPS";
+    process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    generateObjectMock.mockResolvedValue({
+      object: { decision: "escalate", reasoning: "needs human judgment" },
+    });
+    // Outcome recorded at 08:59; a recovery run completed at 08:59:30.
+    queueDbResults(
+      [baseOutcome()],
+      [baseJob()],
+      [
+        baseExecution({
+          id: "00000000-0000-4000-8000-000000000021",
+          status: "completed",
+          error: null,
+          startedAt: new Date("2026-05-20T08:59:30.000Z"),
+          finishedAt: new Date("2026-05-20T08:59:45.000Z"),
+          summary: "Recovery run delivered all artifacts",
+        }),
+        baseExecution(),
+      ],
+    );
+
+    const response = await invokeSupervisor();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, decision: "escalate" });
+    expect(safePostMessageMock).not.toHaveBeenCalled();
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: "escalate",
+    });
+  });
+
+  it("escalate still escalates when no execution completed after the outcome was recorded", async () => {
+    process.env.AURA_OPS_CHANNEL = "C_OPS";
+    process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    generateObjectMock.mockResolvedValue({
+      object: { decision: "escalate", reasoning: "needs human judgment" },
+    });
+    // Only an OLDER completed run exists (before the outcome at 08:59) — it
+    // must not suppress the escalation.
+    queueDbResults(
+      [baseOutcome()],
+      [baseJob()],
+      [
+        baseExecution(),
+        baseExecution({
+          id: "00000000-0000-4000-8000-000000000022",
+          status: "completed",
+          error: null,
+          startedAt: new Date("2026-05-19T08:55:00.000Z"),
+          finishedAt: new Date("2026-05-19T08:58:00.000Z"),
+        }),
+      ],
+    );
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "C_OPS" }),
+    );
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedBy: "U_FOUNDER" }),
+    );
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: "escalate",
+    });
+  });
+
   it("falls back to the requester DM as a last resort when no ops destination is configured", async () => {
     generateObjectMock.mockResolvedValue({
       object: { decision: "retry_as_is", reasoning: "transient failure" },
