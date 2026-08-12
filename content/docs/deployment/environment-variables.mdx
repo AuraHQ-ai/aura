@@ -18,6 +18,7 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `DASHBOARD_SESSION_SECRET` | Secret for signing dashboard session JWTs and HMAC origin verification. Required for the dashboard to function. |
 | `DASHBOARD_API_SECRET` | Shared secret between the dashboard and API for authenticated internal requests (chat, data queries). |
 | `CRON_SECRET` | Secret for authenticating cron invocations (heartbeat, memory consolidation). Set in Vercel cron config. |
+| `CREDENTIALS_KEY` | 64-character hex string (32 bytes) used to encrypt/decrypt all credentials in the credential store. Any credential read/write throws without it, and `storeApiCredential` additionally requires the name to match `/^[a-z][a-z0-9_]{1,62}$/`. |
 
 ## Recommended
 
@@ -31,7 +32,6 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `AURA_PUBLIC_URL` | Public base URL of the API deployment. Used for sandbox completion webhooks and supervisor callbacks. |
 | `SANDBOX_WEBHOOK_SECRET` | Secret for signing sandbox completion webhooks (`run_command_detached` resume). Both this and `AURA_PUBLIC_URL` must be set for detached commands to resume conversations. |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings and audio transcription |
-| `AURA_BOT_USER_ID` | Aura's own Slack bot user ID |
 
 ## Optional Integrations
 
@@ -42,12 +42,12 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `GOOGLE_BQ_CREDENTIALS` | Legacy BigQuery service account fallback for older deployments. Current runtime expects the encrypted credential `google_bq_credentials`. |
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | Legacy alternative to `GOOGLE_BQ_CREDENTIALS` for older deployments. |
 | `TAVILY_API_KEY` | Tavily API key for web search |
-| `BROWSERBASE_API_KEY` | Browserbase API key for browser automation |
-| `BROWSERBASE_PROJECT_ID` | Browserbase project ID |
+| `BROWSERBASE_API_KEY` | Browserbase API key for browser automation. Resolved from the credential store (`browserbase_api_key`), not a plain env var -- add it as a credential in the dashboard. |
+| `BROWSERBASE_PROJECT_ID` | Browserbase project ID. Read from the `browserbase_project_id` workspace setting, not env. |
 | `ELEVENLABS_API_KEY` | ElevenLabs API key for voice calls |
-| `ELEVENLABS_AGENT_ID` | ElevenLabs conversational AI agent ID |
-| `ELEVENLABS_FROM_NUMBER` | Phone number for outbound voice calls |
-| `ELEVENLABS_WEBHOOK_SECRET` | Secret for verifying ElevenLabs webhook payloads |
+| `ELEVENLABS_AGENT_ID` | ElevenLabs conversational AI agent ID. Read from the `elevenlabs_agent_id` workspace setting at execution time (same for `ELEVENLABS_VOICE_ID` and `ELEVENLABS_FROM_NUMBER`), so rotation needs no redeploy. |
+| `ELEVENLABS_FROM_NUMBER` | Phone number for outbound voice calls (workspace setting, see above). |
+| `ELEVENLABS_WEBHOOK_SECRET` | Secret for verifying ElevenLabs webhook payloads. Read from the `elevenlabs_webhook_secret` workspace setting. |
 | `CURSOR_API_KEY` | Cursor API key for dispatching Cursor cloud agents |
 | `CURSOR_WEBHOOK_SECRET` | Secret for verifying Cursor agent webhook callbacks |
 | `COHERE_API_KEY` | Cohere API key for reranking search results |
@@ -57,7 +57,7 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `LANGFUSE_TRACING_ENVIRONMENT` | Override the tracing environment label. Defaults to `VERCEL_ENV` (production/preview), then `NODE_ENV` |
 | `LANGFUSE_RELEASE` | Release identifier attached to traces. Defaults to `VERCEL_GIT_COMMIT_SHA` |
 | `LANGFUSE_DROP_ORPHAN_EMBEDDINGS` | Set to `true` to skip exporting orphan embedding spans |
-| `VERCEL_TOKEN` | Vercel token (injected into sandbox for deployments) |
+| `VERCEL_TOKEN` | Vercel token. Not read by the API runtime -- it only reaches the sandbox when configured as a credential (`vercel_token`) in the dashboard. |
 
 ## Dashboard
 
@@ -69,21 +69,23 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 
 ## Branding / Identity
 
-| Variable | Description |
+These are **workspace settings**, not environment variables -- set them in the dashboard; the API reads them via the settings table.
+
+| Setting | Description |
 |----------|-------------|
-| `COMPANY_NAME` | Company name used in email signatures |
-| `AURA_WEBSITE_URL` | Website URL used in email signatures |
-| `AURA_EMAIL_ADDRESS` | Aura's email address for outbound email |
+| `company_name` | Company name used in email signatures |
+| `aura_website_url` | Website URL used in email signatures |
+| `aura_email_address` | Aura's email address for outbound email |
+| `aura_bot_user_id` | Aura's own Slack bot user ID (used to detect self-messages and as the default job owner) |
 
 ## Model Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MODEL_MAIN` | Primary model ID (Vercel AI Gateway format) | `anthropic/claude-sonnet-4-20250514` |
-| `MODEL_FAST` | Fast model for simple tasks | `anthropic/claude-haiku-4.5` |
-| `MODEL_ESCALATION` | Escalation model for complex reasoning | `anthropic/claude-opus-4.6` |
+Model selection is **not env-driven**. There are no `MODEL_*` environment variables in the API runtime. `resolveModelId()` in `apps/api/src/lib/ai.ts` resolves each of the five categories (`main`, `fast`, `medium`, `embedding`, `escalation`) as:
 
-Models are resolved in order: (1) the `model_<category>` settings row in the database (set via the dashboard or Slack App Home), then (2) the hardcoded `LAST_RESORT_MODELS` constant in `apps/api/src/lib/ai.ts`. There is no `MODEL_EMBEDDING` environment variable — the embedding model is resolved from the `model_embedding` settings row, with a hardcoded last resort of `openai/text-embedding-3-small`. Admins can update any model setting from the dashboard Settings page without redeploying.
+1. **DB setting** (`model_main`, `model_fast`, `model_medium`, `model_embedding`, `model_escalation`) -- set per-workspace via the dashboard or Slack App Home
+2. **Hardcoded `LAST_RESORT_MODELS` fallback** -- a small constant map in `apps/api/src/lib/ai.ts`, used (with a warning log) when no settings row exists
+
+See [Architecture -- Model Resolution](/architecture#model-resolution) for the current fallback defaults per category.
 
 ## Observability (Langfuse)
 
