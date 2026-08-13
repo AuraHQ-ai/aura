@@ -670,6 +670,8 @@ describe("heartbeat stale running recovery", () => {
     // Cron "0 10 * * *" at 2026-05-20T08:59Z → lastCronTick = 2026-05-19T10:00Z.
     // lastExecutedAt >= lastCronTick means isRecurringJobDue() returns false,
     // but the concrete past executeAt (manual requeue / stale recovery) must win.
+    // executeAt 08:30 is off the cron tick, so the run is classified as an
+    // off-schedule "recovery" trigger (issue #1238) — it still executes.
     const requeuedJob = baseJob({
       status: "pending",
       cronSchedule: "0 10 * * *",
@@ -699,7 +701,7 @@ describe("heartbeat stale running recovery", () => {
     expect(response.status).toBe(200);
     expect(executeJobMock).toHaveBeenCalledWith(
       expect.objectContaining({ id: "job-1", name: "alicia-lista-prospeccion-diaria" }),
-      "heartbeat",
+      "recovery",
     );
     const body = await response.json();
     expect(body.executed).toBe(1);
@@ -774,6 +776,242 @@ describe("heartbeat stale running recovery", () => {
     );
     const body = await response.json();
     expect(body.executed).toBe(1);
+  });
+
+  // ── Issue #1238: off-schedule runs must not consume the min_interval budget ──
+
+  it("fires a min-interval job on schedule despite a recent off-schedule run (issue #1238)", async () => {
+    // docs-maintenance repro: daily cron, minIntervalHours 20. A recovery /
+    // dedup-catch run stamped jobs.lastExecutedAt 18.9h ago (old code: blocked),
+    // but the last genuine SCHEDULED execution (trigger='heartbeat') was 28.9h
+    // ago → the gate must pass and the job must fire.
+    const recurringJob = baseJob({
+      status: "pending",
+      cronSchedule: "0 4 * * *",
+      name: "docs-maintenance",
+      retries: 0,
+      executeAt: null,
+      frequencyConfig: { minIntervalHours: 20 },
+      // Stamped by the off-schedule recovery run; < lastCronTick (2026-05-20T04:00Z)
+      // so cron dedup passes.
+      lastExecutedAt: new Date("2026-05-19T14:04:00.000Z"),
+    });
+
+    executeJobMock.mockResolvedValue(true);
+    queueDbResults(
+      [recurringJob], // pending jobs
+      // last scheduled (trigger='heartbeat') execution: 28.98h ago > 20h
+      [{ startedAt: new Date("2026-05-19T04:00:00.000Z") }],
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "job-1", name: "docs-maintenance" }),
+      "heartbeat",
+    );
+    const body = await response.json();
+    expect(body.executed).toBe(1);
+  });
+
+  it("still blocks a min-interval job whose last SCHEDULED run is too recent (issue #1238)", async () => {
+    // Over-fire protection preserved: last trigger='heartbeat' execution was
+    // 14.98h ago < minIntervalHours 20 → not due.
+    const recurringJob = baseJob({
+      status: "pending",
+      cronSchedule: null,
+      name: "frequency-only-job",
+      retries: 0,
+      executeAt: null,
+      frequencyConfig: { minIntervalHours: 20 },
+      lastExecutedAt: new Date("2026-05-19T18:00:00.000Z"),
+    });
+
+    queueDbResults(
+      [recurringJob], // pending jobs
+      // last scheduled execution: 14.98h ago < 20h → blocked
+      [{ startedAt: new Date("2026-05-19T18:00:00.000Z") }],
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.executed).toBe(0);
+  });
+
+  it("passes the min-interval gate when the job has no scheduled executions at all (issue #1238)", async () => {
+    // Only off-schedule (dispatch/recovery) rows exist → the scheduled-run
+    // query returns nothing and the gate fails open. lastExecutedAt (stamped
+    // 5 minutes ago by a dispatch run) must NOT block the fire.
+    const recurringJob = baseJob({
+      status: "pending",
+      cronSchedule: null,
+      name: "never-fired-on-schedule",
+      retries: 0,
+      executeAt: null,
+      frequencyConfig: { minIntervalHours: 20, cooldownHours: 4 },
+      lastExecutedAt: new Date("2026-05-20T08:54:00.000Z"),
+    });
+
+    executeJobMock.mockResolvedValue(true);
+    queueDbResults(
+      [recurringJob], // pending jobs
+      [], // no trigger='heartbeat' execution rows
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "never-fired-on-schedule" }),
+      "heartbeat",
+    );
+    const body = await response.json();
+    expect(body.executed).toBe(1);
+  });
+
+  it("still blocks on cooldownHours when the last SCHEDULED run is inside the cooldown (issue #1238)", async () => {
+    const recurringJob = baseJob({
+      status: "pending",
+      cronSchedule: null,
+      name: "cooldown-job",
+      retries: 0,
+      executeAt: null,
+      frequencyConfig: { cooldownHours: 6 },
+      lastExecutedAt: new Date("2026-05-20T06:00:00.000Z"),
+    });
+
+    queueDbResults(
+      [recurringJob], // pending jobs
+      // last scheduled execution: 2.98h ago < 6h cooldown → blocked
+      [{ startedAt: new Date("2026-05-20T06:00:00.000Z") }],
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body.executed).toBe(0);
+  });
+
+  it("runs a recurring job with executeAt exactly on a cron tick as a scheduled 'heartbeat' fire (issue #1238)", async () => {
+    // First fire after creation (tools/jobs.ts) and exhausted-stale recovery
+    // both set executeAt to an exact cron tick — these ARE on-schedule and
+    // must consume the min_interval budget.
+    const firstFireJob = baseJob({
+      status: "pending",
+      cronSchedule: "0 8 * * *",
+      name: "first-fire-on-tick",
+      retries: 0,
+      executeAt: new Date("2026-05-20T08:00:00.000Z"),
+      lastExecutedAt: null,
+    });
+
+    executeJobMock.mockResolvedValue(true);
+    queueDbResults(
+      [firstFireJob], // pending jobs (picked via executeAt <= now branch)
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "first-fire-on-tick" }),
+      "heartbeat",
+    );
+  });
+
+  it("runs a supervisor-requeued recurring job (off-tick executeAt) as 'recovery' so it does not stamp the min_interval budget (issue #1238)", async () => {
+    // Supervisor retry_as_is / retry_with_fix and stale-running recovery set
+    // executeAt = now, which never lands on a cron tick → trigger "recovery",
+    // and the resulting job_executions row is excluded from the
+    // lastScheduledExecutionAt anchor by its trigger value.
+    const requeuedJob = baseJob({
+      status: "pending",
+      cronSchedule: "0 4 * * *",
+      name: "supervisor-requeued",
+      retries: 0,
+      executeAt: new Date("2026-05-20T08:45:12.000Z"),
+      lastExecutedAt: new Date("2026-05-20T04:00:00.000Z"),
+      frequencyConfig: { minIntervalHours: 20 },
+    });
+
+    executeJobMock.mockResolvedValue(true);
+    queueDbResults(
+      [requeuedJob], // pending jobs (picked via executeAt <= now branch)
+      [], // expired plan notes
+      [], // stale plan notes
+      [], // orphan pending_review outcomes
+      [], // orphan in_progress outcomes
+      [], // dequeued jobs without execution rows
+      [], // stale running jobs below max retries
+      [], // stale exhausted jobs
+    );
+
+    const { heartbeatApp } = await import("./heartbeat.js");
+    const response = await heartbeatApp.request("/api/cron/heartbeat", {
+      headers: { authorization: "Bearer test-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(executeJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "supervisor-requeued" }),
+      "recovery",
+    );
   });
 
   it("legacy escalation is no longer called", () => {
