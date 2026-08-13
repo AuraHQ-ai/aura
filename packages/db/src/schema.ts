@@ -555,8 +555,22 @@ export const resources = pgTable(
 // ── Jobs (unified: one-shot tasks, recurring work, continuations) ───────────
 
 export interface FrequencyConfig {
+  /**
+   * Minimum hours between SCHEDULED fires. Anchored to the most recent
+   * job_executions row with trigger = 'heartbeat' (a genuine on-schedule
+   * fire) — off-schedule runs (trigger 'dispatch', 'continuation',
+   * 'recovery') do NOT reset this clock (issue #1238).
+   */
   minIntervalHours?: number;
+  /**
+   * Daily execution cap. Counts ALL executions regardless of trigger — a
+   * manual dispatch or recovery run consumes the daily budget.
+   */
   maxPerDay?: number;
+  /**
+   * Post-run cooldown before the next scheduled fire. Same scheduled-only
+   * anchoring as minIntervalHours.
+   */
   cooldownHours?: number;
 }
 
