@@ -591,6 +591,13 @@ export const jobs = pgTable(
     enabled: integer("enabled").notNull().default(1),
     archivedAt: timestamptz("archived_at"),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
+    // ── Scoped execution (issue #1302) — all nullable so existing jobs run unchanged ──
+    /** Model catalog category to execute with. Null = 'main' (current behavior). */
+    model: text("model").$type<"main" | "fast" | "escalation">(),
+    /** Sandbox env var names this job may access. Null = full caller-scoped inheritance. */
+    envAllowlist: text("env_allowlist").array(),
+    /** 'task' = minimal task prompt (no personality/notes). Null = 'full' (current behavior). */
+    promptMode: text("prompt_mode").$type<"full" | "task">(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
