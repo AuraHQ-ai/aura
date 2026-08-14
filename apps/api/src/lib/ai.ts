@@ -304,6 +304,37 @@ export async function getEscalationModel() {
   return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
 }
 
+/**
+ * Model categories a job can be routed to (subset of the catalog categories —
+ * 'embedding' makes no sense for text generation).
+ */
+export const JOB_MODEL_CATEGORIES = ["main", "fast", "escalation"] as const;
+export type JobModelCategory = (typeof JOB_MODEL_CATEGORIES)[number];
+
+export function isJobModelCategory(value: unknown): value is JobModelCategory {
+  return (
+    typeof value === "string" &&
+    JOB_MODEL_CATEGORIES.includes(value as JobModelCategory)
+  );
+}
+
+const SETTING_KEY_BY_CATEGORY: Record<JobModelCategory, string> = {
+  main: "model_main",
+  fast: "model_fast",
+  escalation: "model_escalation",
+};
+
+/**
+ * Resolve a language model by catalog category. Same resolution order as the
+ * dedicated getters (DB setting > catalog default), with Anthropic fallback.
+ * Used by scoped job execution to route a job to e.g. the fast model.
+ */
+export async function getModelByCategory(category: JobModelCategory) {
+  const modelId = await resolveModelId(SETTING_KEY_BY_CATEGORY[category], category);
+  const gatewayModel = gateway(modelId);
+  return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
+}
+
 
 
 

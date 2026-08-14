@@ -4,8 +4,10 @@ import type { ScheduleContext } from "@aura/db/schema";
 import {
   getMainModel,
   getEscalationModel,
+  getModelByCategory,
   buildCachedSystemMessages,
   withCacheControl,
+  type JobModelCategory,
 } from "./ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
@@ -99,10 +101,15 @@ export interface HeadlessAgentOptions {
   context?: ScheduleContext;
   systemPrompt: string;
   invocationId?: string;
+  /** Model catalog category to execute with. Defaults to "main" (legacy behavior). */
+  modelCategory?: JobModelCategory;
 }
 
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
-  const { modelId, model } = await getMainModel();
+  const { modelId, model } =
+    options.modelCategory && options.modelCategory !== "main"
+      ? await getModelByCategory(options.modelCategory)
+      : await getMainModel();
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const stepModelIds: string[] = [];
   const systemPrompt = appendDeferredToolsBlock(

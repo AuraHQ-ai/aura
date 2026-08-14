@@ -1,6 +1,7 @@
 import * as nodePath from "node:path";
 import { getSetting, setSetting } from "./settings.js";
 import { decryptCredential } from "./credentials.js";
+import { executionContext } from "./tool.js";
 import { db } from "../db/client.js";
 import { credentials, credentialGrants, users } from "@aura/db/schema";
 import { logger } from "./logger.js";
@@ -200,6 +201,57 @@ function resolveSandboxEnvName(row: SandboxCredentialRow): string {
   return row.sandboxEnvName || row.name.toUpperCase();
 }
 
+// ── Env allowlist (scoped job execution) ─────────────────────────────────────
+
+/**
+ * Env vars the sandbox runtime itself needs (sandbox creation/resume, GCS
+ * mount). These always pass through an allowlist filter — without them a
+ * scoped job couldn't even boot its sandbox.
+ */
+export const CORE_SANDBOX_ENV_NAMES = [
+  "E2B_API_KEY",
+  "E2B_TEMPLATE_ID",
+  "GOOGLE_SA_KEY_B64",
+] as const;
+
+/**
+ * Restrict an env map to the given allowlist of credential env names (matched
+ * case-insensitively) plus core infra vars. Narrows only — names on the
+ * allowlist that aren't in the map are NOT added. A null/undefined allowlist
+ * returns the map unchanged (full inheritance, today's behavior).
+ */
+export function filterEnvsByAllowlist(
+  envs: Record<string, string>,
+  allowlist: string[] | null | undefined,
+): Record<string, string> {
+  if (allowlist == null) return envs;
+
+  const allowed = new Set<string>(
+    [...allowlist, ...CORE_SANDBOX_ENV_NAMES].map((name) => name.toUpperCase()),
+  );
+  // GITHUB_TOKEN is aliased to GH_TOKEN for the gh CLI — allow the alias
+  // whenever the canonical name is allowed (and vice versa).
+  if (allowed.has("GITHUB_TOKEN")) allowed.add("GH_TOKEN");
+  if (allowed.has("GH_TOKEN")) allowed.add("GITHUB_TOKEN");
+
+  const filtered: Record<string, string> = {};
+  for (const [name, value] of Object.entries(envs)) {
+    if (allowed.has(name.toUpperCase())) {
+      filtered[name] = value;
+    }
+  }
+  return filtered;
+}
+
+/**
+ * Read the env allowlist for the current execution from AsyncLocalStorage.
+ * Set by executeJob for jobs with an `env_allowlist`; undefined everywhere
+ * else (interactive turns, unscoped jobs) — meaning full inheritance.
+ */
+function getActiveEnvAllowlist(): string[] | undefined {
+  return executionContext.getStore()?.envAllowlist;
+}
+
 async function resolveSandboxCredentialRows(
   userId: string | undefined,
   includeValue: true,
@@ -345,6 +397,21 @@ export async function getSandboxEnvs(userId?: string): Promise<Record<string, st
 
   if (envs.GITHUB_TOKEN && !envs.GH_TOKEN) {
     envs.GH_TOKEN = envs.GITHUB_TOKEN;
+  }
+
+  // Scoped job execution: when the current execution context carries an env
+  // allowlist, intersect the caller-scoped set with it. Applied here so every
+  // sandbox path (tools, bootstrap, file writes) is covered uniformly.
+  const allowlist = getActiveEnvAllowlist();
+  if (allowlist != null) {
+    const filtered = filterEnvsByAllowlist(envs, allowlist);
+    logger.info("getSandboxEnvs: env allowlist applied", {
+      userId,
+      allowlistSize: allowlist.length,
+      before: Object.keys(envs).length,
+      after: Object.keys(filtered).length,
+    });
+    return filtered;
   }
 
   return envs;

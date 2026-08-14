@@ -16,6 +16,12 @@ export interface ExecutionContext {
   channelId?: string;
   threadTs?: string;
   workspaceId?: string;
+  /**
+   * When set (scoped job execution), sandbox env resolution is restricted to
+   * ONLY these credential env names plus core infra vars. Narrows the
+   * caller-scoped set — never widens it.
+   */
+  envAllowlist?: string[];
   detachedCommandSuspended?: {
     commandId: string;
   };
