@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { generateObject, rerank } from "ai";
+import { generateText, Output, rerank } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import { memories, messages, type Memory } from "@aura/db/schema";
@@ -107,9 +107,9 @@ async function extractQueryEntities(
 ): Promise<Array<{ name: string; type: EntityType }>> {
   try {
     const model = await getFastModel();
-    const { object, usage } = await generateObject({
+    const { output: object, usage } = await generateText({
       model,
-      schema: queryEntitySchema,
+      output: Output.object({ schema: queryEntitySchema }),
       prompt: `Extract entity mentions from this message. Include explicitly named entities and strongly implied ones. Be conservative — only extract entities you're confident about.
 
 Entity types: person, company, project, product, channel, technology, concept, location
@@ -156,9 +156,9 @@ async function planQuery(
   const fallback: QueryPlan = { rewritten: query, subQueries: [] };
   try {
     const model = await getFastModel();
-    const { object, usage } = await generateObject({
+    const { output: object, usage } = await generateText({
       model,
-      schema: queryPlanSchema,
+      output: Output.object({ schema: queryPlanSchema }),
       prompt: `Rewrite this message into a concise, standalone search query for a memory database: resolve pronouns, drop greetings/filler, keep the salient entities and intent.
 
 If, and only if, answering requires multiple independent facts, also return 2-4 atomic sub-queries, each retrievable on its own. For a single-fact question, return an empty subQueries array.

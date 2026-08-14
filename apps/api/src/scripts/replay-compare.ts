@@ -47,7 +47,7 @@ const limit = readNumberFlag("limit", 40);
 const concurrency = readNumberFlag("concurrency", 3);
 
 const { sql, and, eq, asc, inArray } = await import("drizzle-orm");
-const { generateText, generateObject } = await import("ai");
+const { generateText, Output } = await import("ai");
 const { z } = await import("zod");
 const { db } = await import("../db/client.js");
 const {
@@ -272,9 +272,9 @@ async function runCase(c: CaseRow): Promise<CaseResult | null> {
   const A = replayFirst ? replayText : ctx.originalText;
   const B = replayFirst ? ctx.originalText : replayText;
 
-  const { object: judged } = await generateObject({
+  const { output: judged } = await generateText({
     model: fastModel,
-    schema: pairwiseSchema,
+    output: Output.object({ schema: pairwiseSchema }),
     instructions: `You compare two candidate replies from an AI assistant in a Slack conversation and pick the one that better FULFILLS the user's intent: more correct, grounded in the provided evidence (no fabricated facts), complete, and actionable. Tone/length only break ties. Declare "tie" when neither is meaningfully better. You do not know which candidate is newer — judge only quality.`,
     prompt: `${ctx.contextBlock}\n\n<candidate_A>\n${clip(A, MAX_RESPONSE_CHARS)}\n</candidate_A>\n\n<candidate_B>\n${clip(B, MAX_RESPONSE_CHARS)}\n</candidate_B>\n\nWhich candidate better fulfills the user's intent?`,
     temperature: 0,

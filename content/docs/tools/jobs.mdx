@@ -19,7 +19,7 @@ If a recurring job is left in `running` past the stale threshold and has already
 
 ## Supervisor pattern
 
-After every job execution finishes (success, error, or interruption), the heartbeat writes a row to the `job_outcomes` table and fires a webhook to `POST /api/cron/supervisor`. The supervisor is a separately invoked endpoint that runs a fast-model LLM (`generateObject`) over the outcome plus recent job context and picks exactly one decision:
+After every job execution finishes (success, error, or interruption), the heartbeat writes a row to the `job_outcomes` table and fires a webhook to `POST /api/cron/supervisor`. The supervisor is a separately invoked endpoint that runs a fast-model LLM (`generateText` with structured output) over the outcome plus recent job context and picks exactly one decision:
 
 | Decision | What it does |
 |----------|--------------|

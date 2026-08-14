@@ -1,4 +1,4 @@
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -249,9 +249,9 @@ export async function computeThreadStates(
       const threadText = reconstructThread(emails);
       const prompt = buildPrompt(threadText, userName);
 
-      const { object } = await generateObject({
+      const { output: object } = await generateText({
         model,
-        schema: threadStateSchema,
+        output: Output.object({ schema: threadStateSchema }),
         prompt,
         maxOutputTokens: 200,
         telemetry: aiTelemetry("email-triage"),

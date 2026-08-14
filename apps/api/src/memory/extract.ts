@@ -1,4 +1,4 @@
-import { generateText, generateObject, Output } from "ai";
+import { generateText, Output } from "ai";
 import { gateway } from "@ai-sdk/gateway";
 import { z } from "zod";
 import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
@@ -1026,9 +1026,9 @@ async function detectContradictions(
         .map((c, i) => `[${i}] ${c.content}`)
         .join("\n");
 
-      const { object, usage } = await generateObject({
+      const { output: object, usage } = await generateText({
         model,
-        schema: contradictionResultSchema,
+        output: Output.object({ schema: contradictionResultSchema }),
         instructions: CONTRADICTION_PROMPT,
         prompt: `NEW MEMORY: ${newMem.content}\n\nEXISTING CANDIDATE MEMORIES:\n${candidateList}`,
         telemetry: aiTelemetry("memory-contradiction"),

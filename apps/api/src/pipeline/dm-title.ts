@@ -66,22 +66,22 @@ async function generateStructuredTitle(params: {
   instructions: string;
   prompt: string;
 }): Promise<string | null> {
-  const [{ generateObject }, { getFastModel }] = await Promise.all([
+  const [{ generateText, Output }, { getFastModel }] = await Promise.all([
     import("ai"),
     import("../lib/ai.js"),
   ]);
   const fastModel = await getFastModel();
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: fastModel,
-    schema: dmThreadTitleSchema,
+    output: Output.object({ schema: dmThreadTitleSchema }),
     instructions: params.instructions,
     prompt: params.prompt,
     temperature: 0,
     telemetry: aiTelemetry("dm-title"),
   });
 
-  return selectDmThreadTitle(object);
+  return selectDmThreadTitle(output);
 }
 
 export async function generateInitialDmThreadTitle(params: {

@@ -51,7 +51,7 @@ function entry(partId: string, overrides: Partial<JudgeEntry> = {}): JudgeEntry 
 }
 
 function generateReturning(responses: JudgeEntry[]) {
-  return vi.fn(async () => ({ object: { responses } })) as any;
+  return vi.fn(async () => ({ output: { responses } })) as any;
 }
 
 beforeEach(() => {
