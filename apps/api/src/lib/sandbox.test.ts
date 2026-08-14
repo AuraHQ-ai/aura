@@ -54,7 +54,13 @@ vi.mock("./logger.js", () => ({
 
 import { logger } from "./logger.js";
 import { getSetting } from "./settings.js";
-import { bootstrapToolsRepo, getSandboxEnvs, getSandboxEnvNames } from "./sandbox.js";
+import { executionContext } from "./tool.js";
+import {
+  bootstrapToolsRepo,
+  getSandboxEnvs,
+  getSandboxEnvNames,
+  filterEnvsByAllowlist,
+} from "./sandbox.js";
 
 const getSettingMock = vi.mocked(getSetting);
 const loggerWarnMock = vi.mocked(logger.warn);
@@ -126,6 +132,144 @@ describe("getSandboxEnvs", () => {
     const envs = await getSandboxEnvs("U_CALLER");
 
     expect(envs.GITHUB_TOKEN).toBe("caller-token");
+  });
+});
+
+describe("getSandboxEnvs env allowlist (scoped job execution)", () => {
+  const memberCredential = (name: string, value: string): CredentialRow => ({
+    id: `cred-${name}`,
+    name,
+    value,
+    ownerId: "U_OWNER",
+    scope: "member",
+    sandboxEnvName: null,
+  });
+
+  const rows = [
+    memberCredential("meta_admin_token", "meta-secret"),
+    memberCredential("slack_bot_token", "slack-secret"),
+    memberCredential("anthropic_api_key", "anthropic-secret"),
+    memberCredential("github_token", "github-secret"),
+    memberCredential("e2b_api_key", "e2b-secret"),
+  ];
+
+  beforeEach(() => {
+    queueDbResults();
+    vi.clearAllMocks();
+    resolveUserCredentialsMock.mockResolvedValue(
+      new Set(rows.map((row) => row.name)),
+    );
+  });
+
+  it("filters to allowlisted vars plus core infra when the execution context carries an allowlist", async () => {
+    queueDbResults([], rows);
+
+    const envs = await executionContext.run(
+      {
+        triggeredBy: "U_CALLER",
+        triggerType: "scheduled_job",
+        envAllowlist: ["META_ADMIN_TOKEN", "SLACK_BOT_TOKEN"],
+      },
+      () => getSandboxEnvs("U_CALLER"),
+    );
+
+    // Allowlisted vars present
+    expect(envs.META_ADMIN_TOKEN).toBe("meta-secret");
+    expect(envs.SLACK_BOT_TOKEN).toBe("slack-secret");
+    // Non-listed credentials absent
+    expect(envs.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(envs.GITHUB_TOKEN).toBeUndefined();
+    expect(envs.GH_TOKEN).toBeUndefined();
+    // Core infra passes through so the sandbox can still boot
+    expect(envs.E2B_API_KEY).toBe("e2b-secret");
+  });
+
+  it("returns the full env set when no allowlist is in the execution context", async () => {
+    queueDbResults([], rows);
+
+    const envs = await executionContext.run(
+      { triggeredBy: "U_CALLER", triggerType: "scheduled_job" },
+      () => getSandboxEnvs("U_CALLER"),
+    );
+
+    expect(envs.META_ADMIN_TOKEN).toBe("meta-secret");
+    expect(envs.ANTHROPIC_API_KEY).toBe("anthropic-secret");
+    expect(envs.GITHUB_TOKEN).toBe("github-secret");
+    expect(envs.GH_TOKEN).toBe("github-secret");
+  });
+
+  it("returns the full env set outside any execution context", async () => {
+    queueDbResults([], rows);
+
+    const envs = await getSandboxEnvs("U_CALLER");
+
+    expect(envs.ANTHROPIC_API_KEY).toBe("anthropic-secret");
+    expect(envs.GITHUB_TOKEN).toBe("github-secret");
+  });
+
+  it("an empty allowlist keeps only core infra vars", async () => {
+    queueDbResults([], rows);
+
+    const envs = await executionContext.run(
+      {
+        triggeredBy: "U_CALLER",
+        triggerType: "scheduled_job",
+        envAllowlist: [],
+      },
+      () => getSandboxEnvs("U_CALLER"),
+    );
+
+    expect(Object.keys(envs).sort()).toEqual(["E2B_API_KEY"]);
+  });
+});
+
+describe("filterEnvsByAllowlist", () => {
+  const envs = {
+    META_ADMIN_TOKEN: "meta-secret",
+    SLACK_BOT_TOKEN: "slack-secret",
+    ANTHROPIC_API_KEY: "anthropic-secret",
+    GITHUB_TOKEN: "github-secret",
+    GH_TOKEN: "github-secret",
+    E2B_API_KEY: "e2b-secret",
+    E2B_TEMPLATE_ID: "template-1",
+  };
+
+  it("keeps allowlisted and core infra vars, drops the rest", () => {
+    const filtered = filterEnvsByAllowlist(envs, ["META_ADMIN_TOKEN"]);
+
+    expect(filtered).toEqual({
+      META_ADMIN_TOKEN: "meta-secret",
+      E2B_API_KEY: "e2b-secret",
+      E2B_TEMPLATE_ID: "template-1",
+    });
+  });
+
+  it("matches allowlist entries case-insensitively", () => {
+    const filtered = filterEnvsByAllowlist(envs, ["meta_admin_token"]);
+
+    expect(filtered.META_ADMIN_TOKEN).toBe("meta-secret");
+    expect(filtered.SLACK_BOT_TOKEN).toBeUndefined();
+  });
+
+  it("allows the GH_TOKEN alias when GITHUB_TOKEN is allowlisted", () => {
+    const filtered = filterEnvsByAllowlist(envs, ["GITHUB_TOKEN"]);
+
+    expect(filtered.GITHUB_TOKEN).toBe("github-secret");
+    expect(filtered.GH_TOKEN).toBe("github-secret");
+  });
+
+  it("narrows only — allowlisted names not in the env map are not added", () => {
+    const filtered = filterEnvsByAllowlist(
+      { E2B_API_KEY: "e2b-secret" },
+      ["SOME_TOKEN_THE_CALLER_CANNOT_ACCESS"],
+    );
+
+    expect(filtered).toEqual({ E2B_API_KEY: "e2b-secret" });
+  });
+
+  it("returns the map unchanged for a null allowlist (full inheritance)", () => {
+    expect(filterEnvsByAllowlist(envs, null)).toEqual(envs);
+    expect(filterEnvsByAllowlist(envs, undefined)).toEqual(envs);
   });
 });
 
