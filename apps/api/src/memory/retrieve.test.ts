@@ -5,7 +5,7 @@ const retrieveMocks = vi.hoisted(() => ({
   embedText: vi.fn(),
   getFastModel: vi.fn(),
   getRerankingModel: vi.fn(),
-  generateObject: vi.fn(),
+  generateText: vi.fn(),
   rerank: vi.fn(),
   resolveEntityReadOnly: vi.fn(),
 }));
@@ -35,7 +35,8 @@ vi.mock("../lib/logger.js", () => ({
 }));
 
 vi.mock("ai", () => ({
-  generateObject: retrieveMocks.generateObject,
+  generateText: retrieveMocks.generateText,
+  Output: { object: (spec: unknown) => spec },
   rerank: retrieveMocks.rerank,
 }));
 
@@ -218,11 +219,11 @@ describe("retrieveMemories temporal validity", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-09T08:00:00.000Z"));
     retrieveMocks.dbExecute.mockReset();
-    retrieveMocks.generateObject.mockReset();
+    retrieveMocks.generateText.mockReset();
     retrieveMocks.getRerankingModel.mockReset();
     retrieveMocks.resolveEntityReadOnly.mockReset();
-    retrieveMocks.generateObject.mockResolvedValue({
-      object: { entities: [] },
+    retrieveMocks.generateText.mockResolvedValue({
+      output: { entities: [] },
       usage: {},
     });
     retrieveMocks.getRerankingModel.mockResolvedValue(null);
@@ -271,8 +272,8 @@ describe("retrieveMemories temporal validity", () => {
   });
 
   it("applies the live expiration predicate to the entity-first lane", async () => {
-    retrieveMocks.generateObject.mockResolvedValueOnce({
-      object: { entities: [{ name: "Aura", type: "project" }] },
+    retrieveMocks.generateText.mockResolvedValueOnce({
+      output: { entities: [{ name: "Aura", type: "project" }] },
       usage: {},
     });
     retrieveMocks.resolveEntityReadOnly.mockResolvedValueOnce({ entityId: "entity-1" });

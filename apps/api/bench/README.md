@@ -38,7 +38,9 @@ Overall QA accuracy and recall@15 over time, grouped by scope so every row in a 
 
 | date | commit | QA | recall@15 | n | cost | runtime |
 |---|---|---:|---:|---:|---:|---:|
+| 2026-08-14 | `289cb431` | 83% | 88% | 12 | $1.02 | 12m16s |
 | 2026-08-14 | `f5bdba6a` | 75% | 83% | 12 | $0.98 | 14m20s |
+| 2026-08-14 | `286f76b6` | 83% | 83% | 12 | $1.05 | 10m56s |
 | 2026-07-30 | `14a6ab97` | 75% | 83% | 12 | $1.00 | 14m43s |
 | 2026-07-14 | `3b0e20d2` | 75% | 92% | 12 | $1.06 | 16m40s |
 | 2026-07-30 | `e0f8e065` | 92% | 92% | 12 | $1.05 | 15m05s |
@@ -75,6 +77,13 @@ Overall QA accuracy and recall@15 over time, grouped by scope so every row in a 
 | 2026-06-01 | `03d4a4c` | 67% | 79% | 12 | $0.57 | 2m57s |
 | 2026-06-01 | `8435b97` | 71% | 79% | 12 | $0.57 | 3m03s |
 | 2026-06-01 | `c34c107` | 67% | 71% | 12 | $0.57 | 3m09s |
+
+### `toy/medium`
+
+| date | commit | QA | recall@15 | n | cost | runtime |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-08-14 | `c8078355` | 100% | 100% | 5 | $0.12 | 7m11s |
+| 2026-05-28 | `0fd7f3b-dirty` | 100% | 100% | 5 | — | 1m32s |
 
 ### `locomo/full`
 
@@ -127,9 +136,3 @@ Overall QA accuracy and recall@15 over time, grouped by scope so every row in a 
 |---|---|---:|---:|---:|---:|---:|
 | 2026-05-30 | `0ee6037` | 30% | 74% | 330 | $7.69 | 56m31s |
 | 2026-05-29 | `c80b07e-dirty` | 32% | 74% | 329 | $10.77 | 59m08s |
-
-### `toy/medium`
-
-| date | commit | QA | recall@15 | n | cost | runtime |
-|---|---|---:|---:|---:|---:|---:|
-| 2026-05-28 | `0fd7f3b-dirty` | 100% | 100% | 5 | — | 1m32s |

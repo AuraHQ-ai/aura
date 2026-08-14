@@ -51,7 +51,7 @@ function entry(partId: string, overrides: Partial<JudgeEntry> = {}): JudgeEntry 
 }
 
 function generateReturning(responses: JudgeEntry[]) {
-  return vi.fn(async () => ({ object: { responses } })) as any;
+  return vi.fn(async () => ({ output: { responses } })) as any;
 }
 
 beforeEach(() => {
@@ -211,7 +211,7 @@ describe("judgeWindow verdict normalization", () => {
       failureClass: "missing_cred",
     });
     const callArgs = generate.mock.calls[0][0];
-    expect(callArgs.system).toContain("Honest refusals and capability boundaries");
-    expect(callArgs.system).toContain("Use failed only for incorrect, silent, or confabulated behavior");
+    expect(callArgs.instructions).toContain("Honest refusals and capability boundaries");
+    expect(callArgs.instructions).toContain("Use failed only for incorrect, silent, or confabulated behavior");
   });
 });

@@ -1,4 +1,4 @@
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
 import { sql, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -155,9 +155,9 @@ export async function generateEntitySummary(
 
   const model = await getFastModel();
 
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model,
-    schema: z.object({ summary: z.string() }),
+    output: Output.object({ schema: z.object({ summary: z.string() }) }),
     instructions: getSystemPrompt(entity.canonicalName, entity.type ?? "unknown"),
     prompt: `${profileContext ? `${profileContext}\n\n` : ""}Memories:\n${memoriesText}`,
     telemetry: aiTelemetry("entity-summary"),

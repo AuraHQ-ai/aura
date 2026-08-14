@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { db } from "../db/client.js";
 import { getFastModel } from "../lib/ai.js";
 import { getCredential } from "../lib/credentials.js";
@@ -179,7 +179,7 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
   const timer = setTimeout(() => abortController.abort(), SUPERVISOR_LLM_TIMEOUT_MS);
 
   try {
-    const { object } = await withTrace(
+    const { output: object } = await withTrace(
       {
         traceName: "supervisor-decision",
         sessionId: context.job.threadTs || context.job.channelId || context.job.id,
@@ -195,9 +195,9 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
         },
       },
       () =>
-        generateObject({
+        generateText({
           model,
-          schema: supervisorDecisionSchema,
+          output: Output.object({ schema: supervisorDecisionSchema }),
           telemetry: aiTelemetry("supervisor-decision"),
           instructions:
             "You are Aura's job execution supervisor. Make one conservative decision from the provided fixed enum. Return only the structured object. Do not call tools.",

@@ -14,7 +14,7 @@
  */
 
 import { z } from "zod";
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import type { BenchCase } from "./types.js";
 import { resolveBenchJudgeModel } from "./models.js";
 import type { UsageLike } from "./cost-meter.js";
@@ -185,10 +185,12 @@ Grade the model answer per the rules above.`;
   // Binary everywhere, matching the published evaluators: abstention uses the
   // abstain_ok/incorrect schema; every other category (factual, temporal,
   // knowledge-update, multi-hop, adversarial, preference) uses correct/incorrect.
-  const schema = benchCase.abstention ? abstentionJudgeSchema : binaryJudgeSchema;
-  const { object, usage } = await generateObject({
+  const output = benchCase.abstention
+    ? Output.object({ schema: abstentionJudgeSchema })
+    : Output.object({ schema: binaryJudgeSchema });
+  const { output: object, usage } = await generateText({
     model,
-    schema,
+    output,
     instructions: system,
     prompt,
     temperature: 0,

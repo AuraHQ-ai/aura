@@ -53,7 +53,7 @@ const dbMock = vi.hoisted(() => {
   return state;
 });
 
-const generateObjectMock = vi.hoisted(() => vi.fn());
+const generateTextMock = vi.hoisted(() => vi.fn());
 const getCredentialMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 const safePostMessageMock = vi.hoisted(() => vi.fn());
@@ -88,7 +88,8 @@ vi.mock("../lib/ai.js", () => ({
 }));
 
 vi.mock("ai", () => ({
-  generateObject: generateObjectMock,
+  generateText: generateTextMock,
+  Output: { object: (spec: unknown) => spec },
 }));
 
 vi.mock("../lib/credentials.js", () => ({
@@ -206,7 +207,7 @@ function baseExecution(overrides: Record<string, unknown> = {}) {
 }
 
 function promptContextFromGenerateCall() {
-  const prompt = String(generateObjectMock.mock.calls.at(-1)?.[0]?.prompt ?? "");
+  const prompt = String(generateTextMock.mock.calls.at(-1)?.[0]?.prompt ?? "");
   const contextJson = prompt.match(/Context:\n([\s\S]*)$/)?.[1];
   if (!contextJson) throw new Error("Supervisor prompt did not include JSON context");
   return JSON.parse(contextJson) as {
@@ -216,7 +217,7 @@ function promptContextFromGenerateCall() {
 }
 
 function mockCleanSuccessDecisionPolicy() {
-  generateObjectMock.mockImplementation(async (args: { prompt: string }) => {
+  generateTextMock.mockImplementation(async (args: { prompt: string }) => {
     const contextJson = args.prompt.match(/Context:\n([\s\S]*)$/)?.[1];
     if (!contextJson) throw new Error("Supervisor prompt did not include JSON context");
     const context = JSON.parse(contextJson) as {
@@ -230,7 +231,7 @@ function mockCleanSuccessDecisionPolicy() {
       context.job.notify_on_success || context.job.cron_schedule === null || recoveredFromFailure;
 
     return {
-      object: {
+      output: {
         decision: shouldReport ? "report_success" : "silent_success",
         reasoning: shouldReport ? "Success should be reported." : "Routine recurring success.",
       },
@@ -268,8 +269,8 @@ describe("supervisor cron", () => {
     dbMock.results = [];
     dbMock.operations = [];
     vi.clearAllMocks();
-    generateObjectMock.mockResolvedValue({
-      object: {
+    generateTextMock.mockResolvedValue({
+      output: {
         decision: "report_failure",
         reasoning: "The job failed permanently.",
         user_message: "I could not complete the job.",
@@ -378,7 +379,7 @@ describe("supervisor cron", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ ok: true, skipped: true, reason: "already_claimed" });
-    expect(generateObjectMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
     expect(updateSets()).toHaveLength(1);
   });
 
@@ -397,8 +398,8 @@ describe("supervisor cron", () => {
       if ("founder" in expected && expected.founder) {
         process.env.FOUNDER_USER_ID = "U_FOUNDER";
       }
-      generateObjectMock.mockResolvedValue({
-        object: {
+      generateTextMock.mockResolvedValue({
+        output: {
           decision: decisionName,
           reasoning: `reason for ${decisionName}`,
           user_message: `message for ${decisionName}`,
@@ -467,8 +468,8 @@ describe("supervisor cron", () => {
 
   it("routes lifecycle notices to the founder DM when only FOUNDER_USER_ID is set", async () => {
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
-    generateObjectMock.mockResolvedValue({
-      object: { decision: "retry_as_is", reasoning: "transient failure" },
+    generateTextMock.mockResolvedValue({
+      output: { decision: "retry_as_is", reasoning: "transient failure" },
     });
     queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
 
@@ -489,8 +490,8 @@ describe("supervisor cron", () => {
 
   it("escalate does not double-DM the founder when the ops notice already went to the founder", async () => {
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
-    generateObjectMock.mockResolvedValue({
-      object: { decision: "escalate", reasoning: "needs human judgment" },
+    generateTextMock.mockResolvedValue({
+      output: { decision: "escalate", reasoning: "needs human judgment" },
     });
     queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
 
@@ -506,8 +507,8 @@ describe("supervisor cron", () => {
   });
 
   it("falls back to the requester DM as a last resort when no ops destination is configured", async () => {
-    generateObjectMock.mockResolvedValue({
-      object: { decision: "retry_as_is", reasoning: "transient failure" },
+    generateTextMock.mockResolvedValue({
+      output: { decision: "retry_as_is", reasoning: "transient failure" },
     });
     queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
 
@@ -523,8 +524,8 @@ describe("supervisor cron", () => {
   });
 
   it("comments on a matching open supervisor issue instead of creating a duplicate", async () => {
-    generateObjectMock.mockResolvedValue({
-      object: {
+    generateTextMock.mockResolvedValue({
+      output: {
         decision: "retry_with_fix",
         reasoning: "The configured model does not exist.",
         user_message: "I queued the job to retry after a fix.",
@@ -662,7 +663,7 @@ describe("supervisor cron", () => {
 
     const response = await invokeSupervisor();
     const body = await response.json();
-    const prompt = String(generateObjectMock.mock.calls[0][0].prompt);
+    const prompt = String(generateTextMock.mock.calls[0][0].prompt);
     const promptContext = promptContextFromGenerateCall();
 
     expect(response.status).toBe(200);
@@ -682,7 +683,7 @@ describe("supervisor cron", () => {
   });
 
   it("returns errored outcomes to pending_review when the LLM fails", async () => {
-    generateObjectMock.mockRejectedValue(new Error("gateway unavailable"));
+    generateTextMock.mockRejectedValue(new Error("gateway unavailable"));
     queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
 
     const response = await invokeSupervisor();
@@ -710,7 +711,7 @@ describe("supervisor cron", () => {
       skipped: true,
       reason: "max_supervisor_attempts_exceeded",
     });
-    expect(generateObjectMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
     expect(updateSets()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

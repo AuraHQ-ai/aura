@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { generateObject, generateText, Output } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
 import { db } from "../db/client.js";
 import {
@@ -285,9 +285,9 @@ async function consolidateCategory(
   items: string[],
   cap: number,
 ): Promise<string[]> {
-  const { object } = await generateObject({
+  const { output: object } = await generateText({
     model,
-    schema: consolidatedSchema,
+    output: Output.object({ schema: consolidatedSchema }),
     instructions: `You are consolidating a user profile's "${category}" list. Merge semantically similar items, remove noise and overly granular entries, and keep genuinely distinct items. Preserve the most important/recent items. Return at most ${cap} items.`,
     prompt: `Consolidate these ${items.length} items:\n\n${items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`,
     telemetry: aiTelemetry("profile-consolidate"),
