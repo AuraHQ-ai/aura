@@ -101,15 +101,16 @@ export interface HeadlessAgentOptions {
   context?: ScheduleContext;
   systemPrompt: string;
   invocationId?: string;
-  /** Model catalog category to execute with. Defaults to "main" (legacy behavior). */
+  /** Model catalog category to execute with. Defaults to "medium" (Sonnet-class) for jobs. */
   modelCategory?: JobModelCategory;
 }
 
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
+  const category: JobModelCategory = options.modelCategory ?? "medium";
   const { modelId, model } =
-    options.modelCategory && options.modelCategory !== "main"
-      ? await getModelByCategory(options.modelCategory)
-      : await getMainModel();
+    category === "main"
+      ? await getMainModel()
+      : await getModelByCategory(category);
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const stepModelIds: string[] = [];
   const systemPrompt = appendDeferredToolsBlock(

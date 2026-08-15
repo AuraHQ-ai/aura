@@ -173,10 +173,11 @@ export async function executeJob(
     // Scoped execution (issue #1302): prompt_mode 'task' skips the full
     // personality prefix; model routes to a catalog category; env_allowlist
     // narrows the sandbox env (applied below via executionContext + script layer).
+    // Jobs default to 'medium' (Sonnet-class); frontier 'main' is opt-in.
     const isTaskMode = job.promptMode === "task";
     const modelCategory: JobModelCategory = isJobModelCategory(job.model)
       ? job.model
-      : "main";
+      : "medium";
     const envAllowlist = job.envAllowlist ?? undefined;
 
     const stablePrefix = isTaskMode ? buildTaskPrefix() : await buildStablePrefix();
