@@ -481,16 +481,22 @@ describe("executeJob scoped execution (issue #1302)", () => {
     expect(options.modelCategory).toBe("fast");
   });
 
-  it("defaults to the main category when model is null", async () => {
-    const options = await captureAgentOptions({ model: null });
+  it("keeps an explicit 'main' opt-in on the main category", async () => {
+    const options = await captureAgentOptions({ model: "main" });
 
     expect(options.modelCategory).toBe("main");
   });
 
-  it("falls back to main for a model value outside the routable categories", async () => {
+  it("defaults to the medium category when model is null", async () => {
+    const options = await captureAgentOptions({ model: null });
+
+    expect(options.modelCategory).toBe("medium");
+  });
+
+  it("falls back to medium for a model value outside the routable categories", async () => {
     const options = await captureAgentOptions({ model: "embedding" });
 
-    expect(options.modelCategory).toBe("main");
+    expect(options.modelCategory).toBe("medium");
   });
 
   it("carries the env allowlist into the execution context for the agent loop", async () => {
