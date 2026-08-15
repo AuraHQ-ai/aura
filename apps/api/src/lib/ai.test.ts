@@ -117,12 +117,47 @@ describe("getModelByCategory", () => {
       "No default model configured for category: fast",
     );
   });
+
+  it("resolves the medium category from the DB setting override first", async () => {
+    getSettingMock.mockImplementation(async (key: string) =>
+      key === "model_medium" ? "anthropic/claude-medium-override" : null,
+    );
+
+    const { modelId } = await getModelByCategory("medium");
+
+    expect(modelId).toBe("anthropic/claude-medium-override");
+    expect(getSettingMock).toHaveBeenCalledWith("model_medium");
+    expect(mocks.getDefaultModelId).not.toHaveBeenCalled();
+  });
+
+  it("resolves the medium category from the catalog default", async () => {
+    mocks.getDefaultModelId.mockImplementation(async (category: string) =>
+      category === "medium" ? "anthropic/claude-medium-default" : null,
+    );
+
+    const { modelId } = await getModelByCategory("medium");
+
+    expect(modelId).toBe("anthropic/claude-medium-default");
+    expect(mocks.getDefaultModelId).toHaveBeenCalledWith("medium");
+  });
+
+  it("falls back to the main model when no medium selection exists", async () => {
+    mocks.getDefaultModelId.mockImplementation(async (category: string) =>
+      category === "main" ? "anthropic/claude-main" : null,
+    );
+
+    const { modelId } = await getModelByCategory("medium");
+
+    expect(modelId).toBe("anthropic/claude-main");
+    expect(getSettingMock).toHaveBeenCalledWith("model_main");
+  });
 });
 
 describe("isJobModelCategory", () => {
-  it("accepts the three job-routable categories", () => {
+  it("accepts the four job-routable categories", () => {
     expect(isJobModelCategory("main")).toBe(true);
     expect(isJobModelCategory("fast")).toBe(true);
+    expect(isJobModelCategory("medium")).toBe(true);
     expect(isJobModelCategory("escalation")).toBe(true);
   });
 

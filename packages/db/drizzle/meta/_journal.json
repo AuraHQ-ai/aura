@@ -554,6 +554,13 @@
       "when": 1786958400000,
       "tag": "0078_scoped_job_execution",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1787136960000,
+      "tag": "0079_medium_model_category",
+      "breakpoints": true
     }
   ]
 }

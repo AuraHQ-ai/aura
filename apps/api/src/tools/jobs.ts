@@ -87,10 +87,10 @@ export function createJobTools(
           .optional()
           .describe("Max executions per day (recurring jobs)"),
         model: z
-          .enum(["main", "fast", "escalation"])
+          .enum(["main", "fast", "medium", "escalation"])
           .optional()
           .describe(
-            "Model category to execute the job with, resolved from the model catalog. Use 'fast' for simple mechanical tasks (classification, moderation, digests), 'escalation' for exceptionally hard work. Omit for the default main model.",
+            "Model category to execute the job with, resolved from the model catalog. Omit for the default 'medium' (Sonnet-class intelligence — the standard tier for jobs). Use 'fast' for simple mechanical tasks (classification, moderation, digests), 'main' (frontier) only for jobs that genuinely need it, 'escalation' for exceptionally hard work.",
           ),
         env_allowlist: z
           .array(z.string())
@@ -536,11 +536,11 @@ export function createJobTools(
           max_per_day: z.number().optional(),
           min_interval_hours: z.number().optional(),
           model: z
-            .enum(["main", "fast", "escalation"])
+            .enum(["main", "fast", "medium", "escalation"])
             .nullable()
             .optional()
             .describe(
-              "Model category to execute with ('fast' for mechanical tasks). Set to null to reset to the default main model.",
+              "Model category to execute with ('fast' for mechanical tasks, 'main' for frontier opt-in). Set to null to reset to the default 'medium' (Sonnet-class) model.",
             ),
           env_allowlist: z
             .array(z.string())
