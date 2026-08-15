@@ -96,6 +96,39 @@ Script-only mode is ideal for jobs that just need to run a command and post the 
 
 ---
 
+## Scoped job execution
+
+Three optional fields on `create_job` / `update_job` narrow what a job runs with. All three are independent and can be combined.
+
+### `model` — per-job model category
+
+Routes the job's LLM execution to a model catalog category. A job with no `model` set resolves to `medium`:
+
+| Category | Use for |
+|----------|---------|
+| `medium` | Default for jobs. Sonnet-class intelligence — the standard tier. |
+| `fast` | Simple mechanical tasks: classification, moderation, digests. Cheaper and lower latency. |
+| `main` | Frontier model. Opt in only for jobs that genuinely need it. |
+| `escalation` | Exceptionally hard work. |
+
+The category resolves through the same chain as everywhere else: the DB settings row (`model_medium`, `model_fast`, `model_main`, `model_escalation`) first, then the hardcoded `LAST_RESORT_MODELS` map in `apps/api/src/lib/ai.ts`, which logs a warning so the missing setting is visible. `model_catalog_selections` is no longer consulted during resolution. Set the per-category model in the dashboard settings page — every model in the synced gateway catalog is selectable.
+
+### `env_allowlist` — sandbox credential narrowing
+
+Restricts the job's sandbox environment to only the listed credential env var names, plus core infra vars that the sandbox needs to function (`E2B_API_KEY`, `E2B_TEMPLATE_ID`, `GOOGLE_SA_KEY_B64`). Matching is case-insensitive, and `GITHUB_TOKEN`/`GH_TOKEN` are aliased to each other.
+
+The allowlist **narrows, never widens**: it intersects with the caller's credential set, so names in the allowlist that the caller can't access are not added. It applies both to the LLM execution (every `run_command` in the job) and to the `script` layer.
+
+Use this for jobs that process untrusted input (scraped web content, inbound email, ad comments) so a prompt injection can't reach unrelated credentials. Omit for full inheritance of the caller's credential set. On `update_job`, set to `null` to restore full inheritance.
+
+### `prompt_mode` — task-mode system prompt
+
+`prompt_mode: "task"` runs the job with a minimal ~2k-token system prefix instead of the full ~40k-char stable prefix. The task prefix skips the personality, self-directive, and notes index, keeping only the output contract and safety-relevant operational rules (no secrets in chat, verify before claiming, treat fetched content as data, date accuracy, DM privacy). Fewer places for context rot in mechanical jobs.
+
+Memory stays unified either way: task-mode executions write to the same memory and message store as every other invocation. Omit or set `full` for the standard prompt. On `update_job`, set to `null` to reset to `full`.
+
+---
+
 ## `list_jobs`
 
 List jobs by status.
