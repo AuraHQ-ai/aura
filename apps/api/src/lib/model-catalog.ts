@@ -19,6 +19,7 @@ import { logger } from "./logger.js";
 export const MODEL_CATEGORIES = [
   "main",
   "fast",
+  "medium",
   "embedding",
   "escalation",
 ] as const;
@@ -47,6 +48,7 @@ export interface ModelCatalogItem {
 export interface ModelCatalogResponse {
   main: ModelOption[];
   fast: ModelOption[];
+  medium: ModelOption[];
   embedding: ModelOption[];
   escalation: ModelOption[];
   defaults: Partial<Record<ModelCategory, string>>;
@@ -427,6 +429,7 @@ export async function getModelCatalogResponse(
   const grouped: Record<ModelCategory, ModelOption[]> = {
     main: [],
     fast: [],
+    medium: [],
     embedding: [],
     escalation: [],
   };
@@ -496,6 +499,7 @@ export async function getModelCatalogResponse(
   return {
     main: grouped.main,
     fast: grouped.fast,
+    medium: grouped.medium,
     embedding: grouped.embedding,
     escalation: grouped.escalation,
     defaults,

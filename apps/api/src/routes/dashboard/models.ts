@@ -20,6 +20,7 @@ const listModelsRoute = createRoute({
           schema: z.object({
             main: z.array(z.any()),
             fast: z.array(z.any()),
+            medium: z.array(z.any()),
             embedding: z.array(z.any()),
             escalation: z.array(z.any()),
             defaults: z.record(z.string(), z.string()),

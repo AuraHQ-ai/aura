@@ -33,7 +33,7 @@ import type { ModelCapabilities } from "@aura/db/schema";
 
 async function resolveModelId(
   settingKey: string,
-  category: "main" | "fast" | "embedding" | "escalation",
+  category: "main" | "fast" | "medium" | "embedding" | "escalation",
 ): Promise<string> {
   const override = await getSetting(settingKey);
   if (override) return override;
@@ -285,6 +285,33 @@ export async function getFastModelId(): Promise<string> {
 }
 
 /**
+ * Resolve the medium model ID string (no gateway wrapping).
+ * Priority: DB setting > catalog default > main model (never crashes when
+ * no medium selection is configured).
+ */
+export async function getMediumModelId(): Promise<string> {
+  const override = await getSetting("model_medium");
+  if (override) return override;
+
+  const defaultModelId = await getDefaultModelId("medium");
+  if (defaultModelId) return defaultModelId;
+
+  logger.warn("No medium model configured, falling back to main");
+  return getMainModelId();
+}
+
+/**
+ * Get the medium model (Sonnet-class — default tier for scheduled jobs)
+ * with Anthropic fallback support.
+ * Priority: DB setting > catalog default > main model fallback.
+ */
+export async function getMediumModel() {
+  const modelId = await getMediumModelId();
+  const gatewayModel = gateway(modelId);
+  return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
+}
+
+/**
  * Get the embedding model with Anthropic fallback support.
  * Priority: DB setting > catalog default
  */
@@ -308,7 +335,7 @@ export async function getEscalationModel() {
  * Model categories a job can be routed to (subset of the catalog categories —
  * 'embedding' makes no sense for text generation).
  */
-export const JOB_MODEL_CATEGORIES = ["main", "fast", "escalation"] as const;
+export const JOB_MODEL_CATEGORIES = ["main", "fast", "medium", "escalation"] as const;
 export type JobModelCategory = (typeof JOB_MODEL_CATEGORIES)[number];
 
 export function isJobModelCategory(value: unknown): value is JobModelCategory {
@@ -321,6 +348,7 @@ export function isJobModelCategory(value: unknown): value is JobModelCategory {
 const SETTING_KEY_BY_CATEGORY: Record<JobModelCategory, string> = {
   main: "model_main",
   fast: "model_fast",
+  medium: "model_medium",
   escalation: "model_escalation",
 };
 
@@ -328,8 +356,10 @@ const SETTING_KEY_BY_CATEGORY: Record<JobModelCategory, string> = {
  * Resolve a language model by catalog category. Same resolution order as the
  * dedicated getters (DB setting > catalog default), with Anthropic fallback.
  * Used by scoped job execution to route a job to e.g. the fast model.
+ * 'medium' additionally falls back to the main model when unconfigured.
  */
 export async function getModelByCategory(category: JobModelCategory) {
+  if (category === "medium") return getMediumModel();
   const modelId = await resolveModelId(SETTING_KEY_BY_CATEGORY[category], category);
   const gatewayModel = gateway(modelId);
   return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
