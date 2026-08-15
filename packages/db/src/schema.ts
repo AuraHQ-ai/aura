@@ -80,6 +80,7 @@ export const memoryEntityRoleEnum = pgEnum("memory_entity_role", [
 export const modelCatalogCategoryEnum = pgEnum("model_catalog_category", [
   "main",
   "fast",
+  "medium",
   "embedding",
   "escalation",
 ]);
@@ -592,8 +593,8 @@ export const jobs = pgTable(
     archivedAt: timestamptz("archived_at"),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
     // ── Scoped execution (issue #1302) — all nullable so existing jobs run unchanged ──
-    /** Model catalog category to execute with. Null = 'main' (current behavior). */
-    model: text("model").$type<"main" | "fast" | "escalation">(),
+    /** Model catalog category to execute with. Null = 'medium' (job default). */
+    model: text("model").$type<"main" | "fast" | "medium" | "escalation">(),
     /** Sandbox env var names this job may access. Null = full caller-scoped inheritance. */
     envAllowlist: text("env_allowlist").array(),
     /** 'task' = minimal task prompt (no personality/notes). Null = 'full' (current behavior). */
