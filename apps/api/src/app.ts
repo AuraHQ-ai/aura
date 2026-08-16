@@ -40,6 +40,7 @@ import { flushLangfuse, isLangfuseEnabled } from "./lib/langfuse.js";
 import { resolveSlackDestination } from "./tools/slack.js";
 import { recordError } from "./lib/metrics.js";
 import { safePostMessage } from "./lib/slack-messaging.js";
+import { runSmokeCheck } from "./lib/smoke-check.js";
 import crypto from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
@@ -152,6 +153,31 @@ app.get("/", (c) => {
 
 app.get("/api/health", (c) => {
   return c.json({ ok: true, timestamp: new Date().toISOString() });
+});
+
+// Internal post-deploy smoke check. If SMOKE_CHECK_SECRET is not configured,
+// keep the endpoint callable but log loudly so deploy-hook setup mistakes show up.
+app.get("/api/internal/smoke", async (c) => {
+  const secret = process.env.SMOKE_CHECK_SECRET;
+  const header = c.req.header("x-smoke-secret") || "";
+
+  if (!secret) {
+    logger.warn("SMOKE_CHECK_SECRET not configured — running smoke check without secret gate");
+  } else if (header !== secret) {
+    logger.warn("Invalid smoke check secret — rejecting");
+    return c.json({ error: "Invalid smoke check secret" }, 401);
+  }
+
+  const result = await runSmokeCheck({
+    slackClient,
+    deploy: c.req.query("deploy") || c.req.query("sha"),
+  });
+
+  if (result.failures > 0) {
+    return c.json(result, 500);
+  }
+
+  return c.json(result);
 });
 
 // ── Dashboard API (authenticated with DASHBOARD_API_SECRET) ─────────────────

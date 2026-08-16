@@ -56,7 +56,7 @@ export interface ModelCatalogResponse {
   lastSyncedAt: string | null;
 }
 
-interface GatewayModel {
+export interface GatewayModel {
   id: string;
   owned_by?: string;
   name?: string;
@@ -243,7 +243,7 @@ function toPricePerMillion(
   return (numeric * 1_000_000).toString();
 }
 
-async function fetchGatewayModels(): Promise<GatewayModel[]> {
+export async function fetchGatewayModels(): Promise<GatewayModel[]> {
   const response = await fetch(GATEWAY_MODELS_URL);
   if (!response.ok) {
     throw new Error(`Gateway models fetch failed: ${response.status}`);
