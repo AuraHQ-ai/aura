@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { PageSkeleton } from "@/components/page-skeleton";
 import { ThemeSelect } from "@/components/theme-toggle";
 import { formatDate } from "@/lib/utils";
+import { MODEL_CATEGORIES, type ModelCategory } from "@/lib/model-categories";
 import { useMemo, useState } from "react";
 import { RefreshCw, Save, Plus, Pencil } from "lucide-react";
 
@@ -58,11 +59,7 @@ function SettingsPage() {
     queryFn: () => apiGet<ModelCatalog>("/models"),
   });
 
-  const [mainModel, setMainModel] = useState<string | null>(null);
-  const [fastModel, setFastModel] = useState<string | null>(null);
-  const [mediumModel, setMediumModel] = useState<string | null>(null);
-  const [embeddingModel, setEmbeddingModel] = useState<string | null>(null);
-  const [escalationModel, setEscalationModel] = useState<string | null>(null);
+  const [modelDrafts, setModelDrafts] = useState<Partial<Record<ModelCategory, string>>>({});
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -87,19 +84,15 @@ function SettingsPage() {
     return settings?.find((s) => s.key === key)?.value || "";
   }
 
-  const actualMainModel = mainModel ?? getSettingValue("model_main");
-  const actualFastModel = fastModel ?? getSettingValue("model_fast");
-  const actualMediumModel = mediumModel ?? getSettingValue("model_medium");
-  const actualEmbeddingModel = embeddingModel ?? getSettingValue("model_embedding");
-  const actualEscalationModel = escalationModel ?? getSettingValue("model_escalation");
+  function actualModel(category: ModelCategory): string {
+    return modelDrafts[category] ?? getSettingValue(`model_${category}`);
+  }
 
   const saveModelsMutation = useMutation({
     mutationFn: async () => {
-      await apiPut("/settings/model_main", { value: actualMainModel || "" });
-      await apiPut("/settings/model_fast", { value: actualFastModel || "" });
-      await apiPut("/settings/model_medium", { value: actualMediumModel || "" });
-      await apiPut("/settings/model_embedding", { value: actualEmbeddingModel || "" });
-      await apiPut("/settings/model_escalation", { value: actualEscalationModel || "" });
+      for (const { value: category } of MODEL_CATEGORIES) {
+        await apiPut(`/settings/model_${category}`, { value: actualModel(category) || "" });
+      }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
   });
@@ -139,11 +132,6 @@ function SettingsPage() {
     (s) => !s.key.startsWith("model_") && !s.key.startsWith("credential:"),
   );
 
-  const MAIN_MODELS = enrichOptions(models?.main ?? []);
-  const FAST_MODELS = enrichOptions(models?.fast ?? []);
-  const MEDIUM_MODELS = enrichOptions(models?.medium ?? []);
-  const EMBEDDING_MODELS = enrichOptions(models?.embedding ?? []);
-  const ESCALATION_MODELS = enrichOptions(models?.escalation ?? []);
   const isEditing = editingKey !== null;
   const defaultOption = [{ value: "__default", label: "Default" }];
 
@@ -184,56 +172,24 @@ function SettingsPage() {
             </Button>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <label className="text-sm font-medium mb-1 block">Main Model</label>
-              <ModelAutocomplete
-                value={actualMainModel || "__default"}
-                onValueChange={(v) => setMainModel(v === "__default" ? "" : v)}
-                options={MAIN_MODELS}
-                pinnedOptions={defaultOption}
-                placeholder="Select main model"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Fast Model</label>
-              <ModelAutocomplete
-                value={actualFastModel || "__default"}
-                onValueChange={(v) => setFastModel(v === "__default" ? "" : v)}
-                options={FAST_MODELS}
-                pinnedOptions={defaultOption}
-                placeholder="Select fast model"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Medium Model</label>
-              <ModelAutocomplete
-                value={actualMediumModel || "__default"}
-                onValueChange={(v) => setMediumModel(v === "__default" ? "" : v)}
-                options={MEDIUM_MODELS}
-                pinnedOptions={defaultOption}
-                placeholder="Select medium model"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Escalation Model</label>
-              <ModelAutocomplete
-                value={actualEscalationModel || "__default"}
-                onValueChange={(v) => setEscalationModel(v === "__default" ? "" : v)}
-                options={ESCALATION_MODELS}
-                pinnedOptions={defaultOption}
-                placeholder="Select escalation model"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Embedding Model</label>
-              <ModelAutocomplete
-                value={actualEmbeddingModel || "__default"}
-                onValueChange={(v) => setEmbeddingModel(v === "__default" ? "" : v)}
-                options={EMBEDDING_MODELS}
-                pinnedOptions={defaultOption}
-                placeholder="Select embedding model"
-              />
-            </div>
+            {MODEL_CATEGORIES.map((category) => (
+              <div key={category.value}>
+                <label className="text-sm font-medium mb-1 block">{category.title} Model</label>
+                <ModelAutocomplete
+                  value={actualModel(category.value) || "__default"}
+                  onValueChange={(v) =>
+                    setModelDrafts((drafts) => ({
+                      ...drafts,
+                      [category.value]: v === "__default" ? "" : v,
+                    }))
+                  }
+                  options={enrichOptions(models?.[category.value] ?? [])}
+                  pinnedOptions={defaultOption}
+                  placeholder={`Select ${category.value} model`}
+                />
+                <p className="text-xs text-muted-foreground mt-1">{category.description}</p>
+              </div>
+            ))}
           </div>
           <Button onClick={() => saveModelsMutation.mutate()} disabled={saveModelsMutation.isPending} size="sm">
             <Save className="h-4 w-4" /> {saveModelsMutation.isPending ? "Saving..." : "Save Models"}
