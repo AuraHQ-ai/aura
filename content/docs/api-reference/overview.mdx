@@ -122,7 +122,30 @@ Partial update of a job. All body fields are optional: omitted fields are left u
 | `envAllowlist` | `string[]` \| `null` | Sandbox env var **names** the job may access — names only, values are never accepted, returned, or logged. `null` = full caller-scoped inheritance; `[]` = no env vars. Names must match `[A-Za-z_][A-Za-z0-9_]*`. |
 | `promptMode` | `"full"` \| `"task"` \| `null` | `"task"` runs the minimal task prompt (no personality/notes). `null` resolves to `"full"` (default). See [Prompt Modes](/prompt-modes). |
 
-Invalid values return `400` with a validation message. The jobs list (`GET /api/dashboard/jobs`) and detail (`GET /api/dashboard/jobs/:id`) responses include these three fields.
+Invalid values return `400` with a validation message. The jobs list (`GET /api/dashboard/jobs`) and detail (`GET /api/dashboard/jobs/:id`) responses include these three fields, plus cost and watchdog metadata described below.
+
+### `GET /api/dashboard/jobs`
+
+Returns a paginated list of jobs. Accepts `?search=`, `?page=`, and `?limit=` query parameters (limit capped at 100). Each item includes all `jobs` table columns plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `runs30d` | `number` | Count of executions started in the last 30 days. |
+| `cost30dUsd` | `string \| null` | Total `cost_usd` (from `conversation_traces`) over the last 30 days. `null` when no cost data is priced yet. |
+| `avgCostPerRunUsd` | `string \| null` | `cost30dUsd / runs30d` formatted to 6 decimal places. `null` when either input is absent. |
+| `wasWatchdogReset` | `boolean` | `true` when `jobs.result` contains `"reset by watchdog"` — the job was terminated by the stuck-job watchdog. The dashboard renders a **watchdog reset** badge in this case. |
+
+Cost data is aggregated in a single `LEFT JOIN` query over `job_executions → conversation_traces` for the IDs returned by the page — no N+1.
+
+### `GET /api/dashboard/jobs/:id`
+
+Returns `{ job, executions }`. Each execution object includes all `job_executions` columns plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `costUsd` | `string \| null` | Cost from the linked `conversation_traces` row. |
+| `resolvedModelId` | `string \| null` | Actual model ID resolved for this execution (from `conversation_traces.resolved_model_id`). |
+| `conversationTraceId` | `string \| null` | UUID of the linked conversation trace (for deep-linking to the trace viewer). |
 
 **Auth:** Dashboard bearer token.
 

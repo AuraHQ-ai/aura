@@ -53,6 +53,7 @@ interface Execution {
   error: string | null;
   costUsd: string | null;
   conversationTraceId: string | null;
+  resolvedModelId: string | null;
 }
 
 interface JobData {
@@ -312,6 +313,7 @@ function JobDetailPage() {
                   <TableHead className="w-[140px]">Finished</TableHead>
                   <TableHead className="w-[80px]">Status</TableHead>
                   <TableHead className="w-[80px]">Cost</TableHead>
+                  <TableHead className="w-[180px]">Model</TableHead>
                   <TableHead className="w-[80px]">Trigger</TableHead>
                   <TableHead>Error</TableHead>
                 </TableRow>
@@ -341,6 +343,9 @@ function JobDetailPage() {
                     <TableCell className="text-sm font-mono text-muted-foreground">
                       {exec.costUsd ? `$${parseFloat(exec.costUsd).toFixed(4)}` : "—"}
                     </TableCell>
+                    <TableCell className="text-sm font-mono text-muted-foreground truncate max-w-[180px]">
+                      {exec.resolvedModelId ?? "—"}
+                    </TableCell>
                     <TableCell className="text-sm">{exec.trigger}</TableCell>
                     <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
                       {exec.error || "—"}
@@ -349,7 +354,7 @@ function JobDetailPage() {
                 ))}
                 {executions.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No executions yet</TableCell>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No executions yet</TableCell>
                   </TableRow>
                 )}
               </TableBody>
