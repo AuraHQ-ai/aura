@@ -4,12 +4,29 @@ import { apiGet, apiPatch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { DetailSkeleton } from "@/components/page-skeleton";
 import { formatDate } from "@/lib/utils";
-import { ArrowLeft, Play, BookOpen } from "lucide-react";
+import { ArrowLeft, Play, BookOpen, Plus, X } from "lucide-react";
+import { useState } from "react";
+
+type JobModelCategory = "main" | "fast" | "medium" | "escalation";
+
+const JOB_MODEL_OPTIONS: JobModelCategory[] = ["main", "fast", "medium", "escalation"];
+
+/** Env var NAMES only (never values) — standard POSIX-style identifier. */
+const ENV_VAR_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+interface JobPatch {
+  enabled?: boolean;
+  model?: JobModelCategory | null;
+  promptMode?: "full" | "task" | null;
+  envAllowlist?: string[] | null;
+}
 
 interface Execution {
   id: string;
@@ -34,6 +51,9 @@ interface JobData {
     executionCount: number;
     lastExecutedAt: string | null;
     playbook: string | null;
+    model: JobModelCategory | null;
+    promptMode: "full" | "task" | null;
+    envAllowlist: string[] | null;
   };
   executions: Execution[];
 }
@@ -41,14 +61,15 @@ interface JobData {
 function JobDetailPage() {
   const { id } = Route.useParams();
   const queryClient = useQueryClient();
+  const [newEnvVar, setNewEnvVar] = useState("");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["jobs", id],
     queryFn: () => apiGet<JobData>(`/jobs/${id}`),
   });
 
-  const toggleMutation = useMutation({
-    mutationFn: (enabled: boolean) => apiPatch(`/jobs/${id}`, { enabled }),
+  const updateMutation = useMutation({
+    mutationFn: (patch: JobPatch) => apiPatch(`/jobs/${id}`, patch),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
   });
 
@@ -57,6 +78,19 @@ function JobDetailPage() {
   if (!data) return null;
 
   const { job, executions } = data;
+
+  const trimmedEnvVar = newEnvVar.trim();
+  const canAddEnvVar =
+    ENV_VAR_NAME_REGEX.test(trimmedEnvVar) &&
+    !(job.envAllowlist ?? []).includes(trimmedEnvVar);
+
+  function addEnvVar() {
+    if (!canAddEnvVar) return;
+    updateMutation.mutate({
+      envAllowlist: [...(job.envAllowlist ?? []), trimmedEnvVar],
+    });
+    setNewEnvVar("");
+  }
 
   return (
     <div className="space-y-4">
@@ -71,8 +105,8 @@ function JobDetailPage() {
         <div className="flex items-center gap-2 shrink-0">
           <Switch
             checked={job.enabled}
-            onCheckedChange={(checked) => toggleMutation.mutate(checked)}
-            disabled={toggleMutation.isPending}
+            onCheckedChange={(checked) => updateMutation.mutate({ enabled: checked })}
+            disabled={updateMutation.isPending}
           />
           <Badge variant={job.enabled ? "success" : "secondary"}>
             {job.enabled ? "Enabled" : "Disabled"}
@@ -104,6 +138,129 @@ function JobDetailPage() {
           <CardHeader><CardTitle className="text-sm">Last Run</CardTitle></CardHeader>
           <CardContent>
             <span className="text-sm">{formatDate(job.lastExecutedAt)}</span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Model</CardTitle></CardHeader>
+          <CardContent>
+            <Select
+              value={job.model ?? "__default"}
+              onValueChange={(v) =>
+                updateMutation.mutate({
+                  model: v === "__default" ? null : (v as JobModelCategory),
+                })
+              }
+              disabled={updateMutation.isPending}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__default">medium (default)</SelectItem>
+                {JOB_MODEL_OPTIONS.map((category) => (
+                  <SelectItem key={category} value={category}>{category}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Prompt Mode</CardTitle></CardHeader>
+          <CardContent>
+            <Select
+              value={job.promptMode ?? "__default"}
+              onValueChange={(v) =>
+                updateMutation.mutate({
+                  promptMode: v === "__default" ? null : (v as "full" | "task"),
+                })
+              }
+              disabled={updateMutation.isPending}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__default">full (default)</SelectItem>
+                <SelectItem value="full">full</SelectItem>
+                <SelectItem value="task">task</SelectItem>
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+        <Card className="col-span-2">
+          <CardHeader><CardTitle className="text-sm">Env Allowlist</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {job.envAllowlist === null ? (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Full inheritance — job sees every env var its caller scope allows.
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => updateMutation.mutate({ envAllowlist: [] })}
+                  disabled={updateMutation.isPending}
+                >
+                  Restrict
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-1.5">
+                  {job.envAllowlist.map((name) => (
+                    <Badge key={name} variant="secondary" className="font-mono text-xs gap-1">
+                      {name}
+                      <button
+                        onClick={() =>
+                          updateMutation.mutate({
+                            envAllowlist: job.envAllowlist!.filter((n) => n !== name),
+                          })
+                        }
+                        disabled={updateMutation.isPending}
+                        className="cursor-pointer hover:text-destructive"
+                        aria-label={`Remove ${name}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                  {job.envAllowlist.length === 0 && (
+                    <span className="text-sm text-muted-foreground">Empty — no env vars allowed.</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={newEnvVar}
+                    onChange={(e) => setNewEnvVar(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") addEnvVar();
+                    }}
+                    placeholder="ENV_VAR_NAME"
+                    className="h-8 max-w-[240px] font-mono text-xs"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={addEnvVar}
+                    disabled={updateMutation.isPending || !canAddEnvVar}
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => updateMutation.mutate({ envAllowlist: null })}
+                    disabled={updateMutation.isPending}
+                    className="ml-auto text-muted-foreground"
+                  >
+                    Reset to full inheritance
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Env var names only — values are never shown.
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

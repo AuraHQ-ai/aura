@@ -29,9 +29,10 @@ interface ModelOption {
 interface ModelCatalog {
   main: ModelOption[];
   fast: ModelOption[];
+  medium: ModelOption[];
   embedding: ModelOption[];
   escalation: ModelOption[];
-  defaults: { main?: string; fast?: string; embedding?: string; escalation?: string };
+  defaults: { main?: string; fast?: string; medium?: string; embedding?: string; escalation?: string };
   catalog: Array<{
     value: string;
     label: string;
@@ -59,7 +60,9 @@ function SettingsPage() {
 
   const [mainModel, setMainModel] = useState<string | null>(null);
   const [fastModel, setFastModel] = useState<string | null>(null);
+  const [mediumModel, setMediumModel] = useState<string | null>(null);
   const [embeddingModel, setEmbeddingModel] = useState<string | null>(null);
+  const [escalationModel, setEscalationModel] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -86,13 +89,17 @@ function SettingsPage() {
 
   const actualMainModel = mainModel ?? getSettingValue("model_main");
   const actualFastModel = fastModel ?? getSettingValue("model_fast");
+  const actualMediumModel = mediumModel ?? getSettingValue("model_medium");
   const actualEmbeddingModel = embeddingModel ?? getSettingValue("model_embedding");
+  const actualEscalationModel = escalationModel ?? getSettingValue("model_escalation");
 
   const saveModelsMutation = useMutation({
     mutationFn: async () => {
       await apiPut("/settings/model_main", { value: actualMainModel || "" });
       await apiPut("/settings/model_fast", { value: actualFastModel || "" });
+      await apiPut("/settings/model_medium", { value: actualMediumModel || "" });
       await apiPut("/settings/model_embedding", { value: actualEmbeddingModel || "" });
+      await apiPut("/settings/model_escalation", { value: actualEscalationModel || "" });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
   });
@@ -134,7 +141,9 @@ function SettingsPage() {
 
   const MAIN_MODELS = enrichOptions(models?.main ?? []);
   const FAST_MODELS = enrichOptions(models?.fast ?? []);
+  const MEDIUM_MODELS = enrichOptions(models?.medium ?? []);
   const EMBEDDING_MODELS = enrichOptions(models?.embedding ?? []);
+  const ESCALATION_MODELS = enrichOptions(models?.escalation ?? []);
   const isEditing = editingKey !== null;
   const defaultOption = [{ value: "__default", label: "Default" }];
 
@@ -193,6 +202,26 @@ function SettingsPage() {
                 options={FAST_MODELS}
                 pinnedOptions={defaultOption}
                 placeholder="Select fast model"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Medium Model</label>
+              <ModelAutocomplete
+                value={actualMediumModel || "__default"}
+                onValueChange={(v) => setMediumModel(v === "__default" ? "" : v)}
+                options={MEDIUM_MODELS}
+                pinnedOptions={defaultOption}
+                placeholder="Select medium model"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Escalation Model</label>
+              <ModelAutocomplete
+                value={actualEscalationModel || "__default"}
+                onValueChange={(v) => setEscalationModel(v === "__default" ? "" : v)}
+                options={ESCALATION_MODELS}
+                pinnedOptions={defaultOption}
+                placeholder="Select escalation model"
               />
             </div>
             <div>

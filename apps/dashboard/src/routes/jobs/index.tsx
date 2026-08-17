@@ -28,6 +28,7 @@ interface Job {
   lastExecutedAt: string | null;
   createdAt: string;
   priority: string;
+  model: "main" | "fast" | "medium" | "escalation" | null;
 }
 
 const PAGE_SIZE = 100;
@@ -88,7 +89,7 @@ function JobsPage() {
       </div>
 
       <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table className="min-w-[1020px]">
+        <Table className="min-w-[1140px]">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
@@ -100,15 +101,16 @@ function JobsPage() {
               <TableHead className="w-[160px]">Last Run</TableHead>
               <TableHead className="w-[160px]">Created</TableHead>
               <TableHead className="w-[80px]">Priority</TableHead>
+              <TableHead className="w-[120px]">Model</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRowsSkeleton columns={9} />
+              <TableRowsSkeleton columns={10} />
             ) : jobs.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={9}
+                  colSpan={10}
                   className="text-center text-muted-foreground py-8"
                 >
                   No jobs found
@@ -178,6 +180,15 @@ function JobsPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{job.priority}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {job.model ? (
+                        <Badge variant="outline">{job.model}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">
+                          medium (default)
+                        </span>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
