@@ -3,6 +3,7 @@ import { eq, sql, ilike, desc } from "drizzle-orm";
 import { jobs, jobExecutions, conversationTraces } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { JOB_MODEL_CATEGORIES } from "../../lib/ai.js";
+import { buildTaskPrefix } from "../../personality/system-prompt.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, paginationQuerySchema, idParamSchema, createDashboardApp } from "./schemas.js";
 
@@ -86,6 +87,31 @@ dashboardJobsApp.openapi(listJobsRoute, async (c) => {
     logger.error("Failed to list jobs", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
+});
+
+const taskPromptRoute = createRoute({
+  method: "get",
+  path: "/task-prompt",
+  tags: ["Jobs"],
+  summary: "Get the prompt_mode='task' system prefix",
+  description:
+    "Returns the current buildTaskPrefix() output — the minimal system prefix used when a job runs with promptMode='task'. Rendered live from code so dashboard previews and docs never drift.",
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ prompt: z.string() }),
+        },
+      },
+      description: "Success",
+    },
+  },
+});
+
+// Registered before the /{id} route so the static segment can't be captured
+// as a job id.
+dashboardJobsApp.openapi(taskPromptRoute, (c) => {
+  return c.json({ prompt: buildTaskPrefix() } as any, 200);
 });
 
 const getJobRoute = createRoute({

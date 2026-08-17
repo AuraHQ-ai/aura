@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate } from "@/lib/utils";
+import { type JobModelCategory } from "@/lib/model-categories";
 import { useState } from "react";
 import { Search } from "lucide-react";
 
@@ -28,7 +29,7 @@ interface Job {
   lastExecutedAt: string | null;
   createdAt: string;
   priority: string;
-  model: "main" | "fast" | "medium" | "escalation" | null;
+  model: JobModelCategory | null;
 }
 
 const PAGE_SIZE = 100;

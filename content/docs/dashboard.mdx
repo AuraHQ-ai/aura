@@ -139,7 +139,7 @@ Manage ingested content:
 Configure instance behavior:
 
 - Admin user IDs
-- Model selection from the DB-backed Vercel AI Gateway catalog (searchable autocomplete grouped by provider) for all five categories: main, fast, medium, escalation, and embedding — persisted as `model_*` settings through the settings API
+- Model selection for all five categories (fast, medium, main, escalation, embedding) from the **full** Vercel AI Gateway catalog — a searchable, type-to-filter autocomplete grouped by provider, filtered only by capability metadata (image/video/embedding/reranking models are excluded from the chat categories). Choices persist as `model_*` settings through the settings API; the `model_catalog_selections` table only seeds per-category defaults
 - Manual "Refresh Catalog" sync for newly available gateway models
 - Feature flags
 - Theme selection (light/dark/system) -- moved here from the header

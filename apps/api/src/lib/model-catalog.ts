@@ -56,6 +56,35 @@ export interface ModelCatalogResponse {
   lastSyncedAt: string | null;
 }
 
+export interface ModelCatalogResponseOptions {
+  /**
+   * When true, the per-category lists contain the FULL synced catalog filtered
+   * only by capability metadata (the gateway `type`: image/video/embedding/
+   * reranking models are excluded from the chat categories, and the embedding
+   * category lists embedding models). `model_catalog_selections` then only
+   * drives `defaults`.
+   *
+   * Used by the dashboard settings selectors (searchable combobox). Slack App
+   * Home keeps the curated lists (default) because Slack `static_select`
+   * menus are hard-capped at 100 options.
+   */
+  fullCategoryLists?: boolean;
+}
+
+/** Gateway model types that cannot serve a chat (text-generation) category. */
+const NON_CHAT_MODEL_TYPES = new Set(["embedding", "image", "video", "reranking"]);
+
+/**
+ * Category eligibility from catalog `type` metadata. Unknown/missing types
+ * pass every filter — when there's no reliable metadata we show the model
+ * rather than invent a blocklist.
+ */
+function isEligibleForCategory(type: string, category: ModelCategory): boolean {
+  if (type === "unknown") return true;
+  if (category === "embedding") return type === "embedding";
+  return !NON_CHAT_MODEL_TYPES.has(type);
+}
+
 interface GatewayModel {
   id: string;
   owned_by?: string;
@@ -402,6 +431,7 @@ export async function syncModelCatalogFromGateway(
 
 export async function getModelCatalogResponse(
   workspaceId = DEFAULT_WORKSPACE_ID,
+  options: ModelCatalogResponseOptions = {},
 ): Promise<ModelCatalogResponse> {
   const rows = await db
     .select({
@@ -490,9 +520,26 @@ export async function getModelCatalogResponse(
     grouped[category] = Array.from(deduped.values());
   }
 
+  // Defaults always come from the curated lists (isDefault, else the first
+  // curated option) — never from the full catalog listing, where "first"
+  // would be an arbitrary alphabetical model.
   for (const category of MODEL_CATEGORIES) {
     if (!defaults[category]) {
       defaults[category] = grouped[category][0]?.value;
+    }
+  }
+
+  if (options.fullCategoryLists) {
+    for (const category of MODEL_CATEGORIES) {
+      grouped[category] = [];
+    }
+    // catalogByModelId preserves query order (provider asc, name asc).
+    for (const item of catalogByModelId.values()) {
+      for (const category of MODEL_CATEGORIES) {
+        if (isEligibleForCategory(item.type, category)) {
+          grouped[category].push({ value: item.value, label: item.label });
+        }
+      }
     }
   }
 

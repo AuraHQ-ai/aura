@@ -120,12 +120,22 @@ Partial update of a job. All body fields are optional: omitted fields are left u
 | `enabled` | `boolean` | Enable or disable the job. |
 | `model` | `"main"` \| `"fast"` \| `"medium"` \| `"escalation"` \| `null` | Model catalog category the job executes with. `null` resolves to `medium` (the job default). Validated against the job-eligible catalog categories (`embedding` is not allowed). |
 | `envAllowlist` | `string[]` \| `null` | Sandbox env var **names** the job may access — names only, values are never accepted, returned, or logged. `null` = full caller-scoped inheritance; `[]` = no env vars. Names must match `[A-Za-z_][A-Za-z0-9_]*`. |
-| `promptMode` | `"full"` \| `"task"` \| `null` | `"task"` runs the minimal task prompt (no personality/notes). `null` resolves to `"full"` (default). |
+| `promptMode` | `"full"` \| `"task"` \| `null` | `"task"` runs the minimal task prompt (no personality/notes). `null` resolves to `"full"` (default). See [Prompt Modes](/prompt-modes). |
 
 Invalid values return `400` with a validation message. The jobs list (`GET /api/dashboard/jobs`) and detail (`GET /api/dashboard/jobs/:id`) responses include these three fields.
 
 **Auth:** Dashboard bearer token.
 
+### `GET /api/dashboard/jobs/task-prompt`
+
+Returns the live `promptMode='task'` system prefix as `{ "prompt": "<task_mode>..." }`, rendered directly from `buildTaskPrefix()` in the running code. The dashboard job detail page uses this endpoint for its collapsible task-prompt preview, so the UI can never drift from the code. See [Prompt Modes](/prompt-modes) for the full explanation of both modes.
+
+**Auth:** Dashboard bearer token.
+
 ### Model categories & settings keys
 
-`GET /api/dashboard/models` returns the DB-backed model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus per-category `defaults`. Category overrides persist as ordinary settings via `PUT /api/dashboard/settings/:key` with keys `model_main`, `model_fast`, `model_medium`, `model_embedding`, and `model_escalation`. Resolution order everywhere is: DB setting override first, then catalog default (`medium` additionally falls back to the main model when unconfigured).
+`GET /api/dashboard/models` returns the model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus per-category `defaults`. The per-category lists contain the **full catalog synced from the Vercel AI Gateway**, filtered only by capability metadata: models typed `embedding`, `image`, `video`, or `reranking` are excluded from the chat categories, and the `embedding` category lists embedding models. Models with unknown type appear everywhere rather than being hidden by a guessed blocklist.
+
+The `model_catalog_selections` table is **not** a dropdown filter — it only seeds the per-category `defaults` (the value used when no explicit `model_*` setting is stored). There is no management UI for it.
+
+Category overrides persist as ordinary settings via `PUT /api/dashboard/settings/:key` with keys `model_main`, `model_fast`, `model_medium`, `model_embedding`, and `model_escalation`. Resolution order everywhere is: DB setting override first, then catalog default (`medium` additionally falls back to the main model when unconfigured).

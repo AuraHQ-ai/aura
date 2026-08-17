@@ -9,14 +9,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DetailSkeleton } from "@/components/page-skeleton";
 import { formatDate } from "@/lib/utils";
-import { ArrowLeft, Play, BookOpen, Plus, X } from "lucide-react";
+import { JOB_MODEL_SELECT_OPTIONS, type JobModelCategory } from "@/lib/model-categories";
+import { ArrowLeft, Play, BookOpen, Plus, X, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
-type JobModelCategory = "main" | "fast" | "medium" | "escalation";
-
-const JOB_MODEL_OPTIONS: JobModelCategory[] = ["main", "fast", "medium", "escalation"];
+const PROMPT_MODE_OPTIONS = [
+  {
+    value: "__default",
+    label: "full (default)",
+    description: "Follows the job default — currently the full prompt.",
+  },
+  {
+    value: "full",
+    label: "full",
+    description: "Full system prefix: personality, self-directive, notes index (~40k chars).",
+  },
+  {
+    value: "task",
+    label: "task",
+    description: "Minimal ~2k-token task prefix — no personality or notes index.",
+  },
+] as const;
 
 /** Env var NAMES only (never values) — standard POSIX-style identifier. */
 const ENV_VAR_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -153,12 +169,19 @@ function JobDetailPage() {
               disabled={updateMutation.isPending}
             >
               <SelectTrigger className="w-full">
-                <SelectValue />
+                <SelectValue>
+                  {JOB_MODEL_SELECT_OPTIONS.find((o) => o.value === (job.model ?? "__default"))
+                    ?.label}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__default">medium (default)</SelectItem>
-                {JOB_MODEL_OPTIONS.map((category) => (
-                  <SelectItem key={category} value={category}>{category}</SelectItem>
+                {JOB_MODEL_SELECT_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    <div className="flex flex-col items-start gap-0.5">
+                      <span>{option.label}</span>
+                      <span className="text-xs text-muted-foreground">{option.description}</span>
+                    </div>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -166,7 +189,7 @@ function JobDetailPage() {
         </Card>
         <Card>
           <CardHeader><CardTitle className="text-sm">Prompt Mode</CardTitle></CardHeader>
-          <CardContent>
+          <CardContent className="space-y-2">
             <Select
               value={job.promptMode ?? "__default"}
               onValueChange={(v) =>
@@ -177,14 +200,23 @@ function JobDetailPage() {
               disabled={updateMutation.isPending}
             >
               <SelectTrigger className="w-full">
-                <SelectValue />
+                <SelectValue>
+                  {PROMPT_MODE_OPTIONS.find((o) => o.value === (job.promptMode ?? "__default"))
+                    ?.label}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__default">full (default)</SelectItem>
-                <SelectItem value="full">full</SelectItem>
-                <SelectItem value="task">task</SelectItem>
+                {PROMPT_MODE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    <div className="flex flex-col items-start gap-0.5">
+                      <span>{option.label}</span>
+                      <span className="text-xs text-muted-foreground">{option.description}</span>
+                    </div>
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
+            <TaskPromptPreview />
           </CardContent>
         </Card>
         <Card className="col-span-2">
@@ -340,6 +372,44 @@ function JobDetailPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+/**
+ * Collapsible live preview of the prompt_mode='task' system prefix. Fetched
+ * from the API (which renders buildTaskPrefix() directly) so the preview can
+ * never drift from the code.
+ */
+function TaskPromptPreview() {
+  const [open, setOpen] = useState(false);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["jobs", "task-prompt"],
+    queryFn: () => apiGet<{ prompt: string }>("/jobs/task-prompt"),
+    enabled: open,
+    staleTime: Infinity,
+  });
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer">
+        <ChevronRight className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`} />
+        Preview task prompt
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-2">
+          {isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
+          {error && (
+            <p className="text-xs text-destructive">Failed to load task prompt: {error.message}</p>
+          )}
+          {data && (
+            <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[300px]">
+              {data.prompt}
+            </pre>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
