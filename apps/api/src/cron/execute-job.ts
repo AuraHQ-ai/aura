@@ -419,6 +419,7 @@ export async function executeJob(
         callingUserId: job.requestedBy,
         jobId: job.id,
         envAllowlist,
+        jobExecutionId: executionId,
       },
       () =>
         withTrace(
