@@ -34,6 +34,9 @@ interface JobData {
     executionCount: number;
     lastExecutedAt: string | null;
     playbook: string | null;
+    model: "main" | "fast" | "medium" | "escalation" | null;
+    promptMode: "full" | "task" | null;
+    envAllowlist: string[] | null;
   };
   executions: Execution[];
 }
@@ -104,6 +107,44 @@ function JobDetailPage() {
           <CardHeader><CardTitle className="text-sm">Last Run</CardTitle></CardHeader>
           <CardContent>
             <span className="text-sm">{formatDate(job.lastExecutedAt)}</span>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Model</CardTitle></CardHeader>
+          <CardContent>
+            {job.model ? (
+              <Badge variant="outline">{job.model}</Badge>
+            ) : (
+              <span className="text-sm text-muted-foreground">medium (default)</span>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">Prompt Mode</CardTitle></CardHeader>
+          <CardContent>
+            {job.promptMode ? (
+              <Badge variant="outline">{job.promptMode}</Badge>
+            ) : (
+              <span className="text-sm text-muted-foreground">full (default)</span>
+            )}
+          </CardContent>
+        </Card>
+        <Card className="col-span-2">
+          <CardHeader><CardTitle className="text-sm">Env Allowlist</CardTitle></CardHeader>
+          <CardContent>
+            {job.envAllowlist && job.envAllowlist.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {job.envAllowlist.map((name) => (
+                  <Badge key={name} variant="secondary" className="font-mono text-xs">
+                    {name}
+                  </Badge>
+                ))}
+              </div>
+            ) : job.envAllowlist ? (
+              <span className="text-sm text-muted-foreground">Empty (no env vars)</span>
+            ) : (
+              <span className="text-sm text-muted-foreground">Full inheritance</span>
+            )}
           </CardContent>
         </Card>
       </div>
