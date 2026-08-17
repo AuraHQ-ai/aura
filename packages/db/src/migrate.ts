@@ -19,14 +19,21 @@
  * A migration is applied if and only if its hash is absent from the ledger.
  * Ordering never affects whether a migration runs.
  *
- * SELF-HEALING LEGACY BACKFILL
- * ============================
- * Runs before the apply loop.  For journal entries that are missing from the
- * ledger by hash AND whose `when` is <= the ledger's max created_at (the
- * legacy watermark), we insert the ledger row WITHOUT executing the SQL.
- * This covers the three prod cases above: their schema is correct, only the
- * ledger tracking is wrong.  After the first deploy the rows exist and this
- * is a no-op.
+ * LEGACY RECONCILIATION (one-time, closed set)
+ * ============================================
+ * Flipping to hash-based tracking would try to re-run history that already
+ * ran, and `0025_feedback_table.sql` is a bare `CREATE TABLE "feedback"` that
+ * would hard-fail the build.  So a CLOSED, hash-pinned list
+ * (LEGACY_BACKFILL_HASHES in migrator.ts) records those specific entries in the
+ * ledger without executing their SQL.  Ten entries, each verified against the
+ * live prod schema on 2026-08-17.  After the first deploy they all match by
+ * hash and the list is inert.
+ *
+ * What this deliberately does NOT do: infer "already applied" from a
+ * timestamp.  Backfilling anything whose `when` is below the ledger watermark
+ * would reproduce the very bug above — the SQL still never runs, except now a
+ * ledger row asserts that it did, which makes the omission invisible.  A new
+ * migration missing from the ledger EXECUTES, whatever its timestamp.
  */
 
 import { createHash } from "crypto";
@@ -34,7 +41,7 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { neon } from "@neondatabase/serverless";
-import { planMigrations } from "./migrator.js";
+import { planMigrations, LEGACY_BACKFILL_HASHES } from "./migrator.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -94,13 +101,12 @@ try {
     SELECT hash, created_at FROM drizzle.__drizzle_migrations
   `) as { hash: string; created_at: string | null }[];
   const existingHashes = new Set(ledgerRows.map(r => r.hash));
-  const ledgerWatermark = ledgerRows.reduce((max, r) => {
-    const v = r.created_at ? Number(r.created_at) : 0;
-    return v > max ? v : max;
-  }, 0);
 
   // ── 5. Plan (pure, testable — see migrator.ts + migrator.test.ts) ─────────
-  const plan = planMigrations(entriesWithHashes, existingHashes, ledgerWatermark);
+  //       Timestamps do NOT decide execution.  A migration runs iff its hash is
+  //       absent from the ledger and is not in the closed legacy reconciliation
+  //       set.  Deciding by `when` would reproduce the very bug this replaces.
+  const plan = planMigrations(entriesWithHashes, existingHashes, LEGACY_BACKFILL_HASHES);
 
   // ── 6. Execute the plan in journal order ───────────────────────────────────
   let applied = 0;
@@ -110,14 +116,14 @@ try {
     if (item.action === "skip") continue;
 
     if (item.action === "backfill") {
-      // Legacy backfill: this entry was silently skipped by the old watermark
-      // logic but its schema already exists in prod.  Record it in the ledger
-      // without re-executing the SQL.
+      // Legacy reconciliation: pre-existing history whose schema is already in
+      // prod (either silently skipped by the old watermark logic, or applied and
+      // then edited in place).  Record it in the ledger without executing SQL.
       console.warn(
-        `[WARN] legacy backfill: ${item.tag} (when=${item.when}) is missing from ` +
-          `the ledger but when <= watermark (${ledgerWatermark}). ` +
-          `Presumed applied by an earlier in-place-edited migration. ` +
-          `Inserting ledger row WITHOUT executing SQL.`
+        `[WARN] legacy reconciliation: ${item.tag} (when=${item.when}) is missing ` +
+          `from the ledger but is in the closed LEGACY_BACKFILL_HASHES set — its ` +
+          `schema was verified present in prod on 2026-08-17. ` +
+          `Inserting ledger row WITHOUT executing SQL. This should happen exactly once.`
       );
       await sql`
         INSERT INTO drizzle.__drizzle_migrations (hash, created_at)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planMigrations } from "./migrator.js";
+import { planMigrations, LEGACY_BACKFILL_HASHES } from "./migrator.js";
 import type { JournalEntryWithHash, MigrationPlan } from "./migrator.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -12,162 +12,141 @@ function actions(plan: MigrationPlan[]) {
   return plan.map(p => `${p.tag}:${p.action}`);
 }
 
-// Current prod watermark: max(when) from the journal = 0081's when
+/** Real prod ledger watermark on 2026-08-17 (0081's `when`). */
 const PROD_WATERMARK = 1787158001000;
 
-// ── planMigrations tests ──────────────────────────────────────────────────────
+/** Real hash of 0025_feedback_table.sql — bare CREATE TABLE, must never re-run. */
+const HASH_0025 = "3dac0cbc18a14f60af945ff92efe78319f9d0a30068bb8514e76d4464379fff0";
+/** Real hash of 0017_amused_kree.sql. */
+const HASH_0017 = "daab31de8de4e72ccb327d8f540cf821341577580466daea694212a27977d5e0";
+/** Real hash of 0074_dashboard_chat_runs_user_message.sql. */
+const HASH_0074 = "5856e3d56893bddb6cadcb4808121861d171c3bc5ebb8f0b3d9a60debcf291d9";
+
+// ── planMigrations ───────────────────────────────────────────────────────────
 
 describe("planMigrations", () => {
-  // ── Basic rules ────────────────────────────────────────────────────────────
-
   it("skips a migration whose hash is already in the ledger", () => {
-    const plan = planMigrations(
-      [e("0000_init", 1771062880226, "known_hash")],
-      new Set(["known_hash"]),
-      PROD_WATERMARK
-    );
+    const plan = planMigrations([e("0001_a", 1000, "hash_a")], new Set(["hash_a"]));
     expect(plan[0].action).toBe("skip");
   });
 
-  it("applies a new migration above the watermark", () => {
+  it("applies a new migration whose hash is absent", () => {
+    const plan = planMigrations([e("0090_new", PROD_WATERMARK + 5000, "hash_new")], new Set());
+    expect(plan[0].action).toBe("apply");
+  });
+
+  it("applies all entries on a fresh DB", () => {
     const plan = planMigrations(
-      [e("0082_new_table", 1800000000000, "new_hash")],
-      new Set(),
-      PROD_WATERMARK
+      [e("0001_a", 1000, "h1"), e("0002_b", 2000, "h2"), e("0003_c", 3000, "h3")],
+      new Set()
+    );
+    expect(actions(plan)).toEqual(["0001_a:apply", "0002_b:apply", "0003_c:apply"]);
+  });
+
+  it("skips everything when all hashes are present", () => {
+    const entries = [e("0001_a", 1000, "h1"), e("0002_b", 2000, "h2")];
+    const plan = planMigrations(entries, new Set(["h1", "h2"]));
+    expect(actions(plan)).toEqual(["0001_a:skip", "0002_b:skip"]);
+  });
+
+  it("preserves journal order in the output plan", () => {
+    const entries = [e("0003_c", 3000, "h3"), e("0001_a", 1000, "h1"), e("0002_b", 2000, "h2")];
+    const plan = planMigrations(entries, new Set());
+    expect(plan.map(p => p.tag)).toEqual(["0003_c", "0001_a", "0002_b"]);
+  });
+
+  // ── The regression this whole PR exists to prevent ─────────────────────────
+
+  it("APPLIES an out-of-order migration instead of skipping or backfilling it", () => {
+    // The old watermark migrator skipped this forever. A timestamp-based
+    // backfill would be just as wrong: the SQL never runs, but a ledger row
+    // claims it did. It must EXECUTE.
+    const plan = planMigrations(
+      [e("0079_stale_branch", PROD_WATERMARK - 5_000_000, "hash_stale")],
+      new Set()
     );
     expect(plan[0].action).toBe("apply");
   });
 
-  it("backfills a migration below the watermark whose hash is absent", () => {
+  it("does not treat a low `when` as evidence of prior application", () => {
+    // Ancient timestamp, unknown hash, empty ledger → still apply.
+    const plan = planMigrations([e("0091_ancient_ts", 1, "hash_unknown")], new Set());
+    expect(plan[0].action).toBe("apply");
+  });
+
+  it("applies a new migration even when the ledger contains far newer rows", () => {
     const plan = planMigrations(
-      [e("NNNN_stale", 1750000000000, "stale_hash")],
-      new Set(),
-      PROD_WATERMARK
+      [e("0092_late_merge", PROD_WATERMARK - 1, "hash_late")],
+      new Set(["some_much_newer_hash"])
     );
-    expect(plan[0].action).toBe("backfill");
+    expect(plan[0].action).toBe("apply");
   });
 
-  it("backfills a migration exactly at the watermark boundary", () => {
-    // when <= watermark → backfill (not apply)
+  // ── Legacy reconciliation (closed set) ────────────────────────────────────
+
+  it("backfills only hashes in the closed legacy set", () => {
     const plan = planMigrations(
-      [e("NNNN_boundary", PROD_WATERMARK, "boundary_hash")],
-      new Set(),
-      PROD_WATERMARK
-    );
-    expect(plan[0].action).toBe("backfill");
-  });
-
-  // ── The ordering bug ───────────────────────────────────────────────────────
-
-  it("handles the ordering bug: out-of-order migration is backfilled, not silently skipped", () => {
-    // Old watermark-based migrator: sees when <= max → skips forever (bug).
-    // New hash-based migrator: hash absent AND when <= watermark → backfill.
-    // The migration gets a ledger row without re-executing; subsequent runs skip.
-    const plan = planMigrations(
-      [e("NNNN_out_of_order", 1750000000000, "missing_hash")],
-      new Set(),
-      PROD_WATERMARK
-    );
-    expect(plan[0].action).toBe("backfill");
-    // Crucially, NOT "skip" (that would require the hash to be present)
-    expect(plan[0].action).not.toBe("skip");
-  });
-
-  // ── Real prod cases ────────────────────────────────────────────────────────
-
-  it("backfills 0017_amused_kree (prod case: below watermark, hash absent)", () => {
-    const plan = planMigrations(
-      [e("0017_amused_kree", 1771757715594, "hash_0017")],
-      new Set(), // not in ledger
-      PROD_WATERMARK
-    );
-    expect(plan[0].action).toBe("backfill");
-  });
-
-  it("backfills 0025_feedback_table (prod case: below watermark, hash absent)", () => {
-    // 0025 uses bare CREATE TABLE (no IF NOT EXISTS) — re-running would hard-fail.
-    // Backfill ensures it is never re-executed.
-    const plan = planMigrations(
-      [e("0025_feedback_table", 1772600000000, "hash_0025")],
-      new Set(),
-      PROD_WATERMARK
-    );
-    expect(plan[0].action).toBe("backfill");
-  });
-
-  it("backfills 0074_dashboard_chat_runs_user_message (prod case: below watermark, hash absent)", () => {
-    const plan = planMigrations(
-      [e("0074_dashboard_chat_runs_user_message", 1781080113835, "hash_0074")],
-      new Set(),
-      PROD_WATERMARK
-    );
-    expect(plan[0].action).toBe("backfill");
-  });
-
-  it("backfills all three prod missing entries together", () => {
-    const prodMissing = [
-      e("0017_amused_kree", 1771757715594, "hash_0017"),
-      e("0025_feedback_table", 1772600000000, "hash_0025"),
-      e("0074_dashboard_chat_runs_user_message", 1781080113835, "hash_0074"),
-    ];
-    const plan = planMigrations(prodMissing, new Set(), PROD_WATERMARK);
-    expect(plan.every(p => p.action === "backfill")).toBe(true);
-  });
-
-  // ── Full no-op (all hashes present) ────────────────────────────────────────
-
-  it("skips everything when all hashes are already in the ledger", () => {
-    const entries = [
-      e("0000_init", 1771062880226, "h0"),
-      e("0001_next", 1771103243060, "h1"),
-      e("0082_latest", 1800000000000, "h2"),
-    ];
-    const existingHashes = new Set(["h0", "h1", "h2"]);
-    const plan = planMigrations(entries, existingHashes, PROD_WATERMARK);
-    expect(plan.every(p => p.action === "skip")).toBe(true);
-  });
-
-  // ── Fresh DB (empty ledger) ────────────────────────────────────────────────
-
-  it("applies all entries on a fresh DB (watermark=0, empty ledger)", () => {
-    const entries = [
-      e("0000_init", 1771062880226, "h0"),
-      e("0001_next", 1771103243060, "h1"),
-    ];
-    const plan = planMigrations(entries, new Set(), 0);
-    // watermark=0 means every entry's when > 0, so all get "apply"
-    expect(plan.every(p => p.action === "apply")).toBe(true);
-  });
-
-  // ── Mixed scenario ────────────────────────────────────────────────────────
-
-  it("handles mixed skip / backfill / apply in one plan", () => {
-    const entries = [
-      e("already_applied", 1771000000000, "in_ledger"), // skip
-      e("skipped_by_old", 1771000000001, "missing_old"), // backfill (below watermark)
-      e("new_migration", 1800000000000, "new_hash"), // apply (above watermark)
-    ];
-    const plan = planMigrations(
-      entries,
-      new Set(["in_ledger"]),
-      PROD_WATERMARK
+      [
+        e("0017_amused_kree", 1771757715594, HASH_0017),
+        e("0025_feedback_table", 1772600000000, HASH_0025),
+        e("0074_dashboard_chat_runs_user_message", 1781080113835, HASH_0074),
+        e("0093_genuinely_new", 1771000000000, "hash_not_in_legacy_set"),
+      ],
+      new Set()
     );
     expect(actions(plan)).toEqual([
-      "already_applied:skip",
-      "skipped_by_old:backfill",
-      "new_migration:apply",
+      "0017_amused_kree:backfill",
+      "0025_feedback_table:backfill",
+      "0074_dashboard_chat_runs_user_message:backfill",
+      // same era of timestamps, but not a known-legacy hash → must execute
+      "0093_genuinely_new:apply",
     ]);
   });
 
-  // ── Ordering invariant ────────────────────────────────────────────────────
+  it("never re-executes 0025_feedback_table (bare CREATE TABLE would hard-fail)", () => {
+    const plan = planMigrations([e("0025_feedback_table", 1772600000000, HASH_0025)], new Set());
+    expect(plan[0].action).not.toBe("apply");
+    expect(plan[0].action).toBe("backfill");
+  });
 
-  it("preserves journal entry order in the output plan", () => {
-    const entries = [
-      e("tag_c", 1771000000003, "hc"),
-      e("tag_a", 1771000000001, "ha"),
-      e("tag_b", 1771000000002, "hb"),
-    ];
-    const plan = planMigrations(entries, new Set(), 0);
-    expect(plan.map(p => p.tag)).toEqual(["tag_c", "tag_a", "tag_b"]);
+  it("prefers skip over backfill once the legacy row exists (idempotent second deploy)", () => {
+    const plan = planMigrations(
+      [e("0025_feedback_table", 1772600000000, HASH_0025)],
+      new Set([HASH_0025])
+    );
+    expect(plan[0].action).toBe("skip");
+  });
+
+  it("legacy set covers all 10 measured prod discrepancies and nothing else", () => {
+    expect(LEGACY_BACKFILL_HASHES.size).toBe(10);
+    expect(LEGACY_BACKFILL_HASHES.has(HASH_0017)).toBe(true);
+    expect(LEGACY_BACKFILL_HASHES.has(HASH_0025)).toBe(true);
+    expect(LEGACY_BACKFILL_HASHES.has(HASH_0074)).toBe(true);
+    expect(LEGACY_BACKFILL_HASHES.has("hash_that_does_not_exist")).toBe(false);
+  });
+
+  it("handles mixed skip / backfill / apply in one plan", () => {
+    const plan = planMigrations(
+      [
+        e("0001_done", 1000, "h_done"),
+        e("0025_feedback_table", 1772600000000, HASH_0025),
+        e("0094_new", PROD_WATERMARK + 1000, "h_new"),
+      ],
+      new Set(["h_done"])
+    );
+    expect(actions(plan)).toEqual([
+      "0001_done:skip",
+      "0025_feedback_table:backfill",
+      "0094_new:apply",
+    ]);
+  });
+
+  it("accepts an injected legacy set for testing without touching the prod list", () => {
+    const plan = planMigrations(
+      [e("0095_x", 500, "h_x")],
+      new Set(),
+      new Set(["h_x"])
+    );
+    expect(plan[0].action).toBe("backfill");
   });
 });

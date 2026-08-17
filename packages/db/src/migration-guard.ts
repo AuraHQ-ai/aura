@@ -6,7 +6,9 @@
  * the git state and runs all checks, exiting non-zero on any failure.
  *
  * Checks performed (on newly-added entries unless noted):
- *   1. out-of-order    — new entry `when` <= max `when` on main (stale branch)
+ *   1. out-of-order    — new entry `when` <= max `when` on main (stale branch).
+ *                        Hygiene, not correctness: the hash-based runner in
+ *                        migrate.ts applies out-of-order migrations correctly.
  *   2. duplicate-when  — two new entries share the same `when`
  *   3. missing-sql     — any journal entry (new or existing) has no .sql file
  *   4. orphaned-sql    — a .sql file in drizzle/ has no journal entry
@@ -56,7 +58,10 @@ export function checkMigrationGuard(
 
   // ── Check 1: out-of-order generation ────────────────────────────────────
   // A new migration whose `when` is <= the main max `when` was generated on a
-  // stale branch.  Any watermark-based migrator would silently skip it.
+  // stale branch.  Since migrate.ts is hash-based this is no longer a
+  // correctness bug (the migration still executes), but it keeps the journal
+  // monotonic, keeps `_journal.json` merge conflicts to a minimum, and catches
+  // "I forgot to rebase" at PR-open time instead of at merge.
   for (const entry of newEntries) {
     if (entry.when <= mainMaxWhen) {
       errors.push({
