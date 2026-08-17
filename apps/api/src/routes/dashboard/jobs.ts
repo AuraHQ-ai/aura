@@ -2,8 +2,32 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { eq, sql, ilike, desc } from "drizzle-orm";
 import { jobs, jobExecutions, conversationTraces } from "@aura/db/schema";
 import { db } from "../../db/client.js";
+import { JOB_MODEL_CATEGORIES } from "../../lib/ai.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, paginationQuerySchema, idParamSchema, createDashboardApp } from "./schemas.js";
+
+/** Env var NAMES only (never values) — standard POSIX-style identifier. */
+const ENV_VAR_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * All fields optional: omitted = leave unchanged, explicit null = clear the
+ * override (model → medium default, envAllowlist → full inheritance,
+ * promptMode → full prompt).
+ */
+export const updateJobBodySchema = z.object({
+  enabled: z.boolean().optional(),
+  model: z.enum(JOB_MODEL_CATEGORIES).nullable().optional(),
+  envAllowlist: z
+    .array(
+      z
+        .string()
+        .regex(ENV_VAR_NAME_REGEX, "must be a valid env var name (letters, digits, underscores)"),
+    )
+    .max(100)
+    .nullable()
+    .optional(),
+  promptMode: z.enum(["full", "task"]).nullable().optional(),
+});
 
 export const dashboardJobsApp = createDashboardApp();
 
@@ -151,17 +175,17 @@ dashboardJobsApp.openapi(getJobRoute, async (c) => {
   }
 });
 
-const toggleJobRoute = createRoute({
+const updateJobRoute = createRoute({
   method: "patch",
   path: "/{id}",
   tags: ["Jobs"],
-  summary: "Toggle job enabled/disabled",
+  summary: "Update job (enabled, model, env allowlist, prompt mode)",
   request: {
     params: idParamSchema,
     body: {
       content: {
         "application/json": {
-          schema: z.object({ enabled: z.boolean() }),
+          schema: updateJobBodySchema,
         },
       },
       required: true,
@@ -171,6 +195,10 @@ const toggleJobRoute = createRoute({
     200: {
       content: { "application/json": { schema: z.any() } },
       description: "Success",
+    },
+    400: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Validation error",
     },
     404: {
       content: { "application/json": { schema: errorSchema } },
@@ -183,17 +211,20 @@ const toggleJobRoute = createRoute({
   },
 });
 
-dashboardJobsApp.openapi(toggleJobRoute, async (c) => {
+dashboardJobsApp.openapi(updateJobRoute, async (c) => {
   try {
     const id = c.req.param("id");
-    const body = await c.req.json<{ enabled: boolean }>();
+    const body = c.req.valid("json");
+
+    const set: Partial<typeof jobs.$inferInsert> = { updatedAt: new Date() };
+    if (body.enabled !== undefined) set.enabled = body.enabled ? 1 : 0;
+    if (body.model !== undefined) set.model = body.model;
+    if (body.envAllowlist !== undefined) set.envAllowlist = body.envAllowlist;
+    if (body.promptMode !== undefined) set.promptMode = body.promptMode;
 
     const result = await db
       .update(jobs)
-      .set({
-        enabled: body.enabled ? 1 : 0,
-        updatedAt: new Date(),
-      })
+      .set(set)
       .where(eq(jobs.id, id))
       .returning();
 
@@ -203,7 +234,7 @@ dashboardJobsApp.openapi(toggleJobRoute, async (c) => {
 
     return c.json(result[0] as any, 200);
   } catch (error) {
-    logger.error("Failed to toggle job", { error: String(error) });
+    logger.error("Failed to update job", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
   }
 });

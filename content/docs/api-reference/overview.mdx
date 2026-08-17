@@ -110,3 +110,22 @@ Returns the full OpenAPI 3.1 specification for all dashboard API routes. Useful 
 **Auth:** None (public, like the login/callback routes).
 
 The spec covers 17 route groups: auth, chat, stats, notes, memories, users, conversations, errors, jobs, credentials, resources, consumption, adoption, settings, models, entities, and eval.
+
+### `PATCH /api/dashboard/jobs/:id`
+
+Partial update of a job. All body fields are optional: omitted fields are left unchanged, and an explicit `null` clears the override back to its default.
+
+| Field | Type | Semantics |
+| --- | --- | --- |
+| `enabled` | `boolean` | Enable or disable the job. |
+| `model` | `"main"` \| `"fast"` \| `"medium"` \| `"escalation"` \| `null` | Model catalog category the job executes with. `null` resolves to `medium` (the job default). Validated against the job-eligible catalog categories (`embedding` is not allowed). |
+| `envAllowlist` | `string[]` \| `null` | Sandbox env var **names** the job may access — names only, values are never accepted, returned, or logged. `null` = full caller-scoped inheritance; `[]` = no env vars. Names must match `[A-Za-z_][A-Za-z0-9_]*`. |
+| `promptMode` | `"full"` \| `"task"` \| `null` | `"task"` runs the minimal task prompt (no personality/notes). `null` resolves to `"full"` (default). |
+
+Invalid values return `400` with a validation message. The jobs list (`GET /api/dashboard/jobs`) and detail (`GET /api/dashboard/jobs/:id`) responses include these three fields.
+
+**Auth:** Dashboard bearer token.
+
+### Model categories & settings keys
+
+`GET /api/dashboard/models` returns the DB-backed model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus per-category `defaults`. Category overrides persist as ordinary settings via `PUT /api/dashboard/settings/:key` with keys `model_main`, `model_fast`, `model_medium`, `model_embedding`, and `model_escalation`. Resolution order everywhere is: DB setting override first, then catalog default (`medium` additionally falls back to the main model when unconfigured).
