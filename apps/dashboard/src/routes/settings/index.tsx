@@ -12,11 +12,13 @@ import { ThemeSelect } from "@/components/theme-toggle";
 import { formatDate } from "@/lib/utils";
 import { MODEL_CATEGORIES, type ModelCategory } from "@/lib/model-categories";
 import { useMemo, useState } from "react";
-import { RefreshCw, Save, Plus, Pencil } from "lucide-react";
+import { RefreshCw, Save, Plus, Pencil, ChevronDown, ChevronRight, Lock } from "lucide-react";
 
 interface Setting {
   key: string;
   value: string;
+  hasValue: boolean;
+  redacted: boolean;
   description: string | null;
   updatedAt: string;
   updatedBy: string | null;
@@ -46,6 +48,19 @@ interface ModelCatalog {
   lastSyncedAt: string | null;
 }
 
+/** Runtime-state keys that represent per-sandbox/per-user transient state. */
+function isRuntimeKey(key: string): boolean {
+  return (
+    key.startsWith("e2b_sandbox_id:") ||
+    key.startsWith("e2b_template:") ||
+    key.startsWith("sandbox:") ||
+    key.startsWith("session:") ||
+    key.startsWith("runtime:")
+  );
+}
+
+const MASKED_VALUE = "••••••••";
+
 function SettingsPage() {
   const queryClient = useQueryClient();
 
@@ -63,11 +78,14 @@ function SettingsPage() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingRedacted, setEditingRedacted] = useState(false);
   const [formKey, setFormKey] = useState("");
   const [formValue, setFormValue] = useState("");
+  const [runtimeExpanded, setRuntimeExpanded] = useState(false);
 
   function openCreate() {
     setEditingKey(null);
+    setEditingRedacted(false);
     setFormKey("");
     setFormValue("");
     setDialogOpen(true);
@@ -75,8 +93,11 @@ function SettingsPage() {
 
   function openEdit(setting: Setting) {
     setEditingKey(setting.key);
+    setEditingRedacted(setting.redacted);
     setFormKey(setting.key);
-    setFormValue(setting.value);
+    // For redacted settings, start with empty so user must type a new value
+    // (empty = no-op on the server side).
+    setFormValue(setting.redacted ? "" : setting.value);
     setDialogOpen(true);
   }
 
@@ -128,9 +149,14 @@ function SettingsPage() {
   if (loadingSettings) return <PageSkeleton rows={8} />;
   if (settingsError) return <div className="text-destructive text-sm">Failed to load settings: {settingsError.message}</div>;
 
-  const nonModelSettings = (settings ?? []).filter(
+  const allSettings = settings ?? [];
+
+  // Partition into model, runtime, and regular settings
+  const nonModelSettings = allSettings.filter(
     (s) => !s.key.startsWith("model_") && !s.key.startsWith("credential:"),
   );
+  const regularSettings = nonModelSettings.filter((s) => !isRuntimeKey(s.key));
+  const runtimeSettings = nonModelSettings.filter((s) => isRuntimeKey(s.key));
 
   const isEditing = editingKey !== null;
   const defaultOption = [{ value: "__default", label: "Default" }];
@@ -216,10 +242,21 @@ function SettingsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {nonModelSettings.map((s) => (
+            {regularSettings.map((s) => (
               <TableRow key={s.key}>
-                <TableCell className="font-mono text-sm">{s.key}</TableCell>
-                <TableCell className="text-sm">{s.value}</TableCell>
+                <TableCell className="font-mono text-sm">
+                  <span className="flex items-center gap-1.5">
+                    {s.redacted && <Lock className="h-3 w-3 text-muted-foreground shrink-0" />}
+                    {s.key}
+                  </span>
+                </TableCell>
+                <TableCell className="text-sm">
+                  {s.redacted ? (
+                    <span className="text-muted-foreground font-mono">{s.hasValue ? MASKED_VALUE : "—"}</span>
+                  ) : (
+                    s.value
+                  )}
+                </TableCell>
                 <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
                 <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
                 <TableCell>
@@ -229,7 +266,7 @@ function SettingsPage() {
                 </TableCell>
               </TableRow>
             ))}
-            {nonModelSettings.length === 0 && (
+            {regularSettings.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="text-center text-muted-foreground py-8">No settings</TableCell>
               </TableRow>
@@ -237,6 +274,51 @@ function SettingsPage() {
           </TableBody>
         </Table>
       </div>
+
+      {runtimeSettings.length > 0 && (
+        <div className="rounded-xl border overflow-hidden">
+          <button
+            type="button"
+            className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            onClick={() => setRuntimeExpanded((v) => !v)}
+          >
+            {runtimeExpanded ? (
+              <ChevronDown className="h-4 w-4 shrink-0" />
+            ) : (
+              <ChevronRight className="h-4 w-4 shrink-0" />
+            )}
+            Runtime state ({runtimeSettings.length})
+          </button>
+          {runtimeExpanded && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[200px]">Key</TableHead>
+                  <TableHead>Value</TableHead>
+                  <TableHead className="w-[160px]">Updated</TableHead>
+                  <TableHead className="w-[120px]">By</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runtimeSettings.map((s) => (
+                  <TableRow key={s.key}>
+                    <TableCell className="font-mono text-sm">{s.key}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground font-mono truncate max-w-xs">{s.value}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="icon-sm" onClick={() => openEdit(s)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
@@ -259,10 +341,17 @@ function SettingsPage() {
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Value</label>
               <Input
-                placeholder="Setting value"
+                placeholder={editingRedacted ? "Enter new value to overwrite (leave blank to keep current)" : "Setting value"}
                 value={formValue}
                 onChange={(e) => setFormValue(e.target.value)}
+                type={editingRedacted ? "password" : "text"}
               />
+              {editingRedacted && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Lock className="h-3 w-3" />
+                  This is a secret field. Leave blank to keep the stored value unchanged.
+                </p>
+              )}
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>

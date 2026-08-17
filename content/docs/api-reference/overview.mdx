@@ -132,6 +132,36 @@ Returns the live `promptMode='task'` system prefix as `{ "prompt": "<task_mode>.
 
 **Auth:** Dashboard bearer token.
 
+### `GET /api/dashboard/settings`
+
+Returns all settings for the workspace as a JSON array. Each item has the following shape:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `key` | `string` | Setting key |
+| `value` | `string` | Raw value for non-secret keys; masked placeholder (`••••••••`) for secret keys |
+| `hasValue` | `boolean` | `true` when a non-empty value is stored (always `true` for non-secret keys) |
+| `redacted` | `boolean` | `true` when the value has been masked |
+| `description` | `string \| null` | Optional description |
+| `updatedAt` | `string \| null` | ISO 8601 timestamp of last update |
+| `updatedBy` | `string \| null` | Who last updated this setting |
+
+**Secret-bearing keys** are redacted automatically. A key is considered secret when it starts with `credential:` or contains any of: `secret`, `token`, `password`, `api_key`, `apikey`, `private_key`, `refresh_token`, `credential`, `webhook_secret`, `signing` (case-insensitive). Raw values are never returned for these keys.
+
+**Auth:** Dashboard bearer token.
+
+### `GET /api/dashboard/settings/:key`
+
+Returns `{ value, hasValue, redacted }` for a single setting. Same redaction rules as the list endpoint apply.
+
+**Auth:** Dashboard bearer token.
+
+### `PUT /api/dashboard/settings/:key`
+
+Upserts a setting. **Write-only semantics for secret keys:** submitting an empty string or the masked placeholder (`••••••••`) as the value is treated as a no-op and returns `204 No Content` — the stored value is left unchanged. Submitting a non-empty, non-placeholder value always overwrites the stored value. The response body (for `200`) applies the same redaction as the GET endpoints.
+
+**Auth:** Dashboard bearer token.
+
 ### Model categories & settings keys
 
 `GET /api/dashboard/models` returns the model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus per-category `defaults`. The per-category lists contain the **full catalog synced from the Vercel AI Gateway**, filtered only by capability metadata: models typed `embedding`, `image`, `video`, or `reranking` are excluded from the chat categories, and the `embedding` category lists embedding models. Models with unknown type appear everywhere rather than being hidden by a guessed blocklist.
