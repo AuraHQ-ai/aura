@@ -19,6 +19,7 @@ import { logger } from "./logger.js";
 export const MODEL_CATEGORIES = [
   "main",
   "fast",
+  "medium",
   "embedding",
   "escalation",
 ] as const;
@@ -47,11 +48,41 @@ export interface ModelCatalogItem {
 export interface ModelCatalogResponse {
   main: ModelOption[];
   fast: ModelOption[];
+  medium: ModelOption[];
   embedding: ModelOption[];
   escalation: ModelOption[];
   defaults: Partial<Record<ModelCategory, string>>;
   catalog: ModelCatalogItem[];
   lastSyncedAt: string | null;
+}
+
+export interface ModelCatalogResponseOptions {
+  /**
+   * When true, the per-category lists contain the FULL synced catalog filtered
+   * only by capability metadata (the gateway `type`: image/video/embedding/
+   * reranking models are excluded from the chat categories, and the embedding
+   * category lists embedding models). `model_catalog_selections` then only
+   * drives `defaults`.
+   *
+   * Used by the dashboard settings selectors (searchable combobox). Slack App
+   * Home keeps the curated lists (default) because Slack `static_select`
+   * menus are hard-capped at 100 options.
+   */
+  fullCategoryLists?: boolean;
+}
+
+/** Gateway model types that cannot serve a chat (text-generation) category. */
+const NON_CHAT_MODEL_TYPES = new Set(["embedding", "image", "video", "reranking"]);
+
+/**
+ * Category eligibility from catalog `type` metadata. Unknown/missing types
+ * pass every filter — when there's no reliable metadata we show the model
+ * rather than invent a blocklist.
+ */
+function isEligibleForCategory(type: string, category: ModelCategory): boolean {
+  if (type === "unknown") return true;
+  if (category === "embedding") return type === "embedding";
+  return !NON_CHAT_MODEL_TYPES.has(type);
 }
 
 interface GatewayModel {
@@ -400,6 +431,7 @@ export async function syncModelCatalogFromGateway(
 
 export async function getModelCatalogResponse(
   workspaceId = DEFAULT_WORKSPACE_ID,
+  options: ModelCatalogResponseOptions = {},
 ): Promise<ModelCatalogResponse> {
   const rows = await db
     .select({
@@ -427,6 +459,7 @@ export async function getModelCatalogResponse(
   const grouped: Record<ModelCategory, ModelOption[]> = {
     main: [],
     fast: [],
+    medium: [],
     embedding: [],
     escalation: [],
   };
@@ -487,15 +520,33 @@ export async function getModelCatalogResponse(
     grouped[category] = Array.from(deduped.values());
   }
 
+  // Defaults always come from the curated lists (isDefault, else the first
+  // curated option) — never from the full catalog listing, where "first"
+  // would be an arbitrary alphabetical model.
   for (const category of MODEL_CATEGORIES) {
     if (!defaults[category]) {
       defaults[category] = grouped[category][0]?.value;
     }
   }
 
+  if (options.fullCategoryLists) {
+    for (const category of MODEL_CATEGORIES) {
+      grouped[category] = [];
+    }
+    // catalogByModelId preserves query order (provider asc, name asc).
+    for (const item of catalogByModelId.values()) {
+      for (const category of MODEL_CATEGORIES) {
+        if (isEligibleForCategory(item.type, category)) {
+          grouped[category].push({ value: item.value, label: item.label });
+        }
+      }
+    }
+  }
+
   return {
     main: grouped.main,
     fast: grouped.fast,
+    medium: grouped.medium,
     embedding: grouped.embedding,
     escalation: grouped.escalation,
     defaults,
@@ -504,6 +555,19 @@ export async function getModelCatalogResponse(
   };
 }
 
+/**
+ * @deprecated
+ * `getDefaultModelId` reads `model_catalog_selections.isDefault` to find a
+ * per-category default. It is no longer called from the model-resolution path
+ * (`apps/api/src/lib/ai.ts`), which now uses `LAST_RESORT_MODELS` as the
+ * fallback so that resolution never silently relies on potentially stale
+ * catalog data.
+ *
+ * The `model_catalog_selections` table (and the `defaults` field in
+ * `ModelCatalogResponse`) is retained for the legacy curated lists shown in
+ * the Slack App Home `static_select` menus. Do not drop the table or the
+ * `isDefault` column without first migrating those callers.
+ */
 export async function getDefaultModelId(
   category: ModelCategory,
   workspaceId = DEFAULT_WORKSPACE_ID,

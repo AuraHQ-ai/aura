@@ -7,7 +7,8 @@ import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext } from "../lib/tool.js";
 import { getCurrentTimeContext } from "../lib/temporal.js";
-import { buildStablePrefix } from "../personality/system-prompt.js";
+import { isJobModelCategory, type JobModelCategory } from "../lib/ai.js";
+import { buildStablePrefix, buildTaskPrefix } from "../personality/system-prompt.js";
 import {
   createConversationTrace,
   persistConversationInputs,
@@ -169,7 +170,17 @@ export async function executeJob(
         ? `\n\nAuthorized credential IDs for this job: ${credentialIds.join(", ")}`
         : "";
 
-    const stablePrefix = await buildStablePrefix();
+    // Scoped execution (issue #1302): prompt_mode 'task' skips the full
+    // personality prefix; model routes to a catalog category; env_allowlist
+    // narrows the sandbox env (applied below via executionContext + script layer).
+    // Jobs default to 'medium' (Sonnet-class); frontier 'main' is opt-in.
+    const isTaskMode = job.promptMode === "task";
+    const modelCategory: JobModelCategory = isJobModelCategory(job.model)
+      ? job.model
+      : "medium";
+    const envAllowlist = job.envAllowlist ?? undefined;
+
+    const stablePrefix = isTaskMode ? buildTaskPrefix() : await buildStablePrefix();
     const timeContext = getCurrentTimeContext(job.timezone);
 
     if (isContinuation) {
@@ -208,6 +219,9 @@ export async function executeJob(
         hasPlaybook: !!job.playbook,
         trigger: effectiveTrigger,
         credentialCount: credentialIds.length,
+        modelCategory,
+        promptMode: isTaskMode ? "task" : "full",
+        envAllowlistSize: envAllowlist?.length ?? null,
       });
     }
 
@@ -223,9 +237,15 @@ export async function executeJob(
 
     if (job.script) {
       try {
-        const { getOrCreateSandbox, truncateOutput, getSandboxEnvs } = await import("../lib/sandbox.js");
+        const { getOrCreateSandbox, truncateOutput, getSandboxEnvs, filterEnvsByAllowlist } =
+          await import("../lib/sandbox.js");
         const sandbox = await getOrCreateSandbox();
-        const envs = await getSandboxEnvs(job.requestedBy);
+        // Script layer runs outside executionContext.run, so apply the job's
+        // env allowlist explicitly here (narrows, never widens).
+        const envs = filterEnvsByAllowlist(
+          await getSandboxEnvs(job.requestedBy),
+          envAllowlist ?? null,
+        );
 
         const scriptResult = await sandbox.commands.run(job.script, {
           timeoutMs: 120_000,
@@ -374,6 +394,7 @@ export async function executeJob(
       },
       systemPrompt,
       invocationId,
+      modelCategory,
     });
 
     // Create a conversation trace for this job execution
@@ -397,6 +418,7 @@ export async function executeJob(
         triggerType: "scheduled_job",
         callingUserId: job.requestedBy,
         jobId: job.id,
+        envAllowlist,
       },
       () =>
         withTrace(

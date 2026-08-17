@@ -49,7 +49,7 @@ const limit = readNumberFlag("limit", 12);
 const maxSteps = readNumberFlag("max-steps", 12);
 
 const { sql, and, eq, asc, inArray } = await import("drizzle-orm");
-const { generateText, generateObject } = await import("ai");
+const { generateText, Output } = await import("ai");
 const { z } = await import("zod");
 const { WebClient } = await import("@slack/web-api");
 const { db } = await import("../db/client.js");
@@ -388,9 +388,9 @@ for (const c of cases) {
     const replayFirst = Math.random() < 0.5;
     const A = replayFirst ? replayText : ctx.originalText;
     const B = replayFirst ? ctx.originalText : replayText;
-    const { object: judged } = await generateObject({
+    const { output: judged } = await generateText({
       model: fastModel,
-      schema: pairwiseSchema,
+      output: Output.object({ schema: pairwiseSchema }),
       instructions:
         "You compare two candidate replies from an AI assistant in a Slack conversation and pick the one that better FULFILLS the user's intent: more correct, grounded, complete, actionable. Tone/length only break ties. Also flag, for each candidate, whether it claims to lack access, credentials, an API key, or a capability. You do not know which candidate is newer — judge only quality.",
       prompt: `<conversation_so_far>\n${ctx.conversationContext}\n</conversation_so_far>\n\nUSER'S ASK: ${clip(ctx.lastUserText, MAX_TURN_CHARS)}\n\n<candidate_A>\n${clip(A, MAX_RESPONSE_CHARS)}\n</candidate_A>\n\n<candidate_B>\n${clip(B, MAX_RESPONSE_CHARS)}\n</candidate_B>`,

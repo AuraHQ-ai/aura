@@ -110,3 +110,85 @@ Returns the full OpenAPI 3.1 specification for all dashboard API routes. Useful 
 **Auth:** None (public, like the login/callback routes).
 
 The spec covers 17 route groups: auth, chat, stats, notes, memories, users, conversations, errors, jobs, credentials, resources, consumption, adoption, settings, models, entities, and eval.
+
+### `PATCH /api/dashboard/jobs/:id`
+
+Partial update of a job. All body fields are optional: omitted fields are left unchanged, and an explicit `null` clears the override back to its default.
+
+| Field | Type | Semantics |
+| --- | --- | --- |
+| `enabled` | `boolean` | Enable or disable the job. |
+| `model` | `"main"` \| `"fast"` \| `"medium"` \| `"escalation"` \| `null` | Model catalog category the job executes with. `null` resolves to `medium` (the job default). Validated against the job-eligible catalog categories (`embedding` is not allowed). |
+| `envAllowlist` | `string[]` \| `null` | Sandbox env var **names** the job may access — names only, values are never accepted, returned, or logged. `null` = full caller-scoped inheritance; `[]` = no env vars. Names must match `[A-Za-z_][A-Za-z0-9_]*`. |
+| `promptMode` | `"full"` \| `"task"` \| `null` | `"task"` runs the minimal task prompt (no personality/notes). `null` resolves to `"full"` (default). See [Prompt Modes](/prompt-modes). |
+
+Invalid values return `400` with a validation message. The jobs list (`GET /api/dashboard/jobs`) and detail (`GET /api/dashboard/jobs/:id`) responses include these three fields, plus cost and watchdog metadata described below.
+
+### `GET /api/dashboard/jobs`
+
+Returns a paginated list of jobs. Accepts `?search=`, `?page=`, and `?limit=` query parameters (limit capped at 100). Each item includes all `jobs` table columns plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `runs30d` | `number` | Count of executions started in the last 30 days. |
+| `cost30dUsd` | `string \| null` | Total `cost_usd` (from `conversation_traces`) over the last 30 days. `null` when no cost data is priced yet. |
+| `avgCostPerRunUsd` | `string \| null` | `cost30dUsd / runs30d` formatted to 6 decimal places. `null` when either input is absent. |
+| `wasWatchdogReset` | `boolean` | `true` when `jobs.result` contains `"reset by watchdog"` — the job was terminated by the stuck-job watchdog. The dashboard renders a **watchdog reset** badge in this case. |
+
+Cost data is aggregated in a single `LEFT JOIN` query over `job_executions → conversation_traces` for the IDs returned by the page — no N+1.
+
+### `GET /api/dashboard/jobs/:id`
+
+Returns `{ job, executions }`. Each execution object includes all `job_executions` columns plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `costUsd` | `string \| null` | Cost from the linked `conversation_traces` row. |
+| `resolvedModelId` | `string \| null` | Actual model ID resolved for this execution (from `conversation_traces.resolved_model_id`). |
+| `conversationTraceId` | `string \| null` | UUID of the linked conversation trace (for deep-linking to the trace viewer). |
+
+**Auth:** Dashboard bearer token.
+
+### `GET /api/dashboard/jobs/task-prompt`
+
+Returns the live `promptMode='task'` system prefix as `{ "prompt": "<task_mode>..." }`, rendered directly from `buildTaskPrefix()` in the running code. The dashboard job detail page uses this endpoint for its collapsible task-prompt preview, so the UI can never drift from the code. See [Prompt Modes](/prompt-modes) for the full explanation of both modes.
+
+**Auth:** Dashboard bearer token.
+
+### `GET /api/dashboard/settings`
+
+Returns all settings for the workspace as a JSON array. Each item has the following shape:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `key` | `string` | Setting key |
+| `value` | `string` | Raw value for non-secret keys; masked placeholder (`••••••••`) for secret keys |
+| `hasValue` | `boolean` | `true` when a non-empty value is stored (always `true` for non-secret keys) |
+| `redacted` | `boolean` | `true` when the value has been masked |
+| `description` | `string \| null` | Optional description |
+| `updatedAt` | `string \| null` | ISO 8601 timestamp of last update |
+| `updatedBy` | `string \| null` | Who last updated this setting |
+
+**Secret-bearing keys** are redacted automatically. A key is considered secret when it starts with `credential:` or contains any of: `secret`, `token`, `password`, `api_key`, `apikey`, `private_key`, `refresh_token`, `credential`, `webhook_secret`, `signing` (case-insensitive). Raw values are never returned for these keys.
+
+**Auth:** Dashboard bearer token.
+
+### `GET /api/dashboard/settings/:key`
+
+Returns `{ value, hasValue, redacted }` for a single setting. Same redaction rules as the list endpoint apply.
+
+**Auth:** Dashboard bearer token.
+
+### `PUT /api/dashboard/settings/:key`
+
+Upserts a setting. **Write-only semantics for secret keys:** submitting an empty string or the masked placeholder (`••••••••`) as the value is treated as a no-op and returns `204 No Content` — the stored value is left unchanged. Submitting a non-empty, non-placeholder value always overwrites the stored value. The response body (for `200`) applies the same redaction as the GET endpoints.
+
+**Auth:** Dashboard bearer token.
+
+### Model categories & settings keys
+
+`GET /api/dashboard/models` returns the model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus per-category `defaults`. The per-category lists contain the **full catalog synced from the Vercel AI Gateway**, filtered only by capability metadata: models typed `embedding`, `image`, `video`, or `reranking` are excluded from the chat categories, and the `embedding` category lists embedding models. Models with unknown type appear everywhere rather than being hidden by a guessed blocklist.
+
+The `model_catalog_selections` table is **not** a dropdown filter — it only seeds the per-category `defaults` (the value used when no explicit `model_*` setting is stored). There is no management UI for it.
+
+Category overrides persist as ordinary settings via `PUT /api/dashboard/settings/:key` with keys `model_main`, `model_fast`, `model_medium`, `model_embedding`, and `model_escalation`. Resolution order everywhere is: DB setting override first, then catalog default (`medium` additionally falls back to the main model when unconfigured).

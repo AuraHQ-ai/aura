@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { db } from "../db/client.js";
 import { getFastModel } from "../lib/ai.js";
 import { getCredential } from "../lib/credentials.js";
@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { jobExecutions, jobOutcomes, jobs } from "@aura/db/schema";
 import {
+  resolveOpsNotificationTarget,
   sendJobFailureDm,
   sendJobOpsNotice,
   truncateJobFailureText,
@@ -182,7 +183,7 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
   const timer = setTimeout(() => abortController.abort(), SUPERVISOR_LLM_TIMEOUT_MS);
 
   try {
-    const { object } = await withTrace(
+    const { output: object } = await withTrace(
       {
         traceName: "supervisor-decision",
         sessionId: context.job.threadTs || context.job.channelId || context.job.id,
@@ -198,9 +199,9 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
         },
       },
       () =>
-        generateObject({
+        generateText({
           model,
-          schema: supervisorDecisionSchema,
+          output: Output.object({ schema: supervisorDecisionSchema }),
           telemetry: aiTelemetry("supervisor-decision"),
           instructions:
             "You are Aura's job execution supervisor. Make one conservative decision from the provided fixed enum. Return only the structured object. Do not call tools.",
@@ -581,15 +582,26 @@ async function applySupervisorDecision(
         return;
       }
 
-      const text = `${buildUserMessage(decision, `Job \`${context.job.name}\` needs human review.`)}\n\nDecision: escalate\nReason: ${decision.reasoning}\nDetails: ${link}`;
-      const opsResult = await sendSupervisorOpsNotice(context.job, text, {
+      // User-safe text: no internal decision/reasoning — safe to reach any DM.
+      const userText = `${buildUserMessage(decision, `Job \`${context.job.name}\` needs human review.`)}\n\nDetails: ${link}`;
+      // Ops-only text: includes verbose reasoning for admin/ops consumption only.
+      const opsText = `${userText}\n\nDecision: escalate\nReason: ${decision.reasoning}`;
+
+      // Verbose reasoning must never land in the requester's DM. If the ops
+      // routing ladder falls back to requester_dm (no ops channel / founder
+      // configured), send only the user-safe text so internal reasoning stays
+      // out of the end-user's channel.
+      const opsTarget = resolveOpsNotificationTarget(context.job.requestedBy);
+      const noticeText = opsTarget?.kind === "requester_dm" ? userText : opsText;
+
+      const opsResult = await sendSupervisorOpsNotice(context.job, noticeText, {
         outcomeId: context.outcome.id,
         decision: decision.decision,
       });
       // Dedupe: if the ops notice already went to the founder DM (no ops
       // channel configured), don't double-send the founder escalation.
       if (opsResult.target !== "founder_dm") {
-        await sendFounderDm(context.job, text);
+        await sendFounderDm(context.job, opsText);
       }
       return;
     }

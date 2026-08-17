@@ -60,9 +60,22 @@ const sandboxMock = vi.hoisted(() => ({
   commandRun: vi.fn(),
   getOrCreateSandbox: vi.fn(),
   getSandboxEnvs: vi.fn(),
+  filterEnvsByAllowlist: vi.fn(
+    (envs: Record<string, string>, allowlist: string[] | null | undefined) => {
+      if (allowlist == null) return envs;
+      const allowed = new Set(allowlist.map((name) => name.toUpperCase()));
+      return Object.fromEntries(
+        Object.entries(envs).filter(([name]) => allowed.has(name.toUpperCase())),
+      );
+    },
+  ),
 }));
 
 const createHeadlessAgentMock = vi.hoisted(() => vi.fn());
+const buildStablePrefixMock = vi.hoisted(() =>
+  vi.fn(async () => "full stable prefix"),
+);
+const buildTaskPrefixMock = vi.hoisted(() => vi.fn(() => "minimal task prefix"));
 
 vi.mock("../db/client.js", () => ({
   db: {
@@ -85,11 +98,13 @@ vi.mock("../lib/logger.js", () => ({
 vi.mock("../lib/sandbox.js", () => ({
   getOrCreateSandbox: sandboxMock.getOrCreateSandbox,
   getSandboxEnvs: sandboxMock.getSandboxEnvs,
+  filterEnvsByAllowlist: sandboxMock.filterEnvsByAllowlist,
   truncateOutput: (value: string, maxChars: number) => value.slice(0, maxChars),
 }));
 
 vi.mock("../personality/system-prompt.js", () => ({
-  buildStablePrefix: vi.fn(async () => "system prompt"),
+  buildStablePrefix: buildStablePrefixMock,
+  buildTaskPrefix: buildTaskPrefixMock,
 }));
 
 vi.mock("../lib/temporal.js", () => ({
@@ -150,6 +165,9 @@ function baseJob(overrides: Record<string, unknown> = {}) {
     lastExecutionDate: null,
     enabled: 1,
     requiredCredentialIds: [],
+    model: null,
+    envAllowlist: null,
+    promptMode: null,
     createdAt: new Date("2026-05-01T00:00:00.000Z"),
     updatedAt: new Date("2026-05-20T08:00:00.000Z"),
     ...overrides,
@@ -404,6 +422,171 @@ describe("executeJob reply-routing prompt", () => {
 
     expect(prompt).not.toContain("Post your results");
     expect(prompt).not.toContain("post NOTHING");
+  });
+});
+
+describe("executeJob scoped execution (issue #1302)", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    dbMock.operations = [];
+    vi.clearAllMocks();
+  });
+
+  async function captureAgentOptions(
+    jobOverrides: Record<string, unknown>,
+  ): Promise<Record<string, any>> {
+    let captured: Record<string, any> | null = null;
+    createHeadlessAgentMock.mockImplementation(async (options: Record<string, any>) => {
+      captured = options;
+      return {
+        agent: {
+          generate: vi.fn(async () => {
+            throw new Error("stop-after-capture");
+          }),
+        },
+        modelId: "test-model",
+        getStepModelIds: () => [],
+      };
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(baseJob({ script: null, ...jobOverrides }) as any, "heartbeat"),
+    ).rejects.toThrow("stop-after-capture");
+
+    return captured!;
+  }
+
+  it("prompt_mode 'task' assembles the system prompt without the personality prefix", async () => {
+    const options = await captureAgentOptions({ promptMode: "task" });
+
+    expect(options.systemPrompt).toContain("minimal task prefix");
+    expect(options.systemPrompt).not.toContain("full stable prefix");
+    expect(buildTaskPrefixMock).toHaveBeenCalled();
+    expect(buildStablePrefixMock).not.toHaveBeenCalled();
+  });
+
+  it("null prompt_mode keeps today's full stable prefix", async () => {
+    const options = await captureAgentOptions({ promptMode: null });
+
+    expect(options.systemPrompt).toContain("full stable prefix");
+    expect(options.systemPrompt).not.toContain("minimal task prefix");
+    expect(buildTaskPrefixMock).not.toHaveBeenCalled();
+  });
+
+  it("routes the headless agent to the job's model category", async () => {
+    const options = await captureAgentOptions({ model: "fast" });
+
+    expect(options.modelCategory).toBe("fast");
+  });
+
+  it("keeps an explicit 'main' opt-in on the main category", async () => {
+    const options = await captureAgentOptions({ model: "main" });
+
+    expect(options.modelCategory).toBe("main");
+  });
+
+  it("defaults to the medium category when model is null", async () => {
+    const options = await captureAgentOptions({ model: null });
+
+    expect(options.modelCategory).toBe("medium");
+  });
+
+  it("falls back to medium for a model value outside the routable categories", async () => {
+    const options = await captureAgentOptions({ model: "embedding" });
+
+    expect(options.modelCategory).toBe("medium");
+  });
+
+  it("carries the env allowlist into the execution context for the agent loop", async () => {
+    const { executionContext } = await import("../lib/tool.js");
+    let storeDuringGenerate: Record<string, any> | undefined;
+    createHeadlessAgentMock.mockResolvedValue({
+      agent: {
+        generate: vi.fn(async () => {
+          storeDuringGenerate = executionContext.getStore() as Record<string, any>;
+          throw new Error("stop-after-capture");
+        }),
+      },
+      modelId: "test-model",
+      getStepModelIds: () => [],
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(
+        baseJob({ script: null, envAllowlist: ["META_ADMIN_TOKEN"] }) as any,
+        "heartbeat",
+      ),
+    ).rejects.toThrow("stop-after-capture");
+
+    expect(storeDuringGenerate?.envAllowlist).toEqual(["META_ADMIN_TOKEN"]);
+  });
+
+  it("filters script-layer envs through the job's allowlist", async () => {
+    sandboxMock.getSandboxEnvs.mockResolvedValue({
+      META_ADMIN_TOKEN: "meta-secret",
+      GITHUB_TOKEN: "github-secret",
+    });
+    sandboxMock.getOrCreateSandbox.mockResolvedValue({
+      commands: { run: sandboxMock.commandRun },
+    });
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(
+        baseJob({ envAllowlist: ["META_ADMIN_TOKEN"] }) as any,
+        "heartbeat",
+      ),
+    ).resolves.toBe(true);
+
+    expect(sandboxMock.filterEnvsByAllowlist).toHaveBeenCalledWith(
+      { META_ADMIN_TOKEN: "meta-secret", GITHUB_TOKEN: "github-secret" },
+      ["META_ADMIN_TOKEN"],
+    );
+    expect(sandboxMock.commandRun).toHaveBeenCalledWith(
+      "node script.js",
+      expect.objectContaining({
+        envs: { META_ADMIN_TOKEN: "meta-secret" },
+      }),
+    );
+  });
+
+  it("script layer keeps the full env when the job has no allowlist", async () => {
+    sandboxMock.getSandboxEnvs.mockResolvedValue({
+      META_ADMIN_TOKEN: "meta-secret",
+      GITHUB_TOKEN: "github-secret",
+    });
+    sandboxMock.getOrCreateSandbox.mockResolvedValue({
+      commands: { run: sandboxMock.commandRun },
+    });
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "",
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(executeJob(baseJob() as any, "heartbeat")).resolves.toBe(true);
+
+    expect(sandboxMock.commandRun).toHaveBeenCalledWith(
+      "node script.js",
+      expect.objectContaining({
+        envs: {
+          META_ADMIN_TOKEN: "meta-secret",
+          GITHUB_TOKEN: "github-secret",
+        },
+      }),
+    );
   });
 });
 

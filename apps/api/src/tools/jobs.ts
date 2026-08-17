@@ -87,6 +87,24 @@ export function createJobTools(
           .number()
           .optional()
           .describe("Max executions per day (recurring jobs)"),
+        model: z
+          .enum(["main", "fast", "medium", "escalation"])
+          .optional()
+          .describe(
+            "Model category to execute the job with, resolved from the model catalog. Omit for the default 'medium' (Sonnet-class intelligence — the standard tier for jobs). Use 'fast' for simple mechanical tasks (classification, moderation, digests), 'main' (frontier) only for jobs that genuinely need it, 'escalation' for exceptionally hard work.",
+          ),
+        env_allowlist: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Restrict the job's sandbox env to ONLY these credential env var names (e.g. ['META_ADMIN_TOKEN', 'SLACK_BOT_TOKEN']) plus core infra vars. Narrows the caller's credential set — never widens it. Use for jobs that process untrusted input so a prompt injection can't reach unrelated credentials. Omit for full inheritance.",
+          ),
+        prompt_mode: z
+          .enum(["full", "task"])
+          .optional()
+          .describe(
+            "'task' runs the job with a minimal ~2k-token task prompt (no personality, self-directive, or notes index) — fewer places for context rot in mechanical jobs. Memory stays unified either way. Omit or 'full' for the standard prompt.",
+          ),
       }),
       execute: async ({
         name,
@@ -100,6 +118,9 @@ export function createJobTools(
         priority,
         min_interval_hours,
         max_per_day,
+        model,
+        env_allowlist,
+        prompt_mode,
       }) => {
         try {
           // Resolve channel
@@ -230,6 +251,9 @@ export function createJobTools(
           if (executeAt) updateSet.executeAt = executeAt;
           updateSet.timezone = timezone;
           updateSet.priority = priority;
+          if (model !== undefined) updateSet.model = model;
+          if (env_allowlist !== undefined) updateSet.envAllowlist = env_allowlist;
+          if (prompt_mode !== undefined) updateSet.promptMode = prompt_mode;
 
           await db
             .insert(jobs)
@@ -246,6 +270,9 @@ export function createJobTools(
               requestedBy,
               timezone,
               priority,
+              model: model ?? null,
+              envAllowlist: env_allowlist ?? null,
+              promptMode: prompt_mode ?? null,
               updatedAt: new Date(),
             })
             .onConflictDoUpdate({
@@ -515,6 +542,27 @@ export function createJobTools(
             .describe(
               "Transfer job ownership to another user (display name, username, or Slack ID). All system notices, retries, and completions route to the new owner. Only the current owner or an admin can transfer.",
             ),
+          model: z
+            .enum(["main", "fast", "medium", "escalation"])
+            .nullable()
+            .optional()
+            .describe(
+              "Model category to execute with ('fast' for mechanical tasks, 'main' for frontier opt-in). Set to null to reset to the default 'medium' (Sonnet-class) model.",
+            ),
+          env_allowlist: z
+            .array(z.string())
+            .nullable()
+            .optional()
+            .describe(
+              "Restrict the job's sandbox env to ONLY these credential env var names (plus core infra vars). Set to null to restore full inheritance.",
+            ),
+          prompt_mode: z
+            .enum(["full", "task"])
+            .nullable()
+            .optional()
+            .describe(
+              "'task' = minimal ~2k-token task prompt (no personality/notes index). Set to null or 'full' for the standard prompt.",
+            ),
         }).describe("Fields to update. Only provided fields are changed."),
       }),
       execute: async ({ job_id, name, updates }) => {
@@ -582,6 +630,9 @@ export function createJobTools(
           if (updates.script !== undefined) set.script = updates.script || null;
           if (updates.priority !== undefined) set.priority = updates.priority;
           if (updates.timezone !== undefined) set.timezone = updates.timezone;
+          if (updates.model !== undefined) set.model = updates.model;
+          if (updates.env_allowlist !== undefined) set.envAllowlist = updates.env_allowlist;
+          if (updates.prompt_mode !== undefined) set.promptMode = updates.prompt_mode;
 
           // Resolve channel name to ID
           if (updates.channel_name !== undefined) {

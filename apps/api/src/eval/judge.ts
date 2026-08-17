@@ -11,7 +11,7 @@
  * judge merges/splits/omits a turn.
  */
 import { z } from "zod";
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { evalVerdicts, evalFailureClasses } from "@aura/db/schema";
 import type { EvalVerdict, EvalFailureClass } from "@aura/db/schema";
 import { getFastModel, getFastModelId } from "../lib/ai.js";
@@ -108,7 +108,7 @@ export interface JudgeWindowOptions {
   /** Identifier used for tracing (thread key or trace id). */
   sessionId?: string;
   /** Injected for tests. */
-  generate?: typeof generateObject;
+  generate?: typeof generateText;
 }
 
 export interface JudgeWindowResult {
@@ -149,7 +149,7 @@ export async function judgeWindow(
   window: EvalWindow,
   options: JudgeWindowOptions = {},
 ): Promise<JudgeWindowResult> {
-  const generate = options.generate ?? generateObject;
+  const generate = options.generate ?? generateText;
   const [model, judgeModel] = await Promise.all([
     getFastModel(),
     getFastModelId(),
@@ -161,7 +161,7 @@ export async function judgeWindow(
 
   let entries: JudgeEntry[];
   try {
-    const { object } = await withTrace(
+    const { output } = await withTrace(
       {
         traceName: "eval-response-judge",
         sessionId: options.sessionId,
@@ -171,7 +171,7 @@ export async function judgeWindow(
       () =>
         generate({
           model,
-          schema: judgeWindowSchema,
+          output: Output.object({ schema: judgeWindowSchema }),
           telemetry: aiTelemetry("eval-response-judge"),
           instructions: JUDGE_SYSTEM_PROMPT,
           prompt: `Score the marked assistant responses in this transcript window.\n\nThe responses to score are: ${window.ownedPartIds.map((id) => `[R:${id}]`).join(", ")}\n\n<transcript>\n${transcript}\n</transcript>`,
@@ -179,7 +179,7 @@ export async function judgeWindow(
           abortSignal: abortController.signal,
         }),
     );
-    entries = (object as z.infer<typeof judgeWindowSchema>).responses;
+    entries = (output as z.infer<typeof judgeWindowSchema>).responses;
   } finally {
     clearTimeout(timer);
   }

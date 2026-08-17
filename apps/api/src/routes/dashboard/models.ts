@@ -13,6 +13,8 @@ const listModelsRoute = createRoute({
   path: "/",
   tags: ["Models"],
   summary: "List available models",
+  description:
+    "Per-category lists contain the full synced gateway catalog, filtered only by capability metadata (embedding/image/video/reranking models are excluded from the chat categories; the embedding category lists embedding models). `defaults` still comes from model_catalog_selections.",
   responses: {
     200: {
       content: {
@@ -20,6 +22,7 @@ const listModelsRoute = createRoute({
           schema: z.object({
             main: z.array(z.any()),
             fast: z.array(z.any()),
+            medium: z.array(z.any()),
             embedding: z.array(z.any()),
             escalation: z.array(z.any()),
             defaults: z.record(z.string(), z.string()),
@@ -34,7 +37,9 @@ const listModelsRoute = createRoute({
 });
 
 dashboardModelsApp.openapi(listModelsRoute, async (c) => {
-  const catalog = await getModelCatalogResponse();
+  const catalog = await getModelCatalogResponse(undefined, {
+    fullCategoryLists: true,
+  });
   return c.json(catalog as any, 200);
 });
 

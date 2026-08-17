@@ -228,7 +228,7 @@ export function isLangfuseEnabled(): boolean {
 
 /**
  * `telemetry` config for an AI SDK call (`streamText`,
- * `generateText`, `generateObject`, `embed`, the `Agent`/`ToolLoopAgent`
+ * `generateText`, `embed`, the `Agent`/`ToolLoopAgent`
  * constructor, …). Pass a descriptive `functionId` so generations are findable
  * and filterable in Langfuse. Returns `{ isEnabled: false }` when tracing is
  * off, so call sites can spread it unconditionally.
@@ -300,7 +300,7 @@ export function withTrace<T>(attrs: TraceAttributes, fn: () => T): T {
 /**
  * Like {@link withTrace}, but also opens an explicit parent span named `name`
  * around `fn`. Because the parent span is active for the duration of `fn`, every
- * AI SDK GenAI span created inside (sequential `generateText`/`generateObject`/
+ * AI SDK GenAI span created inside (sequential `generateText`/
  * `embed` calls that would otherwise each become their own root trace) nests
  * under it — yielding a SINGLE Langfuse trace per logical unit of work (one Slack
  * turn, one memory job, …) instead of a scatter of orphan traces.

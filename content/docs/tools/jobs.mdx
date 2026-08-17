@@ -12,6 +12,18 @@ Aura can schedule work to run in the background. Jobs come in two types:
 
 The **heartbeat** runs every 30 minutes and evaluates all pending jobs. Scheduling granularity is approximately 30 minutes. Failed jobs retry 3x with 30-minute backoff, then escalate via DM.
 
+## Stuck-job watchdog
+
+Every heartbeat sweep runs a watchdog that detects job executions still in `running` status after **45 minutes** (configurable via `STUCK_JOB_THRESHOLD_MINUTES` in `cron/job-watchdog.ts`).
+
+For each stuck execution the watchdog:
+
+1. **Atomically marks the execution `failed`** with `error = "Stale: no completion signal after <age>m, reset by watchdog"`.
+2. **One-shot jobs** — the parent `jobs` row is also marked `failed` with the same message.
+3. **Recurring jobs** — the parent job is rescheduled to its next cron tick (`status = 'pending'`, `retries = 0`, `executeAt = next tick`), so it picks up automatically on the next heartbeat.
+
+The watchdog is idempotent: every DB update uses a `status = 'running'` guard so concurrent heartbeat invocations cannot double-process the same row. Jobs reset by the watchdog carry the marker string `"reset by watchdog"` in `jobs.result`; the dashboard renders a **watchdog reset** badge next to the status for easy identification.
+
 ## Recurring job recovery
 
 If a recurring job is left in `running` past the stale threshold and has already exhausted retries, the heartbeat does not leave it in `failed` forever. It resets the job to `pending`, clears `retries`, computes the next cron tick in the job timezone, and DMs the requester with the last error and next attempt time. One-shot jobs that exhaust stale retries stay `failed` and also send a DM.
@@ -19,7 +31,7 @@ If a recurring job is left in `running` past the stale threshold and has already
 
 ## Supervisor pattern
 
-After every job execution finishes (success, error, or interruption), the heartbeat writes a row to the `job_outcomes` table and fires a webhook to `POST /api/cron/supervisor`. The supervisor is a separately invoked endpoint that runs a fast-model LLM (`generateObject`) over the outcome plus recent job context and picks exactly one decision:
+After every job execution finishes (success, error, or interruption), the heartbeat writes a row to the `job_outcomes` table and fires a webhook to `POST /api/cron/supervisor`. The supervisor is a separately invoked endpoint that runs a fast-model LLM (`generateText` with structured output) over the outcome plus recent job context and picks exactly one decision:
 
 | Decision | What it does |
 |----------|--------------|
@@ -64,6 +76,9 @@ Create a one-shot task, recurring job, or follow-up.
 | `max_per_day` | number | no | Max executions per day (recurring jobs) |
 | `min_interval_hours` | number | no | Minimum hours between executions |
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
+| `model` | enum | no | Model catalog category to execute with: `fast` (cheap, mechanical tasks), `medium` (Sonnet-class — the default and standard tier for jobs), `main` (frontier), or `escalation` (exceptionally hard work) |
+| `env_allowlist` | string[] | no | Restrict the job's sandbox env to only these credential env var names (plus core infra vars). Omit for full inheritance. |
+| `prompt_mode` | enum | no | `full` (default) or `task` — see [Prompt Modes](/prompt-modes) |
 
 ---
 
@@ -122,6 +137,9 @@ Update an existing job's configuration without recreating it. Preserves job ID a
 | `updates.max_per_day` | number | no | New max executions per day |
 | `updates.min_interval_hours` | number | no | New minimum hours between executions |
 | `updates.script` | string/null | no | New shell command. Set to `null` to remove an existing script. |
+| `updates.model` | enum/null | no | New model category (`fast`, `medium`, `main`, `escalation`). Set to `null` to reset to the default (`medium`). |
+| `updates.env_allowlist` | string[]/null | no | New sandbox env allowlist. Set to `null` to restore full inheritance. |
+| `updates.prompt_mode` | enum/null | no | `full` or `task` — see [Prompt Modes](/prompt-modes). Set to `null` to reset to the default (`full`). |
 
 When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time.
 
