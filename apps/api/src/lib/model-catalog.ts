@@ -555,6 +555,19 @@ export async function getModelCatalogResponse(
   };
 }
 
+/**
+ * @deprecated
+ * `getDefaultModelId` reads `model_catalog_selections.isDefault` to find a
+ * per-category default. It is no longer called from the model-resolution path
+ * (`apps/api/src/lib/ai.ts`), which now uses `LAST_RESORT_MODELS` as the
+ * fallback so that resolution never silently relies on potentially stale
+ * catalog data.
+ *
+ * The `model_catalog_selections` table (and the `defaults` field in
+ * `ModelCatalogResponse`) is retained for the legacy curated lists shown in
+ * the Slack App Home `static_select` menus. Do not drop the table or the
+ * `isDefault` column without first migrating those callers.
+ */
 export async function getDefaultModelId(
   category: ModelCategory,
   workspaceId = DEFAULT_WORKSPACE_ID,
