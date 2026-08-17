@@ -26,9 +26,8 @@ import type { ModelCapabilities } from "@aura/db/schema";
  *   1. settings row (model_main / model_fast / model_medium / model_escalation / model_embedding)
  *   2. Hardcoded LAST_RESORT_MODELS — logs a warning so operators notice the gap
  *
- * Note: model_catalog_selections.isDefault is no longer consulted during
- * resolution; it is only used to populate the curated lists shown in
- * the legacy Slack App Home dropdowns (deprecated — see model-catalog.ts).
+ * Note: model_catalog_selections has been removed. Resolution uses only the
+ * settings row and LAST_RESORT_MODELS.
  *
  * When deployed on Vercel, auth is handled automatically via OIDC.
  * For local development, set VERCEL_AI_GATEWAY_API_KEY in .env.local.

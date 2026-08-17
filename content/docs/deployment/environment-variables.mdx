@@ -81,10 +81,9 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 |----------|-------------|---------|
 | `MODEL_MAIN` | Primary model ID (Vercel AI Gateway format) | `anthropic/claude-sonnet-4-20250514` |
 | `MODEL_FAST` | Fast model for simple tasks | `anthropic/claude-haiku-4.5` |
-| `MODEL_EMBEDDING` | Embedding model ID | `openai/text-embedding-3-small` |
 | `MODEL_ESCALATION` | Escalation model for complex reasoning | `anthropic/claude-opus-4.6` |
 
-Models are normally resolved from database settings first, then the DB-backed model catalog defaults. The environment variable defaults are legacy/local-development references; admins can refresh the live catalog from Vercel AI Gateway in Settings without redeploying.
+Models are resolved in order: (1) the `model_<category>` settings row in the database (set via the dashboard or Slack App Home), then (2) the hardcoded `LAST_RESORT_MODELS` constant in `apps/api/src/lib/ai.ts`. There is no `MODEL_EMBEDDING` environment variable — the embedding model is resolved from the `model_embedding` settings row, with a hardcoded last resort of `openai/text-embedding-3-small`. Admins can update any model setting from the dashboard Settings page without redeploying.
 
 ## Observability (Langfuse)
 

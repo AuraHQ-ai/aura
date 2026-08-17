@@ -14,7 +14,7 @@ const listModelsRoute = createRoute({
   tags: ["Models"],
   summary: "List available models",
   description:
-    "Per-category lists contain the full synced gateway catalog, filtered only by capability metadata (embedding/image/video/reranking models are excluded from the chat categories; the embedding category lists embedding models). `defaults` still comes from model_catalog_selections.",
+    "Per-category lists contain the full synced gateway catalog, filtered only by capability metadata (embedding/image/video/reranking models are excluded from the chat categories; the embedding category lists embedding models). `defaults` is always empty — active models are driven by the settings table.",
   responses: {
     200: {
       content: {
@@ -37,9 +37,7 @@ const listModelsRoute = createRoute({
 });
 
 dashboardModelsApp.openapi(listModelsRoute, async (c) => {
-  const catalog = await getModelCatalogResponse(undefined, {
-    fullCategoryLists: true,
-  });
+  const catalog = await getModelCatalogResponse();
   return c.json(catalog as any, 200);
 });
 

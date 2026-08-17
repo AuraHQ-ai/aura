@@ -137,7 +137,7 @@ Every LLM call in Aura resolves a gateway model ID at runtime through a two-step
 | `escalation` | `model_escalation` | `anthropic/claude-opus-4.5` |
 | `embedding` | `model_embedding` | `openai/text-embedding-3-small` |
 
-> **Deprecated path**: `model_catalog_selections.isDefault` was previously used as a middle tier between the settings row and the hardcoded constant. It is no longer consulted during resolution. The table is kept for the curated dropdown lists shown in the Slack App Home; see the `@deprecated` note on `getDefaultModelId` in `model-catalog.ts`.
+> **Removed**: `model_catalog_selections` was previously used as a middle tier between the settings row and the hardcoded constant. The table has been dropped — resolution now goes directly from the settings row to `LAST_RESORT_MODELS`.
 
 ## Extended Thinking
 
