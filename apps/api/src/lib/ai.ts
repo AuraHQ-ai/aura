@@ -7,7 +7,7 @@ import {
 /** The model type that wrapLanguageModel accepts (LanguageModelV3, not re-exported by "ai"). */
 export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
-import { getDefaultModelId, updateModelCapabilities } from "./model-catalog.js";
+import { type ModelCategory, updateModelCapabilities } from "./model-catalog.js";
 import { logger } from "./logger.js";
 import {
   getProviderThinkingOptions,
@@ -19,8 +19,16 @@ import type { ModelCapabilities } from "@aura/db/schema";
  * All LLM and embedding calls go through Vercel AI Gateway.
  *
  * Models are resolved dynamically: DB settings take priority,
- * then DB-backed catalog defaults. This lets admins
+ * then an explicit hardcoded last-resort constant map. This lets admins
  * change models from the Slack App Home without redeploying.
+ *
+ * Resolution order (see LAST_RESORT_MODELS below):
+ *   1. settings row (model_main / model_fast / model_medium / model_escalation / model_embedding)
+ *   2. Hardcoded LAST_RESORT_MODELS — logs a warning so operators notice the gap
+ *
+ * Note: model_catalog_selections.isDefault is no longer consulted during
+ * resolution; it is only used to populate the curated lists shown in
+ * the legacy Slack App Home dropdowns (deprecated — see model-catalog.ts).
  *
  * When deployed on Vercel, auth is handled automatically via OIDC.
  * For local development, set VERCEL_AI_GATEWAY_API_KEY in .env.local.
@@ -31,17 +39,36 @@ import type { ModelCapabilities } from "@aura/db/schema";
  * directly using ANTHROPIC_API_KEY.
  */
 
+/**
+ * Last-resort model IDs used when no settings row exists for a category.
+ * These are gateway model IDs (provider/model-name format with dotted versions).
+ * Update this map when a newer default is desired — it is the single source
+ * of truth for the fallback path.
+ */
+export const LAST_RESORT_MODELS: Record<ModelCategory, string> = {
+  main:      "anthropic/claude-sonnet-4.5",
+  fast:      "anthropic/claude-haiku-4.5",
+  medium:    "anthropic/claude-sonnet-4.5",
+  embedding: "openai/text-embedding-3-small",
+  escalation:"anthropic/claude-opus-4.5",
+};
+
 async function resolveModelId(
   settingKey: string,
-  category: "main" | "fast" | "medium" | "embedding" | "escalation",
+  category: ModelCategory,
 ): Promise<string> {
   const override = await getSetting(settingKey);
   if (override) return override;
 
-  const defaultModelId = await getDefaultModelId(category);
-  if (defaultModelId) return defaultModelId;
-
-  throw new Error(`No default model configured for category: ${category}`);
+  const fallback = LAST_RESORT_MODELS[category];
+  if (!fallback) {
+    throw new Error(`No last-resort model configured for unknown category: ${category}`);
+  }
+  logger.warn("No DB setting for model category, using last-resort default", {
+    category,
+    fallback,
+  });
+  return fallback;
 }
 
 /**
@@ -286,18 +313,10 @@ export async function getFastModelId(): Promise<string> {
 
 /**
  * Resolve the medium model ID string (no gateway wrapping).
- * Priority: DB setting > catalog default > main model (never crashes when
- * no medium selection is configured).
+ * Priority: DB setting > LAST_RESORT_MODELS.medium
  */
 export async function getMediumModelId(): Promise<string> {
-  const override = await getSetting("model_medium");
-  if (override) return override;
-
-  const defaultModelId = await getDefaultModelId("medium");
-  if (defaultModelId) return defaultModelId;
-
-  logger.warn("No medium model configured, falling back to main");
-  return getMainModelId();
+  return resolveModelId("model_medium", "medium");
 }
 
 /**

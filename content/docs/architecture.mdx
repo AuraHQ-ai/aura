@@ -122,6 +122,23 @@ Additional cron jobs:
 - **Email sync** — Periodic inbox sync for connected Gmail accounts.
 - **Note expiry** — Cleans up expired plan notes.
 
+## Model Resolution
+
+Every LLM call in Aura resolves a gateway model ID at runtime through a two-step chain:
+
+1. **Settings row** — `getSetting("model_<category>")` reads the `settings` table. Admins set these from the dashboard or the Slack App Home. This is the authoritative source.
+2. **Last-resort hardcoded constant** (`LAST_RESORT_MODELS` in `apps/api/src/lib/ai.ts`) — used when no settings row exists. A `warn`-level log entry is emitted so operators know the fallback fired. The constant is intentionally explicit and small so it is easy to update when a newer default model is preferred.
+
+| Category | Setting key | Last-resort default |
+|---|---|---|
+| `main` | `model_main` | `anthropic/claude-sonnet-4.5` |
+| `fast` | `model_fast` | `anthropic/claude-haiku-4.5` |
+| `medium` | `model_medium` | `anthropic/claude-sonnet-4.5` |
+| `escalation` | `model_escalation` | `anthropic/claude-opus-4.5` |
+| `embedding` | `model_embedding` | `openai/text-embedding-3-small` |
+
+> **Deprecated path**: `model_catalog_selections.isDefault` was previously used as a middle tier between the settings row and the hardcoded constant. It is no longer consulted during resolution. The table is kept for the curated dropdown lists shown in the Slack App Home; see the `@deprecated` note on `getDefaultModelId` in `model-catalog.ts`.
+
 ## Extended Thinking
 
 Aura captures the model's reasoning process before it generates a response, across every provider that exposes it -- not just Claude. These reasoning traces are:

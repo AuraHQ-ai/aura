@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   gatewayAuthIsInstance: vi.fn(),
-  getDefaultModelId: vi.fn(),
   getModelCapabilities: vi.fn(),
   updateModelCapabilities: vi.fn(),
   wrapLanguageModel: vi.fn(({ model, middleware }: any) => ({
@@ -37,7 +36,6 @@ vi.mock("./settings.js", () => ({
 }));
 
 vi.mock("./model-catalog.js", () => ({
-  getDefaultModelId: mocks.getDefaultModelId,
   getModelCapabilities: mocks.getModelCapabilities,
   updateModelCapabilities: mocks.updateModelCapabilities,
 }));
@@ -55,19 +53,21 @@ vi.mock("./invocation-lock.js", () => ({
   isInvocationCurrent: vi.fn(),
 }));
 
-import { withAnthropicFallback, getModelByCategory, isJobModelCategory } from "./ai.js";
+import { withAnthropicFallback, getModelByCategory, isJobModelCategory, LAST_RESORT_MODELS } from "./ai.js";
 import { getSetting } from "./settings.js";
+import { logger } from "./logger.js";
 
 const getSettingMock = vi.mocked(getSetting);
+const loggerWarnMock = vi.mocked(logger.warn);
 
-describe("getModelByCategory", () => {
+describe("getModelByCategory — resolution order", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getSettingMock.mockResolvedValue(null);
-    mocks.getDefaultModelId.mockResolvedValue(null);
   });
 
-  it("resolves the fast category from the DB setting override first", async () => {
+  // Requirement: present settings row → used directly, no fallback
+  it("uses the DB settings row when present (fast)", async () => {
     getSettingMock.mockImplementation(async (key: string) =>
       key === "model_fast" ? "openai/gpt-fast-override" : null,
     );
@@ -76,21 +76,10 @@ describe("getModelByCategory", () => {
 
     expect(modelId).toBe("openai/gpt-fast-override");
     expect(getSettingMock).toHaveBeenCalledWith("model_fast");
-    expect(mocks.getDefaultModelId).not.toHaveBeenCalled();
+    expect(loggerWarnMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to the catalog default for the category", async () => {
-    mocks.getDefaultModelId.mockImplementation(async (category: string) =>
-      category === "fast" ? "google/gemini-fast-default" : null,
-    );
-
-    const { modelId } = await getModelByCategory("fast");
-
-    expect(modelId).toBe("google/gemini-fast-default");
-    expect(mocks.getDefaultModelId).toHaveBeenCalledWith("fast");
-  });
-
-  it("resolves the escalation category via its own setting key", async () => {
+  it("uses the DB settings row when present (escalation)", async () => {
     getSettingMock.mockImplementation(async (key: string) =>
       key === "model_escalation" ? "openai/gpt-escalation" : null,
     );
@@ -99,26 +88,10 @@ describe("getModelByCategory", () => {
 
     expect(modelId).toBe("openai/gpt-escalation");
     expect(getSettingMock).toHaveBeenCalledWith("model_escalation");
+    expect(loggerWarnMock).not.toHaveBeenCalled();
   });
 
-  it("resolves the main category identically to getMainModel", async () => {
-    mocks.getDefaultModelId.mockImplementation(async (category: string) =>
-      category === "main" ? "anthropic/claude-main" : null,
-    );
-
-    const { modelId } = await getModelByCategory("main");
-
-    expect(modelId).toBe("anthropic/claude-main");
-    expect(getSettingMock).toHaveBeenCalledWith("model_main");
-  });
-
-  it("throws when neither a setting nor a catalog default exists", async () => {
-    await expect(getModelByCategory("fast")).rejects.toThrow(
-      "No default model configured for category: fast",
-    );
-  });
-
-  it("resolves the medium category from the DB setting override first", async () => {
+  it("uses the DB settings row when present (medium)", async () => {
     getSettingMock.mockImplementation(async (key: string) =>
       key === "model_medium" ? "anthropic/claude-medium-override" : null,
     );
@@ -127,29 +100,59 @@ describe("getModelByCategory", () => {
 
     expect(modelId).toBe("anthropic/claude-medium-override");
     expect(getSettingMock).toHaveBeenCalledWith("model_medium");
-    expect(mocks.getDefaultModelId).not.toHaveBeenCalled();
+    expect(loggerWarnMock).not.toHaveBeenCalled();
   });
 
-  it("resolves the medium category from the catalog default", async () => {
-    mocks.getDefaultModelId.mockImplementation(async (category: string) =>
-      category === "medium" ? "anthropic/claude-medium-default" : null,
+  it("uses the DB settings row when present (main)", async () => {
+    getSettingMock.mockImplementation(async (key: string) =>
+      key === "model_main" ? "anthropic/claude-main-override" : null,
     );
 
-    const { modelId } = await getModelByCategory("medium");
+    const { modelId } = await getModelByCategory("main");
 
-    expect(modelId).toBe("anthropic/claude-medium-default");
-    expect(mocks.getDefaultModelId).toHaveBeenCalledWith("medium");
-  });
-
-  it("falls back to the main model when no medium selection exists", async () => {
-    mocks.getDefaultModelId.mockImplementation(async (category: string) =>
-      category === "main" ? "anthropic/claude-main" : null,
-    );
-
-    const { modelId } = await getModelByCategory("medium");
-
-    expect(modelId).toBe("anthropic/claude-main");
+    expect(modelId).toBe("anthropic/claude-main-override");
     expect(getSettingMock).toHaveBeenCalledWith("model_main");
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+  });
+
+  // Requirement: missing settings row → hardcoded LAST_RESORT_MODELS fallback + warning
+  it("falls back to LAST_RESORT_MODELS and logs a warning when no settings row exists (fast)", async () => {
+    const { modelId } = await getModelByCategory("fast");
+
+    expect(modelId).toBe(LAST_RESORT_MODELS.fast);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "No DB setting for model category, using last-resort default",
+      expect.objectContaining({ category: "fast", fallback: LAST_RESORT_MODELS.fast }),
+    );
+  });
+
+  it("falls back to LAST_RESORT_MODELS and logs a warning when no settings row exists (main)", async () => {
+    const { modelId } = await getModelByCategory("main");
+
+    expect(modelId).toBe(LAST_RESORT_MODELS.main);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "No DB setting for model category, using last-resort default",
+      expect.objectContaining({ category: "main", fallback: LAST_RESORT_MODELS.main }),
+    );
+  });
+
+  it("falls back to LAST_RESORT_MODELS.medium when no settings row exists (not main)", async () => {
+    const { modelId } = await getModelByCategory("medium");
+
+    expect(modelId).toBe(LAST_RESORT_MODELS.medium);
+    // Must NOT fall through to the main setting key
+    expect(getSettingMock).not.toHaveBeenCalledWith("model_main");
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "No DB setting for model category, using last-resort default",
+      expect.objectContaining({ category: "medium" }),
+    );
+  });
+
+  // Requirement: unknown category → throws
+  it("throws for an unknown category (not in LAST_RESORT_MODELS)", async () => {
+    await expect(
+      getModelByCategory("unknown_category" as any),
+    ).rejects.toThrow("No last-resort model configured for unknown category: unknown_category");
   });
 });
 
