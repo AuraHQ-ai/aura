@@ -134,4 +134,8 @@ Returns the live `promptMode='task'` system prefix as `{ "prompt": "<task_mode>.
 
 ### Model categories & settings keys
 
-`GET /api/dashboard/models` returns the DB-backed model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus per-category `defaults`. Category overrides persist as ordinary settings via `PUT /api/dashboard/settings/:key` with keys `model_main`, `model_fast`, `model_medium`, `model_embedding`, and `model_escalation`. Resolution order everywhere is: DB setting override first, then catalog default (`medium` additionally falls back to the main model when unconfigured).
+`GET /api/dashboard/models` returns the model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus per-category `defaults`. The per-category lists contain the **full catalog synced from the Vercel AI Gateway**, filtered only by capability metadata: models typed `embedding`, `image`, `video`, or `reranking` are excluded from the chat categories, and the `embedding` category lists embedding models. Models with unknown type appear everywhere rather than being hidden by a guessed blocklist.
+
+The `model_catalog_selections` table is **not** a dropdown filter — it only seeds the per-category `defaults` (the value used when no explicit `model_*` setting is stored). There is no management UI for it.
+
+Category overrides persist as ordinary settings via `PUT /api/dashboard/settings/:key` with keys `model_main`, `model_fast`, `model_medium`, `model_embedding`, and `model_escalation`. Resolution order everywhere is: DB setting override first, then catalog default (`medium` additionally falls back to the main model when unconfigured).
