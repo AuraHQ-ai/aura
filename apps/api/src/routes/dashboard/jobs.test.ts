@@ -2,7 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../db/client.js", () => ({ db: {} }));
 
-const { updateJobBodySchema } = await import("./jobs.js");
+const { updateJobBodySchema, dashboardJobsApp } = await import("./jobs.js");
+const { buildTaskPrefix } = await import("../../personality/system-prompt.js");
+
+describe("GET /api/dashboard/jobs/task-prompt", () => {
+  it("returns the live buildTaskPrefix() output", async () => {
+    const res = await dashboardJobsApp.request("/task-prompt");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { prompt: string };
+    expect(body.prompt).toBe(buildTaskPrefix());
+    expect(body.prompt).toContain("<task_mode>");
+  });
+});
 
 describe("updateJobBodySchema (PATCH /api/dashboard/jobs/:id)", () => {
   it("accepts an empty body (no-op update)", () => {

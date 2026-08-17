@@ -120,9 +120,15 @@ Partial update of a job. All body fields are optional: omitted fields are left u
 | `enabled` | `boolean` | Enable or disable the job. |
 | `model` | `"main"` \| `"fast"` \| `"medium"` \| `"escalation"` \| `null` | Model catalog category the job executes with. `null` resolves to `medium` (the job default). Validated against the job-eligible catalog categories (`embedding` is not allowed). |
 | `envAllowlist` | `string[]` \| `null` | Sandbox env var **names** the job may access — names only, values are never accepted, returned, or logged. `null` = full caller-scoped inheritance; `[]` = no env vars. Names must match `[A-Za-z_][A-Za-z0-9_]*`. |
-| `promptMode` | `"full"` \| `"task"` \| `null` | `"task"` runs the minimal task prompt (no personality/notes). `null` resolves to `"full"` (default). |
+| `promptMode` | `"full"` \| `"task"` \| `null` | `"task"` runs the minimal task prompt (no personality/notes). `null` resolves to `"full"` (default). See [Prompt Modes](/prompt-modes). |
 
 Invalid values return `400` with a validation message. The jobs list (`GET /api/dashboard/jobs`) and detail (`GET /api/dashboard/jobs/:id`) responses include these three fields.
+
+**Auth:** Dashboard bearer token.
+
+### `GET /api/dashboard/jobs/task-prompt`
+
+Returns the live `promptMode='task'` system prefix as `{ "prompt": "<task_mode>..." }`, rendered directly from `buildTaskPrefix()` in the running code. The dashboard job detail page uses this endpoint for its collapsible task-prompt preview, so the UI can never drift from the code. See [Prompt Modes](/prompt-modes) for the full explanation of both modes.
 
 **Auth:** Dashboard bearer token.
 

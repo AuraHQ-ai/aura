@@ -64,6 +64,9 @@ Create a one-shot task, recurring job, or follow-up.
 | `max_per_day` | number | no | Max executions per day (recurring jobs) |
 | `min_interval_hours` | number | no | Minimum hours between executions |
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
+| `model` | enum | no | Model catalog category to execute with: `fast` (cheap, mechanical tasks), `medium` (Sonnet-class — the default and standard tier for jobs), `main` (frontier), or `escalation` (exceptionally hard work) |
+| `env_allowlist` | string[] | no | Restrict the job's sandbox env to only these credential env var names (plus core infra vars). Omit for full inheritance. |
+| `prompt_mode` | enum | no | `full` (default) or `task` — see [Prompt Modes](/prompt-modes) |
 
 ---
 
@@ -122,6 +125,9 @@ Update an existing job's configuration without recreating it. Preserves job ID a
 | `updates.max_per_day` | number | no | New max executions per day |
 | `updates.min_interval_hours` | number | no | New minimum hours between executions |
 | `updates.script` | string/null | no | New shell command. Set to `null` to remove an existing script. |
+| `updates.model` | enum/null | no | New model category (`fast`, `medium`, `main`, `escalation`). Set to `null` to reset to the default (`medium`). |
+| `updates.env_allowlist` | string[]/null | no | New sandbox env allowlist. Set to `null` to restore full inheritance. |
+| `updates.prompt_mode` | enum/null | no | `full` or `task` — see [Prompt Modes](/prompt-modes). Set to `null` to reset to the default (`full`). |
 
 When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time.
 
