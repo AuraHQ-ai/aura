@@ -220,6 +220,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [], // stale running jobs below max retries
       [recurringJob], // stale exhausted jobs
       [], // recurring recovery update
@@ -259,6 +260,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [],
       [oneShotJob],
       [], // one-shot failure update
@@ -287,6 +289,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-healthy", name: "healthy-retry" }],
       [], // no stale exhausted jobs
       [], // running execution cleanup
@@ -321,6 +324,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
       [],
       [{ id: "exec-stale", jobId: "job-stale" }],
@@ -362,6 +366,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
       [],
       [{ id: "exec-stale", jobId: "job-stale" }],
@@ -400,6 +405,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
       [],
       [{ id: "exec-stale", jobId: "job-stale" }],
@@ -643,6 +649,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-stale-recurring", name: "alicia-lista-prospeccion-diaria", workspaceId: "default" }],
       [], // no stale exhausted jobs
       [], // running execution cleanup
@@ -687,6 +694,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [], // stale running jobs below max retries
       [], // stale exhausted jobs
     );
@@ -724,6 +732,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [], // stale running jobs below max retries
       [], // stale exhausted jobs
     );
@@ -758,6 +767,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [], // stale running jobs below max retries
       [], // stale exhausted jobs
     );

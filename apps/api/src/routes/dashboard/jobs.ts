@@ -1,8 +1,9 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { eq, sql, ilike, desc } from "drizzle-orm";
+import { eq, sql, ilike, desc, and, gte, inArray } from "drizzle-orm";
 import { jobs, jobExecutions, conversationTraces } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { JOB_MODEL_CATEGORIES } from "../../lib/ai.js";
+import { WATCHDOG_RESET_MARKER } from "../../cron/job-watchdog.js";
 import { buildTaskPrefix } from "../../personality/system-prompt.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, paginationQuerySchema, idParamSchema, createDashboardApp } from "./schemas.js";
@@ -82,7 +83,54 @@ dashboardJobsApp.openapi(listJobsRoute, async (c) => {
         .where(where),
     ]);
 
-    return c.json({ items, total: countResult[0]?.count ?? 0 } as any, 200);
+    // ── Cost aggregation (single query, no N+1) ─────────────────────────
+    // Join job_executions → conversation_traces over the last 30 days.
+    // SUM(cost_usd) is nullable: traces may have no cost row yet.
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const jobIds = items.map((j) => j.id);
+
+    type CostStat = { runs30d: number; cost30dUsd: string | null };
+    const costByJobId = new Map<string, CostStat>();
+
+    if (jobIds.length > 0) {
+      const stats = await db
+        .select({
+          jobId: jobExecutions.jobId,
+          runs30d: sql<number>`count(distinct ${jobExecutions.id})::int`,
+          cost30dUsd: sql<string | null>`sum(${conversationTraces.costUsd})::text`,
+        })
+        .from(jobExecutions)
+        .leftJoin(
+          conversationTraces,
+          eq(conversationTraces.jobExecutionId, jobExecutions.id),
+        )
+        .where(
+          and(
+            inArray(jobExecutions.jobId, jobIds),
+            gte(jobExecutions.startedAt, thirtyDaysAgo),
+          ),
+        )
+        .groupBy(jobExecutions.jobId);
+
+      for (const s of stats) {
+        if (s.jobId) costByJobId.set(s.jobId, { runs30d: s.runs30d, cost30dUsd: s.cost30dUsd });
+      }
+    }
+
+    const enrichedItems = items.map((job) => {
+      const stat = costByJobId.get(job.id);
+      const runs30d = stat?.runs30d ?? 0;
+      const cost30dUsd = stat?.cost30dUsd ?? null;
+      const avgCostPerRunUsd =
+        runs30d > 0 && cost30dUsd !== null
+          ? (parseFloat(cost30dUsd) / runs30d).toFixed(6)
+          : null;
+      const wasWatchdogReset = Boolean(job.result?.includes(WATCHDOG_RESET_MARKER));
+      return { ...job, runs30d, cost30dUsd, avgCostPerRunUsd, wasWatchdogReset };
+    });
+
+    return c.json({ items: enrichedItems, total: countResult[0]?.count ?? 0 } as any, 200);
   } catch (error) {
     logger.error("Failed to list jobs", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
@@ -169,7 +217,8 @@ dashboardJobsApp.openapi(getJobRoute, async (c) => {
       .limit(50);
 
     const executionIds = executions.map((e) => e.id);
-    let traceMap: Record<string, { costUsd: string | null; traceId: string }> = {};
+    type TraceInfo = { costUsd: string | null; traceId: string; resolvedModelId: string | null };
+    let traceMap: Record<string, TraceInfo> = {};
 
     if (executionIds.length > 0) {
       const traces = await db
@@ -177,13 +226,18 @@ dashboardJobsApp.openapi(getJobRoute, async (c) => {
           jobExecutionId: conversationTraces.jobExecutionId,
           costUsd: conversationTraces.costUsd,
           traceId: conversationTraces.id,
+          resolvedModelId: conversationTraces.resolvedModelId,
         })
         .from(conversationTraces)
         .where(sql`${conversationTraces.jobExecutionId} IN ${executionIds}`);
 
       for (const t of traces) {
         if (t.jobExecutionId) {
-          traceMap[t.jobExecutionId] = { costUsd: t.costUsd, traceId: t.traceId };
+          traceMap[t.jobExecutionId] = {
+            costUsd: t.costUsd,
+            traceId: t.traceId,
+            resolvedModelId: t.resolvedModelId,
+          };
         }
       }
     }
@@ -192,6 +246,7 @@ dashboardJobsApp.openapi(getJobRoute, async (c) => {
       ...e,
       costUsd: traceMap[e.id]?.costUsd ?? null,
       conversationTraceId: traceMap[e.id]?.traceId ?? null,
+      resolvedModelId: traceMap[e.id]?.resolvedModelId ?? null,
     }));
 
     return c.json({ job, executions: enrichedExecutions } as any, 200);

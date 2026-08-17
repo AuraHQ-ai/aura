@@ -11,6 +11,7 @@ import { computeNextCronTick } from "./cron-utils.js";
 import { persistJobOutcome, triggerSupervisorReview } from "./job-outcomes.js";
 import { sendJobOpsNotice } from "./job-notifications.js";
 import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
+import { sweepStuckJobs } from "./job-watchdog.js";
 
 /** Max jobs to process per heartbeat sweep */
 const MAX_JOBS_PER_SWEEP = 10;
@@ -305,6 +306,9 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let dequeuedWithoutExecutionRecovered = 0;
   let staleTurnsDetected = 0;
   let staleTurnsRecovered = 0;
+  let stuckJobsDetected = 0;
+  let stuckJobsFailed = 0;
+  let stuckJobsRequeued = 0;
 
   try {
     const now = new Date();
@@ -412,6 +416,15 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     inProgressOutcomesReset = orphanSweepResult.inProgressReset;
     inProgressOutcomesSkipped = orphanSweepResult.inProgressSkipped;
     dequeuedWithoutExecutionRecovered = orphanSweepResult.dequeuedWithoutExecution;
+
+    // ── 5a. Watchdog: terminate executions stuck > 45 min ───────────────
+    // Runs before the 15-min retry sweep so the longer-running stuck jobs
+    // are marked failed (not retried) first.  Never throws.
+
+    const stuckJobsResult = await sweepStuckJobs(now);
+    stuckJobsDetected = stuckJobsResult.detected;
+    stuckJobsFailed = stuckJobsResult.markedFailed;
+    stuckJobsRequeued = stuckJobsResult.requeued;
 
     // ── 5. Recover jobs stuck in "running" ─────────────────────────────
 
@@ -627,6 +640,9 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       dequeuedWithoutExecutionRecovered,
       staleTurnsDetected,
       staleTurnsRecovered,
+      stuckJobsDetected,
+      stuckJobsFailed,
+      stuckJobsRequeued,
     });
 
     return c.json({
@@ -642,6 +658,9 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       dequeuedWithoutExecutionRecovered,
       staleTurnsDetected,
       staleTurnsRecovered,
+      stuckJobsDetected,
+      stuckJobsFailed,
+      stuckJobsRequeued,
       duration,
     });
   } catch (error: any) {
