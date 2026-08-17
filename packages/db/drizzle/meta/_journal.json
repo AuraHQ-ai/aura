@@ -568,6 +568,13 @@
       "when": 1787158000000,
       "tag": "0080_detached_commands_job_link",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1787158001000,
+      "tag": "0081_drop_model_catalog_selections",
+      "breakpoints": true
     }
   ]
 }

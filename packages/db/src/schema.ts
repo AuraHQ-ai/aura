@@ -77,14 +77,6 @@ export const memoryEntityRoleEnum = pgEnum("memory_entity_role", [
   "mentioned",
 ]);
 
-export const modelCatalogCategoryEnum = pgEnum("model_catalog_category", [
-  "main",
-  "fast",
-  "medium",
-  "embedding",
-  "escalation",
-]);
-
 // Helper for timestamptz columns
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
@@ -443,34 +435,6 @@ export const modelCatalog = pgTable(
     ),
     index("model_catalog_provider_idx").on(table.provider),
     index("model_catalog_type_idx").on(table.type),
-  ],
-);
-
-export const modelCatalogSelections = pgTable(
-  "model_catalog_selections",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workspaceId: workspaceId().references(() => workspaces.id),
-    modelId: text("model_id").notNull(),
-    category: modelCatalogCategoryEnum("category").notNull(),
-    enabled: boolean("enabled").notNull().default(false),
-    isDefault: boolean("is_default").notNull().default(false),
-    createdAt: timestamptz("created_at").notNull().defaultNow(),
-    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("model_catalog_selections_workspace_model_category_idx").on(
-      table.workspaceId,
-      table.modelId,
-      table.category,
-    ),
-    index("model_catalog_selections_category_idx").on(
-      table.workspaceId,
-      table.category,
-      table.enabled,
-    ),
   ],
 );
 
