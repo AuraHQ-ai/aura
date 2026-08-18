@@ -53,7 +53,9 @@ pnpm ratify:gold-set --ratify <row_id> --gold "Expected answer" \
 pnpm ratify:gold-set --export > ratified-eval-cases.json
 ```
 
-A ratified row carries a human-authored `gold_answer`, an optional `must_do` / `must_not_do` rubric, and `ratified_by`. Ratified failures, deduped by failure class, feed the curated regression bench used to test harness and prompt changes.
+A ratified row carries a human-authored `gold_answer`, an optional `must_do` / `must_not_do` rubric, and `ratified_by`.
+
+`--export` emits every ratified failure or partial (one case per ratified row -- no dedup) in normalized `BenchCase` shape: the last user message before the response becomes the `question`, the prior turns become the session history, and the failure class becomes the `category`. Feed the export to the regression bench with `--corpus-file ratified-eval-cases.json` to test harness and prompt changes. When multiple cases share a failure class, the bench's deterministic stratified sampler caps how many per category a run executes (`toy`/`fast`/`medium` tiers), so a dominant failure class can't crowd out the rest.
 
 ## Dashboard
 
