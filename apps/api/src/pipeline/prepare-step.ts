@@ -24,28 +24,30 @@ export const HEADLESS_STEP_LIMIT = 350;
 const WARNING_THRESHOLD = 200;
 const HEADLESS_WARNING_THRESHOLD = 300;
 
-const WRAP_UP_MESSAGE =
+export const WRAP_UP_MESSAGE =
   "IMPORTANT: You're approaching your step limit ({stepCount}/{limit}). " +
   "Start wrapping up — summarize your findings and post results now. " +
   "Do not start new investigations or long tool chains.";
 
 // ── Turn wall-clock deadline messages (issue #1318) ──────────────────────────
+// Exported so the durable WDK path (workflows/slack-respond.ts) reuses the
+// exact same nudges instead of duplicating the strings (issue #1320).
 
-const TURN_SOFT_DEADLINE_MESSAGE =
+export const TURN_SOFT_DEADLINE_MESSAGE =
   "IMPORTANT: This turn has been running for {elapsedSec}s and is approaching " +
   "the platform's wall-clock limit. Wrap up NOW: do not start new " +
   "investigations or long tool calls, summarize what you have done so far, " +
   "and if work remains use checkpoint_plan to save your progress and " +
   "schedule a continuation.";
 
-const TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION =
+export const TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION =
   "CRITICAL: This turn's wall-clock budget is exhausted and your tools have " +
   "been withdrawn. Reply now with your final message: state what you " +
   "completed and what remains. A continuation job has already been scheduled " +
   "to resume the remaining work in this thread — hand off cleanly and keep " +
   "it brief.";
 
-const TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION =
+export const TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION =
   "CRITICAL: This turn's wall-clock budget is exhausted and your tools have " +
   "been withdrawn. Reply now with your final message: state what you " +
   "completed, what remains, and tell the user they can ask you to resume " +
@@ -195,6 +197,13 @@ export function createPrepareStep(opts: {
   turnDeadlines?: TurnDeadlines;
   /** Pipeline path label for deadline telemetry. */
   turnPath?: TurnDeadlinePath;
+  /**
+   * Continuation depth of the CURRENT turn (issue #1320): 0 for an original
+   * turn, N for a job resumed from a `[CONTINUE:topic:dN]` tag. A hard
+   * deadline spawns the next continuation at depth N + 1, capped at
+   * MAX_CONTINUATION_DEPTH inside spawnTurnContinuationJob.
+   */
+  continuationDepth?: number;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
@@ -343,6 +352,7 @@ export function createPrepareStep(opts: {
         invocationId: opts.invocationId,
         elapsedMs,
         step: stepNumber,
+        depth: (opts.continuationDepth ?? 0) + 1,
       });
     }
 
@@ -479,6 +489,8 @@ export function createHeadlessPrepareStep(opts: {
   userId?: string;
   /** Wall-clock budget for the turn (issue #1318). Omit to disable. */
   turnDeadlines?: TurnDeadlines;
+  /** Continuation depth of the current job (issue #1320); 0 when not a continuation. */
+  continuationDepth?: number;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: HEADLESS_STEP_LIMIT,
@@ -498,5 +510,6 @@ export function createHeadlessPrepareStep(opts: {
     userId: opts.userId,
     turnDeadlines: opts.turnDeadlines,
     turnPath: "headless",
+    continuationDepth: opts.continuationDepth,
   });
 }

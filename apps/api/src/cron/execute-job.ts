@@ -156,9 +156,27 @@ export function findSlackPostingToolCalls(
 
 const CONTINUE_TAG_RE = /^\[CONTINUE:([^\]]+)\]\s*/;
 
-function parseContinuationTag(description: string): string | null {
+/**
+ * Optional depth suffix on the tag topic (issue #1320):
+ * `[CONTINUE:turn-deadline-abc123:d2]` → topic `turn-deadline-abc123`,
+ * depth 2. Tags without the suffix (checkpoint_plan, legacy jobs) are
+ * depth 1 — they ARE continuations, just the first in their chain.
+ */
+const CONTINUATION_DEPTH_RE = /^(.+):d(\d+)$/;
+
+export interface ContinuationTag {
+  topic: string;
+  depth: number;
+}
+
+export function parseContinuationTag(description: string): ContinuationTag | null {
   const match = description.match(CONTINUE_TAG_RE);
-  return match ? match[1] : null;
+  if (!match) return null;
+  const depthMatch = match[1].match(CONTINUATION_DEPTH_RE);
+  if (depthMatch) {
+    return { topic: depthMatch[1], depth: Math.max(1, Number(depthMatch[2])) };
+  }
+  return { topic: match[1], depth: 1 };
 }
 
 async function loadPlanNote(topic: string): Promise<string | null> {
@@ -219,8 +237,8 @@ export async function executeJob(
       throw new Error("Failed to create job execution trace");
     }
 
-    const planTopic = parseContinuationTag(job.description);
-    const isContinuation = planTopic !== null;
+    const continuationTag = parseContinuationTag(job.description);
+    const isContinuation = continuationTag !== null;
     const isRecurring = !!job.cronSchedule || !!job.frequencyConfig;
 
     const effectiveTrigger = isContinuation && trigger === "heartbeat" ? "continuation" : trigger;
@@ -253,20 +271,21 @@ export async function executeJob(
     const stablePrefix = isTaskMode ? buildTaskPrefix() : await buildStablePrefix();
     const timeContext = getCurrentTimeContext(job.timezone);
 
-    if (isContinuation) {
-      const planContent = await loadPlanNote(planTopic);
+    if (continuationTag) {
+      const planContent = await loadPlanNote(continuationTag.topic);
       const nextSteps = job.description.replace(CONTINUE_TAG_RE, "");
 
       prompt = planContent
-        ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
-        : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
+        ? `Plan note "${continuationTag.topic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
+        : `Plan note "${continuationTag.topic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
 
       systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + CONTINUATION_SPECIFIC_INSTRUCTIONS;
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
         executionId,
-        planTopic,
+        planTopic: continuationTag.topic,
+        continuationDepth: continuationTag.depth,
         hasPlanNote: !!planContent,
         credentialCount: credentialIds.length,
       });
@@ -465,6 +484,9 @@ export async function executeJob(
       systemPrompt,
       invocationId,
       modelCategory,
+      // Depth of the chain this job belongs to (issue #1320): a hard-deadline
+      // respawn from inside this run continues at depth + 1, capped at 3.
+      continuationDepth: continuationTag?.depth ?? 0,
     });
 
     // Create a conversation trace for this job execution

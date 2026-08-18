@@ -106,6 +106,12 @@ export interface HeadlessAgentOptions {
   invocationId?: string;
   /** Model catalog category to execute with. Defaults to "medium" (Sonnet-class) for jobs. */
   modelCategory?: JobModelCategory;
+  /**
+   * Continuation depth of the job being executed (issue #1320): 0 for a
+   * regular job, N when resuming a `[CONTINUE:topic:dN]` continuation. Lets a
+   * hard-deadline respawn carry depth N + 1 so the chain is capped.
+   */
+  continuationDepth?: number;
 }
 
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
@@ -147,6 +153,7 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       threadTs: options.context?.threadTs,
       userId: options.context?.userId,
       turnDeadlines: resolveTurnDeadlines("headless"),
+      continuationDepth: options.continuationDepth,
     }),
   });
 

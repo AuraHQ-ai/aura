@@ -584,6 +584,102 @@ describe("executeJob NO_OP sentinel contract", () => {
   });
 });
 
+describe("parseContinuationTag (issue #1320)", () => {
+  it("returns null for a non-continuation description", async () => {
+    const { parseContinuationTag } = await import("./execute-job.js");
+    expect(parseContinuationTag("do the thing")).toBeNull();
+    expect(parseContinuationTag("mentions [CONTINUE:x] but not at the start")).toBeNull();
+  });
+
+  it("treats a tag without a depth suffix as depth 1 (checkpoint_plan / legacy)", async () => {
+    const { parseContinuationTag } = await import("./execute-job.js");
+    expect(parseContinuationTag("[CONTINUE:migrate-repos] finish the last batch")).toEqual({
+      topic: "migrate-repos",
+      depth: 1,
+    });
+  });
+
+  it("parses the :dN depth suffix and strips it from the topic", async () => {
+    const { parseContinuationTag } = await import("./execute-job.js");
+    expect(
+      parseContinuationTag("[CONTINUE:turn-deadline-abc123:d2] resume the work"),
+    ).toEqual({ topic: "turn-deadline-abc123", depth: 2 });
+  });
+
+  it("keeps colons that are part of the topic itself", async () => {
+    const { parseContinuationTag } = await import("./execute-job.js");
+    expect(parseContinuationTag("[CONTINUE:ns:my-topic] next")).toEqual({
+      topic: "ns:my-topic",
+      depth: 1,
+    });
+    expect(parseContinuationTag("[CONTINUE:ns:my-topic:d3] next")).toEqual({
+      topic: "ns:my-topic",
+      depth: 3,
+    });
+  });
+
+  it("clamps a nonsensical d0 to depth 1", async () => {
+    const { parseContinuationTag } = await import("./execute-job.js");
+    expect(parseContinuationTag("[CONTINUE:topic:d0] next")).toEqual({
+      topic: "topic",
+      depth: 1,
+    });
+  });
+});
+
+describe("executeJob continuation depth threading (issue #1320)", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    dbMock.operations = [];
+    vi.clearAllMocks();
+  });
+
+  async function captureAgentOptions(
+    jobOverrides: Record<string, unknown>,
+  ): Promise<Record<string, any>> {
+    let captured: Record<string, any> | null = null;
+    createHeadlessAgentMock.mockImplementation(async (options: Record<string, any>) => {
+      captured = options;
+      return {
+        agent: {
+          generate: vi.fn(async () => {
+            throw new Error("stop-after-capture");
+          }),
+        },
+        modelId: "test-model",
+        getStepModelIds: () => [],
+      };
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(baseJob({ script: null, ...jobOverrides }) as any, "heartbeat"),
+    ).rejects.toThrow("stop-after-capture");
+
+    return captured!;
+  }
+
+  it("passes depth 0 for a regular (non-continuation) job", async () => {
+    const options = await captureAgentOptions({ description: "do the thing" });
+    expect(options.continuationDepth).toBe(0);
+  });
+
+  it("passes depth 1 for a legacy continuation tag without a suffix", async () => {
+    const options = await captureAgentOptions({
+      description: "[CONTINUE:migrate-repos] finish the last batch",
+    });
+    expect(options.continuationDepth).toBe(1);
+  });
+
+  it("passes the parsed depth for a :dN-tagged continuation", async () => {
+    const options = await captureAgentOptions({
+      description: "[CONTINUE:turn-deadline-abc123:d2] resume the work",
+    });
+    expect(options.continuationDepth).toBe(2);
+  });
+});
+
 describe("parseNoOpSentinel", () => {
   it("matches exactly NO_OP (with surrounding whitespace allowed)", async () => {
     const { parseNoOpSentinel } = await import("./execute-job.js");

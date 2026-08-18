@@ -1,6 +1,8 @@
 import { db } from "../db/client.js";
 import { jobs } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+import { logError } from "../lib/error-logger.js";
+import { safePostMessage } from "../lib/slack-messaging.js";
 
 // ── Turn wall-clock budget (issue #1318) ─────────────────────────────────────
 // Vercel kills the function at maxDuration (800s). The step budget never binds
@@ -22,6 +24,22 @@ export const TURN_HARD_DEADLINE_MS = 720_000;
 
 /** Delay before the auto-spawned continuation job becomes eligible to run. */
 export const TURN_CONTINUATION_DELAY_MS = 2 * 60_000;
+
+/**
+ * Max depth of an auto-spawned continuation chain (issue #1320). A
+ * continuation job runs headless, gets its own deadlines, and can trip its
+ * own hard deadline — without a cap, a task that structurally cannot finish
+ * recurs indefinitely. Depth is encoded in the `[CONTINUE:topic:dN]` tag and
+ * parsed back in cron/execute-job.ts.
+ */
+export const MAX_CONTINUATION_DEPTH = 3;
+
+/** Posted to the originating thread when the continuation chain hits the cap. */
+export const CONTINUATION_DEPTH_EXCEEDED_MESSAGE =
+  `I couldn't finish this work within its time budget: it has already been ` +
+  `continued ${MAX_CONTINUATION_DEPTH} times and hit the wall-clock limit again, ` +
+  `so I'm stopping instead of scheduling another continuation. A human needs to ` +
+  `take a look — please re-scope the task or ask me to resume a specific part of it.`;
 
 export type TurnDeadlinePath = "interactive" | "headless";
 
@@ -73,16 +91,31 @@ export async function spawnTurnContinuationJob(params: {
   invocationId?: string;
   elapsedMs: number;
   step: number;
+  /**
+   * Depth of the continuation being spawned (1 = first continuation of an
+   * original turn). Callers resuming a continuation job must pass the parsed
+   * depth + 1. Depths past MAX_CONTINUATION_DEPTH are refused: no job is
+   * inserted, the originating thread is told a human is needed, and an error
+   * event is logged.
+   */
+  depth?: number;
 }): Promise<boolean> {
+  const depth = params.depth ?? 1;
   const suffix = (params.invocationId ?? Date.now().toString(36)).slice(0, 8);
   const topic = `turn-deadline-${suffix}`;
+
+  if (depth > MAX_CONTINUATION_DEPTH) {
+    await notifyContinuationDepthExceeded(topic, depth, params);
+    return false;
+  }
+
   const threadRef = params.threadTs
     ? ` in Slack channel ${params.channelId ?? "unknown"}, thread ${params.threadTs}`
     : params.channelId
       ? ` in Slack channel ${params.channelId}`
       : "";
   const description =
-    `[CONTINUE:${topic}] The previous turn${threadRef} hit its wall-clock budget ` +
+    `[CONTINUE:${topic}:d${depth}] The previous turn${threadRef} hit its wall-clock budget ` +
     `after ${Math.round(params.elapsedMs / 1000)}s (step ${params.step}) and was stopped before finishing. ` +
     `Read the recent messages in that thread to see what was requested and what was already done, ` +
     `then complete the remaining work and post the results in the same thread.`;
@@ -104,6 +137,7 @@ export async function spawnTurnContinuationJob(params: {
       threadTs: params.threadTs,
       elapsedMs: params.elapsedMs,
       step: params.step,
+      depth,
     });
     return true;
   } catch (err: any) {
@@ -114,5 +148,66 @@ export async function spawnTurnContinuationJob(params: {
       error: err?.message || String(err),
     });
     return false;
+  }
+}
+
+/**
+ * Depth cap tripped (issue #1320): stop the chain, tell the originating
+ * thread a human is needed, and record an error event. Fail-soft like the
+ * spawn path — a Slack/DB hiccup must never break the turn's wrap-up step.
+ */
+async function notifyContinuationDepthExceeded(
+  topic: string,
+  depth: number,
+  params: {
+    channelId?: string;
+    threadTs?: string;
+    userId?: string;
+    elapsedMs: number;
+    step: number;
+  },
+): Promise<void> {
+  logger.error("turn-deadline: continuation depth cap reached — not spawning", {
+    topic,
+    depth,
+    maxDepth: MAX_CONTINUATION_DEPTH,
+    channelId: params.channelId,
+    threadTs: params.threadTs,
+  });
+  logError({
+    errorName: "TurnContinuationDepthExceeded",
+    errorMessage:
+      `Continuation chain for ${topic} reached depth ${depth} ` +
+      `(cap ${MAX_CONTINUATION_DEPTH}); refusing to spawn another continuation — a human needs to intervene`,
+    errorCode: "turn_continuation_depth_exceeded",
+    channelId: params.channelId,
+    userId: params.userId,
+    context: {
+      topic,
+      depth,
+      maxDepth: MAX_CONTINUATION_DEPTH,
+      threadTs: params.threadTs,
+      elapsedMs: params.elapsedMs,
+      step: params.step,
+    },
+  });
+
+  if (!params.channelId) return;
+  try {
+    const { WebClient } = await import("@slack/web-api");
+    const client = new WebClient(process.env.SLACK_BOT_TOKEN);
+    await safePostMessage(client, {
+      channel: params.channelId,
+      ...(params.threadTs ? { thread_ts: params.threadTs } : {}),
+      text: params.userId
+        ? `<@${params.userId}> ${CONTINUATION_DEPTH_EXCEEDED_MESSAGE}`
+        : CONTINUATION_DEPTH_EXCEEDED_MESSAGE,
+    });
+  } catch (err: any) {
+    logger.error("turn-deadline: failed to notify thread about depth cap", {
+      topic,
+      channelId: params.channelId,
+      error: err?.message || String(err),
+    });
   }
 }
