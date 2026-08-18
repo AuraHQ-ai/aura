@@ -1056,6 +1056,20 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
             "The message text to send. Supports Slack mrkdwn formatting.",
           ),
       }),
+      inputExamples: [
+        {
+          input: {
+            channel: "general",
+            message: "Deploy finished — all checks green. :rocket:",
+          },
+        },
+        {
+          input: {
+            channel: "C0BNVKS77",
+            message: "*Heads up:* the weekly bug digest is ready in <#C0BUGS123>.",
+          },
+        },
+      ],
       execute: async ({ channel: channelInput, message }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
@@ -1364,6 +1378,20 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
             "The message text to send. Supports Slack mrkdwn formatting.",
           ),
       }),
+      inputExamples: [
+        {
+          input: {
+            user_name: "Joan",
+            message: "Quick reminder: the PR review is due today.",
+          },
+        },
+        {
+          input: {
+            user_name: ["Joan", "Alex", "Sam"],
+            message: "Kicking off the incident retro thread — notes incoming.",
+          },
+        },
+      ],
       execute: async ({ user_name, message }) => {
         try {
           const names = Array.isArray(user_name) ? user_name : [user_name];

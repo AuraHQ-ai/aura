@@ -126,8 +126,22 @@ export function defineTool<TInput, TOutput>(config: {
   slack?: SlackToolMetadata<TInput, TOutput>;
   toModelOutput?: Tool<TInput, TOutput, any>["toModelOutput"];
   requiredCredentials?: string[];
+  /**
+   * Provider-side strict schema validation for tool-call inputs (AI SDK
+   * BaseFunctionTool.strict). Defaults to true so malformed inputs are
+   * rejected at the tool-call layer instead of failing deep in execute().
+   * Set to false only for tools whose inputSchema can't be represented as
+   * strict JSON schema (e.g. z.record() with free-form values).
+   */
+  strict?: boolean;
+  /**
+   * Example inputs shown to the language model (AI SDK
+   * BaseFunctionTool.inputExamples) to ground tool-call generation on real
+   * call shapes. Passed through to tool() unchanged.
+   */
+  inputExamples?: Array<{ input: TInput }>;
 }) {
-  const { slack, requiredCredentials, ...rest } = config;
+  const { slack, requiredCredentials, strict, ...rest } = config;
   const originalExecute = rest.execute;
 
   const toolRef: ToolNameRef = {};
@@ -204,7 +218,7 @@ export function defineTool<TInput, TOutput>(config: {
     }
   };
 
-  const toolConfig = { ...rest, execute: auditedExecute };
+  const toolConfig = { ...rest, strict: strict ?? true, execute: auditedExecute };
   const t = tool<TInput, TOutput, any>(
     toolConfig as unknown as Tool<TInput, TOutput, any>,
   );

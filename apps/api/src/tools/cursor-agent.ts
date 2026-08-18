@@ -52,6 +52,27 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             "GitHub repository in owner/repo format, e.g. 'org/repo'. Defaults to 'AuraHQ-ai/aura'",
           ),
       }),
+      inputExamples: [
+        {
+          input: {
+            issue_description:
+              "Fix the crash in apps/api/src/respond.ts when a Slack thread has more than 1000 messages: paginate the history fetch and add a regression test.",
+            branch_prefix: "cursor",
+            key_files: ["apps/api/src/respond.ts"],
+          },
+        },
+        {
+          input: {
+            issue_description:
+              "Add a 'snooze' action to job reminder DMs: new tool, DB column on jobs, and dashboard toggle.",
+            branch_prefix: "cursor",
+            key_files: [
+              "apps/api/src/tools/jobs.ts",
+              "packages/db/src/schema.ts",
+            ],
+          },
+        },
+      ],
       execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {
         try {
           const { launchCursorAgent } = await import(

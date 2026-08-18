@@ -42,6 +42,61 @@ import {
   TOOL_CALL_AFTER_DETACHED_SUSPEND_ERROR,
 } from "./tool.js";
 
+describe("defineTool strict + inputExamples forwarding", () => {
+  it("defaults strict to true when omitted", () => {
+    const t = defineTool({
+      description: "a tool",
+      inputSchema: z.object({ q: z.string() }),
+      execute: async () => ({ ok: true }),
+    });
+
+    // vi.mock("ai") makes tool() an identity function, so the returned
+    // object is exactly the config passed to the underlying tool() call.
+    expect((t as any).strict).toBe(true);
+    expect((t as any).inputExamples).toBeUndefined();
+  });
+
+  it("forwards strict: false into the tool() config", () => {
+    const t = defineTool({
+      description: "a tool with a strict-incompatible schema",
+      inputSchema: z.object({ fields: z.record(z.any()) }),
+      strict: false,
+      execute: async () => ({ ok: true }),
+    });
+
+    expect((t as any).strict).toBe(false);
+  });
+
+  it("forwards inputExamples unchanged into the tool() config", () => {
+    const examples = [
+      { input: { q: "first example" } },
+      { input: { q: "second example" } },
+    ];
+    const t = defineTool({
+      description: "a tool with examples",
+      inputSchema: z.object({ q: z.string() }),
+      inputExamples: examples,
+      execute: async () => ({ ok: true }),
+    });
+
+    expect((t as any).inputExamples).toEqual(examples);
+    expect((t as any).strict).toBe(true);
+  });
+
+  it("still injects strict when defineTool-only metadata fields are present", () => {
+    const t = defineTool({
+      description: "a tool",
+      inputSchema: z.object({ q: z.string() }),
+      slack: { status: "Working..." },
+      requiredCredentials: ["some_key"],
+      execute: async () => ({ ok: true }),
+    });
+
+    expect((t as any).strict).toBe(true);
+    expect((t as any).__requiredCredentials).toEqual(["some_key"]);
+  });
+});
+
 describe("tool detached suspend enforcement", () => {
   it("returns a hard error for tool calls after a detached command suspends the turn", async () => {
     dbMocks.returning.mockResolvedValue([{ id: "log-1" }]);
