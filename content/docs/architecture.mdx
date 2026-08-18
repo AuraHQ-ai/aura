@@ -15,10 +15,11 @@ aura/
 │   ├── api/            # Core agent (Nitro + Hono, Vercel Functions)
 │   │   └── src/
 │   │       ├── pipeline/    # Message processing, prompt assembly
-│   │       ├── tools/       # 25 tool modules (Slack, email, BigQuery, etc.)
+│   │       ├── tools/       # 27 tool modules (Slack, email, BigQuery, etc.)
 │   │       ├── memory/      # Extract, store, retrieve, consolidate
 │   │       ├── cron/        # Heartbeat, memory consolidation, email sync
-│   │       └── routes/      # API routes (Slack events, dashboard, chat)
+│   │       ├── routes/      # Dashboard API routes
+│   │       ├── app.ts         # Hono app — Slack events/interactions, webhooks, cron endpoints
 │   ├── dashboard/      # Admin UI (Vite + React + TanStack Router)
 │   │   └── src/routes/
 │   │       ├── conversations/   # Conversation traces & threads
@@ -48,7 +49,7 @@ Slack Event → Vercel Function → Nitro + Hono Router → Message Pipeline →
                                               PostgreSQL + pgvector
                                       (memories, messages, conversations, notes, jobs)
                                                       ↕
-                                              Tools (25 modules)
+                                              Tools (27 modules)
                                                       ↕
                                               Admin Dashboard (Vite + React)
 ```
@@ -84,7 +85,7 @@ Aura uses the Vercel Workflow DevKit for durable execution in the Nitro API, wit
 
 ## Tool System
 
-Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `tool()` that adds audit logging and approval policies. Aura has **25 tool modules** organized by domain:
+Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `tool()` that adds audit logging and approval policies. Aura has **27 tool modules** organized by domain:
 
 | Category | Tools | Description |
 |----------|-------|-------------|
@@ -102,7 +103,7 @@ Each tool has a description that guides the LLM on when and how to use it -- the
 
 ### Deferred tool loading
 
-Not every tool schema is sent to the model on every turn. Frequently used tools (Slack messaging, sandbox commands, notes, memories) are loaded eagerly; infrequent ones (Calendar, Canvas, Gmail triage, Cursor agents, voice, and ~60 others listed in `apps/api/src/tools/deferred.ts`) are marked with Anthropic's `deferLoading` provider option. Their full schemas are omitted from the prompt and replaced by a one-line manifest, and the model loads them on demand via the native `tool_search_tool_bm25` meta-tool. This keeps the prompt small without shrinking the toolset. Deferred loading only applies to Anthropic models; other providers receive the full schemas.
+Not every tool schema is sent to the model on every turn. Frequently used tools (Slack messaging, sandbox commands, notes, memories) are loaded eagerly; infrequent ones (Calendar, Canvas, Gmail triage, Cursor agents, voice, and others -- 59 tools total, listed in `apps/api/src/tools/deferred.ts`) are marked with Anthropic's `deferLoading` provider option. Their full schemas are omitted from the prompt and replaced by a one-line manifest, and the model loads them on demand via Anthropic's native BM25 tool-search meta-tool (`toolSearchBm25_20251119`, exposed in the prompt as `tool_search_tool_bm25`). This keeps the prompt small without shrinking the toolset. Deferred loading only applies to Anthropic models; other providers receive the full schemas.
 
 ## Heartbeat & Cron
 
@@ -117,10 +118,12 @@ A heartbeat runs every 30 minutes via Vercel Cron. It:
 
 Every execution outcome is reviewed by the **supervisor** -- a separately invoked fast-model LLM at `POST /api/cron/supervisor` that picks one of seven fixed decisions (`silent_success`, `report_success`, `report_failure`, `retry_as_is`, `retry_with_fix`, `escalate`, `disable_job`). It replaces the older blind 3x backoff retry loop: retries are now LLM-decided, and `retry_with_fix` can open an `auto-supervisor-fix` issue on the repo. Each outcome is processed up to 3 times before being marked `skipped`. See [Jobs -- Supervisor pattern](/docs/tools/jobs#supervisor-pattern) for the full decision table and orphan-sweep thresholds.
 
-Additional cron jobs:
-- **Memory consolidation** — Daily at 4 AM UTC. Decays old memories, merges duplicates.
-- **Email sync** — Periodic inbox sync for connected Gmail accounts.
-- **Note expiry** — Cleans up expired plan notes.
+Additional scheduled work:
+- **Memory consolidation** (`/api/cron/consolidate`) — Daily at 4 AM UTC. Decays old memories, merges duplicates.
+- **Eval responses** (`/api/cron/eval-responses`) — Hourly.
+- **Note expiry** — Runs inside the heartbeat; cleans up expired plan notes.
+
+Email sync has no dedicated cron: Gmail staleness checks and bounded syncs happen lazily inside the email triage tools (`email_digest`, `search_emails`, `update_email_thread`) when the synced data is stale.
 
 ## Model Resolution
 
