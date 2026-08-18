@@ -4,6 +4,12 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
+import { logError } from "../lib/error-logger.js";
+import {
+  spawnTurnContinuationJob,
+  type TurnDeadlinePath,
+  type TurnDeadlines,
+} from "./turn-deadline.js";
 import type { ModelCapabilities } from "@aura/db/schema";
 
 export class InvocationSupersededError extends Error {
@@ -23,13 +29,39 @@ const WRAP_UP_MESSAGE =
   "Start wrapping up — summarize your findings and post results now. " +
   "Do not start new investigations or long tool chains.";
 
+// ── Turn wall-clock deadline messages (issue #1318) ──────────────────────────
+
+const TURN_SOFT_DEADLINE_MESSAGE =
+  "IMPORTANT: This turn has been running for {elapsedSec}s and is approaching " +
+  "the platform's wall-clock limit. Wrap up NOW: do not start new " +
+  "investigations or long tool calls, summarize what you have done so far, " +
+  "and if work remains use checkpoint_plan to save your progress and " +
+  "schedule a continuation.";
+
+const TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION =
+  "CRITICAL: This turn's wall-clock budget is exhausted and your tools have " +
+  "been withdrawn. Reply now with your final message: state what you " +
+  "completed and what remains. A continuation job has already been scheduled " +
+  "to resume the remaining work in this thread — hand off cleanly and keep " +
+  "it brief.";
+
+const TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION =
+  "CRITICAL: This turn's wall-clock budget is exhausted and your tools have " +
+  "been withdrawn. Reply now with your final message: state what you " +
+  "completed, what remains, and tell the user they can ask you to resume " +
+  "the remaining work.";
+
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
   system?: string;
+  instructions?: string;
   providerOptions?: ProviderOptions;
   model?: LanguageModel;
   messages?: Array<ModelMessage>;
+  /** Empty past the hard turn deadline so the model must emit final text. */
+  activeTools?: ReadonlyArray<never>;
+  toolChoice?: "auto" | "none" | "required";
 } | undefined;
 
 type PrepareStepFn = (options: {
@@ -158,12 +190,28 @@ export function createPrepareStep(opts: {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  userId?: string;
+  /** Wall-clock budget for the turn (issue #1318). Omit to disable. */
+  turnDeadlines?: TurnDeadlines;
+  /** Pipeline path label for deadline telemetry. */
+  turnPath?: TurnDeadlinePath;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
   let hasEscalatedModel = false;
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
+
+  // ── Turn wall-clock deadline state (issue #1318) ──────────────────────────
+  // turnStartedAt is recorded ONCE here, alongside the rest of the per-turn
+  // counters, when the prepareStep closure is created at the start of the
+  // turn. It is never re-derived per step.
+  const turnStartedAt = Date.now();
+  const softDeadlineMs = opts.turnDeadlines?.softDeadlineMs;
+  const hardDeadlineMs = opts.turnDeadlines?.hardDeadlineMs;
+  let softDeadlineNudgeInjected = false;
+  let hardDeadlineTripped = false;
+  let continuationJobSpawned = false;
 
   // Cache providerOptions per model/budget for this prepareStep instance.
   // Catalog lookups are also in-memory cached, but this avoids repeated work
@@ -261,23 +309,101 @@ export function createPrepareStep(opts: {
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
     providerOptions = await getCachedProviderThinkingOptions(effectiveModelId, opts.thinkingBudget);
 
+    // --- Turn wall-clock deadline (issue #1318) ---
+    // The step budget never binds in practice (turns die around step 40 while
+    // the limit is 250) because sandbox tool calls cost 40-150s each. Enforce
+    // a wall-clock budget so the turn wraps up BEFORE the Vercel maxDuration
+    // (800s) SIGKILL instead of dying mid-sentence.
+    const elapsedMs = Date.now() - turnStartedAt;
+    const hardDeadlineActive = hardDeadlineMs != null && elapsedMs >= hardDeadlineMs;
+    const systemSuffixes: string[] = [];
+
+    if (hardDeadlineActive && !hardDeadlineTripped) {
+      hardDeadlineTripped = true;
+      logger.warn("prepareStep: turn hard deadline tripped — withdrawing tools", {
+        elapsedMs,
+        hardDeadlineMs,
+        stepNumber,
+      });
+      logError({
+        errorName: "TurnHardDeadline",
+        errorMessage: `Turn exceeded its hard wall-clock deadline (${hardDeadlineMs}ms); tools withdrawn to force a final message`,
+        errorCode: "turn_hard_deadline",
+        channelId: opts.channelId,
+        userId: opts.userId,
+        context: { elapsedMs, step: stepNumber, path: opts.turnPath },
+      });
+      // Auto-spawn a continuation job so the unfinished work resumes in the
+      // same Slack thread. Awaited so the row exists before the SIGKILL;
+      // fail-soft (returns false) so it can never break the wrap-up step.
+      continuationJobSpawned = await spawnTurnContinuationJob({
+        channelId: opts.channelId,
+        threadTs: opts.threadTs,
+        userId: opts.userId,
+        invocationId: opts.invocationId,
+        elapsedMs,
+        step: stepNumber,
+      });
+    }
+
+    if (hardDeadlineActive) {
+      systemSuffixes.push(
+        continuationJobSpawned
+          ? TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION
+          : TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION,
+      );
+    } else if (
+      softDeadlineMs != null &&
+      elapsedMs >= softDeadlineMs &&
+      !softDeadlineNudgeInjected
+    ) {
+      // Soft deadline: inject the wrap-up nudge at most ONCE per turn. The
+      // instructions override carries forward to later steps in the AI SDK,
+      // so a single injection keeps the nudge in play.
+      softDeadlineNudgeInjected = true;
+      logger.warn("prepareStep: turn soft deadline reached — injecting wrap-up nudge", {
+        elapsedMs,
+        softDeadlineMs,
+        stepNumber,
+      });
+      logError({
+        errorName: "TurnSoftDeadline",
+        errorMessage: `Turn exceeded its soft wall-clock deadline (${softDeadlineMs}ms); wrap-up nudge injected`,
+        errorCode: "turn_soft_deadline",
+        channelId: opts.channelId,
+        userId: opts.userId,
+        context: { elapsedMs, step: stepNumber, path: opts.turnPath },
+      });
+      systemSuffixes.push(
+        TURN_SOFT_DEADLINE_MESSAGE.replace(
+          "{elapsedSec}",
+          String(Math.round(elapsedMs / 1000)),
+        ),
+      );
+    }
+
     // --- Step limit warning ---
-    // Concatenates all layers into a single string override. This breaks
-    // cache for the wrap-up step only — acceptable tradeoff since it fires
-    // near the step limit (≥200) and only once per conversation.
     if (stepNumber >= threshold) {
-      const wrapUp = WRAP_UP_MESSAGE
-        .replace("{stepCount}", String(stepNumber))
-        .replace("{limit}", String(limit));
-      systemOverride = opts.stablePrefix
-        + (opts.environmentContext ? "\n\n" + opts.environmentContext : "")
-        + (opts.conversationContext ? "\n\n" + opts.conversationContext : "")
-        + (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "")
-        + "\n\n" + wrapUp;
+      systemSuffixes.push(
+        WRAP_UP_MESSAGE
+          .replace("{stepCount}", String(stepNumber))
+          .replace("{limit}", String(limit)),
+      );
       logger.info("prepareStep: injecting wrap-up nudge", {
         stepNumber,
         limit,
       });
+    }
+
+    // Concatenates all layers into a single string override. This breaks
+    // cache for the affected steps only — acceptable tradeoff since these
+    // nudges fire near the end of a turn.
+    if (systemSuffixes.length > 0) {
+      systemOverride = opts.stablePrefix
+        + (opts.environmentContext ? "\n\n" + opts.environmentContext : "")
+        + (opts.conversationContext ? "\n\n" + opts.conversationContext : "")
+        + (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "")
+        + "\n\n" + systemSuffixes.join("\n\n");
     }
 
     const prunedMessages = pruneMessages({
@@ -290,6 +416,9 @@ export function createPrepareStep(opts: {
       ...(systemOverride && { instructions: systemOverride }),
       ...(providerOptions && { providerOptions }),
       ...(modelOverride && { model: modelOverride }),
+      // Past the hard deadline, stop offering tools so the model is forced
+      // to emit a final text message in the remaining headroom.
+      ...(hardDeadlineActive && { activeTools: [] as const, toolChoice: "none" as const }),
     };
   };
 }
@@ -308,6 +437,9 @@ export function createInteractivePrepareStep(opts: {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  userId?: string;
+  /** Wall-clock budget for the turn (issue #1318). Omit to disable. */
+  turnDeadlines?: TurnDeadlines;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: STEP_LIMIT,
@@ -324,6 +456,9 @@ export function createInteractivePrepareStep(opts: {
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
+    userId: opts.userId,
+    turnDeadlines: opts.turnDeadlines,
+    turnPath: "interactive",
   });
 }
 
@@ -341,6 +476,9 @@ export function createHeadlessPrepareStep(opts: {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  userId?: string;
+  /** Wall-clock budget for the turn (issue #1318). Omit to disable. */
+  turnDeadlines?: TurnDeadlines;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: HEADLESS_STEP_LIMIT,
@@ -357,5 +495,8 @@ export function createHeadlessPrepareStep(opts: {
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
+    userId: opts.userId,
+    turnDeadlines: opts.turnDeadlines,
+    turnPath: "headless",
   });
 }

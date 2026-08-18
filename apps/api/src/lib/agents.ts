@@ -18,6 +18,7 @@ import {
   STEP_LIMIT,
   HEADLESS_STEP_LIMIT,
 } from "../pipeline/prepare-step.js";
+import { resolveTurnDeadlines } from "../pipeline/turn-deadline.js";
 import { aiTelemetry } from "./langfuse.js";
 
 // ── Interactive Agent ────────────────────────────────────────────────────────
@@ -87,6 +88,8 @@ export async function createInteractiveAgent(
       invocationId: options.invocationId,
       channelId: options.channelId,
       threadTs: options.threadTs,
+      userId: options.context?.userId,
+      turnDeadlines: resolveTurnDeadlines("interactive"),
     }),
   });
 
@@ -136,6 +139,14 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       recordStepModelId: (stepNumber, stepModelId) => {
         stepModelIds[stepNumber - 1] = stepModelId ?? modelId;
       },
+      // channelId/threadTs let a hard-deadline continuation resume in the
+      // job's thread. invocationId is intentionally NOT passed — headless
+      // jobs never claim invocation locks, so enabling the staleness check
+      // would falsely abort them as superseded.
+      channelId: options.context?.channelId,
+      threadTs: options.context?.threadTs,
+      userId: options.context?.userId,
+      turnDeadlines: resolveTurnDeadlines("headless"),
     }),
   });
 
