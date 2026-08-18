@@ -17,7 +17,7 @@ Aura can search the web, read URLs as clean text, and automate browser interacti
 
 Search the web for current information. Powered by [Tavily](https://tavily.com).
 
-**Required env var:** `TAVILY_API_KEY`
+**Required credential:** `tavily_api_key` -- stored as an encrypted credential (Dashboard > Credentials), resolved via the credential store with no environment-variable fallback. The tool description and runtime error still mention `TAVILY_API_KEY` for historical reasons, but setting that env var has no effect on the API runtime.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -28,7 +28,7 @@ Search the web for current information. Powered by [Tavily](https://tavily.com).
 
 ## `read_url`
 
-Fetch a URL and extract its readable text content. Use when someone pastes a link and asks "what does this say?". Faster than `browse` for simple text extraction.
+Fetch a URL and extract its readable text content. Use when someone pastes a link and asks "what does this say?". Faster than `browse` for simple text extraction. When the `tavily_api_key` credential is configured, uses Tavily Extract for cleaner results; otherwise falls back to raw fetch + HTML stripping.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
