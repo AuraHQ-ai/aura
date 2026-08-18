@@ -79,9 +79,15 @@ pnpm run db:migrate
 
 ### 6. Deploy to Vercel
 
+Aura deploys automatically when you merge to `main` on GitHub. To trigger your first deploy:
+
 ```bash
-npx vercel --prod
+git push origin main
 ```
+
+<Warning>
+Never run `vercel --prod` from a local checkout — that deploys your local filesystem instead of the reviewed Git commit. See [Environment Variables](/deployment/environment-variables) for details.
+</Warning>
 
 ### 7. Configure Your Slack App
 
