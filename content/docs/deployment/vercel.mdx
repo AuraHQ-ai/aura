@@ -76,10 +76,42 @@ Local development: `pnpm dev` in `apps/api` runs `nitro dev` (workflows run in t
 ## Important Rules
 
 1. **Never push directly to `main`.** Vercel auto-deploys, so any push goes straight to production. Always use feature branches and PRs.
-2. **Migrations run on every deploy.** Drizzle handles idempotency — running the same migration twice is safe.
-3. **Drizzle migration format:** Always include `-->statement-breakpoint` between SQL statements in migration files.
-4. **Serverless = stateless.** In-memory state only lasts for one request. Don't rely on module-level caches persisting. Durable multi-step work belongs in a workflow (`apps/api/workflows/`).
-5. **Function timeout:** 800 seconds max. Plan long-running tasks accordingly.
+2. **Migrations run on every deploy.** The runner (`packages/db/src/migrate.ts`) is idempotent — it tracks applied migrations by SHA-256 content hash, not by timestamp, so running it when there is nothing new is a safe no-op.
+3. **Drizzle migration format:** Always include `--> statement-breakpoint` at the end of each statement line in migration files (same line, not a separate line). Without it, Drizzle concatenates all statements and Postgres rejects the multi-statement execution.
+4. **Generate migrations on an up-to-date branch.** New migrations are named by Unix epoch (`pnpm db:generate` with `prefix: "unix"`), so their timestamp is always greater than any migration already on `main`. A stale branch produces an out-of-order `when`, which the CI migration guard will catch and reject. When the guard fails: **rebase on `main`** and re-run `pnpm db:generate`.
+5. **Serverless = stateless.** In-memory state only lasts for one request. Don't rely on module-level caches persisting. Durable multi-step work belongs in a workflow (`apps/api/workflows/`).
+6. **Function timeout:** 800 seconds max. Plan long-running tasks accordingly.
+
+## Migration Workflow
+
+### How the hash-based ledger works
+
+`packages/db/src/migrate.ts` replaces the upstream Drizzle migrator with an inline hash-based runner:
+
+- Reads `packages/db/drizzle/meta/_journal.json` and iterates entries in journal order.
+- For each entry, computes `sha256(full_file_contents)` — the same hash Drizzle's own migrator uses, so existing `drizzle.__drizzle_migrations` rows remain valid.
+- Loads all hashes from the ledger. Applies a migration **if and only if its hash is absent** — ordering never affects whether a migration runs.
+- **Self-healing backfill:** on first deploy after this change, three prod entries (0017, 0025, 0074) that were silently skipped by the old watermark logic get their ledger rows inserted without re-executing SQL. Subsequent runs skip them as normal.
+
+### Generating a new migration
+
+```bash
+# From the repo root, on a branch that is up to date with main:
+pnpm db:generate
+```
+
+This produces a file like `1786996239_my_migration.sql` (Unix epoch prefix). The timestamp is the current epoch second, which is always greater than any existing migration's `when`.
+
+### CI migration guard
+
+The `.github/workflows/migration-guard.yml` workflow runs on every PR that touches `packages/db/drizzle/**` and fails if:
+
+| Check | Cause | Fix |
+|-------|-------|-----|
+| `out-of-order` | A new entry's `when` ≤ max `when` on `main` | Rebase on `main` and re-run `pnpm db:generate` |
+| `duplicate-when` | Two new entries share the same timestamp | Rebase and regenerate |
+| `missing-sql` | A journal entry references a `.sql` file that doesn't exist | Restore or regenerate the file |
+| `orphaned-sql` | A `.sql` file exists with no journal entry | Remove the file or add a journal entry |
 
 ## Vercel Projects
 
