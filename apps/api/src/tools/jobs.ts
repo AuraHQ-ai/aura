@@ -105,6 +105,27 @@ export function createJobTools(
             "'task' runs the job with a minimal ~2k-token task prompt (no personality, self-directive, or notes index) — fewer places for context rot in mechanical jobs. Memory stays unified either way. Omit or 'full' for the standard prompt.",
           ),
       }),
+      inputExamples: [
+        {
+          input: {
+            description: "Remind Joan to review PR #1284",
+            execute_in: "2 hours",
+            timezone: "UTC",
+            priority: "normal",
+          },
+        },
+        {
+          input: {
+            name: "bug-digest",
+            description: "Check #bugs for new reports since the last run and post a summary",
+            recurring: "0 9 * * 1-5",
+            channel_name: "bugs",
+            timezone: "Europe/Zurich",
+            priority: "normal",
+            max_per_day: 1,
+          },
+        },
+      ],
       execute: async ({
         name,
         description,

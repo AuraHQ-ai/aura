@@ -100,6 +100,26 @@ export function createConversationSearchTools(context?: ScheduleContext) {
           .default(0)
           .describe("Number of messages to skip for pagination (default 0)"),
       }),
+      inputExamples: [
+        {
+          input: {
+            query: "quarterly report deadline",
+            mode: "text",
+            limit: DEFAULT_LIMIT,
+            offset: 0,
+          },
+        },
+        {
+          input: {
+            query: "concerns about the pricing migration",
+            mode: "semantic",
+            user_id: "U066V1AN6",
+            since: "2026-07-01",
+            limit: DEFAULT_LIMIT,
+            offset: 0,
+          },
+        },
+      ],
       execute: async ({ query, mode, user_id, channel_id, since, until, role, limit, offset }) => {
         try {
           if (mode === "semantic" && !query?.trim()) {

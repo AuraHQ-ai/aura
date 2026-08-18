@@ -781,6 +781,23 @@ export function createSandboxTools(context?: ScheduleContext) {
             "Command timeout in seconds (default 90, max 750). Explicitly opt in to values above 90s only for headless/batch work or long-running agent commands; Slack chat.stream caps around 3 minutes, so longer foreground calls can freeze the active Slack message.",
           ),
       }),
+      inputExamples: [
+        { input: { command: "cat /home/user/output.txt", timeout_seconds: 90 } },
+        {
+          input: {
+            command: "git status && git log --oneline -5",
+            workdir: "/home/user/repo",
+            timeout_seconds: 90,
+          },
+        },
+        {
+          input: {
+            command: "python analyze.py --input data.csv > results.txt 2>&1",
+            workdir: "/home/user/analysis",
+            timeout_seconds: 300,
+          },
+        },
+      ],
       execute: async ({ command, workdir, timeout_seconds }) => {
         const userId = context?.userId || "aura";
         try {
