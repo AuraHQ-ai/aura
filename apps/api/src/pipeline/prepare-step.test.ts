@@ -253,6 +253,7 @@ describe("createPrepareStep turn wall-clock deadlines (issue #1318)", () => {
       invocationId: "inv-1",
       elapsedMs: expect.any(Number),
       step: 10,
+      depth: 1,
     });
 
     const hardCalls = errorLoggerMocks.logError.mock.calls.filter(
@@ -274,6 +275,22 @@ describe("createPrepareStep turn wall-clock deadlines (issue #1318)", () => {
       ([params]) => params.errorCode === "turn_soft_deadline",
     );
     expect(softCalls).toHaveLength(0);
+  });
+
+  it("spawns the next continuation at the current depth + 1 (issue #1320)", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      channelId: "C0123456",
+      threadTs: "1755500000.000100",
+      turnDeadlines: { softDeadlineMs: 0, hardDeadlineMs: 0 },
+      continuationDepth: 2,
+    });
+
+    await prepareStep(buildStepArgs(10));
+
+    expect(turnDeadlineMocks.spawnTurnContinuationJob).toHaveBeenCalledWith(
+      expect.objectContaining({ depth: 3 }),
+    );
   });
 
   it("tells the model to hand off manually when the continuation spawn fails", async () => {

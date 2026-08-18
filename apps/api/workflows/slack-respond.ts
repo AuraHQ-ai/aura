@@ -16,6 +16,13 @@
  * resume that arrives late continues in a NEW message bubble instead of
  * appending to the old one — recoverable UX, accepted in the issue.
  *
+ * Cost bounds (issue #1320): durable execution removed the 800s SIGKILL that
+ * implicitly capped turns, so the loop enforces the same wall-clock budget as
+ * the legacy prepareStep path (#1318): the baseline is recorded once in a
+ * step (survives replay), a soft deadline injects a wrap-up nudge, and a hard
+ * deadline withdraws tools, logs `turn_hard_deadline`, and spawns a
+ * depth-capped continuation job.
+ *
  * Enabled via the `AURA_WDK_SLACK_RESPOND` env var or the
  * `wdk_slack_respond` setting (see src/pipeline/slack-workflow.ts). The
  * legacy in-process path in respond.ts remains the default.
@@ -91,6 +98,48 @@ interface SlackAgentStepResult {
   toolRecords: ToolCallRecord[];
   hadToolFailure: boolean;
   stepModelId: string;
+  /**
+   * Wall-clock time elapsed since turnStartedAt, measured at the END of this
+   * step. Durable (part of the step result), so the workflow's deadline
+   * decisions replay deterministically.
+   */
+  elapsedMs: number;
+}
+
+/**
+ * Turn wall-clock budget (issues #1318/#1320), recorded ONCE in a step so it
+ * is workflow-durable: a replay after a SIGKILL returns the memoized values
+ * instead of resetting the clock.
+ */
+export interface TurnClock {
+  turnStartedAt: number;
+  softDeadlineMs: number;
+  hardDeadlineMs: number;
+}
+
+/** Per-step deadline state, derived from durable values in the workflow loop. */
+export interface TurnDeadlineStepState {
+  turnStartedAt: number;
+  /** Elapsed at the end of the PREVIOUS step (0 for the first step). */
+  elapsedMs: number;
+  softDeadlineReached: boolean;
+  hardDeadlineReached: boolean;
+  /** Whether the hard-deadline continuation job was actually spawned. */
+  continuationSpawned: boolean;
+}
+
+/**
+ * Pure deadline evaluation for one loop iteration — extracted so the
+ * workflow-loop behaviour is unit-testable without running the workflow.
+ */
+export function evaluateTurnDeadlines(
+  elapsedMs: number,
+  clock: Pick<TurnClock, "softDeadlineMs" | "hardDeadlineMs">,
+): { softDeadlineReached: boolean; hardDeadlineReached: boolean } {
+  return {
+    softDeadlineReached: elapsedMs >= clock.softDeadlineMs,
+    hardDeadlineReached: elapsedMs >= clock.hardDeadlineMs,
+  };
 }
 
 const SLACK_STEP_LIMIT = 250;
@@ -103,6 +152,61 @@ const EMPTY_COMPLETION_RELAUNCH_PROMPT =
 // ── Steps ────────────────────────────────────────────────────────────────────
 
 /**
+ * Record the turn's wall-clock baseline + budgets (issue #1320). Runs as a
+ * step so the values are durable: on replay the memoized result is returned,
+ * NOT a fresh Date.now() — a per-step baseline would reset the budget every
+ * time the workflow resumes.
+ */
+async function startTurnClock(): Promise<TurnClock> {
+  "use step";
+  const { resolveTurnDeadlines } = await import("../src/pipeline/turn-deadline.js");
+  const { softDeadlineMs, hardDeadlineMs } = resolveTurnDeadlines("interactive");
+  return { turnStartedAt: Date.now(), softDeadlineMs, hardDeadlineMs };
+}
+
+/**
+ * Hard-deadline side effects (issue #1320), mirroring prepare-step.ts: log
+ * the `turn_hard_deadline` error event and spawn the continuation job.
+ * Returns whether the continuation was actually spawned (fail-soft), which
+ * picks the WITH/WITHOUT-continuation hand-off message for the final step.
+ */
+async function handleTurnHardDeadline(
+  input: SlackRespondWorkflowInput,
+  elapsedMs: number,
+  stepIndex: number,
+  hardDeadlineMs: number,
+): Promise<boolean> {
+  "use step";
+  const { logError } = await import("../src/lib/error-logger.js");
+  const { spawnTurnContinuationJob } = await import("../src/pipeline/turn-deadline.js");
+  const { logger } = await import("../src/lib/logger.js");
+
+  logger.warn("slackRespondWorkflow: turn hard deadline tripped — withdrawing tools", {
+    elapsedMs,
+    hardDeadlineMs,
+    stepIndex,
+    channelId: input.channelId,
+  });
+  logError({
+    errorName: "TurnHardDeadline",
+    errorMessage: `Turn exceeded its hard wall-clock deadline (${hardDeadlineMs}ms); tools withdrawn to force a final message`,
+    errorCode: "turn_hard_deadline",
+    channelId: input.channelId,
+    userId: input.userId,
+    context: { elapsedMs, step: stepIndex, path: "interactive" },
+  });
+
+  return await spawnTurnContinuationJob({
+    channelId: input.channelId,
+    threadTs: input.threadTs,
+    userId: input.userId,
+    invocationId: input.invocationId,
+    elapsedMs,
+    step: stepIndex,
+  });
+}
+
+/**
  * One model call + the resulting Slack appends and tool executions.
  * Everything non-serializable (Slack client, model, tools) is rebuilt from
  * env + ctx inside the step.
@@ -113,6 +217,7 @@ async function runSlackAgentStep(
   streamState: SlackStreamState,
   stepIndex: number,
   escalate: boolean,
+  turn: TurnDeadlineStepState,
 ): Promise<SlackAgentStepResult> {
   "use step";
   const { streamText, isStepCount } = await import("ai");
@@ -126,7 +231,13 @@ async function runSlackAgentStep(
   const { createSlackTools } = await import("../src/tools/slack.js");
   const { getDeferredToolManifest } = await import("../src/tools/deferred.js");
   const { appendDeferredToolsBlock } = await import("../src/personality/system-prompt.js");
-  const { getProviderThinkingOptions } = await import("../src/pipeline/prepare-step.js");
+  const {
+    getProviderThinkingOptions,
+    WRAP_UP_MESSAGE,
+    TURN_SOFT_DEADLINE_MESSAGE,
+    TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION,
+    TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION,
+  } = await import("../src/pipeline/prepare-step.js");
   const { isInvocationCurrent } = await import("../src/lib/invocation-lock.js");
   const { executionContext } = await import("../src/lib/tool.js");
   const { getSlackMeta } = await import("../src/lib/tool.js");
@@ -143,7 +254,7 @@ async function runSlackAgentStep(
       input.invocationId,
     );
     if (!current) {
-      return supersededResult(state);
+      return supersededResult(state, Date.now() - turn.turnStartedAt);
     }
   } catch {
     // assume still current on check failure
@@ -171,6 +282,8 @@ async function runSlackAgentStep(
   }
 
   // ── Tools (full Slack tool set, deferred discovery intact) ──────────
+  // Past the hard turn deadline the tool set is EMPTY: the model cannot call
+  // tools and must emit its final text in the remaining headroom (#1320).
   const scheduleContext = {
     userId: input.userId,
     channelId: input.channelId,
@@ -178,12 +291,14 @@ async function runSlackAgentStep(
     workspaceId: input.workspaceId,
     timezone: input.timezone,
   };
-  const tools = await createSlackTools(
-    slackClient,
-    scheduleContext as any,
-    stepModelId,
-    input.invocationId,
-  );
+  const tools = turn.hardDeadlineReached
+    ? ({} as Awaited<ReturnType<typeof createSlackTools>>)
+    : await createSlackTools(
+        slackClient,
+        scheduleContext as any,
+        stepModelId,
+        input.invocationId,
+      );
 
   const environmentContext =
     appendDeferredToolsBlock(
@@ -191,13 +306,38 @@ async function runSlackAgentStep(
       getDeferredToolManifest(tools),
     ) ?? input.environmentContext;
 
+  // ── Dynamic-context nudges (mirrors prepare-step.ts) ────────────────
   let dynamicContext = input.dynamicContext;
+  const appendNudge = (nudge: string) => {
+    dynamicContext = dynamicContext ? `${dynamicContext}\n\n${nudge}` : nudge;
+  };
+
+  if (turn.hardDeadlineReached) {
+    appendNudge(
+      turn.continuationSpawned
+        ? TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION
+        : TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION,
+    );
+  } else if (turn.softDeadlineReached) {
+    logger.warn("slackRespondWorkflow: turn soft deadline reached — injecting wrap-up nudge", {
+      elapsedMs: turn.elapsedMs,
+      stepIndex,
+      channelId: input.channelId,
+    });
+    appendNudge(
+      TURN_SOFT_DEADLINE_MESSAGE.replace(
+        "{elapsedSec}",
+        String(Math.round(turn.elapsedMs / 1000)),
+      ),
+    );
+  }
+
   if (stepIndex >= WRAP_UP_THRESHOLD) {
-    const wrapUp =
-      `IMPORTANT: You're approaching your step limit (${stepIndex}/${SLACK_STEP_LIMIT}). ` +
-      "Start wrapping up — summarize your findings and post results now. " +
-      "Do not start new investigations or long tool chains.";
-    dynamicContext = dynamicContext ? `${dynamicContext}\n\n${wrapUp}` : wrapUp;
+    appendNudge(
+      WRAP_UP_MESSAGE
+        .replace("{stepCount}", String(stepIndex))
+        .replace("{limit}", String(SLACK_STEP_LIMIT)),
+    );
   }
 
   const system = buildCachedSystemMessages(
@@ -480,6 +620,7 @@ async function runSlackAgentStep(
 
     return {
       superseded: false,
+      elapsedMs: Date.now() - turn.turnStartedAt,
       responseMessages: response.messages as ModelMessage[],
       finishReason: String(finishReason),
       text,
@@ -522,7 +663,10 @@ function safeParse(s: string): unknown {
   }
 }
 
-function supersededResult(state: SlackStreamState): SlackAgentStepResult {
+function supersededResult(
+  state: SlackStreamState,
+  elapsedMs: number,
+): SlackAgentStepResult {
   return {
     superseded: true,
     responseMessages: [],
@@ -533,6 +677,7 @@ function supersededResult(state: SlackStreamState): SlackAgentStepResult {
     toolRecords: [],
     hadToolFailure: false,
     stepModelId: "",
+    elapsedMs,
   };
 }
 
@@ -662,8 +807,38 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
   let escalate = false;
   let relaunchedForEmptyCompletion = false;
 
+  // ── Turn wall-clock budget (issue #1320) ────────────────────────────
+  // The baseline + budgets are step-durable (survive replay). Deadline
+  // decisions for step N use the elapsed time measured at the end of step
+  // N-1 — a durable value — so replays take the same branches.
+  const turnClock = await startTurnClock();
+  let elapsedMs = 0;
+  let hardDeadlineHandled = false;
+  let continuationSpawned = false;
+
   for (let stepIndex = 0; stepIndex < SLACK_STEP_LIMIT; stepIndex++) {
-    const r = await runSlackAgentStep(input, messages, streamState, stepIndex, escalate);
+    const { softDeadlineReached, hardDeadlineReached } = evaluateTurnDeadlines(
+      elapsedMs,
+      turnClock,
+    );
+
+    if (hardDeadlineReached && !hardDeadlineHandled) {
+      hardDeadlineHandled = true;
+      continuationSpawned = await handleTurnHardDeadline(
+        input,
+        elapsedMs,
+        stepIndex,
+        turnClock.hardDeadlineMs,
+      );
+    }
+
+    const r = await runSlackAgentStep(input, messages, streamState, stepIndex, escalate, {
+      turnStartedAt: turnClock.turnStartedAt,
+      elapsedMs,
+      softDeadlineReached,
+      hardDeadlineReached,
+      continuationSpawned,
+    });
 
     if (r.superseded) {
       await finalizeSlackRespond({
@@ -684,10 +859,15 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
     steps.push(r.stepRecord);
     stepModelIds.push(r.stepModelId);
     toolRecords.push(...r.toolRecords);
+    elapsedMs = r.elapsedMs;
     if (r.hadToolFailure) failureCount++;
     if (!escalate && stepIndex > 15 && failureCount >= 3) {
       escalate = true;
     }
+
+    // Past the hard deadline the step ran with no tools — its output is the
+    // final message, regardless of finishReason.
+    if (hardDeadlineReached) break;
 
     if (r.finishReason === "tool-calls") continue;
 
