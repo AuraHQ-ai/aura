@@ -5,63 +5,70 @@ description: "Ingest, search, and retrieve URLs, PDFs, YouTube transcripts, and 
 
 # Resources
 
-Aura can ingest external content (web pages, PDFs, YouTube videos, Notion pages) into a searchable knowledge base. Ingested resources are stored with embeddings for semantic search.
+Aura can ingest external content (web pages, PDFs, YouTube videos, Notion pages) into a searchable knowledge base. Ingested resources are stored as markdown with a generated summary and a summary embedding for semantic search.
 
-**Required env vars:** `TAVILY_API_KEY` (for enhanced extraction), `OPENAI_API_KEY` (for embeddings)
+**Credentials:**
+- `tavily_api_key` — stored as an encrypted credential (Dashboard > Credentials). Only used when `use_tavily: true` on `ingest_resource`. There is no environment-variable fallback for ingestion; raw fetch works without it.
+- `OPENAI_API_KEY` — env var, used for summary embeddings (semantic search).
 
 ---
 
 ## `ingest_resource`
 
-Fetch a URL, extract its content, and store it in the resources database with embeddings.
+Register or refresh a raw source document by URL. Stores markdown content, generates a summary, computes a summary embedding, and marks the resource as ready. Idempotent by URL + content hash — re-ingesting unchanged content is a no-op.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `url` | string | **yes** | URL to ingest (web page, PDF, YouTube, Notion, GitHub) |
-| `source` | string | no | Source type: `web`, `youtube`, `notion`, `github`, `pdf`, `docs`, `slack` |
-| `metadata` | object | no | Additional metadata to store with the resource |
+| `url` | string | **yes** | Canonical identifier. Usually an https URL; non-HTTP identifiers like `notion://page-id` or `gs://...` are allowed when `content_markdown` is provided. |
+| `source` | enum | no | `youtube`, `notion`, `github`, `web`, `docs`, `pdf`, `slack`. Inferred from URL when omitted. |
+| `parent_url` | string | no | Parent resource URL for hierarchy (e.g. file → repo, Notion child → parent). |
+| `title` | string | no | Title override. |
+| `metadata` | object | no | Flexible source-specific metadata to store on the resource. |
+| `content_markdown` | string | no | Pre-extracted markdown. Provide for binaries/non-HTTP URLs; if omitted, Aura fetches the URL and converts it to markdown. |
+| `use_tavily` | boolean | no | When true, try Tavily extract first for cleaner markdown on JS-heavy/SPA pages, then fall back to raw fetch. Requires `tavily_api_key`. Default false. |
 
 Supports:
-- **Web pages** — extracted via Tavily or HTML stripping
+- **Web pages** — raw fetch + HTML-to-markdown, or Tavily extract when `use_tavily: true`
 - **YouTube** — transcript extraction
-- **PDFs** — text extraction
+- **PDFs / binaries** — pass pre-extracted text via `content_markdown`
 - **Notion/GitHub** — fetched and converted to markdown
-
-Resources are deduplicated by URL hash. Re-ingesting updates the content.
 
 ---
 
 ## `search_resources`
 
-Search ingested resources by keyword or semantic similarity.
+Search ingested resources (status = `ready` only).
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `query` | string | **yes** | Search query |
-| `mode` | string | no | `text` (keyword, default) or `semantic` (vector similarity) |
-| `source` | string | no | Filter by source type |
-| `limit` | number | no | Max results (default 10) |
+| `mode` | enum | no | `semantic` (default — vector search on summary embeddings) or `text` (Postgres full-text on full markdown content) |
+| `source` | enum | no | Filter by source type |
+| `limit` | number | no | Max results (default 10, max 50) |
+
+Returns resource-level matches with URL, title, source, summary, crawl time, and similarity score.
 
 ---
 
 ## `get_resource`
 
-Retrieve a specific resource by ID with its full content.
+Retrieve a single resource by its canonical URL, including full markdown content, summary, metadata, status, and crawl/error fields.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | **yes** | Resource UUID |
+| `url` | string | **yes** | Exact resource URL (the canonical ID used at ingest time) |
 
 ---
 
 ## `list_resources`
 
-List recently ingested resources.
+List resources in the knowledge base, newest first.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `source` | string | no | Filter by source type |
-| `limit` | number | no | Max results (default 20) |
+| `source` | enum | no | Filter by source type |
+| `status` | enum | no | `ready` (default), `pending`, or `error` — use to check what failed or is still processing |
+| `limit` | number | no | Max results (default 20, max 50) |
 
 ---
 
