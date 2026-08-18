@@ -406,6 +406,7 @@ describe("executeJob reply-routing prompt", () => {
     expect(prompt).toContain('send_thread_reply(channel="C123", thread_ts="111.222")');
     expect(prompt).toContain(SILENT_SUCCESS_CLAUSE);
     expect(prompt).toContain("post NOTHING");
+    expect(prompt).toContain("output exactly `NO_OP`");
   });
 
   it("includes the silent-success clause in the channel-routing variant", async () => {
@@ -415,6 +416,7 @@ describe("executeJob reply-routing prompt", () => {
     expect(prompt).toContain('Post your results to channel "C123" using send_channel_message');
     expect(prompt).toContain(SILENT_SUCCESS_CLAUSE);
     expect(prompt).toContain("post NOTHING");
+    expect(prompt).toContain("output exactly `NO_OP`");
   });
 
   it("does not inject reply-routing for jobs without a channel", async () => {
@@ -422,6 +424,223 @@ describe("executeJob reply-routing prompt", () => {
 
     expect(prompt).not.toContain("Post your results");
     expect(prompt).not.toContain("post NOTHING");
+    expect(prompt).not.toContain("NO_OP");
+  });
+});
+
+describe("executeJob NO_OP sentinel contract", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    dbMock.operations = [];
+    vi.clearAllMocks();
+  });
+
+  function mockAgentGenerate(text: string, steps: Array<Record<string, unknown>> = []) {
+    createHeadlessAgentMock.mockResolvedValue({
+      agent: {
+        generate: vi.fn(async () => ({ text, steps, totalUsage: {} })),
+      },
+      modelId: "test-model",
+      getStepModelIds: () => [],
+    });
+  }
+
+  function updateSetArgs() {
+    return dbMock.operations
+      .filter((operation) => operation.kind === "update")
+      .map((operation) => operation.setArg ?? {});
+  }
+
+  function jobOutcomeInsert() {
+    return insertValues().find((values) => "outcomeStatus" in values) as
+      | Record<string, any>
+      | undefined;
+  }
+
+  async function runLlmJob(jobOverrides: Record<string, unknown> = {}) {
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+    const { executeJob } = await import("./execute-job.js");
+    return executeJob(
+      baseJob({
+        script: null,
+        playbook: "Check for new signups. Stay silent when there is nothing new.",
+        channelId: "C123",
+        cronSchedule: "0 9 * * *",
+        ...jobOverrides,
+      }) as any,
+      "heartbeat",
+    );
+  }
+
+  it("completes a clean no-op (final text exactly NO_OP, no posting tools) with the honest marker", async () => {
+    const { NO_OP_RESULT_MARKER } = await import("./execute-job.js");
+    mockAgentGenerate("NO_OP", [
+      {
+        finishReason: "stop",
+        text: "NO_OP",
+        toolCalls: [{ toolName: "bigquery_query", input: { query: "select 1" } }],
+        toolResults: [{ toolName: "bigquery_query", output: { rows: [] } }],
+      },
+    ]);
+
+    await expect(runLlmJob()).resolves.toBe(true);
+
+    const setArgs = updateSetArgs();
+    expect(setArgs.find((arg) => "summary" in arg)).toMatchObject({
+      status: "completed",
+      summary: NO_OP_RESULT_MARKER,
+    });
+    expect(setArgs.find((arg) => "lastResult" in arg)).toMatchObject({
+      status: "pending",
+      lastResult: NO_OP_RESULT_MARKER,
+    });
+
+    expect(jobOutcomeInsert()).toMatchObject({
+      outcomeStatus: "succeeded",
+      output: expect.objectContaining({
+        type: "llm",
+        final_message: "NO_OP",
+        no_op: true,
+      }),
+    });
+
+    const { logger } = await import("../lib/logger.js");
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalledWith(
+      expect.stringContaining("NO_OP sentinel contract violation"),
+      expect.anything(),
+    );
+  });
+
+  it("supports the NO_OP: <reason> variant and records the reason", async () => {
+    const { NO_OP_RESULT_MARKER } = await import("./execute-job.js");
+    mockAgentGenerate("NO_OP: no new signups today", [
+      { finishReason: "stop", text: "NO_OP: no new signups today", toolCalls: [], toolResults: [] },
+    ]);
+
+    await expect(runLlmJob()).resolves.toBe(true);
+
+    const expectedMarker = `${NO_OP_RESULT_MARKER} (no new signups today)`;
+    const setArgs = updateSetArgs();
+    expect(setArgs.find((arg) => "summary" in arg)).toMatchObject({ summary: expectedMarker });
+    expect(setArgs.find((arg) => "lastResult" in arg)).toMatchObject({ lastResult: expectedMarker });
+
+    expect(jobOutcomeInsert()?.output).toMatchObject({
+      no_op: true,
+      no_op_reason: "no new signups today",
+    });
+  });
+
+  it("does not suppress narration text without the sentinel (sentinel-only contract)", async () => {
+    const narration = "Checked signups, nothing new to report today.";
+    mockAgentGenerate(narration, [
+      { finishReason: "stop", text: narration, toolCalls: [], toolResults: [] },
+    ]);
+
+    await expect(runLlmJob()).resolves.toBe(true);
+
+    const setArgs = updateSetArgs();
+    expect(setArgs.find((arg) => "summary" in arg)).toMatchObject({ summary: narration });
+    expect(setArgs.find((arg) => "lastResult" in arg)).toMatchObject({ lastResult: narration });
+
+    const outcome = jobOutcomeInsert();
+    expect(outcome?.output.final_message).toBe(narration);
+    expect(outcome?.output.no_op).toBeUndefined();
+    expect(outcome?.output.no_op_violation).toBeUndefined();
+  });
+
+  it("logs a contract violation when the model posts to Slack and then declares NO_OP", async () => {
+    mockAgentGenerate("NO_OP", [
+      {
+        finishReason: "tool-calls",
+        text: "",
+        toolCalls: [
+          { toolName: "send_channel_message", input: { channel: "C123", text: "nothing new" } },
+        ],
+        toolResults: [{ toolName: "send_channel_message", output: { ok: true } }],
+      },
+      { finishReason: "stop", text: "NO_OP", toolCalls: [], toolResults: [] },
+    ]);
+
+    await expect(runLlmJob()).resolves.toBe(true);
+
+    const { logger } = await import("../lib/logger.js");
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining("NO_OP sentinel contract violation"),
+      expect.objectContaining({
+        jobId: "job-1",
+        executionId: "exec-1",
+        postingToolCalls: ["send_channel_message"],
+      }),
+    );
+
+    // No suppression on violation: result/summary keep the raw final text.
+    const setArgs = updateSetArgs();
+    expect(setArgs.find((arg) => "summary" in arg)).toMatchObject({ summary: "NO_OP" });
+    expect(setArgs.find((arg) => "lastResult" in arg)).toMatchObject({ lastResult: "NO_OP" });
+
+    const outcome = jobOutcomeInsert();
+    expect(outcome?.output.no_op_violation).toBe(true);
+    expect(outcome?.output.no_op).toBeUndefined();
+  });
+});
+
+describe("parseNoOpSentinel", () => {
+  it("matches exactly NO_OP (with surrounding whitespace allowed)", async () => {
+    const { parseNoOpSentinel } = await import("./execute-job.js");
+    expect(parseNoOpSentinel("NO_OP")).toEqual({ reason: null });
+    expect(parseNoOpSentinel("  NO_OP\n")).toEqual({ reason: null });
+  });
+
+  it("captures the optional one-line reason", async () => {
+    const { parseNoOpSentinel } = await import("./execute-job.js");
+    expect(parseNoOpSentinel("NO_OP: no new signups today")).toEqual({
+      reason: "no new signups today",
+    });
+    expect(parseNoOpSentinel("NO_OP:")).toEqual({ reason: null });
+  });
+
+  it("rejects anything that is not the bare sentinel", async () => {
+    const { parseNoOpSentinel } = await import("./execute-job.js");
+    expect(parseNoOpSentinel("Checked X, nothing new. NO_OP")).toBeNull();
+    expect(parseNoOpSentinel("NO_OPS")).toBeNull();
+    expect(parseNoOpSentinel("no_op")).toBeNull();
+    expect(parseNoOpSentinel("NO_OP: reason\nsecond line")).toBeNull();
+    expect(parseNoOpSentinel("")).toBeNull();
+    expect(parseNoOpSentinel(null)).toBeNull();
+  });
+});
+
+describe("findSlackPostingToolCalls", () => {
+  it("flags all direct Slack-posting tools and ignores non-posting tools", async () => {
+    const { findSlackPostingToolCalls } = await import("./execute-job.js");
+    const steps = [
+      {
+        toolCalls: [
+          { toolName: "bigquery_query", input: {} },
+          { toolName: "send_thread_reply", input: { channel: "C1", thread_ts: "1.2" } },
+          { toolName: "draw_chart", input: {} },
+        ],
+      },
+      { toolCalls: [{ toolName: "send_direct_message", input: { user: "U1" } }] },
+      {},
+    ];
+    expect(findSlackPostingToolCalls(steps)).toEqual([
+      "send_thread_reply",
+      "draw_chart",
+      "send_direct_message",
+    ]);
+  });
+
+  it("counts upload_file only when it targets a channel (explicit or job fallback)", async () => {
+    const { findSlackPostingToolCalls } = await import("./execute-job.js");
+    const uploadWithout = [{ toolCalls: [{ toolName: "upload_file", input: { filename: "a.csv" } }] }];
+    const uploadWith = [
+      { toolCalls: [{ toolName: "upload_file", input: { filename: "a.csv", channel: "C1" } }] },
+    ];
+
+    expect(findSlackPostingToolCalls(uploadWithout)).toEqual([]);
+    expect(findSlackPostingToolCalls(uploadWithout, "C_JOB")).toEqual(["upload_file"]);
+    expect(findSlackPostingToolCalls(uploadWith)).toEqual(["upload_file"]);
   });
 });
 

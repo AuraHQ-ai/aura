@@ -78,9 +78,79 @@ You are resuming a multi-step task. Your accumulated progress and context are be
 /**
  * Appended to both injected reply-routing prompts so playbooks that specify
  * silent success are not overridden by a forced "post your results" rule.
+ *
+ * The second half states the hard NO_OP sentinel contract (issue #1185):
+ * silent runs must be declared mechanically via the sentinel, not narrated.
  */
 export const SILENT_SUCCESS_CLAUSE =
-  " However, if your playbook or task instructions say to stay silent on success, or this run produced no user-facing deliverable, post NOTHING — do not post status updates, receipts, or confirmations that the job ran.";
+  " However, if your playbook or task instructions say to stay silent on success, or this run produced no user-facing deliverable, post NOTHING — do not post status updates, receipts, or confirmations that the job ran." +
+  " If your playbook says to stay silent on no-op/no-finding runs and this run has nothing to report: make ZERO Slack-posting tool calls (no send_channel_message, send_thread_reply, send_direct_message, draw_table, draw_chart, draw_cards, or upload_file to a channel) and output exactly `NO_OP` (optionally `NO_OP: <one-line reason>`) as your ENTIRE final message. Never post narration like 'Checked X, nothing new' — the `NO_OP` sentinel is how you report a quiet run.";
+
+// ── NO_OP sentinel (hard silent-run contract, issue #1185) ──────────────────
+
+/** Stored in result/lastResult/summary for a clean no-op run. */
+export const NO_OP_RESULT_MARKER = "No-op run: nothing to report";
+
+/**
+ * Trimmed final text must be exactly `NO_OP`, optionally followed by a
+ * one-line reason after a colon (`NO_OP: no new signups today`).
+ */
+const NO_OP_SENTINEL_RE = /^NO_OP(?::[ \t]*(.*))?$/;
+
+/** Tool calls that always produce user-visible Slack output. */
+const SLACK_POSTING_TOOL_NAMES = new Set([
+  "send_channel_message",
+  "send_thread_reply",
+  "send_direct_message",
+  "draw_table",
+  "draw_chart",
+  "draw_cards",
+]);
+
+type StepWithToolCalls = {
+  toolCalls?: ReadonlyArray<{ toolName: string; input?: unknown }>;
+};
+
+/**
+ * Detects the NO_OP sentinel in the model's final message. Sentinel-only
+ * contract: narration prose ("Checked X, nothing new") is never treated as a
+ * no-op declaration.
+ */
+export function parseNoOpSentinel(
+  text: string | null | undefined,
+): { reason: string | null } | null {
+  const trimmed = (text ?? "").trim();
+  const match = trimmed.match(NO_OP_SENTINEL_RE);
+  if (!match) return null;
+  const reason = (match[1] ?? "").trim();
+  return { reason: reason ? reason.slice(0, 200) : null };
+}
+
+/**
+ * Returns the names of Slack-posting tool calls made during generation.
+ * `upload_file` counts when it targets a channel — explicitly via its input,
+ * or implicitly through the job's channel (the tool falls back to
+ * context.channelId when no channel is passed).
+ */
+export function findSlackPostingToolCalls(
+  steps: ReadonlyArray<StepWithToolCalls>,
+  fallbackChannelId?: string | null,
+): string[] {
+  const postingCalls: string[] = [];
+  for (const step of steps) {
+    for (const toolCall of step.toolCalls ?? []) {
+      if (SLACK_POSTING_TOOL_NAMES.has(toolCall.toolName)) {
+        postingCalls.push(toolCall.toolName);
+      } else if (toolCall.toolName === "upload_file") {
+        const channel = (toolCall.input as { channel?: unknown } | null | undefined)?.channel;
+        const targetsChannel =
+          (typeof channel === "string" && channel.length > 0) || !!fallbackChannelId;
+        if (targetsChannel) postingCalls.push(toolCall.toolName);
+      }
+    }
+  }
+  return postingCalls;
+}
 
 // ── Continuation Detection ───────────────────────────────────────────────────
 
@@ -439,6 +509,31 @@ export async function executeJob(
 
     const { text, steps, totalUsage: usage } = generateResult;
 
+    // NO_OP sentinel contract (issue #1185): a clean no-op (sentinel + zero
+    // Slack-posting tool calls) completes normally but records an honest
+    // marker instead of narration. Sentinel + Slack posts is a contract
+    // violation: log it so it's measurable; never suppress or delete posts.
+    const noOpSentinel = parseNoOpSentinel(text);
+    let isCleanNoOp = false;
+    if (noOpSentinel) {
+      const postingToolCalls = findSlackPostingToolCalls(steps, job.channelId);
+      isCleanNoOp = postingToolCalls.length === 0;
+      if (!isCleanNoOp) {
+        logger.warn(
+          "executeJob: NO_OP sentinel contract violation — model posted to Slack and declared NO_OP",
+          {
+            jobId,
+            executionId,
+            jobName: job.name,
+            postingToolCalls,
+          },
+        );
+      }
+    }
+    const noOpMarker = noOpSentinel?.reason
+      ? `${NO_OP_RESULT_MARKER} (${noOpSentinel.reason})`
+      : NO_OP_RESULT_MARKER;
+
     // Phase 2a: persist assistant steps now that generate succeeded
     const stepModelIds = getStepModelIds();
     const conversationSteps = buildConversationSteps(steps, stepModelIds, modelId);
@@ -490,11 +585,13 @@ export async function executeJob(
           ? { steps: serializedSteps, scratchpad: scratchpadContents }
           : serializedSteps,
         tokenUsage,
-        summary: (text || "").substring(0, 500) || null,
+        summary: isCleanNoOp ? noOpMarker.substring(0, 500) : (text || "").substring(0, 500) || null,
       })
       .where(eq(jobExecutions.id, executionId));
 
-    const result = (text || "Job completed (no text output)").substring(0, 2000);
+    const result = (
+      isCleanNoOp ? noOpMarker : text || "Job completed (no text output)"
+    ).substring(0, 2000);
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
     const isNewDay = job.lastExecutionDate !== todayStr;
@@ -546,6 +643,13 @@ export async function executeJob(
       output: {
         type: "llm",
         final_message: text || null,
+        ...(isCleanNoOp
+          ? {
+              no_op: true,
+              ...(noOpSentinel?.reason ? { no_op_reason: noOpSentinel.reason } : {}),
+            }
+          : {}),
+        ...(noOpSentinel && !isCleanNoOp ? { no_op_violation: true } : {}),
         scratchpad: scratchpadContents ?? null,
         ...(scriptExecutionOutput ? { script: scriptExecutionOutput } : {}),
       },
