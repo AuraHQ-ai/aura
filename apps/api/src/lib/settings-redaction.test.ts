@@ -63,6 +63,10 @@ describe("isSecretSettingKey", () => {
     expect(isSecretSettingKey("e2b_sandbox_id:abc")).toBe(false);
     expect(isSecretSettingKey("slack_channel")).toBe(false);
     expect(isSecretSettingKey("feature_flag")).toBe(false);
+    // Ops-notice routing keys are configuration, not secrets — they must stay
+    // readable (view + edit) in the dashboard.
+    expect(isSecretSettingKey("aura_ops_channel")).toBe(false);
+    expect(isSecretSettingKey("founder_user_id")).toBe(false);
   });
 });
 
