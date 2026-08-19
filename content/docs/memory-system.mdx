@@ -13,61 +13,205 @@ Each memory has a `type` that determines how it's used during retrieval:
 
 | Type | Description | Example |
 |------|-------------|---------|
-| `fact` | Objective information about the world | "The BigQuery dataset is `analytics.prod`" |
-| `decision` | A decision made by someone | "Team decided to delay the launch by 2 weeks" |
-| `personal` | Personal details about a person | "Joan prefers bullet points over prose" |
-| `relationship` | How two people or entities relate | "Tali reports to Marc and works on the search team" |
-| `sentiment` | How someone feels about something | "The team is frustrated with the slow CI pipeline" |
-| `open_thread` | Something that needs follow-up | "Marc promised to share the Q4 numbers by Friday" |
+| `fact` | Durable information about people, the org, or the world (subsumes the former `personal`, `relationship`, `sentiment` types) | "The BigQuery dataset is `analytics.prod`" |
+| `decision` | An explicit choice made by someone, with participants | "Team decided to delay the launch by 2 weeks" |
+| `preference` | How someone wants things done | "Joan prefers bullet points over prose" |
+| `event` | Something that happened at a specific time | "v2.0 launched on March 1st" |
+| `open_thread` | Unresolved work or pending questions | "Marc promised to share the Q4 numbers by Friday" |
 
 ## Storage
 
-Memories are stored in PostgreSQL with a 1536-dimensional vector embedding (OpenAI `text-embedding-3-large`):
+Memories are stored in PostgreSQL with a 1536-dimensional vector embedding. The embedding model is resolved from the `model_embedding` settings row, with a hardcoded last resort of `openai/text-embedding-3-small` (`LAST_RESORT_MODELS.embedding` in `apps/api/src/lib/ai.ts`). Every embedding is validated to exactly 1536 dimensions before storage:
 
 ```sql
 CREATE TABLE memories (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id TEXT NOT NULL DEFAULT 'default' REFERENCES workspaces(id),
   content TEXT NOT NULL,
   type memory_type NOT NULL,
+  category TEXT NOT NULL DEFAULT 'semantic',  -- semantic | episodic | procedural
   source_message_id UUID REFERENCES messages(id),
   source_channel_type channel_type NOT NULL,
+  source_thread_ts TEXT,                   -- thread the memory was extracted from
+  source_channel_id TEXT,                  -- channel the memory was extracted from
   related_user_ids TEXT[] NOT NULL DEFAULT '{}',
   embedding vector(1536),
+  importance INTEGER,                         -- 1-100, set by extraction LLM
   relevance_score REAL NOT NULL DEFAULT 1.0,
   shareable INTEGER NOT NULL DEFAULT 0,
-  search_vector tsvector GENERATED ALWAYS AS (
-    to_tsvector('english', coalesce(content, ''))
-  ) STORED,
+  extraction_source_role extraction_source_role, -- user | assistant | tool
+  search_vector tsvector,
+  -- Temporal lifecycle
+  status memory_status NOT NULL DEFAULT 'current',
+  confidence REAL DEFAULT 0.8,
+  valid_from TIMESTAMPTZ,
+  valid_until TIMESTAMPTZ,
+  supersedes_memory_id UUID,
+  superseded_at TIMESTAMPTZ,
+  superseded_by_memory_id UUID,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
 
-## Retrieval: Hybrid Search
+Memories are also classified by `category`:
 
-Aura uses hybrid search combining vector similarity and full-text search. This is critical — vector search alone fails for proper nouns and specific terms.
+| Category | Description |
+|----------|-------------|
+| `semantic` | Facts, preferences, decisions -- the default |
+| `episodic` | Specific events, conversations, moments in time |
+| `procedural` | How-to knowledge, workflows, processes |
 
-1. **Vector search** finds semantically similar memories (cosine similarity via HNSW index)
-2. **Full-text search** finds lexically matching memories (GIN index on tsvector)
-3. Results are merged with configurable weighting (default: 70% vector, 30% text)
+### Admission Control
+
+Not every extracted memory makes it into storage. Before persisting, each candidate goes through:
+
+1. **Utility scoring** -- the extraction LLM rates each memory as high, medium, or low utility. Low-utility memories (greetings, filler) are discarded.
+2. **Embedding-based dedup** -- new memories are compared against existing ones via cosine similarity. Above 0.90 similarity, the new memory is skipped. Between 0.85-0.90, the older memory is soft-superseded (its relevance score is reduced to 0.001).
+
+This keeps the memory store high-signal and avoids unbounded growth from repetitive conversations.
+
+## Retrieval: Hybrid Search + Reranking
+
+Aura uses a multi-stage retrieval pipeline to find the most relevant memories. When called from the main prompt pipeline, retrieval first runs a query-planning pass, then hybrid candidate retrieval, then reranking and scoring.
+
+### Stage 0: Query Planning (rewrite + multi-hop decomposition)
+
+Before searching, the raw user message is passed through a fast-model **query-planning** pass (enabled via the `rewrite` option, which the main prompt pipeline turns on). The planner returns:
+
+- a **standalone rewrite** of the message — pronouns resolved, greetings and filler dropped, salient entities and intent preserved — used as the search query;
+- for questions that look multi-hop (heuristic: two or more `?`, or connectives like *and / or / both / compare / versus / difference between*), 2–4 atomic **sub-queries**, each retrievable on its own.
+
+When the planner emits 2+ sub-queries, each is retrieved independently and the lists are merged **round-robin** for balanced coverage across the sub-facts. Otherwise the single rewritten query is used. Planning failures fall back silently to the original query, and callers that omit `rewrite` (e.g. benchmarks, internal lookups) skip this stage entirely.
+
+### Stage 1: Hybrid Candidate Retrieval
+
+Two search strategies run in parallel and their results are fused using **Reciprocal Rank Fusion (RRF)**:
+
+1. **Vector search** — the user's message is embedded and compared against memory embeddings via cosine similarity (HNSW index). Finds semantically similar memories even when wording differs.
+
+2. **Full-text search** — up to 8 positional lexemes are extracted from the query using PostgreSQL's `to_tsvector`. Each lexeme is searched independently (per-term limit of 25 results) to catch exact mentions that vector search might miss — especially proper nouns, technical terms, and specific identifiers.
+
+RRF combines both ranked lists with a smoothing constant of 60, ensuring that memories appearing in both lists rank highest.
+
+**Abstention gate.** Before reranking, the merged candidate pool is checked for real retrieval evidence: at least one resolved entity, a full-text (BM25) hit, or a cosine similarity at or above `0.3`. If none of these signals is present, retrieval **abstains and returns no memories** rather than surfacing weak, off-topic matches. This is on by default (the `abstain` option) and can be disabled by callers that want raw candidates.
+
+### Stage 2: Cohere Reranking
+
+The top candidates from RRF are passed through [Cohere's `rerank-v3.5`](https://cohere.com/rerank) model. This cross-encoder evaluates each candidate against the full query and re-scores them for fine-grained relevance. This stage catches cases where a keyword match is topically irrelevant, or where a subtle semantic match deserves higher ranking.
+
+**Env var:** `COHERE_API_KEY`. Reranking is optional -- without the key, retrieval falls back to a legacy composite score (normalized RRF, cosine similarity, stored relevance, recency, and entity boost) instead of failing.
+
+### Stage 3: Privacy Filtering & Scoring
+
+After reranking, memories are filtered based on channel privacy rules and sorted by a composite score combining rerank relevance, recency, and entity boost, with a mild confidence tiebreaker so lower-trust assistant-sourced memories don't crowd out equally relevant user-stated facts.
+
+## Conversation Retrieval
+
+In addition to discrete memory facts, Aura retrieves full conversation threads from her message history. The same query embedding is used to find relevant past messages via cosine similarity, then entire threads are reconstructed and scored with a recency boost (80% similarity, 20% recency within 30 days).
 
 ## Memory Extraction
 
 After every conversation turn, Aura extracts new memories:
 
-1. The recent messages are sent to Claude with a structured extraction prompt
-2. Claude identifies facts, decisions, sentiments, and open threads
+1. The recent messages are sent to the fast model (resolved dynamically from the model catalog) with a structured extraction prompt
+2. The model identifies facts, decisions, preferences, events, open threads, and entity mentions
+   - `event` and `open_thread` candidates must pass a **durability test**: "will this still be true and useful in 30 days?" In-flight tasks and current-thread activity are not extracted
 3. Each extraction is checked for duplicates against existing memories
 4. New memories are embedded and stored
+5. Extracted entities are resolved and linked to their memories (see below)
+
+When the conversation has thread context (channel + thread timestamp), extraction runs as **thread-scoped reconciliation** instead of blind appending: existing memories relevant to the thread are retrieved first, and the model emits precise operations -- create new memories, update existing ones, or delete outdated ones -- so repeated conversation in the same thread converges on an accurate memory state rather than accumulating near-duplicates.
+
+## Entity Extraction & Resolution
+
+Alongside memory extraction, Aura identifies **entities** -- people, companies, projects, products, channels, technologies, concepts, and locations -- mentioned in conversations. Each entity is extracted with:
+
+- A **type**: `person`, `company`, `project`, `product`, `channel`, `technology`, `concept`, `location`
+- A **role**: `subject` (primary), `object` (secondary), or `mentioned` (just referenced)
+- Optional **aliases**: first names, abbreviations, usernames (e.g. "Joan" for "Joan Rodriguez")
+
+Entities are resolved to a canonical record using a cascade:
+
+1. **Exact canonical match** -- direct match against known entity names (same type)
+2. **Alias match** -- match against registered aliases (e.g. "Joan" → "Joan Rodriguez")
+3. **Cross-type match** -- prevents duplicates across types (e.g. "SMG" as technology when "SMG" as company exists)
+4. **Fuzzy match** -- trigram similarity (>0.4 threshold) with LLM disambiguation to confirm
+5. **Create new** -- if no match is found, a new entity record is created with any extracted aliases
+
+Entities are linked to the memories that mention them via the `memory_entities` join table (with the role preserved). This enables **entity-first retrieval**: when a query mentions a known entity, Aura finds all memories linked to that entity and merges them into the hybrid search results with an RRF boost, ensuring relevant context surfaces even when the exact wording differs.
+
+### LLM-Based Entity Extraction
+
+Queries are processed by a Haiku LLM call that extracts structured entity mentions with type information. This catches cases that heuristic proper-noun detection misses:
+
+- Lowercased entity names (`smg`, `postmark`, `drizzle`)
+- Paraphrased references ("the Swiss portal company" → SMG)
+- Multi-word entities that aren't fully capitalized
+
+Extracted entities are resolved in read-only mode (no new entities created during retrieval) using a 5-step cascade: exact name match, alias match, cross-type exact match, cross-type alias match, and trigram fuzzy match. Memories linked to 2+ extracted entities get an intersection boost, surfacing highly relevant context.
+
+### Entity Summaries
+
+Each entity accumulates a **compiled summary** -- a dossier that distills everything Aura knows about it from linked memories. Summaries are:
+
+- Generated by an LLM that reads all linked memories and produces a structured overview
+- Regenerated incrementally during the nightly consolidation cron (when new memories are added)
+- Injected into the system prompt alongside retrieved memories, providing high-signal context about the people and entities in the conversation
+
+Entity summaries sit above individual memories in the prompt hierarchy because they represent consolidated knowledge rather than isolated facts.
+
+## Temporal Lifecycle
+
+Every memory has a lifecycle governed by its `status` field:
+
+| Status | Meaning |
+|--------|---------|
+| `current` | Active and used in retrieval |
+| `superseded` | Replaced by a newer memory (excluded from retrieval) |
+| `disputed` | Contradicted but not yet resolved (still surfaces in retrieval) |
+| `archived` | Manually archived, excluded from retrieval |
+| `deleted` | Soft-deleted, excluded from everything |
+
+### Confidence scores
+
+Each memory carries a `confidence` score (0.0 -- 1.0, default 0.8) representing how certain the extraction is. Future retrieval and consolidation logic can use this to rank conflicting memories.
+
+### Temporal validity
+
+Memories can have `valid_from` and `valid_until` timestamps to represent time-bounded facts. For example, "Joan is on vacation until March 15" gets a `valid_until` of March 15. By default, `valid_from` is set to the memory's creation time.
+
+### Supersession chains
+
+When a new memory replaces an old one (e.g., "the project deadline moved from April to May"), the old memory is marked `superseded` with:
+- `superseded_at` -- when it was superseded
+- `superseded_by_memory_id` -- which memory replaced it
+
+The new memory gets `supersedes_memory_id` pointing back to the old one. This creates a traceable chain of how facts evolved over time.
+
+Retrieval filters to `status IN ('current', 'disputed')` -- superseded and archived memories are automatically excluded.
+
+### Contradiction detection
+
+After new memories are stored, a contradiction detection pipeline runs automatically. For each new memory with an embedding and related user IDs, it:
+
+1. **Finds candidates** -- queries existing memories in the 0.50--0.85 cosine similarity range that share at least one related user ID. This "moderate similarity" band catches memories about the same topic that say different things (too-similar memories are caught by dedup instead).
+2. **LLM evaluation** -- a fast model evaluates each candidate against the new memory to determine if they make mutually exclusive claims about the same entity or topic.
+3. **Supersession** -- confirmed contradictions cause the old memory to be marked `superseded`, with a proper supersession chain linking to the new memory.
+
+The pipeline is conservative by design: refinements, complementary facts, and temporal updates are not flagged as contradictions. Only true mutual exclusions trigger supersession.
+
 
 ## Consolidation
 
-A nightly consolidation job maintains memory quality:
+A nightly consolidation job (4 AM UTC) maintains memory quality:
 
-- **Decay** — Old memories with low relevance scores are gradually deprioritized
-- **Merge** — Duplicate or near-duplicate memories are consolidated
-- **Strengthen** — Frequently accessed memories get relevance boosts
-- **Expire** — `open_thread` memories are resolved or aged out
+- **Decay** — relevance scores decrease by 0.5% per day (~50% after 138 days). Only applies to `current` memories.
+- **Merge** — memories with >95% cosine similarity are consolidated. The more recent (or higher-relevance) one is kept; the loser is marked `superseded` with a proper supersession chain linking to the winner.
+- **Profile consolidation** — user profiles whose accumulated `known_facts` lists (interests, facts, etc.) exceed their caps are compacted via LLM to stay bounded
+- **Entity summaries** — regenerate summaries for entities with new linked memories since last run
+
+Time-bounded memories are not expired by the cron: `valid_until` is enforced at retrieval time, so an expired memory simply stops surfacing.
 
 ## Privacy
 
@@ -76,9 +220,16 @@ Memory respects channel boundaries:
 - Memories from DMs are marked `shareable: 0` and only surface in conversations with the same user
 - Memories from public channels are `shareable: 1` and can surface anywhere
 - The `source_channel_type` field enables this filtering at query time
+- The `source_channel_id` and `source_thread_ts` fields provide full provenance -- every memory traces back to the exact conversation that generated it
 
 ## Notes: The Knowledge Graph
 
-Beyond extracted memories, Aura maintains a self-authored knowledge base in the `notes` table. These are longer-form documents on specific topics — team processes, technical decisions, project status.
+Beyond extracted memories, Aura maintains a self-authored knowledge base in the `notes` table. Notes use a three-tier hierarchy:
 
-Notes are cross-referenced via embeddings, creating a semantic graph where related knowledge is connected by meaning rather than explicit links.
+| Category | Purpose | Lifetime |
+|----------|---------|----------|
+| `skill` | Durable playbooks, protocols, checklists | Permanent |
+| `plan` | Work-in-progress, ephemeral context | Has expiry date |
+| `knowledge` | General reference, business context | Permanent (default) |
+
+Notes with `inject_in_context: true` appear in every prompt via the auto-generated notes index, ensuring critical operational knowledge is always available. Each note has an importance score (1-100) for sort order and a summary (max 250 chars) that powers the index.

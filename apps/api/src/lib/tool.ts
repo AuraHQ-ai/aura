@@ -1,0 +1,303 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { tool, type Tool } from "ai";
+import { eq } from "drizzle-orm";
+import type { ZodType } from "zod";
+import { db } from "../db/client.js";
+import { actionLog } from "@aura/db/schema";
+import { logger } from "./logger.js";
+
+// ── Execution Context (AsyncLocalStorage) ────────────────────────────────────
+
+export interface ExecutionContext {
+  triggeredBy: string;
+  triggerType: "user_message" | "scheduled_job" | "autonomous";
+  callingUserId?: string;
+  jobId?: string;
+  jobExecutionId?: string;
+  channelId?: string;
+  threadTs?: string;
+  workspaceId?: string;
+  /**
+   * When set (scoped job execution), sandbox env resolution is restricted to
+   * ONLY these credential env names plus core infra vars. Narrows the
+   * caller-scoped set — never widens it.
+   */
+  envAllowlist?: string[];
+  detachedCommandSuspended?: {
+    commandId: string;
+  };
+}
+
+export const executionContext = new AsyncLocalStorage<ExecutionContext>();
+
+export const TOOL_CALL_AFTER_DETACHED_SUSPEND_ERROR =
+  "tool_call_after_suspend: this turn already dispatched a detached command and is suspended; the conversation will resume when the webhook fires";
+
+export function markTurnSuspendedByDetachedCommand(commandId: string): void {
+  const ctx = executionContext.getStore();
+  if (!ctx) return;
+  ctx.detachedCommandSuspended = { commandId };
+}
+
+export function getDetachedCommandSuspendState(): { commandId: string } | undefined {
+  return executionContext.getStore()?.detachedCommandSuspended;
+}
+
+// ── Slack Card Metadata ──────────────────────────────────────────────────────
+// Co-located with tool definitions via defineTool() so that Slack card behavior
+// (spinner label, input summary, output summary, URL citations) stays in sync
+// with the tool itself instead of drifting in separate switch blocks.
+
+export interface SlackToolMetadata<TInput = any, TOutput = any> {
+  /** Spinner label shown while tool is running, e.g. "Searching the web..." */
+  status: string;
+  /** Extract a short detail from input args for the in-progress card */
+  detail?: (input: TInput) => string | undefined;
+  /** Extract a short summary from result for the completed card */
+  output?: (result: TOutput) => string | undefined;
+  /** Extract URL citations for web tool cards */
+  sources?: (
+    result: TOutput,
+  ) => Array<{ type: "url"; url: string; text: string }> | undefined;
+}
+
+/**
+ * Retrieve the Slack card metadata from a tool, if it was created with
+ * defineTool(). Returns undefined for tools created with the standard
+ * AI SDK tool() helper.
+ */
+export function getSlackMeta(t: unknown): SlackToolMetadata | undefined {
+  if (t && typeof t === "object" && "slack" in t) {
+    return (t as { slack: SlackToolMetadata }).slack;
+  }
+  return undefined;
+}
+
+/**
+ * Retrieve the requiredCredentials metadata from a tool, if it was created
+ * with defineTool(). Returns undefined for tools without this metadata.
+ */
+export function getRequiredCredentials(t: unknown): string[] | undefined {
+  if (t && typeof t === "object" && "__requiredCredentials" in t) {
+    return (t as { __requiredCredentials: string[] }).__requiredCredentials;
+  }
+  return undefined;
+}
+
+/**
+ * Filter a tools record to only include tools whose requiredCredentials
+ * are satisfied by the user's accessible credential set.
+ * Tools without requiredCredentials metadata are always included (fail open).
+ */
+export function filterToolsByCredentials<T extends Record<string, unknown>>(
+  tools: T,
+  userCredentials: Set<string>,
+): T {
+  const filtered: Record<string, unknown> = {};
+  for (const [name, t] of Object.entries(tools)) {
+    const required = getRequiredCredentials(t);
+    if (!required || required.length === 0) {
+      filtered[name] = t;
+      continue;
+    }
+    if (required.every((cred) => userCredentials.has(cred))) {
+      filtered[name] = t;
+    }
+  }
+  return filtered as T;
+}
+
+/**
+ * Mutable name ref stored in a closure so registerToolNames() can fill it
+ * in after the tools map is built.
+ */
+interface ToolNameRef {
+  name?: string;
+}
+
+/**
+ * Wrapper around AI SDK's tool() that co-locates Slack card metadata with the
+ * tool definition and adds audit logging. Every tool call is logged to action_log.
+ */
+export function defineTool<TInput, TOutput>(config: {
+  description: string;
+  inputSchema: ZodType<TInput, any, any>;
+  execute: (input: TInput) => PromiseLike<TOutput>;
+  slack?: SlackToolMetadata<TInput, TOutput>;
+  toModelOutput?: Tool<TInput, TOutput, any>["toModelOutput"];
+  requiredCredentials?: string[];
+  /**
+   * Provider-side strict schema validation for tool-call inputs (AI SDK
+   * BaseFunctionTool.strict). Defaults to true so malformed inputs are
+   * rejected at the tool-call layer instead of failing deep in execute().
+   * Set to false only for tools whose inputSchema can't be represented as
+   * strict JSON schema (e.g. z.record() with free-form values).
+   */
+  strict?: boolean;
+  /**
+   * Example inputs shown to the language model (AI SDK
+   * BaseFunctionTool.inputExamples) to ground tool-call generation on real
+   * call shapes. Passed through to tool() unchanged.
+   */
+  inputExamples?: Array<{ input: TInput }>;
+}) {
+  const { slack, requiredCredentials, strict, ...rest } = config;
+  const originalExecute = rest.execute;
+
+  const toolRef: ToolNameRef = {};
+
+  const auditedExecute = async (input: TInput): Promise<TOutput> => {
+    const toolName = toolRef.name || "unknown";
+    const ctx = executionContext.getStore() ?? {
+      triggeredBy: "unknown",
+      triggerType: "autonomous" as const,
+    };
+
+    let logId: string | undefined;
+
+    try {
+      if (ctx.detachedCommandSuspended) {
+        logger.warn("Tool call refused after detached command suspend point", {
+          toolName,
+          commandId: ctx.detachedCommandSuspended.commandId,
+          channelId: ctx.channelId,
+          threadTs: ctx.threadTs,
+        });
+        return {
+          ok: false,
+          error: TOOL_CALL_AFTER_DETACHED_SUSPEND_ERROR,
+        } as TOutput;
+      }
+
+      try {
+        const [logEntry] = await db
+          .insert(actionLog)
+          .values({
+            toolName,
+            params: input as any,
+            triggerType: ctx.triggerType,
+            triggeredBy: ctx.triggeredBy,
+            jobId: ctx.jobId ?? null,
+            credentialName: null,
+            status: "executed",
+          })
+          .returning({ id: actionLog.id });
+        logId = logEntry.id;
+      } catch (logErr) {
+        logger.warn("Audit: failed to write action_log entry", {
+          toolName,
+          error: logErr,
+        });
+      }
+
+      const result = await originalExecute(input);
+
+      if (logId) {
+        try {
+          await db
+            .update(actionLog)
+            .set({ result: result as any })
+            .where(eq(actionLog.id, logId));
+        } catch { /* non-critical */ }
+      }
+
+      return result;
+    } catch (error: any) {
+      if (logId) {
+        try {
+          await db
+            .update(actionLog)
+            .set({
+              status: "failed",
+              result: { error: error.message } as any,
+            })
+            .where(eq(actionLog.id, logId));
+        } catch { /* non-critical */ }
+      }
+      throw error;
+    }
+  };
+
+  const toolConfig = { ...rest, strict: strict ?? true, execute: auditedExecute };
+  const t = tool<TInput, TOutput, any>(
+    toolConfig as unknown as Tool<TInput, TOutput, any>,
+  );
+  if (slack) {
+    (t as any).slack = slack;
+  }
+  (t as any).__toolRef = toolRef;
+  if (requiredCredentials) {
+    (t as any).__requiredCredentials = requiredCredentials;
+  }
+
+  return t as Tool<TInput, TOutput, any> & {
+    slack?: SlackToolMetadata<TInput, TOutput>;
+  };
+}
+
+/**
+ * Stamp tool names from the map keys onto each tool's internal ref.
+ * Call this on the tools record after building it so the audit
+ * interceptor knows which tool is being invoked.
+ */
+export function registerToolNames<T extends Record<string, unknown>>(
+  tools: T,
+): T {
+  for (const [name, t] of Object.entries(tools)) {
+    if (t && typeof t === "object" && "__toolRef" in t) {
+      (t as any).__toolRef.name = name;
+    }
+  }
+  return tools;
+}
+
+/**
+ * Build a toModelOutput result for tools that return binary content (images, PDFs, etc).
+ * Converts base64 strings into native AI SDK content parts so the LLM can see the file.
+ */
+export function binaryToModelOutput(opts: {
+  base64: string;
+  mimeType: string;
+  filename?: string;
+  meta?: Record<string, unknown>;
+}): {
+  type: "content";
+  value: Array<
+    | { type: "text"; text: string }
+    | { type: "image-data"; data: string; mediaType: string }
+    | { type: "file-data"; data: string; mediaType: string; filename?: string }
+  >;
+} {
+  const parts: Array<
+    | { type: "text"; text: string }
+    | { type: "image-data"; data: string; mediaType: string }
+    | { type: "file-data"; data: string; mediaType: string; filename?: string }
+  > = [];
+
+  if (opts.meta && Object.keys(opts.meta).length > 0) {
+    parts.push({
+      type: "text",
+      text: JSON.stringify({
+        ...opts.meta,
+        note: "Binary content attached as native file below",
+      }),
+    });
+  }
+
+  if (opts.mimeType?.startsWith("image/")) {
+    parts.push({
+      type: "image-data",
+      data: opts.base64,
+      mediaType: opts.mimeType,
+    });
+  } else {
+    parts.push({
+      type: "file-data",
+      data: opts.base64,
+      mediaType: opts.mimeType || "application/octet-stream",
+      filename: opts.filename,
+    });
+  }
+
+  return { type: "content", value: parts };
+}

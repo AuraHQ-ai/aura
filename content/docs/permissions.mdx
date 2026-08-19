@@ -1,0 +1,109 @@
+---
+title: "Permissions"
+description: "Role-based access control: user roles, credential-based tool gating, note scoping, and job limits."
+---
+
+# Permissions
+
+Aura uses a three-tier role system to control access to tools, notes, and resources. Roles are stored in the database (`users.role`) with `AURA_ADMIN_USER_IDS` as a hard override (checked first, before the DB).
+
+## Roles
+
+| Role | Level | Description |
+|------|-------|-------------|
+| `member` | 0 | Default role. Can chat with Aura, use tools whose credentials are member-scoped, see shared notes. |
+| `power_user` | 1 | Dashboard access plus any credential scoped to `power_user`. |
+| `admin` | 2 | Full access: cross-user email, system note editing, job limit bypass, user/credential management. Maximum role. |
+
+Roles are hierarchical — a user with `admin` automatically has all `power_user` and `member` permissions.
+
+<Note>
+The `owner` role was removed in the RBAC simplification (migration 0048). Existing `owner` users were migrated to `admin`. The word "owner" now only refers to credential ownership — see [Credentials](/tools/credentials).
+</Note>
+
+## How Roles Are Checked
+
+The `hasRole(userId, minimumRole)` function in `apps/api/src/lib/permissions.ts` is the single source of truth:
+
+1. The system user `aura` always resolves to `admin` and passes all role checks
+2. Check `AURA_ADMIN_USER_IDS` env var first -- users listed there get `admin`-level access as a hard override
+3. If not in the env var, look up `users.role` in the database and compare against the minimum required role
+4. If no DB profile exists (or query fails), default to `member`
+
+The user ID is resolved via the execution context (AsyncLocalStorage) set at the Slack event or job entry point, so permission checks always use the human caller's ID -- never the bot's.
+
+<Warning>
+The env var is checked **before** the database. A user listed in `AURA_ADMIN_USER_IDS` gets `admin` regardless of their DB role. This is intentional -- the env var acts as a hard override to prevent lockouts when DB roles are misconfigured (e.g. after a migration that resets all roles to `member`).
+</Warning>
+
+## How Tools Are Gated
+
+There is no per-tool role table. Tool access is governed by **credential availability**:
+
+1. Each tool can declare `requiredCredentials` (e.g. Cursor agent tools require `cursor_api_key`, voice tools require `elevenlabs_api_key`).
+2. At request time, `resolveUserCredentials()` computes the set of credential names the calling user can access, based on credential **scope** (`member` / `power_user` / `admin` / `owner` / `per_user`) and explicit grants -- see [Credentials](/tools/credentials).
+3. `filterToolsByCredentials()` removes any tool whose required credentials the user cannot access. Tools with no required credentials are available to everyone.
+
+So whether a user can dispatch a Cursor agent or send a voice note depends on how the underlying credential is scoped in that deployment, not on a hardcoded role-to-tool mapping. Sandbox environment variables are injected with the same scope logic.
+
+A few actions are role-gated directly in code with `hasRole(..., "admin")`:
+
+| Action | Minimum Role |
+|--------|-------------|
+| Cross-user email access (reading/sending as another user) | `admin` |
+| Creating or editing system notes and skill notes | `admin` |
+| Bypassing the active-job limit | `admin` |
+| Dashboard user/role management, credential submission, model config | `admin` |
+
+## Dashboard Access
+
+Logging into the dashboard (Slack OAuth) requires role `power_user` or `admin` (`ALLOWED_ROLES` in `apps/api/src/routes/dashboard/auth.ts`). Members and users without a profile are rejected with `insufficient_role` / `no_profile`.
+
+## Note Scoping
+
+Notes have `owner_id` and `visibility` fields:
+
+- **`shared`** — Visible to all users (default for user-created notes)
+- **`system`** — Protected notes like `self-directive`, `business-map`, `gaps-log`, and all skill notes. Only admins can create, edit, or delete these.
+- **Private notes** — Scoped by `owner_id`. Users see shared notes, system notes, and their own private notes.
+
+System topics (`self-directive`, `business-map`, `gaps-log`) are always protected regardless of their visibility column value.
+
+## Job Limits
+
+Non-admin users can have at most **5 active (pending, enabled) jobs** at a time, enforced in `create_job` (`MAX_JOBS_PER_USER` in `apps/api/src/tools/jobs.ts`). Admins and the `aura` system identity are exempt.
+
+<Note>
+Earlier versions had a workspace-scoped `rate_limits` table with per-role quotas (jobs, notes, sandbox calls per day). It was removed in migration 0049 along with the `tool_definitions` and `tool_credential_slots` governance tables. The job cap above is the only resource limit currently enforced.
+</Note>
+
+## Managing Roles
+
+Roles can be set in two ways:
+
+1. **Dashboard** — Navigate to Users → select a user → Profile tab → Role dropdown. Valid options enforced by the API: `admin`, `power_user`, `member`. Requires admin access.
+
+<Warning>
+The dashboard role dropdown still lists a stale `owner` option (left over from the pre-0048 role system). The API (`VALID_ROLES` in `apps/api/src/routes/dashboard/users.ts`) rejects it with `400 Invalid role`, so selecting `owner` silently fails. This is a dashboard UI bug, not a valid role.
+</Warning>
+2. **Database** — Update `users.role` directly.
+
+## User Bootstrapping
+
+- **First user** to log into the dashboard is automatically assigned the `admin` role, but only if no admin exists yet (guarded by a transaction with an advisory lock, so concurrent first logins can't both bootstrap).
+- **Subsequent users** get the `member` role by default (`users.role` defaults to `'member'`) -- which also means they cannot log into the dashboard until an admin promotes them.
+
+Users who interact with Aura in Slack but never log into the dashboard get a `users` row created lazily by the message pipeline (`getOrCreateProfile`), with the default `member` role.
+
+## Migration from `AURA_ADMIN_USER_IDS`
+
+The env var is checked before the DB and acts as a hard override. For new deployments, set roles via the dashboard instead. The env var will be deprecated in a future release once all deployments have properly backfilled DB roles.
+
+## Database Schema
+
+The permission system uses these tables:
+
+- **`users.role`** — `text NOT NULL DEFAULT 'member'` on the users table
+- **`credentials.scope`** — Role-hierarchy-based credential access (`member` / `power_user` / `admin` / `owner` / `per_user`)
+- **`credential_grants`** — Explicit per-user credential grants that override scope
+- **`notes.owner_id`** / **`notes.visibility`** — User scoping for notes

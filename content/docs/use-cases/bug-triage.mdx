@@ -1,0 +1,55 @@
+---
+title: "Bug Triage"
+description: "Automated bug classification, deduplication, and investigation context -- before an engineer looks at it."
+---
+
+# Bug Triage
+
+## The Problem
+
+Bug reports come in through Slack, email, customer calls, and internal testing. They land in different formats, with different levels of detail, often duplicating each other. Engineers spend time:
+
+- Reading reports that are missing reproduction steps
+- Investigating bugs that are duplicates of known issues
+- Prioritizing without context on business impact
+- Switching between Slack, the bug tracker, and the codebase
+
+## How Aura Solves It
+
+Aura monitors your bug tracking channel (Slack Lists, threads, or any structured input) and adds investigation context automatically.
+
+**What happens:**
+- New bug reports are checked against existing known issues for duplicates
+- Missing information is flagged (no client name, no reproduction steps, no environment)
+- Severity is classified based on scope, user impact, and business context
+- Related code, recent PRs, and error logs are cross-referenced
+- A comment is posted on the bug thread with findings
+
+**The trust ladder:**
+1. **Gatekeeper** -- enforces report quality standards, flags incomplete reports
+2. **Investigator** -- adds context from error logs, codebase, and past incidents
+3. **Fixer** -- proposes or ships fixes for straightforward bugs
+4. **Frontline** -- handles the full cycle from report to resolution
+
+## Real Example
+
+A CSM reports: "Client X can't see their reviews"
+
+Aura's triage comment:
+> - Client: Acme Realty (CH, Premium tier, €2.4K MRR)
+> - Likely cause: cache invalidation issue on storefront (seen 3x this month)
+> - Related: Bug #142 (same symptom, different client, resolved via revalidation endpoint)
+> - Suggested fix: trigger cache revalidation for client ID 12345
+> - Business impact: Premium client, review visibility is a core feature
+
+The engineer gets context, not just a complaint.
+
+## Setup
+
+1. Point Aura at your bug tracking Slack List or channel
+2. Define quality standards (required fields, naming conventions)
+3. Aura starts monitoring and commenting automatically via a recurring job
+
+<Info>
+Aura's bug triage follows a trust ladder -- she starts as a gatekeeper and earns more autonomy as her classifications prove accurate. You control the escalation.
+</Info>

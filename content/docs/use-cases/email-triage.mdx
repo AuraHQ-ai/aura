@@ -1,0 +1,56 @@
+---
+title: "Email Triage"
+description: "Turn a chaotic inbox into a prioritized action list -- automatically, every day."
+---
+
+# Email Triage
+
+## The Problem
+
+Executives and managers get 50-150 emails a day. Most are noise. The ones that matter -- a failed payment, an expiring contract, a candidate waiting for a response -- get buried under newsletters, receipts, and CC threads.
+
+Manual triage takes 30-60 minutes daily. Miss one deadline and it costs real money.
+
+## How Aura Solves It
+
+Aura syncs your Gmail inbox, classifies every thread, and delivers a daily digest ranked by urgency.
+
+**What happens automatically:**
+- Inbox synced every few hours via Gmail API
+- Each thread classified: `awaiting_your_reply`, `awaiting_their_reply`, `fyi`, `junk`, `resolved`
+- Daily digest posted to your DM with:
+  - New threads since last digest
+  - Approaching deadlines
+  - Persistent urgents (threads aging without response)
+  - Auto-resolved items (superseded invoices, completed threads)
+  - Trend analysis (is your backlog growing or shrinking?)
+
+**What you can do:**
+- Ask Aura to search your email by keyword or meaning ("find that thread about the Bulgarian domain")
+- Bulk-update thread states ("mark all Sentry alerts as junk")
+- Get a digest on demand ("what's my inbox look like?")
+
+## Real Example
+
+From a production deployment with 100+ active threads:
+
+> *Email Digest — Saturday March 14*
+>
+> Awaiting your reply: **32** (steady)
+> Deadlines: Claap invoice due in 2 days, domain expires Apr 5
+> Persistent urgents: €50K failed payment (23 days), 3 hiring threads (5-13 days)
+> Auto-resolved: Old invoice superseded by new reminder
+>
+> Trend: Inbox holding steady. No net growth this cycle.
+
+The digest doesn't just list emails -- it tracks patterns over time. A thread that's been "awaiting your reply" for 23 days gets escalated. A resolved invoice gets cleaned up automatically.
+
+## Setup
+
+1. Connect Gmail via OAuth in Aura's App Home
+2. Aura creates a recurring sync + digest job
+3. Customize: digest frequency, classification rules, which addresses to prioritize
+
+<Info>
+Aura never sends emails without explicit instruction. The sync is read-only by default.
+</Info>

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+.env.*
 .env.local
 .vercel/
 *.tsbuildinfo
@@ -8,10 +9,21 @@ dist/
 .vercel
 .env*.local
 
+# Memory bench corpus cache — fetched on demand, never committed.
+apps/api/bench/corpus/cache/
+# Memory bench run artifacts (logs, cases.jsonl, manifest, scores) — local only.
+apps/api/bench/runs/
+
 # Landing page
-apps/web/node_modules/
 apps/web/.next/
 apps/web/next-env.d.ts
+
+# Dashboard
+apps/dashboard/.next/
+apps/dashboard/next-env.d.ts
+
+# API
+apps/api/dist/
 
 # Additional env files (prevent accidental secret commits)
 .env.prod

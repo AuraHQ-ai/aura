@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "description": "Manifest for the memory bench corpus. The toy fixture is always vendored; LongMemEval + LoCoMo are fetched into the gitignored 'cache/' directory by 'pnpm --filter aura-api bench:fetch-corpus' before the first run.",
+  "datasets": {
+    "toy": {
+      "file": "toy.json",
+      "vendored": true,
+      "source": "internal",
+      "questions": 3,
+      "notes": "Hand-written smoke-test fixture. Always vendored — safe to run anywhere, no network calls."
+    },
+    "longmemeval": {
+      "file": "cache/longmemeval_oracle.json",
+      "vendored": false,
+      "source": "https://github.com/xiaowu0162/longmemeval",
+      "fetchUrl": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json",
+      "questions": 500,
+      "notes": "Oracle variant (evidence sessions only, cheapest to replay). Cleaned release. Fetched on demand into cache/."
+    },
+    "locomo": {
+      "file": "cache/locomo10.json",
+      "vendored": false,
+      "source": "https://github.com/snap-research/locomo",
+      "fetchUrl": "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json",
+      "questions": 1540,
+      "notes": "10 conversations × ~300 turns × up to 35 sessions. Fetched on demand into cache/."
+    }
+  }
+}

@@ -318,3 +318,31 @@ pre code {
     padding: 0 20px;
   }
 }
+
+/* SlackConversation: flush on mobile -- no border, no radius, bleeds edge to edge */
+@media (max-width: 768px) {
+  .slack-conversation-flush {
+    border: none !important;
+    border-radius: 0 !important;
+    margin-left: -24px !important;
+    margin-right: -24px !important;
+  }
+
+  /* Demo conversation list: tighter gap, title acts as separator */
+  .demo-conversation-list {
+    gap: 0 !important;
+  }
+
+  /* Each conversation item: top border as separator, padding above title */
+  .demo-conversation-list > div {
+    border-top: 1px solid var(--col-border);
+    padding-top: 32px;
+    padding-bottom: 32px;
+  }
+
+  /* First item: no top border (no separator needed at the very top) */
+  .demo-conversation-list > div:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+}

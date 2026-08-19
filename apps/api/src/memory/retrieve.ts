@@ -1,0 +1,1015 @@
+import { sql } from "drizzle-orm";
+import { generateText, Output, rerank } from "ai";
+import { z } from "zod";
+import { db } from "../db/client.js";
+import { memories, messages, type Memory } from "@aura/db/schema";
+import type { EntityType } from "@aura/db/schema";
+import { embedText } from "../lib/embeddings.js";
+import { getFastModel, getRerankingModel } from "../lib/ai.js";
+import { resolveEntityReadOnly } from "./entity-resolution.js";
+import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
+
+interface RetrievalOptions {
+  /** The user's current message text */
+  query: string;
+  /** Pre-computed query embedding (avoids double-embedding when called alongside retrieveConversations) */
+  queryEmbedding?: number[];
+  /** The Slack user ID of the person asking */
+  currentUserId: string;
+  /** Maximum number of memories to return */
+  limit?: number;
+  /** Minimum relevance score threshold */
+  minRelevanceScore?: number;
+  /** Skip privacy filter (for admin dashboard) */
+  adminMode?: boolean;
+  /** Workspace ID for tenant isolation in entity queries */
+  workspaceId?: string;
+  /**
+   * Bi-temporal "as-of" instant. When set, retrieval returns the memories that
+   * were valid at this point in time — `valid_from <= asOf AND (valid_until IS
+   * NULL OR valid_until > asOf)` — instead of the live `status IN
+   * ('current','disputed') AND not expired` pool. A memory superseded/archived
+   * AFTER `asOf` is still included (it was current then); one closed out at or
+   * before `asOf` is excluded. Useful for replaying historical timelines
+   * without exposing future facts.
+   */
+  asOf?: Date;
+  /**
+   * Optional cost hook. When set, the query-entity-extraction LLM call reports
+   * its model id + token usage so callers can price retrieval. Production
+   * passes nothing — no behaviour change.
+   */
+  onUsage?: (
+    modelId: string,
+    usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    },
+  ) => void;
+  /**
+  * Return no memories when the candidate pool has no raw retrieval evidence:
+   * no resolved entity, no lexical hit, and no cosine match above the floor.
+   */
+  abstain?: boolean;
+  /**
+   * Run a fast-model query rewrite + multi-hop decomposition pass before
+   * retrieval. When decomposition yields sub-queries, each is retrieved
+   * independently and merged round-robin for coverage.
+   */
+  rewrite?: boolean;
+}
+
+const MAX_FULLTEXT_LEXEMES = 8;
+const PER_TERM_FULLTEXT_LIMIT = 25;
+
+async function extractLexemes(
+  query: string,
+  maxLexemes = MAX_FULLTEXT_LEXEMES,
+): Promise<string[]> {
+  if (!query.trim()) return [];
+
+  try {
+    const result = await db.execute(sql`
+      SELECT lexeme AS term
+      FROM unnest(to_tsvector('english', ${query})) AS token(lexeme, positions, weights)
+      ORDER BY positions[1] ASC NULLS LAST, lexeme ASC
+      LIMIT ${maxLexemes}
+    `);
+
+    const rows = ((result as any).rows ?? result) as Array<{ term?: string | null }>;
+    const SAFE_LEXEME = /^[a-z0-9]+$/;
+    return rows
+      .map((row) => row.term?.trim() ?? "")
+      .filter((term): term is string => term.length > 0 && SAFE_LEXEME.test(term));
+  } catch (error) {
+    logger.warn("Failed to extract positional lexemes; falling back to vector-only ranking", {
+      error: String(error),
+      query: query.substring(0, 100),
+    });
+    return [];
+  }
+}
+
+// ── LLM-based entity extraction ─────────────────────────────────────────────
+
+const queryEntitySchema = z.object({
+  entities: z.array(z.object({
+    name: z.string().describe("The entity name as mentioned or implied"),
+    type: z.enum(["person", "company", "project", "product", "channel", "technology", "concept", "location"]),
+  })),
+});
+
+async function extractQueryEntities(
+  query: string,
+  onUsage?: RetrievalOptions["onUsage"],
+): Promise<Array<{ name: string; type: EntityType }>> {
+  try {
+    const model = await getFastModel();
+    const { output: object, usage } = await generateText({
+      model,
+      output: Output.object({ schema: queryEntitySchema }),
+      prompt: `Extract entity mentions from this message. Include explicitly named entities and strongly implied ones. Be conservative — only extract entities you're confident about.
+
+Entity types: person, company, project, product, channel, technology, concept, location
+
+Message: "${query}"`,
+      temperature: 0,
+      telemetry: aiTelemetry("memory-query-entities"),
+    });
+    onUsage?.((model as any)?.modelId ?? "retrieve", usage);
+    return object.entities;
+  } catch (error) {
+    logger.warn("Query entity extraction failed, falling back to heuristic", {
+      error: String(error),
+      query: query.substring(0, 100),
+    });
+    return [];
+  }
+}
+
+const queryPlanSchema = z.object({
+  /** A standalone, search-optimized rewrite of the query. */
+  rewritten: z.string(),
+  /** Atomic sub-queries for multi-hop questions; empty for single-fact queries. */
+  subQueries: z.array(z.string()).max(4),
+});
+
+export interface QueryPlan {
+  rewritten: string;
+  subQueries: string[];
+}
+
+export function looksMultiHop(query: string): boolean {
+  const q = query.toLowerCase();
+  if ((query.match(/\?/g)?.length ?? 0) >= 2) return true;
+  return /\b(and|or|both|compare|versus|vs\.?|difference between|as well as|along with|each of|all of)\b/.test(
+    q,
+  );
+}
+
+async function planQuery(
+  query: string,
+  onUsage?: RetrievalOptions["onUsage"],
+): Promise<QueryPlan> {
+  const fallback: QueryPlan = { rewritten: query, subQueries: [] };
+  try {
+    const model = await getFastModel();
+    const { output: object, usage } = await generateText({
+      model,
+      output: Output.object({ schema: queryPlanSchema }),
+      prompt: `Rewrite this message into a concise, standalone search query for a memory database: resolve pronouns, drop greetings/filler, keep the salient entities and intent.
+
+If, and only if, answering requires multiple independent facts, also return 2-4 atomic sub-queries, each retrievable on its own. For a single-fact question, return an empty subQueries array.
+
+Message: "${query}"`,
+      temperature: 0,
+      telemetry: aiTelemetry("memory-plan-query"),
+    });
+    onUsage?.((model as any)?.modelId ?? "retrieve", usage);
+    const rewritten = object.rewritten?.trim() || query;
+    const subQueries = (object.subQueries ?? [])
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return { rewritten, subQueries };
+  } catch (error) {
+    logger.warn("Query planning failed, using original query", {
+      error: String(error).slice(0, 200),
+      query: query.substring(0, 100),
+    });
+    return fallback;
+  }
+}
+
+// ── Heuristic proper noun extraction (fallback) ─────────────────────────────
+
+function extractEntitiesHeuristic(query: string): string[] {
+  const words = query.split(/[\s,;]+/).map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "")).filter((w) => w.length > 1);
+  if (words.length === 0) return [];
+
+  const STOP_WORDS = new Set([
+    "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
+    "tell", "show", "find", "get", "give", "let", "make", "can", "could",
+    "would", "should", "will", "does", "did", "has", "have", "had", "are",
+    "is", "was", "were", "been", "being", "the", "this", "that", "these",
+    "those", "there", "here", "not", "but", "and", "for", "with", "about",
+    "from", "into", "any", "all", "also", "just", "than", "then", "now",
+    "very", "its", "his", "her", "our", "your", "their", "some", "each",
+    "every", "both", "few", "more", "most", "other", "many", "much", "own",
+    "same", "such", "only", "new", "old", "well", "also", "back", "even",
+    "still", "after", "before", "between", "under", "over", "again",
+    "further", "once", "during", "while", "please", "thanks", "thank",
+    "know", "think", "want", "need", "like", "look", "use", "say", "said",
+  ]);
+  const isProperNoun = (w: string, idx: number) =>
+    /^[A-Z]/.test(w) && !STOP_WORDS.has(w.toLowerCase()) && (idx > 0 || /^[A-Z]{2,}/.test(w) || words.length === 1);
+
+  const candidates: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    if (words[i].length >= 3 && isProperNoun(words[i], i)) candidates.push(words[i]);
+  }
+  for (let i = 0; i < words.length - 1; i++) {
+    if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1)) {
+      candidates.push(`${words[i]} ${words[i + 1]}`);
+    }
+  }
+  for (let i = 0; i < words.length - 2; i++) {
+    if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1) && isProperNoun(words[i + 2], i + 2)) {
+      candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+    }
+  }
+
+  return [...new Set(candidates.slice(0, 10))];
+}
+
+// ── Entity-first memory retrieval result with per-entity tracking ───────────
+
+interface EntityMemoryResult {
+  memories: Memory[];
+  /** Maps memory ID → set of resolved entity IDs it was found through */
+  memoryEntityMap: Map<string, Set<string>>;
+  /** Total number of distinct entities resolved */
+  resolvedEntityCount: number;
+}
+
+/**
+ * Entity-first retrieval: extract entity names from query via LLM (with heuristic fallback),
+ * resolve to entity IDs, then fetch their linked memories.
+ */
+async function fetchEntityMatchedMemories(
+  query: string,
+  minRelevanceScore: number,
+  currentUserId?: string,
+  workspaceId?: string,
+  onUsage?: RetrievalOptions["onUsage"],
+  asOf?: Date,
+): Promise<EntityMemoryResult> {
+  const emptyResult: EntityMemoryResult = { memories: [], memoryEntityMap: new Map(), resolvedEntityCount: 0 };
+
+  try {
+    // Step 1: Extract entities via LLM
+    let extractedEntities = await extractQueryEntities(query, onUsage);
+
+    // Step 2: Fall back to heuristic if LLM returns empty
+    let usedHeuristic = false;
+    if (extractedEntities.length === 0) {
+      const heuristicNames = extractEntitiesHeuristic(query);
+      if (heuristicNames.length === 0) return emptyResult;
+      extractedEntities = heuristicNames.map((name) => ({ name, type: "company" as EntityType }));
+      usedHeuristic = true;
+    }
+
+    if (!workspaceId) return emptyResult;
+
+    // Step 3: Resolve each extracted entity to an entity ID (read-only, no creation)
+    const resolutions = await Promise.all(
+      extractedEntities.map(async (entity) => {
+        const resolved = await resolveEntityReadOnly(entity.name, entity.type, workspaceId);
+        return resolved ? { entityId: resolved.entityId, name: entity.name } : null;
+      }),
+    );
+    const resolvedByEntity = resolutions.filter((r): r is NonNullable<typeof r> => r !== null);
+
+    // If LLM entities resolved nothing, try heuristic as a second chance
+    if (resolvedByEntity.length === 0 && !usedHeuristic) {
+      const heuristicNames = extractEntitiesHeuristic(query);
+      const heuristicResolutions = await Promise.all(
+        heuristicNames.map(async (name) => {
+          const resolved = await resolveEntityReadOnly(name, "company" as EntityType, workspaceId);
+          return resolved ? { entityId: resolved.entityId, name } : null;
+        }),
+      );
+      resolvedByEntity.push(...heuristicResolutions.filter((r): r is NonNullable<typeof r> => r !== null));
+    }
+
+    if (resolvedByEntity.length === 0) return emptyResult;
+
+    const entityIds = [...new Set(resolvedByEntity.map((r) => r.entityId))];
+
+    logger.debug("Entity resolution for retrieval", {
+      extracted: extractedEntities.length,
+      resolved: entityIds.length,
+      usedHeuristic,
+      query: query.substring(0, 100),
+    });
+
+    // Step 4: Fetch memories linked to resolved entities, tracking which entity each memory came from
+    const privacyFilter = currentUserId
+      ? sql`AND (
+          m.source_channel_type NOT IN ('dm', 'mpim')
+          OR m.shareable = 1
+          OR m.related_user_ids @> ARRAY[${currentUserId}]::text[]
+        )`
+      : sql``;
+
+    const workspaceMemoryFilter = sql`AND m.workspace_id = ${workspaceId}`;
+
+    // Historical as-of retrieval: temporal validity replaces the live status
+    // filter so callers can replay the memory state at a prior instant. Live
+    // retrieval keeps current/disputed rows but excludes valid_until-expired memories.
+    const lifecycleFilter = asOf
+      ? sql`AND m.valid_from <= ${asOf} AND (m.valid_until IS NULL OR m.valid_until > ${asOf})`
+      : sql`AND m.status IN ('current', 'disputed') AND (m.valid_until IS NULL OR m.valid_until > NOW())`;
+
+    const entityIdList = sql.join(entityIds.map(id => sql`${id}`), sql`, `);
+
+    const memoryResult = await db.execute(sql`
+      SELECT DISTINCT m.*
+      FROM memories m
+      JOIN memory_entities me ON m.id = me.memory_id
+      WHERE me.entity_id IN (${entityIdList})
+        AND m.relevance_score >= ${minRelevanceScore}
+        ${lifecycleFilter}
+        ${privacyFilter}
+        ${workspaceMemoryFilter}
+      ORDER BY m.relevance_score DESC, m.created_at DESC
+      LIMIT 50
+    `);
+
+    const rows = ((memoryResult as any).rows ?? memoryResult) as Array<Record<string, any>>;
+    const memoryIds = rows.map((r) => r.id as string);
+
+    // Restrict entity map to only the candidate memory IDs to avoid unbounded result sets
+    const memoryIdList = sql.join(memoryIds.map(id => sql`${id}`), sql`, `);
+    const entityMapResult = memoryIds.length > 0
+      ? await db.execute(sql`
+          SELECT me.memory_id, me.entity_id
+          FROM memory_entities me
+          WHERE me.entity_id IN (${entityIdList})
+            AND me.memory_id IN (${memoryIdList})
+        `)
+      : [];
+    const entityMapRows = ((entityMapResult as any).rows ?? entityMapResult) as Array<Record<string, any>>;
+
+    const memoryEntityMap = new Map<string, Set<string>>();
+    for (const row of entityMapRows) {
+      const memoryId = row.memory_id as string;
+      const entityId = row.entity_id as string;
+      if (!memoryEntityMap.has(memoryId)) {
+        memoryEntityMap.set(memoryId, new Set());
+      }
+      memoryEntityMap.get(memoryId)!.add(entityId);
+    }
+
+    const memoriesList: Memory[] = rows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      content: row.content,
+      type: row.type,
+      sourceMessageId: row.source_message_id ?? null,
+      sourceChannelType: row.source_channel_type,
+      sourceThreadTs: row.source_thread_ts ?? null,
+      sourceChannelId: row.source_channel_id ?? null,
+      relatedUserIds: row.related_user_ids ?? [],
+      embedding: row.embedding,
+      relevanceScore: row.relevance_score ?? 1,
+      shareable: row.shareable ?? 0,
+      searchVector: row.search_vector ?? null,
+      status: row.status ?? "current",
+      confidence: row.confidence ?? 0.8,
+      validFrom: row.valid_from ?? null,
+      validUntil: row.valid_until ?? null,
+      supersedesMemoryId: row.supersedes_memory_id ?? null,
+      supersededAt: row.superseded_at ?? null,
+      supersededByMemoryId: row.superseded_by_memory_id ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    } as Memory));
+
+    return {
+      memories: memoriesList,
+      memoryEntityMap,
+      resolvedEntityCount: entityIds.length,
+    };
+  } catch (error) {
+    logger.warn("Entity-first retrieval failed, falling back to hybrid search only", {
+      error: String(error),
+      query: query.substring(0, 100),
+    });
+    return emptyResult;
+  }
+}
+
+const ABSTAIN_SIM_FLOOR = 0.3;
+const ABSTAIN_BM25_FLOOR = 0;
+
+/**
+ * True when the merged candidate pool carries at least one real retrieval
+ * signal. Pure + exported for the atomic abstention tests.
+ */
+export function hasRetrievalEvidence(
+  candidates: Array<{ similarity: number; bm25: number }>,
+  resolvedEntityCount: number,
+): boolean {
+  if (resolvedEntityCount > 0) return true;
+  let maxSim = 0;
+  let maxBm25 = 0;
+  for (const c of candidates) {
+    if (c.similarity > maxSim) maxSim = c.similarity;
+    if (c.bm25 > maxBm25) maxBm25 = c.bm25;
+  }
+  return maxSim >= ABSTAIN_SIM_FLOOR || maxBm25 > ABSTAIN_BM25_FLOOR;
+}
+
+export function mergeRoundRobin(lists: Memory[][], limit: number): Memory[] {
+  const seen = new Set<string>();
+  const merged: Memory[] = [];
+  const maxLen = Math.max(0, ...lists.map((l) => l.length));
+  for (let i = 0; i < maxLen && merged.length < limit; i++) {
+    for (const list of lists) {
+      if (merged.length >= limit) break;
+      const memory = list[i];
+      if (memory && !seen.has(memory.id)) {
+        seen.add(memory.id);
+        merged.push(memory);
+      }
+    }
+  }
+  return merged;
+}
+
+function isTemporallyLive(memory: Memory, now: Date): boolean {
+  if (!memory.validUntil) return true;
+  return new Date(memory.validUntil).getTime() > now.getTime();
+}
+
+export function isMemoryVisibleToParticipant(params: {
+  sourceChannelType: string | null | undefined;
+  shareable: number | boolean | null | undefined;
+  relatedUserIds: string[] | null | undefined;
+  currentUserId: string;
+}): boolean {
+  const { sourceChannelType, shareable, relatedUserIds, currentUserId } = params;
+  const isParticipantScoped =
+    sourceChannelType === "dm" || sourceChannelType === "mpim";
+  return (
+    !isParticipantScoped ||
+    shareable === 1 ||
+    shareable === true ||
+    (relatedUserIds ?? []).includes(currentUserId)
+  );
+}
+
+/**
+ * Retrieve relevant memories using hybrid search (vector + full-text) with RRF fusion.
+ *
+ * Flow:
+ * 0. Entity-first retrieval: resolve entity names from the query via aliases, fetch linked memories
+ * 1. Embed the user's message
+ * 2. Extract up to 8 positional lexemes from Postgres full-text parsing
+ * 3. Run hybrid SQL: pgvector + per-term full-text lanes merged by best rank
+ * 4. Fuse results via Reciprocal Rank Fusion (RRF) with FULL OUTER JOIN
+ * 5. Merge entity-matched + hybrid results, apply entity boost
+ * 6. Rerank top candidates with Cohere (or fall back to legacy scoring)
+ * 7. Return top-K memories
+ */
+export async function retrieveMemories(
+  options: RetrievalOptions,
+): Promise<Memory[]> {
+  if (!options.rewrite) {
+    return retrieveSingleQuery(options);
+  }
+
+  const { query, limit = 20, onUsage } = options;
+  const plan = looksMultiHop(query)
+    ? await planQuery(query, onUsage)
+    : { rewritten: query, subQueries: [] as string[] };
+
+  if (plan.subQueries.length >= 2) {
+    const perQueryLimit = Math.max(5, Math.ceil(limit / plan.subQueries.length) + 2);
+    const lists = await Promise.all(
+      plan.subQueries.map((subQuery) =>
+        retrieveSingleQuery({
+          ...options,
+          query: subQuery,
+          queryEmbedding: undefined,
+          limit: perQueryLimit,
+          rewrite: false,
+        }),
+      ),
+    );
+    const merged = mergeRoundRobin(lists, limit);
+    logger.info(`Multi-hop retrieval: ${plan.subQueries.length} sub-queries -> ${merged.length} merged`, {
+      query: query.substring(0, 100),
+      subQueries: plan.subQueries,
+    });
+    if (merged.length > 0) return merged;
+  }
+
+  return retrieveSingleQuery({
+    ...options,
+    query: plan.rewritten,
+    queryEmbedding: plan.rewritten === query ? options.queryEmbedding : undefined,
+    rewrite: false,
+  });
+}
+
+async function retrieveSingleQuery(
+  options: RetrievalOptions,
+): Promise<Memory[]> {
+  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage, asOf, abstain = true } = options;
+  const start = Date.now();
+
+  try {
+    const [queryEmbedding, lexemes, entityResult] = await Promise.all([
+      precomputed ? Promise.resolve(precomputed) : embedText(query),
+      extractLexemes(query),
+      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId, onUsage, asOf),
+    ]);
+    const { memories: entityMemories, memoryEntityMap, resolvedEntityCount } = entityResult;
+
+    const CANDIDATE_POOL_SIZE = Math.max(25, limit);
+    // Embed vector as a raw SQL literal instead of a parameterized value.
+    // This avoids Drizzle/Neon driver issues with large string params that
+    // look like arrays. Safe because validateEmbedding() guarantees all
+    // values are finite numbers.
+    const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
+
+    const privacyFilter = adminMode
+      ? sql`TRUE`
+      : sql`(
+        ${memories.sourceChannelType} NOT IN ('dm', 'mpim')
+        OR ${memories.shareable} = 1
+        OR ${memories.relatedUserIds} @> ARRAY[${currentUserId}]::text[]
+      )`;
+
+    // Historical as-of retrieval: the hybrid lane keys on temporal validity
+    // instead of live status. Production (no asOf) keeps current/disputed rows
+    // while excluding valid_until-expired memories.
+    const statusFilter = asOf
+      ? sql`${memories.validFrom} <= ${asOf} AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > ${asOf})`
+      : sql`${memories.status} IN ('current', 'disputed') AND (${memories.validUntil} IS NULL OR ${memories.validUntil} > NOW())`;
+    // Multi-tenancy: scope the hybrid SQL lane to the workspace when one is
+    // supplied. Without this, the vector + full-text RRF query would see
+    // every workspace's memories. The entity-first lane already filters by
+    // workspace_id; this brings the hybrid lane in line.
+    const workspaceFilter = workspaceId
+      ? sql`${memories.workspaceId} = ${workspaceId}`
+      : sql`TRUE`;
+    const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter} AND ${workspaceFilter}`;
+    const combinedTsQuery = lexemes.join(" | ");
+    const bm25Sql = lexemes.length > 0
+      ? sql`COALESCE(ts_rank_cd(m.search_vector, to_tsquery('english', ${combinedTsQuery}), 4), 0.0)`
+      : sql`0.0`;
+
+    logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
+      lexemes,
+      query: query.substring(0, 100),
+    });
+
+    const fulltextSearchCte = lexemes.length === 0
+      ? sql`
+        fulltext_search AS (
+          SELECT NULL::uuid AS id, NULL::bigint AS rank
+          WHERE FALSE
+        )
+      `
+      : (() => {
+        const perTermCtes = lexemes.map((lexeme, index) => {
+          const cteName = sql.raw(`ft_${index}`);
+          return sql`
+            ${cteName} AS (
+              SELECT id, ROW_NUMBER() OVER (
+                ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+              ) AS rank
+              FROM memories
+              WHERE search_vector @@ to_tsquery('english', ${lexeme})
+                AND ${baseFilter}
+                AND ${privacyFilter}
+              ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
+              LIMIT ${PER_TERM_FULLTEXT_LIMIT}
+            )
+          `;
+        });
+
+        const unionParts = sql.join(
+          lexemes.map((_, index) => sql.raw(`SELECT * FROM ft_${index}`)),
+          sql` UNION ALL `,
+        );
+
+        return sql`
+          ${sql.join(perTermCtes, sql`, `)},
+          ft_dedup AS (
+            SELECT id, MIN(rank) AS rank
+            FROM (${unionParts}) all_terms
+            GROUP BY id
+          ),
+          fulltext_search AS (
+            SELECT id, rank
+            FROM ft_dedup
+          )
+        `;
+      })();
+
+    const hybridQuery = sql`
+      WITH vector_search AS (
+        SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> ${vectorSql}) AS rank
+        FROM memories
+        WHERE ${baseFilter} AND ${privacyFilter}
+        ORDER BY embedding <=> ${vectorSql}
+        LIMIT ${CANDIDATE_POOL_SIZE}
+      ),
+      ${fulltextSearchCte}
+      SELECT
+        m.*,
+        COALESCE(rrf_score(v.rank), 0.0) + COALESCE(rrf_score(f.rank), 0.0) AS rrf_score,
+        (1 - (m.embedding <=> ${vectorSql})) AS similarity,
+        ${bm25Sql} AS bm25
+      FROM (
+        SELECT COALESCE(v.id, f.id) AS id, v.rank AS vector_rank, f.rank AS fulltext_rank
+        FROM vector_search v
+        FULL OUTER JOIN fulltext_search f ON v.id = f.id
+      ) fused
+      JOIN memories m ON m.id = fused.id
+      LEFT JOIN vector_search v ON v.id = fused.id
+      LEFT JOIN fulltext_search f ON f.id = fused.id
+      ORDER BY rrf_score DESC
+    `;
+
+    const executeResult = await db.execute(hybridQuery);
+    const rawResults = ((executeResult as any).rows ?? executeResult) as Array<Record<string, any>>;
+
+    if (rawResults.length === 0 && entityMemories.length === 0) {
+      logger.info(`No memory candidates found in ${Date.now() - start}ms`);
+      return [];
+    }
+
+    // NOTE: manual mapping required because hybrid SQL CTEs bypass Drizzle's auto-mapping.
+    // If the memories schema changes, update this mapping to match.
+    const hybridResults = rawResults.map((row) => ({
+      memory: {
+        id: row.id,
+        workspaceId: row.workspace_id,
+        content: row.content,
+        type: row.type,
+        sourceMessageId: row.source_message_id ?? null,
+        sourceChannelType: row.source_channel_type,
+        sourceThreadTs: row.source_thread_ts ?? null,
+        sourceChannelId: row.source_channel_id ?? null,
+        relatedUserIds: row.related_user_ids ?? [],
+        embedding: row.embedding,
+        relevanceScore: row.relevance_score ?? 1,
+        shareable: row.shareable ?? 0,
+        searchVector: row.search_vector ?? null,
+        status: row.status ?? "current",
+        confidence: row.confidence ?? 0.8,
+        validFrom: row.valid_from ?? null,
+        validUntil: row.valid_until ?? null,
+        supersedesMemoryId: row.supersedes_memory_id ?? null,
+        supersededAt: row.superseded_at ?? null,
+        supersededByMemoryId: row.superseded_by_memory_id ?? null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      } as Memory,
+      similarity: Number(row.similarity ?? 0),
+      rrfScore: Number(row.rrf_score ?? 0),
+      bm25: Number(row.bm25 ?? 0),
+    }));
+
+    // Merge entity-matched memories; track entity boost as a separate signal
+    // so it isn't lost to RRF normalization clamping or ignored in the reranker path.
+    const ENTITY_RRF_BOOST = 0.05;
+    const hybridIds = new Set(hybridResults.map((r) => r.memory.id));
+
+    const entityBoostScore = (memoryId: string): number => {
+      const linkedEntities = memoryEntityMap.get(memoryId);
+      if (!linkedEntities) return 0;
+      if (resolvedEntityCount <= 1) return 1;
+      return Math.min(linkedEntities.size / resolvedEntityCount, 1);
+    };
+
+    const entityOnlyMemories = entityMemories
+      .filter((m) => !hybridIds.has(m.id))
+      .map((m) => ({
+        memory: m,
+        similarity: 0,
+        rrfScore: ENTITY_RRF_BOOST,
+        bm25: 0,
+        entityBoost: entityBoostScore(m.id),
+      }));
+
+    let results = hybridResults.map((r) => ({
+      ...r,
+      entityBoost: entityBoostScore(r.memory.id),
+    }));
+    results.push(...entityOnlyMemories);
+
+    if (!asOf) {
+      const liveNow = new Date();
+      results = results.filter((r) => isTemporallyLive(r.memory, liveNow));
+    }
+
+    if (entityMemories.length > 0) {
+      logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
+        resolvedEntities: resolvedEntityCount,
+        query: query.substring(0, 100),
+      });
+    }
+
+    if (abstain && !hasRetrievalEvidence(results, resolvedEntityCount)) {
+      logger.info(
+        `Abstaining: no candidate cleared evidence floors in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          resolvedEntityCount,
+        },
+      );
+      return [];
+    }
+
+    const rerankingModel = await getRerankingModel();
+    const now = Date.now();
+    let topMemories: Memory[];
+
+    if (rerankingModel && results.length > 0) {
+      const documents = results.map((r) => r.memory.content);
+
+      const { ranking } = await rerank({
+        model: rerankingModel,
+        query,
+        documents,
+        topN: results.length,
+      });
+
+      const ENTITY_WEIGHT = 0.1;
+      const scored = ranking.map((item) => {
+        const result = results[item.originalIndex];
+        const memory = result.memory;
+        const ageMs = now - new Date(memory.createdAt).getTime();
+        const ageDays = ageMs / (1000 * 60 * 60 * 24);
+        const recencyBoost = Math.max(0, 1 - ageDays / 365);
+
+        const baseScore = item.score * (0.8 - ENTITY_WEIGHT / 2) + recencyBoost * (0.2 - ENTITY_WEIGHT / 2) + result.entityBoost * ENTITY_WEIGHT;
+        // Confidence tiebreaker: gently down-weight lower-trust (assistant-
+        // inferred, confidence 0.6) memories so they don't crowd out a
+        // user/tool-sourced (0.8) memory of equal relevance. Deliberately mild
+        // (~2pp between 0.6 and 0.8) — a tiebreaker, not a dominant signal —
+        // so it never evicts a genuinely relevant memory from the top-k.
+        const confidence = (memory as any).confidence ?? 0.8;
+        const confidenceFactor = 0.9 + 0.1 * confidence;
+        const score = baseScore * confidenceFactor;
+        return { memory, score, originalIndex: item.originalIndex, cohereScore: item.score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      topMemories = scored.slice(0, limit).map((s) => s.memory);
+
+      logger.info(
+        `Reranked ${results.length} memories → top ${topMemories.length} in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          lexemeCount: lexemes.length,
+          method: "hybrid-rrf+cohere-rerank",
+        },
+      );
+      const reranking = scored.slice(0, limit).map((s, newRank) =>
+        `${s.originalIndex + 1} → ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`
+      ).join(", ");
+      logger.debug(`Reranking details: ${reranking}`);
+    } else {
+      const RRF_K = 60;
+      const maxRrfScore = 2 / (1 + RRF_K);
+
+      const scored = results.map(({ memory, similarity, rrfScore, entityBoost }) => {
+        const ageMs = now - new Date(memory.createdAt).getTime();
+        const ageDays = ageMs / (1000 * 60 * 60 * 24);
+        const recencyBoost = Math.max(0, 1 - ageDays / 365);
+
+        const normalizedRrf = maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
+        const score =
+          normalizedRrf * 0.4 +
+          similarity * 0.2 +
+          memory.relevanceScore * 0.1 +
+          recencyBoost * 0.1 +
+          entityBoost * 0.2;
+
+        return { memory, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      topMemories = scored.slice(0, limit).map((s) => s.memory);
+
+      logger.info(
+        `Retrieved ${topMemories.length} memories (hybrid+legacy scoring) in ${Date.now() - start}ms`,
+        {
+          query: query.substring(0, 100),
+          totalCandidates: results.length,
+          lexemeCount: lexemes.length,
+          method: "hybrid-rrf+legacy",
+        },
+      );
+    }
+
+    return topMemories;
+  } catch (error: any) {
+    logger.error("Memory retrieval failed", {
+      error: (error?.message ?? String(error)).slice(0, 200),
+      code: error?.code,
+      cause: error?.cause ? String(error.cause).slice(0, 200) : undefined,
+      query: query.substring(0, 100),
+    });
+    throw error;
+  }
+}
+
+// ── Conversation-level retrieval ─────────────────────────────────────────────
+
+export interface ConversationThread {
+  /** The thread identifier (slack_thread_ts of the root message) */
+  threadTs: string;
+  /** Channel where the conversation happened */
+  channelId: string;
+  /** Best similarity score among matched messages in this thread */
+  bestSimilarity: number;
+  /** ISO date (YYYY-MM-DD) of the thread */
+  date: string;
+  /** First user message text, truncated to ~100 chars */
+  summary: string;
+}
+
+interface ConversationRetrievalOptions {
+  /** The user's current message text */
+  query: string;
+  /** Pre-computed query embedding (avoids double-embedding when called alongside retrieveMemories) */
+  queryEmbedding?: number[];
+  /** Maximum number of individual message matches to search */
+  matchLimit?: number;
+  /** Maximum number of conversation threads to return */
+  threadLimit?: number;
+  /** Minimum cosine similarity threshold for message matches */
+  minSimilarity?: number;
+  /** Thread ts to exclude from results (e.g. the current thread, which is already in context) */
+  excludeThreadTs?: string;
+  /** Workspace ID for tenant isolation. When provided, only messages in this workspace are searched. */
+  workspaceId?: string;
+  /**
+   * Bi-temporal upper bound: only messages with `created_at <= asOf` are
+   * searched. Production leaves this undefined (wall-clock now); the memory
+   * bench passes the question's instant so retrieval can't leak the future.
+   * No effect on the prompt — purely a retrieval filter.
+   */
+  asOf?: Date;
+}
+
+/**
+ * Retrieve compact conversation thread pointers via semantic search on message embeddings.
+ *
+ * Returns thread metadata + a short summary (first user message) instead of
+ * full message dumps, keeping the system prompt compact.
+ *
+ * Flow:
+ * 1. Embed the query
+ * 2. Find the most similar messages via pgvector
+ * 3. Group matched messages by thread (slack_thread_ts)
+ * 4. Fetch the first user message per thread for a summary
+ * 5. Return compact thread pointers sorted by best match score
+ */
+export async function retrieveConversations(
+  options: ConversationRetrievalOptions,
+): Promise<ConversationThread[]> {
+  const {
+    query,
+    queryEmbedding: precomputed,
+    matchLimit = 20,
+    threadLimit = 5,
+    minSimilarity = 0.3,
+    excludeThreadTs,
+    workspaceId,
+    asOf,
+  } = options;
+  const start = Date.now();
+
+  try {
+    const queryEmbedding = precomputed ?? (await embedText(query));
+    const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
+
+    // Find the most similar messages
+    const messagesWorkspaceFilter = workspaceId
+      ? sql`AND ${messages.workspaceId} = ${workspaceId}`
+      : sql``;
+    const asOfFilter = asOf ? sql`AND ${messages.createdAt} <= ${asOf}` : sql``;
+    const matchedMessages = await db
+      .select({
+        message: messages,
+        similarity: sql<number>`1 - (${messages.embedding} <=> ${vectorSql})`.as("similarity"),
+      })
+      .from(messages)
+      .where(sql`${messages.embedding} IS NOT NULL ${messagesWorkspaceFilter} ${asOfFilter}`)
+      .orderBy(sql`${messages.embedding} <=> ${vectorSql}`)
+      .limit(matchLimit);
+
+    // Filter by minimum similarity
+    const relevant = matchedMessages.filter((r) => r.similarity >= minSimilarity);
+
+    if (relevant.length === 0) {
+      logger.debug("No relevant messages found for conversation retrieval", {
+        query: query.substring(0, 100),
+      });
+      return [];
+    }
+
+    // Group by thread: use slack_thread_ts if present, otherwise slack_ts (top-level message)
+    const threadMap = new Map<string, { channelId: string; bestSimilarity: number; mostRecentMessageAt: Date }>();
+    for (const r of relevant) {
+      const threadKey = r.message.slackThreadTs || r.message.slackTs;
+      if (!threadKey) continue;
+      const messageDate = new Date(r.message.createdAt);
+      const existing = threadMap.get(threadKey);
+      if (!existing) {
+        threadMap.set(threadKey, {
+          channelId: r.message.channelId,
+          bestSimilarity: r.similarity,
+          mostRecentMessageAt: messageDate,
+        });
+      } else {
+        if (r.similarity > existing.bestSimilarity) {
+          existing.bestSimilarity = r.similarity;
+          existing.channelId = r.message.channelId;
+        }
+        if (messageDate > existing.mostRecentMessageAt) {
+          existing.mostRecentMessageAt = messageDate;
+        }
+      }
+    }
+
+    if (excludeThreadTs) {
+      threadMap.delete(excludeThreadTs);
+    }
+
+    // Score threads: combine cosine similarity with recency boost
+    const now = Date.now();
+    const sortedThreads = [...threadMap.entries()]
+      .map(([key, meta]) => {
+        const ageDays = (now - meta.mostRecentMessageAt.getTime()) / (1000 * 60 * 60 * 24);
+        const recencyBoost = Math.max(0, 1 - ageDays / 30);
+        const combinedScore = meta.bestSimilarity * 0.8 + recencyBoost * 0.2;
+        return [key, { ...meta, combinedScore }] as const;
+      })
+      .sort((a, b) => b[1].combinedScore - a[1].combinedScore)
+      .slice(0, threadLimit);
+
+    if (sortedThreads.length === 0) return [];
+
+    // Fetch only the first user message per thread for a compact summary
+    // DISTINCT ON returns exactly one row per thread, prioritising user messages
+    const threadKeys = sortedThreads.map(([key]) => key);
+    const threadKeysList = sql.join(threadKeys.map(k => sql`${k}`), sql`, `);
+    const summaryWorkspaceFilter = workspaceId
+      ? sql`AND workspace_id = ${workspaceId}`
+      : sql``;
+    const summaryAsOfFilter = asOf ? sql`AND created_at <= ${asOf}` : sql``;
+    const summaryResult = await db.execute(sql`
+      SELECT DISTINCT ON (COALESCE(slack_thread_ts, slack_ts))
+        slack_ts, slack_thread_ts, content, role, created_at
+      FROM messages
+      WHERE (slack_thread_ts IN (${threadKeysList}) OR slack_ts IN (${threadKeysList}))
+        ${summaryWorkspaceFilter}
+        ${summaryAsOfFilter}
+      ORDER BY COALESCE(slack_thread_ts, slack_ts),
+               (CASE WHEN role = 'user' THEN 0 ELSE 1 END),
+               created_at
+    `);
+    const summaryRows = ((summaryResult as any).rows ?? summaryResult) as Array<Record<string, any>>;
+
+    const threadSummaryMap = new Map<string, { content: string; date: string }>();
+    for (const m of summaryRows) {
+      const key = (m.slack_thread_ts || m.slack_ts) as string;
+      if (!key) continue;
+      const rawContent = m.content as string;
+      const content = rawContent.length > 100 ? rawContent.substring(0, 100) + "…" : rawContent;
+      const date = new Date(m.created_at).toISOString().split("T")[0];
+      threadSummaryMap.set(key, { content, date });
+    }
+
+    const conversationThreads: ConversationThread[] = sortedThreads.map(
+      ([threadTs, meta]) => {
+        const summaryData = threadSummaryMap.get(threadTs);
+        return {
+          threadTs,
+          channelId: meta.channelId,
+          bestSimilarity: meta.bestSimilarity,
+          date: summaryData?.date ?? new Date(meta.mostRecentMessageAt).toISOString().split("T")[0],
+          summary: summaryData?.content ?? "",
+        };
+      },
+    );
+
+    logger.info(
+      `Retrieved ${conversationThreads.length} conversation threads (${relevant.length} matched messages) in ${Date.now() - start}ms`,
+      { query: query.substring(0, 100) },
+    );
+
+    return conversationThreads;
+  } catch (error: any) {
+    logger.error("Conversation retrieval failed", {
+      error: error?.message ?? String(error),
+      code: error?.code,
+      cause: error?.cause ? String(error.cause) : undefined,
+      query: query.substring(0, 100),
+    });
+    return [];
+  }
+}

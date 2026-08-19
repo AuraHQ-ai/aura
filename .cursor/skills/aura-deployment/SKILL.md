@@ -94,11 +94,11 @@ After adding new scopes or events, reinstall the app at api.slack.com/apps.
 
 ## Direct API Investigation (POWERFUL)
 
-When debugging Slack/GitHub integration issues, **call APIs directly with curl** using tokens from `.env` to see raw responses. This bypasses Aura's code and reveals undocumented fields, hidden metadata, and the true API response shape.
+When debugging Slack/GitHub integration issues, **call APIs directly with curl** using tokens from `.env.local` to see raw responses. This bypasses Aura's code and reveals undocumented fields, hidden metadata, and the true API response shape.
 
-**Slack API** (source `.env` first for tokens):
+**Slack API** (source `.env.local` first for tokens):
 ```bash
-source .env && curl -s -X POST 'https://slack.com/api/<METHOD>' \
+source .env.local && curl -s -X POST 'https://slack.com/api/<METHOD>' \
   -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"channel":"C...","limit":5}' | python3 -m json.tool
@@ -108,11 +108,29 @@ Use `$SLACK_USER_TOKEN` (xoxp-) for user-scoped methods (e.g. `search.messages`)
 
 **GitHub API**:
 ```bash
-source .env && curl -s -H "Authorization: token $GITHUB_TOKEN" \
+source .env.local && curl -s -H "Authorization: token $GITHUB_TOKEN" \
   'https://api.github.com/repos/realadvisor/aura/pulls' | python3 -m json.tool
 ```
 
 **Key lesson**: Slack's typed SDK and Aura's wrapper code can hide fields from the raw response. For example, `conversations.history` on a list channel returns `msg.slack_list.list_record_id` -- a direct record-to-thread mapping that the SDK types don't expose. Always check the raw JSON when something "doesn't exist" in the API.
+
+## Langfuse Observability & Latency Monitoring
+
+Tracing is wired via `apps/api/src/lib/langfuse.ts` (keys: `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`). Each Slack turn is grouped into one trace (`slack-chat`) and memory/profile jobs into one trace each (`memory-extract-job`, `profile-update-job`, `profile-consolidate-job`).
+
+**Optional noise control**: set `LANGFUSE_DROP_ORPHAN_EMBEDDINGS=true` to stop exporting single-embedding spans (they otherwise dominate trace volume); batch `embedMany` spans are kept.
+
+**Latency dashboard (Langfuse UI → Dashboards → new widget)**: chart p50/p95/p99 of `latency` grouped by trace `name`, scoped to `environment = production`. Watch `slack-chat` (user-facing) and `headless-job` (autonomous jobs) most closely.
+
+**Threshold alerts (Langfuse UI → Settings → Alerts)** — recommended starting points:
+
+| Trace name | Alert when | Rationale |
+|---|---|---|
+| `slack-chat` | p95 latency > 30s | User-facing; degraded UX above this |
+| `headless-job` | max latency > 90s | Healthy is ~8-16s; >90s suggests a stuck tool loop / retry storm |
+| `memory-extract-job` | p95 latency > 45s | Background, but runaway extraction wastes spend |
+
+Note: a 169s `headless-job` outlier was observed only on the pre-fix release `4796ed6184`; current-release jobs run ~8-16s. Re-investigate any return above ~90s.
 
 ## Quick Health Check
 

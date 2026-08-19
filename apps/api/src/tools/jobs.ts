@@ -1,0 +1,981 @@
+import { defineTool } from "../lib/tool.js";
+import { z } from "zod";
+import { eq, and, or, desc, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import type { WebClient } from "@slack/web-api";
+import { CronExpressionParser } from "cron-parser";
+import { db } from "../db/client.js";
+import { jobs, jobExecutions } from "@aura/db/schema";
+import type { FrequencyConfig, ScheduleContext } from "@aura/db/schema";
+import { waitUntil } from "@vercel/functions";
+import { logger } from "../lib/logger.js";
+import { hasRole } from "../lib/permissions.js";
+import { resolveSlackUserId } from "../lib/resolve-user.js";
+import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
+import { resolveChannelByName } from "./slack.js";
+import { executeJob } from "../cron/execute-job.js";
+
+// ── Tool Definitions ─────────────────────────────────────────────────────────
+
+/**
+ * Create unified job tools for the AI SDK.
+ * Jobs are the single execution primitive: one-shot reminders, recurring autonomous work,
+ * and continuations all live in the same table and are processed by the heartbeat.
+ */
+export function createJobTools(
+  client?: WebClient,
+  context?: ScheduleContext,
+) {
+  return {
+    create_job: defineTool({
+      description:
+        "Create a one-shot task, recurring job, or follow-up. This is the single tool for scheduling anything: reminders ('remind me in 2 hours'), monitoring, digests, follow-ups ('check this tomorrow'), and autonomous work ('do this every morning'). One-shots fire once at execute_in time; recurring jobs run on a cron schedule (e.g. '0 9 * * 1-5' for weekdays 9 AM) with optional frequency limits. Always include the user's timezone for recurring jobs. You can create jobs for yourself too. When you spot a new type of recurring work, codify it as a job with a playbook and frequency limits.",
+      inputSchema: z.object({
+        name: z
+          .string()
+          .optional()
+          .describe(
+            "Unique job name, e.g. 'bug-digest' or 'remind-joan-pr'. Auto-generated for one-shots if omitted.",
+          ),
+        description: z
+          .string()
+          .describe(
+            "What to do when the job fires. Be specific — this is the prompt the LLM will execute. E.g. 'Check #bugs for new reports and post a summary' or 'Remind Joan to review the PR'",
+          ),
+        playbook: z
+          .string()
+          .optional()
+          .describe(
+            "Step-by-step execution guide (markdown). For complex recurring jobs. The heartbeat uses this as the prompt.",
+          ),
+        script: z
+          .string()
+          .optional()
+          .describe(
+            "Shell command or path to a script to run before/instead of LLM invocation. Script-only (no playbook): output posted directly, zero LLM cost. Hybrid (with playbook): script output fed as context to a smaller LLM prompt.",
+          ),
+        execute_in: z
+          .string()
+          .optional()
+          .describe(
+            "When to first execute. Relative time: '30 minutes', '2 hours', '1 day', 'tomorrow'. Required for one-shots.",
+          ),
+        recurring: z
+          .string()
+          .optional()
+          .describe(
+            "Cron expression for recurring jobs, e.g. '0 9 * * 1-5' (weekdays 9 AM). Leave empty for one-shot.",
+          ),
+        channel_name: z
+          .string()
+          .optional()
+          .describe(
+            "Channel to post results in, e.g. 'general' or '#bugs'. Omit for DM-only or internal jobs.",
+          ),
+        timezone: z
+          .string()
+          .default("UTC")
+          .describe("IANA timezone for the cron schedule, e.g. 'Europe/Zurich'. Defaults to UTC."),
+        priority: z
+          .enum(["high", "normal", "low"])
+          .default("normal")
+          .describe("Execution priority. High-priority jobs run first."),
+        min_interval_hours: z
+          .number()
+          .optional()
+          .describe("Minimum hours between executions (recurring jobs)"),
+        max_per_day: z
+          .number()
+          .optional()
+          .describe("Max executions per day (recurring jobs)"),
+        model: z
+          .enum(["main", "fast", "medium", "escalation"])
+          .optional()
+          .describe(
+            "Model category to execute the job with, resolved from the model catalog. Omit for the default 'medium' (Sonnet-class intelligence — the standard tier for jobs). Use 'fast' for simple mechanical tasks (classification, moderation, digests), 'main' (frontier) only for jobs that genuinely need it, 'escalation' for exceptionally hard work.",
+          ),
+        env_allowlist: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Restrict the job's sandbox env to ONLY these credential env var names (e.g. ['META_ADMIN_TOKEN', 'SLACK_BOT_TOKEN']) plus core infra vars. Narrows the caller's credential set — never widens it. Use for jobs that process untrusted input so a prompt injection can't reach unrelated credentials. Omit for full inheritance.",
+          ),
+        prompt_mode: z
+          .enum(["full", "task"])
+          .optional()
+          .describe(
+            "'task' runs the job with a minimal ~2k-token task prompt (no personality, self-directive, or notes index) — fewer places for context rot in mechanical jobs. Memory stays unified either way. Omit or 'full' for the standard prompt.",
+          ),
+      }),
+      inputExamples: [
+        {
+          input: {
+            description: "Remind Joan to review PR #1284",
+            execute_in: "2 hours",
+            timezone: "UTC",
+            priority: "normal",
+          },
+        },
+        {
+          input: {
+            name: "bug-digest",
+            description: "Check #bugs for new reports since the last run and post a summary",
+            recurring: "0 9 * * 1-5",
+            channel_name: "bugs",
+            timezone: "Europe/Zurich",
+            priority: "normal",
+            max_per_day: 1,
+          },
+        },
+      ],
+      execute: async ({
+        name,
+        description,
+        playbook,
+        script,
+        execute_in,
+        recurring,
+        channel_name,
+        timezone,
+        priority,
+        min_interval_hours,
+        max_per_day,
+        model,
+        env_allowlist,
+        prompt_mode,
+      }) => {
+        try {
+          // Resolve channel
+          let channelId: string | null = null;
+          let channelLabel = "DM-routed";
+          if (channel_name) {
+            if (!client) {
+              return { ok: false, error: "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly." };
+            }
+            const channel = await resolveChannelByName(client, channel_name);
+            if (!channel) {
+              return { ok: false, error: `Could not find channel "${channel_name}".` };
+            }
+            channelId = channel.id;
+            channelLabel = `#${channel.name}`;
+          }
+
+          // Validate cron expression
+          if (recurring) {
+            try {
+              CronExpressionParser.parse(recurring);
+            } catch {
+              return {
+                ok: false,
+                error: `Invalid cron expression "${recurring}". Use standard 5-field syntax, e.g. '0 9 * * 1-5'.`,
+              };
+            }
+          }
+
+          // Compute executeAt
+          let executeAt: Date | null = null;
+          if (execute_in) {
+            const delayMs = parseRelativeTime(execute_in);
+            if (!delayMs) {
+              return {
+                ok: false,
+                error: `Could not parse time "${execute_in}". Use formats like "30 minutes", "2 hours", "1 day", "tomorrow".`,
+              };
+            }
+            executeAt = new Date(Date.now() + delayMs);
+          } else if (recurring) {
+            // First occurrence: compute from cron
+            const interval = CronExpressionParser.parse(recurring, {
+              currentDate: new Date(),
+              tz: timezone,
+            });
+            executeAt = interval.next().toDate();
+          }
+
+          // If re-enabling an existing recurring job by name, inherit its stored cron schedule
+          if (!executeAt && !recurring && name) {
+            const existing = await db
+              .select({ cronSchedule: jobs.cronSchedule, timezone: jobs.timezone })
+              .from(jobs)
+              .where(eq(jobs.name, name))
+              .limit(1);
+
+            const inheritedRecurring = existing[0]?.cronSchedule;
+            if (inheritedRecurring) {
+              recurring = inheritedRecurring;
+              const tz = timezone || existing[0].timezone || "UTC";
+              const interval = CronExpressionParser.parse(inheritedRecurring, {
+                currentDate: new Date(),
+                tz,
+              });
+              executeAt = interval.next().toDate();
+            }
+          }
+
+          if (!executeAt && !recurring) {
+            return {
+              ok: false,
+              error: "One-shot jobs require execute_in. Recurring jobs require a cron expression via recurring.",
+            };
+          }
+
+          // Build frequency config (only meaningful for recurring jobs)
+          const frequencyConfig: FrequencyConfig | null =
+            recurring && (min_interval_hours != null || max_per_day != null)
+              ? {
+                  ...(min_interval_hours != null && { minIntervalHours: min_interval_hours }),
+                  ...(max_per_day != null && { maxPerDay: max_per_day }),
+                }
+              : null;
+
+          // Auto-generate name for one-shots if not provided
+          const jobName = name || `job-${Date.now().toString(36)}`;
+          const requestedBy = context?.userId || "aura";
+
+          // Per-user job limit (exempt admins and "aura" bot identity)
+          const MAX_JOBS_PER_USER = 5;
+          if (requestedBy !== "aura" && !(await hasRole(context?.userId, "admin"))) {
+            const activeCount = await db
+              .select({ count: sql<number>`count(*)::int` })
+              .from(jobs)
+              .where(
+                and(
+                  eq(jobs.requestedBy, requestedBy),
+                  eq(jobs.status, "pending"),
+                  eq(jobs.enabled, 1),
+                  ne(jobs.name, jobName),
+                ),
+              );
+            if ((activeCount[0]?.count ?? 0) >= MAX_JOBS_PER_USER) {
+              return {
+                ok: false,
+                error: `You have ${MAX_JOBS_PER_USER} active jobs already. Cancel some before creating new ones.`,
+              };
+            }
+          }
+
+          // Build update set for upsert (only update fields that were provided)
+          const updateSet: Record<string, unknown> = {
+            description,
+            updatedAt: new Date(),
+            status: "pending",
+            enabled: 1,
+            archivedAt: null,
+            retries: 0,
+          };
+          if (playbook !== undefined) updateSet.playbook = playbook || null;
+          if (script !== undefined) updateSet.script = script || null;
+          if (recurring !== undefined) updateSet.cronSchedule = recurring || null;
+          updateSet.frequencyConfig = frequencyConfig;
+          if (channel_name !== undefined) updateSet.channelId = channelId;
+          // For one-shot jobs, capture threadTs for thread routing; recurring jobs always post fresh
+          updateSet.threadTs = !recurring ? (context?.threadTs || null) : null;
+          if (executeAt) updateSet.executeAt = executeAt;
+          updateSet.timezone = timezone;
+          updateSet.priority = priority;
+          if (model !== undefined) updateSet.model = model;
+          if (env_allowlist !== undefined) updateSet.envAllowlist = env_allowlist;
+          if (prompt_mode !== undefined) updateSet.promptMode = prompt_mode;
+
+          await db
+            .insert(jobs)
+            .values({
+              name: jobName,
+              description,
+              playbook: playbook || null,
+              script: script || null,
+              cronSchedule: recurring || null,
+              frequencyConfig,
+              channelId: channelId || context?.channelId || "",
+              threadTs: !recurring ? (context?.threadTs || null) : null,
+              executeAt,
+              requestedBy,
+              timezone,
+              priority,
+              model: model ?? null,
+              envAllowlist: env_allowlist ?? null,
+              promptMode: prompt_mode ?? null,
+              updatedAt: new Date(),
+            })
+            .onConflictDoUpdate({
+              target: [jobs.workspaceId, jobs.name],
+              set: updateSet,
+            });
+
+          const timeStr = executeAt?.toISOString() ?? "next cron window";
+          const recurStr = recurring
+            ? ` (recurring: ${recurring} ${timezone})`
+            : " (one-shot)";
+
+          logger.info("create_job tool called", {
+            name: jobName,
+            description: description.substring(0, 80),
+            executeAt: timeStr,
+            recurring,
+            requestedBy,
+          });
+
+          return {
+            ok: true,
+            message: `Job "${jobName}" created${recurStr}. First execution: ${timeStr}.${channelId ? ` Posts to ${channelLabel}.` : ""}`,
+            name: jobName,
+            execute_at: timeStr,
+          };
+        } catch (error: any) {
+          logger.error("create_job tool failed", { error: error.message });
+          return { ok: false, error: `Failed to create job: ${error.message}` };
+        }
+      },
+      slack: { status: "Creating job...", detail: (i) => i.name ?? i.description?.slice(0, 40), output: (r) => r.ok === false ? r.error : `Created '${r.name || 'job'}'` },
+    }),
+
+    list_jobs: defineTool({
+      description:
+        "List jobs. Always includes enabled recurring jobs regardless of their last execution status, with last/next run info. Filter one-shots by status, or use status:'all'. Archived jobs are excluded by default; pass include_archived to see them. For execution history of a specific job, use read_job_trace with the job name.",
+      inputSchema: z.object({
+        status: z
+          .enum(["pending", "running", "completed", "failed", "cancelled", "all"])
+          .default("pending")
+          .describe("Filter by status, or use 'all' to include every job"),
+        recurring_only: z
+          .boolean()
+          .default(false)
+          .describe("If true, only show recurring jobs (not one-shots)"),
+        include_archived: z
+          .boolean()
+          .default(false)
+          .describe("If true, include archived jobs (hidden by default)"),
+        limit: z
+          .number()
+          .min(1)
+          .max(50)
+          .default(20)
+          .describe("Maximum number of jobs to return"),
+      }),
+      execute: async ({ status, recurring_only, include_archived, limit }) => {
+        try {
+          const recurringCondition = and(
+            isNotNull(jobs.cronSchedule),
+            ne(jobs.cronSchedule, ""),
+          )!;
+          const enabledRecurringCondition = and(
+            eq(jobs.enabled, 1),
+            recurringCondition,
+          )!;
+          const conditions: Array<ReturnType<typeof eq>> = [];
+          if (status !== "all") {
+            conditions.push(or(eq(jobs.status, status), enabledRecurringCondition)!);
+          }
+          if (recurring_only) {
+            conditions.push(recurringCondition);
+          }
+          if (!include_archived) {
+            conditions.push(isNull(jobs.archivedAt));
+          }
+
+          const query = db.select().from(jobs);
+          const rows = await (conditions.length > 0
+            ? query.where(and(...conditions))
+            : query
+          )
+            .orderBy(desc(jobs.createdAt))
+            .limit(limit);
+
+          const filtered = rows;
+
+          const tz = context?.timezone;
+          const result = filtered.map((j) => {
+            let nextRunAt: string | null = null;
+            if (j.cronSchedule) {
+              try {
+                const next = CronExpressionParser.parse(j.cronSchedule, {
+                  tz: j.timezone ?? "UTC",
+                }).next().toDate();
+                nextRunAt = formatTimestamp(next, tz) || null;
+              } catch {
+                nextRunAt = null;
+              }
+            }
+
+            return {
+              id: j.id,
+              name: j.name,
+              description: j.description.substring(0, 120),
+              enabled: j.enabled === 1,
+              is_recurring: !!j.cronSchedule,
+              cron_schedule: j.cronSchedule,
+              frequency_config: j.frequencyConfig,
+              execute_at: formatTimestamp(j.executeAt, tz) || null,
+              next_run_at: nextRunAt,
+              channel_id: j.channelId || null,
+              requested_by: j.requestedBy,
+              priority: j.priority,
+              status: j.status,
+              retries: j.retries,
+              last_executed_at: formatTimestamp(j.lastExecutedAt, tz) || null,
+              execution_count: j.executionCount,
+              has_playbook: !!j.playbook,
+              last_result: j.lastResult ? j.lastResult.substring(0, 200) : null,
+            };
+          });
+
+          logger.info("list_jobs tool called", { status, count: result.length });
+
+          return { ok: true, jobs: result, count: result.length };
+        } catch (error: any) {
+          logger.error("list_jobs tool failed", { error: error.message });
+          return { ok: false, error: `Failed to list jobs: ${error.message}` };
+        }
+      },
+      slack: { status: "Listing jobs...", output: (r) => r.ok === false ? r.error : `${r.count} jobs` },
+    }),
+
+    cancel_job: defineTool({
+      description:
+        "Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Pass archive: true to also archive the job — it keeps its execution history but is hidden from list_jobs (re-enable via update_job with enabled: true, which un-archives). Accepts a job ID or name.",
+      inputSchema: z.object({
+        job_id: z
+          .string()
+          .optional()
+          .describe("The UUID of the job to cancel"),
+        name: z
+          .string()
+          .optional()
+          .describe("The name of the job to cancel (alternative to job_id)"),
+        archive: z
+          .boolean()
+          .default(false)
+          .describe(
+            "If true, also archive the job: it is excluded from job listings but keeps its history. Use for retired recurring jobs you don't expect to re-enable.",
+          ),
+      }),
+      execute: async ({ job_id, name, archive }) => {
+        try {
+          if (!job_id && !name) {
+            return { ok: false, error: "Provide either job_id or name." };
+          }
+
+          const condition = job_id
+            ? eq(jobs.id, job_id)
+            : eq(jobs.name, name!);
+
+          const rows = await db
+            .select()
+            .from(jobs)
+            .where(condition)
+            .limit(1);
+
+          if (rows.length === 0) {
+            return { ok: false, error: `No job found with ${job_id ? `ID "${job_id}"` : `name "${name}"`}.` };
+          }
+
+          const job = rows[0];
+
+          if (job.cronSchedule) {
+            // Recurring job: disable instead of cancelling (preserves definition)
+            if (archive) {
+              await db
+                .update(jobs)
+                .set({ enabled: 0, archivedAt: new Date(), updatedAt: new Date() })
+                .where(condition);
+
+              logger.info("cancel_job: archived recurring job", { name: job.name });
+              return {
+                ok: true,
+                message: `Recurring job "${job.name}" archived. It is excluded from job listings (pass include_archived to list_jobs to see it). Re-enable via update_job with enabled: true, which un-archives it.`,
+              };
+            }
+
+            await db
+              .update(jobs)
+              .set({ enabled: 0, updatedAt: new Date() })
+              .where(condition);
+
+            logger.info("cancel_job: disabled recurring job", { name: job.name });
+            return {
+              ok: true,
+              message: `Recurring job "${job.name}" disabled. Use create_job with the same name to re-enable.`,
+            };
+          } else {
+            // One-shot: allow pending jobs and failed zombies to be cancelled.
+            if (job.status !== "pending" && job.status !== "failed") {
+              return {
+                ok: false,
+                error: `Job "${job.name}" is already ${job.status} and cannot be cancelled.`,
+              };
+            }
+
+            await db
+              .update(jobs)
+              .set({
+                status: "cancelled",
+                ...(archive ? { archivedAt: new Date() } : {}),
+                updatedAt: new Date(),
+              })
+              .where(condition);
+
+            logger.info("cancel_job: cancelled one-shot", { name: job.name, archived: archive });
+            return {
+              ok: true,
+              message: `Job "${job.name}" cancelled${archive ? " and archived" : ""}.`,
+            };
+          }
+        } catch (error: any) {
+          logger.error("cancel_job tool failed", { error: error.message });
+          return { ok: false, error: `Failed to cancel job: ${error.message}` };
+        }
+      },
+      slack: { status: "Cancelling job...", output: (r) => r.ok === false ? r.error : 'Job cancelled' },
+    }),
+
+    update_job: defineTool({
+      description:
+        "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, transfer ownership (requested_by), or re-enable a disabled job (setting enabled: true also un-archives an archived job). Accepts job name or ID.",
+      inputSchema: z.object({
+        job_id: z.string().optional().describe("UUID of the job to update"),
+        name: z
+          .string()
+          .optional()
+          .describe("Name of the job to update (alternative to job_id)"),
+        updates: z.object({
+          description: z.string().optional(),
+          playbook: z.string().optional(),
+          script: z
+            .string()
+            .nullable()
+            .optional()
+            .describe("Shell command or path to a script. Set to null to remove."),
+          recurring: z
+            .string()
+            .optional()
+            .describe("New cron expression, e.g. '0 9 * * 1-5'"),
+          timezone: z.string().optional(),
+          channel_name: z.string().optional(),
+          priority: z.enum(["high", "normal", "low"]).optional(),
+          enabled: z
+            .boolean()
+            .optional()
+            .describe("Re-enable a disabled job by setting to true"),
+          max_per_day: z.number().optional(),
+          min_interval_hours: z.number().optional(),
+          requested_by: z
+            .string()
+            .optional()
+            .describe(
+              "Transfer job ownership to another user (display name, username, or Slack ID). All system notices, retries, and completions route to the new owner. Only the current owner or an admin can transfer.",
+            ),
+          model: z
+            .enum(["main", "fast", "medium", "escalation"])
+            .nullable()
+            .optional()
+            .describe(
+              "Model category to execute with ('fast' for mechanical tasks, 'main' for frontier opt-in). Set to null to reset to the default 'medium' (Sonnet-class) model.",
+            ),
+          env_allowlist: z
+            .array(z.string())
+            .nullable()
+            .optional()
+            .describe(
+              "Restrict the job's sandbox env to ONLY these credential env var names (plus core infra vars). Set to null to restore full inheritance.",
+            ),
+          prompt_mode: z
+            .enum(["full", "task"])
+            .nullable()
+            .optional()
+            .describe(
+              "'task' = minimal ~2k-token task prompt (no personality/notes index). Set to null or 'full' for the standard prompt.",
+            ),
+        }).describe("Fields to update. Only provided fields are changed."),
+      }),
+      execute: async ({ job_id, name, updates }) => {
+        try {
+          if (!job_id && !name) {
+            return { ok: false as const, error: "Provide either job_id or name." };
+          }
+
+          const condition = job_id
+            ? eq(jobs.id, job_id)
+            : eq(jobs.name, name!);
+
+          const rows = await db
+            .select()
+            .from(jobs)
+            .where(condition)
+            .limit(1);
+
+          if (rows.length === 0) {
+            return {
+              ok: false as const,
+              error: `No job found with ${job_id ? `ID "${job_id}"` : `name "${name}"`}.`,
+            };
+          }
+
+          const job = rows[0];
+
+          logger.info("update_job tool called", {
+            name: job.name,
+            fields: Object.keys(updates).filter(
+              (k) => updates[k as keyof typeof updates] !== undefined,
+            ),
+          });
+
+          const set: Record<string, unknown> = { updatedAt: new Date() };
+
+          // Ownership transfer: only the current owner, an admin, or anyone for
+          // Aura/system-owned jobs. Every notice path reads jobs.requestedBy live
+          // at send time, so updating the row redirects all system traffic.
+          if (updates.requested_by !== undefined) {
+            const callerId = context?.userId;
+            const allowed =
+              job.requestedBy === "aura" ||
+              (callerId != null && callerId === job.requestedBy) ||
+              (await hasRole(callerId, "admin"));
+            if (!allowed) {
+              return {
+                ok: false as const,
+                error: `Only the current owner (<@${job.requestedBy}>) or an admin can transfer ownership of job "${job.name}".`,
+              };
+            }
+
+            const newOwnerId = await resolveSlackUserId(updates.requested_by);
+            if (!newOwnerId) {
+              return {
+                ok: false as const,
+                error: `Could not resolve "${updates.requested_by}" to a Slack user. Use a display name, username, or Slack ID.`,
+              };
+            }
+            set.requestedBy = newOwnerId;
+          }
+
+          if (updates.description !== undefined) set.description = updates.description;
+          if (updates.playbook !== undefined) set.playbook = updates.playbook || null;
+          if (updates.script !== undefined) set.script = updates.script || null;
+          if (updates.priority !== undefined) set.priority = updates.priority;
+          if (updates.timezone !== undefined) set.timezone = updates.timezone;
+          if (updates.model !== undefined) set.model = updates.model;
+          if (updates.env_allowlist !== undefined) set.envAllowlist = updates.env_allowlist;
+          if (updates.prompt_mode !== undefined) set.promptMode = updates.prompt_mode;
+
+          // Resolve channel name to ID
+          if (updates.channel_name !== undefined) {
+            if (!client) {
+              return { ok: false as const, error: "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly." };
+            }
+            const channel = await resolveChannelByName(client, updates.channel_name);
+            if (!channel) {
+              return { ok: false as const, error: `Could not find channel "${updates.channel_name}".` };
+            }
+            set.channelId = channel.id;
+          }
+
+          // Merge frequency config with existing JSONB instead of replacing
+          if (updates.max_per_day !== undefined || updates.min_interval_hours !== undefined) {
+            const existing: FrequencyConfig = job.frequencyConfig ?? {};
+            set.frequencyConfig = {
+              ...existing,
+              ...(updates.min_interval_hours !== undefined && {
+                minIntervalHours: updates.min_interval_hours,
+              }),
+              ...(updates.max_per_day !== undefined && {
+                maxPerDay: updates.max_per_day,
+              }),
+            };
+          }
+
+          // Validate and apply new cron schedule
+          if (updates.recurring !== undefined) {
+            try {
+              CronExpressionParser.parse(updates.recurring);
+            } catch {
+              return {
+                ok: false as const,
+                error: `Invalid cron expression "${updates.recurring}". Use standard 5-field syntax, e.g. '0 9 * * 1-5'.`,
+              };
+            }
+            set.cronSchedule = updates.recurring;
+
+            const tz = updates.timezone ?? job.timezone ?? "UTC";
+            const parsed = CronExpressionParser.parse(updates.recurring, {
+              currentDate: new Date(),
+              tz,
+            });
+            set.executeAt = parsed.next().toDate();
+          }
+
+          // Timezone-only change: recalculate executeAt against existing cron
+          if (updates.timezone !== undefined && updates.recurring === undefined) {
+            const cron = job.cronSchedule;
+            if (cron && job.executeAt) {
+              const parsed = CronExpressionParser.parse(cron, {
+                currentDate: new Date(),
+                tz: updates.timezone,
+              });
+              set.executeAt = parsed.next().toDate();
+            }
+          }
+
+          // Re-enable a disabled job (also un-archives if it was archived)
+          let unarchived = false;
+          if (updates.enabled === true && job.archivedAt !== null) {
+            set.archivedAt = null;
+            unarchived = true;
+          }
+          if (updates.enabled === true && job.enabled === 0) {
+            set.enabled = 1;
+            set.status = "pending";
+
+            // Recalculate next execution if not already set by a cron update above
+            if (!set.executeAt) {
+              const cron = (set.cronSchedule as string | undefined) ?? job.cronSchedule;
+              if (cron) {
+                const tz = (set.timezone as string | undefined) ?? job.timezone ?? "UTC";
+                const parsed = CronExpressionParser.parse(cron, {
+                  currentDate: new Date(),
+                  tz,
+                });
+                set.executeAt = parsed.next().toDate();
+              }
+            }
+          } else if (updates.enabled === false) {
+            set.enabled = 0;
+          }
+
+          await db.update(jobs).set(set).where(condition);
+
+          // Fetch the updated row for the response
+          const [updated] = await db.select().from(jobs).where(condition).limit(1);
+
+          return {
+            ok: true as const,
+            message: `Job "${updated.name}" updated${unarchived ? " and un-archived (visible in job listings again)" : ""}.`,
+            job: {
+              name: updated.name,
+              description: updated.description,
+              cronSchedule: updated.cronSchedule,
+              enabled: updated.enabled === 1,
+              requestedBy: updated.requestedBy,
+              nextExecution: updated.executeAt?.toISOString() ?? null,
+            },
+          };
+        } catch (error: any) {
+          logger.error("update_job tool failed", { error: error.message });
+          return { ok: false as const, error: `Failed to update job: ${error.message}` };
+        }
+      },
+      slack: {
+        status: "Updating job...",
+        output: (r) => r.ok === false ? r.error : "Job updated",
+      },
+    }),
+
+    dispatch_headless: defineTool({
+      requiredCredentials: ["admin_access"],
+      description:
+        "Dispatch a task for immediate headless execution (no Slack streaming overhead). Creates a job and triggers it NOW — no waiting for the 30-min heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. The task runs as full Aura with all tools. Results are posted to the callback channel/thread when done. Admin-only.",
+      inputSchema: z.object({
+        task: z
+          .string()
+          .describe(
+            "What to do. Be specific — this is the prompt for headless execution.",
+          ),
+        callback_channel: z
+          .string()
+          .optional()
+          .describe(
+            "Channel to post results in when done. Defaults to current channel.",
+          ),
+        callback_thread_ts: z
+          .string()
+          .optional()
+          .describe(
+            "Thread to post results in. Defaults to current thread.",
+          ),
+        name: z
+          .string()
+          .optional()
+          .describe("Job name for tracking."),
+        playbook: z
+          .string()
+          .optional()
+          .describe("Detailed execution guide (markdown)."),
+      }),
+      execute: async ({
+        task,
+        callback_channel,
+        callback_thread_ts,
+        name,
+        playbook,
+      }) => {
+
+        try {
+          const cbChannel = callback_channel || context?.channelId;
+          const cbThread = callback_thread_ts || context?.threadTs;
+
+          const jobName = name || `headless-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const [job] = await db
+            .insert(jobs)
+            .values({
+              name: jobName,
+              description: task,
+              playbook: playbook || null,
+              channelId: cbChannel || null,
+              threadTs: cbThread || null,
+              executeAt: new Date(),
+              requestedBy: context?.userId || "aura",
+              priority: "high",
+              status: "pending",
+              timezone: "UTC",
+            })
+            .returning();
+
+          waitUntil(
+            (async () => {
+              try {
+                const executed = await executeJob(job, "dispatch");
+                if (executed) {
+                  logger.info("dispatch_headless: job executed immediately", {
+                    jobId: job.id,
+                    jobName,
+                    latencyMs: Date.now() - job.createdAt.getTime(),
+                  });
+                }
+              } catch (err: any) {
+                logger.error("dispatch_headless: immediate execution failed, will retry at next heartbeat", {
+                  jobId: job.id,
+                  error: err.message,
+                });
+              }
+            })()
+          );
+
+          logger.info("dispatch_headless tool called", {
+            jobId: job.id,
+            jobName,
+            task: task.substring(0, 80),
+            callbackChannel: cbChannel,
+          });
+
+          return {
+            ok: true,
+            jobId: job.id,
+            jobName,
+            message: `Headless task dispatched. Will report back in ${cbChannel ? `channel ${cbChannel}` : "this conversation"} when done.`,
+          };
+        } catch (error: any) {
+          logger.error("dispatch_headless tool failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to dispatch headless task: ${error.message}`,
+          };
+        }
+      },
+      slack: { status: "Dispatching background task...", detail: (i) => i.name ?? i.task?.slice(0, 40), output: (r) => r.ok === false ? r.error : `Dispatched '${r.jobName || 'task'}'` },
+    }),
+
+    read_job_trace: defineTool({
+      description:
+        "Read execution traces of jobs — reasoning steps, tool calls, results, token usage. Use to inspect what headless execution did, debug failed jobs, or review past autonomous work.",
+      inputSchema: z.object({
+        job_id: z.string().optional().describe("Specific job ID"),
+        job_name: z
+          .string()
+          .optional()
+          .describe("Job name to find latest execution(s) of"),
+        limit: z
+          .number()
+          .default(1)
+          .describe(
+            "Number of recent executions to return (default 1)",
+          ),
+        include_steps: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Include full step details (can be very large). Default false returns just summary + token usage.",
+          ),
+      }),
+      execute: async ({ job_id, job_name, limit, include_steps }) => {
+        try {
+          let condition;
+          if (job_id) {
+            condition = eq(jobExecutions.jobId, job_id);
+          } else if (job_name) {
+            const [job] = await db
+              .select({ id: jobs.id })
+              .from(jobs)
+              .where(eq(jobs.name, job_name))
+              .limit(1);
+            if (!job)
+              return {
+                ok: false,
+                error: `No job found with name "${job_name}"`,
+              };
+            condition = eq(jobExecutions.jobId, job.id);
+          } else {
+            condition = undefined;
+          }
+
+          const query = db.select().from(jobExecutions);
+          const executions = await (condition
+            ? query.where(condition)
+            : query
+          )
+            .orderBy(desc(jobExecutions.startedAt))
+            .limit(limit);
+
+          logger.info("read_job_trace tool called", {
+            job_id,
+            job_name,
+            resultCount: executions.length,
+          });
+
+          return {
+            ok: true,
+            executions: executions.map((e) => ({
+              id: e.id,
+              jobId: e.jobId,
+              status: e.status,
+              trigger: e.trigger,
+              startedAt: e.startedAt?.toISOString(),
+              finishedAt: e.finishedAt?.toISOString(),
+              durationMs:
+                e.finishedAt && e.startedAt
+                  ? e.finishedAt.getTime() - e.startedAt.getTime()
+                  : null,
+              summary: e.summary,
+              tokenUsage: e.tokenUsage,
+              error: e.error,
+              callbackChannel: e.callbackChannel,
+              ...(include_steps
+                ? { steps: e.steps }
+                : {
+                    stepCount: Array.isArray(e.steps)
+                      ? (e.steps as unknown[]).length
+                      : e.steps &&
+                          typeof e.steps === "object" &&
+                          Array.isArray(
+                            (e.steps as Record<string, unknown>).steps,
+                          )
+                        ? (
+                            (e.steps as Record<string, unknown>)
+                              .steps as unknown[]
+                          ).length
+                        : null,
+                  }),
+            })),
+          };
+        } catch (error: any) {
+          logger.error("read_job_trace tool failed", {
+            error: error.message,
+          });
+          return {
+            ok: false,
+            error: `Failed to read job traces: ${error.message}`,
+          };
+        }
+      },
+      slack: { status: "Reading job trace...", output: (r) => r.ok === false ? r.error : `${r.executions?.length ?? 0} executions` },
+    }),
+  };
+}

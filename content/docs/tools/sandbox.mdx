@@ -1,13 +1,25 @@
 ---
 title: "Sandbox & Code Execution"
-description: "Run arbitrary shell commands in an isolated Linux VM — 1 tool."
+description: "Run arbitrary shell commands in an isolated Linux VM."
 ---
 
 # Sandbox & Code Execution
 
 Aura has access to a sandboxed Linux VM powered by [E2B](https://e2b.dev). This allows her to run shell commands, execute code, process files, and interact with the filesystem safely — without risking the production environment.
 
-**Required env var:** `E2B_API_KEY` (and optionally `E2B_TEMPLATE_ID` for a custom template)
+**Configuration:** `E2B_API_KEY` must be stored as a **credential in the dashboard** (shared scope is enough -- it's resolved once under the `"aura"` identity and used to create/connect every user's sandbox). The sandbox itself does not read `process.env` for this. Optionally set `E2B_TEMPLATE_ID` (credential, or env var fallback) to use a custom E2B template.
+
+---
+
+## Command tools
+
+Aura has three sandbox command tools:
+
+| Tool | Use when | Behavior |
+|------|----------|----------|
+| `run_command` | The command should finish inline, usually under 120s | Starts the process, waits up to `timeout_seconds`, then returns exit code/stdout/stderr. If the process is still running at timeout, returns an `id` and `pid` for polling instead of losing progress. |
+| `run_command_detached` | The command is long-running or has uncertain duration | Starts the process in the background and returns immediately with `id`, `pid`, and `started_at`. When the detached-command webhook is configured (`AURA_PUBLIC_URL` + `SANDBOX_WEBHOOK_SECRET`) and the call is made inside a Slack thread, this is a **suspend point**: the turn ends after dispatch and resumes automatically when the process exits. |
+| `check_command` | You need progress or final status for a detached command | Polls `/tmp/aura-bg/<id>.*` and returns status, exit code when available, stdout/stderr tails, and runtime. |
 
 ---
 
@@ -18,10 +30,64 @@ Execute a shell command in the sandboxed Linux VM.
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `command` | string | **yes** | Shell command to run, e.g. `git clone https://github.com/org/repo.git` |
-| `timeout_seconds` | number | no | Timeout in seconds (default 120, max 750). Use higher values for long-running agent commands. |
-| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to `/home/user`. |
+| `timeout_seconds` | number | no | Timeout in seconds (default 90, max 750). Explicitly opt in to values above 90s only for headless/batch work or long-running agent commands. |
+| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to the per-user persistent home (`/mnt/aura-files/users/<user_id>/` when the GCS mount is available, otherwise `/home/user`). |
 
 **Returns:** exit code, stdout, stderr.
+
+If the command exceeds its inline timeout but is still running, `run_command` returns:
+
+```json
+{
+  "ok": false,
+  "error": "Command exceeded inline timeout (90s) but is still running as PID 1234. Call check_command({id: 'abcd1234'}) to poll progress, or run 'kill 1234' to stop it.",
+  "id": "abcd1234",
+  "pid": 1234
+}
+```
+
+Call `check_command({ "id": "abcd1234" })` to continue monitoring the same process.
+
+---
+
+## `run_command_detached`
+
+Start a command in the background and return immediately.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | **yes** | Shell command to run, e.g. `sleep 300` |
+| `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to the per-user persistent home (`/mnt/aura-files/users/<user_id>/` when the GCS mount is available, otherwise `/home/user`). |
+| `env` | object | no | Additional environment variables for this command. |
+
+**Returns:** `id`, `pid`, `started_at`.
+
+Use this for installs, test suites, crawls, data jobs, or any command where blocking the current Slack stream would be risky.
+
+### Webhook-resumed suspend point
+
+When both `AURA_PUBLIC_URL` and `SANDBOX_WEBHOOK_SECRET` are set **and** the call originates from a Slack thread (channel + thread_ts in the schedule context), `run_command_detached` acts as a suspend point:
+
+1. The command is dispatched and the tool returns its `id`/`pid` immediately.
+2. Aura ends the current turn -- she should send a short final note like *"started `<id>`, I'll continue when it finishes"* and stop calling tools.
+3. When the process exits, `/api/webhook/sandbox-command` fires and resumes the same Slack thread with a synthetic `<detached-command-result>` user turn containing the final stdout/stderr/exit code.
+
+This keeps the Slack stream from holding open for long-running work (which would otherwise hit the ~3-minute streaming cap) while still delivering the result in-thread when it's ready.
+
+If either env var is missing, or the call has no thread to resume into (e.g. it's running inside a recurring job context with no `thread_ts`), the tool falls back to the older fire-and-poll behavior -- you have to poll with `check_command` yourself.
+
+---
+
+## `check_command`
+
+Poll a command started by `run_command_detached`, or a `run_command` call that timed out and returned an `id`.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | **yes** | The 8-character command id. |
+| `tail_lines` | number | no | Number of recent stdout/stderr lines to return from each stream (default 200, max 1000). |
+
+**Returns:** `status` (`running`, `exited`, or `not_found`), `exit_code` when available, `stdout_tail`, `stderr_tail`, `runtime_s`.
 
 ---
 
@@ -34,37 +100,104 @@ The sandbox template includes:
 | `node`, `npm` | JavaScript/TypeScript execution |
 | `python3`, `pip` | Python scripting |
 | `git` | Version control |
-| `gh` | GitHub CLI (authenticated via `GH_TOKEN`) |
+| `gh` | GitHub CLI (authenticated via user-specific `GH_TOKEN`) |
 | `gcloud` | Google Cloud SDK |
 | `vercel` | Vercel CLI (install first: `sudo npm install -g vercel`) |
 | `rg` (ripgrep) | Fast code search |
 | `curl`, `jq` | HTTP requests and JSON processing |
 | `claude` | Claude Code for agentic code tasks |
+| `mongosh` | MongoDB Atlas shell (when `MONGODB_ATLAS_URI` is set) |
+| `mongodb` (node driver) | Programmatic Mongo access -- `require('mongodb')` with zero install cost |
 | `pdftotext` | PDF text extraction |
 
 Install additional packages with `apt-get install` or `pip install`.
 
 ---
 
+## Credential injection
+
+When a sandbox command tool executes, Aura injects environment variables based on the calling user's identity. The function `getSandboxEnvs(userId)` resolves which credentials each user can access:
+
+- **Owner-scoped credentials** (scope = `owner`) are only injected for the credential's owner
+- **Per-user credentials** (scope = `per_user`) are injected for the owner or users with an active explicit grant
+- **Role-scoped credentials** (scope = `admin`, `power_user`, or `member`) are injected for any user meeting the minimum role
+- **Granted credentials** — users with explicit grants receive credentials regardless of scope
+
+This means when one user runs a `gh` command, they get their own GitHub token; a different user running the same command gets theirs. No cross-contamination.
+
+See [Credentials](/tools/credentials) for full access control details.
+
+---
+
 ## File system
 
-The sandbox persists between messages **within a session** — files and state are preserved across tool calls in the same conversation. The sandbox may auto-pause between sessions; check `/home/user/` to verify state is intact before assuming files exist.
+Each Slack user gets their own long-lived sandbox (`autoPause: true`, 1 hour inactivity timeout). E2B pauses the sandbox after inactivity and `Sandbox.connect()` transparently resumes it on the next command, preserving filesystem state (including `/home/user/`) and running processes across the resume. Per-user sandboxes are isolated -- one user's repo checkout or in-progress work cannot collide with another's.
 
 Common paths:
 - `/home/user/` — working directory
-- `/home/user/aura/` — Aura's own codebase (cloned at startup)
 - `/home/user/downloads/` — files saved to disk via `download_slack_file` or `download_email_attachment`
+- `/home/user/aura-tools/` — optional checkout for this workspace's self-authored tools repository
+
+### Self-authored tools repository
+
+Workspace admins can configure the `tools_repo` setting from App Home → Settings using the **Self-authored tools repository** field. The value is a single GitHub repository, either `owner/name` or a full `https://github.com/owner/name` URL.
+
+When `tools_repo` is empty or unset, sandbox startup does not clone any tools repository. When it is set, Aura clones the repository into `/home/user/aura-tools` after the sandbox is acquired. If that path already contains a valid Git repository, Aura runs `git pull --ff-only` instead so recycled sandboxes pick up updates.
+
+Clone or pull failures are logged as warnings and do not block sandbox startup. Ensure the sandbox has access to a `GITHUB_TOKEN` credential that can read the configured repository.
+
+---
+
+## Persistent storage
+
+In addition to the per-user sandbox filesystem, each user gets a GCS-backed persistent mount via gcsfuse at `/mnt/aura-files/users/<user_id>/`. The GCS mount survives even if the sandbox itself is destroyed (template upgrade, manual reset, or E2B-side eviction), so it's the right place for anything that must outlive the sandbox lifecycle.
+
+Use persistent storage for:
+- Long-running work that spans multiple conversations (large datasets, intermediate results)
+- SQLite databases for complex analysis (note: SQLite files can be lost on sandbox pause/resume edge cases -- prefer MongoDB Atlas for anything that must survive)
+- Downloaded files you need to reference later
+
+### MongoDB Atlas (recommended for structured cross-session state)
+
+When `MONGODB_ATLAS_URI` is configured, Aura has a dedicated schema-less scratch database for ad-hoc per-task collections. This is the preferred storage layer for anything that needs structured CRUD across sessions -- it's faster than GCS FUSE, more durable than SQLite-in-sandbox, and doesn't require schema migrations.
+
+**Typical uses:**
+- Tracking state for daily/recurring jobs (e.g. Facebook comment moderation: which comment IDs have been classified and what action was taken).
+- Staging area between fetch and load jobs (Notion dumps, scraping, enrichment pipelines).
+- Long-lived task collections that don't deserve a Postgres schema.
+
+**Conventions:**
+- One DB (default `aura`), many collections.
+- Collection naming: `<domain>_<purpose>` (e.g. `fb_comments`, `notion_dump_2026_05_20`).
+- `mongosh` and the `mongodb` node driver are pre-installed in the sandbox template.
+- The Mongo URI is injected per-job via the credential system -- never logged or echoed.
+
+**Boundary with Postgres:**
+- Postgres (`DATABASE_URL`) is the system's mission-critical spine: memories, messages, entities, jobs, notes. Aura does not write DDL or mutate Postgres without explicit owner approval.
+- MongoDB Atlas is Aura's scratch space. Create collections freely.
+
+Every sandbox command also receives `USER_HOME` and `PERSISTENT_HOME` environment variables pointing at the resolved per-user home, so scripts can write portable paths like `$PERSISTENT_HOME/downloads/` without hardcoding the mount.
+
+The mount is set up automatically when a sandbox command tool executes. If the mount isn't available (e.g. GCS credentials not configured), Aura falls back to `/home/user/` with a warning.
+
+Common persistent paths:
+- `/mnt/aura-files/users/<user_id>/` — per-user persistent root
+- `/mnt/aura-files/users/<user_id>/downloads/` — persistent downloads
 
 ---
 
 ## Isolation model
 
-The sandbox is isolated from the Vercel runtime. It **cannot** access:
-- The production PostgreSQL database (use `psql "$DATABASE_URL"` after extracting the URL via `skill-vercel-env-extraction`)
-- Slack tokens (unless extracted and passed explicitly)
-- Other production env vars (must be fetched from Vercel API using the `skill-vercel-env-extraction` playbook)
+The sandbox is isolated from the Vercel runtime. It **cannot** directly access:
+- The production PostgreSQL database (credentials are injected per-user via `DATABASE_URL` if the user has access)
+- Slack tokens (unless injected via the credential system)
+- Other production env vars (must be fetched from Vercel API)
 
 This isolation is intentional — Aura can run untrusted code without risk to the production system.
+
+<Note>
+Sandboxes are per-user. Credential injection is also user-scoped: each command runs with only the credentials the calling user is allowed to see. See [Credentials](/tools/credentials) for the scoping rules.
+</Note>
 
 ---
 
@@ -73,8 +206,12 @@ This isolation is intentional — Aura can run untrusted code without risk to th
 | Task | Recommended timeout |
 |------|-------------------|
 | Quick commands (`ls`, `grep`, `git log`) | 10–30s |
-| Code execution, file processing | 60–120s |
-| `claude` agent tasks (multi-file changes) | 400–750s |
-| Long web crawls or batch processing | 300–600s |
+| Code execution, file processing | 60–90s |
+| `claude` agent tasks (multi-file changes) | Use `run_command_detached`, or 400-750s only for intentionally blocking work |
+| Long web crawls or batch processing | Use `run_command_detached` and poll with `check_command` |
+
+Slack `chat.stream` sessions cap at around 3 minutes. Individual foreground tool calls longer than 90s can leave the in-flight Slack message frozen on a tool widget before the response continues elsewhere, so prefer smaller commands and only set higher `timeout_seconds` when the work is headless or intentionally long-running.
+
+When running `for` or `while` loops that make outbound network calls, start the script with `set -e` so one failed or timed-out command aborts the loop instead of compounding many slow failures.
 
 The Vercel function timeout is 800s. Leave a 50s buffer for overhead — use 750s maximum.

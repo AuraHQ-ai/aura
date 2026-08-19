@@ -1,0 +1,176 @@
+---
+title: "Dashboard"
+description: "Monitor and manage your Aura instance through the admin dashboard."
+---
+
+# Dashboard
+
+The admin dashboard is a Vite + React application (with TanStack Router and TanStack Query) that provides full visibility into Aura's operation. It's deployed alongside the API as a single Vercel project. Access requires the `power_user` role or higher (see [Access & Authentication](#access--authentication)).
+
+## Pages
+
+### Overview
+
+The landing page shows at-a-glance instance health:
+
+- Count cards: notes, memories, users, active jobs, errors in the last 24h
+- Recent errors list with resolution status
+- Recent job executions with trigger and status
+
+### Conversations
+
+Browse every conversation Aura has had. Each conversation shows:
+
+- Full message thread (user messages, Aura responses, tool calls)
+- Extended thinking / reasoning traces
+- Token usage breakdown (input, output, cache tokens)
+- Cost per conversation
+- Channel and user context
+
+Filter by user, channel, date range, or search by content.
+
+The **Invocations** sub-tab (`/conversations/invocations`) shows each individual LLM invocation with its tool calls, token counts, and timing -- useful for debugging multi-step agent work.
+
+### Consumption
+
+Track token usage and costs over time:
+
+- Daily/weekly/monthly cost charts with shareable date range filters
+- Breakdown by model (Claude, Grok, etc.)
+- Per-user consumption tables with totals and pagination
+- Token type distribution (input vs output vs cache)
+- Share bars for quick relative comparisons
+
+The date range selection is reflected in the URL so specific windows can be bookmarked and shared.
+
+### Memories
+
+Browse and search Aura's extracted memories:
+
+- Filter by type (fact, decision, preference, event, open_thread)
+- View category, importance, relevance score, status, and creation time
+- Open a detail dialog or delete stale memories
+
+The **Entities** sub-tab (`/memories/entities`) lists resolved entities (people, companies, projects, products, channels, technologies, concepts, and locations) that Aura has extracted from conversations. Each entity has a canonical name, type, alias list, and count of linked memories.
+
+### Notes
+
+View and manage Aura's knowledge base:
+
+- Three categories: skill (playbooks), plan (ephemeral), knowledge (reference)
+- See injection status, importance scores, and summaries
+- Full content viewer with metadata
+
+### Jobs
+
+Monitor and manage scheduled and recurring jobs:
+
+- View pending, running, completed, and failed jobs
+- See execution history and logs
+- Check cron schedules and frequency limits
+- See each job's model category in the list (`medium (default)` when unset)
+- Edit a job's execution scope from the detail page: model category (main/fast/medium/escalation), prompt mode (full/task), and the sandbox env allowlist — env var **names** only, values are never displayed
+
+### Adoption
+
+Track how Aura is being adopted across the workspace over a chosen date range (default: last 180 days, Europe/Amsterdam timezone):
+
+- Headline KPIs: workspace reach, DAU / WAU / MAU with week-over-week deltas, power users, new users (7d / 28d), DAU/MAU stickiness
+- Activity volume chart (DAU, rolling 7-day WAU, rolling 28-day MAU) with weekend markers
+- Stickiness chart with 20% / 30% / 50% reference lines
+- Penetration funnel from workspace members through ever-talked, MAU, WAU, DAU, and power users -- with drop-off at each stage
+- Depth of engagement: P50 / P90 / P99 messages per active user and a histogram of message-count buckets
+- Weekly cohort retention table by first-message week, color-coded by return rate
+- Week-1 retention, returning-MAU rate, and DM vs mention share (28d)
+- Team adoption table (team comes from `users.known_facts.team`): per-team DAU/WAU/MAU, MAU%, dormant users, top user
+- Top active users (last 7 days) and dormant users (previously active, now silent)
+
+The date range is reflected in the URL so specific windows can be bookmarked and shared.
+
+### Credentials
+
+Manage the encrypted credential store:
+
+- View stored credentials per user (names only — values are never displayed)
+- Set scope (owner, admin, power_user, member) to control minimum access level
+- See credential types (token, OAuth client)
+- Manage grants — add or remove user access via a user picker dropdown
+- Monitor usage and last-accessed timestamps
+
+### Evals
+
+Review the automated response-quality funnel:
+
+- Every assistant response is scored by a fast-tier judge (hourly cron `/api/cron/eval-responses`) using ~20-turn sliding windows over each settled thread
+- Each response gets an atomic verdict: **fulfilled**, **partial**, or **failed** (plus a scorable flag) -- stored once, never overwritten on re-runs
+- Funnel cards aggregate verdicts by failure class, serving intent, and user, with estimated cost per failure class
+- Detail pages support human adjudication: add a note, a gold answer, a must-do / must-not-do rubric, and ratify the verdict
+- Ratified failures, deduped by failure class, feed the curated regression bench
+
+Verdict badges also appear inline on assistant messages in the Conversations timeline, linking to the corresponding eval detail page. For how scoring works under the hood, see [Eval Funnel](/eval-funnel).
+
+### Errors
+
+Track production errors:
+
+- Error events with stack traces and captured context
+- Search by error name and filter by open/resolved status
+- Bulk-resolve selected errors from the list
+- Open detail pages to inspect user, channel, channel type, context, and stack trace
+
+### Users
+
+View and manage workspace member profiles:
+
+- Interaction count, last-active time, timezone, and learned communication style (verbosity, formality, emoji usage, preferred format)
+- **Role management**: assign `owner`, `admin`, `power_user`, or `member` directly from the user detail page -- this is how new members get dashboard access
+- Editable person fields: job title, preferred language, gender, and free-form notes
+- A Memories tab listing every memory linked to that user
+
+### Resources
+
+Manage ingested content:
+
+- Source types: web pages, GitHub, docs, YouTube, Notion, PDFs, and Slack content
+- Filter by source and extraction status (ready / error / pending), with content previews
+
+### Settings
+
+Configure instance behavior:
+
+- Admin user IDs
+- Model selection for all five categories (fast, medium, main, escalation, embedding) from the **full** Vercel AI Gateway catalog — a searchable, type-to-filter autocomplete grouped by provider, filtered only by capability metadata (image/video/embedding/reranking models are excluded from the chat categories). Choices persist as `model_*` settings through the settings API
+- Manual "Refresh Catalog" sync for newly available gateway models
+- Feature flags
+- Theme selection (light/dark/system) -- moved here from the header
+
+## Access & Authentication
+
+The dashboard uses Slack OAuth for login. Access requires at least the `power_user` role (see [Permissions](/permissions)). The `AURA_ADMIN_USER_IDS` env var serves as a fallback for users without a database role.
+
+### Slack OIDC
+
+Authentication is handled directly by the Hono API via Slack's OpenID Connect flow. The API exposes `/login` and `/callback` routes that handle the full OAuth cycle -- no proxy or intermediate redirects needed.
+
+The callback issues a session JWT (HS256, `DASHBOARD_SESSION_TTL` or `365d` by default) stored in the dashboard client. For preview and branch deployments, an origin allowlist (restricted to trusted domain suffixes like `.aurahq.ai` and `localhost`) prevents token theft via crafted redirect URLs.
+
+**Required env vars:** `DASHBOARD_SESSION_SECRET`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`.
+
+
+## Chat
+
+The dashboard includes an embedded chat interface for interacting with Aura directly from the admin UI -- useful for testing and debugging without switching to Slack.
+
+Chat streams are resumable: if the page reloads, the network drops, or a serverless function times out mid-response, the client reconnects to the in-flight run's stream and replays it, continuing with the live tail instead of losing the response.
+
+The model picker in the chat panel uses the same searchable autocomplete as the Settings page, grouped by provider. Both stay in sync -- changing the model in one place updates the other.
+
+A copy-to-clipboard button in the chat header exports the current conversation (including tool calls, tool results, and reasoning) as JSON -- handy for sharing a repro, filing a bug, or seeding an evaluation case.
+
+Each chat message carries its own `modelId` / `resolvedModelId` metadata, so the exported JSON records which model actually produced each turn even when the selection changes mid-conversation.
+
+Chat generation is durable: each send starts a server-side workflow run (tracked in the `dashboard_chat_runs` table), and the browser is just a stream reader. Refreshing, switching threads, or reconnecting from another session reattaches to the live stream instead of killing the run -- only the Stop button (a server-side cancel endpoint) actually stops generation. Threads are scoped to the signed-in user's session.
+
+## Navigation
+
+Account controls (settings, account menu) live in the sidebar footer, following the Cursor navigation pattern. The header stays focused on page actions. Theme selection (light/dark/system) is inside Settings rather than the header.

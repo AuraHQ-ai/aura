@@ -5,17 +5,53 @@ description: "How Aura's message pipeline, memory system, tools, and self-improv
 
 # Architecture
 
-Aura is a Hono-based application deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses Claude models for reasoning.
+Aura is a Nitro-based application with Hono routing, deployed on Vercel serverless functions. She processes Slack events, maintains long-term memory in PostgreSQL, and uses LLMs (Claude, Grok) for reasoning via the Vercel AI SDK.
+
+## Monorepo Structure
+
+```
+aura/
+├── apps/
+│   ├── api/            # Core agent (Nitro + Hono, Vercel Functions)
+│   │   └── src/
+│   │       ├── pipeline/    # Message processing, prompt assembly
+│   │       ├── tools/       # 27 tool modules (Slack, email, BigQuery, etc.)
+│   │       ├── memory/      # Extract, store, retrieve, consolidate
+│   │       ├── cron/        # Heartbeat, memory consolidation, email sync
+│   │       ├── routes/      # Dashboard API routes
+│   │       ├── app.ts         # Hono app — Slack events/interactions, webhooks, cron endpoints
+│   ├── dashboard/      # Admin UI (Vite + React + TanStack Router)
+│   │   └── src/routes/
+│   │       ├── conversations/   # Conversation traces & threads
+│   │       ├── consumption/     # Token usage & cost tracking
+│   │       ├── memories/        # Memory browser
+│   │       ├── notes/           # Notes manager
+│   │       ├── jobs/            # Job scheduler & history
+│   │       ├── credentials/     # Encrypted credential store
+│   │       ├── errors/          # Error event log
+│   │       ├── users/           # User profiles
+│   │       ├── resources/       # Ingested resources
+│   │       └── settings/        # Instance configuration
+│   └── web/            # Marketing site (aurahq.ai)
+├── packages/
+│   └── db/             # Shared DB layer (Drizzle ORM)
+│       ├── src/schema.ts    # Full database schema
+│       └── drizzle/         # Migration files
+└── content/
+    └── docs/           # Documentation (Mintlify)
+```
 
 ## System Overview
 
 ```
-Slack Events → Vercel Function → Hono Router → Message Pipeline → Claude (AI SDK)
+Slack Event → Vercel Function → Nitro + Hono Router → Message Pipeline → LLM (Vercel AI SDK)
                                                       ↕
                                               PostgreSQL + pgvector
-                                              (memories, messages, notes, jobs)
+                                      (memories, messages, conversations, notes, jobs)
                                                       ↕
-                                              Tools (Slack, BigQuery, GitHub, Gmail, ...)
+                                              Tools (27 modules)
+                                                      ↕
+                                              Admin Dashboard (Vite + React)
 ```
 
 ## Message Pipeline
@@ -23,56 +59,144 @@ Slack Events → Vercel Function → Hono Router → Message Pipeline → Claude
 When a Slack message arrives:
 
 1. **Event deduplication** — Slack sometimes sends duplicate events. The `event_locks` table prevents double-processing.
-2. **Context loading** — Recent conversation history, relevant memories, user profile, and channel context are loaded in parallel.
+2. **Context loading** — Recent conversation history, relevant memories, user profile, notes index, and channel context are loaded in parallel.
 3. **Memory retrieval** — Hybrid search (vector + full-text) finds relevant memories from past conversations.
-4. **LLM reasoning** — Claude processes the message with full context and available tools.
-5. **Response streaming** — The response streams back to Slack in real-time using `chatStream`.
-6. **Memory extraction** — Facts, decisions, and sentiments are extracted from the conversation and stored as new memories.
+4. **Prompt assembly** — System prompt is built in two layers: a stable prefix (personality, self-directive, notes index, memories, user profile) and a dynamic context (current time, active model, channel, and usage stats with 7-day activity metrics and week-over-week trends).
+5. **LLM reasoning** — The selected model (Claude, Grok, etc.) processes the message with full context and available tools. Extended thinking captures the reasoning trace (Claude models).
+6. **Response streaming** — The response streams back to Slack in real-time via the Vercel AI SDK.
+7. **Conversation persistence** — The full conversation trace (messages, tool calls, reasoning, token usage) is stored with cost tracking.
+8. **Memory extraction** — Thread-scoped reconciliation compares the full conversation against existing memories and produces create, update, and delete operations, storing facts, decisions, preferences, events, and open threads.
 
-## Memory System
+## Conversation Traces
 
-Aura's memory is a PostgreSQL database with pgvector embeddings. See [Memory System](/memory-system) for the deep dive.
+Every conversation is persisted with full detail:
 
-Key tables:
-- `memories` — Extracted facts, decisions, personal details, relationships
-- `messages` — Raw conversation history with embeddings
-- `notes` — Agent-authored knowledge articles (the "scratchpad")
-- `user_profiles` — Per-user communication preferences and known facts
+- **Messages** — User input, assistant responses, tool calls and results
+- **Reasoning traces** — Extended thinking content (Claude models)
+- **Token usage** — Input, output, and cache tokens per turn
+- **Cost tracking** — Per-conversation cost in USD based on model pricing
+- **Metadata** — Channel, thread, user, model, duration
+
+The [Dashboard](/dashboard) provides a UI for browsing conversation traces, filtering by user/channel, and analyzing costs.
+
+## Durable Execution (Vercel Workflow DevKit)
+
+Aura uses the Vercel Workflow DevKit for durable execution in the Nitro API, with `"use workflow"` and `"use step"` directives defining resumable workflow boundaries. Dashboard chat always runs as a workflow in `apps/api/workflows/dashboard-chat.ts`: the server owns generation, the browser is only a stream reader, and streams can be resumed after disconnects. Slack respond has a flag-gated durable path in `apps/api/workflows/slack-respond.ts`, enabled by `AURA_WDK_SLACK_RESPOND=1` or the `wdk_slack_respond` dashboard setting. This path lets Slack message responses resume after function interruption while the legacy in-process responder remains the default when the flag is off. Durable execution removes the 800s `maxDuration` ceiling that otherwise bounds turn cost, so the WDK path enforces its own wall-clock turn budget and continuation-depth cap on top of its 250-step limit -- see [Jobs -- Turn wall-clock budget](/tools/jobs#turn-wall-clock-budget).
 
 ## Tool System
 
-Tools are defined using the AI SDK `tool()` function with Zod schemas. Each tool has:
-- An `inputSchema` describing its parameters
-- A `description` that guides the LLM on when and how to use it
-- An `execute` function that performs the action
+Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `tool()` that adds audit logging and approval policies. Aura has **27 tool modules** organized by domain:
 
-Tool categories:
-- **Slack** — Send messages, search conversations, manage channels
-- **Email** — Read, search, compose via Gmail
-- **Data** — BigQuery queries, Google Sheets, Drive
-- **Calendar** — View and create events
-- **Sandbox** — Run arbitrary code in an isolated Linux VM (via E2B)
-- **Notes** — Read and write to the knowledge graph
-- **Jobs** — Schedule and manage autonomous tasks
-- **Self-improvement** — Read own source code, file GitHub issues, dispatch agents
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **Slack** | Messages, channels, threads, reactions, lists, tables | Full workspace interaction |
+| **Email** | Gmail read, search, compose, sync, triage | Inbox management with state machine |
+| **Data** | BigQuery, Google Sheets, Google Drive | Data warehouse and document access |
+| **Web** | Search, read URLs, browser automation | External information gathering |
+| **Code** | Sandbox (shell), GitHub CLI, subagents | Code execution and development |
+| **Memory** | Notes, conversations, people | Knowledge management |
+| **Scheduling** | Jobs, datetime | Autonomous task scheduling |
+| **Integration** | Credentials, Cursor agents | Credential management and async coding agents |
+| **Communication** | Voice, resources | Phone calls, content ingestion |
+
+Each tool has a description that guides the LLM on when and how to use it -- these descriptions are a critical part of Aura's behavior.
+
+### Deferred tool loading
+
+Not every tool schema is sent to the model on every turn. Frequently used tools (Slack messaging, sandbox commands, notes, memories) are loaded eagerly; infrequent ones (Calendar, Canvas, Gmail triage, Cursor agents, voice, and others -- 59 tools total, listed in `apps/api/src/tools/deferred.ts`) are marked with Anthropic's `deferLoading` provider option. Their full schemas are omitted from the prompt and replaced by a one-line manifest, and the model loads them on demand via Anthropic's native BM25 tool-search meta-tool (`toolSearchBm25_20251119`, exposed in the prompt as `tool_search_tool_bm25`). This keeps the prompt small without shrinking the toolset. Deferred loading only applies to Anthropic models; other providers receive the full schemas.
 
 ## Heartbeat & Cron
 
 A heartbeat runs every 30 minutes via Vercel Cron. It:
-1. Checks for due jobs (both scheduled and recurring)
-2. Executes each job with full tool access
-3. Logs execution traces for debugging
 
-Jobs include bug sweeps, email digests, memory consolidation, and follow-ups.
+1. Checks for due jobs (both one-shot and recurring)
+2. Evaluates cron schedules and frequency limits
+3. Executes each job with full tool access (up to 350 tool calls per job)
+4. Logs execution traces for debugging
+5. Writes a row to `job_outcomes` after every execution (success, error, or interruption) and fires a webhook to the supervisor
+6. Reaps orphaned supervisor invocations and jobs that died pre-execution
 
-## Self-Improvement
+Every execution outcome is reviewed by the **supervisor** -- a separately invoked fast-model LLM at `POST /api/cron/supervisor` that picks one of seven fixed decisions (`silent_success`, `report_success`, `report_failure`, `retry_as_is`, `retry_with_fix`, `escalate`, `disable_job`). It replaces the older blind 3x backoff retry loop: retries are now LLM-decided, and `retry_with_fix` can open an `auto-supervisor-fix` issue on the repo. Each outcome is processed up to 3 times before being marked `skipped`. See [Jobs -- Supervisor pattern](/docs/tools/jobs#supervisor-pattern) for the full decision table and orphan-sweep thresholds.
 
-Aura can modify her own codebase through a controlled loop:
-1. Identify a gap (failed retrieval, tool error, user feedback)
-2. Read relevant source code via the GitHub API
-3. File an issue describing the problem
-4. Dispatch a Cursor agent to write the fix
-5. Open a PR for human review
-6. The PR is reviewed and merged (or not) by a human
+Additional scheduled work:
+- **Memory consolidation** (`/api/cron/consolidate`) — Daily at 4 AM UTC. Decays old memories, merges duplicates.
+- **Eval responses** (`/api/cron/eval-responses`) — Hourly.
+- **Note expiry** — Runs inside the heartbeat; cleans up expired plan notes.
 
-The safety constraint: Aura cannot push to `main`. All changes go through PRs with human approval.
+Email sync has no dedicated cron: Gmail staleness checks and bounded syncs happen lazily inside the email triage tools (`email_digest`, `search_emails`, `update_email_thread`) when the synced data is stale.
+
+## Model Resolution
+
+Every LLM call in Aura resolves a gateway model ID at runtime through a two-step chain:
+
+1. **Settings row** — `getSetting("model_<category>")` reads the `settings` table. Admins set these from the dashboard or the Slack App Home. This is the authoritative source.
+2. **Last-resort hardcoded constant** (`LAST_RESORT_MODELS` in `apps/api/src/lib/ai.ts`) — used when no settings row exists. A `warn`-level log entry is emitted so operators know the fallback fired. The constant is intentionally explicit and small so it is easy to update when a newer default model is preferred.
+
+| Category | Setting key | Last-resort default |
+|---|---|---|
+| `main` | `model_main` | `anthropic/claude-sonnet-4.5` |
+| `fast` | `model_fast` | `anthropic/claude-haiku-4.5` |
+| `medium` | `model_medium` | `anthropic/claude-sonnet-4.5` |
+| `escalation` | `model_escalation` | `anthropic/claude-opus-4.5` |
+| `embedding` | `model_embedding` | `openai/text-embedding-3-small` |
+
+> **Removed**: `model_catalog_selections` was previously used as a middle tier between the settings row and the hardcoded constant. The table has been dropped — resolution now goes directly from the settings row to `LAST_RESORT_MODELS`.
+
+## Extended Thinking
+
+Aura captures the model's reasoning process before it generates a response, across every provider that exposes it -- not just Claude. These reasoning traces are:
+
+- Stored alongside conversation messages
+- Visible in the dashboard for debugging
+- Useful for understanding why Aura made specific decisions or tool calls
+
+Reasoning support is driven by the model catalog rather than any hand-maintained regex or model-ID parsing. Two columns on `model_catalog` carry the signal:
+
+- **`tags`** -- synced verbatim from the Vercel AI Gateway. The presence of `"reasoning"` sets `supportsThinking`, used for surfacing which models think at all.
+- **`capabilities`** -- a structured, per-provider config persisted as JSONB and validated by a discriminated-union Zod schema (`ModelCapabilities`). This is the source of truth for *how* to ask each model to think.
+
+`getModelCapabilities` reads both columns (with a 5-minute in-process cache). `resolveProviderThinkingOptions` in `prepare-step.ts` then maps the stored capability to the correct provider option, so new releases light up automatically without a code change:
+
+- **Anthropic** -- `thinkingMode` of `enabled` (`{ type: "enabled", budgetTokens }`, a per-step token budget; used for Sonnet and older Opus), `adaptive` (`{ type: "adaptive" }`, the model self-manages its budget; Opus 4.7+ is adaptive-only and rejects a classic budget request), or `none`.
+- **OpenAI** -- `reasoningEffort` of `minimal` / `low` / `medium` / `high` / `none`.
+- **Google** -- `thinkingBudget` as a token count, `dynamic` (maps to `-1`), or `none`.
+- **xAI** -- `reasoningEffort` of `low` / `high` / `none`.
+
+Capabilities are seeded on catalog refresh: Anthropic models are live-probed (`probeAnthropicThinkingMode` sends a throwaway request and inspects the error to tell `enabled` from `adaptive`), while OpenAI/Google/xAI reasoning models are inferred statically from provider + tags. When a model has no persisted `capabilities` yet, Aura falls back to the historical Anthropic `enabled` behavior and lets the next probe write the precise mode back.
+
+## Slack Streaming & Task Display
+
+Aura uses the Slack 2026 Agent SDK (`chat.startStream` / `chat.appendStream`) to stream responses in real time. Tool calls render as native task cards rather than inline markdown.
+
+Three display modes are supported via the `slack_task_display_mode` workspace setting (configurable from the App Home admin panel):
+
+- **`timeline`** (default) -- per-step `task_update` chunks render as a live feed of tool cards.
+- **`plan`** -- an upfront plan block is emitted at stream start, seeded from the registered tools' `slackMeta.status`, then updated as steps progress.
+- **`hybrid`** -- both a plan block and per-step timeline cards.
+
+When a tool result includes sources, they are emitted as dedicated `url_source` chunks (separate from the `task_update` payload) so Slack renders citation blocks inline with the response.
+
+Non-fatal chunk shapes (e.g. `plan`, `url_source`, `blocks`) are skipped rather than collapsing the stream to a `postMessage` fallback. Truly invalid payloads log a warning and continue.
+
+### setStatus shimmer
+
+While Aura reasons, an assistant-thread status is shown via `assistant.threads.setStatus` (e.g. "Thinking...", "Thinking deeply..."). Channels where the workspace lacks permission are cached in-process on first failure and skipped on subsequent calls to avoid log spam and repeated retries.
+
+## Multi-Tenancy
+
+Aura's database schema is workspace-scoped. A central `workspaces` table (keyed by Slack team ID) owns all data, and every major table includes a `workspace_id` foreign key:
+
+- **Workspace isolation** -- Memories, messages, conversations, notes, jobs, credentials, user profiles, and settings are all scoped to a workspace ID. Unique constraints are composite (workspace_id + original key) so multiple workspaces can coexist in a single database.
+- **Backwards compatibility** -- Existing single-workspace deployments use a `'default'` workspace ID, seeded automatically by the migration. No configuration changes needed.
+- **Schema enforcement** -- `workspace_id` is `NOT NULL` with a default value and foreign key constraint on all scoped tables. The `workspaceId()` helper in the schema ensures consistent column definitions.
+
+This is Phase 1 (schema + migration). Query-level filtering by workspace is not yet enforced at the application layer.
+
+## Credential System
+
+Users store API keys and OAuth credentials through Aura's Slack App Home. Credentials are:
+
+- Encrypted at rest (AES-256-GCM)
+- Scoped per user -- Aura can only access credentials the owner has stored
+- Injected as environment variables into the caller's sandbox, scoped per user (the LLM never sees raw values -- see [Credentials](/tools/credentials))
+- Support both static tokens and OAuth client credentials with automatic token refresh

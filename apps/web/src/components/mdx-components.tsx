@@ -1,4 +1,6 @@
 import type { MDXComponents } from "mdx/types";
+import { SlackConversation } from "@/components/slack-conversation";
+export type { SlackMessage, ContentNode, TextNode, ToolCallNode } from "@/components/slack-conversation";
 
 function CodeBlock({
   children,
@@ -66,4 +68,5 @@ export const mdxComponents: MDXComponents = {
   code: CodeBlock,
   Callout,
   table: TableWrapper,
+  SlackConversation,
 };

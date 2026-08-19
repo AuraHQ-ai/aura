@@ -1,0 +1,34 @@
+---
+title: "Tables"
+description: "Render native Slack tables for structured data output."
+---
+
+# Slack Tables
+
+When Aura needs to display tabular data -- query results, comparisons, lists with multiple columns -- she renders native Slack tables instead of markdown.
+
+## Why Not Markdown?
+
+Markdown tables render poorly in Slack. They lose alignment, wrap awkwardly on mobile, and can't be scrolled. Native Slack tables are properly formatted, responsive, and support column alignment.
+
+## Usage
+
+The `draw_table` tool supports three modes:
+
+| Mode | When to Use |
+|------|-------------|
+| **Inline** (default) | Single table attached to the current reply |
+| **Reply** | Multiple tables in a thread |
+| **Targeted** | Post a table to a different channel or DM |
+
+## Example
+
+```
+Rows:
+  ["Name", "Role", "Location"]
+  ["Joan", "Co-founder", "Zurich"]
+  ["Jonas", "Co-founder", "Paris"]
+  ["Jakub", "CPO", "Warsaw"]
+```
+
+The first row is always the header. All rows must have the same number of columns (max 20 columns, 100 rows).

@@ -1,8 +1,14 @@
-# Aura sandbox template
-# Build: cd sandbox && E2B_API_KEY=e2b_xxx e2b template create aura-sandbox
-# After build: set E2B_TEMPLATE_ID in Vercel env vars
+# Aura sandbox template — single source of truth for the sandbox image.
+#
+# Build:  pnpm --filter aura-sandbox build:prod
+# After:  set E2B_TEMPLATE_ID=<id> in Vercel env vars
+#
+# The build script reads this file via E2B's fromDockerfile() API.
+# USER root / USER user are required so the E2B SDK builder (which
+# defaults to a non-root user) runs install commands with privileges.
 
 FROM ubuntu:22.04
+USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -13,6 +19,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     postgresql-client \
     jq \
     ripgrep \
+    sqlite3 \
     curl \
     git \
     wget \
@@ -54,17 +61,41 @@ RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.
 # Vercel CLI
 RUN npm install -g vercel@latest
 
+# pnpm (monorepo package manager)
+RUN npm install -g pnpm
+
 # Claude Code
 RUN npm install -g @anthropic-ai/claude-code
 
-# gcsfuse (GCS bucket mounts)
-RUN echo "deb https://packages.cloud.google.com/apt gcsfuse-jammy main" \
+# gcsfuse (GCS bucket mounts) — signed keyring for proper APT auth
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/gcsfuse.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/gcsfuse.gpg] https://packages.cloud.google.com/apt gcsfuse-jammy main" \
     | tee /etc/apt/sources.list.d/gcsfuse.list > /dev/null \
     && apt-get update -qq && apt-get install -y gcsfuse \
-    && rm -rf /var/lib/apt/lists/* \
-    || true
+    && rm -rf /var/lib/apt/lists/*
+
+# Enable allow_other for FUSE mounts by non-root users
+RUN echo "user_allow_other" >> /etc/fuse.conf
+
+# MongoDB shell (mongosh) — for interactive Atlas debugging
+RUN curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc \
+    | gpg --dearmor -o /usr/share/keyrings/mongodb-org.gpg \
+    && echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-org.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" \
+    | tee /etc/apt/sources.list.d/mongodb-org-7.0.list > /dev/null \
+    && apt-get update -qq && apt-get install -y mongodb-mongosh \
+    && rm -rf /var/lib/apt/lists/*
+
+# MongoDB node driver — pre-installed at /home/user so scripts can `require('mongodb')`
+# without a per-job `npm install` cold-start cost (~3-5s saved).
+RUN mkdir -p /home/user && cd /home/user \
+    && npm init -y > /dev/null \
+    && npm install --silent mongodb \
+    && chown -R user:user /home/user
 
 # Working dirs
-RUN mkdir -p /home/user/downloads /home/user/data /home/user/aura
+RUN mkdir -p /home/user/downloads /home/user/data /home/user/aura \
+    && chown -R user:user /home/user
 
+USER user
 WORKDIR /home/user

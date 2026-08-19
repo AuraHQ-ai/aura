@@ -1,0 +1,866 @@
+import { sql } from "drizzle-orm";
+import { generateText, Output, type LanguageModel } from "ai";
+import { z } from "zod";
+import { db } from "../db/client.js";
+import { entities, entityAliases, memoryEntities } from "@aura/db/schema";
+import type { EntityType, MemoryEntityRole } from "@aura/db/schema";
+import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
+
+export interface ResolvedEntity {
+  entityId: string;
+  canonicalName: string;
+  type: EntityType;
+  confidence: "exact" | "alias" | "fuzzy" | "new";
+}
+
+// ── Fuzzy Disambiguation (Pass 2 LLM) ──────────────────────────────────────
+
+interface FuzzyCandidate {
+  entityId: string;
+  canonicalName: string;
+  type: string;
+  similarity: number;
+}
+
+const ALIAS_STOPWORDS = new Set([
+  "de",
+  "da",
+  "del",
+  "la",
+  "le",
+  "du",
+  "di",
+  "van",
+  "von",
+  "der",
+  "den",
+  "el",
+  "al",
+]);
+const SLACK_USER_ID_RE = /^[UW][A-Z0-9]{8,}$/;
+
+function normalizeToken(value: string): string {
+  return value.toLowerCase().trim();
+}
+
+function isMostlyDigits(value: string): boolean {
+  const compact = value.replace(/[\s\-_.]/g, "");
+  return compact.length > 0 && /^[0-9]+$/.test(compact);
+}
+
+function isValidAlias(alias: string): boolean {
+  const normalized = normalizeToken(alias);
+  if (!normalized) return false;
+  if (ALIAS_STOPWORDS.has(normalized)) return false;
+  if (isMostlyDigits(normalized)) return false;
+  if (SLACK_USER_ID_RE.test(alias.trim())) return false;
+
+  // Allow short handles/acronyms only.
+  if (normalized.length <= 2) {
+    if (alias.startsWith("@")) return true;
+    if (/^[A-Z0-9]{2}$/.test(alias)) return true;
+    return false;
+  }
+
+  return true;
+}
+
+function wordTokens(value: string): string[] {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map((p) => normalizeToken(p))
+    .filter(Boolean);
+}
+
+function isLowSignalTemporalEntityName(name: string): boolean {
+  const normalized = normalizeToken(name);
+  // Ambiguous quarter shorthand without a year/context anchor.
+  // Examples: Q1, q2, Q3, q4
+  if (/^q[1-4]$/.test(normalized)) return true;
+  return false;
+}
+
+async function isAmbiguousPersonFirstName(
+  workspaceId: string,
+  firstName: string,
+): Promise<boolean> {
+  if (!firstName) return false;
+  const rows = extractRows(
+    await db.execute(sql`
+      SELECT count(*)::int AS c
+      FROM entities
+      WHERE workspace_id = ${workspaceId}
+        AND type = 'person'
+        AND lower(split_part(canonical_name, ' ', 1)) = ${firstName}
+    `),
+  );
+  const count = Number(rows[0]?.c ?? 0);
+  return count > 1;
+}
+
+const disambiguationSchema = z.object({
+  match_index: z
+    .number()
+    .nullable()
+    .describe(
+      "0-based index of the candidate that is the SAME entity as the query, or null if none match",
+    ),
+});
+
+/**
+ * Ask the LLM whether a new entity name matches any of the fuzzy candidates.
+ * Returns the matched candidate or null if the LLM says it's a new entity.
+ */
+export async function disambiguateFuzzyMatches(
+  name: string,
+  type: string,
+  candidates: FuzzyCandidate[],
+  model: LanguageModel,
+): Promise<FuzzyCandidate | null> {
+  if (candidates.length === 0) return null;
+
+  const candidateList = candidates
+    .map((c, i) => `  ${i}: "${c.canonicalName}" (${c.type}, similarity ${c.similarity.toFixed(2)})`)
+    .join("\n");
+
+  const { output } = await generateText({
+    model,
+    telemetry: aiTelemetry("entity-disambiguate"),
+    output: Output.object({ schema: disambiguationSchema }),
+    instructions: `You are disambiguating entity names. Given a new entity name and a list of existing entities with similar names, determine if the new name refers to the SAME real-world entity as any candidate.
+
+Return match_index (0-based) of the matching candidate, or null if none match.
+
+CRITICAL rules:
+- "PR #43" and "PR #143" are DIFFERENT pull requests — do NOT match them.
+- "Issue #23" and "Issue #233" are DIFFERENT issues — do NOT match them.
+- Numbered identifiers (PRs, issues, tickets) with different numbers are ALWAYS different entities.
+- Only match when the names genuinely refer to the same thing (e.g. "PostgreSQL" ↔ "Postgres", "Joan Rodriguez" ↔ "Joan", "RealAdvisor" ↔ "RA").`,
+    prompt: `New entity: "${name}" (${type})\n\nCandidates:\n${candidateList}`,
+  });
+
+  if (output?.match_index != null && output.match_index >= 0 && output.match_index < candidates.length) {
+    return candidates[output.match_index];
+  }
+  return null;
+}
+
+// ── Alias Persistence ───────────────────────────────────────────────────────
+
+async function persistLlmAliases(entityId: string, llmAliases?: string[]): Promise<void> {
+  if (!llmAliases || llmAliases.length === 0) return;
+  for (const raw of llmAliases) {
+    const trimmed = raw.trim();
+    if (!trimmed || !isValidAlias(trimmed)) continue;
+    try {
+      await db
+        .insert(entityAliases)
+        .values({
+          entityId,
+          alias: trimmed,
+          source: "llm_extracted",
+        })
+        .onConflictDoNothing();
+    } catch {
+      // ignore duplicate alias conflicts
+    }
+  }
+}
+
+// ── Row extraction helper ───────────────────────────────────────────────────
+
+function extractRows(result: unknown): Array<Record<string, any>> {
+  return ((result as any).rows ?? result) as Array<Record<string, any>>;
+}
+
+/**
+ * Resolve a name to an entity using the cascade:
+ * 1. Exact canonical match
+ * 2. Exact alias match
+ * 3. Trigram fuzzy match (>0.4) with LLM disambiguation (if model provided)
+ * 4. Create new entity
+ *
+ * Pass `disambiguateModel` to enable two-pass LLM disambiguation on fuzzy matches.
+ * Without it, fuzzy matches are accepted blindly (backward-compat for read-only paths).
+ */
+export async function resolveEntity(
+  name: string,
+  type: EntityType,
+  workspaceId: string,
+  opts?: { llmAliases?: string[]; disambiguateModel?: LanguageModel },
+): Promise<ResolvedEntity> {
+  const llmAliases = opts?.llmAliases;
+  const disambiguateModel = opts?.disambiguateModel;
+  const lowerName = name.toLowerCase().trim();
+  if (!lowerName) {
+    throw new Error("Entity name cannot be empty");
+  }
+
+  try {
+    // 1. Exact canonical match
+    const exactRows = extractRows(
+      await db.execute(sql`
+        SELECT id, canonical_name, type
+        FROM entities
+        WHERE workspace_id = ${workspaceId}
+          AND type = ${type}
+          AND lower(canonical_name) = ${lowerName}
+        LIMIT 1
+      `),
+    );
+    if (exactRows.length > 0) {
+      await persistLlmAliases(exactRows[0].id, llmAliases);
+      return {
+        entityId: exactRows[0].id,
+        canonicalName: exactRows[0].canonical_name,
+        type: exactRows[0].type as EntityType,
+        confidence: "exact",
+      };
+    }
+
+    // 2. Exact alias match (same type)
+    const aliasRows = extractRows(
+      await db.execute(sql`
+        SELECT e.id, e.canonical_name, e.type
+        FROM entities e
+        JOIN entity_aliases ea ON e.id = ea.entity_id
+        WHERE ea.alias_lower = ${lowerName}
+          AND e.type = ${type}
+          AND e.workspace_id = ${workspaceId}
+        LIMIT 1
+      `),
+    );
+    if (aliasRows.length > 0) {
+      await persistLlmAliases(aliasRows[0].id, llmAliases);
+      return {
+        entityId: aliasRows[0].id,
+        canonicalName: aliasRows[0].canonical_name,
+        type: aliasRows[0].type as EntityType,
+        confidence: "alias",
+      };
+    }
+
+    // 2.5 Cross-type exact match
+    const crossTypeRows = extractRows(
+      await db.execute(sql`
+        SELECT id, canonical_name, type
+        FROM entities
+        WHERE workspace_id = ${workspaceId}
+          AND lower(canonical_name) = ${lowerName}
+        LIMIT 1
+      `),
+    );
+    if (crossTypeRows.length > 0) {
+      await persistLlmAliases(crossTypeRows[0].id, llmAliases);
+      return {
+        entityId: crossTypeRows[0].id,
+        canonicalName: crossTypeRows[0].canonical_name,
+        type: crossTypeRows[0].type as EntityType,
+        confidence: "exact",
+      };
+    }
+
+    // 2.6 Cross-type alias match
+    const crossAliasRows = extractRows(
+      await db.execute(sql`
+        SELECT e.id, e.canonical_name, e.type
+        FROM entities e
+        JOIN entity_aliases ea ON e.id = ea.entity_id
+        WHERE ea.alias_lower = ${lowerName}
+          AND e.workspace_id = ${workspaceId}
+        LIMIT 1
+      `),
+    );
+    if (crossAliasRows.length > 0) {
+      await persistLlmAliases(crossAliasRows[0].id, llmAliases);
+      return {
+        entityId: crossAliasRows[0].id,
+        canonicalName: crossAliasRows[0].canonical_name,
+        type: crossAliasRows[0].type as EntityType,
+        confidence: "alias",
+      };
+    }
+
+    // 3. Trigram fuzzy match — get top 5 candidates
+    const fuzzyRows = extractRows(
+      await db.execute(sql`
+        SELECT * FROM (
+          SELECT DISTINCT ON (e.id)
+            e.id, e.canonical_name, e.type,
+            similarity(ea.alias_lower, ${lowerName}) AS sim
+          FROM entities e
+          JOIN entity_aliases ea ON e.id = ea.entity_id
+          WHERE ea.alias_lower % ${lowerName}
+            AND e.workspace_id = ${workspaceId}
+            AND similarity(ea.alias_lower, ${lowerName}) > 0.4
+          ORDER BY e.id, sim DESC
+        ) sub
+        ORDER BY sim DESC
+        LIMIT 50
+      `),
+    );
+
+    if (fuzzyRows.length > 0) {
+      // Sort by similarity descending, take top 5
+      const candidates: FuzzyCandidate[] = fuzzyRows
+        .sort((a, b) => Number(b.sim) - Number(a.sim))
+        .slice(0, 5)
+        .map((r) => ({
+          entityId: r.id,
+          canonicalName: r.canonical_name,
+          type: r.type,
+          similarity: Number(r.sim),
+        }));
+
+      if (disambiguateModel) {
+        const match = await disambiguateFuzzyMatches(name, type, candidates, disambiguateModel);
+        if (match) {
+          await persistLlmAliases(match.entityId, llmAliases);
+          // Register the new name as an alias of the matched entity
+          await persistLlmAliases(match.entityId, [name]);
+          return {
+            entityId: match.entityId,
+            canonicalName: match.canonicalName,
+            type: match.type as EntityType,
+            confidence: "fuzzy",
+          };
+        }
+        // LLM said no match — fall through to create new entity
+      } else {
+        // No disambiguation model — accept best fuzzy match (backward compat)
+        const best = candidates[0];
+        await persistLlmAliases(best.entityId, llmAliases);
+        return {
+          entityId: best.entityId,
+          canonicalName: best.canonicalName,
+          type: best.type as EntityType,
+          confidence: "fuzzy",
+        };
+      }
+    }
+
+    // 4. Create new entity + aliases
+    const [newEntity] = await db
+      .insert(entities)
+      .values({
+        workspaceId,
+        type,
+        canonicalName: name,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (newEntity) {
+      await db
+        .insert(entityAliases)
+        .values({
+          entityId: newEntity.id,
+          alias: name,
+          source: "extracted",
+        })
+        .onConflictDoNothing();
+
+      await persistLlmAliases(newEntity.id, llmAliases);
+
+      if (type === "person") {
+        const parts = wordTokens(name);
+        const firstName = parts[0];
+        if (
+          firstName &&
+          isValidAlias(firstName) &&
+          !(await isAmbiguousPersonFirstName(workspaceId, firstName))
+        ) {
+          try {
+            await db
+              .insert(entityAliases)
+              .values({
+                entityId: newEntity.id,
+                alias: firstName,
+                source: "auto_generated",
+              })
+              .onConflictDoNothing();
+          } catch {
+            // ignore duplicate alias conflicts
+          }
+        }
+      }
+
+      return {
+        entityId: newEntity.id,
+        canonicalName: newEntity.canonicalName,
+        type: newEntity.type as EntityType,
+        confidence: "new",
+      };
+    }
+
+    // Conflict on insert — retry exact match
+    const retryRows = extractRows(
+      await db.execute(sql`
+        SELECT id, canonical_name, type
+        FROM entities
+        WHERE workspace_id = ${workspaceId}
+          AND type = ${type}
+          AND lower(canonical_name) = ${lowerName}
+        LIMIT 1
+      `),
+    );
+    if (retryRows.length > 0) {
+      await persistLlmAliases(retryRows[0].id, llmAliases);
+      return {
+        entityId: retryRows[0].id,
+        canonicalName: retryRows[0].canonical_name,
+        type: retryRows[0].type as EntityType,
+        confidence: "exact",
+      };
+    }
+
+    throw new Error(`Failed to create or find entity: ${name} (${type})`);
+  } catch (error) {
+    logger.error("Entity resolution failed", {
+      name,
+      type,
+      workspaceId,
+      error: String(error),
+    });
+    throw error;
+  }
+}
+
+/**
+ * Read-only entity resolution: resolves a name to an existing entity without
+ * creating new ones. Used during retrieval to avoid polluting the entity store.
+ *
+ * Cascade:
+ * 1. Exact canonical match (same type)
+ * 2. Exact alias match (same type)
+ * 3. Exact canonical match (any type)
+ * 4. Exact alias match (any type)
+ * 5. Trigram fuzzy match (any type, similarity > 0.4)
+ */
+export async function resolveEntityReadOnly(
+  name: string,
+  type: EntityType,
+  workspaceId: string,
+): Promise<ResolvedEntity | null> {
+  const lowerName = name.toLowerCase().trim();
+  if (!lowerName) return null;
+
+  try {
+    // 1. Exact canonical match (same type)
+    const exactCanonical = await db.execute(sql`
+      SELECT id, canonical_name, type
+      FROM entities
+      WHERE workspace_id = ${workspaceId}
+        AND type = ${type}
+        AND lower(canonical_name) = ${lowerName}
+      LIMIT 1
+    `);
+    const exactRows = ((exactCanonical as any).rows ?? exactCanonical) as Array<Record<string, any>>;
+    if (exactRows.length > 0) {
+      return {
+        entityId: exactRows[0].id,
+        canonicalName: exactRows[0].canonical_name,
+        type: exactRows[0].type as EntityType,
+        confidence: "exact",
+      };
+    }
+
+    // 2. Exact alias match (same type)
+    const exactAlias = await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower = ${lowerName}
+        AND e.type = ${type}
+        AND e.workspace_id = ${workspaceId}
+      LIMIT 1
+    `);
+    const aliasRows = ((exactAlias as any).rows ?? exactAlias) as Array<Record<string, any>>;
+    if (aliasRows.length > 0) {
+      return {
+        entityId: aliasRows[0].id,
+        canonicalName: aliasRows[0].canonical_name,
+        type: aliasRows[0].type as EntityType,
+        confidence: "alias",
+      };
+    }
+
+    // 3. Exact canonical match (any type)
+    const crossTypeCanonical = await db.execute(sql`
+      SELECT id, canonical_name, type
+      FROM entities
+      WHERE workspace_id = ${workspaceId}
+        AND lower(canonical_name) = ${lowerName}
+      LIMIT 1
+    `);
+    const crossCanonicalRows = ((crossTypeCanonical as any).rows ?? crossTypeCanonical) as Array<Record<string, any>>;
+    if (crossCanonicalRows.length > 0) {
+      return {
+        entityId: crossCanonicalRows[0].id,
+        canonicalName: crossCanonicalRows[0].canonical_name,
+        type: crossCanonicalRows[0].type as EntityType,
+        confidence: "exact",
+      };
+    }
+
+    // 4. Exact alias match (any type)
+    const crossTypeAlias = await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower = ${lowerName}
+        AND e.workspace_id = ${workspaceId}
+      LIMIT 1
+    `);
+    const crossAliasRows = ((crossTypeAlias as any).rows ?? crossTypeAlias) as Array<Record<string, any>>;
+    if (crossAliasRows.length > 0) {
+      return {
+        entityId: crossAliasRows[0].id,
+        canonicalName: crossAliasRows[0].canonical_name,
+        type: crossAliasRows[0].type as EntityType,
+        confidence: "alias",
+      };
+    }
+
+    // 5. Trigram fuzzy match (any type, similarity > 0.4)
+    const fuzzyMatch = await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type, similarity(ea.alias_lower, ${lowerName}) AS sim
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower % ${lowerName}
+        AND e.workspace_id = ${workspaceId}
+        AND similarity(ea.alias_lower, ${lowerName}) > 0.4
+      ORDER BY sim DESC
+      LIMIT 1
+    `);
+    const fuzzyRows = ((fuzzyMatch as any).rows ?? fuzzyMatch) as Array<Record<string, any>>;
+    if (fuzzyRows.length > 0) {
+      return {
+        entityId: fuzzyRows[0].id,
+        canonicalName: fuzzyRows[0].canonical_name,
+        type: fuzzyRows[0].type as EntityType,
+        confidence: "fuzzy",
+      };
+    }
+
+    return null;
+  } catch (error) {
+    logger.warn("Read-only entity resolution failed", {
+      name,
+      type,
+      workspaceId,
+      error: String(error),
+    });
+    return null;
+  }
+}
+
+const ROLE_PRIORITY: Record<string, number> = { subject: 0, object: 1, mentioned: 2 };
+
+/**
+ * Resolve multiple entities from extraction output.
+ * Deduplicates by extracted name, keeping the highest-priority role per name.
+ */
+export async function resolveEntities(
+  extracted: Array<{ name: string; type: EntityType; role?: MemoryEntityRole; aliases?: string[] }>,
+  workspaceId: string,
+  disambiguateModel?: LanguageModel,
+): Promise<Array<ResolvedEntity & { role?: MemoryEntityRole }>> {
+  if (extracted.length === 0) return [];
+
+  // Guardrail: if a standalone first-name person matches multiple existing
+  // person entities in this workspace, skip it instead of creating ambiguity.
+  const ambiguousPersonTokens = new Set<string>();
+  const hasSingleTokenPersons = extracted.some(
+    (e) => e.type === "person" && !e.name.trim().includes(" "),
+  );
+  if (hasSingleTokenPersons) {
+    try {
+      const rows = extractRows(
+        await db.execute(sql`
+          SELECT first_name
+          FROM (
+            SELECT lower(split_part(canonical_name, ' ', 1)) AS first_name
+            FROM entities
+            WHERE workspace_id = ${workspaceId}
+              AND type = 'person'
+          ) t
+          WHERE first_name IS NOT NULL
+            AND first_name <> ''
+          GROUP BY first_name
+          HAVING count(*) > 1
+        `),
+      );
+      for (const r of rows) {
+        const token = String(r.first_name ?? "").trim();
+        if (token) ambiguousPersonTokens.add(token);
+      }
+    } catch (error) {
+      logger.warn("Failed to compute ambiguous person tokens", {
+        workspaceId,
+        error: String(error),
+      });
+    }
+  }
+
+  // Deduplicate by type:name, keeping the highest-priority role and merging aliases
+  const bestByKey = new Map<string, { name: string; type: EntityType; role?: MemoryEntityRole; aliases?: string[] }>();
+  for (const item of extracted) {
+    const normalizedName = item.name.trim();
+    if (!normalizedName) continue;
+    if (isLowSignalTemporalEntityName(normalizedName)) {
+      logger.info("Skipping low-signal temporal entity", {
+        name: item.name,
+        workspaceId,
+      });
+      continue;
+    }
+    const nameParts = wordTokens(normalizedName);
+    const firstName = nameParts[0] ?? "";
+
+    if (item.type === "person" && !normalizedName.includes(" ")) {
+      if (ambiguousPersonTokens.has(firstName)) {
+        logger.info("Skipping ambiguous standalone person entity", {
+          name: item.name,
+          workspaceId,
+        });
+        continue;
+      }
+    }
+
+    const cleanedAliases = (item.aliases ?? []).filter((raw) => {
+      if (!isValidAlias(raw)) return false;
+      if (item.type !== "person") return true;
+
+      const alias = raw.trim();
+      if (alias.startsWith("@")) return true;
+      if (alias.includes(" ")) return true;
+
+      const aliasToken = normalizeToken(alias);
+      // Drop single-token person aliases (including first names) when ambiguous.
+      return !ambiguousPersonTokens.has(aliasToken);
+    });
+    const key = `${item.type}:${normalizedName.toLowerCase()}`;
+    const existing = bestByKey.get(key);
+    if (!existing) {
+      bestByKey.set(key, { ...item, aliases: cleanedAliases });
+    } else {
+      const mergedAliases = [
+        ...(existing.aliases ?? []),
+        ...cleanedAliases,
+      ];
+      if ((ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) < (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)) {
+        bestByKey.set(key, { ...item, aliases: mergedAliases });
+      } else {
+        existing.aliases = mergedAliases;
+      }
+    }
+  }
+
+  const results: Array<ResolvedEntity & { role?: MemoryEntityRole }> = [];
+  for (const item of bestByKey.values()) {
+    try {
+      const resolved = await resolveEntity(item.name, item.type, workspaceId, {
+        llmAliases: item.aliases,
+        disambiguateModel,
+      });
+      results.push({ ...resolved, role: item.role });
+    } catch (error) {
+      logger.warn("Skipping unresolvable entity", {
+        name: item.name,
+        type: item.type,
+        error: String(error),
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Link a memory to its resolved entities via the memory_entities junction table.
+ * Accepts resolved entities with optional per-entity role; defaults to "mentioned".
+ */
+export async function linkMemoryEntities(
+  memoryId: string,
+  resolvedEntities: Array<ResolvedEntity & { role?: MemoryEntityRole }>,
+): Promise<void> {
+  if (resolvedEntities.length === 0) return;
+
+  // Deduplicate by entityId, keeping the most important role
+  const best = new Map<string, { entityId: string; role: MemoryEntityRole }>();
+  for (const e of resolvedEntities) {
+    const role = e.role ?? ("mentioned" as MemoryEntityRole);
+    const existing = best.get(e.entityId);
+    if (!existing || (ROLE_PRIORITY[role] ?? 2) < (ROLE_PRIORITY[existing.role] ?? 2)) {
+      best.set(e.entityId, { entityId: e.entityId, role });
+    }
+  }
+
+  const values = [...best.values()].map((v) => ({
+    memoryId,
+    entityId: v.entityId,
+    role: v.role,
+  }));
+
+  try {
+    await db
+      .insert(memoryEntities)
+      .values(values)
+      .onConflictDoNothing();
+  } catch (error) {
+    logger.error("Failed to link memory entities", {
+      memoryId,
+      entityCount: values.length,
+      error: String(error),
+    });
+  }
+}
+
+/**
+ * Resolve an entity by name without requiring a type.
+ * Uses the same cascade as resolveEntityReadOnly but skips same-type steps:
+ * 1. Exact canonical match (any type)
+ * 2. Exact alias match (any type)
+ * 3. Trigram fuzzy match (any type, similarity > 0.4)
+ *
+ * Shared by: context builder (retrieve.ts), search_memories tool, search_entities tool.
+ */
+export async function resolveEntityByName(
+  name: string,
+  workspaceId: string,
+): Promise<ResolvedEntity | null> {
+  const lowerName = name.toLowerCase().trim();
+  if (!lowerName) return null;
+
+  try {
+    // 1. Exact canonical match
+    const exactCanonical = await db.execute(sql`
+      SELECT id, canonical_name, type
+      FROM entities
+      WHERE workspace_id = ${workspaceId}
+        AND lower(canonical_name) = ${lowerName}
+      LIMIT 1
+    `);
+    const exactRows = ((exactCanonical as any).rows ?? exactCanonical) as Array<Record<string, any>>;
+    if (exactRows.length > 0) {
+      return {
+        entityId: exactRows[0].id,
+        canonicalName: exactRows[0].canonical_name,
+        type: exactRows[0].type,
+        confidence: "exact",
+      };
+    }
+
+    // 2. Exact alias match
+    const exactAlias = await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower = ${lowerName}
+        AND e.workspace_id = ${workspaceId}
+      LIMIT 1
+    `);
+    const aliasRows = ((exactAlias as any).rows ?? exactAlias) as Array<Record<string, any>>;
+    if (aliasRows.length > 0) {
+      return {
+        entityId: aliasRows[0].id,
+        canonicalName: aliasRows[0].canonical_name,
+        type: aliasRows[0].type,
+        confidence: "alias",
+      };
+    }
+
+    // 3. Trigram fuzzy match (>0.4 similarity)
+    const fuzzyMatch = await db.execute(sql`
+      SELECT e.id, e.canonical_name, e.type, similarity(ea.alias_lower, ${lowerName}) AS sim
+      FROM entities e
+      JOIN entity_aliases ea ON e.id = ea.entity_id
+      WHERE ea.alias_lower % ${lowerName}
+        AND e.workspace_id = ${workspaceId}
+        AND similarity(ea.alias_lower, ${lowerName}) > 0.4
+      ORDER BY sim DESC
+      LIMIT 1
+    `);
+    const fuzzyRows = ((fuzzyMatch as any).rows ?? fuzzyMatch) as Array<Record<string, any>>;
+    if (fuzzyRows.length > 0) {
+      return {
+        entityId: fuzzyRows[0].id,
+        canonicalName: fuzzyRows[0].canonical_name,
+        type: fuzzyRows[0].type,
+        confidence: "fuzzy",
+      };
+    }
+
+    return null;
+  } catch (error) {
+    logger.warn("Type-agnostic entity resolution failed", {
+      name,
+      workspaceId,
+      error: String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Fuzzy-search entities by name. Returns multiple matches ranked by similarity.
+ * Used by the search_entities tool to browse/discover entities.
+ */
+export async function searchEntities(
+  query: string,
+  workspaceId: string,
+  options: { type?: string; limit?: number } = {},
+): Promise<Array<{ entityId: string; canonicalName: string; type: string; similarity: number; memoryCount: number; summary: string | null }>> {
+  const lowerQuery = query.toLowerCase().trim();
+  if (!lowerQuery) return [];
+
+  const { type, limit = 20 } = options;
+  const typeFilter = type ? sql`AND e.type = ${type}` : sql``;
+
+  try {
+    const result = await db.execute(sql`
+      SELECT
+        e.id,
+        e.canonical_name,
+        e.type,
+        GREATEST(
+          similarity(lower(e.canonical_name), ${lowerQuery}),
+          COALESCE((
+            SELECT MAX(similarity(ea.alias_lower, ${lowerQuery}))
+            FROM entity_aliases ea
+            WHERE ea.entity_id = e.id
+          ), 0)
+        ) AS sim,
+        (SELECT COUNT(*)::int FROM memory_entities me WHERE me.entity_id = e.id) AS memory_count,
+        e.summary
+      FROM entities e
+      WHERE e.workspace_id = ${workspaceId}
+        ${typeFilter}
+        AND (
+          lower(e.canonical_name) % ${lowerQuery}
+          OR e.id IN (
+            SELECT ea.entity_id FROM entity_aliases ea
+            WHERE ea.alias_lower % ${lowerQuery}
+          )
+        )
+      ORDER BY sim DESC
+      LIMIT ${limit}
+    `);
+
+    const rows = ((result as any).rows ?? result) as Array<Record<string, any>>;
+    return rows.map((r) => ({
+      entityId: r.id,
+      canonicalName: r.canonical_name,
+      type: r.type,
+      similarity: parseFloat(r.sim),
+      memoryCount: r.memory_count,
+      summary: r.summary ?? null,
+    }));
+  } catch (error) {
+    logger.warn("Entity search failed", { query, error: String(error) });
+    return [];
+  }
+}

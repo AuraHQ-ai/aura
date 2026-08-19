@@ -1,0 +1,46 @@
+---
+title: "Subagents"
+description: "Parallel fan-out for concurrent task execution."
+---
+
+# Subagents
+
+When work can be split into independent pieces, Aura uses subagents to run them concurrently. This is how she handles tasks like checking 5 channels at once or analyzing multiple datasets in parallel.
+
+## How It Works
+
+1. Aura identifies independent subtasks in the current work
+2. She dispatches multiple subagents simultaneously using `run_subagent`
+3. Each subagent runs with its own tool access and context
+4. Results are collected and synthesized
+
+## When to Use
+
+- Checking multiple Slack channels for updates
+- Analyzing several data sources in parallel
+- Investigating multiple bugs simultaneously
+- Fetching information from different APIs concurrently
+
+## When NOT to Use
+
+- Sequential work where step N depends on step N-1
+- Simple tasks that don't benefit from parallelism
+- Work that needs shared state between subtasks
+
+## Example
+
+```
+Task: "Check #bugs, #engineering, and #product for mentions of the outage"
+
+→ Subagent 1: search #bugs for "outage"
+→ Subagent 2: search #engineering for "outage"
+→ Subagent 3: search #product for "outage"
+
+All three run simultaneously. Results are merged into one summary.
+```
+
+## Limits
+
+- Each subagent has its own tool call budget
+- Subagents can't communicate with each other during execution
+- Results are returned to the parent agent for synthesis

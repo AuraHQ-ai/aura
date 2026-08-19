@@ -1,0 +1,187 @@
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { apiGet, apiDelete } from "@/lib/api";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { TableRowsSkeleton } from "@/components/page-skeleton";
+import { Pagination } from "@/components/pagination";
+import { RouteTabs } from "@/components/route-tabs";
+import { cn, formatDate, truncate } from "@/lib/utils";
+import { useEffect, useState } from "react";
+import { Search, Trash2, Brain, Network } from "lucide-react";
+
+interface Memory {
+  id: string;
+  content: string;
+  type: string;
+  category: string;
+  importance: number | null;
+  relevanceScore: number;
+  shareable: number;
+  status: string;
+  createdAt: string;
+}
+
+const PAGE_SIZE = 100;
+const MEMORY_TYPES = ["fact", "decision", "preference", "event", "open_thread"] as const;
+
+type MemoriesSearch = { search?: string; type?: string; page?: number };
+
+function MemoriesPage() {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate({ from: Route.fullPath });
+  const { search, type, page } = Route.useSearch();
+  const [searchInput, setSearchInput] = useState(search ?? "");
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSearchInput(search ?? "");
+  }, [search]);
+
+  const setParams = (updates: Partial<MemoriesSearch>) => {
+    navigate({ search: (prev) => ({ ...prev, ...updates }) });
+  };
+
+  const { data, isLoading, isFetching, error } = useQuery({
+    queryKey: ["memories", search, type, page],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (search) params.set("search", search);
+      if (type) params.set("type", type);
+      params.set("page", String(page ?? 1));
+      params.set("limit", String(PAGE_SIZE));
+      return apiGet<{ items: Memory[]; total: number }>(`/memories?${params}`);
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => apiDelete(`/memories/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["memories"] });
+      setDeleteId(null);
+    },
+  });
+
+  if (error && !data) return <div className="text-destructive text-sm">Failed to load memories: {error.message}</div>;
+
+  const memories = data?.items ?? [];
+  const total = data?.total ?? 0;
+
+  return (
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold tracking-tight">Memories</h1>
+        <span className="text-sm text-muted-foreground">
+          {isLoading ? "…" : `${total} total`}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <RouteTabs
+          tabs={[
+            { to: "/memories", label: "Memories", icon: <Brain /> },
+            { to: "/memories/entities", label: "Entities", icon: <Network /> },
+          ]}
+        />
+        <form onSubmit={(e) => { e.preventDefault(); setParams({ search: searchInput || undefined, page: undefined }); }} className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search memories (press Enter)..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            className="pl-9"
+          />
+        </form>
+        <select
+          value={type ?? ""}
+          onChange={(e) => setParams({ type: e.target.value || undefined, page: undefined })}
+          className="h-8 rounded-md border border-input bg-transparent px-2.5 text-[13px]"
+        >
+          <option value="">All types</option>
+          {MEMORY_TYPES.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+        <Table className="min-w-[600px]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Content</TableHead>
+              <TableHead className="w-[90px]">Type</TableHead>
+              <TableHead className="w-[90px]">Category</TableHead>
+              <TableHead className="w-[70px]">Imp.</TableHead>
+              <TableHead className="w-[80px]">Relevance</TableHead>
+              <TableHead className="w-[160px]">Created</TableHead>
+              <TableHead className="w-10" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading ? (
+              <TableRowsSkeleton columns={7} />
+            ) : memories.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No memories found</TableCell>
+              </TableRow>
+            ) : (
+              memories.map((memory) => (
+                <TableRow key={memory.id}>
+                  <TableCell>
+                    <Link to="/memories/$id" params={{ id: memory.id }} className="hover:underline">
+                      {truncate(memory.content, 80)}
+                    </Link>
+                  </TableCell>
+                  <TableCell><Badge variant="secondary">{memory.type}</Badge></TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{memory.category ?? "—"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{memory.importance ?? "—"}</TableCell>
+                  <TableCell>{memory.relevanceScore?.toFixed(2) ?? "—"}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm">{formatDate(memory.createdAt)}</TableCell>
+                  <TableCell>
+                    <Button variant="ghost" size="icon-sm" onClick={() => setDeleteId(memory.id)}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      <Pagination total={total} pageSize={PAGE_SIZE} page={page ?? 1} onPageChange={(p) => setParams({ page: p > 1 ? p : undefined })} />
+
+      <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Memory</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">This action cannot be undone.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteId && deleteMutation.mutate(deleteId)}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+export const Route = createFileRoute("/memories/")({
+  component: MemoriesPage,
+  validateSearch: (raw: Record<string, unknown>) => ({
+    search: typeof raw.search === "string" ? raw.search : undefined,
+    type: typeof raw.type === "string" ? raw.type : undefined,
+    page: typeof raw.page === "number" ? raw.page : typeof raw.page === "string" ? Number(raw.page) || undefined : undefined,
+  }),
+});

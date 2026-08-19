@@ -1,0 +1,230 @@
+import { and, eq, lte, gte, or, isNull } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { modelPricing, type DetailedTokenUsage } from "@aura/db/schema";
+import { logger } from "./logger.js";
+
+export interface StepUsage {
+  modelId: string;
+  resolvedModelId?: string;
+  usage: DetailedTokenUsage;
+}
+
+interface PricingRow {
+  tokenType: string;
+  pricePerMillion: string;
+}
+
+const pricingCache = new Map<string, PricingRow[]>();
+
+export function resolveCanonicalStepModelId(params: {
+  canonicalStepModelId?: string;
+  resolvedModelId?: string;
+  fallbackModelId?: string;
+}): string | undefined {
+  const { canonicalStepModelId, resolvedModelId, fallbackModelId } = params;
+
+  if (canonicalStepModelId?.includes("/")) return canonicalStepModelId;
+  if (resolvedModelId && resolvedModelId.includes("/")) return resolvedModelId;
+  if (fallbackModelId) return fallbackModelId;
+  return canonicalStepModelId ?? resolvedModelId;
+}
+
+async function lookupPricing(
+  modelId: string,
+  asOfDate: Date,
+  workspaceId = "default",
+): Promise<PricingRow[]> {
+  const cacheKey = `${workspaceId}:${modelId}:${asOfDate.toISOString()}`;
+  if (pricingCache.has(cacheKey)) return pricingCache.get(cacheKey)!;
+
+  const rows = await db
+    .select({
+      tokenType: modelPricing.tokenType,
+      pricePerMillion: modelPricing.pricePerMillion,
+    })
+    .from(modelPricing)
+    .where(
+      and(
+        eq(modelPricing.workspaceId, workspaceId),
+        eq(modelPricing.modelId, modelId),
+        lte(modelPricing.effectiveFrom, asOfDate),
+        or(
+          isNull(modelPricing.effectiveUntil),
+          gte(modelPricing.effectiveUntil, asOfDate),
+        ),
+      ),
+    );
+
+  pricingCache.set(cacheKey, rows);
+  return rows;
+}
+
+function getPrice(
+  rows: PricingRow[],
+  tokenType: string,
+): number {
+  const row = rows.find((r) => r.tokenType === tokenType);
+  return row ? parseFloat(row.pricePerMillion) : 0;
+}
+
+/**
+ * Compute cost for a single step's usage given its pricing rows.
+ */
+function computeStepCost(
+  usage: DetailedTokenUsage,
+  pricing: PricingRow[],
+): number {
+  if (pricing.length === 0) return 0;
+
+  const inputPrice = getPrice(pricing, "input");
+  const cacheReadPrice = getPrice(pricing, "cache_read");
+  const cacheWritePrice = getPrice(pricing, "cache_write");
+  const outputPrice = getPrice(pricing, "output");
+  const reasoningPrice = getPrice(pricing, "reasoning");
+
+  let inputCost: number;
+  const id = usage.inputTokenDetails;
+  if (
+    id &&
+    (id.noCacheTokens != null ||
+      id.cacheReadTokens != null ||
+      id.cacheWriteTokens != null)
+  ) {
+    const cacheReadTokens = id.cacheReadTokens ?? 0;
+    const cacheWriteTokens = id.cacheWriteTokens ?? 0;
+    const noCacheTokens = id.noCacheTokens ?? Math.max(0, (usage.inputTokens ?? 0) - cacheReadTokens - cacheWriteTokens);
+    inputCost =
+      (noCacheTokens * inputPrice +
+        cacheReadTokens * cacheReadPrice +
+        cacheWriteTokens * cacheWritePrice) /
+      1_000_000;
+  } else {
+    inputCost = ((usage.inputTokens ?? 0) * inputPrice) / 1_000_000;
+  }
+
+  let outputCost: number;
+  const od = usage.outputTokenDetails;
+  if (od && (od.textTokens != null || od.reasoningTokens != null)) {
+    const textTokens = od.textTokens ?? 0;
+    const reasoningTokens = od.reasoningTokens ?? 0;
+    outputCost =
+      (textTokens * outputPrice + reasoningTokens * reasoningPrice) /
+      1_000_000;
+  } else {
+    outputCost = ((usage.outputTokens ?? 0) * outputPrice) / 1_000_000;
+  }
+
+  return inputCost + outputCost;
+}
+
+/**
+ * Build per-step usage data from raw AI SDK steps.
+ * Filters to steps that have both a modelId and usage, then maps to StepUsage[].
+ */
+export function buildStepUsages(
+  rawSteps: any[],
+  canonicalStepModelIds: Array<string | undefined> = [],
+  fallbackModelId?: string,
+): StepUsage[] {
+  return rawSteps
+    .filter(
+      (step: any, index: number) =>
+        resolveCanonicalStepModelId({
+          canonicalStepModelId: canonicalStepModelIds[index],
+          resolvedModelId: step.response?.modelId,
+          fallbackModelId,
+        }) && step.usage,
+    )
+    .map((step: any, index: number) => ({
+      modelId: resolveCanonicalStepModelId({
+        canonicalStepModelId: canonicalStepModelIds[index],
+        resolvedModelId: step.response?.modelId,
+        fallbackModelId,
+      })!,
+      resolvedModelId: step.response.modelId,
+      usage: {
+        inputTokens: step.usage.inputTokens ?? 0,
+        outputTokens: step.usage.outputTokens ?? 0,
+        totalTokens: step.usage.totalTokens ?? 0,
+        inputTokenDetails: step.usage.inputTokenDetails,
+        outputTokenDetails: step.usage.outputTokenDetails,
+      },
+    }));
+}
+
+/**
+ * Compute total cost in USD for an array of steps.
+ * Looks up pricing for each model and computes:
+ *   Σ (token_count × price_per_million / 1_000_000) across all token types per step.
+ */
+export async function computeConversationCost(
+  steps: StepUsage[],
+  asOfDate: Date = new Date(),
+  workspaceId = "default",
+): Promise<number> {
+  let totalCost = 0;
+
+  for (const step of steps) {
+    try {
+      const pricing = await lookupPricing(step.modelId, asOfDate, workspaceId);
+      totalCost += computeStepCost(step.usage, pricing);
+    } catch (err: any) {
+      logger.warn("Cost calculation failed for step (non-fatal)", {
+        modelId: step.modelId,
+        error: err.message,
+      });
+    }
+  }
+
+  return totalCost;
+}
+
+/**
+ * Sum per-step usages into a single cumulative DetailedTokenUsage.
+ * Use this instead of the SDK's top-level usage (which is just the last step).
+ */
+export function sumStepUsages(steps: StepUsage[]): DetailedTokenUsage {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalTokens = 0;
+  let noCacheTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let textTokens = 0;
+  let reasoningTokens = 0;
+  let hasInputDetails = false;
+  let hasOutputDetails = false;
+
+  for (const step of steps) {
+    inputTokens += step.usage.inputTokens ?? 0;
+    outputTokens += step.usage.outputTokens ?? 0;
+    totalTokens += step.usage.totalTokens ?? 0;
+
+    const id = step.usage.inputTokenDetails;
+    if (id) {
+      hasInputDetails = true;
+      noCacheTokens += id.noCacheTokens ?? 0;
+      cacheReadTokens += id.cacheReadTokens ?? 0;
+      cacheWriteTokens += id.cacheWriteTokens ?? 0;
+    }
+
+    const od = step.usage.outputTokenDetails;
+    if (od) {
+      hasOutputDetails = true;
+      textTokens += od.textTokens ?? 0;
+      reasoningTokens += od.reasoningTokens ?? 0;
+    }
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(hasInputDetails && {
+      inputTokenDetails: { noCacheTokens, cacheReadTokens, cacheWriteTokens },
+    }),
+    ...(hasOutputDetails && {
+      outputTokenDetails: { textTokens, reasoningTokens },
+    }),
+  };
+}

@@ -1,0 +1,53 @@
+---
+title: "Candidate Screening"
+description: "First-pass candidate assessment from your ATS pipeline -- flagging standouts and concerns before a human reviews."
+---
+
+# Candidate Screening
+
+## The Problem
+
+Recruiting pipelines generate volume. A single posting can produce 50-200 applications. The hiring manager needs to review each one, but most of the signal is in the first 30 seconds -- does this person match the role basics?
+
+That first pass takes hours and is mind-numbing. Meanwhile, good candidates wait.
+
+## How Aura Solves It
+
+Aura connects to your ATS (Workable) and runs first-pass assessments on new candidates.
+
+**What she does:**
+- Pulls candidate profiles from Workable via API
+- Assesses against role requirements (experience, skills, location, language)
+- Flags standouts (strong matches, unusual backgrounds worth a look)
+- Flags concerns (gaps, mismatches, red flags)
+- Summarizes findings in a structured format for the hiring manager
+
+**What she doesn't do:**
+- Make hiring decisions
+- Reject candidates automatically
+- Contact candidates directly
+
+## Real Example
+
+> **Role:** Marketing Manager - France
+>
+> **Candidate summary (12 new applications):**
+> - 3 strong matches (5+ years, SaaS background, French-speaking)
+> - 5 partial matches (right experience, missing one key requirement)
+> - 4 clear mismatches (wrong country, no relevant experience)
+>
+> **Standout:** [Name] -- 7 years at [competitor], led demand gen for similar market size. Currently in notice period. Recommend fast-tracking.
+>
+> **Concern:** [Name] -- strong CV but 4 roles in 3 years. Worth asking about stability.
+
+The hiring manager reviews 3 candidates deeply instead of scanning 12 superficially.
+
+## Setup
+
+1. Store Workable API credentials in Aura's App Home
+2. Tell Aura which roles to monitor
+3. She checks for new candidates on a schedule and DMs you summaries
+
+<Tip>
+Aura learns your preferences over time. If you consistently fast-track candidates with a specific background, she'll weight that signal in future assessments.
+</Tip>

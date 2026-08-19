@@ -1,0 +1,47 @@
+---
+title: "People"
+description: "Structured contact database for team and external contacts."
+---
+
+# People Database
+
+Aura maintains a structured database of people she interacts with -- team members, external contacts, candidates, and partners. This goes beyond Slack profiles to include learned preferences, communication styles, and relationship context.
+
+## What's Stored
+
+For each person, Aura tracks:
+
+- **Identity** — Name, email, Slack ID, job title, manager, birthdate
+- **Preferences** — Preferred language, communication style, timezone, gender
+- **Notes** — Free-form observations from conversations
+- **Addresses** — Multiple contact addresses per person (email, phone, slack) with one primary per channel
+- **Interaction history** — Frequency and recency of conversations (workspace messages, Aura DMs, last activity)
+
+## How It's Used
+
+The people database feeds into every conversation:
+
+1. **Before responding**, Aura checks the person's profile for language preference, communication style, and role
+2. **During conversations**, relevant personal context surfaces naturally ("You mentioned last week...")
+3. **Cross-referencing** — Aura can connect people working on similar problems across the org
+
+## Tools
+
+### `get_person`
+
+Look up a person by **name, Slack user ID, or email address**. Returns the full profile: job title, gender, preferred language, birthdate, manager, notes, all known addresses (email, phone, slack), and Slack activity stats (workspace messages, Aura DM messages, last activity, last Aura DM). Ambiguous name searches return up to 3 fuzzy matches.
+
+### `update_person`
+
+Update a person's profile. Not admin-gated — available in all contexts, so Aura is expected to exercise judgment (and always run `get_person` first to verify identity).
+
+- **Identification**: by `person_id` (UUID, preferred) or `query` (fuzzy lookup that must resolve to exactly 1 person)
+- **Fields**: display name, job title, gender, preferred language (`en`/`fr`/`es`/`it`/`de`/`pt`), birthdate (`YYYY-MM-DD`), manager, notes
+- **Shorthands**: `phone` (E.164) and `email` upsert the primary address for that channel
+- **Addresses**: `add_address` / `remove_address` manage non-primary addresses (channel + value)
+
+## Privacy
+
+- DM-sourced personal details are private by default
+- Aura won't share one person's DM content with another unless explicitly asked by an admin
+- The People DB stores facts, not conversation transcripts

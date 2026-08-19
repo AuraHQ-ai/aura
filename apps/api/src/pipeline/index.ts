@@ -1,0 +1,1293 @@
+import type { WebClient } from "@slack/web-api";
+import {
+  buildMessageContext,
+  shouldRespond,
+  isChannelGatedOut,
+  resolveSlackEntities,
+  isSlackbotListNotification,
+  type MessageContext,
+} from "./context.js";
+import { assemblePrompt } from "./prompt.js";
+import { generateResponse, type LLMResponse } from "./respond.js";
+import {
+  isWdkSlackRespondEnabled,
+  isWorkflowEligible,
+  startSlackRespondWorkflow,
+} from "./slack-workflow.js";
+import { InvocationSupersededError } from "./prepare-step.js";
+import { buildMessageText } from "./message-text.js";
+import { safePostMessage } from "../lib/slack-messaging.js";
+import {
+  fetchConversationContext,
+  resolveDisplayName,
+  type ConversationContext,
+} from "./slack-context.js";
+import { storeMessage, claimEvent, storeToolCallMessages, storeChannelReadMessage } from "../memory/store.js";
+import { claimInvocation } from "../lib/invocation-lock.js";
+import type { ToolCallRecord } from "./respond.js";
+import { extractMemories } from "../memory/extract.js";
+import {
+  getKnowledgeAboutUser,
+  formatKnowledgeSummary,
+} from "../memory/transparency.js";
+import {
+  getOrCreateProfile,
+  recordInteraction,
+  updateProfileFromConversation,
+} from "../users/profiles.js";
+import { downloadEventFiles } from "../lib/files.js";
+import { getSettingJSON } from "../lib/settings.js";
+import { logger } from "../lib/logger.js";
+import { withTraceSpan } from "../lib/langfuse.js";
+import { logError } from "../lib/error-logger.js";
+import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
+import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
+import {
+  generateInitialDmThreadTitle,
+  generateUpdatedDmThreadTitle,
+} from "./dm-title.js";
+import {
+  BARE_MENTION_WITH_CONTEXT_PROMPT,
+  shouldGreetAndBailForEmptyMessage,
+} from "./empty-message.js";
+import {
+  createConversationTrace,
+  persistConversationInputs,
+  persistConversationSteps,
+  updateConversationTraceUsage,
+  buildConversationSteps,
+} from "../cron/persist-conversation.js";
+import { buildStepUsages, type StepUsage } from "../lib/cost-calculator.js";
+import type { DetailedTokenUsage } from "@aura/db/schema";
+import type { SlackEvent } from "./context.js";
+
+/** Maximum message length we'll process (characters). Slack max is ~40k. */
+const MAX_MESSAGE_LENGTH = 8000;
+
+// ── Tier 0: Fast-reject noise ───────────────────────────────────────────────
+// Pure JS, no async, no LLM. Must run before any pipeline processing
+// (memory retrieval, embedding, conversation context, etc.)
+
+const FAST_REJECT_SUBTYPES = new Set([
+  "bot_message",
+  "message_changed",
+  "message_deleted",
+  "channel_join",
+  "channel_leave",
+  "channel_topic",
+  "channel_purpose",
+  "channel_archive",
+  "channel_unarchive",
+  "pinned_item",
+  "unpinned_item",
+]);
+
+function shouldFastReject(event: SlackEvent, botUserId: string): boolean {
+  const ev = event as unknown as Record<string, unknown>;
+
+  if (ev.subtype && FAST_REJECT_SUBTYPES.has(ev.subtype as string)) return true;
+
+  if (ev.bot_id) return true;
+
+  if (ev.user === botUserId) return true;
+
+  return false;
+}
+
+/**
+ * Build an optional metadata record from a Slack event's rich fields
+ * (attachments, blocks, files, forwarded content, etc.).
+ * Returns undefined when there's nothing worth storing.
+ */
+function buildMessageMetadata(
+  context: MessageContext,
+  event: SlackEvent,
+): Record<string, unknown> | undefined {
+  const meta: Record<string, unknown> = {};
+  const ev = event as unknown as Record<string, unknown>;
+
+  // Persist engagement signal so usage stats can distinguish true interactions
+  // (@mentions and DMs) from ambient channel chatter.
+  meta.isMentioned = context.isMentioned;
+
+  if (Array.isArray(ev.attachments) && ev.attachments.length > 0) {
+    meta.attachments = ev.attachments;
+  }
+  if (Array.isArray(ev.blocks) && ev.blocks.length > 0) {
+    meta.blocks = ev.blocks;
+  }
+  if (Array.isArray(ev.files) && ev.files.length > 0) {
+    meta.files = ev.files;
+  }
+
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
+interface PipelineOptions {
+  event: SlackEvent;
+  client: WebClient;
+  botUserId: string;
+  /** Slack team ID (from event body) — needed for chatStream in channels */
+  teamId?: string;
+  /** Vercel waitUntil for background tasks */
+  waitUntil?: (promise: Promise<unknown>) => void;
+}
+
+/**
+ * The main message pipeline — the core loop for every incoming message.
+ *
+ * Steps:
+ * 1. Parse context (who, where, what)
+ * 2. Decide if we should respond
+ * 3. Handle special commands (transparency)
+ * 4. Assemble prompt (memories + profile + thread context)
+ * 5. Call LLM
+ * 6. Post-process and send response
+ * 7. Background: store messages, extract memories, update profile
+ */
+export async function runPipeline(options: PipelineOptions): Promise<void> {
+  const { event, client, botUserId, teamId, waitUntil } = options;
+  const pipelineStart = Date.now();
+
+  // Tier 0: Fast-reject noise before any processing
+  if (shouldFastReject(event, botUserId)) {
+    logger.debug("Fast-rejected event", {
+      subtype: (event as unknown as Record<string, unknown>).subtype,
+      bot_id: (event as unknown as Record<string, unknown>).bot_id,
+    });
+    return;
+  }
+
+  // 1. Parse context
+  const context = buildMessageContext(event, botUserId);
+  if (!context) {
+    logger.debug("Skipped event — no valid context");
+    return;
+  }
+
+  // Gated-channel gate: for channels listed in the "gated_channels" setting,
+  // only proceed if Aura is explicitly @mentioned. This is a HARD, code-level
+  // rule that cannot be bypassed by an LLM gate or prompt (see issue #918).
+  if (!context.isDm && !context.isMentioned) {
+    const gatedChannels = new Set(
+      (await getSettingJSON<string[]>("gated_channels", [])) ?? [],
+    );
+    if (isChannelGatedOut(context, gatedChannels)) {
+      logger.info("gated_channel_skip", {
+        channelId: context.channelId,
+        userId: context.userId,
+        reason: "gated_channel_no_mention",
+      });
+      // Still store the message for long-term memory / search. Do NOT run
+      // conversation fetch, shouldRespond, invocation lock, or LLM.
+      await scheduleStoreUserMessage(context, event, waitUntil);
+      return;
+    }
+  }
+
+  // 1a. Dedup: atomically claim this event; skip if another handler got there first
+  const claimed = await claimEvent(context.messageTs, context.channelId);
+  if (!claimed) {
+    logger.debug("Skipping duplicate event", {
+      ts: context.messageTs,
+      channelId: context.channelId,
+    });
+    return;
+  }
+
+  // 1b. Resolve Slack entity references (<@U...>, <#C...>) to readable names
+  context.text = await resolveSlackEntities(client, context.text);
+
+  // 2. Should we respond?
+  // Tier 1 checks are deterministic and need no API calls. Only fetch
+  // conversation context from the Slack API when Tiers 2–3 need it.
+  let conversation: ConversationContext | undefined;
+  let decision: { respond: boolean; reason: string };
+  let alwaysProcessChannels: Set<string> | undefined;
+
+  if (context.isDm) {
+    decision = { respond: true, reason: "dm" };
+  } else if (context.isMentioned) {
+    decision = { respond: true, reason: "mentioned" };
+  } else if (context.isAddressedByName) {
+    decision = { respond: true, reason: "addressed_by_name" };
+  } else {
+    // Tiers 2–3 need live conversation context from the Slack API
+    conversation = await fetchConversationContext(
+      client,
+      context.channelId,
+      botUserId,
+      context.threadTs,
+      context.channelType,
+    );
+    alwaysProcessChannels = new Set(
+      (await getSettingJSON<string[]>("always_process_channels", [])) ?? [],
+    );
+    decision = await shouldRespond(context, conversation, alwaysProcessChannels);
+  }
+
+  if (!decision.respond) {
+    logger.debug("Decided not to respond", {
+      reason: decision.reason,
+      userId: context.userId,
+      channelId: context.channelId,
+    });
+    // Still store the message for long-term memory, but don't respond
+    await scheduleStoreUserMessage(context, event, waitUntil);
+    return;
+  }
+
+  // 2b. Claim invocation lock (enables interruption detection).
+  // Must run after shouldRespond so non-responding messages don't
+  // supersede an in-progress invocation for this thread.
+  const effectiveThreadTs = context.threadTs || context.messageTs;
+  const invocationId = await claimInvocation(context.channelId, effectiveThreadTs, context.messageTs);
+
+  if (!invocationId) {
+    logger.info("Skipping message — a newer message already claimed this thread", {
+      channelId: context.channelId,
+      threadTs: effectiveThreadTs,
+      messageTs: context.messageTs,
+    });
+    // Still store the message for long-term memory, even though we won't respond
+    await scheduleStoreUserMessage(context, event, waitUntil);
+    return;
+  }
+
+  logger.info("Processing message", {
+    userId: context.userId,
+    channelType: context.channelType,
+    isDm: context.isDm,
+    respondReason: decision.reason,
+    textLength: context.text.length,
+    textPreview: context.text.substring(0, 80),
+    hasFiles: Array.isArray((event as any).files),
+    fileCount: (event as any).files?.length || 0,
+    fileTypes: (event as any).files?.map((f: any) => f.mimetype) || [],
+    subtype: (event as any).subtype || "none",
+  });
+
+  // Determine thread_ts for replies:
+  // - In threads: always reply in the thread
+  // - In channels (top-level): reply in a thread under the user's message
+  // - In DMs (top-level): chatStream requires a thread_ts, so we thread
+  //   under the user's message. For non-streaming paths (transparency
+  //   commands, empty mentions), we still use undefined to reply inline.
+    const replyThreadTs = context.threadTs || context.messageTs;
+
+  // Capture response & prompt state for persistence in the catch-block
+  // interruption path (Path 2) where const-scoped variables aren't accessible.
+  let capturedResponse: LLMResponse | undefined;
+  let capturedSystemPrompt: string | undefined;
+  let capturedUserPrompt: string | undefined;
+  let bareMentionWithContext = false;
+
+  try {
+    // ── Edge case: empty or near-empty message (but allow image-only) ───
+    const hasFiles = Array.isArray((event as any).files) && (event as any).files.length > 0;
+    if (context.text.trim().length === 0 && !hasFiles) {
+      if (context.isMentioned && !conversation) {
+        conversation = await fetchConversationContext(
+          client,
+          context.channelId,
+          botUserId,
+          context.threadTs,
+          context.channelType,
+        );
+      }
+
+      if (shouldGreetAndBailForEmptyMessage(context, conversation)) {
+        await safePostMessage(client, {
+          channel: context.channelId,
+          text: "Hey. What's up?",
+          thread_ts: replyThreadTs,
+        });
+        const tracePromise = persistConversationTrace({
+          channelId: context.channelId,
+          threadTs: replyThreadTs,
+          userId: context.userId,
+          modelId: "greet-and-bail",
+          systemPrompt: "Greet-and-bail guard: empty message with no surrounding Slack context.",
+          userPrompt: context.isMentioned ? "(bare mention)" : "(empty message)",
+        }).catch((error: any) => {
+          logger.error("Failed to persist greet-and-bail trace", {
+            channelId: context.channelId,
+            error: error?.message || String(error),
+          });
+        });
+        if (waitUntil) {
+          waitUntil(tracePromise);
+        } else {
+          await tracePromise;
+        }
+        return;
+      }
+
+      bareMentionWithContext = true;
+      context.useSurroundingContext = true;
+      logger.info("Bare mention has surrounding context; continuing through pipeline", {
+        channelId: context.channelId,
+        channelType: context.channelType,
+        threadTs: context.threadTs,
+        messageTs: context.messageTs,
+      });
+    }
+
+    // Set assistant thread status — triggers the shimmer animation on
+    // Aura's name and shows a loading indicator while processing.
+    // Status auto-clears on reply.
+    await trySetAssistantThreadStatus({
+      client,
+      channelId: context.channelId,
+      threadTs: replyThreadTs,
+      status: "Thinking...",
+      loadingMessages: [
+        "Gathering context...",
+        "Searching memories...",
+        "Pulling it together...",
+      ],
+    });
+
+    // 4b. Download files if the message has attachments. Voice notes produce
+    // transcripts for the canonical message body instead of file content parts.
+    const botToken = process.env.SLACK_BOT_TOKEN || "";
+    const downloadedFiles = hasFiles
+      ? await downloadEventFiles(event, botToken)
+      : { parts: [], transcripts: [] };
+    const fileParts = downloadedFiles.parts;
+    const voiceTranscripts = downloadedFiles.transcripts;
+    if (fileParts.length > 0) {
+      logger.info("Files ready for LLM", {
+        count: fileParts.length,
+        types: fileParts.map((p) => p.type),
+      });
+    }
+
+    // ── Edge case: extremely long message ────────────────────────────────
+    let messageText = bareMentionWithContext
+      ? BARE_MENTION_WITH_CONTEXT_PROMPT
+      : buildMessageText(context.text, hasFiles, voiceTranscripts);
+    if (messageText.length > MAX_MESSAGE_LENGTH) {
+      const originalLength = messageText.length;
+      messageText = messageText.substring(0, MAX_MESSAGE_LENGTH);
+      logger.warn("Truncated long message", {
+        originalLength,
+        truncatedTo: MAX_MESSAGE_LENGTH,
+      });
+    }
+    context.text = messageText;
+
+    // ── USLACKBOT list notification enrichment ───────────────────────────
+    // Any USLACKBOT message in a tracked List channel is a list activity
+    // notification. We attach metadata so the prompt guides the LLM to
+    // investigate the actual list item via tools.
+    const slackListChannels = new Set(
+      (await getSettingJSON<string[]>("slack_list_channels", [])) ?? [],
+    );
+    if (isSlackbotListNotification(event, slackListChannels)) {
+      context.slackListItemContext = {
+        messageTs: context.threadTs ?? context.messageTs,
+        channelId: context.channelId,
+        notificationText: messageText,
+      };
+      logger.info("Enriched USLACKBOT list notification", {
+        channelId: context.channelId,
+        messageTs: context.messageTs,
+        notificationText: messageText,
+      });
+    }
+
+    // Ensure user has a profile and resolve their timezone
+    const { name: displayName, timezone: slackTimezone } = await resolveDisplayName(client, context.userId);
+    const userProfile = await getOrCreateProfile(context.userId, displayName, slackTimezone);
+    const userTimezone = userProfile.timezone || "UTC";
+
+    // 3. Check for transparency commands first
+    const transparencyResult = await handleTransparencyCommands(
+      { ...context, text: messageText },
+      client,
+      replyThreadTs,
+    );
+    if (transparencyResult) {
+      recordPipelineMetrics({
+        totalMs: Date.now() - pipelineStart,
+        memoriesUsed: 0,
+        channelType: context.channelType,
+        userId: context.userId,
+        isTransparencyCommand: true,
+      });
+      return;
+    }
+
+    // 4. Assemble prompt (memories + profile + live Slack context)
+    // Fetch conversation context now if it wasn't needed earlier (Tier 1 path)
+    if (!conversation) {
+      conversation = await fetchConversationContext(
+        client,
+        context.channelId,
+        botUserId,
+        context.threadTs,
+        context.channelType,
+      );
+    }
+    // Bind the now-resolved conversation to a const so its non-undefined
+    // narrowing survives into the trace-span closure below.
+    const resolvedConversation = conversation;
+    // Steps 4 + 5 run inside a single parent span so every AI SDK call for this
+    // Slack turn — memory retrieval, thread summary, query embeddings, and the
+    // agent stream — nests under ONE Langfuse trace instead of scattering into
+    // orphan root traces. sessionId = thread links a conversation in the
+    // Sessions view; userId enables per-user analysis.
+    const turn = await withTraceSpan(
+      "slack-chat",
+      {
+        sessionId: replyThreadTs ?? context.channelId,
+        userId: context.userId,
+        userName: displayName,
+        tags: [`channel:${context.channelType ?? "unknown"}`],
+        metadata: { slackUserId: context.userId },
+      },
+      async () => {
+        const retrievalStart = Date.now();
+        const { stablePrefix, environmentContext, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
+          { ...context, text: messageText },
+          resolvedConversation,
+          client,
+        );
+        const retrievalMs = Date.now() - retrievalStart;
+
+        capturedSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+        capturedUserPrompt = messageText;
+
+        // 5a. Durable respond path (issue #1111, flag-gated): delegate the
+        // agent loop to a WDK workflow. The workflow owns Slack delivery AND
+        // persistence (runBackgroundTasks runs as its final step), so when
+        // delegation succeeds this invocation's job is done — a SIGKILL of
+        // this function no longer kills the turn.
+        if (
+          (await isWdkSlackRespondEnabled()) &&
+          isWorkflowEligible({ channelType: context.channelType })
+        ) {
+          const runId = await startSlackRespondWorkflow({
+            stablePrefix,
+            environmentContext,
+            conversationContext,
+            dynamicContext,
+            userMessage: messageText,
+            files: fileParts,
+            channelId: context.channelId,
+            threadTs: replyThreadTs,
+            teamId,
+            recipientUserId: context.userId,
+            userId: context.userId,
+            workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+            timezone: userTimezone,
+            invocationId,
+            background: {
+              context: { ...context, text: messageText },
+              event: event as unknown as Record<string, unknown>,
+              displayName,
+              threadMessageCount: resolvedConversation.thread?.length ?? 0,
+              ...(() => {
+                const all = (resolvedConversation.thread ?? resolvedConversation.recentMessages)
+                  .map((m) => ({ displayName: m.displayName, text: m.text }));
+                if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
+                return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
+              })(),
+              systemPrompt: capturedSystemPrompt,
+            },
+          });
+          if (runId) {
+            return {
+              response: {
+                raw: "",
+                alreadyPosted: true,
+                toolCalls: [],
+                workflowDelegated: true,
+              } as LLMResponse,
+              stablePrefix,
+              environmentContext,
+              conversationContext,
+              dynamicContext,
+              memories,
+              conversations,
+              retrievalMs,
+              llmMs: 0,
+            };
+          }
+          // start() failed — fall through to the legacy in-process path.
+        }
+
+        // 5. Call LLM (streams response directly to Slack via chat.update)
+        const llmStart = Date.now();
+        const response = await generateResponse({
+          stablePrefix,
+          environmentContext,
+          conversationContext,
+          dynamicContext,
+          userMessage: messageText,
+          slackClient: client,
+          context: {
+            userId: context.userId,
+            channelId: context.channelId,
+            threadTs: replyThreadTs,
+            workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+            timezone: userTimezone,
+          },
+          files: fileParts,
+          channelId: context.channelId,
+          threadTs: replyThreadTs,
+          messageTs: context.messageTs,
+          teamId,
+          recipientUserId: context.userId,
+          channelType: context.channelType,
+          invocationId,
+        });
+        const llmMs = Date.now() - llmStart;
+        capturedResponse = response;
+
+        return {
+          response,
+          stablePrefix,
+          environmentContext,
+          conversationContext,
+          dynamicContext,
+          memories,
+          conversations,
+          retrievalMs,
+          llmMs,
+        };
+      },
+    );
+    const {
+      response,
+      stablePrefix,
+      environmentContext,
+      conversationContext,
+      dynamicContext,
+      memories,
+      conversations,
+      retrievalMs,
+      llmMs,
+    } = turn;
+
+    if (response.workflowDelegated) {
+      // The durable workflow owns delivery + persistence from here on.
+      logger.info("Pipeline delegated to durable Slack respond workflow", {
+        channelId: context.channelId,
+        totalMs: Date.now() - pipelineStart,
+      });
+      return;
+    }
+
+    if (response.interrupted) {
+      logger.info("Pipeline interrupted — invocation superseded", {
+        channelId: context.channelId,
+      });
+      await scheduleStoreUserMessage(context, event, waitUntil);
+      await persistInterruptedResponse({
+        context,
+        response,
+        systemPrompt: capturedSystemPrompt,
+        userPrompt: capturedUserPrompt,
+        replyThreadTs,
+      });
+      return;
+    }
+
+    // Sandbox lifecycle is now managed by E2B autoPause: the sandbox pauses
+    // itself after DEFAULT_TIMEOUT_MS of inactivity and auto-resumes on the next
+    // Sandbox.connect(). No manual pause needed here.
+
+    // Response is already posted to Slack via streaming updates
+
+    const totalMs = Date.now() - pipelineStart;
+
+    // Record metrics
+    recordPipelineMetrics({
+      totalMs,
+      llmMs,
+      retrievalMs,
+      memoriesUsed: memories.length,
+      inputTokens: response.usage?.inputTokens,
+      outputTokens: response.usage?.outputTokens,
+      totalTokens: response.usage?.totalTokens,
+      channelType: context.channelType,
+      userId: context.userId,
+      isTransparencyCommand: false,
+    });
+
+    logger.info(`Pipeline completed in ${totalMs}ms`, {
+      userId: context.userId,
+      channelType: context.channelType,
+      memoriesUsed: memories.length,
+      conversationsUsed: conversations.length,
+      llmMs,
+      retrievalMs,
+    });
+
+    // 7. Background tasks (via waitUntil so they don't block the response)
+    const fullSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+    const backgroundTasks = runBackgroundTasks({
+      context: { ...context, text: messageText },
+      event,
+      response: response.raw,
+      toolCalls: response.toolCalls,
+      displayName,
+      client,
+      threadMessageCount: conversation.thread?.length ?? 0,
+      tokenUsage: response.usage,
+      modelId: response.modelId,
+      systemPrompt: fullSystemPrompt,
+      userPrompt: messageText,
+      stepsPromise: response.stepsPromise,
+      stepModelIds: response.stepModelIds,
+      replyThreadTs,
+      ...(() => {
+        const all = (conversation.thread ?? conversation.recentMessages)
+          .map(m => ({ displayName: m.displayName, text: m.text }));
+        if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
+        return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
+      })(),
+    });
+
+    if (waitUntil) {
+      waitUntil(backgroundTasks);
+    } else {
+      await backgroundTasks;
+    }
+  } catch (error: any) {
+    // No manual sandbox pause -- autoPause handles inactivity, and a sandbox
+    // that just errored is more useful kept warm for the user's retry.
+    if (error instanceof InvocationSupersededError) {
+      logger.info("Pipeline interrupted — invocation superseded", {
+        invocationId: error.invocationId,
+        channelId: context.channelId,
+      });
+      await scheduleStoreUserMessage(context, event, waitUntil);
+      if (capturedResponse) {
+        await persistInterruptedResponse({
+          context,
+          response: capturedResponse,
+          systemPrompt: capturedSystemPrompt,
+          userPrompt: capturedUserPrompt,
+          replyThreadTs,
+        });
+      }
+      return;
+    }
+
+    const errorMessage = error?.message || String(error);
+    const errorName = error?.name || "UnknownError";
+
+    logger.error("Pipeline error", {
+      errorName,
+      errorMessage,
+      slackErrorCode: error?.data?.error,
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+    });
+
+    recordError("pipeline", error, {
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+    });
+
+    logError({
+      errorName,
+      errorMessage,
+      errorCode: error?.data?.error || error?.code || "pipeline_error",
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      stackTrace: error?.stack,
+    });
+
+    // Try to send a graceful error message
+    try {
+      await safePostMessage(client, {
+        channel: context.channelId,
+        text: "Sorry, I hit a snag processing that. Give me a sec and try again.",
+        thread_ts: replyThreadTs,
+      });
+    } catch (notifyErr: any) {
+      logger.error("Failed to send error message to Slack", {
+        channelId: context.channelId,
+        slackError: notifyErr?.data?.error,
+        error: notifyErr?.message || String(notifyErr),
+      });
+    }
+  }
+}
+
+/**
+ * Handle transparency commands: "what do you know about me?" and "forget X"
+ * Returns true if a command was handled (pipeline should stop), false otherwise.
+ */
+async function handleTransparencyCommands(
+  context: MessageContext,
+  client: WebClient,
+  replyThreadTs?: string,
+): Promise<boolean> {
+  const text = context.text.toLowerCase().trim();
+
+  // "What do you know about me?" command
+  if (
+    text.includes("what do you know about me") ||
+    text.includes("what do you remember about me")
+  ) {
+    try {
+      const knowledge = await getKnowledgeAboutUser(context.userId);
+      const summary = formatKnowledgeSummary(knowledge);
+      await safePostMessage(client, {
+        channel: context.channelId,
+        text: summary,
+        thread_ts: replyThreadTs,
+      });
+      return true;
+    } catch (error: any) {
+      recordError("transparency.knowledge", error, {
+        userId: context.userId,
+      });
+      logError({
+        errorName: error?.name || "TransparencyKnowledgeError",
+        errorMessage: error?.message || String(error),
+        errorCode: "transparency_knowledge",
+        userId: context.userId,
+        channelId: context.channelId,
+        channelType: context.channelType,
+        stackTrace: error?.stack,
+      });
+      await safePostMessage(client, {
+        channel: context.channelId,
+        text: "I hit a snag pulling that together. Try again in a moment.",
+        thread_ts: replyThreadTs,
+      });
+      return true;
+    }
+  }
+
+  return false;
+}
+
+const STEPS_PROMISE_TIMEOUT_MS = 5_000;
+
+
+async function persistConversationTrace(params: {
+  channelId: string;
+  threadTs?: string;
+  userId: string;
+  modelId?: string;
+  systemPrompt: string;
+  userPrompt: string;
+  stepsPromise?: PromiseLike<any[]>;
+  stepModelIds?: string[];
+  usage?: DetailedTokenUsage;
+  stepsTimeoutMs?: number;
+}): Promise<string> {
+  const {
+    channelId,
+    threadTs,
+    userId,
+    modelId,
+    systemPrompt,
+    userPrompt,
+    stepsPromise,
+    stepModelIds,
+    usage,
+    stepsTimeoutMs,
+  } = params;
+
+  const conversationId = await createConversationTrace({
+    sourceType: "interactive",
+    channelId,
+    threadTs,
+    userId,
+    modelId,
+  });
+
+  const orderIndex = await persistConversationInputs(conversationId, systemPrompt, userPrompt);
+
+  let stepUsages: StepUsage[] = [];
+  if (stepsPromise) {
+    try {
+      let rawSteps: any[];
+      if (stepsTimeoutMs != null) {
+        let timerId: ReturnType<typeof setTimeout>;
+        const timeout = new Promise<never>((_, reject) => {
+          timerId = setTimeout(() => reject(new Error("stepsPromise timed out")), stepsTimeoutMs);
+        });
+        try {
+          rawSteps = await Promise.race([stepsPromise, timeout]);
+        } finally {
+          clearTimeout(timerId!);
+        }
+      } else {
+        rawSteps = await stepsPromise;
+      }
+      const conversationSteps = buildConversationSteps(
+        rawSteps,
+        stepModelIds ?? [],
+        modelId,
+      );
+      await persistConversationSteps(conversationId, conversationSteps, orderIndex);
+      stepUsages = buildStepUsages(rawSteps, stepModelIds ?? [], modelId);
+    } catch (stepsErr: any) {
+      logger.error("Failed to persist conversation steps (non-fatal)", {
+        conversationId,
+        error: stepsErr.message,
+      });
+    }
+  }
+
+  if (usage) {
+    await updateConversationTraceUsage(conversationId, usage, stepUsages);
+  }
+
+  return conversationId;
+}
+
+/**
+ * Store the user's message, scheduling it as a background task via waitUntil
+ * when available, otherwise awaiting it inline.
+ */
+async function scheduleStoreUserMessage(
+  context: MessageContext,
+  event: SlackEvent,
+  waitUntil?: (promise: Promise<unknown>) => void,
+): Promise<void> {
+  const storePromise = storeUserMessage(context, event);
+  if (waitUntil) {
+    waitUntil(storePromise);
+  } else {
+    await storePromise;
+  }
+}
+
+/**
+ * Best-effort persistence for interrupted assistant responses.
+ * Stores the assistant message, tool calls, and conversation trace
+ * so that search_my_conversations and the dashboard have a record.
+ * Does NOT run memory extraction or profile updates (too expensive;
+ * those will catch up on the next full invocation).
+ */
+async function persistInterruptedResponse(params: {
+  context: MessageContext;
+  response: LLMResponse;
+  systemPrompt?: string;
+  userPrompt?: string;
+  replyThreadTs?: string;
+}): Promise<void> {
+  const { context, response, systemPrompt, userPrompt, replyThreadTs } = params;
+
+  // 1. Store assistant message
+  const assistantTs = `${context.messageTs}-aura`;
+  await storeMessage({
+    externalId: assistantTs,
+    slackTs: assistantTs,
+    slackThreadTs: context.threadTs || context.messageTs,
+    channelId: context.channelId,
+    channelType: context.channelType,
+    userId: "aura",
+    role: "assistant",
+    content: response.raw,
+    tokenUsage: response.usage,
+    model: response.modelId,
+  }).catch((err: any) => {
+    logger.error("Failed to store interrupted assistant message", { error: err.message });
+  });
+
+  // 2. Store tool call I/O if any
+  if (response.toolCalls.length > 0) {
+    await storeToolCallMessages(response.toolCalls, {
+      parentTs: context.messageTs,
+      threadTs: context.threadTs,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      userId: context.userId,
+    }).catch((err: any) => {
+      logger.error("Failed to store interrupted tool call messages", { error: err.message });
+    });
+  }
+
+  // 3. Persist conversation trace
+  if (systemPrompt && userPrompt) {
+    try {
+      const conversationId = await persistConversationTrace({
+        channelId: context.channelId,
+        threadTs: replyThreadTs || context.threadTs,
+        userId: context.userId,
+        modelId: response.modelId,
+        systemPrompt,
+        userPrompt,
+        stepsPromise: response.stepsPromise,
+        stepModelIds: response.stepModelIds,
+        usage: response.usage,
+        stepsTimeoutMs: STEPS_PROMISE_TIMEOUT_MS,
+      });
+
+      logger.info("Interrupted conversation trace persisted", { conversationId });
+    } catch (traceErr: any) {
+      logger.error("Failed to persist interrupted conversation trace", { error: traceErr.message });
+    }
+  }
+}
+
+/**
+ * Store the user's message in the background.
+ */
+async function storeUserMessage(context: MessageContext, event: SlackEvent): Promise<void> {
+  try {
+    await storeMessage({
+      externalId: context.messageTs,
+      slackTs: context.messageTs,
+      slackThreadTs: context.threadTs,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      userId: context.userId,
+      role: "user",
+      content: context.text,
+      metadata: buildMessageMetadata(context, event),
+    });
+  } catch (error: any) {
+    recordError("storeUserMessage", error, { userId: context.userId });
+    logError({
+      errorName: error?.name || "StoreUserMessageError",
+      errorMessage: error?.message || String(error),
+      errorCode: "store_user_message",
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      stackTrace: error?.stack,
+    });
+  }
+}
+
+/**
+ * Run background tasks after responding.
+ */
+export async function runBackgroundTasks(params: {
+  context: MessageContext;
+  event: SlackEvent;
+  response: string;
+  toolCalls: ToolCallRecord[];
+  displayName: string;
+  client: InstanceType<typeof import("@slack/web-api").WebClient>;
+  threadMessageCount: number;
+  recentThreadMessages: Array<{ displayName: string; text: string }>;
+  threadMessagesElided: boolean;
+  tokenUsage?: DetailedTokenUsage;
+  modelId?: string;
+  systemPrompt?: string;
+  userPrompt?: string;
+  stepsPromise?: PromiseLike<any[]>;
+  stepModelIds?: string[];
+  replyThreadTs?: string;
+}): Promise<void> {
+  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, stepModelIds, replyThreadTs } = params;
+
+  try {
+    // Store the user's message
+    const userMessageId = await storeMessage({
+      externalId: context.messageTs,
+      slackTs: context.messageTs,
+      slackThreadTs: context.threadTs,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      userId: context.userId,
+      role: "user",
+      content: context.text,
+      metadata: buildMessageMetadata(context, event),
+    });
+
+    // Store Aura's response with a pseudo-timestamp
+    const assistantTs = `${context.messageTs}-aura`;
+    await storeMessage({
+      externalId: assistantTs,
+      slackTs: assistantTs,
+      slackThreadTs: context.threadTs || context.messageTs,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      userId: "aura",
+      role: "assistant",
+      content: response,
+      tokenUsage,
+      model: modelId,
+    });
+
+    // Store tool call I/O as durable messages
+    if (toolCalls.length > 0) {
+      const storageCtx = {
+        parentTs: context.messageTs,
+        threadTs: context.threadTs,
+        channelId: context.channelId,
+        channelType: context.channelType,
+        userId: context.userId,
+      };
+
+      await storeToolCallMessages(toolCalls, storageCtx);
+
+      // Store channel reads as dedicated summary messages
+      const channelReadTools = ["read_channel_history", "read_dm_history"];
+      for (let i = 0; i < toolCalls.length; i++) {
+        const tc = toolCalls[i];
+        if (!channelReadTools.includes(tc.name)) continue;
+
+        const output = tc.rawOutput as any;
+        if (output?.ok && Array.isArray(output.messages) && output.messages.length > 0) {
+          const channelName = output.channel || output.user || "unknown";
+          await storeChannelReadMessage(
+            tc.name,
+            channelName,
+            output.messages,
+            { ...storageCtx, toolIndex: i },
+          );
+        }
+      }
+    }
+
+    // Extract memories — thread-scoped reconciliation when threadTs is available,
+    // falls back to single-exchange extraction with tool context summary otherwise
+    const toolContextSummary = buildToolContextForExtraction(toolCalls);
+    try {
+      await extractMemories({
+        userMessage: context.text,
+        assistantResponse: response + toolContextSummary,
+        userId: context.userId,
+        channelType: context.channelType,
+        sourceMessageId: userMessageId || undefined,
+        displayName,
+        channelId: context.channelId,
+        threadTs: context.threadTs,
+      });
+    } catch (extractErr: any) {
+      logger.warn("Memory extraction failed (non-fatal)", {
+        error: extractErr?.message || String(extractErr),
+      });
+    }
+
+    // Record interaction and potentially update profile
+    await recordInteraction(context.userId);
+    await updateProfileFromConversation(
+      context.userId,
+      context.text,
+      response,
+    );
+
+    // Persist conversation trace for interactive messages
+    if (systemPrompt && userPrompt) {
+      try {
+        const conversationId = await persistConversationTrace({
+          channelId: context.channelId,
+          threadTs: replyThreadTs || context.threadTs,
+          userId: context.userId,
+          modelId,
+          systemPrompt,
+          userPrompt,
+          stepsPromise,
+          stepModelIds,
+          usage: tokenUsage,
+        });
+
+        logger.info("Interactive conversation trace persisted", { conversationId });
+      } catch (traceErr: any) {
+        logger.error("Failed to persist interactive conversation trace (non-fatal)", {
+          error: traceErr.message,
+          channelId: context.channelId,
+        });
+      }
+    }
+
+    // Post optional reasoning trace as a thread reply (gated by env var)
+    if (process.env.SHOW_REASONING_IN_SLACK === "true" && stepsPromise && replyThreadTs) {
+      try {
+        const steps = await stepsPromise;
+        const reasoningTexts: string[] = [];
+        for (const step of steps) {
+          if ((step as any).reasoning) {
+            reasoningTexts.push((step as any).reasoning);
+          }
+        }
+
+        if (reasoningTexts.length > 0) {
+          const fullReasoning = reasoningTexts.join("\n\n---\n\n");
+          const reasoningTokens = Math.ceil(fullReasoning.length / 4);
+          const preview = fullReasoning.slice(0, 500);
+          const truncated = fullReasoning.length > 500;
+          const quotedPreview = preview
+            .split("\n")
+            .map((line) => `>${line}`)
+            .join("\n");
+
+          const replyText =
+            `:brain: _Reasoning trace_ (${reasoningTokens.toLocaleString()} tokens)\n` +
+            quotedPreview +
+            (truncated ? "\n>_Full trace available in dashboard_" : "");
+
+          await safePostMessage(client, {
+            channel: context.channelId,
+            text: replyText,
+            thread_ts: replyThreadTs,
+          });
+
+          logger.info("Posted reasoning trace to Slack", {
+            channelId: context.channelId,
+            reasoningLength: fullReasoning.length,
+            reasoningTokens,
+          });
+        }
+      } catch (reasoningErr: any) {
+        logger.warn("Failed to post reasoning trace to Slack (non-fatal)", {
+          error: reasoningErr?.message || String(reasoningErr),
+        });
+      }
+    }
+
+    // Set or update DM thread title for the Assistant History tab.
+    // Runs last so the LLM call doesn't delay critical background work above.
+    if (context.isDm) {
+      if (!context.threadTs) {
+        // Phase 1: Generate initial title after first assistant response
+        await setInitialDmThreadTitle({
+          userMessage: context.text,
+          assistantResponse: response,
+          channelId: context.channelId,
+          threadTs: context.messageTs,
+          client,
+        });
+      } else {
+        // Phase 2: Periodically re-evaluate title in ongoing threads
+        await maybeUpdateDmThreadTitle({
+          threadMessageCount,
+          recentMessages: recentThreadMessages,
+          messagesElided: threadMessagesElided,
+          assistantResponse: response,
+          channelId: context.channelId,
+          threadTs: context.threadTs,
+          client,
+        });
+      }
+    }
+  } catch (error: any) {
+    recordError("backgroundTasks", error, { userId: context.userId });
+    logError({
+      errorName: error?.name || "BackgroundTaskError",
+      errorMessage: error?.message || String(error),
+      errorCode: "background_tasks",
+      userId: context.userId,
+      channelId: context.channelId,
+      channelType: context.channelType,
+      stackTrace: error?.stack,
+    });
+  }
+}
+
+/**
+ * Generate and set the initial title for a DM thread.
+ * Triggered after the first assistant response so both sides of the
+ * conversation are available for a more descriptive title.
+ */
+async function setInitialDmThreadTitle(params: {
+  userMessage: string;
+  assistantResponse: string;
+  channelId: string;
+  threadTs: string;
+  client: WebClient;
+}): Promise<void> {
+  const { userMessage, assistantResponse, channelId, threadTs, client } = params;
+  try {
+    const title = await generateInitialDmThreadTitle({
+      userMessage,
+      assistantResponse,
+    });
+    if (!title) return;
+    await client.assistant.threads.setTitle({
+      channel_id: channelId,
+      thread_ts: threadTs,
+      title,
+    });
+    logger.info("Set initial DM thread title", { title, channelId });
+  } catch (error: any) {
+    logger.warn("Failed to set DM thread title", {
+      error: error?.message || String(error),
+      channelId,
+    });
+  }
+}
+
+/**
+ * Re-evaluate the DM thread title at message checkpoints (~every 5 messages).
+ * Generates a fresh title from recent messages to reflect topic drift.
+ * Skips quietly if not at a checkpoint.
+ */
+async function maybeUpdateDmThreadTitle(params: {
+  threadMessageCount: number;
+  recentMessages: Array<{ displayName: string; text: string }>;
+  messagesElided: boolean;
+  assistantResponse: string;
+  channelId: string;
+  threadTs: string;
+  client: WebClient;
+}): Promise<void> {
+  const { threadMessageCount, recentMessages, messagesElided, assistantResponse, channelId, threadTs, client } = params;
+
+  // +1 for the assistant response we just posted
+  const totalMessages = threadMessageCount + 1;
+
+  // Re-evaluate near every 5th message (fuzzy: allows off-by-one from
+  // varying user/assistant message counts)
+  if (totalMessages < 5 || totalMessages % 5 > 1) return;
+
+  try {
+    const newTitle = await generateUpdatedDmThreadTitle({
+      recentMessages,
+      messagesElided,
+      assistantResponse,
+    });
+    if (newTitle) {
+      await client.assistant.threads.setTitle({
+        channel_id: channelId,
+        thread_ts: threadTs,
+        title: newTitle,
+      });
+      logger.info("Updated DM thread title at checkpoint", {
+        newTitle,
+        channelId,
+        messageCount: totalMessages,
+      });
+    }
+  } catch (error: any) {
+    logger.warn("Failed to update DM thread title", {
+      error: error?.message || String(error),
+      channelId,
+      messageCount: threadMessageCount + 1,
+    });
+  }
+}
+
+/**
+ * Build a compact summary of tool calls to append to the assistant response
+ * before memory extraction, so the LLM can extract facts from tool outputs.
+ */
+function buildToolContextForExtraction(toolCalls: ToolCallRecord[]): string {
+  if (toolCalls.length === 0) return "";
+
+  const informativeTools = toolCalls.filter(
+    (tc) =>
+      !tc.is_error &&
+      !["set_my_status", "add_reaction", "remove_reaction"].includes(tc.name),
+  );
+
+  if (informativeTools.length === 0) return "";
+
+  const summaries = informativeTools.slice(0, 10).map((tc) => {
+    const outputPreview =
+      tc.output.length > 300 ? tc.output.slice(0, 300) + "…" : tc.output;
+    return `[Tool: ${tc.name}] ${outputPreview}`;
+  });
+
+  return "\n\n---\nTool outputs from this conversation:\n" + summaries.join("\n");
+}
+
