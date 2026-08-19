@@ -22,7 +22,7 @@ Built with TypeScript, Hono, Vercel serverless functions, Vercel AI SDK v6, and 
 
 **Voice** — Outbound phone calls and SMS via ElevenLabs + Twilio, text-to-speech voice notes
 
-**Sandbox** — Persistent Linux VM (E2B) with pre-baked tools: `psql`, `jq`, `rg`, `gcloud`, `claude`, `pdftotext`
+**Sandbox** — Persistent Linux VM (E2B) with pre-baked tools: `psql`, `jq`, `rg`, `gcloud`, `claude`, `pdftotext`, `mongosh`
 
 **Coding agents** — Dispatch, monitor, and follow up on Cursor Cloud Agents; also Claude and Codex agents
 
@@ -50,7 +50,9 @@ Slack event → Vercel serverless function → embed query → pgvector similari
 
 **Memory:** Every exchange triggers a fast-model LLM call that extracts structured memories (facts, decisions, relationships, open threads). Each memory is a 1536-dimensional pgvector embedding. Top ~10 most similar memories are retrieved on each response. DM-sourced memories are private by default.
 
-**Sandbox:** Persistent E2B VM attached to each user. Survives across conversations within a session. Has git, psql, gcloud, the GitHub CLI, and more. Build the custom template with `node sandbox/build-tsx.ts`.
+**Sandbox:** Persistent E2B VM attached to each user. Survives across conversations within a session. Has git, psql, gcloud, the GitHub CLI, `mongosh`, the `mongodb` node driver, and more. `run_command_detached` is a suspend point when webhook callbacks are configured: the active Slack turn ends after dispatch, and `/api/webhook/sandbox-command` resumes the same thread with a synthetic `<detached-command-result>` user turn when the process exits. Build the custom template with `node sandbox/build-tsx.ts`.
+
+**Scratch storage:** When `MONGODB_ATLAS_URI` is set, Aura uses MongoDB Atlas as a schema-less scratch layer for arbitrary per-task collections (cross-session job state, dumps, staging). Postgres stays mission-critical and schema-managed; Mongo is the ad-hoc workspace. See `content/docs/tools/sandbox.mdx`.
 
 **Jobs/heartbeat:** A cron runs every 30 minutes. One-shot jobs fire at their scheduled time. Recurring jobs evaluate against their cron expression and frequency limits. Failed jobs retry 3× with 30-minute backoff.
 
@@ -80,7 +82,7 @@ channels:history, channels:read, groups:history, im:history, mpim:history,
 reactions:read, search:read, users:read
 ```
 
-**Event subscriptions:** `app_mention`, `message.im`
+**Event subscriptions:** `app_mention`, `message.im`, `message.mpim`
 
 Set `SLACK_BOT_TOKEN`, `SLACK_USER_TOKEN`, `SLACK_SIGNING_SECRET`, and `AURA_BOT_USER_ID`.
 
@@ -118,6 +120,117 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 | [Vercel](https://vercel.com) | `VERCEL_TOKEN` | Deployment logs, self-diagnosis |
 | [Cohere](https://cohere.com) | `COHERE_API_KEY` | Reranking for better memory retrieval |
 | [Browserbase CF](https://browserbase.com) | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Auth'd domains via Cloudflare Access |
+
+---
+
+## Memory benchmark
+
+The harness in `apps/api/bench/` makes memory changes falsifiable. It replays vendored LongMemEval (default) / LoCoMo corpora through Aura's real `extract → retrieve → answer` pipeline on a **production-faithful timeline** — per-assistant-reply extraction runs as a producer that advances a global watermark, and each question is scored the moment the watermark passes its timestamp, retrieving **bi-temporally as-of that instant** (so questions never see the future). It scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.
+
+### Current results
+
+<!-- BENCH_SNAPSHOT:START -->
+<!-- Generated from apps/api/bench/history.jsonl — do not edit by hand. -->
+
+Current codebase (as of `c94fcae`, scope `longmemeval/medium`): **QA 74%** · **recall@15 92%** across 180 questions. Full breakdown + history in [apps/api/bench/README.md](apps/api/bench/README.md).
+
+| dataset | category | QA acc | recall@15 | n |
+|---|---|---:|---:|---:|
+| longmemeval | knowledge-update | 77% | 95% | 30 |
+| longmemeval | multi-session | 60% | 93% | 30 |
+| longmemeval | single-session-assistant | 83% | 90% | 30 |
+| longmemeval | single-session-preference | 50% | 93% | 30 |
+| longmemeval | single-session-user | 100% | 93% | 30 |
+| longmemeval | temporal-reasoning | 77% | 85% | 30 |
+
+<!-- BENCH_SNAPSHOT:END -->
+
+The full per-category breakdown and the run-over-run evolution live in [`apps/api/bench/README.md`](apps/api/bench/README.md), generated from [`apps/api/bench/history.jsonl`](apps/api/bench/history.jsonl). The snapshot above reflects the latest logged run on the current codebase.
+
+### When does it run?
+
+The bench runs **on the server, in CI**, so every memory change ships with real, reproducible numbers:
+
+* **On pull requests** that touch memory-relevant paths (`apps/api/src/memory/**`, `apps/api/bench/**`, the embedding/vector libs, the pipeline, or the DB schema). The action runs the medium LongMemEval (`--dataset=lme --replay=exchange`) pass on an isolated Neon branch, then **posts a sticky PR comment** with per-category deltas vs the target branch (like a deploy preview), flagging any regression > 2pp.
+* Every non-draft PR also runs the tiny **toy** bench as a fast smoke test.
+* **Manually via `workflow_dispatch`** (Actions → Memory bench → Run workflow), with optional subset (`fast | medium | full`), dataset (`toy | lme | locomo | both`), and the staged-reuse knobs (`bench_id`/`from`/`to`) for isolated experiments. Manual runs upload the result JSON as an artifact and may commit regenerated `history.jsonl` + README artifacts to the selected branch.
+
+Running locally is still the fast iteration loop while you're working on a change (see below) — but you no longer have to remember to run medium/full and paste numbers by hand; CI does that on the PR.
+
+### Local workflow
+
+```bash
+# One-time: cache the real corpora locally (~18 MB, gitignored).
+pnpm bench:fetch-corpus
+
+# Cheap smoke test (3 questions, ~$0.05, ~30s).
+pnpm bench:memory --dataset=toy
+
+# Standard run — main-tier extraction + answerer, escalation-tier judge.
+# ~330 questions across LoCoMo + LongMemEval, ~1h, ~$10.
+pnpm bench:memory --dataset=both --subset=medium --log
+
+# Fast iteration loop (~44 Qs, a few min, ~$2).
+pnpm bench:memory --dataset=both --subset=fast --log
+
+# Full corpus — every question (~2,486 Qs, ~2–3h). Costs real money; ask before running.
+pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
+
+# Bring-your-own normalized corpus, skipping fetch-corpus entirely.
+pnpm bench:memory --corpus-file=/tmp/my-cases.json --subset=full
+```
+
+Models are slotted onto three catalog **tiers** (`fast`, `main`, `escalation`). Defaults: `extraction=main`, `answerer=main`, `judge=escalation`. When the team updates "main" to point at the next-gen Sonnet, the bench picks it up automatically. The resolved gateway id is persisted on every `bench_runs` row so cross-run deltas stay honest.
+
+Override per-slot via either a tier name or an explicit gateway id:
+
+```bash
+# Override one slot to Haiku-tier via the catalog
+pnpm bench:memory --extraction-model=fast
+
+# Or pin an exact id
+pnpm bench:memory --judge-model=anthropic/claude-opus-4.6
+```
+
+`--prod` switches to `.env.production`. `--dry-run` validates corpora load without any DB writes or LLM calls. `--json=path` writes per-question detail.
+
+### Iterating: ramp the data up, don't boil the ocean
+
+Don't jump straight to the full corpus. Start tiny, confirm the axis you're working on improves, then widen. There's no point scoring 1,500 LoCoMo questions while `temporal` and `knowledge_update` sit at 0% — fix those on a handful of cases first.
+
+`--limit=N` caps cases **per category** (overriding `--subset`), and `--category=` narrows to the one axis you're fixing:
+
+```bash
+# Tight loop on the failing axis — 3 cases, seconds, cents.
+pnpm bench:memory --dataset=lme --category=temporal-reasoning --limit=3
+
+# Looks better? Widen to 10 and log the result for the record.
+pnpm bench:memory --dataset=lme --category=temporal-reasoning --limit=10 --log --note="extractor durability fix"
+
+# Axis healthy across categories? Now it's worth the full run.
+pnpm bench:memory --dataset=both --subset=full --concurrency=4 --log
+```
+
+### Results log (commit fingerprints)
+
+`--log` appends a structured entry to [`apps/api/bench/history.jsonl`](apps/api/bench/history.jsonl) — runId, commit SHA, corpus hash, config, resolved models, cost, and per-category scores — then regenerates [`apps/api/bench/README.md`](apps/api/bench/README.md) and the snapshot block above. Commit all three alongside the change so every result is permanently tied to the code that produced it; `git log` on `history.jsonl` shows whether a change actually moved the needle. A `-dirty` suffix on the commit flags runs that included uncommitted changes. Add `--note="…"` to annotate what you were trying. Regenerate the markdown from history at any time with `pnpm bench:report` (no DB or LLM needed).
+
+### What goes in the PR
+
+You don't paste numbers by hand. The **Memory bench** action posts a sticky comment on the PR with the per-category before/after/Δ table (QA + recall@15) computed against the target branch. The comment looks like:
+
+| Dataset | Category | QA before | QA after | QA Δ | recall before | recall after | recall Δ | n |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| longmemeval | temporal-reasoning | 39% | 46% | +7pp | 77% | 79% | +2pp | 30 |
+| … | | | | | | | | |
+
+Any category that regresses by more than **2pp** is flagged in the comment and **requires explicit justification in the PR description**. If there's no comparable baseline on the target branch yet (corpus or case-set changed), the comment shows absolute scores instead of deltas. Because the sampler is deterministic, a PR run and the target branch's run at the same subset/corpus diff like-for-like.
+
+### Adding new evidence
+
+* **New corpus** → entry in `apps/api/bench/corpus/manifest.json` (set `vendored: false` + a `fetchUrl`; the file lands in the gitignored `cache/` dir), and a loader in `apps/api/bench/src/fixtures.ts` that returns `BenchCase[]`.
+* **New scoring lane** → new `ScoreType` in `apps/api/bench/src/types.ts` + branch in `aggregateScores()`.
+* **New judge prompt** → drop next to the existing ones in `apps/api/bench/src/judge.ts` and route via `pickPrompt()`.
 
 ---
 

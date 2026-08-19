@@ -13,7 +13,11 @@ Aura's notes system is a persistent knowledge base stored in PostgreSQL. Notes a
 | `plan` | Ephemeral work-in-progress | Expires (set via `expires_in`) |
 | `knowledge` | General reference, business context | Permanent |
 
-Two special notes are auto-loaded into every conversation: **`self-directive`** (Aura's hard rules and institutional memory) and **`notes-index`** (table of contents for all notes).
+Two things are injected into every conversation's system prompt: the **`self-directive`** note (Aura's hard rules and institutional memory, truncated at ~2000 tokens) and an **auto-generated notes index** — a table of contents built from every non-expired note with `inject_in_context = true`, grouped by category and sorted by `importance`. Each index entry shows the note's `topic` and `summary`, which is why setting a good summary matters.
+
+<Note>
+**System notes are admin-protected.** The topics `self-directive`, `business-map`, and `gaps-log` — plus any note with `skill` category or `system` visibility — can only be created, overwritten, edited, or deleted by users with the admin role.
+</Note>
 
 ---
 
@@ -25,7 +29,10 @@ Create a new note or fully overwrite an existing one.
 |-------|------|----------|-------------|
 | `topic` | string | **yes** | Short descriptive key, e.g. `bugs-weekly` or `project-alpha-todos` |
 | `content` | string | **yes** | Full note content (markdown supported) |
-| `category` | enum | no | `skill`, `plan`, or `knowledge` (default `knowledge`) |
+| `category` | enum | no | `skill`, `plan`, or `knowledge` (default `knowledge` for new notes; omit to preserve existing category on update) |
+| `summary` | string | no | One-line summary (max 250 chars) shown in the auto-generated notes index. Omit on update to preserve the existing summary. |
+| `inject_in_context` | boolean | no | Whether the note appears in the notes index injected into every prompt (default `false`) |
+| `importance` | number | no | Sort order within category in the notes index, 1–100 (default 50, higher = more prominent) |
 | `expires_in` | string | no | When to expire, e.g. `2 hours`, `3 days` (mainly for plan notes) |
 
 ---
@@ -62,12 +69,15 @@ Surgically edit an existing note without rewriting the whole thing. Prefer this 
 | `start_line` | number | conditional | First line to replace (required for `replace_lines`) |
 | `end_line` | number | conditional | Last line to replace (required for `replace_lines`) |
 | `line` | number | conditional | Line to insert after (required for `insert_after_line`) |
+| `summary` | string | no | Update the note's summary for the notes index (omit to keep existing) |
+| `inject_in_context` | boolean | no | Update index visibility (omit to keep existing) |
+| `importance` | number | no | Update index sort order, 1–100 (omit to keep existing) |
 
 ---
 
 ## `delete_note`
 
-Delete a note entirely by topic.
+Delete a note entirely by topic. System notes require the admin role.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -93,8 +103,12 @@ Save progress on a multi-step task and schedule a continuation. Use when approac
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `topic` | string | **yes** | Plan note topic (will create or update) |
+| `topic` | string | **yes** | Plan note topic (will create or update). Must not contain `]` — it would break the `[CONTINUE:topic]` tag parser. |
 | `progress` | string | **yes** | What has been accomplished so far |
 | `next_steps` | string | **yes** | Specific instructions for the next continuation |
 | `context` | string | **yes** | Accumulated findings and intermediate results |
 | `continue_in_minutes` | number | no | Minutes until continuation fires (default 5) |
+
+### Continuation depth limit
+
+Continuations are capped at **5** per plan topic. When the limit is reached, `checkpoint_plan` still saves the plan note (status `waiting`, 7-day expiry) but does **not** schedule another continuation — a human needs to re-trigger the work.

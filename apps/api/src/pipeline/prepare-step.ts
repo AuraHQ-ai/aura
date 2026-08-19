@@ -1,10 +1,16 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { isAnthropicModel } from "../lib/ai.js";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
+import { logError } from "../lib/error-logger.js";
+import {
+  spawnTurnContinuationJob,
+  type TurnDeadlinePath,
+  type TurnDeadlines,
+} from "./turn-deadline.js";
+import type { ModelCapabilities } from "@aura/db/schema";
 
 export class InvocationSupersededError extends Error {
   constructor(public readonly invocationId: string) {
@@ -18,18 +24,46 @@ export const HEADLESS_STEP_LIMIT = 350;
 const WARNING_THRESHOLD = 200;
 const HEADLESS_WARNING_THRESHOLD = 300;
 
-const WRAP_UP_MESSAGE =
+export const WRAP_UP_MESSAGE =
   "IMPORTANT: You're approaching your step limit ({stepCount}/{limit}). " +
   "Start wrapping up — summarize your findings and post results now. " +
   "Do not start new investigations or long tool chains.";
+
+// ── Turn wall-clock deadline messages (issue #1318) ──────────────────────────
+// Exported so the durable WDK path (workflows/slack-respond.ts) reuses the
+// exact same nudges instead of duplicating the strings (issue #1320).
+
+export const TURN_SOFT_DEADLINE_MESSAGE =
+  "IMPORTANT: This turn has been running for {elapsedSec}s and is approaching " +
+  "the platform's wall-clock limit. Wrap up NOW: do not start new " +
+  "investigations or long tool calls, summarize what you have done so far, " +
+  "and if work remains use checkpoint_plan to save your progress and " +
+  "schedule a continuation.";
+
+export const TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION =
+  "CRITICAL: This turn's wall-clock budget is exhausted and your tools have " +
+  "been withdrawn. Reply now with your final message: state what you " +
+  "completed and what remains. A continuation job has already been scheduled " +
+  "to resume the remaining work in this thread — hand off cleanly and keep " +
+  "it brief.";
+
+export const TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION =
+  "CRITICAL: This turn's wall-clock budget is exhausted and your tools have " +
+  "been withdrawn. Reply now with your final message: state what you " +
+  "completed, what remains, and tell the user they can ask you to resume " +
+  "the remaining work.";
 
 export type EffortLevel = "low" | "medium" | "high";
 
 type PrepareStepResult = {
   system?: string;
+  instructions?: string;
   providerOptions?: ProviderOptions;
   model?: LanguageModel;
   messages?: Array<ModelMessage>;
+  /** Empty past the hard turn deadline so the model must emit final text. */
+  activeTools?: ReadonlyArray<never>;
+  toolChoice?: "auto" | "none" | "required";
 } | undefined;
 
 type PrepareStepFn = (options: {
@@ -55,35 +89,99 @@ type PrepareStepFn = (options: {
  * ignored — we rely on the model's own adaptive behavior.
  */
 
-/**
- * Some Anthropic models only support adaptive thinking (self-managed budget),
- * not the classic `{ type: "enabled", budgetTokens }` API. Opus 4.7 is the
- * first such model. Sending `enabled` to an adaptive-only model causes the
- * direct Anthropic API to reject the request, producing
- * `AI_NoOutputGeneratedError` with an empty stream.
- *
- * The gateway catalog only exposes a single `reasoning` tag and doesn't
- * distinguish the two thinking modes, so we keep a small allowlist of
- * adaptive-only gateway IDs. When more land, add them here.
- */
-const ADAPTIVE_ONLY_THINKING_MODELS = new Set<string>([
-  "anthropic/claude-opus-4.7",
-]);
+function isAnthropicGatewayModel(modelId: string): boolean {
+  return modelId.startsWith("anthropic/") || modelId.startsWith("claude");
+}
 
-function getAnthropicThinkingOptions(
+function hasProviderOptions(options: ProviderOptions): boolean {
+  return Object.keys(options).length > 0;
+}
+
+export function resolveProviderThinkingOptions(
+  modelId: string,
+  capabilities: ModelCapabilities | null,
+  budgetTokens: number,
+  catalogState?: { found: boolean; supportsThinking: boolean },
+): ProviderOptions {
+  if (!capabilities) {
+    // Preserve historical Anthropic behavior while allowing the catalog probe
+    // or runtime self-heal to write the more precise mode back later.
+    if (
+      isAnthropicGatewayModel(modelId) &&
+      (catalogState?.supportsThinking || catalogState?.found === false)
+    ) {
+      return {
+        anthropic: {
+          thinking: { type: "enabled", budgetTokens },
+        },
+      } as ProviderOptions;
+    }
+    return {};
+  }
+
+  switch (capabilities.provider) {
+    case "anthropic":
+      if (capabilities.thinkingMode === "none") return {};
+      return {
+        anthropic: {
+          thinking: capabilities.thinkingMode === "adaptive"
+            ? { type: "adaptive" }
+            : { type: "enabled", budgetTokens },
+        },
+      } as ProviderOptions;
+    case "openai":
+      if (capabilities.reasoningEffort === "none") return {};
+      return {
+        openai: {
+          reasoningEffort: capabilities.reasoningEffort,
+        },
+      } as ProviderOptions;
+    case "google":
+      if (capabilities.thinkingBudget === "none") return {};
+      return {
+        google: {
+          thinkingConfig: {
+            thinkingBudget: capabilities.thinkingBudget === "dynamic"
+              ? -1
+              : capabilities.thinkingBudget,
+          },
+        },
+      } as ProviderOptions;
+    case "xai":
+      if (capabilities.reasoningEffort === "none") return {};
+      return {
+        xai: {
+          reasoningEffort: capabilities.reasoningEffort,
+        },
+      } as ProviderOptions;
+    case "none":
+      return {};
+  }
+
+  return {};
+}
+
+export async function getProviderThinkingOptions(
   modelId: string,
   budgetTokens: number,
-): { type: "adaptive" } | { type: "enabled"; budgetTokens: number } {
-  if (ADAPTIVE_ONLY_THINKING_MODELS.has(modelId)) {
-    return { type: "adaptive" };
-  }
-  return { type: "enabled", budgetTokens };
+): Promise<ProviderOptions> {
+  const catalogCapabilities = await getModelCapabilities(modelId);
+  return resolveProviderThinkingOptions(
+    modelId,
+    catalogCapabilities.capabilities,
+    budgetTokens,
+    {
+      found: catalogCapabilities.found,
+      supportsThinking: catalogCapabilities.supportsThinking,
+    },
+  );
 }
 
 export function createPrepareStep(opts: {
   stepLimit?: number;
   warningThreshold?: number;
   stablePrefix: string;
+  environmentContext?: string;
   conversationContext?: string;
   dynamicContext?: string;
   defaultEffort?: EffortLevel;
@@ -94,6 +192,18 @@ export function createPrepareStep(opts: {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  userId?: string;
+  /** Wall-clock budget for the turn (issue #1318). Omit to disable. */
+  turnDeadlines?: TurnDeadlines;
+  /** Pipeline path label for deadline telemetry. */
+  turnPath?: TurnDeadlinePath;
+  /**
+   * Continuation depth of the CURRENT turn (issue #1320): 0 for an original
+   * turn, N for a job resumed from a `[CONTINUE:topic:dN]` tag. A hard
+   * deadline spawns the next continuation at depth N + 1, capped at
+   * MAX_CONTINUATION_DEPTH inside spawnTurnContinuationJob.
+   */
+  continuationDepth?: number;
 }): PrepareStepFn {
   const limit = opts.stepLimit ?? STEP_LIMIT;
   const threshold = opts.warningThreshold ?? WARNING_THRESHOLD;
@@ -101,26 +211,41 @@ export function createPrepareStep(opts: {
   let escalatedModel: { modelId: string; model: LanguageModel } | null = null;
   let failureCount = 0;
 
-  // Cache thinking support per model ID for this prepareStep instance.
-  // Catalog lookups are already in-memory-cached (5 min TTL), but we also
-  // memoize here so we don't hit the cache on every step.
-  const thinkingCache = new Map<string, boolean>();
-  async function modelSupportsThinking(modelId: string | undefined): Promise<boolean> {
-    if (!modelId) return false;
-    if (!isAnthropicModel(modelId)) return false;
-    const hit = thinkingCache.get(modelId);
-    if (hit !== undefined) return hit;
+  // ── Turn wall-clock deadline state (issue #1318) ──────────────────────────
+  // turnStartedAt is recorded ONCE here, alongside the rest of the per-turn
+  // counters, when the prepareStep closure is created at the start of the
+  // turn. It is never re-derived per step.
+  const turnStartedAt = Date.now();
+  const softDeadlineMs = opts.turnDeadlines?.softDeadlineMs;
+  const hardDeadlineMs = opts.turnDeadlines?.hardDeadlineMs;
+  let softDeadlineNudgeInjected = false;
+  let hardDeadlineTripped = false;
+  let continuationJobSpawned = false;
+
+  // Cache providerOptions per model/budget for this prepareStep instance.
+  // Catalog lookups are also in-memory cached, but this avoids repeated work
+  // while a long multi-step response is running.
+  const thinkingOptionsCache = new Map<string, ProviderOptions>();
+  async function getCachedProviderThinkingOptions(
+    modelId: string | undefined,
+    budgetTokens: number | undefined,
+  ): Promise<ProviderOptions | undefined> {
+    if (!modelId || !budgetTokens) return undefined;
+    const cacheKey = `${modelId}::${budgetTokens}`;
+    const hit = thinkingOptionsCache.get(cacheKey);
+    if (hit) return hasProviderOptions(hit) ? hit : undefined;
+
     try {
-      const caps = await getModelCapabilities(modelId);
-      thinkingCache.set(modelId, caps.supportsThinking);
-      return caps.supportsThinking;
+      const options = await getProviderThinkingOptions(modelId, budgetTokens);
+      thinkingOptionsCache.set(cacheKey, options);
+      return hasProviderOptions(options) ? options : undefined;
     } catch (err: any) {
       logger.warn("prepareStep: capability lookup failed", {
         modelId,
         error: err?.message,
       });
-      thinkingCache.set(modelId, false);
-      return false;
+      thinkingOptionsCache.set(cacheKey, {});
+      return undefined;
     }
   }
 
@@ -191,33 +316,104 @@ export function createPrepareStep(opts: {
     // support via the gateway-sourced catalog (tags.includes("reasoning")).
     const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
-    const thinkingEnabled = await modelSupportsThinking(effectiveModelId);
+    providerOptions = await getCachedProviderThinkingOptions(effectiveModelId, opts.thinkingBudget);
 
-    // --- Build Anthropic provider options ---
-    if (thinkingEnabled && opts.thinkingBudget && effectiveModelId) {
-      providerOptions = {
-        anthropic: {
-          thinking: getAnthropicThinkingOptions(effectiveModelId, opts.thinkingBudget),
-        },
-      };
+    // --- Turn wall-clock deadline (issue #1318) ---
+    // The step budget never binds in practice (turns die around step 40 while
+    // the limit is 250) because sandbox tool calls cost 40-150s each. Enforce
+    // a wall-clock budget so the turn wraps up BEFORE the Vercel maxDuration
+    // (800s) SIGKILL instead of dying mid-sentence.
+    const elapsedMs = Date.now() - turnStartedAt;
+    const hardDeadlineActive = hardDeadlineMs != null && elapsedMs >= hardDeadlineMs;
+    const systemSuffixes: string[] = [];
+
+    if (hardDeadlineActive && !hardDeadlineTripped) {
+      hardDeadlineTripped = true;
+      logger.warn("prepareStep: turn hard deadline tripped — withdrawing tools", {
+        elapsedMs,
+        hardDeadlineMs,
+        stepNumber,
+      });
+      logError({
+        errorName: "TurnHardDeadline",
+        errorMessage: `Turn exceeded its hard wall-clock deadline (${hardDeadlineMs}ms); tools withdrawn to force a final message`,
+        errorCode: "turn_hard_deadline",
+        channelId: opts.channelId,
+        userId: opts.userId,
+        context: { elapsedMs, step: stepNumber, path: opts.turnPath },
+      });
+      // Auto-spawn a continuation job so the unfinished work resumes in the
+      // same Slack thread. Awaited so the row exists before the SIGKILL;
+      // fail-soft (returns false) so it can never break the wrap-up step.
+      continuationJobSpawned = await spawnTurnContinuationJob({
+        channelId: opts.channelId,
+        threadTs: opts.threadTs,
+        userId: opts.userId,
+        invocationId: opts.invocationId,
+        elapsedMs,
+        step: stepNumber,
+        depth: (opts.continuationDepth ?? 0) + 1,
+      });
+    }
+
+    if (hardDeadlineActive) {
+      systemSuffixes.push(
+        continuationJobSpawned
+          ? TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION
+          : TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION,
+      );
+    } else if (
+      softDeadlineMs != null &&
+      elapsedMs >= softDeadlineMs &&
+      !softDeadlineNudgeInjected
+    ) {
+      // Soft deadline: inject the wrap-up nudge at most ONCE per turn. The
+      // instructions override carries forward to later steps in the AI SDK,
+      // so a single injection keeps the nudge in play.
+      softDeadlineNudgeInjected = true;
+      logger.warn("prepareStep: turn soft deadline reached — injecting wrap-up nudge", {
+        elapsedMs,
+        softDeadlineMs,
+        stepNumber,
+      });
+      logError({
+        errorName: "TurnSoftDeadline",
+        errorMessage: `Turn exceeded its soft wall-clock deadline (${softDeadlineMs}ms); wrap-up nudge injected`,
+        errorCode: "turn_soft_deadline",
+        channelId: opts.channelId,
+        userId: opts.userId,
+        context: { elapsedMs, step: stepNumber, path: opts.turnPath },
+      });
+      systemSuffixes.push(
+        TURN_SOFT_DEADLINE_MESSAGE.replace(
+          "{elapsedSec}",
+          String(Math.round(elapsedMs / 1000)),
+        ),
+      );
     }
 
     // --- Step limit warning ---
-    // Concatenates all layers into a single string override. This breaks
-    // cache for the wrap-up step only — acceptable tradeoff since it fires
-    // near the step limit (≥200) and only once per conversation.
     if (stepNumber >= threshold) {
-      const wrapUp = WRAP_UP_MESSAGE
-        .replace("{stepCount}", String(stepNumber))
-        .replace("{limit}", String(limit));
-      systemOverride = opts.stablePrefix
-        + (opts.conversationContext ? "\n\n" + opts.conversationContext : "")
-        + (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "")
-        + "\n\n" + wrapUp;
+      systemSuffixes.push(
+        WRAP_UP_MESSAGE
+          .replace("{stepCount}", String(stepNumber))
+          .replace("{limit}", String(limit)),
+      );
       logger.info("prepareStep: injecting wrap-up nudge", {
         stepNumber,
         limit,
       });
+    }
+
+    // Concatenates all layers into a single string override. This breaks
+    // cache for the affected steps only — acceptable tradeoff since these
+    // nudges fire near the end of a turn.
+    if (systemSuffixes.length > 0) {
+      systemOverride = opts.stablePrefix
+        + (opts.environmentContext ? "\n\n" + opts.environmentContext : "")
+        + (opts.conversationContext ? "\n\n" + opts.conversationContext : "")
+        + (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "")
+        + "\n\n" + systemSuffixes.join("\n\n");
     }
 
     const prunedMessages = pruneMessages({
@@ -227,9 +423,12 @@ export function createPrepareStep(opts: {
 
     return {
       messages: prunedMessages,
-      ...(systemOverride && { system: systemOverride }),
+      ...(systemOverride && { instructions: systemOverride }),
       ...(providerOptions && { providerOptions }),
       ...(modelOverride && { model: modelOverride }),
+      // Past the hard deadline, stop offering tools so the model is forced
+      // to emit a final text message in the remaining headroom.
+      ...(hardDeadlineActive && { activeTools: [] as const, toolChoice: "none" as const }),
     };
   };
 }
@@ -237,6 +436,7 @@ export function createPrepareStep(opts: {
 /** Factory for interactive Slack agent prepareStep (250-step limit). */
 export function createInteractivePrepareStep(opts: {
   stablePrefix: string;
+  environmentContext?: string;
   conversationContext?: string;
   dynamicContext?: string;
   modelId?: string;
@@ -247,11 +447,15 @@ export function createInteractivePrepareStep(opts: {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  userId?: string;
+  /** Wall-clock budget for the turn (issue #1318). Omit to disable. */
+  turnDeadlines?: TurnDeadlines;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: STEP_LIMIT,
     warningThreshold: WARNING_THRESHOLD,
     stablePrefix: opts.stablePrefix,
+    environmentContext: opts.environmentContext,
     conversationContext: opts.conversationContext,
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
@@ -262,12 +466,16 @@ export function createInteractivePrepareStep(opts: {
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
+    userId: opts.userId,
+    turnDeadlines: opts.turnDeadlines,
+    turnPath: "interactive",
   });
 }
 
 /** Factory for headless job execution prepareStep (350-step limit). */
 export function createHeadlessPrepareStep(opts: {
   stablePrefix: string;
+  environmentContext?: string;
   conversationContext?: string;
   dynamicContext?: string;
   modelId?: string;
@@ -278,11 +486,17 @@ export function createHeadlessPrepareStep(opts: {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  userId?: string;
+  /** Wall-clock budget for the turn (issue #1318). Omit to disable. */
+  turnDeadlines?: TurnDeadlines;
+  /** Continuation depth of the current job (issue #1320); 0 when not a continuation. */
+  continuationDepth?: number;
 }): PrepareStepFn {
   return createPrepareStep({
     stepLimit: HEADLESS_STEP_LIMIT,
     warningThreshold: HEADLESS_WARNING_THRESHOLD,
     stablePrefix: opts.stablePrefix,
+    environmentContext: opts.environmentContext,
     conversationContext: opts.conversationContext,
     dynamicContext: opts.dynamicContext,
     modelId: opts.modelId,
@@ -293,5 +507,9 @@ export function createHeadlessPrepareStep(opts: {
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
+    userId: opts.userId,
+    turnDeadlines: opts.turnDeadlines,
+    turnPath: "headless",
+    continuationDepth: opts.continuationDepth,
   });
 }

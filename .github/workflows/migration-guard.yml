@@ -1,0 +1,39 @@
+name: Migration Guard
+
+on:
+  pull_request:
+    paths:
+      - 'packages/db/drizzle/**'
+
+jobs:
+  migration-guard:
+    name: Check migration ordering + integrity
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so `git show origin/main:...` works
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch main branch for comparison
+        run: git fetch origin main --depth=1
+
+      - name: Run migration guard
+        # Checks that no newly added journal entry:
+        #   - has a `when` <= max `when` on main (out-of-order generation)
+        #   - shares a `when` with another new entry (duplicate timestamp)
+        #   - references a .sql file that does not exist (missing SQL)
+        # And that no .sql file in drizzle/ lacks a journal entry (orphaned SQL).
+        # Failure means the branch is stale — rebase on main and regenerate.
+        run: pnpm --filter @aura/db run guard

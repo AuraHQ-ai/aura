@@ -34,7 +34,8 @@ import {
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate } from "@/lib/utils";
-import { useState, useMemo } from "react";
+import { useAuth } from "@/lib/auth";
+import { useState, useMemo, useEffect } from "react";
 import { Plus, Search, Check, ChevronsUpDown } from "lucide-react";
 
 const SCOPE_LABELS: Record<
@@ -72,15 +73,22 @@ const PAGE_SIZE = 100;
 
 function CredentialsPage() {
   const queryClient = useQueryClient();
+  const { session } = useAuth();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState("token");
   const [newValue, setNewValue] = useState("");
-  const [newOwnerId, setNewOwnerId] = useState("");
+  const [newOwnerId, setNewOwnerId] = useState(session?.slackUserId ?? "");
   const [newScope, setNewScope] = useState("member");
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (showCreate && !newOwnerId && session?.slackUserId) {
+      setNewOwnerId(session.slackUserId);
+    }
+  }, [showCreate, newOwnerId, session?.slackUserId]);
 
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ["credentials", search, page],
@@ -110,6 +118,13 @@ function CredentialsPage() {
     [users, newOwnerId],
   );
 
+  const ownerLabel =
+    selectedOwner?.displayName ||
+    selectedOwner?.slackUserId ||
+    (newOwnerId === session?.slackUserId
+      ? session.name || session.slackUserId
+      : null);
+
   const createMutation = useMutation({
     mutationFn: (payload: {
       name: string;
@@ -124,7 +139,7 @@ function CredentialsPage() {
       setNewName("");
       setNewType("token");
       setNewValue("");
-      setNewOwnerId("");
+      setNewOwnerId(session?.slackUserId ?? "");
       setNewScope("member");
     },
   });
@@ -256,10 +271,7 @@ function CredentialsPage() {
                     aria-expanded={ownerPickerOpen}
                     className="w-full justify-between font-normal"
                   >
-                    {selectedOwner
-                      ? selectedOwner.displayName ||
-                        selectedOwner.slackUserId
-                      : "Select owner…"}
+                    {ownerLabel || "Select owner…"}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>

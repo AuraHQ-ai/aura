@@ -9,6 +9,7 @@ import type { ScheduleContext } from "@aura/db/schema";
 import { getFastModel } from "../lib/ai.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { tavily } from "@tavily/core";
 import { BROWSER_UA, isPrivateUrl } from "../lib/ssrf.js";
 import { defineTool } from "../lib/tool.js";
@@ -209,6 +210,7 @@ async function summarizeResource(input: {
   const { text } = await generateText({
     model,
     maxOutputTokens: 320,
+    telemetry: aiTelemetry("resource-summary"),
     prompt: `Summarize this resource in ~200 words for fast retrieval.
 
 Focus on:
@@ -339,7 +341,7 @@ export function createResourceTools(context?: ScheduleContext) {
           const nextParentUrl = parent_url ?? current?.parentUrl ?? null;
           let nextTitle = title?.trim() || current?.title || null;
 
-          if (/^https?:\/\//i.test(normalizedUrl) && await isPrivateUrl(normalizedUrl)) {
+          if (/^https?:\/\//i.test(normalizedUrl) && (await isPrivateUrl(normalizedUrl))) {
             return { ok: false, error: "Blocked: URL resolves to a private/internal network address" };
           }
 

@@ -117,6 +117,7 @@ async function getUserRole(userId: string): Promise<Role> {
  * - 'power_user' -> power_user, admin
  * - 'admin' -> admin only
  * - 'owner' -> only the credential owner (owner_id must match)
+ * - 'per_user' -> only the credential owner or an explicit active grant
  *
  * Plus explicit grants and synthetic env-var-based credentials.
  */
@@ -132,27 +133,8 @@ export async function resolveUserCredentials(
   const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
 
   try {
-    const allCreds = await db
-      .select({ name: credentials.name, scope: credentials.scope, ownerId: credentials.ownerId })
-      .from(credentials);
-
-    for (const cred of allCreds) {
-      const scope = (cred.scope || "member") as Role | "owner";
-      if (scope === "owner") {
-        if (cred.ownerId === effectiveUserId) {
-          result.add(cred.name);
-        }
-      } else {
-        const requiredLevel = ROLE_HIERARCHY[scope as Role] ?? 0;
-        if (userLevel >= requiredLevel) {
-          result.add(cred.name);
-        }
-      }
-    }
-
-    // Explicit grants always work regardless of scope
     const grants = await db
-      .select({ credentialName: credentials.name })
+      .select({ credentialId: credentialGrants.credentialId, credentialName: credentials.name })
       .from(credentialGrants)
       .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
       .where(
@@ -162,6 +144,44 @@ export async function resolveUserCredentials(
         ),
       );
 
+    const grantedCredentialIds = new Set(grants.map((grant) => grant.credentialId));
+
+    const allCreds = await db
+      .select({
+        id: credentials.id,
+        name: credentials.name,
+        scope: credentials.scope,
+        ownerId: credentials.ownerId,
+      })
+      .from(credentials);
+
+    for (const cred of allCreds) {
+      const scope = cred.scope || "member";
+      if (scope === "owner") {
+        if (cred.ownerId === effectiveUserId) {
+          result.add(cred.name);
+        }
+      } else if (scope === "per_user") {
+        if (cred.ownerId === effectiveUserId || grantedCredentialIds.has(cred.id)) {
+          result.add(cred.name);
+        }
+      } else {
+        const requiredLevel = ROLE_HIERARCHY[scope as Role];
+        if (requiredLevel === undefined) {
+          logger.warn("resolveUserCredentials: unknown credential scope", {
+            userId: effectiveUserId,
+            credentialName: cred.name,
+            scope,
+          });
+          continue;
+        }
+        if (userLevel >= requiredLevel) {
+          result.add(cred.name);
+        }
+      }
+    }
+
+    // Explicit grants always work regardless of scope
     for (const grant of grants) {
       result.add(grant.credentialName);
     }

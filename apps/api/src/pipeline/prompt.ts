@@ -10,6 +10,7 @@ import { getProfile } from "../users/profiles.js";
 
 export interface AssembledPrompt {
   stablePrefix: string;
+  environmentContext: string;
   conversationContext: string;
   dynamicContext: string;
   memories: Memory[];
@@ -41,6 +42,11 @@ export async function assemblePrompt(
           .slice(-5)
           .map((m) => m.text)
           .join("\n")
+      : context.useSurroundingContext && conversation.recentMessages.length > 0
+        ? conversation.recentMessages
+            .slice(-5)
+            .map((m) => m.text)
+            .join("\n")
       : context.text;
 
   // Extract @mentioned user IDs from message text (excluding the sender).
@@ -80,7 +86,10 @@ export async function assemblePrompt(
 
   // Format conversation context from live Slack data
   const useChannelFallback =
-    context.isDm || !!context.threadTs || conversation.auraRecentlyActive;
+    context.isDm ||
+    !!context.threadTs ||
+    conversation.auraRecentlyActive ||
+    !!context.useSurroundingContext;
   const threadContext = await formatConversationContext(
     conversation,
     useChannelFallback,
@@ -126,6 +135,7 @@ If the thread content is sparse, try list_slack_list_items to find the item by m
 
   return {
     stablePrefix: core.stablePrefix,
+    environmentContext: core.environmentContext,
     conversationContext: core.conversationContext,
     dynamicContext,
     memories: core.memories,

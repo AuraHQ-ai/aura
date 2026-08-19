@@ -55,7 +55,10 @@
             "pages": [
               "memory-system",
               "self-improvement",
-              "permissions"
+              "eval-funnel",
+              "self-authored-tools",
+              "permissions",
+              "prompt-modes"
             ]
           },
           {
@@ -74,6 +77,8 @@
               "tools/people",
               "tools/lists",
               "tools/tables",
+              "tools/charts",
+              "tools/cards",
               "tools/subagents",
               "tools/voice",
               "tools/cursor-agent",

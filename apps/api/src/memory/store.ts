@@ -1,5 +1,6 @@
 import { eq, sql, isNull, and, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
+import { withTransaction } from "../db/tx.js";
 import { messages, memories, notes, eventLocks, type NewMessage, type NewMemory } from "@aura/db/schema";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
@@ -7,11 +8,25 @@ import { importanceToRelevance } from "./importance.js";
 import type { ToolCallRecord } from "../pipeline/respond.js";
 import type { ChannelType } from "../pipeline/context.js";
 
-export type DbChannelType = "dm" | "public_channel" | "private_channel" | "dashboard";
+export type DbChannelType = "dm" | "mpim" | "public_channel" | "private_channel" | "dashboard";
 
 export function toDbChannelType(ct: ChannelType | "dashboard"): DbChannelType {
-  if (ct === "dm" || ct === "public_channel" || ct === "private_channel" || ct === "dashboard") return ct;
-  return "public_channel";
+  switch (ct) {
+    case "dm":
+    case "mpim":
+    case "public_channel":
+    case "private_channel":
+    case "dashboard":
+      return ct;
+    case "slack_list_item":
+      // Slack List item notifications arrive from a real public channel and
+      // are not a durable channel type in the database enum.
+      return "public_channel";
+    default: {
+      const exhaustive: never = ct;
+      return exhaustive;
+    }
+  }
 }
 
 /**
@@ -315,6 +330,35 @@ export async function backfillNoteEmbeddings(
 }
 
 /**
+ * Provenance authority for conflict resolution.
+ *
+ * Grounded sources — a user's own statement or a verified tool result — outrank
+ * the assistant's own inferences/recommendations. This mirrors the "authority
+ * policy" that Zep, Mem0, and the agent-memory literature converge on: a lower-
+ * authority memory must never supersede or invalidate a higher-authority one,
+ * which is what prevents self-reinforcing "delusion" loops where Aura's own
+ * guess silently overwrites a user-stated fact.
+ *
+ * `assistant` → 1 (lowest). `user` / `tool` / unknown(null) → 2.
+ */
+export function memoryAuthority(sourceRole?: string | null): number {
+  return sourceRole === "assistant" ? 1 : 2;
+}
+
+/**
+ * True iff a NEW memory (from `newRole`) is allowed to supersede/invalidate an
+ * EXISTING memory (from `oldRole`). Equal authority is allowed — recency wins,
+ * Zep-style. A strictly lower-authority new memory is blocked, so an
+ * assistant-sourced fact can never displace a user/tool-sourced one.
+ */
+export function canSupersede(
+  newRole?: string | null,
+  oldRole?: string | null,
+): boolean {
+  return memoryAuthority(newRole) >= memoryAuthority(oldRole);
+}
+
+/**
  * Deduplication result for a single candidate memory.
  * - `dominated`: true if the candidate should be skipped entirely (similarity > 0.90)
  * - `supersedesId`: if similarity is 0.85–0.90, the ID of the old memory to soft-supersede
@@ -332,7 +376,7 @@ export interface DedupResult {
  * - similarity < 0.85 → no match, insert normally
  */
 export async function checkDuplicates(
-  candidates: { content: string; embedding: number[] | null }[],
+  candidates: { content: string; embedding: number[] | null; sourceRole?: string | null }[],
   workspaceId: string,
 ): Promise<DedupResult[]> {
   const results: DedupResult[] = [];
@@ -346,7 +390,7 @@ export async function checkDuplicates(
     try {
       const vectorSql = sql.raw(`'[${candidate.embedding.join(",")}]'::vector`);
       const neighbors = await db.execute(sql`
-        SELECT id, 1 - (embedding <=> ${vectorSql}) AS similarity
+        SELECT id, extraction_source_role, 1 - (embedding <=> ${vectorSql}) AS similarity
         FROM memories
         WHERE workspace_id = ${workspaceId}
           AND embedding IS NOT NULL
@@ -368,7 +412,12 @@ export async function checkDuplicates(
           break;
         }
         if (sim >= 0.85 && !supersedesId) {
-          supersedesId = row.id;
+          // Authority guard: a lower-authority (assistant-inferred) memory must
+          // not soft-supersede a higher-authority (user/tool) near-duplicate.
+          // When blocked, both coexist and retrieval ranking arbitrates.
+          if (canSupersede(candidate.sourceRole, row.extraction_source_role)) {
+            supersedesId = row.id;
+          }
         }
       }
 
@@ -396,17 +445,34 @@ export async function checkDuplicates(
  * Sets old memory: status='superseded', superseded_at=now(), superseded_by_memory_id=newMemoryId, valid_until=now()
  * Sets new memory: status='current', valid_from=now(), supersedes_memory_id=oldMemoryId
  * Leaves relevance_score untouched — it's purely a recency/decay signal.
+ *
+ * `at` overrides the timestamp written to the temporal columns (superseded_at,
+ * valid_until, valid_from). Production callers omit it and get wall-clock now.
+ * Replay/import callers can pass historical timestamps so bi-temporal as-of
+ * retrieval can reconstruct the memory state at a prior point in time.
  */
-export async function supersedeMemory(oldMemoryId: string, newMemoryId: string): Promise<void> {
-  const now = new Date();
+export async function supersedeMemory(
+  oldMemoryId: string,
+  newMemoryId: string,
+  at?: Date,
+): Promise<void> {
+  const now = at ?? new Date();
   try {
-    await db.transaction(async (tx) => {
+    await withTransaction(async (tx) => {
+      // Clamp valid_until to never precede the row's own valid_from. When a
+      // memory is superseded by an event timestamped earlier than its own
+      // valid_from (replay/import ordering, or a backdated correction), a raw
+      // `valid_until = now` would produce an INVERTED window (valid_until <
+      // valid_from). That window is empty, so bi-temporal as-of retrieval
+      // (`valid_from <= T AND valid_until > T`) can never surface the row at
+      // ANY instant — silently erasing the fact and corrupting knowledge-update
+      // / temporal answers. GREATEST keeps the window non-degenerate. (#1040)
       await tx.execute(sql`
         UPDATE memories
         SET status = 'superseded',
             superseded_at = ${now},
             superseded_by_memory_id = ${newMemoryId}::uuid,
-            valid_until = ${now},
+            valid_until = GREATEST(${now}, valid_from),
             updated_at = ${now}
         WHERE id = ${oldMemoryId}::uuid
           AND status IN ('current', 'disputed')
@@ -437,6 +503,10 @@ export interface ContradictionCandidate {
   id: string;
   content: string;
   similarity: number;
+  /** Provenance of the existing memory — used to gate supersession so an
+   * assistant-sourced new memory can't invalidate a user/tool-sourced one. */
+  sourceRole: string | null;
+  confidence: number | null;
 }
 
 /**
@@ -463,7 +533,7 @@ export async function findContradictionCandidates(
       : sql``;
 
     const result = await db.execute(sql`
-      SELECT id, content, 1 - (embedding <=> ${vectorSql}) AS similarity
+      SELECT id, content, extraction_source_role, confidence, 1 - (embedding <=> ${vectorSql}) AS similarity
       FROM memories
       WHERE workspace_id = ${workspaceId}
         AND embedding IS NOT NULL
@@ -481,6 +551,8 @@ export async function findContradictionCandidates(
       id: row.id as string,
       content: row.content as string,
       similarity: parseFloat(row.similarity),
+      sourceRole: (row.extraction_source_role ?? null) as string | null,
+      confidence: row.confidence != null ? parseFloat(row.confidence) : null,
     }));
   } catch (error) {
     logger.warn("Failed to find contradiction candidates", {
@@ -493,6 +565,7 @@ export async function findContradictionCandidates(
 /**
  * Batch store multiple memories.
  * Automatically sets status='current' and validFrom=now() on all new memories.
+ * validUntil is persisted only when explicitly supplied by the caller.
  */
 export async function storeMemories(newMemories: NewMemory[]): Promise<string[]> {
   if (newMemories.length === 0) return [];
@@ -667,8 +740,9 @@ export async function updateMemoryContent(
   newContent: string,
   newEmbedding: number[] | null,
   newImportance?: number,
+  at?: Date,
 ): Promise<void> {
-  const now = new Date();
+  const now = at ?? new Date();
   try {
     const updates: Record<string, unknown> = {
       content: newContent,
@@ -700,12 +774,21 @@ export async function updateMemoryContent(
 export async function archiveMemory(
   memoryId: string,
   reason: string,
+  at?: Date,
 ): Promise<void> {
-  const now = new Date();
+  const now = at ?? new Date();
   try {
     await db
       .update(memories)
-      .set({ status: "archived", updatedAt: now })
+      // Historical replays can pass `at`; close the validity interval there so
+      // bi-temporal as-of retrieval treats the memory as gone after the delete.
+      // Clamp to valid_from (GREATEST) so an early/backdated `at` can't create an
+      // inverted, never-visible window (see supersedeMemory / #1040).
+      .set({
+        status: "archived",
+        updatedAt: now,
+        ...(at ? { validUntil: sql`GREATEST(${at}, ${memories.validFrom})` } : {}),
+      })
       .where(eq(memories.id, memoryId));
     logger.info("Archived memory", { memoryId, reason });
   } catch (error) {

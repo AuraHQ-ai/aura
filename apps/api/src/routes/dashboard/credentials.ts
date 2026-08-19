@@ -348,6 +348,166 @@ dashboardCredentialsApp.openapi(updateCredentialValueRoute, async (c) => {
   }
 });
 
+const NAME_PATTERN = /^[a-z][a-z0-9_]{1,62}$/;
+
+const updateCredentialNameRoute = createRoute({
+  method: "patch",
+  path: "/{id}/name",
+  tags: ["Credentials"],
+  summary: "Rename a credential",
+  request: {
+    params: idParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({ name: z.string() }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: z.any() } },
+      description: "Success",
+    },
+    400: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Invalid name",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    409: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Name already in use",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(updateCredentialNameRoute, async (c) => {
+  try {
+    const id = c.req.param("id");
+    const { name } = await c.req.json<{ name: string }>();
+
+    const normalizedName = (name ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, "_");
+
+    if (!NAME_PATTERN.test(normalizedName)) {
+      return c.json(
+        {
+          error:
+            "Invalid name. Use 2-63 characters: lowercase letters, numbers, and underscores, starting with a letter.",
+        },
+        400,
+      );
+    }
+
+    const [existing] = await db
+      .select({ id: credentials.id, name: credentials.name })
+      .from(credentials)
+      .where(eq(credentials.id, id))
+      .limit(1);
+
+    if (!existing) return c.json({ error: "Not found" }, 404);
+
+    try {
+      const [updated] = await db
+        .update(credentials)
+        .set({ name: normalizedName, updatedAt: new Date() })
+        .where(eq(credentials.id, id))
+        .returning({ id: credentials.id, name: credentials.name });
+
+      await db.insert(credentialAuditLog).values({
+        credentialId: id,
+        credentialName: normalizedName,
+        accessedBy: "dashboard",
+        action: "update",
+        context: `Renamed from ${existing.name} to ${normalizedName}`,
+      });
+
+      return c.json(updated as any, 200);
+    } catch (error) {
+      if (String(error).includes("credentials_workspace_owner_id_name_unique")) {
+        return c.json({ error: "A credential with that name already exists for this owner." }, 409);
+      }
+      throw error;
+    }
+  } catch (error) {
+    logger.error("Failed to rename credential", { error: String(error) });
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+const revealCredentialRoute = createRoute({
+  method: "get",
+  path: "/{id}/reveal",
+  tags: ["Credentials"],
+  summary: "Reveal the plaintext credential value",
+  request: {
+    params: idParamSchema,
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ value: z.string() }),
+        },
+      },
+      description: "Success",
+    },
+    404: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Not found",
+    },
+    500: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Error",
+    },
+  },
+});
+
+dashboardCredentialsApp.openapi(revealCredentialRoute, async (c) => {
+  try {
+    const id = c.req.param("id");
+
+    const [cred] = await db
+      .select({ id: credentials.id, name: credentials.name, value: credentials.value })
+      .from(credentials)
+      .where(eq(credentials.id, id))
+      .limit(1);
+
+    if (!cred) return c.json({ error: "Not found" }, 404);
+
+    let value: string;
+    try {
+      value = decryptCredential(cred.value);
+    } catch (error) {
+      logger.error("Failed to decrypt credential for reveal", { id, error: String(error) });
+      return c.json({ error: "Unable to decrypt credential value" }, 500);
+    }
+
+    await db.insert(credentialAuditLog).values({
+      credentialId: id,
+      credentialName: cred.name,
+      accessedBy: "dashboard",
+      action: "read",
+      context: "Revealed via dashboard",
+    });
+
+    return c.json({ value } as any, 200);
+  } catch (error) {
+    logger.error("Failed to reveal credential", { error: String(error) });
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
 const createGrantRoute = createRoute({
   method: "post",
   path: "/{id}/grants",

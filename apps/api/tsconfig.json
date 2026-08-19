@@ -9,8 +9,9 @@
       "DOM.Iterable"
     ],
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "strict": true,
+    "jsx": "react-jsx",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -28,7 +29,10 @@
     "incremental": true
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "workflows/**/*.ts",
+    "bench/**/*.ts",
+    "bench/**/*.tsx"
   ],
   "exclude": [
     "node_modules",

@@ -1,16 +1,20 @@
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 import { defineTool, binaryToModelOutput, registerToolNames, filterToolsByCredentials } from "../lib/tool.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
 import { createCoreTools } from "./core.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
 import { createTableTools } from "./table.js";
+import { createChartTools } from "./chart.js";
+import { createCardTools } from "./card.js";
 import { createSubagentTools } from "./subagents.js";
 import { createVoiceTools } from "./voice.js";
 import { createEmailSyncTools } from "./email-sync.js";
 import { createScratchpadTools } from "./scratchpad.js";
+import { applyAnthropicToolDiscovery } from "./deferred.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import { formatForSlack } from "../lib/format.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -403,10 +407,11 @@ export async function resolveUserByName(
 
     const { text } = await generateText({
       model,
-      system:
+      instructions:
         "Given a list of team members and a possibly misspelled or speech-transcribed name, return ONLY the user ID (e.g. U066V1AN6) of the best match. If no reasonable match exists, return 'NONE'. Do not explain.",
       prompt: `Team members:\n${userListStr}\n\nFind: "${cleaned}"`,
       maxOutputTokens: 50,
+      telemetry: aiTelemetry("resolve-user-name"),
     });
 
     const matchedId = text.trim();
@@ -589,7 +594,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
   const tools: Record<string, any> = {
     // ── Core Tools (channel-agnostic, shared with Dashboard etc.) ────────
-    ...(await createCoreTools(context, userCreds)),
+    ...(await createCoreTools(context, userCreds, modelId)),
 
     list_channels: defineTool({
       description:
@@ -1051,6 +1056,20 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
             "The message text to send. Supports Slack mrkdwn formatting.",
           ),
       }),
+      inputExamples: [
+        {
+          input: {
+            channel: "general",
+            message: "Deploy finished — all checks green. :rocket:",
+          },
+        },
+        {
+          input: {
+            channel: "C0BNVKS77",
+            message: "*Heads up:* the weekly bug digest is ready in <#C0BUGS123>.",
+          },
+        },
+      ],
       execute: async ({ channel: channelInput, message }) => {
         try {
           const channel = await resolveChannelByName(client, channelInput);
@@ -1359,6 +1378,20 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
             "The message text to send. Supports Slack mrkdwn formatting.",
           ),
       }),
+      inputExamples: [
+        {
+          input: {
+            user_name: "Joan",
+            message: "Quick reminder: the PR review is due today.",
+          },
+        },
+        {
+          input: {
+            user_name: ["Joan", "Alex", "Sam"],
+            message: "Kicking off the incident retro thread — notes incoming.",
+          },
+        },
+      ],
       execute: async ({ user_name, message }) => {
         try {
           const names = Array.isArray(user_name) ? user_name : [user_name];
@@ -2400,7 +2433,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
               };
             }
             const { getOrCreateSandbox } = await import("../lib/sandbox.js");
-            const sandbox = await getOrCreateSandbox();
+            const sandbox = await getOrCreateSandbox(context?.userId);
             const fileBytes = await sandbox.files.read(file_path, { format: "bytes" });
             fileBuffer = Buffer.from(fileBytes);
           } else {
@@ -3003,6 +3036,13 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     ...createJobTools(client, context),
     ...createEmailSyncTools(client, context),
     ...createTableTools(client, context),
+    ...createChartTools(client, context),
+    ...createCardTools(),
+    // raise_alert (tools/alert.ts) is intentionally NOT registered: the
+    // 2026-07-30 live probe showed Slack still rejects `alert` blocks on all
+    // message surfaces (modal-only, `invalid_blocks`). The capture path in
+    // respond.ts is ready — add `...createAlertTools()` here once Slack
+    // enables alert blocks in messages (issue #1246).
     ...createSubagentTools(client, context),
     ...createVoiceTools(client, context),
     ...createScratchpadTools(invocationId ?? crypto.randomUUID()),
@@ -3014,74 +3054,7 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
     if (!(k in filteredTools)) delete tools[k];
   }
 
-  // ── Anthropic Tool Discovery ──────────────────────────────────────
-  // When running on an Anthropic model, mark infrequently-used tools as
-  // deferred so their schemas aren't sent upfront, and register the
-  // tool search meta-tool so Claude can discover them on demand.
-  // Non-Anthropic providers don't support these features.
-  const isAnthropic = modelId?.startsWith("anthropic/") ?? false;
-
-  if (isAnthropic) {
-    const { anthropic } = await import("@ai-sdk/anthropic");
-    // TODO: toolSearchBm25_20251119() returns an Anthropic-native tool object that bypasses
-    // defineTool(), so it never gets the `slack` metadata we use for Slack action cards.
-    // Workaround: cast to any and attach the slack property manually so the pipeline
-    // renders a proper card (status + detail) instead of the fallback "Done" label.
-    // Long-term fix: Anthropic should expose a way to attach metadata to built-in tools,
-    // or we should wrap it in defineTool() once the SDK supports that pattern.
-    const _toolSearch = anthropic.tools.toolSearchBm25_20251119();
-    ((_toolSearch as unknown) as Record<string, unknown>).slack = {
-      status: "Searching tools...",
-      detail: (i: { query: string }) => i.query,
-    };
-    tools.toolSearch = _toolSearch;
-
-    const DEFERRED_TOOLS = new Set([
-      // BigQuery / Data
-      "bq_list_datasets", "bq_list_tables", "bq_inspect_table", "bq_execute_query",
-      // Google Sheets
-      "read_google_sheet",
-      // Google Drive
-      "search_drive", "read_drive_file", "list_drive_folder", "list_shared_drives",
-      // Calendar
-      "check_calendar", "create_event", "update_event", "delete_event", "find_available_slot",
-      // Canvas
-      "read_canvas", "create_canvas", "edit_canvas", "delete_canvas", "share_canvas", "list_canvases",
-      // Slack Lists (list + get are eager -- used in every bug triage session)
-      "create_slack_list_item", "update_slack_list_item", "delete_slack_list_item",
-      // Email
-      "send_email", "reply_to_email",
-      // Email triage (per-user Gmail)
-      "sync_emails", "email_digest", "update_email_thread",
-      "read_user_emails", "read_user_email",
-      "generate_gmail_auth_url", "create_gmail_draft", "list_gmail_drafts", "delete_gmail_draft",
-      // Dev / Code (run_command is eager -- used reflexively in most sessions)
-      "dispatch_headless", "read_job_trace",
-      "dispatch_cursor_agent", "check_cursor_agent", "followup_cursor_agent",
-      "stop_cursor_agent", "get_cursor_conversation", "list_cursor_agents",
-      // Browser
-      "browse", "download_slack_file",
-      // Voice / Calls
-      "list_voice_agents", "place_call", "send_sms", "send_voice_note",
-      // Directory / Contacts
-      "lookup_workspace_user", "list_workspace_users", "lookup_contact",
-      // Checkpoint
-      "checkpoint_plan",
-      // Resources
-      "ingest_resource", "search_resources", "get_resource", "list_resources",
-      // Subagent
-      "run_subagent",
-      // People
-      "get_person", "update_person",
-    ]);
-
-    const deferOpts = { anthropic: { deferLoading: true } };
-    for (const name of DEFERRED_TOOLS) {
-      if (name in tools) {
-        tools[name] = { ...tools[name], providerOptions: deferOpts };
-      }
-    }
-  }
+  await applyAnthropicToolDiscovery(tools, modelId, context);
 
   return registerToolNames(tools);
 }

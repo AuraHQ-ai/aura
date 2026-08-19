@@ -1,11 +1,13 @@
-import { generateText, generateObject, Output } from "ai";
+import { generateText, Output } from "ai";
+import { gateway } from "@ai-sdk/gateway";
 import { z } from "zod";
-import { getFastModel } from "../lib/ai.js";
+import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib/ai.js";
+import { aiTelemetry, withTraceSpan } from "../lib/langfuse.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
   fetchThreadMessages, updateMemoryContent, archiveMemory,
-  findContradictionCandidates,
+  findContradictionCandidates, canSupersede,
 } from "./store.js";
 import { retrieveMemories } from "./retrieve.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
@@ -19,7 +21,7 @@ import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importanc
 import { db } from "../db/client.js";
 import { users, memoryEntities } from "@aura/db/schema";
 import { inArray, eq } from "drizzle-orm";
-import type { NewMemory, Memory } from "@aura/db/schema";
+import type { Memory, NewMemory } from "@aura/db/schema";
 import type { ChannelType } from "../pipeline/context.js";
 import type { DbChannelType } from "./store.js";
 import type { ThreadMessage } from "./store.js";
@@ -49,17 +51,41 @@ function stripInjectedContext(text: string): string {
 
 const MIN_STRIPPED_LENGTH = 50;
 
+// Backstop cap on assistant-sourced memories created per extraction (per
+// exchange). Keeps the high-signal deliverables Aura produced while preventing
+// her verbose/tool-heavy replies from flooding memory with low-value facts.
+// Tuned empirically: an unclamped n=60 LongMemEval probe stored 81% assistant
+// memories (~24/conversation, one exchange creating 34), which diluted retrieval
+// and slowed the bench; clamping (with the concise-deliverable prompt) cut that
+// to ~1-3/conversation. 8 balances single-session-assistant recall against store
+// health — raise it if assistant-recall regresses, lower it if dilution returns.
+const MAX_ASSISTANT_MEMORIES_PER_EXCHANGE = 8;
+
 // ── Thread Context Building ─────────────────────────────────────────────────
 
-const MAX_THREAD_CONTEXT_CHARS = 4000;
-const MAX_MSG_CHARS = 500;
+// Tool messages are the only real source of context blow-up (large tool I/O),
+// and they're already pruned to a one-line status below — so user and assistant
+// turns are NOT per-message truncated. The answer to many questions (especially
+// "what did you recommend/tell me?") lives deep in a long assistant reply, so
+// truncating it to a few hundred chars hid the fact from the extractor entirely.
+// A generous overall budget bounds cost; the newest turns are kept first.
+const MAX_THREAD_CONTEXT_CHARS = 12000;
+// Safety cap for a single pathologically long turn (e.g. a giant code/data dump)
+// so one message can't consume the whole budget. Normal replies fall well under.
+const MAX_TURN_CHARS = 6000;
 
 const TOOL_STATUS_RE = /^\[([^\]]+)\]\s*\((OK|ERROR)\)/;
 
+function capTurn(text: string): string {
+  return text.length > MAX_TURN_CHARS ? text.slice(0, MAX_TURN_CHARS) + "..." : text;
+}
+
 /**
  * Build a compact thread representation with aggressive tool-message pruning.
- * Tool messages are reduced to just "[Tool: name] OK/ERROR" (no I/O).
- * User/assistant messages are truncated to MAX_MSG_CHARS.
+ * Tool messages are reduced to just "[Tool: name] OK/ERROR" (no I/O) — that is
+ * where context blow-up comes from. User and assistant turns are kept in full
+ * (only a high per-turn safety cap applies) so concrete details Aura produced or
+ * the user stated survive into extraction.
  */
 function buildThreadContext(
   threadMessages: ThreadMessage[],
@@ -77,20 +103,20 @@ function buildThreadContext(
       const match = msg.content.match(TOOL_STATUS_RE);
       line = match ? `[Tool: ${match[1]}] ${match[2]}` : "[Tool]";
     } else if (msg.role === "assistant") {
-      const stripped = stripInjectedContext(msg.content);
-      const truncated = stripped.length > MAX_MSG_CHARS
-        ? stripped.slice(0, MAX_MSG_CHARS) + "..."
-        : stripped;
-      line = `[Aura]: ${truncated}`;
+      line = `[Aura]: ${capTurn(stripInjectedContext(msg.content))}`;
     } else {
       const name = displayNames.get(msg.userId) || msg.userId;
-      const truncated = msg.content.length > MAX_MSG_CHARS
-        ? msg.content.slice(0, MAX_MSG_CHARS) + "..."
-        : msg.content;
-      line = `[User (${name})]: ${truncated}`;
+      line = `[User (${name})]: ${capTurn(msg.content)}`;
     }
 
-    if (totalLen + line.length + 1 > MAX_THREAD_CONTEXT_CHARS) break;
+    const remaining = MAX_THREAD_CONTEXT_CHARS - totalLen;
+    if (line.length + 1 > remaining) {
+      // The newest turns matter most; rather than dropping an over-budget turn
+      // wholesale (which previously lost the answer entirely), keep its head to
+      // fill the remaining budget, then stop walking further back.
+      if (remaining > 200) lines.push(line.slice(0, remaining - 1));
+      break;
+    }
     lines.push(line);
     totalLen += line.length + 1;
   }
@@ -202,9 +228,29 @@ async function buildUserLookupInner(): Promise<Map<string, string>> {
  * Normalize an array of user references (names, IDs, @-mentions) to
  * canonical Slack user IDs.  Unresolvable references are kept as-is.
  */
-async function normalizeUserReferences(refs: string[]): Promise<string[]> {
+async function normalizeUserReferences(
+  refs: string[],
+  directory?: Record<string, string>,
+): Promise<string[]> {
   if (refs.length === 0) return refs;
   if (refs.every((r) => SLACK_USER_ID_RE.test(r))) return refs;
+
+  // Bench / replay harnesses supply their own synthetic name→id directory.
+  // When present we resolve ONLY against it and never touch the live Slack
+  // workspace — fictional corpus speakers ("James", "Mel") would otherwise
+  // either spam "could not resolve" warnings or, worse, get linked to a real
+  // employee who happens to share a first name. Unknown refs are kept as-is.
+  if (directory) {
+    return refs.map((ref) => {
+      if (SLACK_USER_ID_RE.test(ref)) return ref;
+      const mention = ref.match(/^<@([UW][A-Z0-9]+)>$/);
+      if (mention) return mention[1];
+      const lower = ref.toLowerCase().trim().replace(/^@/, "");
+      return (directory[lower] ??
+      directory[lower.replace(/_/g, " ")] ??
+      directory[lower.replace(/\s+/g, "_")] ?? ref);
+    });
+  }
 
   const lookup = await buildUserLookup();
   if (lookup.size === 0) return refs;
@@ -251,7 +297,7 @@ const extractedMemoriesSchema = z.object({
         .describe("A concise statement of the memory, e.g. 'Joan prefers bullet points'"),
       type: z
         .enum(["fact", "decision", "preference", "event", "open_thread"])
-        .describe("fact: durable info about people/org/world (subsumes personal, relationships). decision: explicit choices with participants. preference: how someone wants things done. event: something that happened at a specific time. open_thread: unresolved work/pending questions."),
+        .describe("fact: durable info about people/org/world (subsumes personal, relationships). decision: explicit choices with participants. preference: how someone wants things done. event: durable incident/outcome that happened at a specific time. open_thread: durable unresolved work/pending question, not current-thread activity."),
       category: z
         .enum(["semantic", "episodic", "procedural"])
         .describe("semantic: durable facts/preferences/relationships. episodic: time-bound events/conversations/incidents. procedural: how-to knowledge/workflows.")
@@ -261,7 +307,7 @@ const extractedMemoriesSchema = z.object({
         .int()
         .min(1)
         .max(100)
-        .describe("How important is this memory to recall months from now? 1-100. 90-100: business decisions, org changes, key relationships. 70-89: product discussions, bugs with impact, personal facts. 40-69: status updates with substance, meeting notes. 20-39: routine coordination, minor updates. 1-19: operational noise, 'ok thanks', agent self-actions.")
+        .describe("How important is this memory to recall months from now? 1-100. 90-100: business decisions, org changes, key relationships. 70-89: product discussions, bugs with impact, personal facts. 40-69: status updates with substance, meeting notes. 20-39: routine coordination, minor updates. 1-19: operational noise, 'ok thanks', Aura's self-narration (the act of running a query). A grounded RESULT Aura surfaced is a real fact, scored on its own merits.")
         .default(50),
       relatedUserIds: z
         .array(z.string())
@@ -272,6 +318,12 @@ const extractedMemoriesSchema = z.object({
           "True only if the user explicitly asked Aura to share this info with someone specific",
         )
         .default(false),
+      sourceRole: z
+        .enum(["user", "assistant", "tool"])
+        .default("user")
+        .describe(
+          "Who the fact originated from. Use 'assistant' ONLY for a concrete, grounded result or explicit recommendation Aura surfaced (backed by a tool result/computation), phrased with attribution ('Aura found...', 'Aura recommended...'). Use 'user' for everything the user (or a person in the thread) stated. Default 'user'.",
+        ),
       entities: z
         .array(extractedEntitySchema)
         .optional()
@@ -293,8 +345,8 @@ Extract ONLY things worth remembering long-term. Skip pleasantries, small talk, 
 - **fact**: Durable information about people, the org, or the world. This includes personal details, relationships, roles, titles, team structure, and business context. E.g., "Joan manages the Aura codebase", "Tom has a dog named Biscuit", "Joan and Maria work closely on the mobile app", "Churn rate increased 15% after the pricing change."
 - **decision**: Explicit choices made, with who made them. E.g., "We decided to use Postgres instead of MongoDB."
 - **preference**: How someone wants things done. Communication style, tool choices, formatting preferences. E.g., "Joan prefers bullet points over prose."
-- **event**: Something that happened at a specific time. Incidents, launches, meetings with outcomes. E.g., "Production went down on March 10 due to a migration bug."
-- **open_thread**: Unresolved work, pending questions, things someone said they'd do. These should eventually be resolved. E.g., "Joan asked about the API docs but never got an answer."
+- **event**: Something durable that happened at a specific time. Incidents, launches, meetings with outcomes, or real events with lasting consequence. E.g., "Production went down on March 10 due to a migration bug."
+- **open_thread**: Durable unresolved work, pending questions, or commitments that will still be useful to know later. These should eventually be resolved. E.g., "Joan asked about the API docs but never got an answer."
 
 ## Memory Categories (3 categories -- orthogonal to type)
 
@@ -302,19 +354,65 @@ Extract ONLY things worth remembering long-term. Skip pleasantries, small talk, 
 - **episodic**: Time-bound events, conversations, incidents tied to a specific moment.
 - **procedural**: How-to knowledge, workflows, processes, patterns of behavior.
 
+## Preserve concrete specifics (do NOT summarize these away)
+
+When a message states a specific value -- a number, price, amount, quantity, duration, date, measurement, score, or a named item/place/product -- capture it VERBATIM in the memory content. These exact values are the operands needed to answer later questions (price differences, totals, elapsed time, "which came first") and are expensive to rediscover.
+- Keep the precise figure: "found a similar pair of boots at a budget store for $50" -- NOT "found cheaper boots".
+- When several distinct values are stated that could later be compared or combined, record EACH as its own fact (e.g. the $800 luxury price AND the $50 budget-store price are two separate, equally worth-keeping facts -- not one vague summary).
+- Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The precise figure is worth keeping on its own.
+- A concrete personal/world fact carrying a specific stated value is worth AT LEAST importance 40 -- do not discard it as noise just because it seems minor in the moment.
+
 ## Admission Rules
 
 Save things that would be EXPENSIVE TO REDISCOVER. Unlike a coding agent that can grep the codebase instantly, this agent's retrieval relies on stored memories and whatever is in the conversation context. If finding this fact again would require searching Slack channels, reading email threads, querying databases, or exploring codebases -- store it now. The memory is a cache that saves future tool calls.
+
+## Durability Test for event/open_thread
+
+Before extracting an **event** or **open_thread**, ask: "Will this still be true and useful in 30 days?" If it describes an in-flight task, current-thread activity, or a transcript of what just happened, do NOT extract it as a memory.
+
+NEGATIVE examples -- do NOT extract:
+- "Joan is preparing the KPI report."
+- "Vadim requested a pricing analysis in this thread."
+- "Aura is drafting the deployment summary."
+
+POSITIVE examples -- keep these:
+- Durable preferences: "Joan prefers bullet points over prose."
+- Role/capability facts: "Maria owns the mobile release process."
+- Explicit decisions: "The team decided to use Postgres instead of MongoDB."
+- Real incidents with lasting consequence: "Production went down on March 10 due to a migration bug."
 
 DO NOT save:
 - Things already in the agent's persistent notes or self-directive (those are always in context)
 - Exact duplicates of things already stored as memories
 - Transient noise that won't matter in 48 hours
-- Aura's own actions ("Aura checked the deploy", "Aura ran a query")
+- Aura's self-narration — the ACT of doing something ("Aura checked the deploy", "Aura ran a query", "Aura searched Slack"). Save the RESULT, never the narration.
+- Speculation or hedging from anyone, including Aura ("probably", "I think", "might", "should be", "let me guess") — only grounded, verifiable facts.
 - Acknowledgments and pleasantries ("thanks", "got it", "sounds good")
 - Scheduling logistics ("let's meet at 3pm") unless it's a decision
 - Information that just restates what was already retrieved from memory in this conversation
 - Meta-conversation about the memory system itself
+
+## Capturing what Aura surfaced (assistant-sourced facts)
+
+Aura's own turns appear in the exchange (as "Aura:"). When the user later asks "what did you recommend/suggest/tell me?", the answer lives in Aura's earlier reply — so you MUST capture the concrete deliverables Aura produced, not just the user's request. A memory like "User requested a D&D one-shot" is nearly useless for recall; "Aura's Lost Temple of the Djinn one-shot features 4 mummies in the temple" is the fact that answers the question.
+
+Capture a concrete result or explicit recommendation Aura produced when ALL of these hold:
+1. **Grounded** — backed by a tool result, a computation over stated values, or a specific recommendation/answer Aura actually gave. If Aura could not have verified it, do NOT store it. (Self-narration like "Aura ran a query" stays excluded; the RESULT — "Aura found the cheapest flight is $340" — is kept.)
+2. **Genuinely new** — not an echo of the user's words or of a memory already retrieved/stored in this conversation.
+3. **Attributed** — phrase it with attribution: "Aura recommended...", "Aura found that...", "Aura's <thing> includes...".
+4. Never speculation or hedging (see DO NOT save above).
+
+**Pull the specific operands out of Aura's reply — but be SELECTIVE.** When Aura's answer names a specific item, place, product, person, handle/URL, title, or count that the user is likely to ask about later, capture that value as its own assistant-sourced memory. Examples:
+- Aura recommends a UK jewelry designer who works with unusual gemstones → "Aura recommended UK jewelry designer Jessica Poole (Instagram @jessica_poole_jewellery) for unusual gemstones."
+- Aura's generated one-shot says the temple holds four mummies → "Aura's Lost Temple of the Djinn one-shot has the party face 4 mummies in the temple."
+- Aura suggests a specific hostel → "Aura recommended the International Budget Hostel near Amsterdam's Red Light District."
+
+DO capture each distinct named/numeric deliverable the user might later ask about (the headline recommendation, the specific count, the key names/handles). But keep it high-signal and concise — Aura is verbose and tool-heavy, so DON'T let her replies flood memory:
+- **One concise memory per distinct deliverable**, capturing its IDENTITY + the single key distinguishing value — NOT exhaustive ingredient lists, full stat blocks, every option, or step-by-step instructions. E.g. "Aura recommended a lentil bolognese recipe" — NOT all 11 ingredients; "Aura's one-shot has the party face 4 mummies (45 HP each)" — NOT every monster's full stat block.
+- **Skip process/tool-call narration entirely** ("Aura searched…", "Aura generated a list…", "Aura ran a query") — keep only the grounded result.
+- Don't split one deliverable into many tiny memories; don't enumerate every sub-component. Capture the answer-bearing fact, not the whole essay.
+
+For every memory, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation/deliverable she produced), otherwise \`"user"\` (the default — anything a person stated). A grounded assistant deliverable is a real fact worth keeping; do not auto-discard it as a low-value "agent self-action".
 
 ## Importance Scoring (be strict, use the 1-100 scale)
 
@@ -322,7 +420,7 @@ DO NOT save:
 - **70-89**: Important technical/product decisions, high-impact customer or org context, durable people/ownership facts, non-trivial constraints.
 - **40-69**: Useful but replaceable context (project updates, meeting outcomes, tactical plans, substantial status).
 - **20-39**: Routine coordination, recurring operational updates, minor progress check-ins.
-- **1-19**: Operational noise, status checks, agent actions, acknowledgments -- these will be DISCARDED.
+- **1-19**: Operational noise, status checks, Aura's self-narration (the act of running a query/checking a deploy), acknowledgments -- these will be DISCARDED. NOTE: a grounded RESULT Aura surfaced (e.g. "Aura found the cheapest flight is $340") is a real fact, not a "self-action" — score it on its own merits, not here.
 
 Aggressive scoring guidance:
 - Default conservative: if unsure, score LOWER.
@@ -355,6 +453,12 @@ const createOperationSchema = z.object({
   importance: z.number().int().min(1).max(100).default(50),
   relatedUserIds: z.array(z.string()).describe("Slack user IDs this memory is about"),
   shareable: z.boolean().default(false),
+  sourceRole: z
+    .enum(["user", "assistant", "tool"])
+    .default("user")
+    .describe(
+      "Who the fact originated from. Use 'assistant' ONLY for a concrete, grounded result or explicit recommendation Aura surfaced (backed by a tool result/computation), phrased with attribution ('Aura found...', 'Aura recommended...'). Use 'user' for everything a person in the thread stated. Default 'user'.",
+    ),
   entities: z.array(extractedEntitySchema).optional().default([]),
 });
 
@@ -402,17 +506,24 @@ Types of memories:
 - **fact**: Durable information about people, the org, or the world. Includes personal details, relationships, roles, titles, team structure, and business context.
 - **decision**: Explicit choices made by the team with participants.
 - **preference**: How someone wants things done — working style, tool choices, communication preferences.
-- **event**: Time-bound events or incidents that happened at a specific time.
-- **open_thread**: Questions or tasks raised but not yet resolved.
+- **event**: Durable time-bound events or incidents that happened at a specific time.
+- **open_thread**: Durable questions, tasks, or commitments that remain unresolved and will still matter later.
 
 Categories: semantic (durable facts), episodic (time-bound events), procedural (how-to knowledge).
+
+## Preserve concrete specifics (do NOT summarize these away)
+When a message states a specific value — a number, price, amount, quantity, duration, date, measurement, score, or a named item/place/product — capture it VERBATIM in the memory content. These exact values are the operands needed to answer later questions (price differences, totals, elapsed time, "which came first") and are expensive to rediscover.
+- Keep the precise figure: "found a similar pair of boots at a budget store for $50" — NOT "found cheaper boots".
+- When several distinct values are stated that could later be compared or combined, record EACH as its own fact (e.g. the $800 luxury boots price AND the $50 budget-store price are two separate, equally worth-keeping facts — not one vague summary).
+- Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The preference and the precise figure are both worth keeping.
+- A concrete personal/world fact that carries a specific stated value is worth AT LEAST importance 40 — do not discard it as noise just because it seems minor in the moment.
 
 Importance (be strict):
 - 90-100: company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents.
 - 70-89: important technical/product decisions, high-impact org/customer context, durable people facts.
 - 40-69: useful but replaceable tactical updates and meeting outcomes.
 - 20-39: routine operational updates and minor coordination.
-- 1-19: noise (will be DISCARDED).
+- 1-19: noise (will be DISCARDED) — operational status checks, Aura's self-narration (the act of running a query/checking a deploy), acknowledgments. NOTE: a grounded RESULT Aura surfaced is a real fact, not a "self-action" — score it on its own merits.
 
 Aggressive scoring guidance:
 - Default conservative: if unsure, score LOWER.
@@ -421,11 +532,40 @@ Aggressive scoring guidance:
 - OKRs, strategy, and important operating rules should score >=75 (often >=85 if broadly impactful).
 
 ## What NOT to extract
-- Aura's own actions ("Aura ran a query", "Aura checked the deploy")
+- Transient current-thread activity or in-flight task narration that will not still be true/useful in 30 days ("Joan is preparing the KPI report", "Vadim requested a pricing analysis", "Aura is drafting the deployment summary").
+- Aura's self-narration — the ACT of doing something ("Aura ran a query", "Aura checked the deploy", "Aura searched Slack"). Save the RESULT, never the narration.
+- Speculation or hedging from anyone, including Aura ("probably", "I think", "might", "should be") — only grounded, verifiable facts.
 - Pleasantries and acknowledgments ("thanks", "got it")
 - Information already captured in existing memories above (the whole point is to AVOID duplicates)
 - Meta-conversation about the memory system itself
 - Scheduling logistics unless they represent a decision
+
+## Durability Test for event/open_thread
+Before creating an **event** or **open_thread**, ask: "Will this still be true and useful in 30 days?" If it is just a transcript of what happened in this thread or current work in progress ("X is preparing Y", "Z requested a report", "A is drafting B"), do NOT create it.
+
+Keep durable positives: preferences, role/capability facts, explicit decisions, and real incidents/outcomes with lasting consequence. Do not create routine status, current-thread activity, or in-flight tasks.
+
+## Capturing what Aura surfaced (assistant-sourced facts)
+
+The thread shows Aura's own turns (as "[Aura]:"). When the user later asks "what did you recommend/suggest/tell me?", the answer lives in Aura's earlier reply — so you MUST capture the concrete deliverables Aura produced, not just the user's request. "User requested a D&D one-shot" is nearly useless for recall; "Aura's Lost Temple of the Djinn one-shot features 4 mummies" is the fact that answers the question.
+
+Create a memory for a concrete result or explicit recommendation Aura produced when ALL of these hold:
+1. **Grounded** — backed by a tool result, a computation over stated values, or a specific recommendation/answer Aura actually gave. If Aura could not have verified it, do NOT store it. (Self-narration like "Aura ran a query" stays excluded; the RESULT — "Aura found the cheapest flight is $340" — is kept.)
+2. **Genuinely new** — not an echo of the user's words and not already covered by an existing memory above.
+3. **Attributed** — phrase it with attribution: "Aura recommended...", "Aura found that...", "Aura's <thing> includes...".
+4. Never speculation or hedging (see above).
+
+**Pull the specific operands out of Aura's reply — but be SELECTIVE.** When Aura's answer names a specific item, place, product, person, handle/URL, title, or count that the user is likely to ask about later, capture that value as its own assistant-sourced memory. Examples:
+- "Aura recommended UK jewelry designer Jessica Poole (Instagram @jessica_poole_jewellery) for unusual gemstones."
+- "Aura's Lost Temple of the Djinn one-shot has the party face 4 mummies in the temple."
+- "Aura recommended the International Budget Hostel near Amsterdam's Red Light District."
+
+DO capture each distinct named/numeric deliverable the user might later ask about (the headline recommendation, the specific count, the key names/handles). But keep it high-signal and concise — Aura is verbose and tool-heavy, so DON'T let her replies flood memory:
+- **One concise memory per distinct deliverable**, capturing its IDENTITY + the single key distinguishing value — NOT exhaustive ingredient lists, full stat blocks, every option, or step-by-step instructions. E.g. "Aura recommended a lentil bolognese recipe" — NOT all 11 ingredients; "Aura's one-shot has the party face 4 mummies (45 HP each)" — NOT every monster's full stat block.
+- **Skip process/tool-call narration entirely** ("Aura searched…", "Aura generated a list…", "Aura ran a query") — keep only the grounded result.
+- Don't split one deliverable into many tiny memories; don't enumerate every sub-component. Capture the answer-bearing fact, not the whole essay.
+
+For every create operation, set \`sourceRole\`: \`"assistant"\` when the fact originated from Aura's turn (a grounded result/recommendation/deliverable she produced), otherwise \`"user"\` (the default — anything a person in the thread stated).
 
 ## Rules
 - Be concise — one clear sentence per memory.
@@ -435,7 +575,7 @@ Aggressive scoring guidance:
 
 ${ENTITY_EXTRACTION_RULES}`;
 
-interface ExtractionContext {
+export interface ExtractionContext {
   userMessage: string;
   assistantResponse: string;
   userId: string;
@@ -450,6 +590,55 @@ interface ExtractionContext {
   threadTs?: string;
   /** Override createdAt on stored memories (for backfills) */
   createdAt?: Date;
+  /**
+   * Workspace ID for tenant isolation. Falls back to process.env.DEFAULT_WORKSPACE_ID
+   * then to "default". Pass an explicit value when running multiple extractions in
+   * different workspaces from the same process.
+   */
+  workspaceId?: string;
+  /**
+   * Override the extraction LLM (defaults to getFastModel()). Useful for
+   * replays and backfills that need stable model selection.
+   */
+  extractionModelId?: string;
+  /**
+   * Replay/backfill only: a synthetic lowercased name→id directory. When set,
+   * user-reference normalization resolves against THIS map instead of the live
+   * Slack workspace, so fictional corpus speakers map to deterministic
+   * synthetic ids and never collide with (or warn against) real employees.
+   * Always undefined in production.
+   */
+  userDirectory?: Record<string, string>;
+  /**
+   * Optional cost hook. When set, each extraction-stage LLM call reports its
+   * resolved model id + token usage so callers can price the run. Production
+   * passes nothing — no behaviour change.
+   */
+  onUsage?: (
+    modelId: string,
+    usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    },
+  ) => void;
+}
+
+/**
+ * Resolve the extraction model. Honours `context.extractionModelId` when
+ * a caller wants to pin a specific model; otherwise uses the catalog-resolved
+ * fast model. Anthropic fallback middleware is applied either way.
+ */
+async function resolveExtractionModel(
+  context: ExtractionContext,
+): Promise<WrappableModel> {
+  if (context.extractionModelId) {
+    return withAnthropicFallback(
+      gateway(context.extractionModelId),
+      context.extractionModelId,
+    );
+  }
+  return getFastModel();
 }
 
 /**
@@ -465,21 +654,96 @@ type ExtractionSourceRole = "user" | "assistant" | "tool";
 
 export async function extractMemories(context: ExtractionContext): Promise<void> {
   const start = Date.now();
-  const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
+  const workspaceId = context.workspaceId
+    || process.env.DEFAULT_WORKSPACE_ID
+    || "default";
   const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
 
   try {
-    const useReconciliation = !!(context.channelId && context.threadTs);
+    // One parent span per extraction job so every AI SDK call inside (extract,
+    // contradiction, reconcile, entity resolution + their embeds) nests into a
+    // single Langfuse trace, grouped with the conversation via sessionId.
+    await withTraceSpan(
+      "memory-extract-job",
+      {
+        sessionId: context.threadTs ?? context.channelId ?? context.userId,
+        userId: context.userId,
+        tags: ["job:memory-extract"],
+      },
+      async () => {
+        const useReconciliation = !!(context.channelId && context.threadTs);
 
-    if (useReconciliation) {
-      await extractWithReconciliation(context, workspaceId, extractionSourceRole, start);
-    } else {
-      await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
-    }
+        if (useReconciliation) {
+          await extractWithReconciliation(context, workspaceId, extractionSourceRole, start);
+        } else {
+          await extractSingleExchange(context, workspaceId, extractionSourceRole, start);
+        }
+      },
+    );
   } catch (error) {
     logger.error("Memory extraction failed", {
       error: String(error).slice(0, 200),
       userId: context.userId,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Adapter that runs the thread-scoped reconciliation pipeline against an
+ * arbitrary, in-memory transcript instead of fetching messages from Postgres.
+ *
+ * Production callers should use {@link extractMemories} — this entry point
+ * exists for replay/import harnesses that already have the full conversation in
+ * hand and don't want to seed `messages` rows just to extract from them.
+ *
+ * The transcript MUST be in chronological order. `channelId` + `threadTs`
+ * must be supplied on the context so subsequent retrieval calls (during
+ * reconciliation) target the same workspace.
+ */
+export async function extractMemoriesFromTranscript(
+  threadMessages: ThreadMessage[],
+  context: ExtractionContext,
+): Promise<void> {
+  const start = Date.now();
+  const workspaceId = context.workspaceId
+    || process.env.DEFAULT_WORKSPACE_ID
+    || "default";
+  const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
+
+  if (!context.channelId || !context.threadTs) {
+    throw new Error(
+      "extractMemoriesFromTranscript requires context.channelId and context.threadTs",
+    );
+  }
+
+  if (threadMessages.length === 0) {
+    logger.debug("Empty transcript — nothing to extract");
+    return;
+  }
+
+  try {
+    await withTraceSpan(
+      "memory-extract-job",
+      {
+        sessionId: context.threadTs ?? context.channelId ?? context.userId,
+        userId: context.userId,
+        tags: ["job:memory-extract", "source:transcript"],
+      },
+      () =>
+        extractWithReconciliationFromTranscript(
+          threadMessages,
+          context,
+          workspaceId,
+          extractionSourceRole,
+          start,
+        ),
+    );
+  } catch (error) {
+    logger.error("Transcript-based memory extraction failed", {
+      error: String(error).slice(0, 200),
+      userId: context.userId,
+      messageCount: threadMessages.length,
     });
     throw error;
   }
@@ -518,6 +782,66 @@ async function extractWithReconciliation(
     return extractSingleExchange(context, workspaceId, extractionSourceRole, start);
   }
 
+  return runReconciliationCore(
+    threadMessages,
+    existingMemories,
+    context,
+    workspaceId,
+    extractionSourceRole,
+    start,
+  );
+}
+
+/**
+ * Variant of {@link extractWithReconciliation} that uses a pre-supplied
+ * transcript instead of fetching messages from Postgres. This keeps the LLM
+ * call, dedup, supersession, and entity-linking logic identical to production.
+ */
+async function extractWithReconciliationFromTranscript(
+  threadMessages: ThreadMessage[],
+  context: ExtractionContext,
+  workspaceId: string,
+  extractionSourceRole: ExtractionSourceRole,
+  start: number,
+): Promise<void> {
+  let existingMemories: Memory[] = [];
+  try {
+    existingMemories = await retrieveMemories({
+      query: context.userMessage,
+      currentUserId: context.userId,
+      limit: 20,
+      workspaceId,
+      adminMode: true,
+    });
+  } catch (err) {
+    logger.warn("Memory retrieval failed during transcript reconciliation — proceeding with empty existing memories", {
+      error: String((err as any)?.message ?? err).slice(0, 200),
+    });
+  }
+
+  return runReconciliationCore(
+    threadMessages,
+    existingMemories,
+    context,
+    workspaceId,
+    extractionSourceRole,
+    start,
+  );
+}
+
+/**
+ * I/O-free middle of the reconciliation pipeline. Given a transcript and
+ * the existing memories that are semantically relevant, runs the LLM to
+ * produce CREATE/UPDATE/DELETE operations and applies them.
+ */
+async function runReconciliationCore(
+  threadMessages: ThreadMessage[],
+  existingMemories: Memory[],
+  context: ExtractionContext,
+  workspaceId: string,
+  extractionSourceRole: ExtractionSourceRole,
+  start: number,
+): Promise<void> {
   const userIds = [...new Set(threadMessages.map((m) => m.userId).filter(Boolean))];
   const displayNames = new Map<string, string>();
   if (userIds.length > 0) {
@@ -542,14 +866,19 @@ async function extractWithReconciliation(
 
   const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", () => existingMemoriesText);
 
-  const model = await getFastModel();
+  const model = await resolveExtractionModel(context);
 
-  const { output: result } = await generateText({
+  const { output: result, usage } = await generateText({
     model,
     output: Output.object({ schema: reconciliationSchema }),
-    system: systemPrompt,
+    instructions: systemPrompt,
     prompt: threadContext,
+    telemetry: aiTelemetry("memory-reconcile"),
   });
+  context.onUsage?.(
+    context.extractionModelId ?? (model as any)?.modelId ?? "extraction",
+    usage,
+  );
 
   if (!result || result.operations.length === 0) {
     logger.debug("No memory operations from reconciliation");
@@ -573,7 +902,7 @@ async function extractWithReconciliation(
     const memoryId = refToId.get(del.memoryRef);
     if (memoryId) {
       try {
-        await archiveMemory(memoryId, del.reason);
+        await archiveMemory(memoryId, del.reason, context.createdAt);
       } catch {
         logger.warn("Skipping delete because archive failed", {
           memoryId,
@@ -599,7 +928,7 @@ async function extractWithReconciliation(
       logger.warn("Failed to embed updated memory content", { ref: upd.memoryRef });
     }
     try {
-      await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined);
+      await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined, context.createdAt);
     } catch {
       logger.warn("Skipping entity link refresh because content update failed", {
         memoryId,
@@ -670,9 +999,13 @@ async function detectContradictions(
     content: string;
     embedding: number[] | null;
     relatedUserIds: string[];
+    sourceRole: ExtractionSourceRole;
   }>,
   workspaceId: string,
   model: Awaited<ReturnType<typeof getFastModel>>,
+  onUsage?: ExtractionContext["onUsage"],
+  modelId?: string,
+  at?: Date,
 ): Promise<void> {
   const batchIds = storedMemories.map((m) => m.id);
   for (const newMem of storedMemories) {
@@ -693,18 +1026,37 @@ async function detectContradictions(
         .map((c, i) => `[${i}] ${c.content}`)
         .join("\n");
 
-      const { object } = await generateObject({
+      const { output: object, usage } = await generateText({
         model,
-        schema: contradictionResultSchema,
-        system: CONTRADICTION_PROMPT,
+        output: Output.object({ schema: contradictionResultSchema }),
+        instructions: CONTRADICTION_PROMPT,
         prompt: `NEW MEMORY: ${newMem.content}\n\nEXISTING CANDIDATE MEMORIES:\n${candidateList}`,
+        telemetry: aiTelemetry("memory-contradiction"),
         temperature: 0,
       });
+      onUsage?.(modelId ?? (model as any)?.modelId ?? "extraction", usage);
 
       for (const result of object.results) {
         if (!result.contradicts) continue;
         const candidate = candidates[result.candidateIndex];
         if (!candidate) continue;
+
+        // Authority guard: never let a lower-authority (assistant-inferred)
+        // memory invalidate a higher-authority (user/tool) one. This is the
+        // load-bearing guardrail against self-reinforcing delusion loops —
+        // Aura's own recommendation must not overwrite a user-stated fact.
+        // Both memories coexist; retrieval ranking (confidence-weighted)
+        // arbitrates which one surfaces.
+        if (!canSupersede(newMem.sourceRole, candidate.sourceRole)) {
+          logger.info("Contradiction detected but new memory is lower authority — keeping both (no supersede)", {
+            oldId: candidate.id,
+            newId: newMem.id,
+            newRole: newMem.sourceRole,
+            oldRole: candidate.sourceRole,
+            reason: result.reason,
+          });
+          continue;
+        }
 
         logger.info("Contradiction detected — superseding old memory", {
           oldId: candidate.id,
@@ -713,7 +1065,7 @@ async function detectContradictions(
           similarity: candidate.similarity,
         });
 
-        await supersedeMemory(candidate.id, newMem.id);
+        await supersedeMemory(candidate.id, newMem.id, at);
       }
     } catch (error) {
       logger.warn("Contradiction detection LLM call failed — skipping", {
@@ -740,12 +1092,42 @@ async function processCreateOperations(
     return;
   }
 
-  const normalizedMemories = await Promise.all(
+  let normalizedMemories = await Promise.all(
     filtered.map(async (m) => ({
       ...m,
-      relatedUserIds: await normalizeUserReferences(m.relatedUserIds),
+      relatedUserIds: await normalizeUserReferences(m.relatedUserIds, context.userDirectory),
     })),
   );
+
+  // Effective provenance per memory: the LLM-tagged sourceRole, falling back to
+  // the trigger role. Computed once and threaded through dedup, the stored
+  // attribution/confidence, and contradiction detection so the authority guard
+  // (assistant-inferred facts can't supersede user/tool facts) is consistent.
+  let sourceRoles: ExtractionSourceRole[] = normalizedMemories.map(
+    (m) => m.sourceRole ?? extractionSourceRole,
+  );
+
+  // Clamp assistant-sourced over-extraction. Aura is verbose and makes many tool
+  // calls, so a single reply can yield dozens of assistant memories (observed: 34
+  // in one exchange; 81% of a bench workspace was assistant-sourced), flooding the
+  // store, slowing retrieval/rerank, and drowning out the user's own facts. Keep
+  // ALL user/tool memories; keep only the top-N highest-importance assistant ones
+  // per exchange. The prompt asks the model to be selective; this is the
+  // deterministic backstop.
+  const assistantByImportance = sourceRoles
+    .map((role, i) => ({ role, i, importance: normalizedMemories[i].importance }))
+    .filter((x) => x.role === "assistant")
+    .sort((a, b) => b.importance - a.importance);
+  if (assistantByImportance.length > MAX_ASSISTANT_MEMORIES_PER_EXCHANGE) {
+    const dropped = new Set(
+      assistantByImportance.slice(MAX_ASSISTANT_MEMORIES_PER_EXCHANGE).map((x) => x.i),
+    );
+    logger.info(
+      `Clamped assistant-sourced memories ${assistantByImportance.length} → ${MAX_ASSISTANT_MEMORIES_PER_EXCHANGE} (${source})`,
+    );
+    normalizedMemories = normalizedMemories.filter((_, i) => !dropped.has(i));
+    sourceRoles = sourceRoles.filter((_, i) => !dropped.has(i));
+  }
 
   const memoryTexts = normalizedMemories.map((m) => m.content);
   let embeddings: (number[] | null)[];
@@ -757,7 +1139,11 @@ async function processCreateOperations(
   }
 
   const dedupResults = await checkDuplicates(
-    normalizedMemories.map((m, i) => ({ content: m.content, embedding: embeddings[i] ?? null })),
+    normalizedMemories.map((m, i) => ({
+      content: m.content,
+      embedding: embeddings[i] ?? null,
+      sourceRole: sourceRoles[i],
+    })),
     workspaceId,
   );
 
@@ -770,7 +1156,17 @@ async function processCreateOperations(
     return;
   }
 
-  const newMemories: NewMemory[] = survivingIndices.map((i) => ({
+  const newMemories: NewMemory[] = survivingIndices.map((i) => {
+    // Per-memory attribution: the LLM tags each memory with the role it
+    // originated from. The trigger role (extractionSourceRole) is the fallback
+    // when the LLM doesn't specify. Assistant-sourced facts get lower trust
+    // (0.6); the authority guard in dedup/contradiction (canSupersede) then
+    // ensures a later user statement (default 0.8) wins and an assistant guess
+    // never overwrites a user fact — preventing self-reinforcing delusion
+    // loops. undefined keeps the column default (0.8).
+    const memorySourceRole = sourceRoles[i];
+    const confidence = memorySourceRole === "assistant" ? 0.6 : undefined;
+    return {
     content: normalizedMemories[i].content,
     type: normalizedMemories[i].type,
     category: normalizedMemories[i].category,
@@ -786,9 +1182,19 @@ async function processCreateOperations(
     shareable: normalizedMemories[i].shareable ? 1 : 0,
     importance: normalizedMemories[i].importance,
     relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
-    extractionSourceRole,
-    ...(context.createdAt && { createdAt: context.createdAt, updatedAt: context.createdAt }),
-  }));
+    extractionSourceRole: memorySourceRole,
+    ...(confidence !== undefined && { confidence }),
+    // Bench replay stamps corpus time on the full temporal triplet so as-of
+    // retrieval can place the memory on the replayed timeline. validFrom is what
+    // the `valid_from <= asOf` filter keys on; without it storeMemories would
+    // default valid_from to wall-clock now and every memory would look "future".
+    ...(context.createdAt && {
+      createdAt: context.createdAt,
+      updatedAt: context.createdAt,
+      validFrom: context.createdAt,
+    }),
+    };
+  });
 
   const memoryIds = await storeMemories(newMemories);
 
@@ -797,7 +1203,7 @@ async function processCreateOperations(
     const oldId = dedupResults[i].supersedesId;
     const newId = memoryIds[j];
     if (oldId && newId) {
-      await supersedeMemory(oldId, newId);
+      await supersedeMemory(oldId, newId, context.createdAt);
     }
   }
 
@@ -811,10 +1217,18 @@ async function processCreateOperations(
         content: normalizedMemories[i].content,
         embedding: embeddings[i] ?? null,
         relatedUserIds: newMemories[j].relatedUserIds ?? [],
+        sourceRole: sourceRoles[i],
       }))
       .filter((m) => m.id);
     if (storedForContradiction.length > 0) {
-      await detectContradictions(storedForContradiction, workspaceId, model);
+      await detectContradictions(
+        storedForContradiction,
+        workspaceId,
+        model,
+        context.onUsage,
+        context.extractionModelId ?? (model as any)?.modelId,
+        context.createdAt,
+      );
     }
   } catch (error) {
     logger.warn("Contradiction detection pass failed — continuing without it", {
@@ -858,14 +1272,19 @@ async function extractSingleExchange(
     ? `User (${context.displayName || context.userId}): ${context.userMessage}\n\nAura: ${strippedAssistant}`
     : `User (${context.displayName || context.userId}): ${context.userMessage}`;
 
-  const model = await getFastModel();
+  const model = await resolveExtractionModel(context);
 
-  const { output: object } = await generateText({
+  const { output: object, usage } = await generateText({
     model,
     output: Output.object({ schema: extractedMemoriesSchema }),
-    system: EXTRACTION_PROMPT,
+    instructions: EXTRACTION_PROMPT,
     prompt: conversationText,
+    telemetry: aiTelemetry("memory-extract"),
   });
+  context.onUsage?.(
+    context.extractionModelId ?? (model as any)?.modelId ?? "extraction",
+    usage,
+  );
 
   if (!object || object.memories.length === 0) {
     logger.debug("No memories extracted from exchange");

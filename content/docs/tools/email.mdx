@@ -5,14 +5,14 @@ description: "Gmail reading, drafting, sending, triage, calendar management, and
 
 # Email & Calendar Tools
 
-Aura integrates with Gmail and Google Calendar via the Google Workspace APIs. All email and calendar tools respect a hard security boundary: **they always use the requesting user's OAuth token, never Aura's own**. Users must connect their Google account before these tools work.
+Aura integrates with Gmail and Google Calendar via the Google Workspace APIs. User-scoped tools respect a hard security boundary: **they always use the requesting user's OAuth token** (callers can only access their own account; admins can act for others). `send_email`/`reply_to_email` default to sending from Aura's configured address and only use a user's account when `user_name` is set. Users must connect their Google account before user-scoped tools work.
 
 ---
 
 ## Gmail — Sending
 
 ### `send_email`
-Send an email from `aura@realadvisor.com` (default) or from a specific user's account.
+Send an email. Defaults to Aura's configured sending address; pass `user_name` to send from a specific user's account (caller must be that user or an admin).
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -93,6 +93,9 @@ Create a draft email in a user's Gmail account.
 | `cc` | string | no | CC address |
 | `bcc` | string | no | BCC address |
 | `thread_id` | string | no | Gmail thread ID to add the draft to |
+| `in_reply_to` | string | no | Message-ID to reply to (threading) |
+| `references` | string | no | References header (threading) |
+| `quoted_message` | string | no | Original message text to quote in the reply |
 | `attachments` | array | no | Base64-encoded attachments |
 
 ---
@@ -118,15 +121,17 @@ Delete a draft from a Gmail account.
 ---
 
 ### `generate_gmail_auth_url`
-Generate a Google OAuth consent URL so a user can connect their Gmail account. DM the URL to the user — they click it and authorize.
+Generate a Google OAuth consent URL so a user can connect their Gmail account to Aura. DM the link to the user — they click it, authorize in Google, and their Gmail is connected for reading and drafting.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `user_name` | string | no | Whose account to connect (defaults to caller) |
+| `user_name` | string | no | Account owner (defaults to caller; admins may generate for others) |
 
 ---
 
-## Email Triage (Admin-only)
+## Email Triage
+
+Each tool below works for the caller's own Gmail account by default. Workspace admins can additionally operate on another user's synced inbox by passing `user_name`. The previous admin-only restriction was lifted in PR #933 (May 2026).
 
 ### `sync_emails`
 Sync emails from a user's Gmail into Aura's staging pipeline. Supports date windows and Gmail query syntax. Resumable — re-running skips already-synced emails.
@@ -290,11 +295,15 @@ Find available meeting slots across multiple people's calendars.
 ## Required Google OAuth Scopes
 
 ```
-gmail.readonly
 gmail.send
 gmail.compose
+gmail.readonly
 gmail.modify
+directory.readonly
 calendar.readonly
 calendar.events
-admin.directory.user.readonly
+spreadsheets.readonly
+drive.readonly
 ```
+
+The Sheets and Drive scopes are shared with the Google Sheets / Drive tools.

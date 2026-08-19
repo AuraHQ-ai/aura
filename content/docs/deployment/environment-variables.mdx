@@ -18,6 +18,7 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `DASHBOARD_SESSION_SECRET` | Secret for signing dashboard session JWTs and HMAC origin verification. Required for the dashboard to function. |
 | `DASHBOARD_API_SECRET` | Shared secret between the dashboard and API for authenticated internal requests (chat, data queries). |
 | `CRON_SECRET` | Secret for authenticating cron invocations (heartbeat, memory consolidation). Set in Vercel cron config. |
+| `CREDENTIALS_KEY` | 64-character hex string (32 bytes) used to encrypt/decrypt all credentials in the credential store. Any credential read/write throws without it, and `storeApiCredential` additionally requires the name to match `/^[a-z][a-z0-9_]{1,62}$/`. |
 
 ## Recommended
 
@@ -26,9 +27,11 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `SLACK_USER_TOKEN` | Slack user token (`xoxp-...`) for message search |
 | `GITHUB_TOKEN` | GitHub PAT for reading source code and opening PRs |
 | `AURA_ADMIN_USER_IDS` | Comma-separated Slack user IDs with admin access. Fallback for users without a DB role — see [Permissions](/permissions) |
+| `DASHBOARD_SESSION_TTL` | Optional dashboard session JWT lifetime. Defaults to `365d`; accepts duration strings like `30d`, `365d`, or `12h`. |
 | `E2B_API_KEY` | E2B API key for sandbox access |
+| `AURA_PUBLIC_URL` | Public base URL of the API deployment. Used for sandbox completion webhooks and supervisor callbacks. |
+| `SANDBOX_WEBHOOK_SECRET` | Secret for signing sandbox completion webhooks (`run_command_detached` resume). Both this and `AURA_PUBLIC_URL` must be set for detached commands to resume conversations. |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings and audio transcription |
-| `AURA_BOT_USER_ID` | Aura's own Slack bot user ID |
 
 ## Optional Integrations
 
@@ -36,19 +39,25 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 |----------|-------------|
 | `GOOGLE_EMAIL_CLIENT_ID` | Google OAuth client ID (for Gmail integration) |
 | `GOOGLE_EMAIL_CLIENT_SECRET` | Google OAuth client secret (for Gmail integration) |
-| `GOOGLE_BQ_CREDENTIALS` | Base64-encoded Google service account key JSON (for BigQuery) |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | Google service account key JSON (alternative to `GOOGLE_BQ_CREDENTIALS`) |
+| `GOOGLE_BQ_CREDENTIALS` | Legacy BigQuery service account fallback for older deployments. Current runtime expects the encrypted credential `google_bq_credentials`. |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | Legacy alternative to `GOOGLE_BQ_CREDENTIALS` for older deployments. |
 | `TAVILY_API_KEY` | Tavily API key for web search |
-| `BROWSERBASE_API_KEY` | Browserbase API key for browser automation |
-| `BROWSERBASE_PROJECT_ID` | Browserbase project ID |
+| `BROWSERBASE_API_KEY` | Browserbase API key for browser automation. Resolved from the credential store (`browserbase_api_key`), not a plain env var -- add it as a credential in the dashboard. |
+| `BROWSERBASE_PROJECT_ID` | Browserbase project ID. Read from the `browserbase_project_id` workspace setting, not env. |
 | `ELEVENLABS_API_KEY` | ElevenLabs API key for voice calls |
-| `ELEVENLABS_AGENT_ID` | ElevenLabs conversational AI agent ID |
-| `ELEVENLABS_FROM_NUMBER` | Phone number for outbound voice calls |
-| `ELEVENLABS_WEBHOOK_SECRET` | Secret for verifying ElevenLabs webhook payloads |
+| `ELEVENLABS_AGENT_ID` | ElevenLabs conversational AI agent ID. Read from the `elevenlabs_agent_id` workspace setting at execution time (same for `ELEVENLABS_VOICE_ID` and `ELEVENLABS_FROM_NUMBER`), so rotation needs no redeploy. |
+| `ELEVENLABS_FROM_NUMBER` | Phone number for outbound voice calls (workspace setting, see above). |
+| `ELEVENLABS_WEBHOOK_SECRET` | Secret for verifying ElevenLabs webhook payloads. Read from the `elevenlabs_webhook_secret` workspace setting. |
 | `CURSOR_API_KEY` | Cursor API key for dispatching Cursor cloud agents |
 | `CURSOR_WEBHOOK_SECRET` | Secret for verifying Cursor agent webhook callbacks |
 | `COHERE_API_KEY` | Cohere API key for reranking search results |
-| `VERCEL_TOKEN` | Vercel token (injected into sandbox for deployments) |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key -- enables LLM tracing when set together with the secret key |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key (tracing is disabled if either key is missing) |
+| `LANGFUSE_BASE_URL` | Langfuse host URL (for self-hosted or EU/US region instances) |
+| `LANGFUSE_TRACING_ENVIRONMENT` | Override the tracing environment label. Defaults to `VERCEL_ENV` (production/preview), then `NODE_ENV` |
+| `LANGFUSE_RELEASE` | Release identifier attached to traces. Defaults to `VERCEL_GIT_COMMIT_SHA` |
+| `LANGFUSE_DROP_ORPHAN_EMBEDDINGS` | Set to `true` to skip exporting orphan embedding spans |
+| `VERCEL_TOKEN` | Vercel token. Not read by the API runtime -- it only reaches the sandbox when configured as a credential (`vercel_token`) in the dashboard. |
 
 ## Dashboard
 
@@ -60,22 +69,34 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 
 ## Branding / Identity
 
-| Variable | Description |
+These are **workspace settings**, not environment variables -- set them in the dashboard; the API reads them via the settings table.
+
+| Setting | Description |
 |----------|-------------|
-| `COMPANY_NAME` | Company name used in email signatures |
-| `AURA_WEBSITE_URL` | Website URL used in email signatures |
-| `AURA_EMAIL_ADDRESS` | Aura's email address for outbound email |
+| `company_name` | Company name used in email signatures |
+| `aura_website_url` | Website URL used in email signatures |
+| `aura_email_address` | Aura's email address for outbound email |
+| `aura_bot_user_id` | Aura's own Slack bot user ID (used to detect self-messages and as the default job owner) |
 
 ## Model Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MODEL_MAIN` | Primary model ID (Vercel AI Gateway format) | `anthropic/claude-sonnet-4-20250514` |
-| `MODEL_FAST` | Fast model for simple tasks | `anthropic/claude-haiku-4-5` |
-| `MODEL_EMBEDDING` | Embedding model ID | `openai/text-embedding-3-small` |
-| `MODEL_ESCALATION` | Escalation model for complex reasoning | `anthropic/claude-opus-4-6` |
+Model selection is **not env-driven**. There are no `MODEL_*` environment variables in the API runtime. `resolveModelId()` in `apps/api/src/lib/ai.ts` resolves each of the five categories (`main`, `fast`, `medium`, `embedding`, `escalation`) as:
 
-Models can also be configured via the `settings` table in the database, which takes precedence over environment variables.
+1. **DB setting** (`model_main`, `model_fast`, `model_medium`, `model_embedding`, `model_escalation`) -- set per-workspace via the dashboard or Slack App Home
+2. **Hardcoded `LAST_RESORT_MODELS` fallback** -- a small constant map in `apps/api/src/lib/ai.ts`, used (with a warning log) when no settings row exists
+
+See [Architecture -- Model Resolution](/architecture#model-resolution) for the current fallback defaults per category.
+
+## Observability (Langfuse)
+
+| Variable | Description |
+|----------|-------------|
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key. Tracing is disabled unless both keys are set. |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key |
+| `LANGFUSE_BASE_URL` | Langfuse instance base URL |
+| `LANGFUSE_TRACING_ENVIRONMENT` | Environment label for traces (defaults from Vercel env) |
+| `LANGFUSE_RELEASE` | Release identifier (defaults to `VERCEL_GIT_COMMIT_SHA`) |
+| `LANGFUSE_DROP_ORPHAN_EMBEDDINGS` | Set to `"true"` to skip exporting orphaned embedding spans |
 
 ## Debugging
 
@@ -83,6 +104,8 @@ Models can also be configured via the `settings` table in the database, which ta
 |----------|-------------|
 | `LOG_LEVEL` | Logging verbosity |
 | `SHOW_REASONING_IN_SLACK` | Set to `"true"` to post extended thinking traces as thread replies |
+| `AURA_WDK_SLACK_RESPOND` | Set to `1`/`true` to force the durable Workflow DevKit Slack respond pipeline (highest priority; otherwise resolved from the `wdk_slack_respond` workspace setting) |
+| `TRUSTED_ORIGINS` | Extra comma-separated origins allowed for dashboard OAuth callbacks (preview deploys) |
 
 ## Adding Variables via CLI
 
@@ -92,8 +115,4 @@ printf '%s' 'your-value' | npx --yes vercel@50.13.2 env add VAR_NAME production 
 
 Always use `printf '%s'` — never `echo`, which adds trailing newlines that break Vercel.
 
-After adding variables, redeploy:
-
-```bash
-npx --yes vercel@50.13.2 --prod --scope realadvisor
-```
+After adding variables, redeploy from Git or your hosting provider's deploy hook. Do not run `vercel --prod` from a local checkout or sandbox; that deploys the local filesystem instead of the reviewed Git commit.

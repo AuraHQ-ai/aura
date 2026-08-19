@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db/client.js";
+import { withTransaction } from "../db/tx.js";
 import { entities, entityAliases, memoryEntities, users } from "@aura/db/schema";
 import type { EntityType } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
@@ -25,7 +26,7 @@ function generateOrgAliases(canonicalName: string): string[] {
 
   aliases.add(canonicalName.toLowerCase());
 
-  // Whitespace-stripped variant ("Real Advisor" → "realadvisor")
+  // Whitespace-stripped variant ("Example Co" -> "exampleco")
   const stripped = canonicalName.replace(/\s+/g, "").toLowerCase();
   if (stripped !== canonicalName.toLowerCase()) {
     aliases.add(stripped);
@@ -135,7 +136,7 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
 
   const loserIdList = sql.join(safeLoserIds.map(id => sql`${id}`), sql`, `);
 
-  await db.transaction(async (tx) => {
+  await withTransaction(async (tx) => {
     // 1. Repoint memory_entities from losers → winner (insert-then-delete
     //    to avoid duplicate PK when multiple losers share a memory_id;
     //    ORDER BY role priority so "subject" > "object" > "mentioned")

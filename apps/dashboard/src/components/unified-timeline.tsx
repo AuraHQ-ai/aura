@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { MarkdownContent } from "@/components/ui/markdown";
 import { CodeBlockContent } from "@/components/ai-elements/code-block";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+import { VerdictBadge, type EvalScore } from "@/components/eval-verdict-badge";
 
 export interface ConversationPart {
   id: string;
@@ -39,6 +41,8 @@ export interface ConversationMessageWithParts {
   } | null;
   createdAt: string;
   parts: ConversationPart[];
+  /** Eval funnel verdict for this assistant response, when one exists. */
+  evalScore?: EvalScore | null;
 }
 
 function Collapsible({
@@ -286,6 +290,19 @@ function AssistantStepBlock({
           <span className="text-[10px] text-muted-foreground font-mono">
             {msg.modelId}
           </span>
+        )}
+        {msg.evalScore && (
+          <Link
+            to="/evals/$id"
+            params={{ id: msg.evalScore.id }}
+            title={msg.evalScore.note ?? msg.evalScore.servingIntent ?? undefined}
+          >
+            <VerdictBadge
+              verdict={msg.evalScore.verdict}
+              scorable={msg.evalScore.scorable}
+              className="text-[10px] cursor-pointer"
+            />
+          </Link>
         )}
         <span className="text-xs text-muted-foreground ml-auto flex items-center gap-2">
           {stepTokenUsage && (

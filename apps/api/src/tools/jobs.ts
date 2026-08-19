@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, or, desc, isNotNull, ne, sql } from "drizzle-orm";
+import { eq, and, or, desc, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
@@ -9,6 +9,7 @@ import type { FrequencyConfig, ScheduleContext } from "@aura/db/schema";
 import { waitUntil } from "@vercel/functions";
 import { logger } from "../lib/logger.js";
 import { hasRole } from "../lib/permissions.js";
+import { resolveSlackUserId } from "../lib/resolve-user.js";
 import { parseRelativeTime, formatTimestamp } from "../lib/temporal.js";
 import { resolveChannelByName } from "./slack.js";
 import { executeJob } from "../cron/execute-job.js";
@@ -86,7 +87,46 @@ export function createJobTools(
           .number()
           .optional()
           .describe("Max executions per day (recurring jobs)"),
+        model: z
+          .enum(["main", "fast", "medium", "escalation"])
+          .optional()
+          .describe(
+            "Model category to execute the job with, resolved from the model catalog. Omit for the default 'medium' (Sonnet-class intelligence — the standard tier for jobs). Use 'fast' for simple mechanical tasks (classification, moderation, digests), 'main' (frontier) only for jobs that genuinely need it, 'escalation' for exceptionally hard work.",
+          ),
+        env_allowlist: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Restrict the job's sandbox env to ONLY these credential env var names (e.g. ['META_ADMIN_TOKEN', 'SLACK_BOT_TOKEN']) plus core infra vars. Narrows the caller's credential set — never widens it. Use for jobs that process untrusted input so a prompt injection can't reach unrelated credentials. Omit for full inheritance.",
+          ),
+        prompt_mode: z
+          .enum(["full", "task"])
+          .optional()
+          .describe(
+            "'task' runs the job with a minimal ~2k-token task prompt (no personality, self-directive, or notes index) — fewer places for context rot in mechanical jobs. Memory stays unified either way. Omit or 'full' for the standard prompt.",
+          ),
       }),
+      inputExamples: [
+        {
+          input: {
+            description: "Remind Joan to review PR #1284",
+            execute_in: "2 hours",
+            timezone: "UTC",
+            priority: "normal",
+          },
+        },
+        {
+          input: {
+            name: "bug-digest",
+            description: "Check #bugs for new reports since the last run and post a summary",
+            recurring: "0 9 * * 1-5",
+            channel_name: "bugs",
+            timezone: "Europe/Zurich",
+            priority: "normal",
+            max_per_day: 1,
+          },
+        },
+      ],
       execute: async ({
         name,
         description,
@@ -99,6 +139,9 @@ export function createJobTools(
         priority,
         min_interval_hours,
         max_per_day,
+        model,
+        env_allowlist,
+        prompt_mode,
       }) => {
         try {
           // Resolve channel
@@ -156,10 +199,11 @@ export function createJobTools(
               .where(eq(jobs.name, name))
               .limit(1);
 
-            if (existing.length > 0 && existing[0].cronSchedule) {
-              recurring = existing[0].cronSchedule;
+            const inheritedRecurring = existing[0]?.cronSchedule;
+            if (inheritedRecurring) {
+              recurring = inheritedRecurring;
               const tz = timezone || existing[0].timezone || "UTC";
-              const interval = CronExpressionParser.parse(recurring, {
+              const interval = CronExpressionParser.parse(inheritedRecurring, {
                 currentDate: new Date(),
                 tz,
               });
@@ -215,6 +259,7 @@ export function createJobTools(
             updatedAt: new Date(),
             status: "pending",
             enabled: 1,
+            archivedAt: null,
             retries: 0,
           };
           if (playbook !== undefined) updateSet.playbook = playbook || null;
@@ -227,6 +272,9 @@ export function createJobTools(
           if (executeAt) updateSet.executeAt = executeAt;
           updateSet.timezone = timezone;
           updateSet.priority = priority;
+          if (model !== undefined) updateSet.model = model;
+          if (env_allowlist !== undefined) updateSet.envAllowlist = env_allowlist;
+          if (prompt_mode !== undefined) updateSet.promptMode = prompt_mode;
 
           await db
             .insert(jobs)
@@ -243,6 +291,9 @@ export function createJobTools(
               requestedBy,
               timezone,
               priority,
+              model: model ?? null,
+              envAllowlist: env_allowlist ?? null,
+              promptMode: prompt_mode ?? null,
               updatedAt: new Date(),
             })
             .onConflictDoUpdate({
@@ -279,16 +330,20 @@ export function createJobTools(
 
     list_jobs: defineTool({
       description:
-        "List jobs by status. See what's pending, completed, or failed. Shows both one-shot tasks and recurring jobs.",
+        "List jobs. Always includes enabled recurring jobs regardless of their last execution status, with last/next run info. Filter one-shots by status, or use status:'all'. Archived jobs are excluded by default; pass include_archived to see them. For execution history of a specific job, use read_job_trace with the job name.",
       inputSchema: z.object({
         status: z
-          .enum(["pending", "running", "completed", "failed", "cancelled"])
+          .enum(["pending", "running", "completed", "failed", "cancelled", "all"])
           .default("pending")
-          .describe("Filter by status"),
+          .describe("Filter by status, or use 'all' to include every job"),
         recurring_only: z
           .boolean()
           .default(false)
           .describe("If true, only show recurring jobs (not one-shots)"),
+        include_archived: z
+          .boolean()
+          .default(false)
+          .describe("If true, include archived jobs (hidden by default)"),
         limit: z
           .number()
           .min(1)
@@ -296,44 +351,72 @@ export function createJobTools(
           .default(20)
           .describe("Maximum number of jobs to return"),
       }),
-      execute: async ({ status, recurring_only, limit }) => {
+      execute: async ({ status, recurring_only, include_archived, limit }) => {
         try {
-          const conditions = [eq(jobs.status, status)];
+          const recurringCondition = and(
+            isNotNull(jobs.cronSchedule),
+            ne(jobs.cronSchedule, ""),
+          )!;
+          const enabledRecurringCondition = and(
+            eq(jobs.enabled, 1),
+            recurringCondition,
+          )!;
+          const conditions: Array<ReturnType<typeof eq>> = [];
+          if (status !== "all") {
+            conditions.push(or(eq(jobs.status, status), enabledRecurringCondition)!);
+          }
           if (recurring_only) {
-            conditions.push(
-              and(isNotNull(jobs.cronSchedule), ne(jobs.cronSchedule, ""))!,
-            );
+            conditions.push(recurringCondition);
+          }
+          if (!include_archived) {
+            conditions.push(isNull(jobs.archivedAt));
           }
 
-          const rows = await db
-            .select()
-            .from(jobs)
-            .where(and(...conditions))
+          const query = db.select().from(jobs);
+          const rows = await (conditions.length > 0
+            ? query.where(and(...conditions))
+            : query
+          )
             .orderBy(desc(jobs.createdAt))
             .limit(limit);
 
           const filtered = rows;
 
           const tz = context?.timezone;
-          const result = filtered.map((j) => ({
-            id: j.id,
-            name: j.name,
-            description: j.description.substring(0, 120),
-            enabled: j.enabled === 1,
-            is_recurring: !!j.cronSchedule,
-            cron_schedule: j.cronSchedule,
-            frequency_config: j.frequencyConfig,
-            execute_at: formatTimestamp(j.executeAt, tz) || null,
-            channel_id: j.channelId || null,
-            requested_by: j.requestedBy,
-            priority: j.priority,
-            status: j.status,
-            retries: j.retries,
-            last_executed_at: formatTimestamp(j.lastExecutedAt, tz) || null,
-            execution_count: j.executionCount,
-            has_playbook: !!j.playbook,
-            last_result: j.lastResult ? j.lastResult.substring(0, 200) : null,
-          }));
+          const result = filtered.map((j) => {
+            let nextRunAt: string | null = null;
+            if (j.cronSchedule) {
+              try {
+                const next = CronExpressionParser.parse(j.cronSchedule, {
+                  tz: j.timezone ?? "UTC",
+                }).next().toDate();
+                nextRunAt = formatTimestamp(next, tz) || null;
+              } catch {
+                nextRunAt = null;
+              }
+            }
+
+            return {
+              id: j.id,
+              name: j.name,
+              description: j.description.substring(0, 120),
+              enabled: j.enabled === 1,
+              is_recurring: !!j.cronSchedule,
+              cron_schedule: j.cronSchedule,
+              frequency_config: j.frequencyConfig,
+              execute_at: formatTimestamp(j.executeAt, tz) || null,
+              next_run_at: nextRunAt,
+              channel_id: j.channelId || null,
+              requested_by: j.requestedBy,
+              priority: j.priority,
+              status: j.status,
+              retries: j.retries,
+              last_executed_at: formatTimestamp(j.lastExecutedAt, tz) || null,
+              execution_count: j.executionCount,
+              has_playbook: !!j.playbook,
+              last_result: j.lastResult ? j.lastResult.substring(0, 200) : null,
+            };
+          });
 
           logger.info("list_jobs tool called", { status, count: result.length });
 
@@ -348,7 +431,7 @@ export function createJobTools(
 
     cancel_job: defineTool({
       description:
-        "Cancel a pending one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Accepts a job ID or name.",
+        "Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Pass archive: true to also archive the job — it keeps its execution history but is hidden from list_jobs (re-enable via update_job with enabled: true, which un-archives). Accepts a job ID or name.",
       inputSchema: z.object({
         job_id: z
           .string()
@@ -358,8 +441,14 @@ export function createJobTools(
           .string()
           .optional()
           .describe("The name of the job to cancel (alternative to job_id)"),
+        archive: z
+          .boolean()
+          .default(false)
+          .describe(
+            "If true, also archive the job: it is excluded from job listings but keeps its history. Use for retired recurring jobs you don't expect to re-enable.",
+          ),
       }),
-      execute: async ({ job_id, name }) => {
+      execute: async ({ job_id, name, archive }) => {
         try {
           if (!job_id && !name) {
             return { ok: false, error: "Provide either job_id or name." };
@@ -383,6 +472,19 @@ export function createJobTools(
 
           if (job.cronSchedule) {
             // Recurring job: disable instead of cancelling (preserves definition)
+            if (archive) {
+              await db
+                .update(jobs)
+                .set({ enabled: 0, archivedAt: new Date(), updatedAt: new Date() })
+                .where(condition);
+
+              logger.info("cancel_job: archived recurring job", { name: job.name });
+              return {
+                ok: true,
+                message: `Recurring job "${job.name}" archived. It is excluded from job listings (pass include_archived to list_jobs to see it). Re-enable via update_job with enabled: true, which un-archives it.`,
+              };
+            }
+
             await db
               .update(jobs)
               .set({ enabled: 0, updatedAt: new Date() })
@@ -394,8 +496,8 @@ export function createJobTools(
               message: `Recurring job "${job.name}" disabled. Use create_job with the same name to re-enable.`,
             };
           } else {
-            // One-shot: only cancel if still pending
-            if (job.status !== "pending") {
+            // One-shot: allow pending jobs and failed zombies to be cancelled.
+            if (job.status !== "pending" && job.status !== "failed") {
               return {
                 ok: false,
                 error: `Job "${job.name}" is already ${job.status} and cannot be cancelled.`,
@@ -404,13 +506,17 @@ export function createJobTools(
 
             await db
               .update(jobs)
-              .set({ status: "cancelled", updatedAt: new Date() })
+              .set({
+                status: "cancelled",
+                ...(archive ? { archivedAt: new Date() } : {}),
+                updatedAt: new Date(),
+              })
               .where(condition);
 
-            logger.info("cancel_job: cancelled one-shot", { name: job.name });
+            logger.info("cancel_job: cancelled one-shot", { name: job.name, archived: archive });
             return {
               ok: true,
-              message: `Job "${job.name}" cancelled.`,
+              message: `Job "${job.name}" cancelled${archive ? " and archived" : ""}.`,
             };
           }
         } catch (error: any) {
@@ -423,7 +529,7 @@ export function createJobTools(
 
     update_job: defineTool({
       description:
-        "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, or re-enable a disabled job. Accepts job name or ID.",
+        "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, transfer ownership (requested_by), or re-enable a disabled job (setting enabled: true also un-archives an archived job). Accepts job name or ID.",
       inputSchema: z.object({
         job_id: z.string().optional().describe("UUID of the job to update"),
         name: z
@@ -451,6 +557,33 @@ export function createJobTools(
             .describe("Re-enable a disabled job by setting to true"),
           max_per_day: z.number().optional(),
           min_interval_hours: z.number().optional(),
+          requested_by: z
+            .string()
+            .optional()
+            .describe(
+              "Transfer job ownership to another user (display name, username, or Slack ID). All system notices, retries, and completions route to the new owner. Only the current owner or an admin can transfer.",
+            ),
+          model: z
+            .enum(["main", "fast", "medium", "escalation"])
+            .nullable()
+            .optional()
+            .describe(
+              "Model category to execute with ('fast' for mechanical tasks, 'main' for frontier opt-in). Set to null to reset to the default 'medium' (Sonnet-class) model.",
+            ),
+          env_allowlist: z
+            .array(z.string())
+            .nullable()
+            .optional()
+            .describe(
+              "Restrict the job's sandbox env to ONLY these credential env var names (plus core infra vars). Set to null to restore full inheritance.",
+            ),
+          prompt_mode: z
+            .enum(["full", "task"])
+            .nullable()
+            .optional()
+            .describe(
+              "'task' = minimal ~2k-token task prompt (no personality/notes index). Set to null or 'full' for the standard prompt.",
+            ),
         }).describe("Fields to update. Only provided fields are changed."),
       }),
       execute: async ({ job_id, name, updates }) => {
@@ -487,11 +620,40 @@ export function createJobTools(
 
           const set: Record<string, unknown> = { updatedAt: new Date() };
 
+          // Ownership transfer: only the current owner, an admin, or anyone for
+          // Aura/system-owned jobs. Every notice path reads jobs.requestedBy live
+          // at send time, so updating the row redirects all system traffic.
+          if (updates.requested_by !== undefined) {
+            const callerId = context?.userId;
+            const allowed =
+              job.requestedBy === "aura" ||
+              (callerId != null && callerId === job.requestedBy) ||
+              (await hasRole(callerId, "admin"));
+            if (!allowed) {
+              return {
+                ok: false as const,
+                error: `Only the current owner (<@${job.requestedBy}>) or an admin can transfer ownership of job "${job.name}".`,
+              };
+            }
+
+            const newOwnerId = await resolveSlackUserId(updates.requested_by);
+            if (!newOwnerId) {
+              return {
+                ok: false as const,
+                error: `Could not resolve "${updates.requested_by}" to a Slack user. Use a display name, username, or Slack ID.`,
+              };
+            }
+            set.requestedBy = newOwnerId;
+          }
+
           if (updates.description !== undefined) set.description = updates.description;
           if (updates.playbook !== undefined) set.playbook = updates.playbook || null;
           if (updates.script !== undefined) set.script = updates.script || null;
           if (updates.priority !== undefined) set.priority = updates.priority;
           if (updates.timezone !== undefined) set.timezone = updates.timezone;
+          if (updates.model !== undefined) set.model = updates.model;
+          if (updates.env_allowlist !== undefined) set.envAllowlist = updates.env_allowlist;
+          if (updates.prompt_mode !== undefined) set.promptMode = updates.prompt_mode;
 
           // Resolve channel name to ID
           if (updates.channel_name !== undefined) {
@@ -551,7 +713,12 @@ export function createJobTools(
             }
           }
 
-          // Re-enable a disabled job
+          // Re-enable a disabled job (also un-archives if it was archived)
+          let unarchived = false;
+          if (updates.enabled === true && job.archivedAt !== null) {
+            set.archivedAt = null;
+            unarchived = true;
+          }
           if (updates.enabled === true && job.enabled === 0) {
             set.enabled = 1;
             set.status = "pending";
@@ -579,12 +746,13 @@ export function createJobTools(
 
           return {
             ok: true as const,
-            message: `Job "${updated.name}" updated.`,
+            message: `Job "${updated.name}" updated${unarchived ? " and un-archived (visible in job listings again)" : ""}.`,
             job: {
               name: updated.name,
               description: updated.description,
               cronSchedule: updated.cronSchedule,
               enabled: updated.enabled === 1,
+              requestedBy: updated.requestedBy,
               nextExecution: updated.executeAt?.toISOString() ?? null,
             },
           };

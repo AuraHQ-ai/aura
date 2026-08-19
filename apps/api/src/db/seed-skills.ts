@@ -28,7 +28,7 @@ const SEED_SKILLS = [
     content: `# How to read and modify your own source code
 
 1. Clone the repo (once per sandbox session):
-   run_command("git clone https://$GITHUB_TOKEN@github.com/realadvisor/aura.git /home/user/aura")
+   run_command("git clone https://$GITHUB_TOKEN@github.com/<owner>/<repo>.git /home/user/aura")
 
 2. Search for code:
    run_command("rg 'pattern' /home/user/aura/src/")
@@ -36,10 +36,15 @@ const SEED_SKILLS = [
 3. Read files:
    run_command("cat /home/user/aura/src/path/to/file.ts")
 
-4. For changes: create a branch, make edits, commit, push, open PR via gh CLI.
+4. For long-running shell work: use run_command_detached({ command: "..." }) and poll with check_command({ id }).
+
+5. For changes: create a branch, make edits, commit, push, open PR via gh CLI.
    Always create PRs on branches, never push to main.
    Tag Joan for review on anything non-trivial.
-   For prompt changes (system-prompt.ts): flag as "self-edit" and explain reasoning.`,
+   For prompt changes (system-prompt.ts): flag as "self-edit" and explain reasoning.
+   Before any gh pr merge, run: gh pr view "$PR_NUMBER" --json mergeStateStatus,reviewDecision.
+   If mergeStateStatus is BLOCKED, fail fast with: "PR #N is BLOCKED (review required). Use --admin to bypass or wait for review."
+   In shell loops with gh/network calls, use set -e so one failure aborts the loop.`,
   },
   {
     topic: "follow-up-protocol",

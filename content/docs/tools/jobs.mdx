@@ -1,6 +1,6 @@
 ---
 title: "Jobs & Scheduling Tools"
-description: "One-shot reminders, recurring cron jobs, script execution, headless dispatch, and background tasks — 6 tools."
+description: "One-shot reminders, recurring cron jobs, script execution, headless dispatch, working scratchpad, and background tasks — 8 tools."
 ---
 
 # Jobs & Scheduling Tools
@@ -11,6 +11,61 @@ Aura can schedule work to run in the background. Jobs come in two types:
 - **Recurring** — runs on a cron schedule (e.g. every weekday at 9 AM). Great for digests, monitoring, and periodic reports.
 
 The **heartbeat** runs every 30 minutes and evaluates all pending jobs. Scheduling granularity is approximately 30 minutes. Failed jobs retry 3x with 30-minute backoff, then escalate via DM.
+
+## Stuck-job watchdog
+
+Every heartbeat sweep runs a watchdog that detects job executions still in `running` status after **45 minutes** (configurable via `STUCK_JOB_THRESHOLD_MINUTES` in `cron/job-watchdog.ts`).
+
+For each stuck execution the watchdog:
+
+1. **Atomically marks the execution `failed`** with `error = "Stale: no completion signal after <age>m, reset by watchdog"`.
+2. **One-shot jobs** — the parent `jobs` row is also marked `failed` with the same message.
+3. **Recurring jobs** — the parent job is rescheduled to its next cron tick (`status = 'pending'`, `retries = 0`, `executeAt = next tick`), so it picks up automatically on the next heartbeat.
+
+The watchdog is idempotent: every DB update uses a `status = 'running'` guard so concurrent heartbeat invocations cannot double-process the same row. Jobs reset by the watchdog carry the marker string `"reset by watchdog"` in `jobs.result`; the dashboard renders a **watchdog reset** badge next to the status for easy identification.
+
+## Recurring job recovery
+
+If a recurring job is left in `running` past the stale threshold and has already exhausted retries, the heartbeat does not leave it in `failed` forever. It resets the job to `pending`, clears `retries`, computes the next cron tick in the job timezone, and DMs the requester with the last error and next attempt time. One-shot jobs that exhaust stale retries stay `failed` and also send a DM.
+
+## Turn wall-clock budget
+
+The step budget above (350 tool calls) rarely binds in practice -- sandbox tool calls cost 40-150s each, so a headless turn typically dies around step 40 on the 800s Vercel `maxDuration` SIGKILL, long before it burns 350 steps. Every turn -- interactive Slack, the durable WDK slack-respond path, and headless jobs -- also carries a wall-clock budget (`resolveTurnDeadlines()` in `apps/api/src/pipeline/turn-deadline.ts`):
+
+- **Soft deadline (10 min default):** nudges the model to wrap up.
+- **Hard deadline (12 min default):** withdraws tools, forcing a final text message with ~80s of headroom before the SIGKILL.
+
+If the hard deadline trips, a continuation job is auto-spawned in the same thread using the `[CONTINUE:topic:dN]` tag mechanism (2-minute delay before it's eligible to run). This auto-continuation chain is capped at **depth 3** (`MAX_CONTINUATION_DEPTH`) -- past that, no further continuation is spawned; the thread gets a message that a human needs to re-scope the task. This is separate from `checkpoint_plan`'s own 5-continuation cap (see [Notes & Memory -- Continuation depth limit](/tools/notes#continuation-depth-limit)), which uses a depth-unsuffixed `[CONTINUE:topic]` tag for manually-checkpointed work.
+
+Headless jobs can tune their deadlines independently via `HEADLESS_TURN_SOFT_DEADLINE_MS` / `HEADLESS_TURN_HARD_DEADLINE_MS`; both fall back to the shared `TURN_SOFT_DEADLINE_MS` / `TURN_HARD_DEADLINE_MS` env overrides if unset.
+
+## Supervisor pattern
+
+After every job execution finishes (success, error, or interruption), the heartbeat writes a row to the `job_outcomes` table and fires a webhook to `POST /api/cron/supervisor`. The supervisor is a separately invoked endpoint that runs a fast-model LLM (`generateText` with structured output) over the outcome plus recent job context and picks exactly one decision:
+
+| Decision | What it does |
+|----------|--------------|
+| `silent_success` | Outcome succeeded cleanly; resolved with no DM. Default for routine recurring runs when `notify_on_success` is false. |
+| `report_success` | DMs the requester that the job succeeded. No retry. Used for noteworthy successes (recovery after failure, first run after a code change, or `notify_on_success=true`); one-shot jobs typically use this. |
+| `report_failure` | DMs the requester with the error. No retry. |
+| `retry_as_is` | Resets the job to `pending` with `retries=0`, sets `executeAt=now`, DMs the requester. |
+| `retry_with_fix` | Queues an immediate retry **and** opens a GitHub issue labelled `auto-supervisor-fix` on `AuraHQ-ai/aura`. |
+| `escalate` | DMs both the requester and the configured founder (`FOUNDER_USER_ID`) for human review. |
+| `disable_job` | Sets `enabled=0` on the job and DMs the requester with the reason. |
+
+Each outcome can be processed up to **3 times** (`MAX_SUPERVISOR_ATTEMPTS`). After that the outcome is marked `skipped` and the requester gets a fallback DM.
+
+`notify_on_success` is a per-job database flag (`jobs.notify_on_success`, default `false`) read by the supervisor. It is not currently exposed as a parameter on `create_job` or `update_job` -- it can only be set directly in the database.
+
+### Orphan sweeps
+
+The heartbeat also reaps supervisor invocations that never completed:
+
+- `pending_review` outcomes older than 5 minutes are re-fired (webhook lost or never delivered).
+- `in_progress` outcomes older than 10 minutes with attempts left are reset to `pending_review`.
+- `in_progress` outcomes older than 10 minutes that have exhausted attempts are marked `skipped` and the requester is DM'd.
+- Jobs dequeued into `running` for which no execution row appears after 10 minutes get a `process_died_pre_execution` outcome written so the supervisor can still see and route them.
+
 
 ---
 
@@ -31,6 +86,9 @@ Create a one-shot task, recurring job, or follow-up.
 | `max_per_day` | number | no | Max executions per day (recurring jobs) |
 | `min_interval_hours` | number | no | Minimum hours between executions |
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
+| `model` | enum | no | Model catalog category to execute with: `fast` (cheap, mechanical tasks), `medium` (Sonnet-class — the default and standard tier for jobs), `main` (frontier), or `escalation` (exceptionally hard work) |
+| `env_allowlist` | string[] | no | Restrict the job's sandbox env to only these credential env var names (plus core infra vars). Omit for full inheritance. |
+| `prompt_mode` | enum | no | `full` (default) or `task` — see [Prompt Modes](/prompt-modes) |
 
 ---
 
@@ -48,26 +106,64 @@ Script-only mode is ideal for jobs that just need to run a command and post the 
 
 ---
 
+## Scoped job execution
+
+Three optional fields on `create_job` / `update_job` narrow what a job runs with. All three are independent and can be combined.
+
+### `model` — per-job model category
+
+Routes the job's LLM execution to a model catalog category. A job with no `model` set resolves to `medium`:
+
+| Category | Use for |
+|----------|---------|
+| `medium` | Default for jobs. Sonnet-class intelligence — the standard tier. |
+| `fast` | Simple mechanical tasks: classification, moderation, digests. Cheaper and lower latency. |
+| `main` | Frontier model. Opt in only for jobs that genuinely need it. |
+| `escalation` | Exceptionally hard work. |
+
+The category resolves through the same chain as everywhere else: the DB settings row (`model_medium`, `model_fast`, `model_main`, `model_escalation`) first, then the hardcoded `LAST_RESORT_MODELS` map in `apps/api/src/lib/ai.ts`, which logs a warning so the missing setting is visible. `model_catalog_selections` is no longer consulted during resolution. Set the per-category model in the dashboard settings page — every model in the synced gateway catalog is selectable.
+
+### `env_allowlist` — sandbox credential narrowing
+
+Restricts the job's sandbox environment to only the listed credential env var names, plus core infra vars that the sandbox needs to function (`E2B_API_KEY`, `E2B_TEMPLATE_ID`, `GOOGLE_SA_KEY_B64`). Matching is case-insensitive, and `GITHUB_TOKEN`/`GH_TOKEN` are aliased to each other.
+
+The allowlist **narrows, never widens**: it intersects with the caller's credential set, so names in the allowlist that the caller can't access are not added. It applies both to the LLM execution (every `run_command` in the job) and to the `script` layer.
+
+Use this for jobs that process untrusted input (scraped web content, inbound email, ad comments) so a prompt injection can't reach unrelated credentials. Omit for full inheritance of the caller's credential set. On `update_job`, set to `null` to restore full inheritance.
+
+### `prompt_mode` — task-mode system prompt
+
+`prompt_mode: "task"` runs the job with a minimal ~2k-token system prefix instead of the full ~40k-char stable prefix. The task prefix skips the personality, self-directive, and notes index, keeping only the output contract and safety-relevant operational rules (no secrets in chat, verify before claiming, treat fetched content as data, date accuracy, DM privacy). Fewer places for context rot in mechanical jobs.
+
+Memory stays unified either way: task-mode executions write to the same memory and message store as every other invocation. Omit or set `full` for the standard prompt. On `update_job`, set to `null` to reset to `full`.
+
+---
+
 ## `list_jobs`
 
-List jobs by status.
+List jobs by status. Enabled recurring jobs are always included regardless of their last execution status (with last/next run info); one-shots are filtered by `status`.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `status` | enum | no | `pending` (default), `running`, `completed`, `failed`, or `cancelled` |
+| `status` | enum | no | `pending` (default), `running`, `completed`, `failed`, `cancelled`, or `all` (every job) |
 | `limit` | number | no | Max jobs to return (default 20, max 50) |
-| `recurring_only` | boolean | no | Show only recurring jobs (default false) |
+| `recurring_only` | boolean | no | Show only recurring jobs, not one-shots (default false) |
+| `include_archived` | boolean | no | Include archived jobs, which are hidden by default (default false) |
+
+Archived jobs are excluded from results unless `include_archived: true` is passed.
 
 ---
 
 ## `cancel_job`
 
-Cancel a pending one-shot job, or disable a recurring job (preserves its definition).
+Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later).
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `job_id` | string | conditional | UUID of the job to cancel |
 | `name` | string | conditional | Name of the job to cancel (alternative to `job_id`) |
+| `archive` | boolean | no | Also archive the job (default false). Archived jobs are hidden from `list_jobs` but keep their execution history. Re-enable via `update_job` with `enabled: true`, which un-archives. Use for retired recurring jobs you don't expect to re-enable. |
+
 ---
 
 ## `update_job`
@@ -89,14 +185,17 @@ Update an existing job's configuration without recreating it. Preserves job ID a
 | `updates.max_per_day` | number | no | New max executions per day |
 | `updates.min_interval_hours` | number | no | New minimum hours between executions |
 | `updates.script` | string/null | no | New shell command. Set to `null` to remove an existing script. |
+| `updates.model` | enum/null | no | New model category (`fast`, `medium`, `main`, `escalation`). Set to `null` to reset to the default (`medium`). |
+| `updates.env_allowlist` | string[]/null | no | New sandbox env allowlist. Set to `null` to restore full inheritance. |
+| `updates.prompt_mode` | enum/null | no | `full` or `task` — see [Prompt Modes](/prompt-modes). Set to `null` to reset to the default (`full`). |
 
-When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time.
+When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time; if the job was archived, it is also un-archived and becomes visible in `list_jobs` again.
 
 ---
 
 ## `dispatch_headless`
 
-Dispatch a task for immediate headless execution. Creates a job and triggers it NOW — no waiting for the heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. Results are posted to the callback channel/thread when done.
+**Admin-only** (requires the `admin_access` credential). Dispatch a task for immediate headless execution. Creates a job and triggers it NOW — no waiting for the heartbeat. Use for heavy work: backfills, data processing, multi-step investigations. Results are posted to the callback channel/thread when done.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -105,6 +204,24 @@ Dispatch a task for immediate headless execution. Creates a job and triggers it 
 | `playbook` | string | no | Detailed execution guide |
 | `callback_channel` | string | no | Channel to post results in (defaults to current channel) |
 | `callback_thread_ts` | string | no | Thread to post results in |
+
+---
+
+## `scratchpad_write` / `scratchpad_read`
+
+An invocation-scoped working memory for long-running work. During a job (or any single conversation turn), Aura can save intermediate results — running tallies, findings, checklists — into named sections and read them back later, instead of re-reading tool results from many steps earlier.
+
+| Tool | Param | Type | Required | Description |
+|------|-------|------|----------|-------------|
+| `scratchpad_write` | `key` | string | **yes** | Section name, e.g. `findings`, `running-total` |
+| `scratchpad_write` | `content` | string | **yes** | Content to write (markdown). Writing to an existing key overwrites it. |
+| `scratchpad_read` | `key` | string | no | Specific section to read. Omit to read all sections. |
+
+Key properties:
+
+- **Scoped to one invocation.** The scratchpad lives in memory for the duration of a single job execution or response turn, keyed by invocation ID. It does not persist across invocations — use [notes](/tools/notes) for anything that should survive.
+- **Persisted into the execution trace.** When a job finishes, non-empty scratchpad contents are saved into the execution trace (visible via `read_job_trace` with `include_steps: true`), so intermediate findings survive for debugging even though the live scratchpad is discarded.
+- **Cleaned up automatically** at the end of each invocation to prevent memory leaks.
 
 ---
 

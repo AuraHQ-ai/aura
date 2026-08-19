@@ -18,16 +18,19 @@ import { Route as ResourcesIndexRouteImport } from "./routes/resources/index"
 import { Route as NotesIndexRouteImport } from "./routes/notes/index"
 import { Route as MemoriesIndexRouteImport } from "./routes/memories/index"
 import { Route as JobsIndexRouteImport } from "./routes/jobs/index"
+import { Route as EvalsIndexRouteImport } from "./routes/evals/index"
 import { Route as ErrorsIndexRouteImport } from "./routes/errors/index"
 import { Route as CredentialsIndexRouteImport } from "./routes/credentials/index"
 import { Route as ConversationsIndexRouteImport } from "./routes/conversations/index"
 import { Route as ConsumptionIndexRouteImport } from "./routes/consumption/index"
+import { Route as AdoptionIndexRouteImport } from "./routes/adoption/index"
 import { Route as UsersSlackUserIdRouteImport } from "./routes/users/$slackUserId"
 import { Route as ResourcesIdRouteImport } from "./routes/resources/$id"
 import { Route as NotesIdRouteImport } from "./routes/notes/$id"
 import { Route as MemoriesEntitiesRouteImport } from "./routes/memories/entities"
 import { Route as MemoriesIdRouteImport } from "./routes/memories/$id"
 import { Route as JobsIdRouteImport } from "./routes/jobs/$id"
+import { Route as EvalsIdRouteImport } from "./routes/evals/$id"
 import { Route as ErrorsIdRouteImport } from "./routes/errors/$id"
 import { Route as CredentialsIdRouteImport } from "./routes/credentials/$id"
 import { Route as ConversationsInvocationsRouteImport } from "./routes/conversations/invocations"
@@ -80,6 +83,11 @@ const JobsIndexRoute = JobsIndexRouteImport.update({
   path: "/jobs/",
   getParentRoute: () => rootRouteImport,
 } as any)
+const EvalsIndexRoute = EvalsIndexRouteImport.update({
+  id: "/evals/",
+  path: "/evals/",
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ErrorsIndexRoute = ErrorsIndexRouteImport.update({
   id: "/errors/",
   path: "/errors/",
@@ -98,6 +106,11 @@ const ConversationsIndexRoute = ConversationsIndexRouteImport.update({
 const ConsumptionIndexRoute = ConsumptionIndexRouteImport.update({
   id: "/consumption/",
   path: "/consumption/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdoptionIndexRoute = AdoptionIndexRouteImport.update({
+  id: "/adoption/",
+  path: "/adoption/",
   getParentRoute: () => rootRouteImport,
 } as any)
 const UsersSlackUserIdRoute = UsersSlackUserIdRouteImport.update({
@@ -128,6 +141,11 @@ const MemoriesIdRoute = MemoriesIdRouteImport.update({
 const JobsIdRoute = JobsIdRouteImport.update({
   id: "/jobs/$id",
   path: "/jobs/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvalsIdRoute = EvalsIdRouteImport.update({
+  id: "/evals/$id",
+  path: "/evals/$id",
   getParentRoute: () => rootRouteImport,
 } as any)
 const ErrorsIdRoute = ErrorsIdRouteImport.update({
@@ -171,16 +189,19 @@ export interface FileRoutesByFullPath {
   "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
+  "/evals/$id": typeof EvalsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
   "/memories/entities": typeof MemoriesEntitiesRoute
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
+  "/adoption/": typeof AdoptionIndexRoute
   "/consumption/": typeof ConsumptionIndexRoute
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
   "/errors/": typeof ErrorsIndexRoute
+  "/evals/": typeof EvalsIndexRoute
   "/jobs/": typeof JobsIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
@@ -198,16 +219,19 @@ export interface FileRoutesByTo {
   "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
+  "/evals/$id": typeof EvalsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
   "/memories/entities": typeof MemoriesEntitiesRoute
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
+  "/adoption": typeof AdoptionIndexRoute
   "/consumption": typeof ConsumptionIndexRoute
   "/conversations": typeof ConversationsIndexRoute
   "/credentials": typeof CredentialsIndexRoute
   "/errors": typeof ErrorsIndexRoute
+  "/evals": typeof EvalsIndexRoute
   "/jobs": typeof JobsIndexRoute
   "/memories": typeof MemoriesIndexRoute
   "/notes": typeof NotesIndexRoute
@@ -226,16 +250,19 @@ export interface FileRoutesById {
   "/conversations/invocations": typeof ConversationsInvocationsRoute
   "/credentials/$id": typeof CredentialsIdRoute
   "/errors/$id": typeof ErrorsIdRoute
+  "/evals/$id": typeof EvalsIdRoute
   "/jobs/$id": typeof JobsIdRoute
   "/memories/$id": typeof MemoriesIdRoute
   "/memories/entities": typeof MemoriesEntitiesRoute
   "/notes/$id": typeof NotesIdRoute
   "/resources/$id": typeof ResourcesIdRoute
   "/users/$slackUserId": typeof UsersSlackUserIdRoute
+  "/adoption/": typeof AdoptionIndexRoute
   "/consumption/": typeof ConsumptionIndexRoute
   "/conversations/": typeof ConversationsIndexRoute
   "/credentials/": typeof CredentialsIndexRoute
   "/errors/": typeof ErrorsIndexRoute
+  "/evals/": typeof EvalsIndexRoute
   "/jobs/": typeof JobsIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
@@ -255,16 +282,19 @@ export interface FileRouteTypes {
     | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
+    | "/evals/$id"
     | "/jobs/$id"
     | "/memories/$id"
     | "/memories/entities"
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
+    | "/adoption/"
     | "/consumption/"
     | "/conversations/"
     | "/credentials/"
     | "/errors/"
+    | "/evals/"
     | "/jobs/"
     | "/memories/"
     | "/notes/"
@@ -282,16 +312,19 @@ export interface FileRouteTypes {
     | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
+    | "/evals/$id"
     | "/jobs/$id"
     | "/memories/$id"
     | "/memories/entities"
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
+    | "/adoption"
     | "/consumption"
     | "/conversations"
     | "/credentials"
     | "/errors"
+    | "/evals"
     | "/jobs"
     | "/memories"
     | "/notes"
@@ -309,16 +342,19 @@ export interface FileRouteTypes {
     | "/conversations/invocations"
     | "/credentials/$id"
     | "/errors/$id"
+    | "/evals/$id"
     | "/jobs/$id"
     | "/memories/$id"
     | "/memories/entities"
     | "/notes/$id"
     | "/resources/$id"
     | "/users/$slackUserId"
+    | "/adoption/"
     | "/consumption/"
     | "/conversations/"
     | "/credentials/"
     | "/errors/"
+    | "/evals/"
     | "/jobs/"
     | "/memories/"
     | "/notes/"
@@ -337,16 +373,19 @@ export interface RootRouteChildren {
   ConversationsInvocationsRoute: typeof ConversationsInvocationsRoute
   CredentialsIdRoute: typeof CredentialsIdRoute
   ErrorsIdRoute: typeof ErrorsIdRoute
+  EvalsIdRoute: typeof EvalsIdRoute
   JobsIdRoute: typeof JobsIdRoute
   MemoriesIdRoute: typeof MemoriesIdRoute
   MemoriesEntitiesRoute: typeof MemoriesEntitiesRoute
   NotesIdRoute: typeof NotesIdRoute
   ResourcesIdRoute: typeof ResourcesIdRoute
   UsersSlackUserIdRoute: typeof UsersSlackUserIdRoute
+  AdoptionIndexRoute: typeof AdoptionIndexRoute
   ConsumptionIndexRoute: typeof ConsumptionIndexRoute
   ConversationsIndexRoute: typeof ConversationsIndexRoute
   CredentialsIndexRoute: typeof CredentialsIndexRoute
   ErrorsIndexRoute: typeof ErrorsIndexRoute
+  EvalsIndexRoute: typeof EvalsIndexRoute
   JobsIndexRoute: typeof JobsIndexRoute
   MemoriesIndexRoute: typeof MemoriesIndexRoute
   NotesIndexRoute: typeof NotesIndexRoute
@@ -422,6 +461,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof JobsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    "/evals/": {
+      id: "/evals/"
+      path: "/evals"
+      fullPath: "/evals/"
+      preLoaderRoute: typeof EvalsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     "/errors/": {
       id: "/errors/"
       path: "/errors"
@@ -448,6 +494,13 @@ declare module "@tanstack/react-router" {
       path: "/consumption"
       fullPath: "/consumption/"
       preLoaderRoute: typeof ConsumptionIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/adoption/": {
+      id: "/adoption/"
+      path: "/adoption"
+      fullPath: "/adoption/"
+      preLoaderRoute: typeof AdoptionIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/users/$slackUserId": {
@@ -490,6 +543,13 @@ declare module "@tanstack/react-router" {
       path: "/jobs/$id"
       fullPath: "/jobs/$id"
       preLoaderRoute: typeof JobsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/evals/$id": {
+      id: "/evals/$id"
+      path: "/evals/$id"
+      fullPath: "/evals/$id"
+      preLoaderRoute: typeof EvalsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/errors/$id": {
@@ -545,16 +605,19 @@ const rootRouteChildren: RootRouteChildren = {
   ConversationsInvocationsRoute: ConversationsInvocationsRoute,
   CredentialsIdRoute: CredentialsIdRoute,
   ErrorsIdRoute: ErrorsIdRoute,
+  EvalsIdRoute: EvalsIdRoute,
   JobsIdRoute: JobsIdRoute,
   MemoriesIdRoute: MemoriesIdRoute,
   MemoriesEntitiesRoute: MemoriesEntitiesRoute,
   NotesIdRoute: NotesIdRoute,
   ResourcesIdRoute: ResourcesIdRoute,
   UsersSlackUserIdRoute: UsersSlackUserIdRoute,
+  AdoptionIndexRoute: AdoptionIndexRoute,
   ConsumptionIndexRoute: ConsumptionIndexRoute,
   ConversationsIndexRoute: ConversationsIndexRoute,
   CredentialsIndexRoute: CredentialsIndexRoute,
   ErrorsIndexRoute: ErrorsIndexRoute,
+  EvalsIndexRoute: EvalsIndexRoute,
   JobsIndexRoute: JobsIndexRoute,
   MemoriesIndexRoute: MemoriesIndexRoute,
   NotesIndexRoute: NotesIndexRoute,

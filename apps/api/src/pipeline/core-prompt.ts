@@ -1,6 +1,7 @@
 import {
   buildSystemPrompt,
   buildDynamicContext,
+  buildEnvironmentContext,
   type PersonProfile,
   type EntitySummary,
 } from "../personality/system-prompt.js";
@@ -12,6 +13,7 @@ import {
 import { embedText } from "../lib/embeddings.js";
 import { getProfile } from "../users/profiles.js";
 import { getMainModelId } from "../lib/ai.js";
+import { getSandboxEnvNames } from "../lib/sandbox.js";
 import type { Memory, UserProfile } from "@aura/db/schema";
 import { users, entities } from "@aura/db/schema";
 import { db } from "../db/client.js";
@@ -24,7 +26,7 @@ export type { PersonProfile };
 
 // ── Channel Session ──────────────────────────────────────────────────────────
 
-export type ChannelType = "dm" | "dashboard" | "public_channel" | "private_channel";
+export type ChannelType = "dm" | "mpim" | "dashboard" | "public_channel" | "private_channel";
 
 export interface ChannelSession {
   channel: "slack" | "dashboard";
@@ -78,8 +80,25 @@ export async function getUsageStats(): Promise<string> {
 
     const result = await db.execute(sql`
       SELECT
-        COUNT(DISTINCT CASE WHEN created_at > now() - INTERVAL '7 days' AND role = 'user' THEN user_id END) AS users_this_week,
-        COUNT(DISTINCT CASE WHEN created_at > now() - INTERVAL '14 days' AND created_at <= now() - INTERVAL '7 days' AND role = 'user' THEN user_id END) AS users_last_week,
+        COUNT(DISTINCT CASE
+          WHEN created_at > now() - INTERVAL '7 days'
+            AND role = 'user'
+            AND (
+              channel_type = 'dm'
+              OR COALESCE(metadata->>'isMentioned', 'false') = 'true'
+            )
+          THEN user_id
+        END) AS users_this_week,
+        COUNT(DISTINCT CASE
+          WHEN created_at > now() - INTERVAL '14 days'
+            AND created_at <= now() - INTERVAL '7 days'
+            AND role = 'user'
+            AND (
+              channel_type = 'dm'
+              OR COALESCE(metadata->>'isMentioned', 'false') = 'true'
+            )
+          THEN user_id
+        END) AS users_last_week,
         COUNT(CASE WHEN created_at > now() - INTERVAL '7 days' AND role = 'user' THEN 1 END) AS received_this_week,
         COUNT(CASE WHEN created_at > now() - INTERVAL '7 days' AND role = 'assistant' THEN 1 END) AS sent_this_week,
         COUNT(CASE WHEN created_at > now() - INTERVAL '14 days' AND created_at <= now() - INTERVAL '7 days' AND role = 'user' THEN 1 END) AS received_last_week,
@@ -238,6 +257,8 @@ async function buildEntitySummaries(
 
 export interface CorePrompt {
   stablePrefix: string;
+  /** Per-user "what you can do" layer (capabilities + storage), cached ahead of the conversation. */
+  environmentContext: string;
   conversationContext: string;
   dynamicContext: string;
   memories: Memory[];
@@ -271,13 +292,14 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
-  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity] =
+  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity, sandboxEnvNames] =
     await Promise.all([
       queryEmbedding
         ? retrieveMemories({
             query: session.messageText,
             queryEmbedding,
             currentUserId: session.userId,
+            rewrite: true,
             limit: 15,
           }).catch(() => [] as Memory[])
         : Promise.resolve([] as Memory[]),
@@ -298,6 +320,7 @@ export async function buildCorePrompt(
       lookupPerson(session.userId),
       getUsageStats(),
       fetchInterlocutorEntity(session.userId),
+      getSandboxEnvNames(session.userId),
     ]);
 
   // Build entity summaries (related-entities lookup depends on retrieved memories)
@@ -326,6 +349,10 @@ export async function buildCorePrompt(
 
   const modelId = session.modelIdOverride ?? await getMainModelId();
 
+  const environmentContext = buildEnvironmentContext({
+    sandboxEnvNames,
+  });
+
   let dynamicContext = buildDynamicContext({
     userTimezone: session.userTimezone ?? userProfile?.timezone ?? undefined,
     modelId,
@@ -348,6 +375,7 @@ export async function buildCorePrompt(
 
   return {
     stablePrefix,
+    environmentContext,
     conversationContext,
     dynamicContext,
     memories,

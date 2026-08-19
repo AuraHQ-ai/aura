@@ -3,7 +3,10 @@ import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import { cronApp } from "./cron/consolidate.js";
 import { heartbeatApp } from "./cron/heartbeat.js";
+import { supervisorApp } from "./cron/supervisor.js";
+import { evalResponsesApp } from "./cron/eval-responses.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
+import { createSandboxCommandWebhookApp } from "./webhook/sandbox-command.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
 import { runPipeline } from "./pipeline/index.js";
 import {
@@ -17,6 +20,8 @@ import {
   openUpdateCredentialModal,
   openShareCredentialModal,
   openCredentialAccessModal,
+  TOOLS_REPO_SAVE_ACTION,
+  TOOLS_REPO_SETTING_KEY,
 } from "./slack/home.js";
 import {
   storeApiCredential,
@@ -26,16 +31,19 @@ import {
   hasPermission,
 } from "./lib/api-credentials.js";
 import { resolveConfirmation } from "./lib/confirmation.js";
-import { executionContext } from "./lib/tool.js";
+import { executionContext, type ExecutionContext } from "./lib/tool.js";
 import { setSetting, getConfig } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
+// Import for side effect: registers the Langfuse OpenTelemetry provider before
+// any AI SDK call runs. Also re-exported helpers for flushing spans.
+import { flushLangfuse, isLangfuseEnabled } from "./lib/langfuse.js";
 import { resolveSlackDestination } from "./tools/slack.js";
 import { recordError } from "./lib/metrics.js";
 import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { notes, feedback } from "@aura/db/schema";
+import { errorEvents, notes, feedback } from "@aura/db/schema";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -51,9 +59,87 @@ if (!signingSecret || !botToken) {
 
 const slackClient = new WebClient(botToken);
 
+// ── Process-level crash fallback ────────────────────────────────────────────
+
+let latestInFlightContext: ExecutionContext | null = null;
+const globalForProcessHooks = globalThis as typeof globalThis & {
+  __auraProcessErrorHooksRegistered?: boolean;
+};
+
+function stringifyUnhandledReason(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  if (typeof reason === "string") return reason;
+  try {
+    return JSON.stringify(reason);
+  } catch {
+    return String(reason);
+  }
+}
+
+function stackForUnhandledReason(reason: unknown): string | undefined {
+  if (reason instanceof Error) return reason.stack;
+  if (reason && typeof reason === "object" && "stack" in reason) {
+    return String((reason as { stack?: unknown }).stack);
+  }
+  return undefined;
+}
+
+function logProcessLevelError(
+  errorName: "UnhandledRejection" | "UncaughtException",
+  reason: unknown,
+): void {
+  try {
+    const ctx = executionContext.getStore() ?? latestInFlightContext ?? undefined;
+    const write = db.insert(errorEvents)
+      .values({
+        errorName,
+        errorMessage: stringifyUnhandledReason(reason) || errorName,
+        errorCode: "function_died_unhandled",
+        userId: ctx?.callingUserId ?? ctx?.triggeredBy,
+        channelId: ctx?.channelId,
+        context: {
+          triggerType: ctx?.triggerType,
+          threadTs: ctx?.threadTs,
+          workspaceId: ctx?.workspaceId,
+        },
+        stackTrace: stackForUnhandledReason(reason),
+      })
+      .catch(() => {});
+
+    const timeout = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1_500);
+      (timer as any).unref?.();
+    });
+    void Promise.race([write, timeout]).catch(() => {});
+  } catch {
+    // Process-level handlers must never throw.
+  }
+}
+
+if (!globalForProcessHooks.__auraProcessErrorHooksRegistered) {
+  globalForProcessHooks.__auraProcessErrorHooksRegistered = true;
+  process.on("unhandledRejection", (reason) => {
+    logProcessLevelError("UnhandledRejection", reason);
+  });
+  process.on("uncaughtException", (error) => {
+    logProcessLevelError("UncaughtException", error);
+  });
+}
+
 // ── Hono App ────────────────────────────────────────────────────────────────
 
 export const app = new Hono();
+
+// Serverless flush: after a request's handler resolves, drain any Langfuse spans
+// produced synchronously within it (e.g. crons, dashboard non-stream routes)
+// before the function instance can freeze. Background work dispatched via
+// `waitUntil` (Slack pipeline) flushes itself at its own completion point.
+app.use("*", async (c, next) => {
+  await next();
+  if (isLangfuseEnabled()) {
+    waitUntil(flushLangfuse());
+  }
+});
 
 // Health check
 app.get("/", (c) => {
@@ -73,6 +159,8 @@ app.get("/api/health", (c) => {
 // Mount cron routes
 app.route("/", cronApp);
 app.route("/", heartbeatApp);
+app.route("/", supervisorApp);
+app.route("/", evalResponsesApp);
 
 // Mount ElevenLabs voice webhook routes
 app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);
@@ -254,14 +342,17 @@ app.post("/api/slack/events", async (c) => {
     // On Vercel, we must acknowledge within 3 seconds, so we process
     // in the background using waitUntil where available.
     const userId = event.user || "unknown";
+    const eventExecutionContext: ExecutionContext = {
+      triggeredBy: userId,
+      triggerType: "user_message",
+      callingUserId: event.user || undefined,
+      channelId: event.channel || undefined,
+      threadTs: event.thread_ts || event.ts || undefined,
+      workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+    };
+    latestInFlightContext = eventExecutionContext;
     const pipelinePromise = executionContext.run(
-      {
-        triggeredBy: userId,
-        triggerType: "user_message",
-        callingUserId: event.user || undefined,
-        channelId: event.channel || undefined,
-        threadTs: event.thread_ts || event.ts || undefined,
-      },
+      eventExecutionContext,
       async () =>
         runPipeline({
           event,
@@ -274,7 +365,12 @@ app.post("/api/slack/events", async (c) => {
         eventType: event.type,
         channel: event.channel,
       });
-    });
+    }).finally(() => {
+      if (latestInFlightContext === eventExecutionContext) {
+        latestInFlightContext = null;
+      }
+    // Flush Langfuse spans for this turn before the keep-alive window closes.
+    }).finally(() => flushLangfuse());
 
     // Keep the function alive after the response is sent so the
     // pipeline can finish (LLM call, Slack reply, memory extraction).
@@ -386,6 +482,23 @@ app.post("/api/slack/interactions", async (c) => {
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.save", err, { userId, settingKey });
+          }
+        })();
+
+        waitUntil(savePromise);
+      }
+
+      if (action.action_id === TOOLS_REPO_SAVE_ACTION) {
+        const newValue =
+          payload.view?.state?.values?.tools_repo_input_block?.tools_repo_value
+            ?.value?.trim() ?? "";
+
+        const savePromise = (async () => {
+          try {
+            await setSetting(TOOLS_REPO_SETTING_KEY, newValue, userId);
+            await publishHomeTab(slackClient, userId);
+          } catch (err) {
+            recordError("interactions.tools_repo_save", err, { userId });
           }
         })();
 
@@ -747,6 +860,10 @@ app.get("/api/oauth/google/callback", async (c) => {
   }
 });
 
+// ── Sandbox Command Webhook ─────────────────────────────────────────────────
+
+app.route("/api/webhook/sandbox-command", createSandboxCommandWebhookApp(slackClient));
+
 // ── Cursor Agent Webhook ───────────────────────────────────────────────────
 
 function verifyCursorWebhookSignature(
@@ -811,6 +928,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       let requester = "";
       let channelId = "";
       let threadTs = "";
+      let repo = process.env.AURA_REPO_DEFAULT || "AuraHQ-ai/aura";
 
       if (agentId) {
         const trackingRows = await db
@@ -826,11 +944,13 @@ app.post("/api/webhook/cursor-agent", async (c) => {
           );
           const channelMatch = content.match(/\*\*Channel\*\*:\s*(\S+)/);
           const threadMatch = content.match(/\*\*Thread\*\*:\s*(\S+)/);
+          const repoMatch = content.match(/\*\*Repo\*\*:\s*(\S+)/);
           if (requesterMatch && requesterMatch[1] !== "unknown")
             requester = requesterMatch[1];
           if (channelMatch) channelId = channelMatch[1];
           if (threadMatch && threadMatch[1] !== "none")
             threadTs = threadMatch[1];
+          if (repoMatch) repo = repoMatch[1];
         }
       }
 
@@ -852,16 +972,53 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         status.toLowerCase() === "error" ||
         status.toLowerCase() === "failed";
 
+      let resolvedPrUrl = prUrl;
+      if (isFinished && !resolvedPrUrl && branchName) {
+        try {
+          const { getCredential } = await import("./lib/credentials.js");
+          const { resolveCursorAgentPrUrl } = await import(
+            "./lib/cursor-agent.js"
+          );
+          const ghToken = await getCredential("github_token");
+          resolvedPrUrl = await resolveCursorAgentPrUrl({
+            branchName,
+            repo,
+            githubToken: ghToken,
+          });
+        } catch {
+          /* fall back to current behavior */
+        }
+      }
+
+      if (isFinished && resolvedPrUrl) {
+        try {
+          const { getCredential } = await import("./lib/credentials.js");
+          const { markPullRequestReadyForReview } = await import(
+            "./lib/cursor-agent.js"
+          );
+          const ghToken = await getCredential("github_token");
+          await markPullRequestReadyForReview({
+            prUrl: resolvedPrUrl,
+            githubToken: ghToken,
+          });
+        } catch (error) {
+          logger.warn("Cursor agent webhook: failed to mark PR ready for review", {
+            prUrl: resolvedPrUrl,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       let prTitle = "";
-      if (prUrl) {
-        const prMatch = prUrl.match(/\/pull\/(\d+)$/);
+      if (resolvedPrUrl) {
+        const prMatch = resolvedPrUrl.match(/\/pull\/(\d+)$/);
         if (prMatch) {
           try {
             const { getCredential } = await import("./lib/credentials.js");
             const ghToken = await getCredential("github_token");
             if (ghToken) {
               const prNumber = prMatch[1];
-              const repoMatch = prUrl.match(
+              const repoMatch = resolvedPrUrl.match(
                 /github\.com\/([^/]+\/[^/]+)\/pull/,
               );
               if (repoMatch) {
@@ -893,10 +1050,12 @@ app.post("/api/webhook/cursor-agent", async (c) => {
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;")
           .replace(/\|/g, "\u2758");
-        const prLine = prUrl
+        const isPullRequestUrl = /\/pull\/\d+$/.test(resolvedPrUrl);
+        const linkLabel = safePrTitle || (isPullRequestUrl ? "PR" : "branch");
+        const prLine = resolvedPrUrl
           ? safePrTitle
-            ? `\u2705 *<${prUrl}|${safePrTitle}>*`
-            : `\u2705 *<${prUrl}|PR>*`
+            ? `\u2705 *<${resolvedPrUrl}|${safePrTitle}>*`
+            : `\u2705 *<${resolvedPrUrl}|${linkLabel}>*`
           : "\u2705 Agent finished";
         const branchLine = branchName
           ? `\n_Branch:_ \`${branchName}\``

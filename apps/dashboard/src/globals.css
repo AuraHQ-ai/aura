@@ -93,6 +93,22 @@ body {
   margin: 0;
 }
 
+/*
+ * iOS Safari zooms the viewport when a focused form control has a computed
+ * font-size below 16px. The base root font-size is 14px (compact UI), so the
+ * Tailwind `text-base`/`text-sm` inputs resolve under 16px on mobile and
+ * trigger that zoom. Force at least 16px on touch-sized viewports (below the
+ * `md` breakpoint). This rule is intentionally unlayered so it wins over
+ * Tailwind utility classes regardless of specificity.
+ */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 [data-separator] {
   transition: background-color 0.15s ease;
 }

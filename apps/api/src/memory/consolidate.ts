@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db/client.js";
+import { withTransaction } from "../db/tx.js";
 import { memories } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { DECAY_FACTOR } from "./importance.js";
@@ -126,7 +127,7 @@ export async function mergeDuplicateMemories(): Promise<number> {
 
         // Inline supersession (not using supersedeMemory()) because consolidation
         // needs atomic boost + multi-loser forward-link handling in one transaction.
-        await db.transaction(async (tx) => {
+        await withTransaction(async (tx) => {
           await tx
             .update(memories)
             .set({

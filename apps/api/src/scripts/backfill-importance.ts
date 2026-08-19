@@ -63,7 +63,7 @@ async function processBatch(
     const { output: result } = await generateText({
       model,
       output: Output.object({ schema: classificationSchema }),
-      system: SYSTEM_PROMPT,
+      instructions: SYSTEM_PROMPT,
       prompt: JSON.stringify(payload),
     });
 

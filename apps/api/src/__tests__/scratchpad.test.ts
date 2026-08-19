@@ -5,7 +5,12 @@ import {
   cleanupScratchpad,
 } from "../tools/scratchpad.js";
 
-const execOpts = { toolCallId: "tc", messages: [] as any[], abortSignal: undefined as any };
+const execOpts = {
+  toolCallId: "tc",
+  messages: [] as any[],
+  abortSignal: undefined as any,
+  context: {},
+};
 
 describe("scratchpad tools", () => {
   const invocationId = "test-invocation-1";

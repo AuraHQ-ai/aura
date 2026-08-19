@@ -186,6 +186,35 @@ async function batchGetMessages(
   return results;
 }
 
+const BATCH_API_MISS_RECOVERY_LOG_INTERVAL = 25;
+let batchApiMissRecoveredSinceStart = 0;
+
+function recordBatchApiMissRecoveries(
+  userId: string,
+  recovered: number,
+  attempted: number,
+): void {
+  if (recovered <= 0) return;
+
+  const previous = batchApiMissRecoveredSinceStart;
+  batchApiMissRecoveredSinceStart += recovered;
+
+  if (
+    Math.floor(previous / BATCH_API_MISS_RECOVERY_LOG_INTERVAL) ===
+    Math.floor(batchApiMissRecoveredSinceStart / BATCH_API_MISS_RECOVERY_LOG_INTERVAL)
+  ) {
+    return;
+  }
+
+  logger.info("Email sync: batch_api_miss recovery counter", {
+    userId,
+    recovered,
+    attempted,
+    recoveredSinceStart: batchApiMissRecoveredSinceStart,
+    logInterval: BATCH_API_MISS_RECOVERY_LOG_INTERVAL,
+  });
+}
+
 // ── Message row conversion ───────────────────────────────────────────────────
 
 function messageToRow(
@@ -312,12 +341,10 @@ export async function syncEmails(
         const reason = "batch_api_miss: message ID listed but not returned by batch API";
         result.errorDetails.push({ gmailMessageId: id, reason });
         result.errors++;
-        logError({
-          errorName: "EmailSyncError",
-          errorMessage: reason,
-          errorCode: "email_sync_error",
+        logger.warn("Email sync: batch_api_miss before retry", {
           userId,
-          context: { gmailMessageId: id },
+          gmailMessageId: id,
+          batchOffset: i,
         });
         continue;
       }
@@ -399,24 +426,54 @@ export async function syncEmails(
     .map((e) => e.gmailMessageId);
 
   if (missedIds.length > 0) {
-    logger.info("Retrying batch_api_miss messages", { count: missedIds.length });
+    const missedIdSet = new Set(missedIds);
+    logger.info("Retrying batch_api_miss messages", { userId, count: missedIds.length });
     await new Promise((r) => setTimeout(r, 5000));
 
     const retryMap = await batchGetMessages(accessToken, missedIds);
 
     const retryRows: NewEmailRaw[] = [];
     const recoveredIds: Set<string> = new Set();
+    const retryFailureReasons = new Map<string, string>();
     for (const e of result.errorDetails) {
       if (!e.reason.startsWith("batch_api_miss")) continue;
       const msg = retryMap.get(e.gmailMessageId);
-      if (!msg) continue;
+      if (!msg) {
+        retryFailureReasons.set(
+          e.gmailMessageId,
+          "batch_api_miss_persisted: message ID still not returned by batch API after retry",
+        );
+        continue;
+      }
       try {
         const row = messageToRow(msg, userId, userEmail);
         if (row) {
           retryRows.push(row);
           recoveredIds.add(e.gmailMessageId);
+        } else {
+          retryFailureReasons.set(
+            e.gmailMessageId,
+            "batch_api_retry_messageToRow_null: missing required fields after retry",
+          );
         }
-      } catch {}
+      } catch (err) {
+        retryFailureReasons.set(
+          e.gmailMessageId,
+          `batch_api_retry_process_failed: ${String(err)}`,
+        );
+        logger.warn("Failed to process retried batch_api_miss message", {
+          userId,
+          gmailMessageId: e.gmailMessageId,
+          error: String(err),
+        });
+      }
+    }
+
+    if (retryFailureReasons.size > 0) {
+      result.errorDetails = result.errorDetails.map((e) => {
+        const retryReason = retryFailureReasons.get(e.gmailMessageId);
+        return retryReason ? { ...e, reason: retryReason } : e;
+      });
     }
 
     if (retryRows.length > 0) {
@@ -433,9 +490,42 @@ export async function syncEmails(
           (e) => !recoveredIds.has(e.gmailMessageId),
         );
         result.errors -= recoveredIds.size;
-        logger.info("Retry recovered messages", { recovered: retryRows.length });
+        logger.info("Retry recovered batch_api_miss messages", {
+          userId,
+          recovered: recoveredIds.size,
+          attempted: missedIds.length,
+          inserted: insertResult.rowCount ?? 0,
+          skipped: retryRows.length - (insertResult.rowCount ?? 0),
+        });
+        recordBatchApiMissRecoveries(userId, recoveredIds.size, missedIds.length);
       } catch (err) {
-        logger.error("Retry batch insert failed", { error: String(err) });
+        logger.error("Retry batch insert failed", {
+          userId,
+          rowCount: retryRows.length,
+          error: String(err),
+        });
+      }
+    }
+
+    const permanentMisses = result.errorDetails.filter((e) =>
+      missedIdSet.has(e.gmailMessageId),
+    );
+    if (permanentMisses.length > 0) {
+      logger.error("Email sync: batch_api_miss persisted after retry", {
+        userId,
+        count: permanentMisses.length,
+      });
+      for (const miss of permanentMisses) {
+        logError({
+          errorName: "EmailSyncPermanentMiss",
+          errorMessage: `batch_api_miss retry failed: ${miss.reason}`,
+          errorCode: "email_sync_permanent_miss",
+          userId,
+          context: {
+            gmailMessageId: miss.gmailMessageId,
+            retryAttempted: true,
+          },
+        });
       }
     }
   }

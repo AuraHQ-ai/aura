@@ -12,6 +12,7 @@ import {
   getModelCatalogResponse,
   type ModelOption,
 } from "../lib/model-catalog.js";
+import { LAST_RESORT_MODELS } from "../lib/ai.js";
 
 // ── Credential Definitions ───────────────────────────────────────────────────
 
@@ -33,6 +34,11 @@ const CREDENTIALS: CredentialDef[] = [
 export const CREDENTIAL_ACTIONS: Record<string, string> = {
   credential_edit_github_token: "github_token",
 };
+
+export const TOOLS_REPO_SAVE_ACTION = "save_tools_repo";
+export const TOOLS_REPO_SETTING_KEY = "tools_repo";
+
+const TOOLS_REPO_CHECKOUT_PATH = `/home/user/${["aura", "tools"].join("-")}`;
 
 // ── Block Kit Helpers ────────────────────────────────────────────────────────
 
@@ -106,6 +112,50 @@ async function buildCredentialBlocks(): Promise<any[]> {
   }
 
   return blocks;
+}
+
+function buildToolsRepoBlocks(currentValue: string): any[] {
+  const inputElement: any = {
+    type: "plain_text_input",
+    action_id: "tools_repo_value",
+    placeholder: {
+      type: "plain_text",
+      text: "owner/repo or https://github.com/owner/repo",
+    },
+  };
+
+  if (currentValue) {
+    inputElement.initial_value = currentValue;
+  }
+
+  return [
+    { type: "divider" },
+    {
+      type: "input",
+      block_id: "tools_repo_input_block",
+      optional: true,
+      label: {
+        type: "plain_text",
+        text: "Self-authored tools repository",
+      },
+      element: inputElement,
+      hint: {
+        type: "plain_text",
+        text: `GitHub repo (owner/name) containing this workspace's self-authored tools. Cloned into the sandbox at ${TOOLS_REPO_CHECKOUT_PATH} on startup. Leave empty to skip.`,
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Save tools repository" },
+          action_id: TOOLS_REPO_SAVE_ACTION,
+          style: "primary",
+        },
+      ],
+    },
+  ];
 }
 
 // ── User API Credential Blocks ──────────────────────────────────────────────
@@ -590,10 +640,11 @@ export async function publishHomeTab(
       catalog.catalog.map((model) => [model.value, model.label]),
     );
 
-    const mainValue = currentSettings.model_main || catalog.defaults.main || "";
-    const fastValue = currentSettings.model_fast || catalog.defaults.fast || "";
-    const embeddingValue =
-      currentSettings.model_embedding || catalog.defaults.embedding || "";
+    const mainValue = currentSettings.model_main || LAST_RESORT_MODELS.main;
+    const fastValue = currentSettings.model_fast || LAST_RESORT_MODELS.fast;
+    const mediumValue = currentSettings.model_medium || LAST_RESORT_MODELS.medium;
+    const escalationValue = currentSettings.model_escalation || LAST_RESORT_MODELS.escalation;
+    const embeddingValue = currentSettings.model_embedding || LAST_RESORT_MODELS.embedding;
 
     const blocks: any[] = [
       {
@@ -639,6 +690,24 @@ export async function publishHomeTab(
           type: "section",
           text: {
             type: "mrkdwn",
+            text: "*:newspaper: Medium Model*\nDefault tier for scheduled jobs — Sonnet-class balance of speed and quality.",
+          },
+        },
+        buildDropdown("select_model_medium", "Medium Model", catalog.medium, mediumValue),
+        { type: "divider" },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*:arrow_up: Escalation Model*\nSwapped in automatically when the main model is struggling mid-conversation.",
+          },
+        },
+        buildDropdown("select_model_escalation", "Escalation Model", catalog.escalation, escalationValue),
+        { type: "divider" },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
             text: "*:mag: Embedding Model*\nUsed for vectorizing memories and queries.\n:warning: _Changing this may require updating the DB vector dimensions (currently 1536)._",
           },
         },
@@ -648,11 +717,70 @@ export async function publishHomeTab(
           catalog.embedding,
           embeddingValue,
         ),
+        { type: "divider" },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*:clipboard: Slack task display mode*\nControls how streaming tool tasks are shown in replies.",
+          },
+        },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*Task display mode*",
+          },
+          accessory: {
+            type: "static_select",
+            action_id: "select_slack_task_display_mode",
+            placeholder: {
+              type: "plain_text",
+              text: "Select task display mode",
+            },
+            options: [
+              {
+                text: { type: "plain_text", text: "Timeline" },
+                value: "\"timeline\"",
+              },
+              {
+                text: { type: "plain_text", text: "Plan" },
+                value: "\"plan\"",
+              },
+              {
+                text: { type: "plain_text", text: "Hybrid" },
+                value: "\"hybrid\"",
+              },
+            ],
+            initial_option: (() => {
+              const mode = currentSettings.slack_task_display_mode || "\"timeline\"";
+              if (mode === "\"plan\"") {
+                return {
+                  text: { type: "plain_text", text: "Plan" },
+                  value: "\"plan\"",
+                };
+              }
+              if (mode === "\"hybrid\"") {
+                return {
+                  text: { type: "plain_text", text: "Hybrid" },
+                  value: "\"hybrid\"",
+                };
+              }
+              return {
+                text: { type: "plain_text", text: "Timeline" },
+                value: "\"timeline\"",
+              };
+            })(),
+          },
+        },
       );
+      blocks.push(...buildToolsRepoBlocks(currentSettings[TOOLS_REPO_SETTING_KEY] || ""));
     } else {
       // Read-only view
       const mainLabel = labelByValue.get(mainValue) || mainValue;
       const fastLabel = labelByValue.get(fastValue) || fastValue;
+      const mediumLabel = labelByValue.get(mediumValue) || mediumValue;
+      const escalationLabel = labelByValue.get(escalationValue) || escalationValue;
       const embeddingLabel = labelByValue.get(embeddingValue) || embeddingValue;
 
       blocks.push(
@@ -660,7 +788,7 @@ export async function publishHomeTab(
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `*:brain: Main Model:* ${mainLabel}\n*:zap: Fast Model:* ${fastLabel}\n*:mag: Embedding Model:* ${embeddingLabel}`,
+            text: `*:brain: Main Model:* ${mainLabel}\n*:zap: Fast Model:* ${fastLabel}\n*:newspaper: Medium Model:* ${mediumLabel}\n*:arrow_up: Escalation Model:* ${escalationLabel}\n*:mag: Embedding Model:* ${embeddingLabel}`,
           },
         },
       );
@@ -707,7 +835,10 @@ export async function publishHomeTab(
 export const ACTION_TO_SETTING: Record<string, string> = {
   select_model_main: "model_main",
   select_model_fast: "model_fast",
+  select_model_medium: "model_medium",
+  select_model_escalation: "model_escalation",
   select_model_embedding: "model_embedding",
+  select_slack_task_display_mode: "slack_task_display_mode",
 };
 
 export { hasRole } from "../lib/permissions.js";

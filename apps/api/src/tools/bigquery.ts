@@ -267,7 +267,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
             maximumBytesBilled: String(1e9),
             location,
           });
-          samples = rows;
+          samples = JSON.parse(JSON.stringify(rows));
         } catch (sampleError: unknown) {
           logger.warn(`${toolName} sample query failed`, {
             dataset,
@@ -363,20 +363,21 @@ export function createBigQueryTools(context?: ScheduleContext) {
         location,
       });
       const rows = queryResult[0];
+      const cleanRows = JSON.parse(JSON.stringify(rows));
       const responseMeta = (queryResult as any)[2];
       const columns =
         responseMeta?.schema?.fields?.map((f: any) => f.name) ??
-        (rows.length > 0 ? Object.keys(rows[0]) : []);
-      const totalRows = rows.length;
+        (cleanRows.length > 0 ? Object.keys(cleanRows[0]) : []);
+      const totalRows = cleanRows.length;
       const bytesProcessed = responseMeta?.totalBytesProcessed ?? null;
 
       logger.info(`${toolName} called`, {
         sqlLength: sql.length,
-        rowCount: rows.length,
+        rowCount: cleanRows.length,
         bytesProcessed,
       });
 
-      const resultRows = rows.slice(0, max_rows);
+      const resultRows = cleanRows.slice(0, max_rows);
       const result = {
         ok: true as const,
         columns,
@@ -461,6 +462,20 @@ export function createBigQueryTools(context?: ScheduleContext) {
       description:
         `Run a read-only BigQuery query (SELECT/WITH only). ${BIGQUERY_SQL_STYLE_GUIDANCE} ${BIGQUERY_DEBUGGING_LADDER} For unfamiliar tables, bq_inspect_table before querying. Do not infer permissions issues from one complex failing query; retry a minimal valid query first.`,
       inputSchema: executeQueryInputSchema,
+      inputExamples: [
+        {
+          input: {
+            sql: "SELECT status, COUNT(*) AS n FROM `project.crm.leads` WHERE created_at >= '2026-01-01' GROUP BY status ORDER BY n DESC",
+            max_rows: 100,
+          },
+        },
+        {
+          input: {
+            sql: "WITH recent AS (SELECT * FROM `project.analytics.events` WHERE event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)) SELECT event_name, COUNT(*) AS total FROM recent GROUP BY event_name",
+            max_rows: 50,
+          },
+        },
+      ],
       execute: async (input) => executeBigQueryQuery(input, "bq_execute_query"),
       slack: {
         status: "Running a SQL query...",

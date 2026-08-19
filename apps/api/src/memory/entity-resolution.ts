@@ -5,6 +5,7 @@ import { db } from "../db/client.js";
 import { entities, entityAliases, memoryEntities } from "@aura/db/schema";
 import type { EntityType, MemoryEntityRole } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry } from "../lib/langfuse.js";
 
 export interface ResolvedEntity {
   entityId: string;
@@ -126,8 +127,9 @@ export async function disambiguateFuzzyMatches(
 
   const { output } = await generateText({
     model,
+    telemetry: aiTelemetry("entity-disambiguate"),
     output: Output.object({ schema: disambiguationSchema }),
-    system: `You are disambiguating entity names. Given a new entity name and a list of existing entities with similar names, determine if the new name refers to the SAME real-world entity as any candidate.
+    instructions: `You are disambiguating entity names. Given a new entity name and a list of existing entities with similar names, determine if the new name refers to the SAME real-world entity as any candidate.
 
 Return match_index (0-based) of the matching candidate, or null if none match.
 

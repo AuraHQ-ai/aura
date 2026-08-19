@@ -1,10 +1,11 @@
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { emailsRaw } from "@aura/db/schema";
 import { getFastModel } from "./ai.js";
 import { logger } from "./logger.js";
+import { aiTelemetry } from "./langfuse.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -248,11 +249,12 @@ export async function computeThreadStates(
       const threadText = reconstructThread(emails);
       const prompt = buildPrompt(threadText, userName);
 
-      const { object } = await generateObject({
+      const { output: object } = await generateText({
         model,
-        schema: threadStateSchema,
+        output: Output.object({ schema: threadStateSchema }),
         prompt,
         maxOutputTokens: 200,
+        telemetry: aiTelemetry("email-triage"),
       });
 
       pendingUpdates.push({

@@ -27,6 +27,12 @@ export function isMsgTooLong(error: any): boolean {
   return msg.includes("msg_too_long") || code === "msg_too_long";
 }
 
+export function isInvalidChunks(error: any): boolean {
+  const msg = error?.message || "";
+  const code = error?.data?.error || "";
+  return msg.includes("invalid_chunks") || code === "invalid_chunks";
+}
+
 export function isInvalidArguments(error: any): boolean {
   const msg = error?.message || "";
   const code = error?.data?.error || "";

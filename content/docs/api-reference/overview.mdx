@@ -1,11 +1,11 @@
 ---
 title: "API Reference"
-description: "Aura's HTTP endpoints for Slack events, health checks, and cron jobs."
+description: "Aura's HTTP endpoints for Slack events, health checks, cron jobs, and webhooks."
 ---
 
 # API Reference
 
-Aura exposes a small set of HTTP endpoints, primarily for Slack integration and operational health.
+Aura exposes a small set of HTTP endpoints, primarily for Slack integration, scheduled work, and operational health.
 
 ## Base URL
 
@@ -17,10 +17,11 @@ Or your custom deployment URL.
 
 ## Authentication
 
-- **Slack events** are verified using the Slack signing secret (`SLACK_SIGNING_SECRET`)
-- **Cron endpoints** are protected by Vercel's `CRON_SECRET` header
+- **Slack events and interactions** are verified using the Slack signing secret (`SLACK_SIGNING_SECRET`)
+- **Cron endpoints** require an `Authorization: Bearer <CRON_SECRET>` header
+- **Webhooks** each verify their own shared secret or HMAC signature
+- **Dashboard API** requires a Bearer token: either the static `DASHBOARD_API_SECRET` (used by the Next.js dashboard's server-side calls) or a user-session JWT signed with `DASHBOARD_SESSION_SECRET`
 - **Health check** is unauthenticated
-- **Dashboard API** uses session-based auth via OAuth
 
 ## Core Endpoints
 
@@ -30,50 +31,162 @@ Webhook endpoint for Slack event subscriptions. Receives all Slack events (messa
 
 **Auth:** Slack signing secret verification on every request.
 
+### `POST /api/slack/interactions`
+
+Handles Slack interactive payloads: App Home settings toggles, credential modals (add/update/share), and confirmation buttons.
+
+**Auth:** Slack signing secret verification.
+
 ### `GET /api/health`
 
-Simple health check. Returns `200 OK` with basic system status.
+Simple health check. Returns `200 OK` with a timestamp. `GET /` returns basic name/version/status info.
 
 **Auth:** None.
+
+## Cron & Job Endpoints
+
+All protected by `Authorization: Bearer <CRON_SECRET>`.
 
 ### `GET /api/cron/heartbeat`
 
 Periodic job execution trigger. Evaluates all pending and recurring jobs, executes what's due. Runs every 30 minutes via Vercel Cron.
 
-**Auth:** `CRON_SECRET` header.
-
 ### `GET /api/cron/consolidate`
 
-Nightly memory consolidation. Decays old memories, merges duplicates, and cleans up stale data. Runs daily at 4 AM UTC.
+Nightly consolidation: memory consolidation, user profile compilation, and stale entity-summary regeneration. Runs daily at 4 AM UTC.
 
-**Auth:** `CRON_SECRET` header.
+### `GET /api/cron/eval-responses`
 
-### `POST /api/chat`
+Scores recent assistant responses through the eval funnel. Runs hourly via Vercel Cron. Accepts an optional `?limit=` to cap thread groups per run.
 
-Streaming chat endpoint for the dashboard's AI Elements chat interface. Accepts messages and returns streamed AI responses.
+### `POST /api/cron/supervisor`
 
-**Auth:** Dashboard session cookie.
+Analyzes failed or problematic job executions and files `auto-supervisor-fix` GitHub issues. Not on a cron schedule — invoked internally after job outcomes are recorded.
 
-### `POST /api/cursor/webhook`
+### `POST /api/execute-now`
 
-Webhook endpoint for Cursor Cloud Agent completion notifications. Receives results when dispatched agents finish their work.
+Immediately executes a specific pending job by `jobId`, bypassing its schedule. Used by the dashboard's "run now" action.
 
-**Auth:** Webhook signature verification.
+## Webhook Endpoints
+
+### `POST /api/webhook/cursor-agent`
+
+Receives Cursor Cloud Agent completion notifications and delivers results (PR link, summary) back to the dispatching conversation.
+
+**Auth:** HMAC signature (`x-webhook-signature`) verified against `CURSOR_WEBHOOK_SECRET`.
+
+### `POST /api/webhook/sandbox-command`
+
+Completion callback for detached sandbox commands (`run_command_detached`). Resumes the originating Slack conversation with the command result.
+
+**Auth:** Shared secret (`SANDBOX_WEBHOOK_SECRET`).
+
+### `POST /api/webhook/elevenlabs/tool/:toolName` and `POST /api/webhook/elevenlabs/post-call`
+
+Server-side tools invoked by ElevenLabs voice agents mid-call, and the post-call transcript webhook.
+
+**Auth:** Shared secret header (`x-webhook-secret`) / ElevenLabs HMAC signature.
+
+## OAuth Endpoints
+
+### `GET /api/oauth/google/auth-url` and `GET /api/oauth/google/callback`
+
+Google OAuth flow for connecting a user's Gmail/Calendar/Drive account to Aura.
 
 ## Dashboard API
 
-The admin dashboard (`apps/dashboard`) has its own API routes for authentication:
+All dashboard data routes live under `/api/dashboard/*`, served by an OpenAPIHono app with full Zod schema validation. Authentication endpoints:
 
-- `GET /api/auth/login` — Initiate OAuth login
-- `GET /api/auth/callback` — OAuth callback handler
-- `POST /api/auth/logout` — End session
+- `GET /api/dashboard/auth/login` — Initiate OAuth login
+- `GET /api/dashboard/auth/callback` — OAuth callback handler
+- `GET /api/dashboard/auth/check-role` — Verify the session user's role
 
-All dashboard data routes are served by an OpenAPIHono app with full Zod schema validation. The API spec is available at:
+Sessions are JWTs issued at login; there is no server-side logout endpoint (logout clears the token client-side).
 
 ### `GET /api/dashboard/openapi.json`
 
 Returns the full OpenAPI 3.1 specification for all dashboard API routes. Useful for generating client SDKs, testing with tools like Swagger UI, or validating request/response shapes.
 
-**Auth:** Dashboard session cookie.
+**Auth:** None (public, like the login/callback routes).
 
-The spec covers 14 route groups: auth, chat, stats, notes, memories, users, conversations, errors, jobs, credentials, resources, consumption, settings, and models.
+The spec covers 17 route groups: auth, chat, stats, notes, memories, users, conversations, errors, jobs, credentials, resources, consumption, adoption, settings, models, entities, and eval.
+
+### `PATCH /api/dashboard/jobs/:id`
+
+Partial update of a job. All body fields are optional: omitted fields are left unchanged, and an explicit `null` clears the override back to its default.
+
+| Field | Type | Semantics |
+| --- | --- | --- |
+| `enabled` | `boolean` | Enable or disable the job. |
+| `model` | `"main"` \| `"fast"` \| `"medium"` \| `"escalation"` \| `null` | Model catalog category the job executes with. `null` resolves to `medium` (the job default). Validated against the job-eligible catalog categories (`embedding` is not allowed). |
+| `envAllowlist` | `string[]` \| `null` | Sandbox env var **names** the job may access — names only, values are never accepted, returned, or logged. `null` = full caller-scoped inheritance; `[]` = no env vars. Names must match `[A-Za-z_][A-Za-z0-9_]*`. |
+| `promptMode` | `"full"` \| `"task"` \| `null` | `"task"` runs the minimal task prompt (no personality/notes). `null` resolves to `"full"` (default). See [Prompt Modes](/prompt-modes). |
+
+Invalid values return `400` with a validation message. The jobs list (`GET /api/dashboard/jobs`) and detail (`GET /api/dashboard/jobs/:id`) responses include these three fields, plus cost and watchdog metadata described below.
+
+### `GET /api/dashboard/jobs`
+
+Returns a paginated list of jobs. Accepts `?search=`, `?page=`, and `?limit=` query parameters (limit capped at 100). Each item includes all `jobs` table columns plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `runs30d` | `number` | Count of executions started in the last 30 days. |
+| `cost30dUsd` | `string \| null` | Total `cost_usd` (from `conversation_traces`) over the last 30 days. `null` when no cost data is priced yet. |
+| `avgCostPerRunUsd` | `string \| null` | `cost30dUsd / runs30d` formatted to 6 decimal places. `null` when either input is absent. |
+| `wasWatchdogReset` | `boolean` | `true` when `jobs.result` contains `"reset by watchdog"` — the job was terminated by the stuck-job watchdog. The dashboard renders a **watchdog reset** badge in this case. |
+
+Cost data is aggregated in a single `LEFT JOIN` query over `job_executions → conversation_traces` for the IDs returned by the page — no N+1.
+
+### `GET /api/dashboard/jobs/:id`
+
+Returns `{ job, executions }`. Each execution object includes all `job_executions` columns plus:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `costUsd` | `string \| null` | Cost from the linked `conversation_traces` row. |
+| `resolvedModelId` | `string \| null` | Actual model ID resolved for this execution (from `conversation_traces.resolved_model_id`). |
+| `conversationTraceId` | `string \| null` | UUID of the linked conversation trace (for deep-linking to the trace viewer). |
+
+**Auth:** Dashboard bearer token.
+
+### `GET /api/dashboard/jobs/task-prompt`
+
+Returns the live `promptMode='task'` system prefix as `{ "prompt": "<task_mode>..." }`, rendered directly from `buildTaskPrefix()` in the running code. The dashboard job detail page uses this endpoint for its collapsible task-prompt preview, so the UI can never drift from the code. See [Prompt Modes](/prompt-modes) for the full explanation of both modes.
+
+**Auth:** Dashboard bearer token.
+
+### `GET /api/dashboard/settings`
+
+Returns all settings for the workspace as a JSON array. Each item has the following shape:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `key` | `string` | Setting key |
+| `value` | `string` | Raw value for non-secret keys; masked placeholder (`••••••••`) for secret keys |
+| `hasValue` | `boolean` | `true` when a non-empty value is stored (always `true` for non-secret keys) |
+| `redacted` | `boolean` | `true` when the value has been masked |
+| `description` | `string \| null` | Optional description |
+| `updatedAt` | `string \| null` | ISO 8601 timestamp of last update |
+| `updatedBy` | `string \| null` | Who last updated this setting |
+
+**Secret-bearing keys** are redacted automatically. A key is considered secret when it starts with `credential:` or contains any of: `secret`, `token`, `password`, `api_key`, `apikey`, `private_key`, `refresh_token`, `credential`, `webhook_secret`, `signing` (case-insensitive). Raw values are never returned for these keys.
+
+**Auth:** Dashboard bearer token.
+
+### `GET /api/dashboard/settings/:key`
+
+Returns `{ value, hasValue, redacted }` for a single setting. Same redaction rules as the list endpoint apply.
+
+**Auth:** Dashboard bearer token.
+
+### `PUT /api/dashboard/settings/:key`
+
+Upserts a setting. **Write-only semantics for secret keys:** submitting an empty string or the masked placeholder (`••••••••`) as the value is treated as a no-op and returns `204 No Content` — the stored value is left unchanged. Submitting a non-empty, non-placeholder value always overwrites the stored value. The response body (for `200`) applies the same redaction as the GET endpoints.
+
+**Auth:** Dashboard bearer token.
+
+### Model categories & settings keys
+
+`GET /api/dashboard/models` returns the model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus a `defaults` field (always empty; active models are driven by the settings table). The per-category lists contain the **full catalog synced from the Vercel AI Gateway**, filtered only by capability metadata: models typed `embedding`, `image`, `video`, or `reranking` are excluded from the chat categories, and the `embedding` category lists embedding models. Models with unknown type appear everywhere rather than being hidden by a guessed blocklist.
+
+Category overrides persist as ordinary settings via `PUT /api/dashboard/settings/:key` with keys `model_main`, `model_fast`, `model_medium`, `model_embedding`, and `model_escalation`. Resolution order everywhere is: DB setting override first, then the hardcoded `LAST_RESORT_MODELS` constant in `apps/api/src/lib/ai.ts`.

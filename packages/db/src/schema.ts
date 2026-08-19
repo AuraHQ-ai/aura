@@ -20,11 +20,13 @@ import {
   numeric,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { z } from "zod";
 
 // ── Enums ──────────────────────────────────────────────────────────────────
 
 export const channelTypeEnum = pgEnum("channel_type", [
   "dm",
+  "mpim",
   "public_channel",
   "private_channel",
   "dashboard",
@@ -73,13 +75,6 @@ export const memoryEntityRoleEnum = pgEnum("memory_entity_role", [
   "subject",
   "object",
   "mentioned",
-]);
-
-export const modelCatalogCategoryEnum = pgEnum("model_catalog_category", [
-  "main",
-  "fast",
-  "embedding",
-  "escalation",
 ]);
 
 // Helper for timestamptz columns
@@ -168,6 +163,18 @@ export const memories = pgTable(
     supersedesMemoryId: uuid("supersedes_memory_id"),
     supersededAt: timestamptz("superseded_at"),
     supersededByMemoryId: uuid("superseded_by_memory_id"),
+    /**
+     * Benchmark-only provenance — links a memory back to the corpus turns
+     * it was extracted from (e.g. LoCoMo dia_ids like ["D1:3", "D1:7"]).
+     * Populated only when the harness writes into a bench-* workspace;
+     * NULL in production. Powers retrieval recall@K scoring.
+     */
+    benchProvenance: jsonb("bench_provenance").$type<{
+      datasetId?: string;
+      conversationId?: string;
+      diaIds?: string[];
+      sessionIds?: string[];
+    } | null>(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -377,6 +384,28 @@ export const settings = pgTable(
 
 // ── Model Catalog ───────────────────────────────────────────────────────────
 
+export const ModelCapabilities = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("anthropic"),
+    thinkingMode: z.enum(["adaptive", "enabled", "none"]),
+  }),
+  z.object({
+    provider: z.literal("openai"),
+    reasoningEffort: z.enum(["minimal", "low", "medium", "high", "none"]),
+  }),
+  z.object({
+    provider: z.literal("google"),
+    thinkingBudget: z.union([z.number(), z.literal("dynamic"), z.literal("none")]),
+  }),
+  z.object({
+    provider: z.literal("xai"),
+    reasoningEffort: z.enum(["low", "high", "none"]),
+  }),
+  z.object({ provider: z.literal("none") }),
+]);
+
+export type ModelCapabilities = z.infer<typeof ModelCapabilities>;
+
 export const modelCatalog = pgTable(
   "model_catalog",
   {
@@ -392,6 +421,7 @@ export const modelCatalog = pgTable(
     contextWindow: integer("context_window"),
     maxTokens: integer("max_tokens"),
     tags: jsonb("tags").$type<string[]>(),
+    capabilities: jsonb("capabilities").$type<ModelCapabilities | null>(),
     rawPricing: jsonb("raw_pricing").$type<Record<string, string | number | null>>(),
     rawPayload: jsonb("raw_payload").$type<Record<string, unknown>>(),
     lastSyncedAt: timestamptz("last_synced_at").notNull().defaultNow(),
@@ -405,34 +435,6 @@ export const modelCatalog = pgTable(
     ),
     index("model_catalog_provider_idx").on(table.provider),
     index("model_catalog_type_idx").on(table.type),
-  ],
-);
-
-export const modelCatalogSelections = pgTable(
-  "model_catalog_selections",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workspaceId: workspaceId().references(() => workspaces.id),
-    modelId: text("model_id").notNull(),
-    category: modelCatalogCategoryEnum("category").notNull(),
-    enabled: boolean("enabled").notNull().default(false),
-    isDefault: boolean("is_default").notNull().default(false),
-    createdAt: timestamptz("created_at").notNull().defaultNow(),
-    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("model_catalog_selections_workspace_model_category_idx").on(
-      table.workspaceId,
-      table.modelId,
-      table.category,
-    ),
-    index("model_catalog_selections_category_idx").on(
-      table.workspaceId,
-      table.category,
-      table.enabled,
-    ),
   ],
 );
 
@@ -535,6 +537,7 @@ export const jobs = pgTable(
     playbook: text("playbook"),
     script: text("script"),
     cronSchedule: text("cron_schedule"),
+    notifyOnSuccess: boolean("notify_on_success").notNull().default(false),
     frequencyConfig: jsonb("frequency_config").$type<FrequencyConfig>(),
     channelId: text("channel_id"),
     threadTs: text("thread_ts"),
@@ -551,7 +554,15 @@ export const jobs = pgTable(
     todayExecutions: integer("today_executions").notNull().default(0),
     lastExecutionDate: text("last_execution_date"),
     enabled: integer("enabled").notNull().default(1),
+    archivedAt: timestamptz("archived_at"),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
+    // ── Scoped execution (issue #1302) — all nullable so existing jobs run unchanged ──
+    /** Model catalog category to execute with. Null = 'medium' (job default). */
+    model: text("model").$type<"main" | "fast" | "medium" | "escalation">(),
+    /** Sandbox env var names this job may access. Null = full caller-scoped inheritance. */
+    envAllowlist: text("env_allowlist").array(),
+    /** 'task' = minimal task prompt (no personality/notes). Null = 'full' (current behavior). */
+    promptMode: text("prompt_mode").$type<"full" | "task">(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -586,6 +597,104 @@ export const jobExecutions = pgTable(
   (table) => [
     index("job_executions_job_id_idx").on(table.jobId),
     index("job_executions_started_at_idx").on(table.startedAt),
+  ],
+);
+
+export type JobOutcomeStatus =
+  | "succeeded"
+  | "errored"
+  | "interrupted"
+  | "process_died_pre_execution";
+export type JobOutcomeSupervisorStatus = "pending_review" | "in_progress" | "resolved" | "skipped";
+export type JobOutcomeSupervisorDecision =
+  | "retry_as_is"
+  | "retry_with_fix"
+  | "silent_success"
+  | "report_success"
+  | "report_failure"
+  | "escalate"
+  | "disable_job";
+
+export const jobOutcomes = pgTable(
+  "job_outcomes",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id),
+    jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
+    outcomeStatus: text("outcome_status").$type<JobOutcomeStatus>().notNull(),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    error: text("error"),
+    lastNSteps: jsonb("last_n_steps").$type<Array<Record<string, unknown>>>(),
+    supervisorStatus: text("supervisor_status")
+      .$type<JobOutcomeSupervisorStatus>()
+      .notNull()
+      .default("pending_review"),
+    supervisorInvocationId: text("supervisor_invocation_id"),
+    supervisorStartedAt: timestamptz("supervisor_started_at"),
+    supervisorDecision: text("supervisor_decision").$type<JobOutcomeSupervisorDecision>(),
+    supervisorReasoning: text("supervisor_reasoning"),
+    supervisorAttempts: integer("supervisor_attempts").notNull().default(0),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("job_outcomes_job_created_idx").on(table.jobId, table.createdAt),
+    index("job_outcomes_supervisor_status_started_idx").on(
+      table.supervisorStatus,
+      table.supervisorStartedAt,
+    ),
+    uniqueIndex("job_outcomes_job_execution_id_idx")
+      .on(table.jobExecutionId)
+      .where(sql`job_execution_id IS NOT NULL`),
+    check(
+      "job_outcomes_outcome_status_check",
+      sql`${table.outcomeStatus} IN ('succeeded', 'errored', 'interrupted', 'process_died_pre_execution')`,
+    ),
+    check(
+      "job_outcomes_supervisor_status_check",
+      sql`${table.supervisorStatus} IN ('pending_review', 'in_progress', 'resolved', 'skipped')`,
+    ),
+    check(
+      "job_outcomes_supervisor_decision_check",
+      sql`${table.supervisorDecision} IS NULL OR ${table.supervisorDecision} IN ('retry_as_is', 'retry_with_fix', 'silent_success', 'report_success', 'report_failure', 'escalate', 'disable_job')`,
+    ),
+  ],
+);
+
+// ── Detached Sandbox Commands ────────────────────────────────────────────────
+
+export const detachedCommands = pgTable(
+  "detached_commands",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    pid: integer("pid"),
+    command: text("command").notNull(),
+    status: text("status").notNull().default("running"),
+    exitCode: integer("exit_code"),
+    requestedBy: text("requested_by").notNull(),
+    channelId: text("channel_id"),
+    threadTs: text("thread_ts"),
+    // Link back to the job execution that dispatched this command (issue #1281).
+    // Nullable — interactive turns have no job.
+    jobId: uuid("job_id").references(() => jobs.id),
+    jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
+    startedAt: timestamptz("started_at").notNull().defaultNow(),
+    completedAt: timestamptz("completed_at"),
+    stdoutTail: text("stdout_tail"),
+    stderrTail: text("stderr_tail"),
+  },
+  (table) => [
+    index("detached_commands_status_started_at_idx").on(table.status, table.startedAt),
+    check(
+      "detached_commands_status_check",
+      sql`${table.status} IN ('running', 'completed', 'failed', 'killed')`,
+    ),
   ],
 );
 
@@ -721,6 +830,51 @@ export const conversationParts = pgTable(
   ],
 );
 
+// ── Dashboard Chat Runs (workflow run ↔ thread mapping) ─────────────────────
+// One row per dashboard chat turn executed as a durable workflow run. The
+// thread↔run mapping is server-anchored so any browser session can reconnect
+// to an in-flight generation. `status` mirrors the workflow run state and is
+// finalized by the workflow itself; the workflow backend stays the source of
+// truth for rows still marked "running".
+
+export const dashboardChatRuns = pgTable(
+  "dashboard_chat_runs",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    threadId: text("thread_id").notNull(),
+    runId: text("run_id").notNull(),
+    userId: text("user_id").notNull(),
+    /**
+     * The user message that started this turn. The conversation trace is only
+     * persisted when the turn completes, so this is what lets a fresh browser
+     * session render the in-flight user bubble (and a thread preview) while
+     * the run is still generating.
+     */
+    userMessage: text("user_message"),
+    status: text("status").notNull().default("running"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    completedAt: timestamptz("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("dashboard_chat_runs_workspace_run_idx").on(
+      table.workspaceId,
+      table.runId,
+    ),
+    index("dashboard_chat_runs_thread_idx").on(
+      table.workspaceId,
+      table.threadId,
+      table.createdAt,
+    ),
+    check(
+      "dashboard_chat_runs_status_check",
+      sql`${table.status} IN ('running', 'completed', 'failed', 'cancelled')`,
+    ),
+  ],
+);
+
 // ── Event Locks (dedup for Slack duplicate events) ──────────────────────────
 
 export const eventLocks = pgTable(
@@ -757,6 +911,67 @@ export const conversationLocks = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.workspaceId, table.channelId, table.threadTs] }),
+  ],
+);
+
+// ── Turn Markers (stream-death watchdog, issue #1109) ────────────────────────
+// Ground-truth record that a Slack respond turn started. Written early in the
+// respond pipeline and marked terminal on every in-process exit path. Rows
+// stuck in "started" mean the process was hard-killed (e.g. Vercel maxDuration
+// SIGKILL) — the heartbeat watchdog detects them and posts a recovery message.
+
+export const turnMarkers = pgTable(
+  "turn_markers",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    invocationId: text("invocation_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts"),
+    /** ts of the user message this turn is responding to */
+    messageTs: text("message_ts"),
+    userId: text("user_id"),
+    status: text("status").notNull().default("started"),
+    startedAt: timestamptz("started_at").notNull().defaultNow(),
+    endedAt: timestamptz("ended_at"),
+  },
+  (table) => [
+    uniqueIndex("turn_markers_workspace_invocation_idx").on(
+      table.workspaceId,
+      table.invocationId,
+    ),
+    index("turn_markers_status_started_at_idx").on(
+      table.status,
+      table.startedAt,
+    ),
+    check(
+      "turn_markers_status_check",
+      sql`${table.status} IN ('started', 'completed', 'failed', 'recovered')`,
+    ),
+  ],
+);
+
+// ── Deferred Tool Thread Cache ───────────────────────────────────────────────
+export const deferredToolThreadCache = pgTable(
+  "deferred_tool_thread_cache",
+  {
+    workspaceId: workspaceId().references(() => workspaces.id),
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts").notNull(),
+    toolName: text("tool_name").notNull(),
+    resolvedAt: timestamptz("resolved_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.workspaceId, table.channelId, table.threadTs, table.toolName],
+    }),
+    index("deferred_tool_thread_cache_thread_idx").on(
+      table.workspaceId,
+      table.channelId,
+      table.threadTs,
+    ),
   ],
 );
 
@@ -958,6 +1173,8 @@ export type NewChannel = typeof channels.$inferInsert;
 export type Setting = typeof settings.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
+export type DetachedCommand = typeof detachedCommands.$inferSelect;
+export type NewDetachedCommand = typeof detachedCommands.$inferInsert;
 export type Note = typeof notes.$inferSelect;
 export type Resource = typeof resources.$inferSelect;
 export type NewResource = typeof resources.$inferInsert;
@@ -965,6 +1182,8 @@ export type EventLock = typeof eventLocks.$inferSelect;
 export type NewEventLock = typeof eventLocks.$inferInsert;
 export type ConversationLock = typeof conversationLocks.$inferSelect;
 export type NewConversationLock = typeof conversationLocks.$inferInsert;
+export type TurnMarker = typeof turnMarkers.$inferSelect;
+export type NewTurnMarker = typeof turnMarkers.$inferInsert;
 export type ErrorEvent = typeof errorEvents.$inferSelect;
 export type NewErrorEvent = typeof errorEvents.$inferInsert;
 export type JobExecution = typeof jobExecutions.$inferSelect;
@@ -985,6 +1204,7 @@ export interface ScheduleContext {
   userId?: string;
   channelId?: string;
   threadTs?: string;
+  workspaceId?: string;
   timezone?: string;
 }
 // ── Feedback ────────────────────────────────────────────────────────────────
@@ -1150,11 +1370,153 @@ export const content = pgTable(
 
 export type Content = typeof content.$inferSelect;
 export type NewContent = typeof content.$inferInsert;
+
+// ── Memory Benchmark Runs ──────────────────────────────────────────────────
+//
+// One row per (dataset, category, scoreType) per bench run. The harness
+// writes into a dedicated workspace_id = 'bench-meta' that is never wiped,
+// so historical scores survive even as the per-run extraction workspaces
+// (bench-{runId}) are garbage-collected.
+
+export const benchRuns = pgTable(
+  "bench_runs",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    /** Stable identifier for one full bench execution (groups all rows of a run). */
+    runId: text("run_id").notNull(),
+    /** "locomo" | "longmemeval" | "toy" (or future datasets). */
+    dataset: text("dataset").notNull(),
+    /** Per-dataset category, e.g. "temporal", "multi_hop", "abstention", "all". */
+    category: text("category").notNull(),
+    /** "qa_accuracy" | "retrieval_recall_at_15" | etc. */
+    scoreType: text("score_type").notNull(),
+    n: integer("n").notNull(),
+    nCorrect: integer("n_correct").notNull(),
+    score: real("score").notNull(),
+    costUsd: real("cost_usd"),
+    durationMs: integer("duration_ms"),
+    generationModel: text("generation_model"),
+    judgeModel: text("judge_model"),
+    embeddingModel: text("embedding_model"),
+    corpusHash: text("corpus_hash"),
+    gitSha: text("git_sha"),
+    prNumber: integer("pr_number"),
+    /** Free-form metadata (subset name, model overrides, etc.). */
+    metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("bench_runs_run_id_idx").on(table.runId),
+    index("bench_runs_dataset_category_idx").on(table.dataset, table.category, table.scoreType),
+    index("bench_runs_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export type BenchRun = typeof benchRuns.$inferSelect;
+export type NewBenchRun = typeof benchRuns.$inferInsert;
+
+// ── Eval Response Scores (production observability funnel) ──────────────────
+//
+// One row per atomic assistant response judged by the overnight LLM batch
+// judge (Machine A). Three grains, three jobs:
+//   - SCORING grain: message_id / part_id — the response being judged.
+//   - ATTRIBUTION grain: trace_id — native joins to user/channel/model/cost ONLY.
+//   - FILTER grain: thread_ts — bare text for UI grouping. NO FK, owns no verdict.
+// Thread/intent rollups are derived (GROUP BY), never materialized.
+
+export const evalVerdicts = ["fulfilled", "partial", "failed"] as const;
+export type EvalVerdict = (typeof evalVerdicts)[number];
+
+export const evalFailureClasses = [
+  "missing_cred",
+  "bad_memory",
+  "bad_harness",
+  "missing_tool",
+  "reasoning",
+  "latency",
+  "none",
+] as const;
+export type EvalFailureClass = (typeof evalFailureClasses)[number];
+
+export interface EvalRubric {
+  must_do?: string[];
+  must_not_do?: string[];
+}
+
+export const evalResponseScores = pgTable(
+  "eval_response_scores",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    /** SCORING grain: the atomic assistant response being judged. */
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => conversationMessages.id, { onDelete: "cascade" }),
+    /** The exact text part judged (echoed back by the judge as [R:part_id]). */
+    partId: uuid("part_id")
+      .notNull()
+      .references(() => conversationParts.id, { onDelete: "cascade" }),
+    /** ATTRIBUTION grain: joins to user/channel/model/cost ONLY. Owns no verdict. */
+    traceId: uuid("trace_id")
+      .notNull()
+      .references(() => conversationTraces.id, { onDelete: "cascade" }),
+    /** FILTER grain: UI grouping only. A Slack string, not a relation — NO FK. */
+    threadTs: text("thread_ts"),
+    /** Judge attributes the response to the nearest open user ask in the window. */
+    servingIntent: text("serving_intent"),
+    /** True when a hedge in this turn was resolved later within the window. */
+    resolvedInWindow: boolean("resolved_in_window").notNull().default(false),
+    /** Null when scorable=false (acks, clarifying questions, tool-relay turns). */
+    verdict: text("verdict").$type<EvalVerdict | null>(),
+    scorable: boolean("scorable").notNull(),
+    failureClass: text("failure_class")
+      .$type<EvalFailureClass>()
+      .notNull()
+      .default("none"),
+    note: text("note"),
+    /** Human-authored during adjudication. */
+    goldAnswer: text("gold_answer"),
+    rubric: jsonb("rubric").$type<EvalRubric | null>(),
+    /** Set on a SPECIFIC failed response during human ratification, never "a thread". */
+    ratifiedBy: text("ratified_by"),
+    judgeModel: text("judge_model").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("eval_response_scores_workspace_message_idx").on(
+      table.workspaceId,
+      table.messageId,
+    ),
+    index("eval_response_scores_part_idx").on(table.partId),
+    index("eval_response_scores_trace_idx").on(table.traceId),
+    index("eval_response_scores_thread_ts_idx").on(table.threadTs),
+    index("eval_response_scores_verdict_idx").on(table.verdict, table.failureClass),
+    index("eval_response_scores_created_at_idx").on(table.createdAt),
+    check(
+      "ers_verdict_check",
+      sql`${table.verdict} IS NULL OR ${table.verdict} IN ('fulfilled', 'partial', 'failed')`,
+    ),
+    check(
+      "ers_failure_class_check",
+      sql`${table.failureClass} IN ('missing_cred', 'bad_memory', 'bad_harness', 'missing_tool', 'reasoning', 'latency', 'none')`,
+    ),
+  ],
+);
+
+export type EvalResponseScore = typeof evalResponseScores.$inferSelect;
+export type NewEvalResponseScore = typeof evalResponseScores.$inferInsert;
 export type ConversationTrace = typeof conversationTraces.$inferSelect;
 export type NewConversationTrace = typeof conversationTraces.$inferInsert;
 export type ConversationMessage = typeof conversationMessages.$inferSelect;
 export type NewConversationMessage = typeof conversationMessages.$inferInsert;
 export type ConversationPart = typeof conversationParts.$inferSelect;
 export type NewConversationPart = typeof conversationParts.$inferInsert;
+export type DashboardChatRun = typeof dashboardChatRuns.$inferSelect;
+export type NewDashboardChatRun = typeof dashboardChatRuns.$inferInsert;
 export type ModelPricing = typeof modelPricing.$inferSelect;
 export type NewModelPricing = typeof modelPricing.$inferInsert;

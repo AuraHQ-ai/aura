@@ -3,6 +3,7 @@ import { generateText } from "ai";
 import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
+import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { resolveChannelById } from "../tools/slack.js";
 
 // ── Slack Event Types ────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ export interface SlackAppMentionEvent {
 
 export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
-export type ChannelType = "dm" | "dashboard" | "public_channel" | "private_channel" | "slack_list_item";
+export type ChannelType = "dm" | "mpim" | "dashboard" | "public_channel" | "private_channel" | "slack_list_item";
 
 export interface SlackListItemContext {
   /** The message ts that doubles as the list item's thread_ts */
@@ -72,6 +73,8 @@ export interface MessageContext {
   isMentioned: boolean;
   /** Whether Aura was addressed by name */
   isAddressedByName: boolean;
+  /** Force surrounding channel/DM context into the prompt for implicit requests. */
+  useSurroundingContext?: boolean;
   /** When set, this message is a Slackbot notification about a Slack List item */
   slackListItemContext?: SlackListItemContext;
 }
@@ -152,7 +155,7 @@ export function buildMessageContext(
     channelType,
     threadTs,
     messageTs,
-    isDm: channelType === "dm",
+    isDm: channelType === "dm" || channelType === "mpim",
     isMentioned,
     isAddressedByName,
   };
@@ -163,10 +166,27 @@ export interface ShouldRespondResult {
   reason: string;
 }
 
+export function isChannelGatedOut(
+  context: Pick<MessageContext, "isDm" | "isMentioned" | "channelId">,
+  gatedChannels: Set<string>,
+): boolean {
+  if (context.isDm || context.isMentioned) {
+    return false;
+  }
+
+  return gatedChannels.has(context.channelId);
+}
+
 // ── Channel-level override ───────────────────────────────────────────────────
 // Channels in this list always process new messages without LLM gating (Tier 4
 // is bypassed). Managed via DB setting "always_process_channels" (comma-separated
 // channel IDs). Change at runtime — no redeploy needed.
+//
+// ── Channel gating (hard, code-level) ────────────────────────────────────────
+// Channels in the "gated_channels" setting (JSON array of channel IDs) require
+// an explicit @Aura mention to trigger any pipeline processing. Unlike
+// "always_process_channels" (which OPENS the gate), "gated_channels" CLOSES it.
+// Enforced in runPipeline — see issue #918.
 
 
 /**
@@ -304,12 +324,25 @@ async function llmShouldRespond(
     const userMessage = `Recent conversation:\n${conversationText}\n\nLatest message from ${senderName}:\n${context.text}\n\nShould Aura respond?`;
 
     const model = await getFastModel();
-    const result = await generateText({
-      model,
-      system: withCacheControl(systemPrompt),
-      prompt: userMessage,
-      maxOutputTokens: 5,
-    });
+    // Share the turn's sessionId (thread) so the gate decision groups with the
+    // rest of the conversation in Langfuse's Sessions view. The gate runs before
+    // the user's display name is resolved and for messages that may get no
+    // response, so it stays its own trace rather than nesting under slack-chat.
+    const result = await withTrace(
+      {
+        sessionId: context.threadTs ?? context.messageTs ?? context.channelId,
+        userId: context.userId,
+        tags: [`channel:${context.channelType ?? "unknown"}`, "stage:should-respond"],
+      },
+      () =>
+        generateText({
+          model,
+          instructions: withCacheControl(systemPrompt),
+          prompt: userMessage,
+          maxOutputTokens: 5,
+          telemetry: aiTelemetry("should-respond"),
+        }),
+    );
 
     const answer = result.text.trim().toUpperCase();
     const shouldReply = answer.startsWith("RESPOND");
@@ -343,7 +376,8 @@ function resolveChannelType(
   if ("channel_type" in event) {
     const ct = (event as any).channel_type;
     if (ct === "im") return "dm";
-    if (ct === "group" || ct === "mpim") return "private_channel";
+    if (ct === "mpim") return "mpim";
+    if (ct === "group") return "private_channel";
     if (ct === "slack_list_item") return "slack_list_item";
     return "public_channel";
   }

@@ -10,11 +10,13 @@ import { dashboardJobsApp } from "./jobs.js";
 import { dashboardCredentialsApp } from "./credentials.js";
 import { dashboardResourcesApp } from "./resources.js";
 import { dashboardConsumptionApp } from "./consumption.js";
+import { dashboardAdoptionApp } from "./adoption.js";
 import { dashboardSettingsApp } from "./settings.js";
 import { dashboardModelsApp } from "./models.js";
 import { dashboardEntitiesApp } from "./entities.js";
+import { dashboardEvalApp } from "./eval.js";
 import { createDashboardApp } from "./schemas.js";
-import { jwtVerify } from "jose";
+import { errors, jwtVerify } from "jose";
 
 export const dashboardApp = createDashboardApp();
 
@@ -52,7 +54,10 @@ dashboardApp.use("*", async (c, next) => {
       c.set("userId" as never, payload.slackUserId as never);
       c.set("userName" as never, payload.name as never);
       return next();
-    } catch {
+    } catch (error) {
+      if (error instanceof errors.JWTExpired) {
+        return c.json({ error: "Unauthorized", reason: "token_expired" }, 401);
+      }
       // JWT verification failed — fall through to 401
     }
   }
@@ -72,9 +77,11 @@ dashboardApp.route("/jobs", dashboardJobsApp);
 dashboardApp.route("/credentials", dashboardCredentialsApp);
 dashboardApp.route("/resources", dashboardResourcesApp);
 dashboardApp.route("/consumption", dashboardConsumptionApp);
+dashboardApp.route("/adoption", dashboardAdoptionApp);
 dashboardApp.route("/settings", dashboardSettingsApp);
 dashboardApp.route("/models", dashboardModelsApp);
 dashboardApp.route("/entities", dashboardEntitiesApp);
+dashboardApp.route("/eval", dashboardEvalApp);
 
 dashboardApp.doc31("/openapi.json", {
   openapi: "3.1.0",
