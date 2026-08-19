@@ -130,3 +130,27 @@ describe("tool detached suspend enforcement", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 });
+
+describe("strict-mode JSON schema compatibility", () => {
+  it("no tool inputSchema uses integer type with minimum/maximum", async () => {
+    // Provider-side strict validation (defaulted on in #1317) rejects
+    // { type: "integer", minimum, maximum } -- it surfaces as
+    // "tools.N.custom: For 'integer' type, properties maximum, minimum are
+    // not supported" and kills the whole turn, not just the tool call.
+    // Use z.number().min().max() instead of z.number().int().min().max().
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(import.meta.dirname, "../tools");
+    const offenders: string[] = [];
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".ts") || f.includes(".test.")) continue;
+      const src = readFileSync(join(dir, f), "utf8");
+      for (const [i, line] of src.split("\n").entries()) {
+        if (/z\.number\(\)\.int\(\)/.test(line) && /\.(min|max)\(/.test(line)) {
+          offenders.push(`${f}:${i + 1}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
