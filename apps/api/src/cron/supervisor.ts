@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { jobExecutions, jobOutcomes, jobs } from "@aura/db/schema";
 import {
+  resolveFounderUserId,
   resolveOpsNotificationTarget,
   sendJobFailureDm,
   sendJobOpsNotice,
@@ -292,7 +293,7 @@ async function sendSupervisorOpsNotice(
 }
 
 async function sendFounderDm(job: JobRow, text: string): Promise<void> {
-  const founderUserId = process.env.FOUNDER_USER_ID?.trim() || job.requestedBy;
+  const founderUserId = (await resolveFounderUserId()) || job.requestedBy;
   if (!founderUserId || founderUserId === job.requestedBy) return;
 
   await sendJobFailureDm({
@@ -591,7 +592,7 @@ async function applySupervisorDecision(
       // routing ladder falls back to requester_dm (no ops channel / founder
       // configured), send only the user-safe text so internal reasoning stays
       // out of the end-user's channel.
-      const opsTarget = resolveOpsNotificationTarget(context.job.requestedBy);
+      const opsTarget = await resolveOpsNotificationTarget(context.job.requestedBy);
       const noticeText = opsTarget?.kind === "requester_dm" ? userText : opsText;
 
       const opsResult = await sendSupervisorOpsNotice(context.job, noticeText, {

@@ -58,6 +58,8 @@ const getCredentialMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 const safePostMessageMock = vi.hoisted(() => vi.fn());
 const resolveSlackDestinationMock = vi.hoisted(() => vi.fn());
+const getSettingMock = vi.hoisted(() => vi.fn());
+const logErrorMock = vi.hoisted(() => vi.fn());
 
 type MockFetchResponse = {
   ok: boolean;
@@ -113,6 +115,28 @@ vi.mock("../lib/slack-messaging.js", () => ({
 vi.mock("../tools/slack.js", () => ({
   resolveSlackDestination: resolveSlackDestinationMock,
 }));
+
+// The ops routing ladder is DB-first: settings.aura_ops_channel /
+// settings.founder_user_id take priority over the env vars. Mock the settings
+// reader so tests control both rungs deterministically.
+vi.mock("../lib/settings.js", () => ({
+  getSetting: getSettingMock,
+  setSetting: vi.fn(),
+  getAllSettings: vi.fn(async () => ({})),
+  getConfig: vi.fn(async (_key: string, fallback = "") => fallback),
+  getSettingJSON: vi.fn(async (_key: string, fallback: unknown = null) => fallback),
+}));
+
+vi.mock("../lib/error-logger.js", () => ({
+  logError: logErrorMock,
+  sanitizeErrorText: vi.fn((value: string | null | undefined) => value ?? ""),
+  flushLoggerDrops: vi.fn(),
+  resetErrorLoggerStateForTest: vi.fn(),
+}));
+
+function mockSettingsRows(rows: Record<string, string>) {
+  getSettingMock.mockImplementation(async (key: string) => rows[key] ?? null);
+}
 
 function queueDbResults(...results: unknown[][]) {
   dbMock.results = [...results];
@@ -269,6 +293,7 @@ describe("supervisor cron", () => {
     dbMock.results = [];
     dbMock.operations = [];
     vi.clearAllMocks();
+    getSettingMock.mockResolvedValue(null);
     generateTextMock.mockResolvedValue({
       output: {
         decision: "report_failure",
@@ -488,6 +513,76 @@ describe("supervisor cron", () => {
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
+  it("routes lifecycle notices to the settings-configured ops channel even when env vars point elsewhere", async () => {
+    mockSettingsRows({ aura_ops_channel: "C_SETTINGS_OPS" });
+    process.env.AURA_OPS_CHANNEL = "C_ENV_OPS";
+    process.env.FOUNDER_USER_ID = "U_ENV_FOUNDER";
+    generateTextMock.mockResolvedValue({
+      output: { decision: "retry_as_is", reasoning: "transient failure" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "C_SETTINGS_OPS",
+        text: expect.stringContaining("<@U_REQUESTER>"),
+      }),
+    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+
+  it("routes lifecycle notices to the settings-configured founder DM without any env vars", async () => {
+    mockSettingsRows({ founder_user_id: "U_SETTINGS_FOUNDER" });
+    generateTextMock.mockResolvedValue({
+      output: { decision: "retry_as_is", reasoning: "transient failure" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "U_SETTINGS_FOUNDER",
+    );
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "D_U_SETTINGS_FOUNDER",
+        text: expect.stringContaining("<@U_REQUESTER>"),
+      }),
+    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+
+  it("escalate DMs the settings-configured founder when the ops notice went to the ops channel", async () => {
+    mockSettingsRows({
+      aura_ops_channel: "C_SETTINGS_OPS",
+      founder_user_id: "U_SETTINGS_FOUNDER",
+    });
+    generateTextMock.mockResolvedValue({
+      output: { decision: "escalate", reasoning: "needs human judgment" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "C_SETTINGS_OPS" }),
+    );
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedBy: "U_SETTINGS_FOUNDER" }),
+    );
+  });
+
   it("escalate does not double-DM the founder when the ops notice already went to the founder", async () => {
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
     generateTextMock.mockResolvedValue({
@@ -596,6 +691,10 @@ describe("supervisor cron", () => {
     expect(safePostMessageMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ channel: "D_U_REQUESTER" }),
+    );
+    // The misconfiguration must be visible in monitoring, not only in logs.
+    expect(logErrorMock).toHaveBeenCalledWith(
+      expect.objectContaining({ errorName: "job_ops_notice_no_ops_destination" }),
     );
   });
 
