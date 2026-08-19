@@ -9,6 +9,7 @@ const dbMock = vi.hoisted(() => {
     rows: [] as Array<Record<string, unknown>>,
     whereCalls: [] as unknown[],
     select: vi.fn(),
+    update: vi.fn(),
   };
 
   function createQuery() {
@@ -35,6 +36,23 @@ const dbMock = vi.hoisted(() => {
   }
 
   state.select.mockImplementation(() => createQuery());
+
+  state.update.mockImplementation(() => {
+    let setArg: Record<string, unknown> = {};
+    const query: any = {
+      set: vi.fn((arg: Record<string, unknown>) => {
+        setArg = arg;
+        return query;
+      }),
+      where: vi.fn((condition: Predicate) => {
+        state.rows = state.rows.map((row) =>
+          condition(row) ? { ...row, ...setArg } : row,
+        );
+        return Promise.resolve();
+      }),
+    };
+    return query;
+  });
 
   return state;
 });
@@ -108,9 +126,13 @@ const drizzleMock = vi.hoisted(() => {
   };
 });
 
+const hasRoleMock = vi.hoisted(() => vi.fn());
+const resolveSlackUserIdMock = vi.hoisted(() => vi.fn());
+
 vi.mock("../db/client.js", () => ({
   db: {
     select: dbMock.select,
+    update: dbMock.update,
   },
 }));
 
@@ -132,7 +154,11 @@ vi.mock("../lib/logger.js", () => ({
 }));
 
 vi.mock("../lib/permissions.js", () => ({
-  hasRole: vi.fn(),
+  hasRole: hasRoleMock,
+}));
+
+vi.mock("../lib/resolve-user.js", () => ({
+  resolveSlackUserId: resolveSlackUserIdMock,
 }));
 
 vi.mock("./slack.js", () => ({
@@ -330,5 +356,91 @@ describe("list_jobs", () => {
       ],
       count: 2,
     });
+  });
+});
+
+async function updateJob(
+  input: Record<string, unknown>,
+  context: Record<string, unknown> = {},
+) {
+  const { createJobTools } = await import("./jobs.js");
+  const tool = createJobTools(undefined, { timezone: "UTC", ...context } as any)
+    .update_job as any;
+
+  return tool.execute(tool.inputSchema.parse(input));
+}
+
+describe("update_job requested_by transfer", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-20T08:00:00.000Z"));
+    dbMock.rows = [];
+    dbMock.whereCalls = [];
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("lets the current owner transfer ownership and updates the row to the resolved Slack ID", async () => {
+    dbMock.rows = [baseJob()];
+    resolveSlackUserIdMock.mockResolvedValue("U_ANNA");
+
+    const result = await updateJob(
+      { name: "one-shot", updates: { requested_by: "Anna" } },
+      { userId: "U_REQUESTER" },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(resolveSlackUserIdMock).toHaveBeenCalledWith("Anna");
+    expect(dbMock.rows[0].requestedBy).toBe("U_ANNA");
+    expect(result.job).toMatchObject({ requestedBy: "U_ANNA" });
+  });
+
+  it("rejects a transfer from a non-owner non-admin", async () => {
+    dbMock.rows = [baseJob()];
+    hasRoleMock.mockResolvedValue(false);
+    resolveSlackUserIdMock.mockResolvedValue("U_ANNA");
+
+    const result = await updateJob(
+      { name: "one-shot", updates: { requested_by: "Anna" } },
+      { userId: "U_SOMEONE_ELSE" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/owner.*admin/i);
+    expect(hasRoleMock).toHaveBeenCalledWith("U_SOMEONE_ELSE", "admin");
+    expect(resolveSlackUserIdMock).not.toHaveBeenCalled();
+    expect(dbMock.rows[0].requestedBy).toBe("U_REQUESTER");
+  });
+
+  it("lets an admin transfer ownership of someone else's job", async () => {
+    dbMock.rows = [baseJob()];
+    hasRoleMock.mockResolvedValue(true);
+    resolveSlackUserIdMock.mockResolvedValue("U_ANNA");
+
+    const result = await updateJob(
+      { name: "one-shot", updates: { requested_by: "Anna" } },
+      { userId: "U_ADMIN" },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(hasRoleMock).toHaveBeenCalledWith("U_ADMIN", "admin");
+    expect(dbMock.rows[0].requestedBy).toBe("U_ANNA");
+  });
+
+  it("returns an error when the new owner cannot be resolved", async () => {
+    dbMock.rows = [baseJob()];
+    resolveSlackUserIdMock.mockResolvedValue(null);
+
+    const result = await updateJob(
+      { name: "one-shot", updates: { requested_by: "Nobody Real" } },
+      { userId: "U_REQUESTER" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Nobody Real");
+    expect(dbMock.rows[0].requestedBy).toBe("U_REQUESTER");
   });
 });

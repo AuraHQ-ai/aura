@@ -9,6 +9,7 @@ import { logger } from "../lib/logger.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { jobExecutions, jobOutcomes, jobs } from "@aura/db/schema";
 import {
+  resolveOpsNotificationTarget,
   sendJobFailureDm,
   sendJobOpsNotice,
   truncateJobFailureText,
@@ -22,6 +23,9 @@ const GITHUB_REPO = "AuraHQ-ai/aura";
 const GITHUB_ISSUE_LABEL = "auto-supervisor-fix";
 const DEFAULT_SUPERVISOR_FIX_DEDUP_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
+// execute-job.ts records successful runs as "completed"; "succeeded" is kept
+// for parity with the job_outcomes success terminology.
+const SUCCESSFUL_EXECUTION_STATUSES = new Set(["completed", "succeeded"]);
 
 type GitHubIssue = {
   number?: number;
@@ -557,15 +561,47 @@ async function applySupervisorDecision(
     }
 
     case "escalate": {
-      const text = `${buildUserMessage(decision, `Job \`${context.job.name}\` needs human review.`)}\n\nDecision: escalate\nReason: ${decision.reasoning}\nDetails: ${link}`;
-      const opsResult = await sendSupervisorOpsNotice(context.job, text, {
+      // A recovery run that succeeded after this failure was recorded makes
+      // human escalation redundant: resolve silently instead of paging anyone.
+      // (Only escalate is suppressed — report_success / report_failure are
+      // user-facing deliverables and always go out.)
+      const outcomeCreatedAtMs = context.outcome.createdAt.getTime();
+      const newerSuccess = context.executions.find(
+        (execution) =>
+          execution.startedAt.getTime() > outcomeCreatedAtMs &&
+          SUCCESSFUL_EXECUTION_STATUSES.has(execution.status),
+      );
+      if (newerSuccess) {
+        logger.info("job_supervisor_escalation_suppressed_newer_success", {
+          jobId: context.job.id,
+          outcomeId: context.outcome.id,
+          newerExecutionId: newerSuccess.id,
+        });
+        // Same resolution path as silent_success: return without side effects
+        // and let finalizeOutcome mark the outcome resolved.
+        return;
+      }
+
+      // User-safe text: no internal decision/reasoning — safe to reach any DM.
+      const userText = `${buildUserMessage(decision, `Job \`${context.job.name}\` needs human review.`)}\n\nDetails: ${link}`;
+      // Ops-only text: includes verbose reasoning for admin/ops consumption only.
+      const opsText = `${userText}\n\nDecision: escalate\nReason: ${decision.reasoning}`;
+
+      // Verbose reasoning must never land in the requester's DM. If the ops
+      // routing ladder falls back to requester_dm (no ops channel / founder
+      // configured), send only the user-safe text so internal reasoning stays
+      // out of the end-user's channel.
+      const opsTarget = resolveOpsNotificationTarget(context.job.requestedBy);
+      const noticeText = opsTarget?.kind === "requester_dm" ? userText : opsText;
+
+      const opsResult = await sendSupervisorOpsNotice(context.job, noticeText, {
         outcomeId: context.outcome.id,
         decision: decision.decision,
       });
       // Dedupe: if the ops notice already went to the founder DM (no ops
       // channel configured), don't double-send the founder escalation.
       if (opsResult.target !== "founder_dm") {
-        await sendFounderDm(context.job, text);
+        await sendFounderDm(context.job, opsText);
       }
       return;
     }
