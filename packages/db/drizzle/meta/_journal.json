@@ -575,6 +575,13 @@
       "when": 1787158001000,
       "tag": "0081_drop_model_catalog_selections",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1787158002000,
+      "tag": "0082_conversation_trace_compaction",
+      "breakpoints": true
     }
   ]
 }

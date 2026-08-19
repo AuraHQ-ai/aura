@@ -642,6 +642,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       userPrompt: messageText,
       stepsPromise: response.stepsPromise,
       stepModelIds: response.stepModelIds,
+      compactionTotals: response.compactionTotals,
       replyThreadTs,
       ...(() => {
         const all = (conversation.thread ?? conversation.recentMessages)
@@ -786,6 +787,7 @@ async function persistConversationTrace(params: {
   stepModelIds?: string[];
   usage?: DetailedTokenUsage;
   stepsTimeoutMs?: number;
+  compactionTotals?: { compactedToolResults: number; compactionTokensSaved: number };
 }): Promise<string> {
   const {
     channelId,
@@ -798,6 +800,7 @@ async function persistConversationTrace(params: {
     stepModelIds,
     usage,
     stepsTimeoutMs,
+    compactionTotals,
   } = params;
 
   const conversationId = await createConversationTrace({
@@ -843,7 +846,7 @@ async function persistConversationTrace(params: {
   }
 
   if (usage) {
-    await updateConversationTraceUsage(conversationId, usage, stepUsages);
+    await updateConversationTraceUsage(conversationId, usage, stepUsages, compactionTotals);
   }
 
   return conversationId;
@@ -926,6 +929,7 @@ async function persistInterruptedResponse(params: {
         stepModelIds: response.stepModelIds,
         usage: response.usage,
         stepsTimeoutMs: STEPS_PROMISE_TIMEOUT_MS,
+        compactionTotals: response.compactionTotals,
       });
 
       logger.info("Interrupted conversation trace persisted", { conversationId });
@@ -984,9 +988,10 @@ export async function runBackgroundTasks(params: {
   userPrompt?: string;
   stepsPromise?: PromiseLike<any[]>;
   stepModelIds?: string[];
+  compactionTotals?: { compactedToolResults: number; compactionTokensSaved: number };
   replyThreadTs?: string;
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, stepModelIds, replyThreadTs } = params;
+  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, stepModelIds, compactionTotals, replyThreadTs } = params;
 
   try {
     // Store the user's message
@@ -1089,6 +1094,7 @@ export async function runBackgroundTasks(params: {
           stepsPromise,
           stepModelIds,
           usage: tokenUsage,
+          compactionTotals,
         });
 
         logger.info("Interactive conversation trace persisted", { conversationId });

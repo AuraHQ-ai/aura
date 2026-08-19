@@ -187,6 +187,8 @@ export interface LLMResponse {
   stepsPromise?: PromiseLike<any[]>;
   /** Canonical gateway model ID used for each step in order */
   stepModelIds?: string[];
+  /** Per-turn context-compaction totals (issue #1328), for the trace row */
+  compactionTotals?: { compactedToolResults: number; compactionTokensSaved: number };
   /** Whether the response was interrupted by a newer invocation */
   interrupted?: boolean;
   /** Whether the turn was delegated to the durable WDK workflow (issue #1111) */
@@ -692,7 +694,7 @@ export async function generateResponse(
   let longToolSplitInFlight = false;
 
   // ── Build agent ──────────────────────────────────────────────────────
-  const { agent, tools, modelId, getStepModelIds } = await createInteractiveAgent({
+  const { agent, tools, modelId, getStepModelIds, getCompactionTotals } = await createInteractiveAgent({
     slackClient: options.slackClient,
     context: options.context,
     stablePrefix: options.stablePrefix,
@@ -1982,6 +1984,7 @@ export async function generateResponse(
         ? Promise.all(stepsPromises).then((steps) => steps.flat())
         : latestResult?.steps,
       stepModelIds: getStepModelIds(),
+      compactionTotals: getCompactionTotals?.(),
     };
   } catch (error: any) {
     clearTimeout(inactivityTimer);
@@ -2036,6 +2039,7 @@ export async function generateResponse(
         toolCalls: toolCallRecords,
         modelId,
         stepModelIds: getStepModelIds(),
+        compactionTotals: getCompactionTotals?.(),
         interrupted: true,
       };
     }
