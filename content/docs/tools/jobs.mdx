@@ -28,6 +28,16 @@ The watchdog is idempotent: every DB update uses a `status = 'running'` guard so
 
 If a recurring job is left in `running` past the stale threshold and has already exhausted retries, the heartbeat does not leave it in `failed` forever. It resets the job to `pending`, clears `retries`, computes the next cron tick in the job timezone, and DMs the requester with the last error and next attempt time. One-shot jobs that exhaust stale retries stay `failed` and also send a DM.
 
+## Turn wall-clock budget
+
+The step budget above (350 tool calls) rarely binds in practice -- sandbox tool calls cost 40-150s each, so a headless turn typically dies around step 40 on the 800s Vercel `maxDuration` SIGKILL, long before it burns 350 steps. Every turn -- interactive Slack, the durable WDK slack-respond path, and headless jobs -- also carries a wall-clock budget (`resolveTurnDeadlines()` in `apps/api/src/pipeline/turn-deadline.ts`):
+
+- **Soft deadline (10 min default):** nudges the model to wrap up.
+- **Hard deadline (12 min default):** withdraws tools, forcing a final text message with ~80s of headroom before the SIGKILL.
+
+If the hard deadline trips, a continuation job is auto-spawned in the same thread using the `[CONTINUE:topic:dN]` tag mechanism (2-minute delay before it's eligible to run). This auto-continuation chain is capped at **depth 3** (`MAX_CONTINUATION_DEPTH`) -- past that, no further continuation is spawned; the thread gets a message that a human needs to re-scope the task. This is separate from `checkpoint_plan`'s own 5-continuation cap (see [Notes & Memory -- Continuation depth limit](/tools/notes#continuation-depth-limit)), which uses a depth-unsuffixed `[CONTINUE:topic]` tag for manually-checkpointed work.
+
+Headless jobs can tune their deadlines independently via `HEADLESS_TURN_SOFT_DEADLINE_MS` / `HEADLESS_TURN_HARD_DEADLINE_MS`; both fall back to the shared `TURN_SOFT_DEADLINE_MS` / `TURN_HARD_DEADLINE_MS` env overrides if unset.
 
 ## Supervisor pattern
 
