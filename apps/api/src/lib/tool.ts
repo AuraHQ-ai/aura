@@ -5,6 +5,7 @@ import type { ZodType } from "zod";
 import { db } from "../db/client.js";
 import { actionLog } from "@aura/db/schema";
 import { logger } from "./logger.js";
+import { capToolResult, DEFAULT_MAX_RESULT_CHARS } from "./result-cap.js";
 
 // ── Execution Context (AsyncLocalStorage) ────────────────────────────────────
 
@@ -140,8 +141,17 @@ export function defineTool<TInput, TOutput>(config: {
    * call shapes. Passed through to tool() unchanged.
    */
   inputExamples?: Array<{ input: TInput }>;
+  /**
+   * Cap on the serialized size (chars) of the tool result that reaches the
+   * model. Defaults to DEFAULT_MAX_RESULT_CHARS (12000). Oversized results
+   * are truncated with an explicit visible marker — arrays degrade by
+   * dropping items from the end, never by slicing mid-JSON. Set a number to
+   * override the ceiling, or `false` to opt out entirely (only for tools
+   * that deliberately manage their own output size).
+   */
+  maxResultChars?: number | false;
 }) {
-  const { slack, requiredCredentials, strict, ...rest } = config;
+  const { slack, requiredCredentials, strict, maxResultChars, ...rest } = config;
   const originalExecute = rest.execute;
 
   const toolRef: ToolNameRef = {};
@@ -190,7 +200,15 @@ export function defineTool<TInput, TOutput>(config: {
         });
       }
 
-      const result = await originalExecute(input);
+      const rawResult = await originalExecute(input);
+      // Default-on result cap: no tool can ship uncapped output to the model.
+      const result = (maxResultChars === false
+        ? rawResult
+        : capToolResult(
+            rawResult,
+            maxResultChars ?? DEFAULT_MAX_RESULT_CHARS,
+            toolName,
+          )) as TOutput;
 
       if (logId) {
         try {
