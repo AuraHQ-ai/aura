@@ -242,6 +242,7 @@ async function runSlackAgentStep(
   const { executionContext } = await import("../src/lib/tool.js");
   const { getSlackMeta } = await import("../src/lib/tool.js");
   const { pruneMessages } = await import("ai");
+  const { compactMessages } = await import("../src/pipeline/compact-messages.js");
   const { logger } = await import("../src/lib/logger.js");
 
   const state: SlackStreamState = { ...streamState };
@@ -464,8 +465,21 @@ async function runSlackAgentStep(
     }
   }, 20_000);
 
+  // Context compaction (issue #1328), mirroring prepare-step.ts: past the
+  // step threshold, old large tool results become stubs (toolCallId/toolName
+  // kept) so long turns stop replaying full tool output on every model call.
+  const compaction = compactMessages(messages, stepIndex);
+  if (compaction.compactedCount > 0) {
+    logger.info("slackRespondWorkflow: compacting messages", {
+      stepNumber: stepIndex,
+      totalMessages: messages.length,
+      compactedCount: compaction.compactedCount,
+      estimatedTokensSaved: compaction.estimatedTokensSaved,
+    });
+  }
+
   const prunedMessages = pruneMessages({
-    messages,
+    messages: compaction.messages,
     reasoning: "before-last-message",
   });
 
