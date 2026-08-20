@@ -762,6 +762,11 @@ export const conversationTraces = pgTable(
     tokenUsage: jsonb("token_usage").$type<DetailedTokenUsage>(),
     costUsd: numeric("cost_usd"),
     costPricedAt: timestamptz("cost_priced_at"),
+    // Per-turn context-compaction totals (issue #1328): how many old tool
+    // results were stubbed across all steps and the estimated input tokens
+    // that avoided being re-sent. Null = turn ran before compaction existed.
+    compactedToolResults: integer("compacted_tool_results"),
+    compactionTokensSaved: integer("compaction_tokens_saved"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
