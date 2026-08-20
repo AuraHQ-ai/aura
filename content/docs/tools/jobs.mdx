@@ -50,12 +50,24 @@ After every job execution finishes (success, error, or interruption), the heartb
 | `report_failure` | DMs the requester with the error. No retry. |
 | `retry_as_is` | Resets the job to `pending` with `retries=0`, sets `executeAt=now`, DMs the requester. |
 | `retry_with_fix` | Queues an immediate retry **and** opens a GitHub issue labelled `auto-supervisor-fix` on `AuraHQ-ai/aura`. |
-| `escalate` | DMs both the requester and the configured founder (`FOUNDER_USER_ID`) for human review. |
+| `escalate` | Sends an internal ops notice (see [Ops notice routing](#ops-notice-routing) below) and, unless that notice already reached the founder, also DMs the founder directly for human review. |
 | `disable_job` | Sets `enabled=0` on the job and DMs the requester with the reason. |
 
 Each outcome can be processed up to **3 times** (`MAX_SUPERVISOR_ATTEMPTS`). After that the outcome is marked `skipped` and the requester gets a fallback DM.
 
 `notify_on_success` is a per-job database flag (`jobs.notify_on_success`, default `false`) read by the supervisor. It is not currently exposed as a parameter on `create_job` or `update_job` -- it can only be set directly in the database.
+
+### Ops notice routing
+
+Internal job lifecycle notices -- retries, escalations, disable notices, retry-exhausted alerts -- are plumbing, not user deliverables. They must not land in the requester's DM if an ops destination is configured. `resolveOpsNotificationTarget()` (`apps/api/src/cron/job-notifications.ts`) resolves the destination through a DB-first ladder, checked in order:
+
+1. `settings.aura_ops_channel` (channel ID or name) -- editable from the dashboard **Settings > Ops Notifications** card.
+2. `AURA_OPS_CHANNEL` env var.
+3. `settings.founder_user_id` -- also editable from the same Settings card.
+4. `FOUNDER_USER_ID` env var.
+5. Last resort: DM the job's `requestedBy` (skipped entirely for `aura`-owned jobs). This fallback also writes a `job_ops_notice_no_ops_destination` row to `error_events` so an unconfigured instance is visible in the Errors dashboard, not just the logs.
+
+DB settings take priority over their env-var equivalents so ops routing is configurable without a redeploy. When an ops channel or founder DM is configured, notices are prefixed with the job name and requester (`:gear: Job ops notice -- \`job-name\` (requested by <@U...>)`) so the reader knows whose job it is; the requester-DM fallback sends the plain user-facing text instead.
 
 ### Orphan sweeps
 
