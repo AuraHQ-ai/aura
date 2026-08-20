@@ -34,6 +34,12 @@ export interface InteractiveAgentOptions {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  /**
+   * Returns the assistant text streamed so far in this turn (issue #1336).
+   * respond.ts wires this to its accumulator so a hard-deadline continuation
+   * carries the truncated message's own "remaining work" promises.
+   */
+  getAccumulatedText?: () => string;
 }
 
 export interface InteractiveAgentResult {
@@ -90,6 +96,7 @@ export async function createInteractiveAgent(
       threadTs: options.threadTs,
       userId: options.context?.userId,
       turnDeadlines: resolveTurnDeadlines("interactive"),
+      getAccumulatedText: options.getAccumulatedText,
     }),
   });
 

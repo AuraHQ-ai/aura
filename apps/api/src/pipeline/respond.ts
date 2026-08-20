@@ -691,6 +691,10 @@ export async function generateResponse(
   let longToolSplitTimer: ReturnType<typeof setTimeout> | null = null;
   let longToolSplitInFlight = false;
 
+  // Declared before the agent so the getAccumulatedText closure below is
+  // always safe to invoke; appended to in handleTextDelta during streaming.
+  let accumulatedText = "";
+
   // ── Build agent ──────────────────────────────────────────────────────
   const { agent, tools, modelId, getStepModelIds } = await createInteractiveAgent({
     slackClient: options.slackClient,
@@ -702,6 +706,9 @@ export async function generateResponse(
     invocationId,
     channelId: options.channelId,
     threadTs: options.threadTs,
+    // Lets a hard-deadline continuation job carry the truncated message's
+    // own "remaining work" promises verbatim (issue #1336).
+    getAccumulatedText: () => accumulatedText,
   });
 
   const configuredTaskDisplayMode = normalizeTaskDisplayMode(
@@ -778,7 +785,6 @@ export async function generateResponse(
   });
 
   // ── Stream and send to Slack ────────────────────────────────────────
-  let accumulatedText = "";
   let currentStreamLength = 0;
   let fallbackStartIdx = 0;
   let streamedRawIdx = 0;
