@@ -97,6 +97,74 @@ describe("defineTool strict + inputExamples forwarding", () => {
   });
 });
 
+describe("defineTool result cap", () => {
+  const MARKER_RE = /\.\.\. \[truncated \d+ chars of \d+.*narrow the query or paginate\]/;
+
+  function makeTool(
+    result: unknown,
+    maxResultChars?: number | false,
+  ): (input: unknown) => Promise<unknown> {
+    dbMocks.returning.mockResolvedValue([{ id: "log-1" }]);
+    dbMocks.updateWhere.mockResolvedValue(undefined);
+    const tools = registerToolNames({
+      big_tool: defineTool({
+        description: "a tool with a big result",
+        inputSchema: z.object({}),
+        ...(maxResultChars !== undefined ? { maxResultChars } : {}),
+        execute: async () => result,
+      }),
+    });
+    return (tools.big_tool as any).execute;
+  }
+
+  it("applies the 12k default cap when no cap config is given", async () => {
+    const execute = makeTool({ ok: true, content: "x".repeat(50000) });
+    const capped = await execute({});
+    expect(JSON.stringify(capped).length).toBeLessThanOrEqual(12000);
+    expect((capped as any)._truncated).toBe(true);
+    expect((capped as any).content).toMatch(MARKER_RE);
+  });
+
+  it("respects an explicit maxResultChars override", async () => {
+    const execute = makeTool({ ok: true, content: "x".repeat(50000) }, 2000);
+    const capped = await execute({});
+    expect(JSON.stringify(capped).length).toBeLessThanOrEqual(2000);
+    expect((capped as any).content).toMatch(MARKER_RE);
+  });
+
+  it("maxResultChars: false opts out entirely", async () => {
+    const result = { ok: true, content: "x".repeat(50000) };
+    const execute = makeTool(result, false);
+    expect(await execute({})).toBe(result);
+  });
+
+  it("degrades array-heavy results by dropping items, keeping valid JSON", async () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => ({
+      id: i,
+      name: `row-${i}`,
+      padding: "p".repeat(50),
+    }));
+    const execute = makeTool({ ok: true, rows, total_rows: 1000 });
+    const capped = (await execute({})) as any;
+
+    const serialized = JSON.stringify(capped);
+    expect(serialized.length).toBeLessThanOrEqual(12000);
+    expect(JSON.parse(serialized)).toEqual(capped);
+    expect(capped.ok).toBe(true);
+    expect(capped.total_rows).toBe(1000);
+    expect(capped._truncated).toBe(true);
+    expect(capped._note).toMatch(MARKER_RE);
+    expect(capped.rows.length).toBeLessThan(1000);
+    expect(capped.rows).toEqual(rows.slice(0, capped.rows.length));
+  });
+
+  it("leaves results under the cap untouched", async () => {
+    const result = { ok: true, message: "small" };
+    const execute = makeTool(result);
+    expect(await execute({})).toBe(result);
+  });
+});
+
 describe("tool detached suspend enforcement", () => {
   it("returns a hard error for tool calls after a detached command suspends the turn", async () => {
     dbMocks.returning.mockResolvedValue([{ id: "log-1" }]);
