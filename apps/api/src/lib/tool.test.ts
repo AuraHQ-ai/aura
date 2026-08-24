@@ -145,11 +145,13 @@ describe("strict-mode JSON schema compatibility", () => {
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".ts") || f.includes(".test.")) continue;
       const src = readFileSync(join(dir, f), "utf8");
-      for (const [i, line] of src.split("\n").entries()) {
-        if (/z\.number\(\)\.int\(\)/.test(line) && /\.(min|max)\(/.test(line)) {
-          offenders.push(`${f}:${i + 1}`);
-        }
-      }
+      // Collapse whitespace so multi-line builder chains are caught too --
+      // the original single-line check missed
+      //   z\n  .number()\n  .int()\n  .min(1)
+      // which is how Prettier formats longer chains (see notes.ts/sandbox.ts).
+      const flat = src.replace(/\s+/g, "");
+      const re = /z\.number\(\)\.int\(\)\.(?:min|max)\(/g;
+      if (re.test(flat)) offenders.push(f);
     }
     expect(offenders).toEqual([]);
   });
