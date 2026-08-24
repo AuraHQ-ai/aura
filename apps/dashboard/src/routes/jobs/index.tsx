@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate } from "@/lib/utils";
+import { type JobModelCategory } from "@/lib/model-categories";
 import { useState } from "react";
 import { Search } from "lucide-react";
 
@@ -28,6 +29,11 @@ interface Job {
   lastExecutedAt: string | null;
   createdAt: string;
   priority: string;
+  model: JobModelCategory | null;
+  runs30d: number;
+  cost30dUsd: string | null;
+  avgCostPerRunUsd: string | null;
+  wasWatchdogReset: boolean;
 }
 
 const PAGE_SIZE = 100;
@@ -88,7 +94,7 @@ function JobsPage() {
       </div>
 
       <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
-        <Table className="min-w-[1020px]">
+        <Table className="min-w-[1280px]">
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
@@ -100,15 +106,17 @@ function JobsPage() {
               <TableHead className="w-[160px]">Last Run</TableHead>
               <TableHead className="w-[160px]">Created</TableHead>
               <TableHead className="w-[80px]">Priority</TableHead>
+              <TableHead className="w-[120px]">Model</TableHead>
+              <TableHead className="w-[110px]">Cost/run</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRowsSkeleton columns={9} />
+              <TableRowsSkeleton columns={11} />
             ) : jobs.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={9}
+                  colSpan={11}
                   className="text-center text-muted-foreground py-8"
                 >
                   No jobs found
@@ -132,17 +140,24 @@ function JobsPage() {
                       {job.requestedBy ?? "—"}
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          job.status === "completed"
-                            ? "success"
-                            : job.status === "failed"
-                              ? "destructive"
-                              : "secondary"
-                        }
-                      >
-                        {job.status}
-                      </Badge>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge
+                          variant={
+                            job.status === "completed"
+                              ? "success"
+                              : job.status === "failed"
+                                ? "destructive"
+                                : "secondary"
+                          }
+                        >
+                          {job.status}
+                        </Badge>
+                        {job.wasWatchdogReset && (
+                          <Badge variant="outline" className="text-amber-600 border-amber-400">
+                            watchdog reset
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="font-mono text-sm text-muted-foreground">
                       {job.cronSchedule || "—"}
@@ -178,6 +193,25 @@ function JobsPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{job.priority}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {job.model ? (
+                        <Badge variant="outline">{job.model}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">
+                          medium (default)
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-sm text-muted-foreground">
+                      {job.avgCostPerRunUsd !== null
+                        ? `$${parseFloat(job.avgCostPerRunUsd).toFixed(4)}`
+                        : "—"}
+                      {job.runs30d > 0 && (
+                        <span className="block text-xs text-muted-foreground/60">
+                          {job.runs30d} runs/30d
+                        </span>
+                      )}
                     </TableCell>
                   </TableRow>
                 );

@@ -222,7 +222,7 @@ describe("generateResponse Slack stream handling", () => {
 
     // Delivery receipt: the block landed via the stream append path.
     expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
-      toolCallId: "call-1",
+      toolCallIds: ["call-1"],
       path: "stream_append",
     }));
   });
@@ -425,7 +425,7 @@ describe("generateResponse Slack stream handling", () => {
 
     // Delivery receipt: the block landed via the postMessage fallback.
     expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
-      toolCallId: "call-1",
+      toolCallIds: ["call-1"],
       path: "post_message_fallback",
     }));
     expect(logError).not.toHaveBeenCalledWith(expect.objectContaining({
@@ -473,7 +473,7 @@ describe("generateResponse Slack stream handling", () => {
       blocks: expect.arrayContaining([tableBlock]),
     });
     expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
-      toolCallId: "call-1",
+      toolCallIds: ["call-1"],
       path: "stop_blocks",
     }));
     expect(logError).not.toHaveBeenCalledWith(expect.objectContaining({
@@ -522,7 +522,7 @@ describe("generateResponse Slack stream handling", () => {
       errorName: "NativeBlockDropped",
       errorCode: "native_block_dropped",
       context: expect.objectContaining({
-        toolCallId: "call-1",
+        toolCallIds: ["call-1"],
         path: "post_message_fallback",
         error: "channel_not_found",
       }),

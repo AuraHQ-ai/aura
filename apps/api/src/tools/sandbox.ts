@@ -7,7 +7,11 @@ import {
   ensureUserHome,
 } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
-import { defineTool, markTurnSuspendedByDetachedCommand } from "../lib/tool.js";
+import {
+  defineTool,
+  executionContext,
+  markTurnSuspendedByDetachedCommand,
+} from "../lib/tool.js";
 import { detachedCommands, type DetachedCommand, type ScheduleContext } from "@aura/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -129,6 +133,12 @@ async function insertDetachedCommandRow(input: {
   userId: string;
 }) {
   const db = await getDb();
+  // Link the command back to the job execution that dispatched it (issue #1281)
+  // so the detached-command watchdog can fail the right job_executions row when
+  // the completion webhook never arrives. Interactive turns have no job.
+  const store = executionContext.getStore();
+  const jobId = store?.jobId || null;
+  const jobExecutionId = store?.jobExecutionId || null;
   await db
     .insert(detachedCommands)
     .values({
@@ -139,6 +149,8 @@ async function insertDetachedCommandRow(input: {
       requestedBy: input.context?.userId || input.userId,
       channelId: input.context?.channelId || null,
       threadTs: input.context?.threadTs || null,
+      jobId,
+      jobExecutionId,
       workspaceId: getWorkspaceId(input.context),
     })
     .onConflictDoUpdate({
@@ -151,6 +163,8 @@ async function insertDetachedCommandRow(input: {
         requestedBy: input.context?.userId || input.userId,
         channelId: input.context?.channelId || null,
         threadTs: input.context?.threadTs || null,
+        jobId,
+        jobExecutionId,
         workspaceId: getWorkspaceId(input.context),
         startedAt: new Date(),
         completedAt: null,
@@ -767,6 +781,23 @@ export function createSandboxTools(context?: ScheduleContext) {
             "Command timeout in seconds (default 90, max 750). Explicitly opt in to values above 90s only for headless/batch work or long-running agent commands; Slack chat.stream caps around 3 minutes, so longer foreground calls can freeze the active Slack message.",
           ),
       }),
+      inputExamples: [
+        { input: { command: "cat /home/user/output.txt", timeout_seconds: 90 } },
+        {
+          input: {
+            command: "git status && git log --oneline -5",
+            workdir: "/home/user/repo",
+            timeout_seconds: 90,
+          },
+        },
+        {
+          input: {
+            command: "python analyze.py --input data.csv > results.txt 2>&1",
+            workdir: "/home/user/analysis",
+            timeout_seconds: 300,
+          },
+        },
+      ],
       execute: async ({ command, workdir, timeout_seconds }) => {
         const userId = context?.userId || "aura";
         try {
@@ -877,7 +908,7 @@ export function createSandboxTools(context?: ScheduleContext) {
     }),
     run_command_detached: defineTool({
       description:
-        "Start a long-running shell command in the sandbox and return immediately with { id, pid, started_at }. Use this instead of run_command when work may exceed about 120s or has uncertain duration. When webhook env is configured (AURA_PUBLIC_URL and SANDBOX_WEBHOOK_SECRET) and this turn has a Slack thread to resume, this is a suspend point: after a successful dispatch, do not call any more tools in this turn; send a short final message like 'started <id>, I'll continue when it finishes.' The completion webhook will resume the conversation with the command result. If webhook env is missing, the turn does not suspend because no resume can arrive; poll progress with check_command({ id }) as before. The command writes stdout/stderr/status under /tmp/aura-bg/<id>.*. Stop it with run_command({ command: 'kill <pid>' }) if needed.",
+        "Start a long-running shell command in the sandbox and return immediately with { id, pid, started_at }. Use this instead of run_command when work may exceed about 120s or has uncertain duration. This is a suspend point ONLY when a webhook resume is possible: webhook env configured (AURA_PUBLIC_URL and SANDBOX_WEBHOOK_SECRET) AND this turn has a Slack thread to resume into. In that case the result is { id, pid, started_at }: after a successful dispatch, do not call any more tools in this turn; send a short final message like 'started <id>, I'll continue when it finishes.' The completion webhook will resume the conversation with the command result. When no resume is possible (e.g. a job execution without a Slack thread, or webhook env missing), the result additionally carries resume: 'none' with guidance: do NOT end your turn waiting for a callback — no callback will arrive; poll with check_command({ id }) until it exits, then continue your work in this same turn. The command writes stdout/stderr/status under /tmp/aura-bg/<id>.*. Stop it with run_command({ command: 'kill <pid>' }) if needed.",
       requiredCredentials: ["e2b_api_key"],
       inputSchema: z.object({
         command: z
@@ -943,9 +974,19 @@ export function createSandboxTools(context?: ScheduleContext) {
 
           if (canSuspendForDetachedCommand(context)) {
             markTurnSuspendedByDetachedCommand(detached.id);
+            return detached;
           }
 
-          return detached;
+          // No webhook continuation can arrive for this turn (no Slack thread
+          // to resume into, or webhook env missing). Tell the LLM explicitly so
+          // it polls instead of ending the turn waiting for a callback that will
+          // never come (issue #1281 — phantom-complete job executions).
+          return {
+            ...detached,
+            resume: "none" as const,
+            message:
+              `No webhook resume is available for this turn (no Slack thread or webhook env missing). Do NOT end your turn waiting for a callback — none will arrive. Poll with check_command({ id: '${detached.id}' }) until it exits, then continue.`,
+          };
         } catch (error: any) {
           logger.error("run_command_detached tool failed", {
             command: command.substring(0, 100),

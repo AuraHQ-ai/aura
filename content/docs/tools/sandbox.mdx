@@ -7,7 +7,7 @@ description: "Run arbitrary shell commands in an isolated Linux VM."
 
 Aura has access to a sandboxed Linux VM powered by [E2B](https://e2b.dev). This allows her to run shell commands, execute code, process files, and interact with the filesystem safely — without risking the production environment.
 
-**Required env var:** `E2B_API_KEY` (and optionally `E2B_TEMPLATE_ID` for a custom template)
+**Configuration:** `E2B_API_KEY` must be stored as a **credential in the dashboard** (shared scope is enough -- it's resolved once under the `"aura"` identity and used to create/connect every user's sandbox). The sandbox itself does not read `process.env` for this. Optionally set `E2B_TEMPLATE_ID` (credential, or env var fallback) to use a custom E2B template.
 
 ---
 

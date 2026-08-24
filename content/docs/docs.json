@@ -57,7 +57,8 @@
               "self-improvement",
               "eval-funnel",
               "self-authored-tools",
-              "permissions"
+              "permissions",
+              "prompt-modes"
             ]
           },
           {
@@ -77,6 +78,7 @@
               "tools/lists",
               "tools/tables",
               "tools/charts",
+              "tools/cards",
               "tools/subagents",
               "tools/voice",
               "tools/cursor-agent",

@@ -30,6 +30,7 @@ const dbMocks = vi.hoisted(() => ({
 
 const toolMocks = vi.hoisted(() => ({
   markTurnSuspendedByDetachedCommand: vi.fn(),
+  getStore: vi.fn(),
 }));
 
 vi.mock("../lib/sandbox.js", () => ({
@@ -46,6 +47,9 @@ vi.mock("../lib/logger.js", () => ({
 vi.mock("../lib/tool.js", () => ({
   defineTool: (config: any) => config,
   markTurnSuspendedByDetachedCommand: toolMocks.markTurnSuspendedByDetachedCommand,
+  executionContext: {
+    getStore: toolMocks.getStore,
+  },
 }));
 
 vi.mock("../db/client.js", () => ({
@@ -147,6 +151,7 @@ describe("sandbox command tools", () => {
     dbMocks.insertOnConflictDoUpdate.mockResolvedValue(undefined);
     dbMocks.selectRows.mockResolvedValue([]);
     dbMocks.updateWhere.mockResolvedValue(undefined);
+    toolMocks.getStore.mockReturnValue(undefined);
     process.env.AURA_PUBLIC_URL = "https://aura.test";
     process.env.SANDBOX_WEBHOOK_SECRET = "test-secret";
   });
@@ -288,8 +293,60 @@ describe("sandbox command tools", () => {
       status: "running",
       requestedBy: "U123",
       workspaceId: "default",
+      jobId: null,
+      jobExecutionId: null,
     }));
     expect(toolMocks.markTurnSuspendedByDetachedCommand).toHaveBeenCalledWith(result.id);
+    // The suspend path keeps the original result shape — no polling guidance.
+    expect(result.resume).toBeUndefined();
+    expect(result.message).toBeUndefined();
+  });
+
+  it("returns explicit no-suspend guidance when the context has no Slack thread", async () => {
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
+
+    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+
+    expect(result.id).toMatch(/^[a-f0-9]{8}$/);
+    expect(result.pid).toBe(4321);
+    expect(result.resume).toBe("none");
+    expect(result.message).toContain("No webhook resume is available for this turn");
+    expect(result.message).toContain("Do NOT end your turn");
+    expect(result.message).toContain(`check_command({ id: '${result.id}' })`);
+    expect(toolMocks.markTurnSuspendedByDetachedCommand).not.toHaveBeenCalled();
+  });
+
+  it("returns no-suspend guidance when webhook env vars are missing despite a thread", async () => {
+    delete process.env.AURA_PUBLIC_URL;
+    delete process.env.SANDBOX_WEBHOOK_SECRET;
+    const tool = createSandboxTools({
+      userId: "U123",
+      channelId: "C123",
+      threadTs: "1710000000.000000",
+    } as any).run_command_detached as any;
+
+    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+
+    expect(result.resume).toBe("none");
+    expect(toolMocks.markTurnSuspendedByDetachedCommand).not.toHaveBeenCalled();
+  });
+
+  it("persists jobId and jobExecutionId from the ALS execution context", async () => {
+    toolMocks.getStore.mockReturnValue({
+      triggeredBy: "U123",
+      triggerType: "scheduled_job",
+      jobId: "job-uuid-1",
+      jobExecutionId: "exec-uuid-1",
+    });
+    const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
+
+    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+
+    expect(dbMocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
+      id: result.id,
+      jobId: "job-uuid-1",
+      jobExecutionId: "exec-uuid-1",
+    }));
   });
 
   it("waits for a slow detached pid file before returning", async () => {

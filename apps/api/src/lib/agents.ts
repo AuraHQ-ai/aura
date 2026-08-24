@@ -4,8 +4,10 @@ import type { ScheduleContext } from "@aura/db/schema";
 import {
   getMainModel,
   getEscalationModel,
+  getModelByCategory,
   buildCachedSystemMessages,
   withCacheControl,
+  type JobModelCategory,
 } from "./ai.js";
 import { createSlackTools } from "../tools/slack.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
@@ -16,6 +18,7 @@ import {
   STEP_LIMIT,
   HEADLESS_STEP_LIMIT,
 } from "../pipeline/prepare-step.js";
+import { resolveTurnDeadlines } from "../pipeline/turn-deadline.js";
 import { aiTelemetry } from "./langfuse.js";
 
 // ── Interactive Agent ────────────────────────────────────────────────────────
@@ -85,6 +88,8 @@ export async function createInteractiveAgent(
       invocationId: options.invocationId,
       channelId: options.channelId,
       threadTs: options.threadTs,
+      userId: options.context?.userId,
+      turnDeadlines: resolveTurnDeadlines("interactive"),
     }),
   });
 
@@ -99,10 +104,22 @@ export interface HeadlessAgentOptions {
   context?: ScheduleContext;
   systemPrompt: string;
   invocationId?: string;
+  /** Model catalog category to execute with. Defaults to "medium" (Sonnet-class) for jobs. */
+  modelCategory?: JobModelCategory;
+  /**
+   * Continuation depth of the job being executed (issue #1320): 0 for a
+   * regular job, N when resuming a `[CONTINUE:topic:dN]` continuation. Lets a
+   * hard-deadline respawn carry depth N + 1 so the chain is capped.
+   */
+  continuationDepth?: number;
 }
 
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
-  const { modelId, model } = await getMainModel();
+  const category: JobModelCategory = options.modelCategory ?? "medium";
+  const { modelId, model } =
+    category === "main"
+      ? await getMainModel()
+      : await getModelByCategory(category);
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const stepModelIds: string[] = [];
   const systemPrompt = appendDeferredToolsBlock(
@@ -128,6 +145,15 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       recordStepModelId: (stepNumber, stepModelId) => {
         stepModelIds[stepNumber - 1] = stepModelId ?? modelId;
       },
+      // channelId/threadTs let a hard-deadline continuation resume in the
+      // job's thread. invocationId is intentionally NOT passed — headless
+      // jobs never claim invocation locks, so enabling the staleness check
+      // would falsely abort them as superseded.
+      channelId: options.context?.channelId,
+      threadTs: options.context?.threadTs,
+      userId: options.context?.userId,
+      turnDeadlines: resolveTurnDeadlines("headless"),
+      continuationDepth: options.continuationDepth,
     }),
   });
 

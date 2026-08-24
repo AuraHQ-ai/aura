@@ -62,6 +62,8 @@ const executeJobMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 const safePostMessageMock = vi.hoisted(() => vi.fn());
 const resolveSlackDestinationMock = vi.hoisted(() => vi.fn());
+const getSettingMock = vi.hoisted(() => vi.fn());
+const logErrorMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../db/client.js", () => ({
   db: {
@@ -103,6 +105,29 @@ vi.mock("../lib/slack-messaging.js", () => ({
 vi.mock("../tools/slack.js", () => ({
   resolveSlackDestination: resolveSlackDestinationMock,
 }));
+
+// The ops routing ladder is DB-first: settings.aura_ops_channel /
+// settings.founder_user_id take priority over the env vars. Mock the settings
+// reader so tests control both rungs deterministically (and so the real
+// job-notifications module does not consume queued db results).
+vi.mock("../lib/settings.js", () => ({
+  getSetting: getSettingMock,
+  setSetting: vi.fn(),
+  getAllSettings: vi.fn(async () => ({})),
+  getConfig: vi.fn(async (_key: string, fallback = "") => fallback),
+  getSettingJSON: vi.fn(async (_key: string, fallback: unknown = null) => fallback),
+}));
+
+vi.mock("../lib/error-logger.js", () => ({
+  logError: logErrorMock,
+  sanitizeErrorText: vi.fn((value: string | null | undefined) => value ?? ""),
+  flushLoggerDrops: vi.fn(),
+  resetErrorLoggerStateForTest: vi.fn(),
+}));
+
+function mockSettingsRows(rows: Record<string, string>) {
+  getSettingMock.mockImplementation(async (key: string) => rows[key] ?? null);
+}
 
 function queueDbResults(...results: unknown[][]) {
   dbMock.results = [...results];
@@ -168,6 +193,7 @@ describe("heartbeat stale running recovery", () => {
     dbMock.results = [];
     dbMock.operations = [];
     vi.clearAllMocks();
+    getSettingMock.mockResolvedValue(null);
     sendJobFailureDmMock.mockResolvedValue(true);
     safePostMessageMock.mockResolvedValue({ ok: true });
     resolveSlackDestinationMock.mockImplementation(
@@ -220,6 +246,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [], // stale running jobs below max retries
       [recurringJob], // stale exhausted jobs
       [], // recurring recovery update
@@ -259,6 +286,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [],
       [oneShotJob],
       [], // one-shot failure update
@@ -287,6 +315,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-healthy", name: "healthy-retry" }],
       [], // no stale exhausted jobs
       [], // running execution cleanup
@@ -321,6 +350,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
       [],
       [{ id: "exec-stale", jobId: "job-stale" }],
@@ -362,6 +392,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
       [],
       [{ id: "exec-stale", jobId: "job-stale" }],
@@ -400,6 +431,7 @@ describe("heartbeat stale running recovery", () => {
       [],
       [],
       [],
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-stale", name: "healthy-retry", workspaceId: "default" }],
       [],
       [{ id: "exec-stale", jobId: "job-stale" }],
@@ -524,6 +556,61 @@ describe("heartbeat stale running recovery", () => {
     );
   });
 
+  it("routes the retry-exhausted notice to the settings-configured ops channel over env vars", async () => {
+    mockSettingsRows({ aura_ops_channel: "C_SETTINGS_OPS" });
+    process.env.AURA_OPS_CHANNEL = "C_ENV_OPS";
+    process.env.FOUNDER_USER_ID = "U_ENV_FOUNDER";
+    queueDbResults(
+      [],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1", supervisorAttempts: 3 }],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1" }],
+      [{ id: "job-1", name: "stuck supervisor job", requestedBy: "U_REQUESTER" }],
+      [],
+    );
+
+    const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
+    const result = await sweepOrphanedOutcomes();
+
+    expect(result.inProgressSkipped).toBe(1);
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "C_SETTINGS_OPS",
+        text: expect.stringContaining("exhausted retries"),
+      }),
+    );
+    expect(logErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("routes the retry-exhausted notice to the settings-configured founder DM when no ops channel is set", async () => {
+    mockSettingsRows({ founder_user_id: "U_SETTINGS_FOUNDER" });
+    queueDbResults(
+      [],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1", supervisorAttempts: 3 }],
+      [{ id: "00000000-0000-4000-8000-000000000103", jobId: "job-1" }],
+      [{ id: "job-1", name: "stuck supervisor job", requestedBy: "U_REQUESTER" }],
+      [],
+    );
+
+    const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
+    const result = await sweepOrphanedOutcomes();
+
+    expect(result.inProgressSkipped).toBe(1);
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "U_SETTINGS_FOUNDER",
+    );
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "D_U_SETTINGS_FOUNDER",
+        text: expect.stringContaining("exhausted retries"),
+      }),
+    );
+  });
+
   it("routes the retry-exhausted notice to the founder DM when only FOUNDER_USER_ID is set", async () => {
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
     queueDbResults(
@@ -573,6 +660,10 @@ describe("heartbeat stale running recovery", () => {
         channel: "D_U_REQUESTER",
         text: "Supervisor for job stuck supervisor job exhausted retries; manual intervention needed",
       }),
+    );
+    // The misconfiguration must be visible in monitoring, not only in logs.
+    expect(logErrorMock).toHaveBeenCalledWith(
+      expect.objectContaining({ errorName: "job_ops_notice_no_ops_destination" }),
     );
   });
 
@@ -643,6 +734,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [{ id: "job-stale-recurring", name: "alicia-lista-prospeccion-diaria", workspaceId: "default" }],
       [], // no stale exhausted jobs
       [], // running execution cleanup
@@ -689,6 +781,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [], // stale running jobs below max retries
       [], // stale exhausted jobs
     );
@@ -726,6 +819,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [], // stale running jobs below max retries
       [], // stale exhausted jobs
     );
@@ -760,6 +854,7 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan pending_review outcomes
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
+      [], // stuck job executions (sweepStuckJobs)
       [], // stale running jobs below max retries
       [], // stale exhausted jobs
     );

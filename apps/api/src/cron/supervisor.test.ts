@@ -53,11 +53,13 @@ const dbMock = vi.hoisted(() => {
   return state;
 });
 
-const generateObjectMock = vi.hoisted(() => vi.fn());
+const generateTextMock = vi.hoisted(() => vi.fn());
 const getCredentialMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 const safePostMessageMock = vi.hoisted(() => vi.fn());
 const resolveSlackDestinationMock = vi.hoisted(() => vi.fn());
+const getSettingMock = vi.hoisted(() => vi.fn());
+const logErrorMock = vi.hoisted(() => vi.fn());
 
 type MockFetchResponse = {
   ok: boolean;
@@ -88,7 +90,8 @@ vi.mock("../lib/ai.js", () => ({
 }));
 
 vi.mock("ai", () => ({
-  generateObject: generateObjectMock,
+  generateText: generateTextMock,
+  Output: { object: (spec: unknown) => spec },
 }));
 
 vi.mock("../lib/credentials.js", () => ({
@@ -112,6 +115,28 @@ vi.mock("../lib/slack-messaging.js", () => ({
 vi.mock("../tools/slack.js", () => ({
   resolveSlackDestination: resolveSlackDestinationMock,
 }));
+
+// The ops routing ladder is DB-first: settings.aura_ops_channel /
+// settings.founder_user_id take priority over the env vars. Mock the settings
+// reader so tests control both rungs deterministically.
+vi.mock("../lib/settings.js", () => ({
+  getSetting: getSettingMock,
+  setSetting: vi.fn(),
+  getAllSettings: vi.fn(async () => ({})),
+  getConfig: vi.fn(async (_key: string, fallback = "") => fallback),
+  getSettingJSON: vi.fn(async (_key: string, fallback: unknown = null) => fallback),
+}));
+
+vi.mock("../lib/error-logger.js", () => ({
+  logError: logErrorMock,
+  sanitizeErrorText: vi.fn((value: string | null | undefined) => value ?? ""),
+  flushLoggerDrops: vi.fn(),
+  resetErrorLoggerStateForTest: vi.fn(),
+}));
+
+function mockSettingsRows(rows: Record<string, string>) {
+  getSettingMock.mockImplementation(async (key: string) => rows[key] ?? null);
+}
 
 function queueDbResults(...results: unknown[][]) {
   dbMock.results = [...results];
@@ -206,7 +231,7 @@ function baseExecution(overrides: Record<string, unknown> = {}) {
 }
 
 function promptContextFromGenerateCall() {
-  const prompt = String(generateObjectMock.mock.calls.at(-1)?.[0]?.prompt ?? "");
+  const prompt = String(generateTextMock.mock.calls.at(-1)?.[0]?.prompt ?? "");
   const contextJson = prompt.match(/Context:\n([\s\S]*)$/)?.[1];
   if (!contextJson) throw new Error("Supervisor prompt did not include JSON context");
   return JSON.parse(contextJson) as {
@@ -216,7 +241,7 @@ function promptContextFromGenerateCall() {
 }
 
 function mockCleanSuccessDecisionPolicy() {
-  generateObjectMock.mockImplementation(async (args: { prompt: string }) => {
+  generateTextMock.mockImplementation(async (args: { prompt: string }) => {
     const contextJson = args.prompt.match(/Context:\n([\s\S]*)$/)?.[1];
     if (!contextJson) throw new Error("Supervisor prompt did not include JSON context");
     const context = JSON.parse(contextJson) as {
@@ -230,7 +255,7 @@ function mockCleanSuccessDecisionPolicy() {
       context.job.notify_on_success || context.job.cron_schedule === null || recoveredFromFailure;
 
     return {
-      object: {
+      output: {
         decision: shouldReport ? "report_success" : "silent_success",
         reasoning: shouldReport ? "Success should be reported." : "Routine recurring success.",
       },
@@ -268,8 +293,9 @@ describe("supervisor cron", () => {
     dbMock.results = [];
     dbMock.operations = [];
     vi.clearAllMocks();
-    generateObjectMock.mockResolvedValue({
-      object: {
+    getSettingMock.mockResolvedValue(null);
+    generateTextMock.mockResolvedValue({
+      output: {
         decision: "report_failure",
         reasoning: "The job failed permanently.",
         user_message: "I could not complete the job.",
@@ -378,7 +404,7 @@ describe("supervisor cron", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ ok: true, skipped: true, reason: "already_claimed" });
-    expect(generateObjectMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
     expect(updateSets()).toHaveLength(1);
   });
 
@@ -397,8 +423,8 @@ describe("supervisor cron", () => {
       if ("founder" in expected && expected.founder) {
         process.env.FOUNDER_USER_ID = "U_FOUNDER";
       }
-      generateObjectMock.mockResolvedValue({
-        object: {
+      generateTextMock.mockResolvedValue({
+        output: {
           decision: decisionName,
           reasoning: `reason for ${decisionName}`,
           user_message: `message for ${decisionName}`,
@@ -467,8 +493,8 @@ describe("supervisor cron", () => {
 
   it("routes lifecycle notices to the founder DM when only FOUNDER_USER_ID is set", async () => {
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
-    generateObjectMock.mockResolvedValue({
-      object: { decision: "retry_as_is", reasoning: "transient failure" },
+    generateTextMock.mockResolvedValue({
+      output: { decision: "retry_as_is", reasoning: "transient failure" },
     });
     queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
 
@@ -487,10 +513,80 @@ describe("supervisor cron", () => {
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
+  it("routes lifecycle notices to the settings-configured ops channel even when env vars point elsewhere", async () => {
+    mockSettingsRows({ aura_ops_channel: "C_SETTINGS_OPS" });
+    process.env.AURA_OPS_CHANNEL = "C_ENV_OPS";
+    process.env.FOUNDER_USER_ID = "U_ENV_FOUNDER";
+    generateTextMock.mockResolvedValue({
+      output: { decision: "retry_as_is", reasoning: "transient failure" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "C_SETTINGS_OPS",
+        text: expect.stringContaining("<@U_REQUESTER>"),
+      }),
+    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+
+  it("routes lifecycle notices to the settings-configured founder DM without any env vars", async () => {
+    mockSettingsRows({ founder_user_id: "U_SETTINGS_FOUNDER" });
+    generateTextMock.mockResolvedValue({
+      output: { decision: "retry_as_is", reasoning: "transient failure" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "U_SETTINGS_FOUNDER",
+    );
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "D_U_SETTINGS_FOUNDER",
+        text: expect.stringContaining("<@U_REQUESTER>"),
+      }),
+    );
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+  });
+
+  it("escalate DMs the settings-configured founder when the ops notice went to the ops channel", async () => {
+    mockSettingsRows({
+      aura_ops_channel: "C_SETTINGS_OPS",
+      founder_user_id: "U_SETTINGS_FOUNDER",
+    });
+    generateTextMock.mockResolvedValue({
+      output: { decision: "escalate", reasoning: "needs human judgment" },
+    });
+    queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "C_SETTINGS_OPS" }),
+    );
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedBy: "U_SETTINGS_FOUNDER" }),
+    );
+  });
+
   it("escalate does not double-DM the founder when the ops notice already went to the founder", async () => {
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
-    generateObjectMock.mockResolvedValue({
-      object: { decision: "escalate", reasoning: "needs human judgment" },
+    generateTextMock.mockResolvedValue({
+      output: { decision: "escalate", reasoning: "needs human judgment" },
     });
     queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
 
@@ -505,9 +601,85 @@ describe("supervisor cron", () => {
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
+  it("escalate is suppressed when a newer execution completed after the outcome was recorded", async () => {
+    process.env.AURA_OPS_CHANNEL = "C_OPS";
+    process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    generateTextMock.mockResolvedValue({
+      output: { decision: "escalate", reasoning: "needs human judgment" },
+    });
+    // Outcome recorded at 08:59; a recovery run completed at 08:59:30.
+    queueDbResults(
+      [baseOutcome()],
+      [baseJob()],
+      [
+        baseExecution({
+          id: "00000000-0000-4000-8000-000000000021",
+          status: "completed",
+          error: null,
+          startedAt: new Date("2026-05-20T08:59:30.000Z"),
+          finishedAt: new Date("2026-05-20T08:59:45.000Z"),
+          summary: "Recovery run delivered all artifacts",
+        }),
+        baseExecution(),
+      ],
+    );
+
+    const response = await invokeSupervisor();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, decision: "escalate" });
+    expect(safePostMessageMock).not.toHaveBeenCalled();
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: "escalate",
+    });
+  });
+
+  it("escalate still escalates when no execution completed after the outcome was recorded", async () => {
+    process.env.AURA_OPS_CHANNEL = "C_OPS";
+    process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    generateTextMock.mockResolvedValue({
+      output: { decision: "escalate", reasoning: "needs human judgment" },
+    });
+    // Only an OLDER completed run exists (before the outcome at 08:59) — it
+    // must not suppress the escalation.
+    queueDbResults(
+      [baseOutcome()],
+      [baseJob()],
+      [
+        baseExecution(),
+        baseExecution({
+          id: "00000000-0000-4000-8000-000000000022",
+          status: "completed",
+          error: null,
+          startedAt: new Date("2026-05-19T08:55:00.000Z"),
+          finishedAt: new Date("2026-05-19T08:58:00.000Z"),
+        }),
+      ],
+    );
+
+    const response = await invokeSupervisor();
+
+    expect(response.status).toBe(200);
+    expect(safePostMessageMock).toHaveBeenCalledTimes(1);
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channel: "C_OPS" }),
+    );
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedBy: "U_FOUNDER" }),
+    );
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: "escalate",
+    });
+  });
+
   it("falls back to the requester DM as a last resort when no ops destination is configured", async () => {
-    generateObjectMock.mockResolvedValue({
-      object: { decision: "retry_as_is", reasoning: "transient failure" },
+    generateTextMock.mockResolvedValue({
+      output: { decision: "retry_as_is", reasoning: "transient failure" },
     });
     queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
 
@@ -520,11 +692,15 @@ describe("supervisor cron", () => {
       expect.anything(),
       expect.objectContaining({ channel: "D_U_REQUESTER" }),
     );
+    // The misconfiguration must be visible in monitoring, not only in logs.
+    expect(logErrorMock).toHaveBeenCalledWith(
+      expect.objectContaining({ errorName: "job_ops_notice_no_ops_destination" }),
+    );
   });
 
   it("comments on a matching open supervisor issue instead of creating a duplicate", async () => {
-    generateObjectMock.mockResolvedValue({
-      object: {
+    generateTextMock.mockResolvedValue({
+      output: {
         decision: "retry_with_fix",
         reasoning: "The configured model does not exist.",
         user_message: "I queued the job to retry after a fix.",
@@ -662,7 +838,7 @@ describe("supervisor cron", () => {
 
     const response = await invokeSupervisor();
     const body = await response.json();
-    const prompt = String(generateObjectMock.mock.calls[0][0].prompt);
+    const prompt = String(generateTextMock.mock.calls[0][0].prompt);
     const promptContext = promptContextFromGenerateCall();
 
     expect(response.status).toBe(200);
@@ -682,7 +858,7 @@ describe("supervisor cron", () => {
   });
 
   it("returns errored outcomes to pending_review when the LLM fails", async () => {
-    generateObjectMock.mockRejectedValue(new Error("gateway unavailable"));
+    generateTextMock.mockRejectedValue(new Error("gateway unavailable"));
     queueDbResults([baseOutcome()], [baseJob()], [baseExecution()]);
 
     const response = await invokeSupervisor();
@@ -710,7 +886,7 @@ describe("supervisor cron", () => {
       skipped: true,
       reason: "max_supervisor_attempts_exceeded",
     });
-    expect(generateObjectMock).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
     expect(updateSets()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

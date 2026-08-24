@@ -10,7 +10,6 @@ import {
   ModelCapabilities as ModelCapabilitiesSchema,
   type ModelCapabilities as StoredModelCapabilities,
   modelCatalog,
-  modelCatalogSelections,
   modelPricing,
 } from "@aura/db/schema";
 import { db } from "../db/client.js";
@@ -19,15 +18,12 @@ import { logger } from "./logger.js";
 export const MODEL_CATEGORIES = [
   "main",
   "fast",
+  "medium",
   "embedding",
   "escalation",
 ] as const;
 
 export type ModelCategory = (typeof MODEL_CATEGORIES)[number];
-
-function isModelCategory(value: unknown): value is ModelCategory {
-  return typeof value === "string" && MODEL_CATEGORIES.includes(value as ModelCategory);
-}
 
 export interface ModelOption {
   value: string;
@@ -39,19 +35,32 @@ export interface ModelCatalogItem {
   label: string;
   provider: string;
   type: string;
-  enabledCategories: ModelCategory[];
-  defaultCategories: ModelCategory[];
   lastSyncedAt: string | null;
 }
 
 export interface ModelCatalogResponse {
   main: ModelOption[];
   fast: ModelOption[];
+  medium: ModelOption[];
   embedding: ModelOption[];
   escalation: ModelOption[];
   defaults: Partial<Record<ModelCategory, string>>;
   catalog: ModelCatalogItem[];
   lastSyncedAt: string | null;
+}
+
+/** Gateway model types that cannot serve a chat (text-generation) category. */
+const NON_CHAT_MODEL_TYPES = new Set(["embedding", "image", "video", "reranking"]);
+
+/**
+ * Category eligibility from catalog `type` metadata. Unknown/missing types
+ * pass every filter — when there's no reliable metadata we show the model
+ * rather than invent a blocklist.
+ */
+function isEligibleForCategory(type: string, category: ModelCategory): boolean {
+  if (type === "unknown") return true;
+  if (category === "embedding") return type === "embedding";
+  return !NON_CHAT_MODEL_TYPES.has(type);
 }
 
 interface GatewayModel {
@@ -408,18 +417,8 @@ export async function getModelCatalogResponse(
       provider: modelCatalog.provider,
       type: modelCatalog.type,
       lastSyncedAt: modelCatalog.lastSyncedAt,
-      selectionCategory: modelCatalogSelections.category,
-      selectionEnabled: modelCatalogSelections.enabled,
-      selectionDefault: modelCatalogSelections.isDefault,
     })
     .from(modelCatalog)
-    .leftJoin(
-      modelCatalogSelections,
-      and(
-        eq(modelCatalogSelections.workspaceId, modelCatalog.workspaceId),
-        eq(modelCatalogSelections.modelId, modelCatalog.modelId),
-      ),
-    )
     .where(eq(modelCatalog.workspaceId, workspaceId))
     .orderBy(asc(modelCatalog.provider), asc(modelCatalog.name));
 
@@ -427,89 +426,49 @@ export async function getModelCatalogResponse(
   const grouped: Record<ModelCategory, ModelOption[]> = {
     main: [],
     fast: [],
+    medium: [],
     embedding: [],
     escalation: [],
   };
-  const defaults: Partial<Record<ModelCategory, string>> = {};
   let lastSyncedAt: string | null = null;
 
   for (const row of rows) {
-    const item =
-      catalogByModelId.get(row.modelId) ??
-      {
-        value: row.modelId,
-        label: row.name,
-        provider: row.provider,
-        type: row.type,
-        enabledCategories: [],
-        defaultCategories: [],
-        lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
-      };
+    const syncedAt = row.lastSyncedAt?.toISOString() ?? null;
+    const item: ModelCatalogItem = catalogByModelId.get(row.modelId) ?? {
+      value: row.modelId,
+      label: row.name,
+      provider: row.provider,
+      type: row.type,
+      lastSyncedAt: syncedAt,
+    };
 
-    if (isModelCategory(row.selectionCategory) && row.selectionEnabled) {
-      const category = row.selectionCategory;
-
-      if (!item.enabledCategories.includes(category)) {
-        item.enabledCategories.push(category);
-      }
-
-      const option = { value: row.modelId, label: row.name };
-      grouped[category].push(option);
-
-      if (row.selectionDefault) {
-        if (!item.defaultCategories.includes(category)) {
-          item.defaultCategories.push(category);
-        }
-        defaults[category] = row.modelId;
-      }
-    }
-
-    if (item.lastSyncedAt && (!lastSyncedAt || item.lastSyncedAt > lastSyncedAt)) {
-      lastSyncedAt = item.lastSyncedAt;
+    if (syncedAt && (!lastSyncedAt || syncedAt > lastSyncedAt)) {
+      lastSyncedAt = syncedAt;
     }
 
     catalogByModelId.set(row.modelId, item);
   }
 
+  // Fill per-category lists from the full catalog, filtered only by capability
+  // metadata. catalogByModelId preserves query order (provider asc, name asc).
   for (const item of catalogByModelId.values()) {
-    if (item.enabledCategories.length > 0) continue;
-
-    const fallbackCategory: ModelCategory =
-      item.type === "embedding" ? "embedding" : "main";
-    grouped[fallbackCategory].push({ value: item.value, label: item.label });
-  }
-
-  for (const category of MODEL_CATEGORIES) {
-    const deduped = new Map<string, ModelOption>();
-    for (const option of grouped[category]) {
-      deduped.set(option.value, option);
-    }
-    grouped[category] = Array.from(deduped.values());
-  }
-
-  for (const category of MODEL_CATEGORIES) {
-    if (!defaults[category]) {
-      defaults[category] = grouped[category][0]?.value;
+    for (const category of MODEL_CATEGORIES) {
+      if (isEligibleForCategory(item.type, category)) {
+        grouped[category].push({ value: item.value, label: item.label });
+      }
     }
   }
 
   return {
     main: grouped.main,
     fast: grouped.fast,
+    medium: grouped.medium,
     embedding: grouped.embedding,
     escalation: grouped.escalation,
-    defaults,
+    defaults: {},
     catalog: Array.from(catalogByModelId.values()),
     lastSyncedAt,
   };
-}
-
-export async function getDefaultModelId(
-  category: ModelCategory,
-  workspaceId = DEFAULT_WORKSPACE_ID,
-): Promise<string | null> {
-  const catalog = await getModelCatalogResponse(workspaceId);
-  return catalog.defaults[category] ?? null;
 }
 
 // ── Model capabilities (from gateway tags + persisted provider config) ───────

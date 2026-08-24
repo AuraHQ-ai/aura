@@ -129,7 +129,7 @@ export function createMemoryTools(context?: ScheduleContext) {
           .enum(["person", "company", "channel", "technology", "product", "project"])
           .optional()
           .describe("Narrow entity resolution to a specific type. Optional — omit to match across all types."),
-        limit: z.number().int().min(1).max(50).optional().default(20).describe("Max results (default 20, max 50)"),
+        limit: z.number().min(1).max(50).optional().default(20).describe("Max results (default 20, max 50)"),
         mode: z
           .enum(["text", "semantic"])
           .optional()
@@ -381,7 +381,7 @@ export function createMemoryTools(context?: ScheduleContext) {
           .enum(["person", "company", "channel", "technology", "product", "project"])
           .optional()
           .describe("Filter to a specific entity type"),
-        limit: z.number().int().min(1).max(50).optional().default(20).describe("Max results (default 20)"),
+        limit: z.number().min(1).max(50).optional().default(20).describe("Max results (default 20)"),
       }),
       execute: async ({ query, type, limit }) => {
         try {

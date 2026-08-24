@@ -81,7 +81,11 @@ Earlier versions had a workspace-scoped `rate_limits` table with per-role quotas
 
 Roles can be set in two ways:
 
-1. **Dashboard** — Navigate to Users → select a user → Profile tab → Role dropdown. Valid options: `admin`, `power_user`, `member`. Requires admin access.
+1. **Dashboard** — Navigate to Users → select a user → Profile tab → Role dropdown. Valid options enforced by the API: `admin`, `power_user`, `member`. Requires admin access.
+
+<Warning>
+The dashboard role dropdown still lists a stale `owner` option (left over from the pre-0048 role system). The API (`VALID_ROLES` in `apps/api/src/routes/dashboard/users.ts`) rejects it with `400 Invalid role`, so selecting `owner` silently fails. This is a dashboard UI bug, not a valid role.
+</Warning>
 2. **Database** — Update `users.role` directly.
 
 ## User Bootstrapping

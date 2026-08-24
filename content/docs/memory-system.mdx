@@ -21,7 +21,7 @@ Each memory has a `type` that determines how it's used during retrieval:
 
 ## Storage
 
-Memories are stored in PostgreSQL with a 1536-dimensional vector embedding. The embedding model is resolved dynamically from the model catalog (the `model_embedding` DB setting takes priority, falling back to the catalog default) and served through the AI Gateway; every embedding is validated to exactly 1536 dimensions before storage:
+Memories are stored in PostgreSQL with a 1536-dimensional vector embedding. The embedding model is resolved from the `model_embedding` settings row, with a hardcoded last resort of `openai/text-embedding-3-small` (`LAST_RESORT_MODELS.embedding` in `apps/api/src/lib/ai.ts`). Every embedding is validated to exactly 1536 dimensions before storage:
 
 ```sql
 CREATE TABLE memories (

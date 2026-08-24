@@ -89,6 +89,29 @@ export function createListWriteTools(client: WebClient) {
               "Or use typed objects: {select: [\"done\"]}, {rich_text: [...]}, {user: [\"U01234\"]}, {date: [\"2025-09-20\"]}.",
           ),
       }),
+      // fields is z.record(z.any()) — free-form keys/values can't be expressed
+      // as strict JSON schema, so provider-side strict validation stays off.
+      strict: false,
+      inputExamples: [
+        {
+          input: {
+            list_id: "F0123ABCD",
+            item_id: "Rec0123ABCD",
+            fields: { Col0STATUS1: ["done"] },
+          },
+        },
+        {
+          input: {
+            list_id: "F0123ABCD",
+            item_id: "Rec0456EFGH",
+            fields: {
+              Col0OWNER01: ["U0123ABCD"],
+              Col0DUEDATE: { date: ["2026-09-20"] },
+              Col0TITLE01: "Ship strict tool inputs",
+            },
+          },
+        },
+      ],
       execute: async ({ list_id, item_id, fields }) => {
         try {
 

@@ -67,7 +67,7 @@ export const DEFAULT_TIERS = {
 };
 
 interface ResolvedModel {
-  /** AI SDK LanguageModel ready to pass to generateText/generateObject. */
+  /** AI SDK LanguageModel ready to pass to generateText. */
   model: LanguageModel;
   /** Gateway-style id (e.g. anthropic/claude-sonnet-4.6) recorded with the run. */
   modelId: string;

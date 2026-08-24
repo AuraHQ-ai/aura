@@ -77,13 +77,6 @@ export const memoryEntityRoleEnum = pgEnum("memory_entity_role", [
   "mentioned",
 ]);
 
-export const modelCatalogCategoryEnum = pgEnum("model_catalog_category", [
-  "main",
-  "fast",
-  "embedding",
-  "escalation",
-]);
-
 // Helper for timestamptz columns
 const timestamptz = (name: string) =>
   timestamp(name, { withTimezone: true, mode: "date" });
@@ -445,34 +438,6 @@ export const modelCatalog = pgTable(
   ],
 );
 
-export const modelCatalogSelections = pgTable(
-  "model_catalog_selections",
-  {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
-    workspaceId: workspaceId().references(() => workspaces.id),
-    modelId: text("model_id").notNull(),
-    category: modelCatalogCategoryEnum("category").notNull(),
-    enabled: boolean("enabled").notNull().default(false),
-    isDefault: boolean("is_default").notNull().default(false),
-    createdAt: timestamptz("created_at").notNull().defaultNow(),
-    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("model_catalog_selections_workspace_model_category_idx").on(
-      table.workspaceId,
-      table.modelId,
-      table.category,
-    ),
-    index("model_catalog_selections_category_idx").on(
-      table.workspaceId,
-      table.category,
-      table.enabled,
-    ),
-  ],
-);
-
 // ── Notes (agent scratchpad with three-tier hierarchy) ──────────────────────
 
 export const notes = pgTable(
@@ -605,6 +570,13 @@ export const jobs = pgTable(
     enabled: integer("enabled").notNull().default(1),
     archivedAt: timestamptz("archived_at"),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
+    // ── Scoped execution (issue #1302) — all nullable so existing jobs run unchanged ──
+    /** Model catalog category to execute with. Null = 'medium' (job default). */
+    model: text("model").$type<"main" | "fast" | "medium" | "escalation">(),
+    /** Sandbox env var names this job may access. Null = full caller-scoped inheritance. */
+    envAllowlist: text("env_allowlist").array(),
+    /** 'task' = minimal task prompt (no personality/notes). Null = 'full' (current behavior). */
+    promptMode: text("prompt_mode").$type<"full" | "task">(),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -722,6 +694,10 @@ export const detachedCommands = pgTable(
     requestedBy: text("requested_by").notNull(),
     channelId: text("channel_id"),
     threadTs: text("thread_ts"),
+    // Link back to the job execution that dispatched this command (issue #1281).
+    // Nullable — interactive turns have no job.
+    jobId: uuid("job_id").references(() => jobs.id),
+    jobExecutionId: uuid("job_execution_id").references(() => jobExecutions.id),
     startedAt: timestamptz("started_at").notNull().defaultNow(),
     completedAt: timestamptz("completed_at"),
     stdoutTail: text("stdout_tail"),

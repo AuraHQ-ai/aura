@@ -115,6 +115,8 @@ describe("sandbox command webhook", () => {
         requestedBy: "U123",
         channelId: "C123",
         threadTs: "1710000000.000000",
+        jobId: null,
+        jobExecutionId: null,
         startedAt,
         completedAt,
         stdoutTail: null,

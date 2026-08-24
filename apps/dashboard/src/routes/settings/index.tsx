@@ -10,12 +10,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { PageSkeleton } from "@/components/page-skeleton";
 import { ThemeSelect } from "@/components/theme-toggle";
 import { formatDate } from "@/lib/utils";
+import { MODEL_CATEGORIES, type ModelCategory } from "@/lib/model-categories";
 import { useMemo, useState } from "react";
-import { RefreshCw, Save, Plus, Pencil } from "lucide-react";
+import { RefreshCw, Save, Plus, Pencil, ChevronDown, ChevronRight, Lock } from "lucide-react";
 
 interface Setting {
   key: string;
   value: string;
+  hasValue: boolean;
+  redacted: boolean;
   description: string | null;
   updatedAt: string;
   updatedBy: string | null;
@@ -29,9 +32,10 @@ interface ModelOption {
 interface ModelCatalog {
   main: ModelOption[];
   fast: ModelOption[];
+  medium: ModelOption[];
   embedding: ModelOption[];
   escalation: ModelOption[];
-  defaults: { main?: string; fast?: string; embedding?: string; escalation?: string };
+  defaults: { main?: string; fast?: string; medium?: string; embedding?: string; escalation?: string };
   catalog: Array<{
     value: string;
     label: string;
@@ -43,6 +47,41 @@ interface ModelCatalog {
   }>;
   lastSyncedAt: string | null;
 }
+
+/**
+ * Ops notification routing keys — internal job lifecycle notices (retries,
+ * escalations, disable notices) are routed here instead of the requester's DM.
+ * DB settings take priority over the AURA_OPS_CHANNEL / FOUNDER_USER_ID env vars.
+ */
+const OPS_NOTIFICATION_KEYS = [
+  {
+    key: "aura_ops_channel",
+    title: "Ops Channel",
+    placeholder: "e.g. C0123456789 or #aura-ops",
+    description:
+      "Slack channel (ID or name) that receives internal job lifecycle notices (retries, escalations, disable notices). Takes priority over the AURA_OPS_CHANNEL env var.",
+  },
+  {
+    key: "founder_user_id",
+    title: "Founder User ID",
+    placeholder: "e.g. U0123456789",
+    description:
+      "Slack user DM'd with ops notices when no ops channel is set. Takes priority over the FOUNDER_USER_ID env var. Without either, notices fall back to the job requester's DM.",
+  },
+] as const;
+
+/** Runtime-state keys that represent per-sandbox/per-user transient state. */
+function isRuntimeKey(key: string): boolean {
+  return (
+    key.startsWith("e2b_sandbox_id:") ||
+    key.startsWith("e2b_template:") ||
+    key.startsWith("sandbox:") ||
+    key.startsWith("session:") ||
+    key.startsWith("runtime:")
+  );
+}
+
+const MASKED_VALUE = "••••••••";
 
 function SettingsPage() {
   const queryClient = useQueryClient();
@@ -57,17 +96,19 @@ function SettingsPage() {
     queryFn: () => apiGet<ModelCatalog>("/models"),
   });
 
-  const [mainModel, setMainModel] = useState<string | null>(null);
-  const [fastModel, setFastModel] = useState<string | null>(null);
-  const [embeddingModel, setEmbeddingModel] = useState<string | null>(null);
+  const [modelDrafts, setModelDrafts] = useState<Partial<Record<ModelCategory, string>>>({});
+  const [opsDrafts, setOpsDrafts] = useState<Record<string, string>>({});
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingRedacted, setEditingRedacted] = useState(false);
   const [formKey, setFormKey] = useState("");
   const [formValue, setFormValue] = useState("");
+  const [runtimeExpanded, setRuntimeExpanded] = useState(false);
 
   function openCreate() {
     setEditingKey(null);
+    setEditingRedacted(false);
     setFormKey("");
     setFormValue("");
     setDialogOpen(true);
@@ -75,8 +116,11 @@ function SettingsPage() {
 
   function openEdit(setting: Setting) {
     setEditingKey(setting.key);
+    setEditingRedacted(setting.redacted);
     setFormKey(setting.key);
-    setFormValue(setting.value);
+    // For redacted settings, start with empty so user must type a new value
+    // (empty = no-op on the server side).
+    setFormValue(setting.redacted ? "" : setting.value);
     setDialogOpen(true);
   }
 
@@ -84,15 +128,15 @@ function SettingsPage() {
     return settings?.find((s) => s.key === key)?.value || "";
   }
 
-  const actualMainModel = mainModel ?? getSettingValue("model_main");
-  const actualFastModel = fastModel ?? getSettingValue("model_fast");
-  const actualEmbeddingModel = embeddingModel ?? getSettingValue("model_embedding");
+  function actualModel(category: ModelCategory): string {
+    return modelDrafts[category] ?? getSettingValue(`model_${category}`);
+  }
 
   const saveModelsMutation = useMutation({
     mutationFn: async () => {
-      await apiPut("/settings/model_main", { value: actualMainModel || "" });
-      await apiPut("/settings/model_fast", { value: actualFastModel || "" });
-      await apiPut("/settings/model_embedding", { value: actualEmbeddingModel || "" });
+      for (const { value: category } of MODEL_CATEGORIES) {
+        await apiPut(`/settings/model_${category}`, { value: actualModel(category) || "" });
+      }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
   });
@@ -102,6 +146,19 @@ function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
     },
+  });
+
+  function actualOpsValue(key: string): string {
+    return opsDrafts[key] ?? getSettingValue(key);
+  }
+
+  const saveOpsMutation = useMutation({
+    mutationFn: async () => {
+      for (const { key } of OPS_NOTIFICATION_KEYS) {
+        await apiPut(`/settings/${key}`, { value: actualOpsValue(key).trim() });
+      }
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
   });
 
   const saveSettingMutation = useMutation({
@@ -128,13 +185,15 @@ function SettingsPage() {
   if (loadingSettings) return <PageSkeleton rows={8} />;
   if (settingsError) return <div className="text-destructive text-sm">Failed to load settings: {settingsError.message}</div>;
 
-  const nonModelSettings = (settings ?? []).filter(
+  const allSettings = settings ?? [];
+
+  // Partition into model, runtime, and regular settings
+  const nonModelSettings = allSettings.filter(
     (s) => !s.key.startsWith("model_") && !s.key.startsWith("credential:"),
   );
+  const regularSettings = nonModelSettings.filter((s) => !isRuntimeKey(s.key));
+  const runtimeSettings = nonModelSettings.filter((s) => isRuntimeKey(s.key));
 
-  const MAIN_MODELS = enrichOptions(models?.main ?? []);
-  const FAST_MODELS = enrichOptions(models?.fast ?? []);
-  const EMBEDDING_MODELS = enrichOptions(models?.embedding ?? []);
   const isEditing = editingKey !== null;
   const defaultOption = [{ value: "__default", label: "Default" }];
 
@@ -175,39 +234,59 @@ function SettingsPage() {
             </Button>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <label className="text-sm font-medium mb-1 block">Main Model</label>
-              <ModelAutocomplete
-                value={actualMainModel || "__default"}
-                onValueChange={(v) => setMainModel(v === "__default" ? "" : v)}
-                options={MAIN_MODELS}
-                pinnedOptions={defaultOption}
-                placeholder="Select main model"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Fast Model</label>
-              <ModelAutocomplete
-                value={actualFastModel || "__default"}
-                onValueChange={(v) => setFastModel(v === "__default" ? "" : v)}
-                options={FAST_MODELS}
-                pinnedOptions={defaultOption}
-                placeholder="Select fast model"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Embedding Model</label>
-              <ModelAutocomplete
-                value={actualEmbeddingModel || "__default"}
-                onValueChange={(v) => setEmbeddingModel(v === "__default" ? "" : v)}
-                options={EMBEDDING_MODELS}
-                pinnedOptions={defaultOption}
-                placeholder="Select embedding model"
-              />
-            </div>
+            {MODEL_CATEGORIES.map((category) => (
+              <div key={category.value}>
+                <label className="text-sm font-medium mb-1 block">{category.title} Model</label>
+                <ModelAutocomplete
+                  value={actualModel(category.value) || "__default"}
+                  onValueChange={(v) =>
+                    setModelDrafts((drafts) => ({
+                      ...drafts,
+                      [category.value]: v === "__default" ? "" : v,
+                    }))
+                  }
+                  options={enrichOptions(models?.[category.value] ?? [])}
+                  pinnedOptions={defaultOption}
+                  placeholder={`Select ${category.value} model`}
+                />
+                <p className="text-xs text-muted-foreground mt-1">{category.description}</p>
+              </div>
+            ))}
           </div>
           <Button onClick={() => saveModelsMutation.mutate()} disabled={saveModelsMutation.isPending} size="sm">
             <Save className="h-4 w-4" /> {saveModelsMutation.isPending ? "Saving..." : "Save Models"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Ops Notifications</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Where internal job lifecycle notices (retries, escalations, disable notices,
+            retry-exhausted alerts) are sent. Without an ops channel or founder, these
+            fall back to the job requester's DM.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {OPS_NOTIFICATION_KEYS.map((field) => (
+              <div key={field.key}>
+                <label className="text-sm font-medium mb-1 block" htmlFor={`ops-${field.key}`}>
+                  {field.title}
+                </label>
+                <Input
+                  id={`ops-${field.key}`}
+                  placeholder={field.placeholder}
+                  value={actualOpsValue(field.key)}
+                  onChange={(e) =>
+                    setOpsDrafts((drafts) => ({ ...drafts, [field.key]: e.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground mt-1">{field.description}</p>
+              </div>
+            ))}
+          </div>
+          <Button onClick={() => saveOpsMutation.mutate()} disabled={saveOpsMutation.isPending} size="sm">
+            <Save className="h-4 w-4" /> {saveOpsMutation.isPending ? "Saving..." : "Save Ops Notifications"}
           </Button>
         </CardContent>
       </Card>
@@ -231,10 +310,21 @@ function SettingsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {nonModelSettings.map((s) => (
+            {regularSettings.map((s) => (
               <TableRow key={s.key}>
-                <TableCell className="font-mono text-sm">{s.key}</TableCell>
-                <TableCell className="text-sm">{s.value}</TableCell>
+                <TableCell className="font-mono text-sm">
+                  <span className="flex items-center gap-1.5">
+                    {s.redacted && <Lock className="h-3 w-3 text-muted-foreground shrink-0" />}
+                    {s.key}
+                  </span>
+                </TableCell>
+                <TableCell className="text-sm">
+                  {s.redacted ? (
+                    <span className="text-muted-foreground font-mono">{s.hasValue ? MASKED_VALUE : "—"}</span>
+                  ) : (
+                    s.value
+                  )}
+                </TableCell>
                 <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
                 <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
                 <TableCell>
@@ -244,7 +334,7 @@ function SettingsPage() {
                 </TableCell>
               </TableRow>
             ))}
-            {nonModelSettings.length === 0 && (
+            {regularSettings.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="text-center text-muted-foreground py-8">No settings</TableCell>
               </TableRow>
@@ -252,6 +342,51 @@ function SettingsPage() {
           </TableBody>
         </Table>
       </div>
+
+      {runtimeSettings.length > 0 && (
+        <div className="rounded-xl border overflow-hidden">
+          <button
+            type="button"
+            className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            onClick={() => setRuntimeExpanded((v) => !v)}
+          >
+            {runtimeExpanded ? (
+              <ChevronDown className="h-4 w-4 shrink-0" />
+            ) : (
+              <ChevronRight className="h-4 w-4 shrink-0" />
+            )}
+            Runtime state ({runtimeSettings.length})
+          </button>
+          {runtimeExpanded && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[200px]">Key</TableHead>
+                  <TableHead>Value</TableHead>
+                  <TableHead className="w-[160px]">Updated</TableHead>
+                  <TableHead className="w-[120px]">By</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runtimeSettings.map((s) => (
+                  <TableRow key={s.key}>
+                    <TableCell className="font-mono text-sm">{s.key}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground font-mono truncate max-w-xs">{s.value}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="icon-sm" onClick={() => openEdit(s)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
@@ -274,10 +409,17 @@ function SettingsPage() {
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Value</label>
               <Input
-                placeholder="Setting value"
+                placeholder={editingRedacted ? "Enter new value to overwrite (leave blank to keep current)" : "Setting value"}
                 value={formValue}
                 onChange={(e) => setFormValue(e.target.value)}
+                type={editingRedacted ? "password" : "text"}
               />
+              {editingRedacted && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Lock className="h-3 w-3" />
+                  This is a secret field. Leave blank to keep the stored value unchanged.
+                </p>
+              )}
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>

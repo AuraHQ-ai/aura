@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const safePostMessageMock = vi.hoisted(() => vi.fn());
 const resolveSlackDestinationMock = vi.hoisted(() => vi.fn());
+const getSettingMock = vi.hoisted(() => vi.fn());
+const logErrorMock = vi.hoisted(() => vi.fn());
 const loggerMock = vi.hoisted(() => ({
   info: vi.fn(),
   warn: vi.fn(),
@@ -21,6 +23,26 @@ vi.mock("../tools/slack.js", () => ({
   resolveSlackDestination: resolveSlackDestinationMock,
 }));
 
+vi.mock("../lib/settings.js", () => ({
+  getSetting: getSettingMock,
+  setSetting: vi.fn(),
+  getAllSettings: vi.fn(async () => ({})),
+  getConfig: vi.fn(async (_key: string, fallback = "") => fallback),
+  getSettingJSON: vi.fn(async (_key: string, fallback: unknown = null) => fallback),
+}));
+
+vi.mock("../lib/error-logger.js", () => ({
+  logError: logErrorMock,
+  sanitizeErrorText: vi.fn((value: string | null | undefined) => value ?? ""),
+  flushLoggerDrops: vi.fn(),
+  resetErrorLoggerStateForTest: vi.fn(),
+}));
+
+/** Point the mocked settings table at specific key/value pairs (unset keys resolve to null). */
+function mockSettingsRows(rows: Record<string, string>) {
+  getSettingMock.mockImplementation(async (key: string) => rows[key] ?? null);
+}
+
 const originalFounderUserId = process.env.FOUNDER_USER_ID;
 const originalAuraOpsChannel = process.env.AURA_OPS_CHANNEL;
 
@@ -28,6 +50,7 @@ beforeEach(() => {
   delete process.env.FOUNDER_USER_ID;
   delete process.env.AURA_OPS_CHANNEL;
   vi.clearAllMocks();
+  getSettingMock.mockResolvedValue(null);
   safePostMessageMock.mockResolvedValue({ ok: true });
   resolveSlackDestinationMock.mockImplementation(
     async (_client: unknown, destination: string) =>
@@ -49,15 +72,55 @@ afterEach(() => {
 });
 
 describe("resolveOpsNotificationTarget fallback ladder", () => {
-  it("prefers AURA_OPS_CHANNEL over everything else", async () => {
+  it("prefers the aura_ops_channel setting over everything else, including env vars", async () => {
+    mockSettingsRows({
+      aura_ops_channel: "C_SETTINGS_OPS",
+      founder_user_id: "U_SETTINGS_FOUNDER",
+    });
+    process.env.AURA_OPS_CHANNEL = "C_ENV_OPS";
+    process.env.FOUNDER_USER_ID = "U_ENV_FOUNDER";
+
+    const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
+
+    await expect(resolveOpsNotificationTarget("U_REQUESTER")).resolves.toEqual({
+      kind: "ops_channel",
+      destination: "C_SETTINGS_OPS",
+    });
+  });
+
+  it("prefers AURA_OPS_CHANNEL over founder / requester targets when the setting is unset", async () => {
     process.env.AURA_OPS_CHANNEL = "C_OPS";
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
 
     const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
 
-    expect(resolveOpsNotificationTarget("U_REQUESTER")).toEqual({
+    await expect(resolveOpsNotificationTarget("U_REQUESTER")).resolves.toEqual({
       kind: "ops_channel",
       destination: "C_OPS",
+    });
+  });
+
+  it("prefers the founder_user_id setting over the FOUNDER_USER_ID env var", async () => {
+    mockSettingsRows({ founder_user_id: "U_SETTINGS_FOUNDER" });
+    process.env.FOUNDER_USER_ID = "U_ENV_FOUNDER";
+
+    const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
+
+    await expect(resolveOpsNotificationTarget("U_REQUESTER")).resolves.toEqual({
+      kind: "founder_dm",
+      destination: "U_SETTINGS_FOUNDER",
+    });
+  });
+
+  it("ignores whitespace-only settings rows and falls through the ladder", async () => {
+    mockSettingsRows({ aura_ops_channel: "   ", founder_user_id: "  " });
+    process.env.FOUNDER_USER_ID = "U_ENV_FOUNDER";
+
+    const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
+
+    await expect(resolveOpsNotificationTarget("U_REQUESTER")).resolves.toEqual({
+      kind: "founder_dm",
+      destination: "U_ENV_FOUNDER",
     });
   });
 
@@ -66,7 +129,7 @@ describe("resolveOpsNotificationTarget fallback ladder", () => {
 
     const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
 
-    expect(resolveOpsNotificationTarget("U_REQUESTER")).toEqual({
+    await expect(resolveOpsNotificationTarget("U_REQUESTER")).resolves.toEqual({
       kind: "founder_dm",
       destination: "U_FOUNDER",
     });
@@ -75,7 +138,7 @@ describe("resolveOpsNotificationTarget fallback ladder", () => {
   it("falls back to the requester DM as a last resort", async () => {
     const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
 
-    expect(resolveOpsNotificationTarget("U_REQUESTER")).toEqual({
+    await expect(resolveOpsNotificationTarget("U_REQUESTER")).resolves.toEqual({
       kind: "requester_dm",
       destination: "U_REQUESTER",
     });
@@ -84,9 +147,9 @@ describe("resolveOpsNotificationTarget fallback ladder", () => {
   it("keeps the system-owned (aura) skip semantics on the last-resort path", async () => {
     const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
 
-    expect(resolveOpsNotificationTarget("aura")).toBeNull();
-    expect(resolveOpsNotificationTarget(null)).toBeNull();
-    expect(resolveOpsNotificationTarget("  ")).toBeNull();
+    await expect(resolveOpsNotificationTarget("aura")).resolves.toBeNull();
+    await expect(resolveOpsNotificationTarget(null)).resolves.toBeNull();
+    await expect(resolveOpsNotificationTarget("  ")).resolves.toBeNull();
   });
 
   it("still resolves the ops channel for system-owned jobs", async () => {
@@ -94,9 +157,20 @@ describe("resolveOpsNotificationTarget fallback ladder", () => {
 
     const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
 
-    expect(resolveOpsNotificationTarget("aura")).toEqual({
+    await expect(resolveOpsNotificationTarget("aura")).resolves.toEqual({
       kind: "ops_channel",
       destination: "C_OPS",
+    });
+  });
+
+  it("still resolves the settings-configured ops channel for system-owned jobs", async () => {
+    mockSettingsRows({ aura_ops_channel: "C_SETTINGS_OPS" });
+
+    const { resolveOpsNotificationTarget } = await import("./job-notifications.js");
+
+    await expect(resolveOpsNotificationTarget("aura")).resolves.toEqual({
+      kind: "ops_channel",
+      destination: "C_SETTINGS_OPS",
     });
   });
 });
@@ -125,6 +199,49 @@ describe("sendJobOpsNotice", () => {
       }),
     );
     expect(loggerMock.warn).not.toHaveBeenCalled();
+    expect(logErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("posts to the settings-configured ops channel even when env vars point elsewhere", async () => {
+    mockSettingsRows({ aura_ops_channel: "C_SETTINGS_OPS" });
+    process.env.AURA_OPS_CHANNEL = "C_ENV_OPS";
+    process.env.FOUNDER_USER_ID = "U_ENV_FOUNDER";
+
+    const { sendJobOpsNotice } = await import("./job-notifications.js");
+    const result = await sendJobOpsNotice(notice);
+
+    expect(result).toEqual({ ok: true, target: "ops_channel" });
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "C_SETTINGS_OPS",
+    );
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "C_SETTINGS_OPS",
+        text: expect.stringContaining("`daily sync` (requested by <@U_REQUESTER>)"),
+      }),
+    );
+    expect(loggerMock.warn).not.toHaveBeenCalled();
+    expect(logErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("posts to the settings-configured founder DM when no ops channel is configured", async () => {
+    mockSettingsRows({ founder_user_id: "U_SETTINGS_FOUNDER" });
+    process.env.FOUNDER_USER_ID = "U_ENV_FOUNDER";
+
+    const { sendJobOpsNotice } = await import("./job-notifications.js");
+    const result = await sendJobOpsNotice(notice);
+
+    expect(result).toEqual({ ok: true, target: "founder_dm" });
+    expect(safePostMessageMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        channel: "D_U_SETTINGS_FOUNDER",
+        text: expect.stringContaining("<@U_REQUESTER>"),
+      }),
+    );
+    expect(logErrorMock).not.toHaveBeenCalled();
   });
 
   it("posts to the founder DM when only FOUNDER_USER_ID is configured", async () => {
@@ -161,12 +278,31 @@ describe("sendJobOpsNotice", () => {
     );
   });
 
+  it("writes an error_events row when the ladder falls back to the requester DM", async () => {
+    const { sendJobOpsNotice } = await import("./job-notifications.js");
+    await sendJobOpsNotice(notice);
+
+    expect(logErrorMock).toHaveBeenCalledTimes(1);
+    expect(logErrorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: "job_ops_notice_no_ops_destination",
+        errorMessage: expect.stringContaining("daily sync"),
+        context: expect.objectContaining({
+          jobId: "job-1",
+          jobName: "daily sync",
+          requestedBy: "U_REQUESTER",
+        }),
+      }),
+    );
+  });
+
   it("skips system-owned jobs entirely when no ops destination is configured", async () => {
     const { sendJobOpsNotice } = await import("./job-notifications.js");
     const result = await sendJobOpsNotice({ ...notice, requestedBy: "aura" });
 
     expect(result).toEqual({ ok: false, target: null });
     expect(safePostMessageMock).not.toHaveBeenCalled();
+    expect(logErrorMock).not.toHaveBeenCalled();
   });
 
   it("reports failure without throwing when Slack posting fails", async () => {

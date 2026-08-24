@@ -12,6 +12,7 @@ import {
   getModelCatalogResponse,
   type ModelOption,
 } from "../lib/model-catalog.js";
+import { LAST_RESORT_MODELS } from "../lib/ai.js";
 
 // ── Credential Definitions ───────────────────────────────────────────────────
 
@@ -639,10 +640,11 @@ export async function publishHomeTab(
       catalog.catalog.map((model) => [model.value, model.label]),
     );
 
-    const mainValue = currentSettings.model_main || catalog.defaults.main || "";
-    const fastValue = currentSettings.model_fast || catalog.defaults.fast || "";
-    const embeddingValue =
-      currentSettings.model_embedding || catalog.defaults.embedding || "";
+    const mainValue = currentSettings.model_main || LAST_RESORT_MODELS.main;
+    const fastValue = currentSettings.model_fast || LAST_RESORT_MODELS.fast;
+    const mediumValue = currentSettings.model_medium || LAST_RESORT_MODELS.medium;
+    const escalationValue = currentSettings.model_escalation || LAST_RESORT_MODELS.escalation;
+    const embeddingValue = currentSettings.model_embedding || LAST_RESORT_MODELS.embedding;
 
     const blocks: any[] = [
       {
@@ -683,6 +685,24 @@ export async function publishHomeTab(
           },
         },
         buildDropdown("select_model_fast", "Fast Model", catalog.fast, fastValue),
+        { type: "divider" },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*:newspaper: Medium Model*\nDefault tier for scheduled jobs — Sonnet-class balance of speed and quality.",
+          },
+        },
+        buildDropdown("select_model_medium", "Medium Model", catalog.medium, mediumValue),
+        { type: "divider" },
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "*:arrow_up: Escalation Model*\nSwapped in automatically when the main model is struggling mid-conversation.",
+          },
+        },
+        buildDropdown("select_model_escalation", "Escalation Model", catalog.escalation, escalationValue),
         { type: "divider" },
         {
           type: "section",
@@ -759,6 +779,8 @@ export async function publishHomeTab(
       // Read-only view
       const mainLabel = labelByValue.get(mainValue) || mainValue;
       const fastLabel = labelByValue.get(fastValue) || fastValue;
+      const mediumLabel = labelByValue.get(mediumValue) || mediumValue;
+      const escalationLabel = labelByValue.get(escalationValue) || escalationValue;
       const embeddingLabel = labelByValue.get(embeddingValue) || embeddingValue;
 
       blocks.push(
@@ -766,7 +788,7 @@ export async function publishHomeTab(
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `*:brain: Main Model:* ${mainLabel}\n*:zap: Fast Model:* ${fastLabel}\n*:mag: Embedding Model:* ${embeddingLabel}`,
+            text: `*:brain: Main Model:* ${mainLabel}\n*:zap: Fast Model:* ${fastLabel}\n*:newspaper: Medium Model:* ${mediumLabel}\n*:arrow_up: Escalation Model:* ${escalationLabel}\n*:mag: Embedding Model:* ${embeddingLabel}`,
           },
         },
       );
@@ -813,6 +835,8 @@ export async function publishHomeTab(
 export const ACTION_TO_SETTING: Record<string, string> = {
   select_model_main: "model_main",
   select_model_fast: "model_fast",
+  select_model_medium: "model_medium",
+  select_model_escalation: "model_escalation",
   select_model_embedding: "model_embedding",
   select_slack_task_display_mode: "slack_task_display_mode",
 };

@@ -7,7 +7,8 @@ import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext } from "../lib/tool.js";
 import { getCurrentTimeContext } from "../lib/temporal.js";
-import { buildStablePrefix } from "../personality/system-prompt.js";
+import { isJobModelCategory, type JobModelCategory } from "../lib/ai.js";
+import { buildStablePrefix, buildTaskPrefix } from "../personality/system-prompt.js";
 import {
   createConversationTrace,
   persistConversationInputs,
@@ -77,17 +78,105 @@ You are resuming a multi-step task. Your accumulated progress and context are be
 /**
  * Appended to both injected reply-routing prompts so playbooks that specify
  * silent success are not overridden by a forced "post your results" rule.
+ *
+ * The second half states the hard NO_OP sentinel contract (issue #1185):
+ * silent runs must be declared mechanically via the sentinel, not narrated.
  */
 export const SILENT_SUCCESS_CLAUSE =
-  " However, if your playbook or task instructions say to stay silent on success, or this run produced no user-facing deliverable, post NOTHING — do not post status updates, receipts, or confirmations that the job ran.";
+  " However, if your playbook or task instructions say to stay silent on success, or this run produced no user-facing deliverable, post NOTHING — do not post status updates, receipts, or confirmations that the job ran." +
+  " If your playbook says to stay silent on no-op/no-finding runs and this run has nothing to report: make ZERO Slack-posting tool calls (no send_channel_message, send_thread_reply, send_direct_message, draw_table, draw_chart, draw_cards, or upload_file to a channel) and output exactly `NO_OP` (optionally `NO_OP: <one-line reason>`) as your ENTIRE final message. Never post narration like 'Checked X, nothing new' — the `NO_OP` sentinel is how you report a quiet run.";
+
+// ── NO_OP sentinel (hard silent-run contract, issue #1185) ──────────────────
+
+/** Stored in result/lastResult/summary for a clean no-op run. */
+export const NO_OP_RESULT_MARKER = "No-op run: nothing to report";
+
+/**
+ * Trimmed final text must be exactly `NO_OP`, optionally followed by a
+ * one-line reason after a colon (`NO_OP: no new signups today`).
+ */
+const NO_OP_SENTINEL_RE = /^NO_OP(?::[ \t]*(.*))?$/;
+
+/** Tool calls that always produce user-visible Slack output. */
+const SLACK_POSTING_TOOL_NAMES = new Set([
+  "send_channel_message",
+  "send_thread_reply",
+  "send_direct_message",
+  "draw_table",
+  "draw_chart",
+  "draw_cards",
+]);
+
+type StepWithToolCalls = {
+  toolCalls?: ReadonlyArray<{ toolName: string; input?: unknown }>;
+};
+
+/**
+ * Detects the NO_OP sentinel in the model's final message. Sentinel-only
+ * contract: narration prose ("Checked X, nothing new") is never treated as a
+ * no-op declaration.
+ */
+export function parseNoOpSentinel(
+  text: string | null | undefined,
+): { reason: string | null } | null {
+  const trimmed = (text ?? "").trim();
+  const match = trimmed.match(NO_OP_SENTINEL_RE);
+  if (!match) return null;
+  const reason = (match[1] ?? "").trim();
+  return { reason: reason ? reason.slice(0, 200) : null };
+}
+
+/**
+ * Returns the names of Slack-posting tool calls made during generation.
+ * `upload_file` counts when it targets a channel — explicitly via its input,
+ * or implicitly through the job's channel (the tool falls back to
+ * context.channelId when no channel is passed).
+ */
+export function findSlackPostingToolCalls(
+  steps: ReadonlyArray<StepWithToolCalls>,
+  fallbackChannelId?: string | null,
+): string[] {
+  const postingCalls: string[] = [];
+  for (const step of steps) {
+    for (const toolCall of step.toolCalls ?? []) {
+      if (SLACK_POSTING_TOOL_NAMES.has(toolCall.toolName)) {
+        postingCalls.push(toolCall.toolName);
+      } else if (toolCall.toolName === "upload_file") {
+        const channel = (toolCall.input as { channel?: unknown } | null | undefined)?.channel;
+        const targetsChannel =
+          (typeof channel === "string" && channel.length > 0) || !!fallbackChannelId;
+        if (targetsChannel) postingCalls.push(toolCall.toolName);
+      }
+    }
+  }
+  return postingCalls;
+}
 
 // ── Continuation Detection ───────────────────────────────────────────────────
 
 const CONTINUE_TAG_RE = /^\[CONTINUE:([^\]]+)\]\s*/;
 
-function parseContinuationTag(description: string): string | null {
+/**
+ * Optional depth suffix on the tag topic (issue #1320):
+ * `[CONTINUE:turn-deadline-abc123:d2]` → topic `turn-deadline-abc123`,
+ * depth 2. Tags without the suffix (checkpoint_plan, legacy jobs) are
+ * depth 1 — they ARE continuations, just the first in their chain.
+ */
+const CONTINUATION_DEPTH_RE = /^(.+):d(\d+)$/;
+
+export interface ContinuationTag {
+  topic: string;
+  depth: number;
+}
+
+export function parseContinuationTag(description: string): ContinuationTag | null {
   const match = description.match(CONTINUE_TAG_RE);
-  return match ? match[1] : null;
+  if (!match) return null;
+  const depthMatch = match[1].match(CONTINUATION_DEPTH_RE);
+  if (depthMatch) {
+    return { topic: depthMatch[1], depth: Math.max(1, Number(depthMatch[2])) };
+  }
+  return { topic: match[1], depth: 1 };
 }
 
 async function loadPlanNote(topic: string): Promise<string | null> {
@@ -159,8 +248,8 @@ export async function executeJob(
       throw new Error("Failed to create job execution trace");
     }
 
-    const planTopic = parseContinuationTag(job.description);
-    const isContinuation = planTopic !== null;
+    const continuationTag = parseContinuationTag(job.description);
+    const isContinuation = continuationTag !== null;
     const isRecurring = !!job.cronSchedule || !!job.frequencyConfig;
 
     const effectiveTrigger = isContinuation && trigger === "heartbeat" ? "continuation" : trigger;
@@ -180,23 +269,34 @@ export async function executeJob(
         ? `\n\nAuthorized credential IDs for this job: ${credentialIds.join(", ")}`
         : "";
 
-    const stablePrefix = await buildStablePrefix();
+    // Scoped execution (issue #1302): prompt_mode 'task' skips the full
+    // personality prefix; model routes to a catalog category; env_allowlist
+    // narrows the sandbox env (applied below via executionContext + script layer).
+    // Jobs default to 'medium' (Sonnet-class); frontier 'main' is opt-in.
+    const isTaskMode = job.promptMode === "task";
+    const modelCategory: JobModelCategory = isJobModelCategory(job.model)
+      ? job.model
+      : "medium";
+    const envAllowlist = job.envAllowlist ?? undefined;
+
+    const stablePrefix = isTaskMode ? buildTaskPrefix() : await buildStablePrefix();
     const timeContext = getCurrentTimeContext(job.timezone);
 
-    if (isContinuation) {
-      const planContent = await loadPlanNote(planTopic);
+    if (continuationTag) {
+      const planContent = await loadPlanNote(continuationTag.topic);
       const nextSteps = job.description.replace(CONTINUE_TAG_RE, "");
 
       prompt = planContent
-        ? `Plan note "${planTopic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
-        : `Plan note "${planTopic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
+        ? `Plan note "${continuationTag.topic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
+        : `Plan note "${continuationTag.topic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
 
       systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + CONTINUATION_SPECIFIC_INSTRUCTIONS;
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
         executionId,
-        planTopic,
+        planTopic: continuationTag.topic,
+        continuationDepth: continuationTag.depth,
         hasPlanNote: !!planContent,
         credentialCount: credentialIds.length,
       });
@@ -219,6 +319,9 @@ export async function executeJob(
         hasPlaybook: !!job.playbook,
         trigger: effectiveTrigger,
         credentialCount: credentialIds.length,
+        modelCategory,
+        promptMode: isTaskMode ? "task" : "full",
+        envAllowlistSize: envAllowlist?.length ?? null,
       });
     }
 
@@ -234,9 +337,15 @@ export async function executeJob(
 
     if (job.script) {
       try {
-        const { getOrCreateSandbox, truncateOutput, getSandboxEnvs } = await import("../lib/sandbox.js");
+        const { getOrCreateSandbox, truncateOutput, getSandboxEnvs, filterEnvsByAllowlist } =
+          await import("../lib/sandbox.js");
         const sandbox = await getOrCreateSandbox();
-        const envs = await getSandboxEnvs(job.requestedBy);
+        // Script layer runs outside executionContext.run, so apply the job's
+        // env allowlist explicitly here (narrows, never widens).
+        const envs = filterEnvsByAllowlist(
+          await getSandboxEnvs(job.requestedBy),
+          envAllowlist ?? null,
+        );
 
         const scriptResult = await sandbox.commands.run(job.script, {
           timeoutMs: 120_000,
@@ -385,6 +494,10 @@ export async function executeJob(
       },
       systemPrompt,
       invocationId,
+      modelCategory,
+      // Depth of the chain this job belongs to (issue #1320): a hard-deadline
+      // respawn from inside this run continues at depth + 1, capped at 3.
+      continuationDepth: continuationTag?.depth ?? 0,
     });
 
     // Create a conversation trace for this job execution
@@ -408,6 +521,8 @@ export async function executeJob(
         triggerType: "scheduled_job",
         callingUserId: job.requestedBy,
         jobId: job.id,
+        envAllowlist,
+        jobExecutionId: executionId,
       },
       () =>
         withTrace(
@@ -426,6 +541,31 @@ export async function executeJob(
     );
 
     const { text, steps, totalUsage: usage } = generateResult;
+
+    // NO_OP sentinel contract (issue #1185): a clean no-op (sentinel + zero
+    // Slack-posting tool calls) completes normally but records an honest
+    // marker instead of narration. Sentinel + Slack posts is a contract
+    // violation: log it so it's measurable; never suppress or delete posts.
+    const noOpSentinel = parseNoOpSentinel(text);
+    let isCleanNoOp = false;
+    if (noOpSentinel) {
+      const postingToolCalls = findSlackPostingToolCalls(steps, job.channelId);
+      isCleanNoOp = postingToolCalls.length === 0;
+      if (!isCleanNoOp) {
+        logger.warn(
+          "executeJob: NO_OP sentinel contract violation — model posted to Slack and declared NO_OP",
+          {
+            jobId,
+            executionId,
+            jobName: job.name,
+            postingToolCalls,
+          },
+        );
+      }
+    }
+    const noOpMarker = noOpSentinel?.reason
+      ? `${NO_OP_RESULT_MARKER} (${noOpSentinel.reason})`
+      : NO_OP_RESULT_MARKER;
 
     // Phase 2a: persist assistant steps now that generate succeeded
     const stepModelIds = getStepModelIds();
@@ -478,11 +618,13 @@ export async function executeJob(
           ? { steps: serializedSteps, scratchpad: scratchpadContents }
           : serializedSteps,
         tokenUsage,
-        summary: (text || "").substring(0, 500) || null,
+        summary: isCleanNoOp ? noOpMarker.substring(0, 500) : (text || "").substring(0, 500) || null,
       })
       .where(eq(jobExecutions.id, executionId));
 
-    const result = (text || "Job completed (no text output)").substring(0, 2000);
+    const result = (
+      isCleanNoOp ? noOpMarker : text || "Job completed (no text output)"
+    ).substring(0, 2000);
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
     const isNewDay = job.lastExecutionDate !== todayStr;
@@ -534,6 +676,13 @@ export async function executeJob(
       output: {
         type: "llm",
         final_message: text || null,
+        ...(isCleanNoOp
+          ? {
+              no_op: true,
+              ...(noOpSentinel?.reason ? { no_op_reason: noOpSentinel.reason } : {}),
+            }
+          : {}),
+        ...(noOpSentinel && !isCleanNoOp ? { no_op_violation: true } : {}),
         scratchpad: scratchpadContents ?? null,
         ...(scriptExecutionOutput ? { script: scriptExecutionOutput } : {}),
       },
