@@ -17,7 +17,7 @@ vi.mock("./logger.js", () => ({
 import {
   setAssistantThreadTitle,
   setStatusUnsupportedChannels,
-  trySetAssistantThreadStatus,
+  trySetAgentSessionStatus,
 } from "./slack-status.js";
 
 function makeClient() {
@@ -32,15 +32,15 @@ beforeEach(() => {
   setStatusUnsupportedChannels.clear();
 });
 
-describe("trySetAssistantThreadStatus", () => {
-  it("calls raw apiCall agents.sessions.setStatus with channel/thread/status", async () => {
+describe("trySetAgentSessionStatus", () => {
+  it("calls raw apiCall agents.sessions.setStatus with an enum status", async () => {
     const { client, asWebClient } = makeClient();
 
-    await trySetAssistantThreadStatus({
+    await trySetAgentSessionStatus({
       client: asWebClient,
       channelId: "D123",
       threadTs: "1724264405.531769",
-      status: "is thinking...",
+      status: "processing",
     });
 
     expect(client.apiCall).toHaveBeenCalledExactlyOnceWith(
@@ -48,7 +48,65 @@ describe("trySetAssistantThreadStatus", () => {
       {
         channel_id: "D123",
         thread_ts: "1724264405.531769",
-        status: "is thinking...",
+        status: "processing",
+      },
+    );
+  });
+
+  it("accepts every value of the agent_view status enum", async () => {
+    const { client, asWebClient } = makeClient();
+
+    for (const status of ["suspended", "processing", "active", "closed"] as const) {
+      await trySetAgentSessionStatus({
+        client: asWebClient,
+        channelId: "D123",
+        threadTs: "1.2",
+        status,
+      });
+    }
+
+    expect(client.apiCall).toHaveBeenCalledTimes(4);
+    expect(client.apiCall).toHaveBeenLastCalledWith("agents.sessions.setStatus", {
+      channel_id: "D123",
+      thread_ts: "1.2",
+      status: "closed",
+    });
+  });
+
+  it("rejects free-text statuses at compile time (agent_view enum contract)", async () => {
+    const { client, asWebClient } = makeClient();
+
+    await trySetAgentSessionStatus({
+      client: asWebClient,
+      channelId: "D123",
+      threadTs: "1.2",
+      // @ts-expect-error — free-text statuses were an assistant_view concept;
+      // agents.sessions.setStatus rejects them with invalid_arguments.
+      status: "Thinking...",
+    });
+  });
+
+  it("no longer accepts loadingMessages (assistant-only concept, deleted from the interface)", async () => {
+    const { client, asWebClient } = makeClient();
+
+    await trySetAgentSessionStatus({
+      client: asWebClient,
+      channelId: "D123",
+      threadTs: "1.2",
+      status: "processing",
+      // @ts-expect-error — loading_messages does not exist under agent_view
+      // and must not be forwardable through this helper.
+      loadingMessages: ["one", "two"],
+    });
+
+    // Even if forced past the compiler, nothing beyond the documented
+    // payload fields is forwarded to the API.
+    expect(client.apiCall).toHaveBeenCalledExactlyOnceWith(
+      "agents.sessions.setStatus",
+      {
+        channel_id: "D123",
+        thread_ts: "1.2",
+        status: "processing",
       },
     );
   });
@@ -56,10 +114,10 @@ describe("trySetAssistantThreadStatus", () => {
   it("skips when threadTs is missing", async () => {
     const { client, asWebClient } = makeClient();
 
-    await trySetAssistantThreadStatus({
+    await trySetAgentSessionStatus({
       client: asWebClient,
       channelId: "D123",
-      status: "working",
+      status: "processing",
     });
 
     expect(client.apiCall).not.toHaveBeenCalled();
@@ -68,15 +126,15 @@ describe("trySetAssistantThreadStatus", () => {
   it("soft-fails and disables the channel on error", async () => {
     const { client, asWebClient } = makeClient();
     client.apiCall.mockRejectedValueOnce(
-      new Error("An API error occurred: channel_not_found"),
+      new Error("An API error occurred: invalid_arguments"),
     );
 
     await expect(
-      trySetAssistantThreadStatus({
+      trySetAgentSessionStatus({
         client: asWebClient,
         channelId: "DFAIL",
         threadTs: "1.2",
-        status: "working",
+        status: "processing",
       }),
     ).resolves.toBeUndefined();
 
@@ -87,11 +145,11 @@ describe("trySetAssistantThreadStatus", () => {
     );
 
     // Subsequent calls in the disabled channel are skipped entirely.
-    await trySetAssistantThreadStatus({
+    await trySetAgentSessionStatus({
       client: asWebClient,
       channelId: "DFAIL",
       threadTs: "1.3",
-      status: "still working",
+      status: "active",
     });
     expect(client.apiCall).toHaveBeenCalledTimes(1);
   });

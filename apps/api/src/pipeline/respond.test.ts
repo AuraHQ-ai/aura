@@ -33,10 +33,6 @@ vi.mock("../lib/settings.js", () => ({
   getSettingJSON: vi.fn().mockResolvedValue("timeline"),
 }));
 
-vi.mock("../lib/slack-status.js", () => ({
-  trySetAssistantThreadStatus: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock("../lib/logger.js", () => ({
   logger: {
     info: vi.fn(),
