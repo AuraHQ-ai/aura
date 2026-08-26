@@ -31,6 +31,7 @@ import type { ModelMessage } from "ai";
 import type { FileContentPart } from "../src/lib/files.js";
 import type { MessageContext } from "../src/pipeline/context.js";
 import type { ToolCallRecord } from "../src/pipeline/respond.js";
+import type { AnyChunk } from "../src/lib/slack-chunks.js";
 
 export interface SlackRespondWorkflowInput {
   /** Prompt layers (already assembled by the pipeline). */
@@ -375,10 +376,26 @@ async function runSlackAgentStep(
     }
   }
 
-  async function append(chunks: Array<Record<string, unknown>>): Promise<void> {
+  async function append(rawChunks: Array<AnyChunk | Record<string, unknown>>): Promise<void> {
     if (state.streamingFailed) return;
     if (!state.streamTs) await openStream();
     if (!state.streamTs) return;
+
+    // Coerce every chunk to the exact server schema (or drop it) BEFORE the
+    // call: one malformed element rejects the whole batch with
+    // `invalid_arguments … [json-pointer:/chunks/N]` and the text in that
+    // batch never reaches Slack (issue #1348).
+    const { sanitizeChunks, markdownOnly, describeChunks, slackErrorDetail, isChunkSchemaRejection } =
+      await import("../src/lib/slack-chunks.js");
+    const { chunks, dropped } = sanitizeChunks(rawChunks);
+    if (dropped.length > 0) {
+      logger.warn("slackRespondWorkflow: dropped malformed chunk(s) before append", {
+        channelId: input.channelId,
+        dropped: dropped.map((d) => ({ reason: d.reason, chunk: describeChunks(d.chunk, 300) })),
+      });
+    }
+    if (chunks.length === 0) return;
+
     try {
       await slackClient.apiCall("chat.appendStream", {
         channel: input.channelId,
@@ -388,6 +405,53 @@ async function runSlackAgentStep(
       state.charCount += JSON.stringify(chunks).length;
     } catch (error: any) {
       const code = error?.data?.error;
+      if (isChunkSchemaRejection(error)) {
+        // Schema rejection is per-batch and atomic: retry the text-only
+        // subset so the words still land, record the exact rejected payload
+        // in error_events (this path used to be a warn-only black hole), and
+        // keep streaming.
+        const slackDetail = slackErrorDetail(error);
+        const rejectedPayload = describeChunks(chunks);
+        const textOnly = markdownOnly(chunks);
+        let textRecovered = false;
+        if (textOnly.length > 0 && textOnly.length < chunks.length) {
+          try {
+            await slackClient.apiCall("chat.appendStream", {
+              channel: input.channelId,
+              ts: state.streamTs,
+              chunks: textOnly,
+            });
+            state.charCount += JSON.stringify(textOnly).length;
+            textRecovered = true;
+          } catch {
+            // fall through — logged below
+          }
+        }
+        logger.warn("slackRespondWorkflow: append rejected by Slack schema validation", {
+          channelId: input.channelId,
+          code,
+          slackDetail,
+          rejectedPayload,
+          textRecovered,
+        });
+        const { logError } = await import("../src/lib/error-logger.js");
+        logError({
+          errorName: code === "invalid_chunks" ? "InvalidChunks" : "InvalidArguments",
+          errorMessage: slackDetail
+            ? `${code} on stream append: ${slackDetail}`
+            : error?.message || `${code} on stream append`,
+          errorCode: code || "invalid_arguments",
+          channelId: input.channelId,
+          userId: input.userId,
+          context: {
+            path: "slack-respond-workflow",
+            chunkTypes: chunks.map((c) => c.type),
+            rejectedPayload,
+            textRecovered,
+          },
+        });
+        return;
+      }
       if (code === "message_not_in_streaming_state" || code === "msg_too_long") {
         // Known seam: the stream session expired (e.g. resume after a kill)
         // or overflowed — continue in a new bubble.
@@ -711,10 +775,14 @@ async function finalizeSlackRespond(params: {
         ts: streamState.streamTs,
       };
       if (outcome === "superseded") {
+        // "stopped" = the user pressed Stop (agent_session_stopped) — Slack
+        // has already halted the stream, so both calls are best effort.
+        const { getSupersedeReason, interruptionNote } = await import("../src/lib/invocation-lock.js");
+        const note = interruptionNote(await getSupersedeReason(input.channelId, input.threadTs));
         await slackClient.apiCall("chat.appendStream", {
           channel: input.channelId,
           ts: streamState.streamTs,
-          chunks: [{ type: "markdown_text", text: "\n\n_(interrupted by a newer message)_" }],
+          chunks: [{ type: "markdown_text", text: `\n\n${note}` }],
         }).catch(() => {});
       }
       await slackClient.apiCall("chat.stopStream", stopParams);

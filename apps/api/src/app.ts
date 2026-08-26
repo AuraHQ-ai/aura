@@ -303,6 +303,52 @@ app.post("/api/slack/events", async (c) => {
       return c.json({ ok: true });
     }
 
+    // Stop button (agent_view). Slack has already halted the streaming
+    // message(s) in `event.streaming_message_ts`; it is OUR job to stop the
+    // generation and to move the session out of `processing` — the status
+    // does not update by itself (https://docs.slack.dev/reference/events/agent_session_stopped).
+    // Requires the `agent_session_stopped` bot event subscription in the app
+    // manifest (see docs/slack-agent-view-rollout.md).
+    if (event.type === "agent_session_stopped") {
+      const stopPromise = (async () => {
+        const channelId: string | undefined = event.channel;
+        const threadTs: string | undefined = event.thread_ts;
+        if (!channelId || !threadTs) {
+          logger.warn("agent_session_stopped without channel/thread_ts", { event });
+          return;
+        }
+        try {
+          const { stopInvocation } = await import("./lib/invocation-lock.js");
+          const displaced = await stopInvocation(
+            channelId,
+            threadTs,
+            String(event.event_ts ?? threadTs),
+            process.env.DEFAULT_WORKSPACE_ID || "default",
+          );
+          logger.info("agent_session_stopped handled", {
+            channelId,
+            threadTs,
+            userId: event.user,
+            displaced,
+            haltedStreams: event.streaming_message_ts,
+          });
+        } catch (err) {
+          recordError("agent_session_stopped", err, { userId: event.user, channelId });
+        }
+        // Clear the loading UX regardless — the turn will unwind on its next
+        // step, but the user pressed Stop and expects the spinner gone now.
+        const { trySetAgentSessionStatus } = await import("./lib/slack-status.js");
+        await trySetAgentSessionStatus({
+          client: slackClient,
+          channelId,
+          threadTs,
+          status: "active",
+        });
+      })();
+      waitUntil(stopPromise);
+      return c.json({ ok: true });
+    }
+
     // Handle App Home opened
     if (event.type === "app_home_opened") {
       // Agent-view entry point for thread bootstrap (Messages tab only).
