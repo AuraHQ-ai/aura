@@ -180,7 +180,7 @@ Non-fatal chunk shapes (e.g. `plan`, `url_source`, `blocks`) are skipped rather 
 
 ### setStatus shimmer
 
-While Aura reasons, an assistant-thread status is shown via `assistant.threads.setStatus` (e.g. "Thinking...", "Thinking deeply..."). Channels where the workspace lacks permission are cached in-process on first failure and skipped on subsequent calls to avoid log spam and repeated retries.
+While Aura reasons, an agent-session status is shown via `agents.sessions.setStatus` (e.g. "Thinking...", "Thinking deeply..."). Channels where the workspace lacks permission are cached in-process on first failure and skipped on subsequent calls to avoid log spam and repeated retries.
 
 ## Multi-Tenancy
 
