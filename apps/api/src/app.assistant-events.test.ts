@@ -180,139 +180,79 @@ async function postSlackEvent(event: Record<string, unknown>) {
   return response;
 }
 
-describe("assistant thread bootstrap wiring (SLACK_AGENT_VIEW dual-path)", () => {
+describe("agent-view thread bootstrap wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.waitUntilPromises.length = 0;
-    delete process.env.SLACK_AGENT_VIEW;
     mocks.bootstrapAssistantThreadMock.mockResolvedValue(undefined);
     mocks.publishHomeTabMock.mockResolvedValue(undefined);
   });
 
-  describe("flag off (default)", () => {
-    it("assistant_thread_started triggers the thread bootstrap", async () => {
-      const response = await postSlackEvent({
-        type: "assistant_thread_started",
-        assistant_thread: {
-          channel_id: "D123",
-          thread_ts: "1724264405.531769",
-        },
-      });
-
-      expect(response.status).toBe(200);
-      expect(
-        mocks.bootstrapAssistantThreadMock,
-      ).toHaveBeenCalledExactlyOnceWith({
-        client: expect.anything(),
-        channelId: "D123",
-        threadTs: "1724264405.531769",
-      });
+  it("assistant_thread_started is acked without bootstrapping (event retired under agent view)", async () => {
+    const response = await postSlackEvent({
+      type: "assistant_thread_started",
+      assistant_thread: {
+        channel_id: "D123",
+        thread_ts: "1724264405.531769",
+      },
     });
 
-    it("app_home_opened (messages tab) does NOT bootstrap; home tab still published", async () => {
-      const response = await postSlackEvent({
-        type: "app_home_opened",
-        user: "U123",
-        channel: "D123",
-        tab: "messages",
-      });
-
-      expect(response.status).toBe(200);
-      expect(mocks.bootstrapAssistantThreadMock).not.toHaveBeenCalled();
-      expect(mocks.publishHomeTabMock).toHaveBeenCalledExactlyOnceWith(
-        expect.anything(),
-        "U123",
-      );
-    });
-
-    it("bootstrap failures are recorded, never thrown", async () => {
-      mocks.bootstrapAssistantThreadMock.mockRejectedValueOnce(
-        new Error("slack down"),
-      );
-
-      const response = await postSlackEvent({
-        type: "assistant_thread_started",
-        assistant_thread: { channel_id: "D123", thread_ts: "1.2" },
-      });
-
-      expect(response.status).toBe(200);
-      expect(mocks.recordErrorMock).toHaveBeenCalledWith(
-        "assistant_thread_started",
-        expect.any(Error),
-      );
-    });
+    expect(response.status).toBe(200);
+    expect(mocks.bootstrapAssistantThreadMock).not.toHaveBeenCalled();
+    expect(mocks.publishHomeTabMock).not.toHaveBeenCalled();
   });
 
-  describe("flag on", () => {
-    beforeEach(() => {
-      process.env.SLACK_AGENT_VIEW = "on";
+  it("app_home_opened (messages tab) triggers the thread bootstrap; home tab still published", async () => {
+    const response = await postSlackEvent({
+      type: "app_home_opened",
+      user: "U123",
+      channel: "D123",
+      tab: "messages",
     });
 
-    it("assistant_thread_started does NOT bootstrap (event retired under agent view)", async () => {
-      const response = await postSlackEvent({
-        type: "assistant_thread_started",
-        assistant_thread: {
-          channel_id: "D123",
-          thread_ts: "1724264405.531769",
-        },
-      });
+    expect(response.status).toBe(200);
+    expect(
+      mocks.bootstrapAssistantThreadMock,
+    ).toHaveBeenCalledExactlyOnceWith({
+      client: expect.anything(),
+      channelId: "D123",
+    });
+    expect(mocks.publishHomeTabMock).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      "U123",
+    );
+  });
 
-      expect(response.status).toBe(200);
-      expect(mocks.bootstrapAssistantThreadMock).not.toHaveBeenCalled();
+  it("app_home_opened for other tabs does NOT bootstrap", async () => {
+    const response = await postSlackEvent({
+      type: "app_home_opened",
+      user: "U123",
+      channel: "D123",
+      tab: "home",
     });
 
-    it("app_home_opened (messages tab) triggers the thread bootstrap; home tab still published", async () => {
-      const response = await postSlackEvent({
-        type: "app_home_opened",
-        user: "U123",
-        channel: "D123",
-        tab: "messages",
-      });
+    expect(response.status).toBe(200);
+    expect(mocks.bootstrapAssistantThreadMock).not.toHaveBeenCalled();
+    expect(mocks.publishHomeTabMock).toHaveBeenCalledTimes(1);
+  });
 
-      expect(response.status).toBe(200);
-      expect(
-        mocks.bootstrapAssistantThreadMock,
-      ).toHaveBeenCalledExactlyOnceWith({
-        client: expect.anything(),
-        channelId: "D123",
-      });
-      expect(mocks.publishHomeTabMock).toHaveBeenCalledExactlyOnceWith(
-        expect.anything(),
-        "U123",
-      );
+  it("bootstrap failures are recorded, never thrown", async () => {
+    mocks.bootstrapAssistantThreadMock.mockRejectedValueOnce(
+      new Error("slack down"),
+    );
+
+    const response = await postSlackEvent({
+      type: "app_home_opened",
+      user: "U123",
+      channel: "D123",
+      tab: "messages",
     });
 
-    it("app_home_opened for other tabs does NOT bootstrap", async () => {
-      const response = await postSlackEvent({
-        type: "app_home_opened",
-        user: "U123",
-        channel: "D123",
-        tab: "home",
-      });
-
-      expect(response.status).toBe(200);
-      expect(mocks.bootstrapAssistantThreadMock).not.toHaveBeenCalled();
-      expect(mocks.publishHomeTabMock).toHaveBeenCalledTimes(1);
-    });
-
-    it("bootstrap failures are recorded, never thrown", async () => {
-      mocks.bootstrapAssistantThreadMock.mockRejectedValueOnce(
-        new Error("slack down"),
-      );
-
-      const response = await postSlackEvent({
-        type: "app_home_opened",
-        user: "U123",
-        channel: "D123",
-        tab: "messages",
-      });
-
-      expect(response.status).toBe(200);
-      expect(mocks.recordErrorMock).toHaveBeenCalledWith(
-        "app_home_opened_bootstrap",
-        expect.any(Error),
-        { userId: "U123" },
-      );
-    });
+    expect(response.status).toBe(200);
+    expect(mocks.recordErrorMock).toHaveBeenCalledWith(
+      "app_home_opened_bootstrap",
+      expect.any(Error),
+      { userId: "U123" },
+    );
   });
 });

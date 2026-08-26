@@ -344,11 +344,6 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       channelId: context.channelId,
       threadTs: replyThreadTs,
       status: "Thinking...",
-      loadingMessages: [
-        "Gathering context...",
-        "Searching memories...",
-        "Pulling it together...",
-      ],
     });
 
     // 4b. Download files if the message has attachments. Voice notes produce
@@ -1206,8 +1201,7 @@ async function setInitialDmThreadTitle(params: {
       assistantResponse,
     });
     if (!title) return;
-    // Branches on SLACK_AGENT_VIEW: assistant.threads.setTitle (off) vs
-    // agents.sessions.rename via raw apiCall (on). Soft-fail semantics are
+    // agents.sessions.rename via raw apiCall. Soft-fail semantics are
     // preserved by the surrounding catch.
     await setAssistantThreadTitle({ client, channelId, threadTs, title });
     logger.info("Set initial DM thread title", { title, channelId });
@@ -1249,8 +1243,7 @@ async function maybeUpdateDmThreadTitle(params: {
       assistantResponse,
     });
     if (newTitle) {
-      // Branches on SLACK_AGENT_VIEW: assistant.threads.setTitle (off) vs
-      // agents.sessions.rename via raw apiCall (on). Soft-fail semantics are
+      // agents.sessions.rename via raw apiCall. Soft-fail semantics are
       // preserved by the surrounding catch.
       await setAssistantThreadTitle({
         client,
