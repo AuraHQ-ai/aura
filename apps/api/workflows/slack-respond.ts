@@ -775,10 +775,14 @@ async function finalizeSlackRespond(params: {
         ts: streamState.streamTs,
       };
       if (outcome === "superseded") {
+        // "stopped" = the user pressed Stop (agent_session_stopped) — Slack
+        // has already halted the stream, so both calls are best effort.
+        const { getSupersedeReason, interruptionNote } = await import("../src/lib/invocation-lock.js");
+        const note = interruptionNote(await getSupersedeReason(input.channelId, input.threadTs));
         await slackClient.apiCall("chat.appendStream", {
           channel: input.channelId,
           ts: streamState.streamTs,
-          chunks: [{ type: "markdown_text", text: "\n\n_(interrupted by a newer message)_" }],
+          chunks: [{ type: "markdown_text", text: `\n\n${note}` }],
         }).catch(() => {});
       }
       await slackClient.apiCall("chat.stopStream", stopParams);

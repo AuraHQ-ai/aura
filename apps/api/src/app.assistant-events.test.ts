@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   bootstrapAssistantThreadMock: vi.fn(),
   publishHomeTabMock: vi.fn(),
   recordErrorMock: vi.fn(),
+  stopInvocationMock: vi.fn(),
+  trySetAgentSessionStatusMock: vi.fn(),
+  runPipelineMock: vi.fn(),
   waitUntilPromises: [] as Array<Promise<unknown>>,
 }));
 
@@ -60,7 +63,21 @@ vi.mock("./routes/dashboard/index.js", async () => {
 });
 
 vi.mock("./pipeline/index.js", () => ({
-  runPipeline: vi.fn(),
+  runPipeline: mocks.runPipelineMock,
+}));
+
+vi.mock("./lib/invocation-lock.js", () => ({
+  stopInvocation: mocks.stopInvocationMock,
+  getSupersedeReason: vi.fn(async () => "stopped"),
+  interruptionNote: vi.fn(() => "_[stopped]_"),
+  claimInvocation: vi.fn(),
+  isInvocationCurrent: vi.fn(async () => true),
+}));
+
+vi.mock("./lib/slack-status.js", () => ({
+  trySetAgentSessionStatus: mocks.trySetAgentSessionStatusMock,
+  setAssistantThreadTitle: vi.fn(),
+  setStatusUnsupportedChannels: new Set<string>(),
 }));
 
 vi.mock("./slack/home.js", () => ({
@@ -254,5 +271,71 @@ describe("agent-view thread bootstrap wiring", () => {
       expect.any(Error),
       { userId: "U123" },
     );
+  });
+});
+
+describe("agent_session_stopped (Stop button)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.waitUntilPromises.length = 0;
+    mocks.stopInvocationMock.mockResolvedValue(true);
+    mocks.trySetAgentSessionStatusMock.mockResolvedValue(undefined);
+  });
+
+  it("stops the running invocation, clears the session status, and never hits the pipeline", async () => {
+    const response = await postSlackEvent({
+      type: "agent_session_stopped",
+      channel: "D0AFEC7BEMP",
+      thread_ts: "1787785660.512159",
+      event_ts: "1787785700.000100",
+      user: "U0678NQJ2",
+      streaming_message_ts: ["1787785661.000200"],
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.stopInvocationMock).toHaveBeenCalledExactlyOnceWith(
+      "D0AFEC7BEMP",
+      "1787785660.512159",
+      "1787785700.000100",
+      "default",
+    );
+    expect(mocks.trySetAgentSessionStatusMock).toHaveBeenCalledExactlyOnceWith({
+      client: expect.anything(),
+      channelId: "D0AFEC7BEMP",
+      threadTs: "1787785660.512159",
+      status: "active",
+    });
+    expect(mocks.runPipelineMock).not.toHaveBeenCalled();
+    expect(mocks.recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("still clears the session status when stopping the lock fails", async () => {
+    mocks.stopInvocationMock.mockRejectedValueOnce(new Error("db down"));
+
+    const response = await postSlackEvent({
+      type: "agent_session_stopped",
+      channel: "D0AFEC7BEMP",
+      thread_ts: "1787785660.512159",
+      event_ts: "1787785700.000100",
+      user: "U0678NQJ2",
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.recordErrorMock).toHaveBeenCalledWith(
+      "agent_session_stopped",
+      expect.any(Error),
+      expect.objectContaining({ channelId: "D0AFEC7BEMP" }),
+    );
+    expect(mocks.trySetAgentSessionStatusMock).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "active" }),
+    );
+  });
+
+  it("acks and does nothing without channel/thread_ts", async () => {
+    const response = await postSlackEvent({ type: "agent_session_stopped", user: "U0678NQJ2" });
+    expect(response.status).toBe(200);
+    expect(mocks.stopInvocationMock).not.toHaveBeenCalled();
+    expect(mocks.trySetAgentSessionStatusMock).not.toHaveBeenCalled();
+    expect(mocks.runPipelineMock).not.toHaveBeenCalled();
   });
 });

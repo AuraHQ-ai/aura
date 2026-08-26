@@ -48,3 +48,39 @@ guarantees `"active"` at end of turn (finally-style, on success and error
 paths, in both the in-process and durable-workflow respond paths). The
 mid-stream `"Thinking deeply..."` update was removed — there is no
 expressible equivalent through the enum.
+
+## Stop button (Aug 27, 2026) — manifest change REQUIRED
+
+Under `agent_view` the Stop button in the Slack UI does **not** cancel anything
+by itself. Slack halts the streaming message and emits an
+[`agent_session_stopped`](https://docs.slack.dev/reference/events/agent_session_stopped)
+event; the app must stop its own generation and move the session out of
+`processing` (the status never updates automatically).
+
+Every `agents.sessions.setStatus` call has been warning
+`missing_agent_session_stopped_event_subscription` — the manifest (Slack app
+dashboard, not this repo) is missing the subscription, so the event never
+reached us and pressing Stop was a no-op. Add it:
+
+```yaml
+settings:
+  event_subscriptions:
+    bot_events:
+      - agent_session_stopped   # ← add (scope: chat:write, already granted)
+```
+
+Handler (`apps/api/src/app.ts`, `/api/slack/events`):
+
+1. `stopInvocation(channel, thread_ts)` writes a `stop:` sentinel into
+   `conversation_locks.invocation_id` (without advancing `message_ts`). Every
+   in-flight invocation for that thread fails its next `isInvocationCurrent()`
+   check — the in-process path at its next `prepareStep`, the durable workflow
+   at its next step — and unwinds through the superseded path, appending
+   `_[stopped]_` instead of `_[interrupted — new message received]_`
+   (`getSupersedeReason()`). The user's next message still claims the lock
+   normally because its ts is newer.
+2. `agents.sessions.setStatus("active")` immediately, so the spinner clears
+   even before the turn unwinds.
+
+Event payload used: `channel`, `thread_ts`, `event_ts`, `user`,
+`streaming_message_ts[]` (the messages Slack already halted).

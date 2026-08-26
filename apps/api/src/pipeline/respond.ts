@@ -43,6 +43,7 @@ import {
   type TaskUpdateChunk,
   type URLSource,
 } from "../lib/slack-chunks.js";
+import { getSupersedeReason, interruptionNote } from "../lib/invocation-lock.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -2014,12 +2015,19 @@ export async function generateResponse(
         },
       });
 
+      // "stopped" = the user pressed Stop (agent_session_stopped); otherwise a
+      // newer message claimed the lock. Slack already halted the stream on a
+      // Stop press, so stop() may reject — best effort.
+      const supersedeReason = await getSupersedeReason(channelId, threadTs);
+      const interruptedNote = interruptionNote(supersedeReason);
       if (streamer && !streamingFailed) {
         try {
           await streamer.stop({
             chunks: [
-              ...buildOptimisticToolErrorChunks("Interrupted by a newer message"),
-              toChunkMarkdownText("\n\n_[interrupted — new message received]_"),
+              ...buildOptimisticToolErrorChunks(
+                supersedeReason === "stopped" ? "Stopped by user" : "Interrupted by a newer message",
+              ),
+              toChunkMarkdownText(`\n\n${interruptedNote}`),
             ],
           });
           optimisticToolCards.clear();
@@ -2032,7 +2040,7 @@ export async function generateResponse(
 
       turnMarkerStatus = "completed";
       return {
-        raw: accumulatedText + "\n\n_[interrupted — new message received]_",
+        raw: accumulatedText + `\n\n${interruptedNote}`,
         alreadyPosted: true,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         toolCalls: toolCallRecords,
