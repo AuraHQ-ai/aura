@@ -41,7 +41,10 @@ import { logger } from "../lib/logger.js";
 import { withTraceSpan } from "../lib/langfuse.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
-import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
+import {
+  setAssistantThreadTitle,
+  trySetAssistantThreadStatus,
+} from "../lib/slack-status.js";
 import {
   generateInitialDmThreadTitle,
   generateUpdatedDmThreadTitle,
@@ -1203,11 +1206,10 @@ async function setInitialDmThreadTitle(params: {
       assistantResponse,
     });
     if (!title) return;
-    await client.assistant.threads.setTitle({
-      channel_id: channelId,
-      thread_ts: threadTs,
-      title,
-    });
+    // Branches on SLACK_AGENT_VIEW: assistant.threads.setTitle (off) vs
+    // agents.sessions.rename via raw apiCall (on). Soft-fail semantics are
+    // preserved by the surrounding catch.
+    await setAssistantThreadTitle({ client, channelId, threadTs, title });
     logger.info("Set initial DM thread title", { title, channelId });
   } catch (error: any) {
     logger.warn("Failed to set DM thread title", {
@@ -1247,9 +1249,13 @@ async function maybeUpdateDmThreadTitle(params: {
       assistantResponse,
     });
     if (newTitle) {
-      await client.assistant.threads.setTitle({
-        channel_id: channelId,
-        thread_ts: threadTs,
+      // Branches on SLACK_AGENT_VIEW: assistant.threads.setTitle (off) vs
+      // agents.sessions.rename via raw apiCall (on). Soft-fail semantics are
+      // preserved by the surrounding catch.
+      await setAssistantThreadTitle({
+        client,
+        channelId,
+        threadTs,
         title: newTitle,
       });
       logger.info("Updated DM thread title at checkpoint", {

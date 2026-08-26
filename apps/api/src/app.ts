@@ -31,6 +31,8 @@ import {
   hasPermission,
 } from "./lib/api-credentials.js";
 import { resolveConfirmation } from "./lib/confirmation.js";
+import { isSlackAgentViewEnabled } from "./lib/slack-agent-view.js";
+import { bootstrapAssistantThread } from "./slack/thread-bootstrap.js";
 import { executionContext, type ExecutionContext } from "./lib/tool.js";
 import { setSetting, getConfig } from "./lib/settings.js";
 import { logger } from "./lib/logger.js";
@@ -294,35 +296,46 @@ app.post("/api/slack/events", async (c) => {
       return c.json({ ok: true });
     }
 
-    // Handle assistant thread started — set suggested prompts in split-view
+    // Handle assistant thread started — bootstrap the thread (suggested
+    // prompts in split-view). Legacy assistant_view entry point: only wired
+    // while SLACK_AGENT_VIEW is off. Under agent_view this event no longer
+    // fires; the equivalent entry point is app_home_opened (messages tab).
     if (event.type === "assistant_thread_started") {
-      const threadStartPromise = (async () => {
-        try {
-          const channelId = event.assistant_thread?.channel_id;
-          const threadTs = event.assistant_thread?.thread_ts;
-          if (!channelId || !threadTs) return;
-
-          await slackClient.assistant.threads.setSuggestedPrompts({
-            channel_id: channelId,
-            thread_ts: threadTs,
-            title: "How can I help?",
-            prompts: [
-              { title: "Catch me up", message: "What happened in my channels while I was away?" },
-              { title: "Run a query", message: "Show me this week's key metrics from BigQuery" },
-              { title: "Search Slack", message: "Find recent messages about..." },
-              { title: "What do you know?", message: "What do you know about me?" },
-            ],
-          });
-        } catch (err) {
-          recordError("assistant_thread_started", err);
-        }
-      })();
-      waitUntil(threadStartPromise);
+      if (!isSlackAgentViewEnabled()) {
+        const threadStartPromise = (async () => {
+          try {
+            await bootstrapAssistantThread({
+              client: slackClient,
+              channelId: event.assistant_thread?.channel_id,
+              threadTs: event.assistant_thread?.thread_ts,
+            });
+          } catch (err) {
+            recordError("assistant_thread_started", err);
+          }
+        })();
+        waitUntil(threadStartPromise);
+      }
       return c.json({ ok: true });
     }
 
     // Handle App Home opened
     if (event.type === "app_home_opened") {
+      // Agent-view entry point for thread bootstrap: only wired while
+      // SLACK_AGENT_VIEW is on, and only for the Messages tab.
+      if (isSlackAgentViewEnabled() && event.tab === "messages") {
+        const bootstrapPromise = (async () => {
+          try {
+            await bootstrapAssistantThread({
+              client: slackClient,
+              channelId: event.channel,
+            });
+          } catch (err) {
+            recordError("app_home_opened_bootstrap", err, { userId: event.user });
+          }
+        })();
+        waitUntil(bootstrapPromise);
+      }
+
       const homePromise = publishHomeTab(slackClient, event.user).catch(
         (err) => {
           recordError("app_home", err, { userId: event.user });
