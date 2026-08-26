@@ -30,7 +30,6 @@ import { InvocationSupersededError } from "./prepare-step.js";
 import { cleanupScratchpad } from "../tools/scratchpad.js";
 import { cacheDeferredToolResolutions } from "../tools/deferred.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
-import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
 import { getSettingJSON } from "../lib/settings.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
@@ -1242,14 +1241,10 @@ export async function generateResponse(
   }
 
   try {
-    // Signal extended thinking phase to the user via Slack thread status
-    await trySetAssistantThreadStatus({
-      client: slackClient,
-      channelId,
-      threadTs,
-      status: "Thinking deeply...",
-    });
-
+    // No mid-stream status update here: agents.sessions.setStatus only
+    // accepts the enum "suspended"|"processing"|"active"|"closed" — the
+    // pipeline already set "processing" at turn start and free-text phases
+    // like "Thinking deeply..." are not expressible under agent_view.
     let currentStreamCallOptions = streamCallOptions;
     while (true) {
       supersededDuringStream = false;

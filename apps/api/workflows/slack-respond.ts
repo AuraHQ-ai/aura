@@ -700,6 +700,7 @@ async function finalizeSlackRespond(params: {
   const { logger } = await import("../src/lib/logger.js");
 
   const { input, streamState, fullText, steps, stepModelIds, toolRecords, outcome } = params;
+  const { trySetAgentSessionStatus } = await import("../src/lib/slack-status.js");
   const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN);
 
   // ── Close / deliver ──────────────────────────────────────────────────
@@ -735,6 +736,21 @@ async function finalizeSlackRespond(params: {
     logger.error("slackRespondWorkflow: finalize delivery failed", {
       error: error?.data?.error || error?.message,
       channelId: input.channelId,
+    });
+  }
+
+  // ── End-of-turn: clear the loading UX ────────────────────────────────
+  // The pipeline set the session status to "processing" before delegating to
+  // this workflow, and Slack does not auto-clear it on message post — set
+  // "active" here or the session spins until Slack's 1-hour timeout.
+  // Superseded turns skip this: the superseding invocation has already set
+  // its own "processing" and owns the status now. Soft-fail in the helper.
+  if (outcome !== "superseded") {
+    await trySetAgentSessionStatus({
+      client: slackClient,
+      channelId: input.channelId,
+      threadTs: input.threadTs,
+      status: "active",
     });
   }
 
