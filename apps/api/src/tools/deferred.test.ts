@@ -25,7 +25,13 @@ vi.mock("../db/client.js", () => ({
 vi.mock("@ai-sdk/anthropic", () => ({
   anthropic: {
     tools: {
-      toolSearchBm25_20251119: vi.fn(() => ({ type: "tool-search" })),
+      // Mirrors the real provider-executed tool shape: `type: "provider"` +
+      // an `anthropic.` tool id (the server-tool marker).
+      toolSearchBm25_20251119: vi.fn(() => ({
+        type: "provider",
+        id: "anthropic.tool_search_bm25_20251119",
+        args: {},
+      })),
     },
   },
 }));
@@ -42,6 +48,7 @@ import {
   applyAnthropicToolDiscovery,
   cacheDeferredToolResolutions,
   getDeferredToolManifest,
+  hasAnthropicServerSideTools,
 } from "./deferred.js";
 
 describe("deferred tool thread cache", () => {
@@ -107,5 +114,59 @@ describe("deferred tool thread cache", () => {
       }),
     ]);
     expect(dbMocks.onConflictDoUpdate).toHaveBeenCalled();
+  });
+});
+
+describe("hasAnthropicServerSideTools (issue #1357)", () => {
+  beforeEach(() => {
+    dbMocks.rows = [];
+  });
+
+  it("returns true after applyAnthropicToolDiscovery on an anthropic model", async () => {
+    const tools: Record<string, any> = {
+      send_voice_note: { description: "Generate a voice note." },
+    };
+
+    expect(hasAnthropicServerSideTools(tools)).toBe(false);
+
+    await applyAnthropicToolDiscovery(
+      tools,
+      "anthropic/claude-opus-4.5",
+      { channelId: "C123", threadTs: "171234.000100" },
+    );
+
+    expect(hasAnthropicServerSideTools(tools)).toBe(true);
+  });
+
+  it("returns false for a non-anthropic model (no server tool injected)", async () => {
+    const tools: Record<string, any> = {
+      send_voice_note: { description: "Generate a voice note." },
+    };
+
+    await applyAnthropicToolDiscovery(
+      tools,
+      "openai/gpt-5.1",
+      { channelId: "C123", threadTs: "171234.000100" },
+    );
+
+    expect(tools.toolSearch).toBeUndefined();
+    expect(hasAnthropicServerSideTools(tools)).toBe(false);
+  });
+
+  it("detects the server-tool marker, not the toolSearch key name", () => {
+    expect(
+      hasAnthropicServerSideTools({
+        renamed: { type: "provider", id: "anthropic.tool_search_bm25_20251119" },
+      }),
+    ).toBe(true);
+    // A regular function tool that happens to be named toolSearch is NOT a
+    // server-side tool.
+    expect(
+      hasAnthropicServerSideTools({
+        toolSearch: { description: "regular tool", inputSchema: {} },
+      }),
+    ).toBe(false);
+    expect(hasAnthropicServerSideTools(undefined)).toBe(false);
+    expect(hasAnthropicServerSideTools({})).toBe(false);
   });
 });

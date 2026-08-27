@@ -68,6 +68,7 @@ vi.mock("../src/tools/slack.js", () => ({
 
 vi.mock("../src/tools/deferred.js", () => ({
   getDeferredToolManifest: () => [],
+  hasAnthropicServerSideTools: () => false,
 }));
 
 vi.mock("../src/personality/system-prompt.js", () => ({

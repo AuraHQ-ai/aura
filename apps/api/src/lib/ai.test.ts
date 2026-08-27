@@ -78,6 +78,18 @@ vi.mock("./invocation-lock.js", () => ({
   isInvocationCurrent: vi.fn(),
 }));
 
+const errorLoggerMocks = vi.hoisted(() => ({
+  logError: vi.fn(),
+}));
+
+vi.mock("./error-logger.js", () => ({
+  logError: errorLoggerMocks.logError,
+}));
+
+// prepare-step (imported by ai.ts) pulls in tools/deferred.js, which imports
+// the db client — mock it so tests don't require DATABASE_URL.
+vi.mock("../db/client.js", () => ({ db: {} }));
+
 import { withAnthropicFallback, getModelByCategory, isJobModelCategory, LAST_RESORT_MODELS } from "./ai.js";
 import { getSetting } from "./settings.js";
 import { logger } from "./logger.js";
@@ -488,6 +500,240 @@ describe("gatewayFallbackMiddleware — unsupported tool field self-heal", () =>
         tools: [{ type: "function", name: "a", input_examples: [] }],
       }),
     ).rejects.toBe(EXTRA_INPUTS_ERROR);
+
+    // Initial call + exactly one stripped retry.
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("gatewayFallbackMiddleware — Anthropic server-side tool self-heal (issue #1357)", () => {
+  const SERVER_TOOL = {
+    type: "provider",
+    name: "toolSearch",
+    id: "anthropic.tool_search_bm25_20251119",
+    args: {},
+  };
+  const FUNCTION_TOOL = { type: "function", name: "check_calendar" };
+
+  const UNSUPPORTED_TOOL_TYPE_ERROR = new Error(
+    "tool type 'tool_search_tool_bm25_20251119' is not supported for this model",
+  );
+  const ORPHANED_TOOL_USE_ERROR = new Error(
+    "messages.1: `tool_search_tool_bm25` tool use with id `srvtoolu_bdrk_014RCTaCoXYc` was found without a corresponding `tool_search_tool_bm25_tool_result` block",
+  );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.gatewayAuthIsInstance.mockReturnValue(false);
+  });
+
+  it("strips server tools and retries once on 'tool type not supported' (generate)", async () => {
+    const result = { text: "ok" };
+    const gatewayModel = {
+      doGenerate: vi
+        .fn()
+        .mockRejectedValueOnce(UNSUPPORTED_TOOL_TYPE_ERROR)
+        .mockResolvedValueOnce(result),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-opus-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({ tools: [SERVER_TOOL, FUNCTION_TOOL] }),
+    ).resolves.toBe(result);
+
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);
+    const retryTools = gatewayModel.doGenerate.mock.calls[1][0].tools;
+    expect(retryTools).toEqual([FUNCTION_TOOL]);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("Anthropic server-side tools"),
+      expect.objectContaining({
+        modelId: "anthropic/claude-opus-4.5",
+        upstream: "unknown",
+        strippedTools: ["toolSearch"],
+      }),
+    );
+    expect(errorLoggerMocks.logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: "anthropic_server_tool_divergence",
+        context: expect.objectContaining({
+          modelId: "anthropic/claude-opus-4.5",
+          reason: "unsupported_tool_type",
+        }),
+      }),
+    );
+  });
+
+  it("strips server tools and scrubs the stranded tool_use on the orphaned-tool_result error (stream), logging the bdrk upstream", async () => {
+    const streamResult = { stream: "ok" };
+    const gatewayModel = {
+      doGenerate: vi.fn(),
+      doStream: vi
+        .fn()
+        .mockRejectedValueOnce(ORPHANED_TOOL_USE_ERROR)
+        .mockResolvedValueOnce(streamResult),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-opus-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doStream({
+        tools: [SERVER_TOOL, FUNCTION_TOOL],
+        prompt: [
+          { role: "user", content: [{ type: "text", text: "hi" }] },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "searching" },
+              {
+                type: "tool-call",
+                toolCallId: "srvtoolu_bdrk_014RCTaCoXYc",
+                toolName: "toolSearch",
+                providerExecuted: true,
+              },
+            ],
+          },
+        ],
+      }),
+    ).resolves.toBe(streamResult);
+
+    expect(gatewayModel.doStream).toHaveBeenCalledTimes(2);
+    const retryParams = gatewayModel.doStream.mock.calls[1][0];
+    expect(retryParams.tools).toEqual([FUNCTION_TOOL]);
+    // The stranded server tool_use is scrubbed; the rest of the message stays.
+    expect(retryParams.prompt).toEqual([
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "searching" }],
+      },
+    ]);
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("Anthropic server-side tools"),
+      expect.objectContaining({
+        upstream: "bdrk",
+        reason: "orphaned_server_tool_use",
+      }),
+    );
+    expect(errorLoggerMocks.logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: "anthropic_server_tool_divergence",
+        context: expect.objectContaining({ upstream: "bdrk" }),
+      }),
+    );
+  });
+
+  it("recognises the vrtx upstream prefix", async () => {
+    const result = { text: "ok" };
+    const vrtxError = new Error(
+      "messages.3: `tool_search_tool_bm25` tool use with id `srvtoolu_vrtx_01AbCdEf` was found without a corresponding `tool_search_tool_bm25_tool_result` block",
+    );
+    const gatewayModel = {
+      doGenerate: vi
+        .fn()
+        .mockRejectedValueOnce(vrtxError)
+        .mockResolvedValueOnce(result),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-opus-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({ tools: [SERVER_TOOL] }),
+    ).resolves.toBe(result);
+
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining("Anthropic server-side tools"),
+      expect.objectContaining({ upstream: "vrtx" }),
+    );
+  });
+
+  it("finds the error message in a nested cause", async () => {
+    const result = { text: "ok" };
+    const wrappedError = new Error("gateway request failed");
+    (wrappedError as any).cause = UNSUPPORTED_TOOL_TYPE_ERROR;
+    const gatewayModel = {
+      doGenerate: vi
+        .fn()
+        .mockRejectedValueOnce(wrappedError)
+        .mockResolvedValueOnce(result),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-opus-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({ tools: [SERVER_TOOL] }),
+    ).resolves.toBe(result);
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);
+  });
+
+  it("rethrows non-matching errors unchanged without retrying", async () => {
+    const error = new Error("boom");
+    const gatewayModel = {
+      doGenerate: vi.fn().mockRejectedValue(error),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-opus-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({ tools: [SERVER_TOOL] }),
+    ).rejects.toBe(error);
+
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(1);
+    expect(errorLoggerMocks.logError).not.toHaveBeenCalled();
+  });
+
+  it("rethrows when the error matches but no server tool is present (retry would be pointless)", async () => {
+    const gatewayModel = {
+      doGenerate: vi.fn().mockRejectedValue(ORPHANED_TOOL_USE_ERROR),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-opus-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({ tools: [FUNCTION_TOOL] }),
+    ).rejects.toBe(ORPHANED_TOOL_USE_ERROR);
+
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(1);
+    expect(errorLoggerMocks.logError).not.toHaveBeenCalled();
+  });
+
+  it("retries at most once when the retry fails with the same error", async () => {
+    const gatewayModel = {
+      doGenerate: vi.fn().mockRejectedValue(UNSUPPORTED_TOOL_TYPE_ERROR),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-opus-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({ tools: [SERVER_TOOL] }),
+    ).rejects.toBe(UNSUPPORTED_TOOL_TYPE_ERROR);
 
     // Initial call + exactly one stripped retry.
     expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);

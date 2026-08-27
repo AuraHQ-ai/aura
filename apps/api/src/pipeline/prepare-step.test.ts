@@ -42,6 +42,10 @@ vi.mock("./turn-deadline.js", () => ({
   spawnTurnContinuationJob: turnDeadlineMocks.spawnTurnContinuationJob,
 }));
 
+// prepare-step imports tools/deferred.js (for hasAnthropicServerSideTools),
+// which imports the db client — mock it so tests don't require DATABASE_URL.
+vi.mock("../db/client.js", () => ({ db: {} }));
+
 import {
   createPrepareStep,
   getProviderThinkingOptions,
@@ -304,5 +308,96 @@ describe("createPrepareStep turn wall-clock deadlines (issue #1318)", () => {
     expect(result?.activeTools).toEqual([]);
     expect(result?.instructions).toContain("they can ask you to resume");
     expect(result?.instructions).not.toContain("continuation job has already been scheduled");
+  });
+});
+
+describe("createPrepareStep anthropic gateway pin for server-side tools (issue #1357)", () => {
+  const messages: ModelMessage[] = [{ role: "user", content: "hello" }];
+
+  const SERVER_TOOL = {
+    type: "provider",
+    id: "anthropic.tool_search_bm25_20251119",
+    args: {},
+  };
+
+  function buildStepArgs(stepNumber: number) {
+    return { stepNumber, steps: [], messages };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    catalogMocks.getModelCapabilities.mockResolvedValue(
+      catalogRow({ provider: "anthropic", thinkingMode: "enabled" }),
+    );
+  });
+
+  it("pins the gateway to the first-party anthropic upstream when server tools are present, preserving thinking options", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "anthropic/claude-opus-4.5",
+      thinkingBudget: 8000,
+      tools: {
+        toolSearch: SERVER_TOOL,
+        check_calendar: { description: "regular tool" },
+      },
+    });
+
+    const result = await prepareStep(buildStepArgs(1));
+
+    expect((result?.providerOptions as any)?.gateway?.only).toEqual(["anthropic"]);
+    // The existing anthropic thinking options must not be clobbered.
+    expect((result?.providerOptions as any)?.anthropic?.thinking).toEqual({
+      type: "enabled",
+      budgetTokens: 8000,
+    });
+  });
+
+  it("does not pin the gateway when no server tools are present", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "anthropic/claude-opus-4.5",
+      thinkingBudget: 8000,
+      tools: {
+        check_calendar: { description: "regular tool" },
+      },
+    });
+
+    const result = await prepareStep(buildStepArgs(1));
+
+    expect((result?.providerOptions as any)?.gateway).toBeUndefined();
+    expect((result?.providerOptions as any)?.anthropic?.thinking).toEqual({
+      type: "enabled",
+      budgetTokens: 8000,
+    });
+  });
+
+  it("does not pin the gateway when tools are omitted entirely", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "anthropic/claude-opus-4.5",
+      thinkingBudget: 8000,
+    });
+
+    const result = await prepareStep(buildStepArgs(1));
+
+    expect((result?.providerOptions as any)?.gateway).toBeUndefined();
+  });
+
+  it("pins the gateway even when no thinking options resolve", async () => {
+    catalogMocks.getModelCapabilities.mockResolvedValue(
+      catalogRow({ provider: "anthropic", thinkingMode: "none" }, false),
+    );
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "anthropic/claude-opus-4.5",
+      thinkingBudget: 8000,
+      tools: { toolSearch: SERVER_TOOL },
+    });
+
+    const result = await prepareStep(buildStepArgs(1));
+
+    expect((result?.providerOptions as any)?.gateway?.only).toEqual(["anthropic"]);
+    expect((result?.providerOptions as any)?.anthropic).toBeUndefined();
   });
 });
