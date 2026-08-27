@@ -209,10 +209,45 @@ app.use("/api/slack/*", async (c, next) => {
   const retryReason = c.req.header("x-slack-retry-reason");
 
   if (retryNum) {
+    // Log the ack WITH the event type (issue #1355): this early-return drops
+    // the retry, so if the FIRST delivery of an event was lost, this is the
+    // only place the retry is ever visible. Reading the body is safe here —
+    // we never call next() on this path.
+    let retryEventType: string | undefined;
+    let retryEvent: Record<string, any> | undefined;
+    try {
+      const body = JSON.parse(await c.req.text());
+      retryEvent = body?.event;
+      retryEventType = retryEvent?.type ?? body?.type;
+    } catch {
+      // Non-JSON payload (e.g. form-encoded interactivity) — type unknown.
+    }
     logger.info("Slack retry detected — acknowledging without processing", {
       retryNum,
       retryReason,
+      eventType: retryEventType,
     });
+    if (retryEventType === "agent_session_stopped") {
+      // A retried stop event means the first delivery likely never completed
+      // — and this ack drops it. Leave a durable, queryable trace (Vercel
+      // log retrieval is unreliable; error_events is not).
+      const { logError } = await import("./lib/error-logger.js");
+      waitUntil(
+        logError({
+          errorName: "AgentSessionStopped",
+          errorMessage: `agent_session_stopped retry acked without processing (retry ${retryNum}: ${retryReason ?? "unknown"})`,
+          errorCode: "agent_session_stopped_retry_ack",
+          channelId: retryEvent?.channel,
+          userId: retryEvent?.user,
+          context: {
+            threadTs: retryEvent?.thread_ts ?? null,
+            eventTs: retryEvent?.event_ts ?? null,
+            retryNum,
+            retryReason: retryReason ?? null,
+          },
+        }),
+      );
+    }
     return c.json({ ok: true });
   }
 
@@ -317,9 +352,12 @@ app.post("/api/slack/events", async (c) => {
           logger.warn("agent_session_stopped without channel/thread_ts", { event });
           return;
         }
+        // `null` = stopInvocation itself failed (vs true/false = displaced?).
+        let displaced: boolean | null = null;
+        let stopError: string | null = null;
         try {
           const { stopInvocation } = await import("./lib/invocation-lock.js");
-          const displaced = await stopInvocation(
+          displaced = await stopInvocation(
             channelId,
             threadTs,
             String(event.event_ts ?? threadTs),
@@ -333,16 +371,40 @@ app.post("/api/slack/events", async (c) => {
             haltedStreams: event.streaming_message_ts,
           });
         } catch (err) {
+          stopError = err instanceof Error ? err.message : String(err);
           recordError("agent_session_stopped", err, { userId: event.user, channelId });
         }
         // Clear the loading UX regardless — the turn will unwind on its next
         // step, but the user pressed Stop and expects the spinner gone now.
         const { trySetAgentSessionStatus } = await import("./lib/slack-status.js");
-        await trySetAgentSessionStatus({
+        const statusCleared = await trySetAgentSessionStatus({
           client: slackClient,
           channelId,
           threadTs,
           status: "active",
+        });
+        // Durable receipt for EVERY stop delivery, success or failure (issue
+        // #1355). logger.info above is the only other trace and Vercel log
+        // retrieval is unreliable, so without this row we cannot tell "Slack
+        // never delivered the event" from "delivered but displaced nothing".
+        // Awaited so the write lands before the waitUntil scope ends.
+        const { logError } = await import("./lib/error-logger.js");
+        await logError({
+          errorName: "AgentSessionStopped",
+          errorMessage: stopError
+            ? `agent_session_stopped receipt — stopInvocation failed: ${stopError}`
+            : `agent_session_stopped receipt (displaced=${displaced})`,
+          errorCode: "agent_session_stopped_receipt",
+          channelId,
+          userId: event.user,
+          context: {
+            threadTs,
+            eventTs: event.event_ts ?? null,
+            streamingMessageTs: event.streaming_message_ts ?? null,
+            displaced,
+            statusCleared,
+            stopFailed: stopError !== null,
+          },
         });
       })();
       waitUntil(stopPromise);
