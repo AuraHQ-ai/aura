@@ -10,6 +10,10 @@ const turnMarkerMocks = vi.hoisted(() => ({
   startTurnMarker: vi.fn().mockResolvedValue(undefined),
   finishTurnMarker: vi.fn().mockResolvedValue(undefined),
 }));
+const invocationLockMocks = vi.hoisted(() => ({
+  isInvocationCurrent: vi.fn(),
+  getSupersedeReason: vi.fn(),
+}));
 
 vi.mock("ai", () => ({
   streamText: vi.fn(),
@@ -74,19 +78,12 @@ vi.mock("./prepare-step.js", () => ({
   },
 }));
 
-const lockMocks = vi.hoisted(() => ({
-  isInvocationCurrent: vi.fn(async () => true),
-  getSupersedeReason: vi.fn(
-    async (): Promise<"stopped" | "newer_message"> => "newer_message",
-  ),
-}));
-
 vi.mock("../lib/invocation-lock.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/invocation-lock.js")>();
   return {
     ...actual,
-    isInvocationCurrent: lockMocks.isInvocationCurrent,
-    getSupersedeReason: lockMocks.getSupersedeReason,
+    isInvocationCurrent: invocationLockMocks.isInvocationCurrent,
+    getSupersedeReason: invocationLockMocks.getSupersedeReason,
   };
 });
 
@@ -185,6 +182,8 @@ describe("generateResponse Slack stream handling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     toolStateMocks.detachedSuspendState = undefined;
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    invocationLockMocks.getSupersedeReason.mockResolvedValue("newer_message");
   });
 
   afterEach(() => {
@@ -1348,8 +1347,8 @@ describe("generateResponse Slack stream handling", () => {
     try {
       // The lock is already displaced (stop:* sentinel) by the time the
       // keepalive tick re-checks it mid-tool.
-      lockMocks.isInvocationCurrent.mockResolvedValue(false);
-      lockMocks.getSupersedeReason.mockResolvedValue("stopped");
+      invocationLockMocks.isInvocationCurrent.mockResolvedValue(false);
+      invocationLockMocks.getSupersedeReason.mockResolvedValue("stopped");
 
       const streamer = {
         append: vi.fn().mockResolvedValue(undefined),
@@ -1397,7 +1396,7 @@ describe("generateResponse Slack stream handling", () => {
       });
       await vi.advanceTimersByTimeAsync(0);
       // No mid-tool check before the keepalive fires.
-      expect(lockMocks.isInvocationCurrent).not.toHaveBeenCalled();
+      expect(invocationLockMocks.isInvocationCurrent).not.toHaveBeenCalled();
 
       // One 60s toolKeepAlive tick: lock re-checked, abort fired, turn unwinds.
       await vi.advanceTimersByTimeAsync(60_000);
@@ -1406,7 +1405,7 @@ describe("generateResponse Slack stream handling", () => {
       expect(result.interrupted).toBe(true);
       // raw is the internal record of the turn — the marker stays there…
       expect(result.raw.endsWith("_[stopped]_")).toBe(true);
-      expect(lockMocks.isInvocationCurrent).toHaveBeenCalledWith(
+      expect(invocationLockMocks.isInvocationCurrent).toHaveBeenCalledWith(
         "C123",
         "1710000000.000000",
         "inv-live",
@@ -1437,10 +1436,10 @@ describe("generateResponse Slack stream handling", () => {
       // The stream was still closed.
       expect(streamer.stop).toHaveBeenCalled();
     } finally {
-      lockMocks.isInvocationCurrent.mockReset();
-      lockMocks.isInvocationCurrent.mockResolvedValue(true);
-      lockMocks.getSupersedeReason.mockReset();
-      lockMocks.getSupersedeReason.mockResolvedValue("newer_message");
+      invocationLockMocks.isInvocationCurrent.mockReset();
+      invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+      invocationLockMocks.getSupersedeReason.mockReset();
+      invocationLockMocks.getSupersedeReason.mockResolvedValue("newer_message");
     }
   });
 
@@ -1598,10 +1597,160 @@ describe("generateResponse Slack stream handling", () => {
   });
 });
 
+describe("generateResponse supersede check at final delivery (issue #1342)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    toolStateMocks.detachedSuspendState = undefined;
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    invocationLockMocks.getSupersedeReason.mockResolvedValue("newer_message");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("suppresses the final streamer.stop payload when superseded right before delivery", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Old answer that must not be posted." };
+    })());
+
+    // A follow-up message claimed the lock while the final step was streaming,
+    // so by the time final delivery runs this invocation is no longer current.
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(false);
+
+    const result = await generateResponse({
+      ...baseOptions(slackClient),
+      invocationId: "inv-1342-happy",
+    });
+
+    // The turn exits via the supersede path, not the happy path.
+    expect(result).toMatchObject({ interrupted: true });
+    expect(invocationLockMocks.isInvocationCurrent).toHaveBeenCalledWith(
+      "C123",
+      "1710000000.000000",
+      "inv-1342-happy",
+    );
+
+    // The final answer payload (blocks + metadata) must NOT be delivered.
+    for (const call of stream.stop.mock.calls) {
+      expect(call[0]?.blocks).toBeUndefined();
+      expect(call[0]?.metadata).toBeUndefined();
+    }
+    // Instead the stream is finalized with the interruption note only.
+    expect(stream.stop).toHaveBeenCalledWith({
+      chunks: expect.arrayContaining([
+        expect.objectContaining({
+          type: "markdown_text",
+          text: expect.stringContaining("_[interrupted — new message received]_"),
+        }),
+      ]),
+    });
+    expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
+
+    expect(logger.info).toHaveBeenCalledWith(
+      "Invocation superseded at final delivery — suppressing answer",
+      expect.objectContaining({
+        invocationId: "inv-1342-happy",
+        channelId: "C123",
+        deliveryPath: "stream_stop",
+      }),
+    );
+    const supersedeLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "superseded_at_final_delivery",
+    );
+    expect(supersedeLogs).toHaveLength(1);
+    expect(supersedeLogs[0]?.[0]).toMatchObject({
+      errorName: "InvocationSupersededAtFinalDelivery",
+      channelId: "C123",
+      context: expect.objectContaining({
+        invocationId: "inv-1342-happy",
+        deliveryPath: "stream_stop",
+      }),
+    });
+  });
+
+  it("skips the postMessage fallback when superseded right before delivery", async () => {
+    const stream = {
+      append: vi.fn().mockRejectedValueOnce(Object.assign(new Error("boom"), {
+        data: { error: "some_unexpected_error" },
+      })),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Fallback answer that must not be posted." };
+    })());
+
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(false);
+
+    const result = await generateResponse({
+      ...baseOptions(slackClient),
+      invocationId: "inv-1342-fallback",
+    });
+
+    expect(result).toMatchObject({ interrupted: true });
+    // The fallback text is never posted — no postMessage with real content.
+    expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
+
+    const supersedeLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "superseded_at_final_delivery",
+    );
+    expect(supersedeLogs).toHaveLength(1);
+    expect(supersedeLogs[0]?.[0]).toMatchObject({
+      errorName: "InvocationSupersededAtFinalDelivery",
+      channelId: "C123",
+      context: expect.objectContaining({
+        invocationId: "inv-1342-fallback",
+        deliveryPath: "post_message_fallback",
+      }),
+    });
+  });
+
+  it("still delivers the final payload when the invocation is current", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Current answer." };
+    })());
+
+    await expect(generateResponse({
+      ...baseOptions(slackClient),
+      invocationId: "inv-1342-current",
+    })).resolves.toMatchObject({
+      raw: "Current answer.",
+      alreadyPosted: true,
+    });
+
+    // Happy-path finalize still carries the feedback block.
+    expect(stream.stop).toHaveBeenCalledWith(expect.objectContaining({
+      blocks: expect.arrayContaining([
+        expect.objectContaining({ type: "context_actions" }),
+      ]),
+    }));
+    const supersedeLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "superseded_at_final_delivery",
+    );
+    expect(supersedeLogs).toHaveLength(0);
+  });
+});
+
 describe("generateResponse turn markers (stream-death watchdog, issue #1109)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     toolStateMocks.detachedSuspendState = undefined;
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    invocationLockMocks.getSupersedeReason.mockResolvedValue("newer_message");
   });
 
   afterEach(() => {

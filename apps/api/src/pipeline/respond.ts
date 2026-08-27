@@ -864,6 +864,47 @@ export async function generateResponse(
       toolCallRecords.map((record) => record.name),
     );
   };
+  // Issue #1342: prepareStep's supersede check only runs BETWEEN agent steps,
+  // so a follow-up that arrives while the FINAL step is generating/streaming
+  // would otherwise let both the old and new invocation post final answers to
+  // the same thread. Re-check the conversation lock immediately before final
+  // delivery (one indexed SELECT per turn). Fail-open on read errors — same
+  // policy as the between-steps check in prepare-step.ts.
+  const isCurrentAtFinalDelivery = async (deliveryPath: string): Promise<boolean> => {
+    let stillCurrent = true;
+    try {
+      stillCurrent = await isInvocationCurrent(channelId, threadTs, invocationId);
+    } catch (err: any) {
+      logger.warn("Final-delivery invocation check failed, assuming still current", {
+        invocationId,
+        channelId,
+        deliveryPath,
+        error: err?.message,
+      });
+      return true;
+    }
+    if (!stillCurrent) {
+      logger.info("Invocation superseded at final delivery — suppressing answer", {
+        invocationId,
+        channelId,
+        threadTs,
+        deliveryPath,
+      });
+      logError({
+        errorName: "InvocationSupersededAtFinalDelivery",
+        errorMessage: "Invocation superseded before final delivery; suppressing the answer",
+        errorCode: "superseded_at_final_delivery",
+        channelId,
+        context: {
+          invocationId,
+          deliveryPath,
+          accumulatedTextLength: accumulatedText.length,
+          toolCallCount: toolCallRecords.length,
+        },
+      });
+    }
+    return stillCurrent;
+  };
   let continuationCount = 0;
   let currentSegmentIndex = 0;
   let currentSegmentTextLength = 0;
@@ -1781,6 +1822,12 @@ export async function generateResponse(
           channelId,
         });
       } else {
+        // Issue #1342: skip the fallback post entirely when a newer message has
+        // taken over the thread — unwind through the existing supersede path.
+        if (!(await isCurrentAtFinalDelivery("post_message_fallback"))) {
+          throw new InvocationSupersededError(invocationId);
+        }
+
         try {
           const fallbackResult = await safePostMessage(slackClient, {
             channel: channelId,
@@ -1859,6 +1906,13 @@ export async function generateResponse(
       stopBlocks.push(feedbackBlock);
       const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
+
+      // Issue #1342: do NOT finalize the stream with the answer when a newer
+      // message has taken over the thread — unwind through the existing
+      // supersede path (streamer.stop with interruption note, telemetry).
+      if (!(await isCurrentAtFinalDelivery("stream_stop"))) {
+        throw new InvocationSupersededError(invocationId);
+      }
 
       try {
         await streamer.stop(stopArgs);
