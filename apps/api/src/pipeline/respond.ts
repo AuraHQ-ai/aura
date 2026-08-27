@@ -284,13 +284,20 @@ function estimateAppendSize(payload: any): number {
   return JSON.stringify(payload).length;
 }
 
-type SlackTaskDisplayMode = "timeline" | "plan" | "hybrid";
+// Slack accepts exactly `timeline` (default) | `plan` for chat.startStream
+// `task_display_mode` (https://docs.slack.dev/reference/methods/chat.startStream).
+// "hybrid" was never a valid value — it would make the lazy startStream fail
+// on the first append and silently drop the whole turn to postMessage.
+type SlackTaskDisplayMode = "timeline" | "plan";
 // Chunk shapes are the real `@slack/types` contracts (see lib/slack-chunks.ts)
 // so a wrong status enum or a missing required field fails `tsc`, not Slack.
 type SlackStreamChunk = AnyChunk;
 
 function normalizeTaskDisplayMode(value: unknown): SlackTaskDisplayMode {
-  if (value === "plan" || value === "hybrid" || value === "timeline") return value;
+  if (value === "plan" || value === "timeline") return value;
+  if (value === "hybrid") {
+    logger.warn("slack_task_display_mode 'hybrid' is not a Slack value; using 'timeline'");
+  }
   return "timeline";
 }
 
@@ -449,6 +456,9 @@ export async function generateResponse(
   // chat.startStream. When we detect this, we flip to buffer-only mode
   // and post the final result via chat.postMessage.
   let streamingFailed = skipStreaming;
+  // Slack refused an append with `stopped_by_user` (Stop button): terminal,
+  // and the buffered text must NOT be re-posted as a fallback.
+  let stoppedByUser = false;
   let streamTombstoneSent = false;
   let pendingMessageNotInStreamingStateError: Parameters<typeof logError>[0] | null = null;
   let pendingChannelTypeUnsupportedFallback: { errorMessage: string } | null = null;
@@ -563,6 +573,15 @@ export async function generateResponse(
           },
         });
         return textRecovered;
+      } else if (err?.data?.error === "stopped_by_user") {
+        // The user pressed Stop: Slack halted this stream and refuses further
+        // appends. Terminal — do NOT fall back to postMessage (that would
+        // dump the answer they just stopped). The turn unwinds via the
+        // stop sentinel on the next step (see stopInvocation()).
+        streamingFailed = true;
+        stoppedByUser = true;
+        logger.info("chatStream append refused: stopped_by_user — ending delivery", { channelId });
+        return false;
       } else if (isInvalidBlocks(err)) {
         streamingFailed = true;
         logger.warn("chatStream append returned invalid_blocks, falling back to postMessage", {
@@ -1270,7 +1289,9 @@ export async function generateResponse(
         }
 
         case "tool-input-start": {
-          const toolCallId = (chunk as any).toolCallId;
+          // The gateway can emit this event with `id` instead of `toolCallId`
+          // (seen in production 2026-08-27) — accept both.
+          const toolCallId = (chunk as any).toolCallId ?? (chunk as any).id;
           const toolName = (chunk as any).toolName;
           if (typeof toolCallId !== "string" || typeof toolName !== "string") {
             break;
@@ -1649,17 +1670,22 @@ export async function generateResponse(
       // Fallback: post the unsent portion via safePostMessage.
       // If a continuation split partially succeeded, only post text that
       // wasn't already streamed (fallbackStartIdx marks the boundary).
-      const unsentText = fallbackStartIdx > 0
-        ? finalText.slice(fallbackStartIdx)
-        : finalText;
+      // After a Stop press nothing further is delivered — the user asked for
+      // silence, not a bulk dump of what they stopped.
+      const unsentText = stoppedByUser
+        ? ""
+        : fallbackStartIdx > 0
+          ? finalText.slice(fallbackStartIdx)
+          : finalText;
       const blocks: any[] = [];
       const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
       // Issue #1121: when the stream died after everything visible had
       // already been streamed (pure tool-call tail), the unsent buffer is
       // empty and the fallback would post an effectively empty block list.
       // Post a short stub instead so the user knows the turn was cut short.
-      const interruptedStubText =
-        !emptyCompletionDetected && !formattedUnsent && toolCallRecords.length > 0
+      const interruptedStubText = stoppedByUser
+        ? "_[stopped]_"
+        : !emptyCompletionDetected && !formattedUnsent && toolCallRecords.length > 0
           ? `_Turn interrupted after ${toolCallRecords.length} tool call${toolCallRecords.length === 1 ? "" : "s"} — rerun?_`
           : null;
       if (formattedUnsent) {

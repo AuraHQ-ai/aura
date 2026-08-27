@@ -123,11 +123,12 @@ describe("trySetAgentSessionStatus", () => {
     expect(client.apiCall).not.toHaveBeenCalled();
   });
 
-  it("soft-fails and disables the channel on error", async () => {
+  it("soft-fails WITHOUT disabling the channel on a per-call error (e.g. invalid_arguments, ratelimited)", async () => {
     const { client, asWebClient } = makeClient();
-    client.apiCall.mockRejectedValueOnce(
-      new Error("An API error occurred: invalid_arguments"),
-    );
+    const err = Object.assign(new Error("An API error occurred: invalid_arguments"), {
+      data: { ok: false, error: "invalid_arguments" },
+    });
+    client.apiCall.mockRejectedValueOnce(err);
 
     await expect(
       trySetAgentSessionStatus({
@@ -138,16 +139,48 @@ describe("trySetAgentSessionStatus", () => {
       }),
     ).resolves.toBeUndefined();
 
-    expect(setStatusUnsupportedChannels.has("DFAIL")).toBe(true);
+    // A bad payload / transient error must not switch the loading UX off for
+    // the whole channel — that is what hid the status-enum regression.
+    expect(setStatusUnsupportedChannels.has("DFAIL")).toBe(false);
     expect(mocks.loggerWarnMock).toHaveBeenCalledExactlyOnceWith(
-      "agents.sessions.setStatus failed; disabling for channel",
-      expect.objectContaining({ channelId: "DFAIL" }),
+      "agents.sessions.setStatus failed (will retry next turn)",
+      expect.objectContaining({ channelId: "DFAIL", code: "invalid_arguments" }),
+    );
+
+    // The next call is attempted again.
+    await trySetAgentSessionStatus({
+      client: asWebClient,
+      channelId: "DFAIL",
+      threadTs: "1.3",
+      status: "active",
+    });
+    expect(client.apiCall).toHaveBeenCalledTimes(2);
+  });
+
+  it("disables the channel only for errors that mean sessions can never work there", async () => {
+    const { client, asWebClient } = makeClient();
+    const err = Object.assign(new Error("An API error occurred: feature_disabled"), {
+      data: { ok: false, error: "feature_disabled" },
+    });
+    client.apiCall.mockRejectedValueOnce(err);
+
+    await trySetAgentSessionStatus({
+      client: asWebClient,
+      channelId: "DNEVER",
+      threadTs: "1.2",
+      status: "processing",
+    });
+
+    expect(setStatusUnsupportedChannels.has("DNEVER")).toBe(true);
+    expect(mocks.loggerWarnMock).toHaveBeenCalledExactlyOnceWith(
+      "agents.sessions.setStatus unsupported here; disabling for channel",
+      expect.objectContaining({ channelId: "DNEVER", code: "feature_disabled" }),
     );
 
     // Subsequent calls in the disabled channel are skipped entirely.
     await trySetAgentSessionStatus({
       client: asWebClient,
-      channelId: "DFAIL",
+      channelId: "DNEVER",
       threadTs: "1.3",
       status: "active",
     });

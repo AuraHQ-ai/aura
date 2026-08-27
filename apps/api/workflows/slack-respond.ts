@@ -72,6 +72,8 @@ export interface SlackStreamState {
   charCount: number;
   /** Streaming unsupported on this channel — buffer and post at finalize. */
   streamingFailed: boolean;
+  /** Slack refused an append with `stopped_by_user` — never post a fallback. */
+  stoppedByUser?: boolean;
   /** Number of bubbles opened so far (continuations / expiry recoveries). */
   bubbleCount: number;
 }
@@ -380,7 +382,7 @@ async function runSlackAgentStep(
     }
   }
 
-  async function append(rawChunks: Array<AnyChunk | Record<string, unknown>>): Promise<void> {
+  async function append(rawChunks: AnyChunk[]): Promise<void> {
     if (state.streamingFailed) return;
     if (!state.streamTs) await openStream();
     if (!state.streamTs) return;
@@ -409,6 +411,16 @@ async function runSlackAgentStep(
       state.charCount += JSON.stringify(chunks).length;
     } catch (error: any) {
       const code = error?.data?.error;
+      if (code === "stopped_by_user") {
+        // Stop button: Slack halted the stream and refuses appends. Terminal;
+        // finalize must not re-post the buffered text.
+        state.streamingFailed = true;
+        state.stoppedByUser = true;
+        logger.info("slackRespondWorkflow: append refused — stopped_by_user", {
+          channelId: input.channelId,
+        });
+        return;
+      }
       if (isChunkSchemaRejection(error)) {
         // Schema rejection is per-batch and atomic: retry the text-only
         // subset so the words still land, record the exact rejected payload
@@ -592,11 +604,16 @@ async function runSlackAgentStep(
         }
         case "tool-input-start": {
           const meta = getSlackMeta((tools as any)[(chunk as any).toolName]);
+          // Seen in production (2026-08-27): the gateway emits this event with
+          // `id` rather than `toolCallId`; without the fallback the task_update
+          // had no id and poisoned the whole append batch (issue #1348).
+          const startId = (chunk as any).toolCallId ?? (chunk as any).id;
+          if (typeof startId !== "string") break;
           await flushText(true);
           await append([
             {
               type: "task_update",
-              id: (chunk as any).toolCallId,
+              id: startId,
               title: meta?.status ?? "Working on it...",
               status: "in_progress",
             },
@@ -836,6 +853,12 @@ async function finalizeSlackRespond(params: {
         channel: input.channelId,
         thread_ts: input.threadTs,
         text: fullText.trim() ? `${fullText}\n\n${failureNote}` : failureNote,
+      });
+    } else if (streamState.stoppedByUser) {
+      // Stop button — Slack already halted the bubble; do not re-post the
+      // stopped answer. The `_[stopped]_` note comes from the superseded path.
+      logger.info("slackRespondWorkflow: stopped by user — skipping fallback delivery", {
+        channelId: input.channelId,
       });
     } else if (outcome === "completed" && fullText.trim()) {
       // Streaming never worked on this channel — deliver the buffered text.
