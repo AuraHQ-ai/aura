@@ -5,6 +5,7 @@ import { executionContext } from "./tool.js";
 import { db } from "../db/client.js";
 import { credentials, credentialGrants, users } from "@aura/db/schema";
 import { logger } from "./logger.js";
+import { recordError } from "./metrics.js";
 
 const sandboxNoteKey = (userId?: string) =>
   userId ? `e2b_sandbox_id:${userId}` : "e2b_sandbox_id";
@@ -585,9 +586,11 @@ export async function bootstrapToolsRepo(
   }
 
   if (!commandEnvs.GITHUB_TOKEN) {
-    logger.warn("Skipping tools_repo clone because GITHUB_TOKEN is not available", {
-      toolsRepo,
-    });
+    recordError(
+      "sandbox.bootstrapToolsRepo",
+      new Error("Skipping tools_repo clone because GITHUB_TOKEN is not available"),
+      { toolsRepo },
+    );
     return;
   }
 
@@ -725,7 +728,9 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
   }
 
   const Sandbox = await loadE2B();
-  const envs = await getSandboxEnvs("aura");
+  // Resolve envs for the calling user so owner-scoped credentials (e.g. GITHUB_TOKEN)
+  // are available to bootstrapToolsRepo; fall back to "aura" when no user is known.
+  const envs = await getSandboxEnvs(userId ?? "aura");
 
   const apiKey = envs.E2B_API_KEY;
   if (!apiKey) {
