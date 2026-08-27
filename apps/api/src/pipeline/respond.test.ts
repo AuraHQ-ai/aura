@@ -74,6 +74,22 @@ vi.mock("./prepare-step.js", () => ({
   },
 }));
 
+const lockMocks = vi.hoisted(() => ({
+  isInvocationCurrent: vi.fn(async () => true),
+  getSupersedeReason: vi.fn(
+    async (): Promise<"stopped" | "newer_message"> => "newer_message",
+  ),
+}));
+
+vi.mock("../lib/invocation-lock.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/invocation-lock.js")>();
+  return {
+    ...actual,
+    isInvocationCurrent: lockMocks.isInvocationCurrent,
+    getSupersedeReason: lockMocks.getSupersedeReason,
+  };
+});
+
 import { generateResponse } from "./respond.js";
 import { logError } from "../lib/error-logger.js";
 import { logger } from "../lib/logger.js";
@@ -1284,6 +1300,104 @@ describe("generateResponse Slack stream handling", () => {
         toolCallCount: 1,
       }),
     });
+  });
+
+  it("aborts a long-running tool within one toolKeepAlive tick after Stop and finalizes with _[stopped]_ (issue #1355)", async () => {
+    vi.useFakeTimers();
+    try {
+      // The lock is already displaced (stop:* sentinel) by the time the
+      // keepalive tick re-checks it mid-tool.
+      lockMocks.isInvocationCurrent.mockResolvedValue(false);
+      lockMocks.getSupersedeReason.mockResolvedValue("stopped");
+
+      const streamer = {
+        append: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+      };
+      const slackClient = createSlackClient([streamer]);
+
+      // A model call that starts a tool and then hangs until the abort
+      // signal fires — simulating a 120s sandbox command in flight.
+      const streamMock = vi.fn().mockImplementation(async (callOptions: any) =>
+        createAgentStreamResult((async function* () {
+          yield { type: "text-delta", text: "Kicking off a slow command." };
+          yield {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            input: { command: "sleep 120" },
+          };
+          await new Promise<never>((_, reject) => {
+            callOptions.abortSignal.addEventListener("abort", () =>
+              reject(Object.assign(new Error("This operation was aborted"), {
+                name: "AbortError",
+              })),
+            );
+          });
+        })()),
+      );
+      agentMocks.createInteractiveAgent.mockResolvedValue({
+        agent: { stream: streamMock },
+        tools: {
+          run_command: {
+            slack: {
+              status: "Running a command in the sandbox...",
+              detail: (input: any) => input.command,
+            },
+          },
+        },
+        modelId: "test-model",
+        getStepModelIds: () => ["test-model"],
+      });
+
+      const responsePromise = generateResponse({
+        ...baseOptions(slackClient),
+        invocationId: "inv-live",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      // No mid-tool check before the keepalive fires.
+      expect(lockMocks.isInvocationCurrent).not.toHaveBeenCalled();
+
+      // One 60s toolKeepAlive tick: lock re-checked, abort fired, turn unwinds.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const result = await responsePromise;
+      expect(result.interrupted).toBe(true);
+      expect(result.raw.endsWith("_[stopped]_")).toBe(true);
+      expect(lockMocks.isInvocationCurrent).toHaveBeenCalledWith(
+        "C123",
+        "1710000000.000000",
+        "inv-live",
+      );
+
+      // The abort resolved to the superseded outcome — never a raw abort
+      // tombstone or a generic stream error.
+      const supersededLogs = vi.mocked(logError).mock.calls.filter(
+        ([entry]) => entry.errorCode === "superseded_while_streaming",
+      );
+      expect(supersededLogs).toHaveLength(1);
+      expect(supersededLogs[0]?.[0]).toMatchObject({
+        context: expect.objectContaining({ abortReason: "superseded" }),
+      });
+      expect(vi.mocked(logError).mock.calls.some(
+        ([entry]) => entry.errorCode === "stream_aborted_by_watchdog",
+      )).toBe(false);
+
+      // The stopped marker landed on the stream close.
+      expect(streamer.stop).toHaveBeenCalledWith(expect.objectContaining({
+        chunks: expect.arrayContaining([
+          expect.objectContaining({
+            type: "markdown_text",
+            text: expect.stringContaining("_[stopped]_"),
+          }),
+        ]),
+      }));
+    } finally {
+      lockMocks.isInvocationCurrent.mockReset();
+      lockMocks.isInvocationCurrent.mockResolvedValue(true);
+      lockMocks.getSupersedeReason.mockReset();
+      lockMocks.getSupersedeReason.mockResolvedValue("newer_message");
+    }
   });
 
   it("logs empty completions for tool-error-only continuation segments", async () => {
