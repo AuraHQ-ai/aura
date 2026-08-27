@@ -52,6 +52,12 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
+const recordErrorMock = vi.hoisted(() => vi.fn());
+
+vi.mock("./metrics.js", () => ({
+  recordError: recordErrorMock,
+}));
+
 import { logger } from "./logger.js";
 import { getSetting } from "./settings.js";
 import { executionContext } from "./tool.js";
@@ -478,6 +484,20 @@ describe("getSandboxEnvNames", () => {
 
 describe("bootstrapToolsRepo", () => {
   const checkoutPath = `/home/user/${["aura", "tools"].join("-")}`;
+  const checkoutProbe = `test -d '${checkoutPath}'/.git && echo yes || echo no`;
+
+  /** Error shaped like e2b v2's CommandExitError (implements CommandResult). */
+  function commandExitError(
+    exitCode: number,
+    stderr: string,
+    stdout = "",
+  ): Error {
+    return Object.assign(new Error(`exit status ${exitCode}`), {
+      exitCode,
+      stdout,
+      stderr,
+    });
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -491,15 +511,18 @@ describe("bootstrapToolsRepo", () => {
 
     expect(run).not.toHaveBeenCalled();
     expect(loggerWarnMock).not.toHaveBeenCalled();
+    expect(recordErrorMock).not.toHaveBeenCalled();
   });
 
   it("clones the configured repository when the checkout is missing", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
+    let checkoutExists = false;
     const run = vi.fn(async (command: string, _options?: unknown) => {
-      if (command.includes("rev-parse")) {
-        return { exitCode: 128, stdout: "", stderr: "missing" };
+      if (command.includes("test -d")) {
+        return { exitCode: 0, stdout: checkoutExists ? "yes\n" : "no\n", stderr: "" };
       }
       if (command.startsWith("git clone")) {
+        checkoutExists = true;
         return { exitCode: 0, stdout: "", stderr: "" };
       }
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -507,23 +530,55 @@ describe("bootstrapToolsRepo", () => {
 
     await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
 
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(run.mock.calls[1][0]).toContain(
-      'git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
-    );
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      checkoutProbe,
+      `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git" '${checkoutPath}'`,
+      checkoutProbe,
+    ]);
     expect(run.mock.calls[1][0]).not.toContain("token@");
     expect(run.mock.calls[1][1]).toMatchObject({
       envs: { GITHUB_TOKEN: "token" },
     });
     expect(loggerWarnMock).not.toHaveBeenCalled();
+    expect(recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("still reaches the clone when the repo probe THROWS a CommandExitError (e2b v2 non-zero exit)", async () => {
+    getSettingMock.mockResolvedValue("acme/tools");
+    let checkoutExists = false;
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.includes("test -d")) {
+        if (!checkoutExists) {
+          // Simulate e2b v2 throwing on non-zero exit instead of returning.
+          throw commandExitError(128, "fatal: not a git repository");
+        }
+        return { exitCode: 0, stdout: "yes\n", stderr: "" };
+      }
+      if (command.startsWith("git clone")) {
+        checkoutExists = true;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+
+    const cloneCalls = run.mock.calls.filter(([command]) =>
+      command.startsWith("git clone"),
+    );
+    expect(cloneCalls).toHaveLength(1);
+    expect(cloneCalls[0][0]).toContain(
+      'git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
+    );
+    expect(recordErrorMock).not.toHaveBeenCalled();
   });
 
   it("pulls on re-acquire when the checkout is already a git repository", async () => {
     getSettingMock.mockResolvedValue("https://github.com/acme/tools.git");
     let checkoutExists = false;
     const run = vi.fn(async (command: string, _options?: unknown) => {
-      if (command.includes("rev-parse")) {
-        return { exitCode: checkoutExists ? 0 : 128, stdout: "", stderr: "" };
+      if (command.includes("test -d")) {
+        return { exitCode: 0, stdout: checkoutExists ? "yes\n" : "no\n", stderr: "" };
       }
       if (command.startsWith("git clone")) {
         checkoutExists = true;
@@ -539,22 +594,29 @@ describe("bootstrapToolsRepo", () => {
     await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
 
     expect(run.mock.calls.map(([command]) => command)).toEqual([
-      `git -C '${checkoutPath}' rev-parse --is-inside-work-tree`,
+      checkoutProbe,
       `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git" '${checkoutPath}'`,
-      `git -C '${checkoutPath}' rev-parse --is-inside-work-tree`,
+      checkoutProbe,
+      checkoutProbe,
       `git -C '${checkoutPath}' pull --ff-only`,
+      checkoutProbe,
     ]);
     expect(loggerWarnMock).not.toHaveBeenCalled();
+    expect(recordErrorMock).not.toHaveBeenCalled();
   });
 
-  it("logs a warning but does not throw when clone fails", async () => {
+  it("records an error (with redacted git auth) and does not throw when clone fails", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
     const run = vi.fn(async (command: string, _options?: unknown) => {
-      if (command.includes("rev-parse")) {
-        return { exitCode: 128, stdout: "", stderr: "missing" };
+      if (command.includes("test -d")) {
+        return { exitCode: 0, stdout: "no\n", stderr: "" };
       }
       if (command.startsWith("git clone")) {
-        return { exitCode: 128, stdout: "", stderr: "repository not found" };
+        // e2b v2 throws on non-zero exit; stderr carries the resolved URL.
+        throw commandExitError(
+          128,
+          "fatal: unable to access 'https://x-access-token:ghs_secret123@github.com/acme/tools.git/': repository not found",
+        );
       }
       return { exitCode: 0, stdout: "", stderr: "" };
     });
@@ -563,13 +625,61 @@ describe("bootstrapToolsRepo", () => {
       bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" }),
     ).resolves.toBeUndefined();
 
-    expect(loggerWarnMock).toHaveBeenCalledWith(
+    expect(recordErrorMock).toHaveBeenCalledTimes(1);
+    const [component, error, context] = recordErrorMock.mock.calls[0];
+    expect(component).toBe("sandbox.bootstrapToolsRepo");
+    expect((error as Error).message).toBe(
       "Failed to clone configured tools repository",
+    );
+    expect(context).toMatchObject({
+      toolsRepo: "acme/tools",
+      checkoutPath,
+      exitCode: 128,
+    });
+    expect(context.stderr).toContain("x-access-token:[REDACTED]@");
+    expect(JSON.stringify(recordErrorMock.mock.calls[0])).not.toContain(
+      "ghs_secret123",
+    );
+  });
+
+  it("records an error when the checkout is still missing after a green clone", async () => {
+    getSettingMock.mockResolvedValue("acme/tools");
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.includes("test -d")) {
+        // Missing before AND after the clone: bootstrap must not read green.
+        return { exitCode: 0, stdout: "no\n", stderr: "" };
+      }
+      if (command.startsWith("git clone")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+
+    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+
+    expect(recordErrorMock).toHaveBeenCalledWith(
+      "sandbox.bootstrapToolsRepo",
       expect.objectContaining({
-        toolsRepo: "acme/tools",
-        exitCode: 128,
-        stderr: "repository not found",
+        message: "Tools repository checkout missing after bootstrap",
       }),
+      expect.objectContaining({ toolsRepo: "acme/tools", checkoutPath }),
+    );
+  });
+
+  it("records an error instead of silently warning when a non-exit error escapes", async () => {
+    getSettingMock.mockResolvedValue("acme/tools");
+    const run = vi.fn(async () => {
+      throw new Error("transport closed");
+    });
+
+    await expect(
+      bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" }),
+    ).resolves.toBeUndefined();
+
+    expect(recordErrorMock).toHaveBeenCalledWith(
+      "sandbox.bootstrapToolsRepo",
+      expect.objectContaining({ message: "transport closed" }),
+      expect.objectContaining({ toolsRepo: "acme/tools", checkoutPath }),
     );
   });
 });
