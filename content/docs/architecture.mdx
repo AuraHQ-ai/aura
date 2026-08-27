@@ -182,6 +182,12 @@ Non-fatal chunk shapes (e.g. `plan`, `url_source`, `blocks`) are skipped rather 
 
 While Aura reasons, the agent-session loading UX is driven via `agents.sessions.setStatus`, which only accepts the enum `"suspended" | "processing" | "active" | "closed"`: the pipeline sets `"processing"` at turn start and `"active"` when the turn ends (Slack does not auto-clear on message post). Channels where the call fails are cached in-process on first failure and skipped on subsequent calls to avoid log spam and repeated retries.
 
+### Interruption & the Stop button
+
+Every incoming message claims a row in `conversation_locks` (keyed by channel + thread) via `claimInvocation()`, ordered by Slack's `message_ts` so a late-arriving cold start for an older message can never clobber a newer message's claim. Each running turn checks `isInvocationCurrent()` between steps and unwinds as superseded if it no longer holds the lock.
+
+The agent_view Stop button fires a Slack `agent_session_stopped` event. The handler calls `stopInvocation()`, which overwrites the lock with a `stop:`-prefixed sentinel (without advancing `message_ts`) so every in-flight step for that thread fails its next currency check, and immediately clears the loading status since Slack does not do this automatically. `getSupersedeReason()` distinguishes "stopped" from "a newer message arrived" so the interruption note appended to the truncated response reads either `_[stopped]_` or `_[interrupted — new message received]_` accordingly.
+
 ## Multi-Tenancy
 
 Aura's database schema is workspace-scoped. A central `workspaces` table (keyed by Slack team ID) owns all data, and every major table includes a `workspace_id` foreign key:
