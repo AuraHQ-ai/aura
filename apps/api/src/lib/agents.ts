@@ -81,6 +81,7 @@ export async function createInteractiveAgent(
       modelId,
       defaultEffort: "medium",
       thinkingBudget: 8000,
+      tools,
       getEscalationModel,
       recordStepModelId: (stepNumber, stepModelId) => {
         stepModelIds[stepNumber - 1] = stepModelId ?? modelId;
@@ -141,6 +142,7 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       modelId,
       defaultEffort: "medium",
       thinkingBudget: 16000,
+      tools,
       getEscalationModel,
       recordStepModelId: (stepNumber, stepModelId) => {
         stepModelIds[stepNumber - 1] = stepModelId ?? modelId;

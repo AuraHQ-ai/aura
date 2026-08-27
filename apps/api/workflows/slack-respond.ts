@@ -232,7 +232,9 @@ async function runSlackAgentStep(
     buildCachedSystemMessages,
   } = await import("../src/lib/ai.js");
   const { createSlackTools } = await import("../src/tools/slack.js");
-  const { getDeferredToolManifest } = await import("../src/tools/deferred.js");
+  const { getDeferredToolManifest, hasAnthropicServerSideTools } = await import(
+    "../src/tools/deferred.js"
+  );
   const { appendDeferredToolsBlock } = await import("../src/personality/system-prompt.js");
   const {
     getProviderThinkingOptions,
@@ -354,9 +356,21 @@ async function runSlackAgentStep(
     dynamicContext,
   );
 
-  const providerOptions = await getProviderThinkingOptions(stepModelId, 8000).catch(
+  const thinkingOptions = await getProviderThinkingOptions(stepModelId, 8000).catch(
     () => ({}),
   );
+  // Anthropic server-side tools (BM25 tool search) only run on the
+  // first-party anthropic upstream — pin the gateway so free-routing can't
+  // send the request to bedrock/vertex (issue #1357). Mirrors prepare-step.ts.
+  const providerOptions = hasAnthropicServerSideTools(tools)
+    ? {
+        ...thinkingOptions,
+        gateway: {
+          ...((thinkingOptions as Record<string, any>).gateway ?? {}),
+          only: ["anthropic"],
+        },
+      }
+    : thinkingOptions;
 
   // ── Slack append helpers ─────────────────────────────────────────────
   async function openStream(): Promise<void> {

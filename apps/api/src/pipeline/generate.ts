@@ -69,6 +69,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
     dynamicContext: options.dynamicContext,
     thinkingBudget: options.thinkingBudget ?? 8000,
     modelId: options.modelId,
+    tools: options.tools,
     recordStepModelId: (stepNumber, stepModelId) => {
       stepModelIds[stepNumber - 1] = stepModelId ?? options.modelId;
     },

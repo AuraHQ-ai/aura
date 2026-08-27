@@ -10,6 +10,7 @@ export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
 import { type ModelCategory, updateModelCapabilities } from "./model-catalog.js";
 import { logger } from "./logger.js";
+import { logError } from "./error-logger.js";
 import {
   getProviderThinkingOptions,
   resolveProviderThinkingOptions,
@@ -312,6 +313,184 @@ async function retryWithStrippedToolField<T>(opts: {
   return { healed: true, result: await opts.retry(retryParams) };
 }
 
+// ── Anthropic server-side tool divergence (issue #1357) ─────────────────────
+// applyAnthropicToolDiscovery injects Anthropic *server-side* tools (BM25
+// tool search) for `anthropic/*` models. The gateway free-routes those models
+// across the anthropic, bedrock, and vertex upstreams, and the
+// non-first-party upstreams either reject the tool type outright or emit the
+// server `tool_use` block without ever returning the matching tool_result —
+// which then fails schema validation on the next call. prepare-step pins the
+// gateway to the first-party upstream when server tools are present; this
+// middleware is the safety net for any path that misses the pin: strip the
+// server tools (and any stranded server tool_use/tool_result parts they left
+// in the prompt) and retry once. Degrading to "no BM25 tool discovery" is
+// strictly better than a hard job failure.
+
+const UNSUPPORTED_SERVER_TOOL_TYPE_PATTERN =
+  /tool type '([\w.-]+)' is not supported for this model/;
+// Server tool ids: `srvtoolu_01...` (first-party), `srvtoolu_bdrk_...`
+// (Bedrock), `srvtoolu_vrtx_...` (Vertex). Captures the upstream prefix.
+const ORPHANED_SERVER_TOOL_USE_PATTERN =
+  /tool use with id `?srvtoolu_(?:(bdrk|vrtx)_)?[A-Za-z0-9_]+`? was found without a corresponding/;
+
+interface AnthropicServerToolError {
+  reason: "unsupported_tool_type" | "orphaned_server_tool_use";
+  /** Gateway upstream inferred from the tool id ("bdrk"/"vrtx"), if any. */
+  upstreamPrefix: string | null;
+  matchedMessage: string;
+}
+
+function findAnthropicServerToolError(
+  error: unknown,
+): AnthropicServerToolError | null {
+  for (const message of collectErrorMessages(error)) {
+    const unsupported = UNSUPPORTED_SERVER_TOOL_TYPE_PATTERN.exec(message);
+    if (unsupported) {
+      return {
+        reason: "unsupported_tool_type",
+        upstreamPrefix: null,
+        matchedMessage: unsupported[0],
+      };
+    }
+    const orphaned = ORPHANED_SERVER_TOOL_USE_PATTERN.exec(message);
+    if (orphaned) {
+      return {
+        reason: "orphaned_server_tool_use",
+        upstreamPrefix: orphaned[1] ?? null,
+        matchedMessage: orphaned[0],
+      };
+    }
+  }
+  return null;
+}
+
+/** LanguageModelV3-level view of an Anthropic server-side tool. */
+function isAnthropicServerToolParam(tool: unknown): boolean {
+  if (!isRecord(tool)) return false;
+  return (
+    (tool.type === "provider" || tool.type === "provider-defined") &&
+    typeof tool.id === "string" &&
+    tool.id.startsWith("anthropic.")
+  );
+}
+
+/**
+ * Return the tools array without Anthropic server-side tools plus the names
+ * of the removed tools, or null if none were present (retry would be
+ * pointless).
+ */
+function stripAnthropicServerTools(
+  tools: unknown,
+): { tools: unknown[]; strippedNames: string[] } | null {
+  if (!Array.isArray(tools) || tools.length === 0) return null;
+
+  const strippedNames: string[] = [];
+  const kept = tools.filter((tool) => {
+    if (!isAnthropicServerToolParam(tool)) return true;
+    const record = tool as Record<string, unknown>;
+    strippedNames.push(
+      typeof record.name === "string" ? record.name : String(record.id),
+    );
+    return false;
+  });
+
+  return strippedNames.length > 0 ? { tools: kept, strippedNames } : null;
+}
+
+/**
+ * Remove server-tool call/result parts that a non-first-party upstream left
+ * stranded in the message history (server tool ids are prefixed
+ * `srvtoolu_`). Leaving them in place would re-trigger the same "found
+ * without a corresponding tool_result" validation error on the retry, and
+ * once the server tool is stripped from the request the provider can no
+ * longer resolve the referenced tool anyway. Messages left empty by the
+ * scrub are dropped.
+ */
+function scrubServerToolParts(prompt: unknown, strippedNames: string[]): unknown {
+  if (!Array.isArray(prompt)) return prompt;
+  const names = new Set(strippedNames);
+
+  const isServerToolPart = (part: unknown): boolean => {
+    if (!isRecord(part)) return false;
+    if (part.type !== "tool-call" && part.type !== "tool-result") return false;
+    return (
+      (typeof part.toolCallId === "string" &&
+        part.toolCallId.startsWith("srvtoolu_")) ||
+      (typeof part.toolName === "string" && names.has(part.toolName))
+    );
+  };
+
+  return prompt
+    .map((message) => {
+      if (!isRecord(message) || !Array.isArray(message.content)) return message;
+      if (message.role !== "assistant" && message.role !== "tool") return message;
+      const content = message.content.filter((part) => !isServerToolPart(part));
+      return content.length === message.content.length
+        ? message
+        : { ...message, content };
+    })
+    .filter(
+      (message) =>
+        !(
+          isRecord(message) &&
+          (message.role === "assistant" || message.role === "tool") &&
+          Array.isArray(message.content) &&
+          message.content.length === 0
+        ),
+    );
+}
+
+/**
+ * Self-heal gateway failures caused by Anthropic server-side tools reaching a
+ * non-first-party upstream (Bedrock/Vertex): strip the server tools, scrub
+ * any stranded server tool parts from the prompt, and retry once.
+ */
+async function retryWithStrippedServerTools<T>(opts: {
+  error: unknown;
+  gatewayId: string;
+  params: unknown;
+  retry: (params: any) => PromiseLike<T>;
+}): Promise<SelfHealRetryResult<T>> {
+  const matched = findAnthropicServerToolError(opts.error);
+  if (!matched) return { healed: false };
+
+  const stripped = stripAnthropicServerTools((opts.params as any)?.tools);
+  if (!stripped) return { healed: false };
+
+  const upstream = matched.upstreamPrefix ?? "unknown";
+  logger.warn(
+    "Gateway upstream rejected Anthropic server-side tools (provider capability divergence), stripping them and retrying",
+    {
+      modelId: opts.gatewayId,
+      upstream,
+      reason: matched.reason,
+      strippedTools: stripped.strippedNames,
+    },
+  );
+  logError({
+    errorName: "AnthropicServerToolDivergence",
+    errorMessage: `Gateway upstream (${upstream}) failed on Anthropic server-side tools for ${opts.gatewayId}: ${matched.matchedMessage}`,
+    errorCode: "anthropic_server_tool_divergence",
+    context: {
+      modelId: opts.gatewayId,
+      upstream,
+      reason: matched.reason,
+      strippedTools: stripped.strippedNames,
+    },
+  });
+
+  const scrubbedPrompt = scrubServerToolParts(
+    (opts.params as any)?.prompt,
+    stripped.strippedNames,
+  );
+  const retryParams = {
+    ...(isRecord(opts.params) ? opts.params : {}),
+    tools: stripped.tools,
+    ...(Array.isArray(scrubbedPrompt) ? { prompt: scrubbedPrompt } : {}),
+  };
+  return { healed: true, result: await opts.retry(retryParams) };
+}
+
 function gatewayFallbackMiddleware(
   directModelId: string,
   gatewayId: string,
@@ -344,6 +523,17 @@ function gatewayFallbackMiddleware(
             gatewayModel.doGenerate(retryParams) as ReturnType<typeof doGenerate>,
         });
         if (strippedField.healed) return strippedField.result;
+
+        const strippedServerTools = await retryWithStrippedServerTools<
+          Awaited<ReturnType<typeof doGenerate>>
+        >({
+          error,
+          gatewayId,
+          params,
+          retry: (retryParams) =>
+            gatewayModel.doGenerate(retryParams) as ReturnType<typeof doGenerate>,
+        });
+        if (strippedServerTools.healed) return strippedServerTools.result;
 
         if (GatewayAuthenticationError.isInstance(error)) {
           logger.warn(
@@ -381,6 +571,17 @@ function gatewayFallbackMiddleware(
             gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
         });
         if (strippedField.healed) return strippedField.result;
+
+        const strippedServerTools = await retryWithStrippedServerTools<
+          Awaited<ReturnType<typeof doStream>>
+        >({
+          error,
+          gatewayId,
+          params,
+          retry: (retryParams) =>
+            gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
+        });
+        if (strippedServerTools.healed) return strippedServerTools.result;
 
         if (GatewayAuthenticationError.isInstance(error)) {
           logger.warn(

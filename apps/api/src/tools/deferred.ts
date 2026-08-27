@@ -91,6 +91,41 @@ function isAnthropicModel(modelId?: string): boolean {
   return modelId?.startsWith("anthropic/") ?? false;
 }
 
+/**
+ * Detect an Anthropic *server-side* (provider-executed) tool — e.g. the BM25
+ * tool-search meta-tool injected by applyAnthropicToolDiscovery. These tools
+ * carry the provider-tool marker (`type: "provider"`) and an `anthropic.`
+ * tool id; checking the marker instead of the `toolSearch` key name means any
+ * future Anthropic server tool is caught too.
+ */
+export function isAnthropicServerSideTool(tool: unknown): boolean {
+  if (!tool || typeof tool !== "object") return false;
+  const { type, id } = tool as { type?: unknown; id?: unknown };
+  return (
+    (type === "provider" || type === "provider-defined") &&
+    typeof id === "string" &&
+    id.startsWith("anthropic.")
+  );
+}
+
+/**
+ * True when the tool set contains at least one Anthropic server-side tool.
+ *
+ * Server-side tools are only supported by the first-party Anthropic upstream.
+ * The AI Gateway free-routes `anthropic/*` models across anthropic, bedrock,
+ * and vertex, and the non-first-party upstreams either reject the tool type
+ * outright or emit the `tool_use` block without ever returning the matching
+ * server tool_result — failing schema validation on the next turn (issue
+ * #1357). Callers use this to pin the gateway to the first-party upstream via
+ * `providerOptions: { gateway: { only: ["anthropic"] } }`.
+ */
+export function hasAnthropicServerSideTools(
+  tools: Record<string, unknown> | undefined,
+): boolean {
+  if (!tools) return false;
+  return Object.values(tools).some(isAnthropicServerSideTool);
+}
+
 function toOneLineDescription(description: unknown): string {
   if (typeof description !== "string") return "deferred tool";
   const normalized = description.replace(/\s+/g, " ").trim();

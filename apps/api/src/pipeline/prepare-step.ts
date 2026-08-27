@@ -2,6 +2,7 @@ import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { getModelCapabilities } from "../lib/model-catalog.js";
+import { hasAnthropicServerSideTools } from "../tools/deferred.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
@@ -187,6 +188,13 @@ export function createPrepareStep(opts: {
   defaultEffort?: EffortLevel;
   modelId?: string;
   thinkingBudget?: number;
+  /**
+   * The tool set for the turn. Used to detect Anthropic server-side tools
+   * (e.g. BM25 tool search), which require pinning the gateway to the
+   * first-party anthropic upstream — bedrock/vertex can't execute them
+   * (issue #1357).
+   */
+  tools?: Record<string, unknown>;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
   recordStepModelId?: (stepNumber: number, modelId?: string) => void;
   invocationId?: string;
@@ -221,6 +229,12 @@ export function createPrepareStep(opts: {
   let softDeadlineNudgeInjected = false;
   let hardDeadlineTripped = false;
   let continuationJobSpawned = false;
+
+  // Anthropic server-side tools (BM25 tool search) only run on the
+  // first-party anthropic upstream. Pin the gateway so free-routing can't
+  // send the request to bedrock/vertex, which reject the tool type or strand
+  // the server tool_use without its tool_result (issue #1357).
+  const pinAnthropicUpstream = hasAnthropicServerSideTools(opts.tools);
 
   // Cache providerOptions per model/budget for this prepareStep instance.
   // Catalog lookups are also in-memory cached, but this avoids repeated work
@@ -317,6 +331,20 @@ export function createPrepareStep(opts: {
     const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
     providerOptions = await getCachedProviderThinkingOptions(effectiveModelId, opts.thinkingBudget);
+
+    if (pinAnthropicUpstream) {
+      const existingGateway = (providerOptions as Record<string, unknown> | undefined)
+        ?.gateway;
+      providerOptions = {
+        ...(providerOptions ?? {}),
+        gateway: {
+          ...(existingGateway && typeof existingGateway === "object"
+            ? existingGateway
+            : {}),
+          only: ["anthropic"],
+        },
+      } as ProviderOptions;
+    }
 
     // --- Turn wall-clock deadline (issue #1318) ---
     // The step budget never binds in practice (turns die around step 40 while
@@ -442,6 +470,8 @@ export function createInteractivePrepareStep(opts: {
   modelId?: string;
   defaultEffort?: EffortLevel;
   thinkingBudget?: number;
+  /** Tool set for the turn — enables the anthropic gateway pin (issue #1357). */
+  tools?: Record<string, unknown>;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
   recordStepModelId?: (stepNumber: number, modelId?: string) => void;
   invocationId?: string;
@@ -461,6 +491,7 @@ export function createInteractivePrepareStep(opts: {
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
     thinkingBudget: opts.thinkingBudget,
+    tools: opts.tools,
     getEscalationModel: opts.getEscalationModel,
     recordStepModelId: opts.recordStepModelId,
     invocationId: opts.invocationId,
@@ -481,6 +512,8 @@ export function createHeadlessPrepareStep(opts: {
   modelId?: string;
   defaultEffort?: EffortLevel;
   thinkingBudget?: number;
+  /** Tool set for the turn — enables the anthropic gateway pin (issue #1357). */
+  tools?: Record<string, unknown>;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
   recordStepModelId?: (stepNumber: number, modelId?: string) => void;
   invocationId?: string;
@@ -502,6 +535,7 @@ export function createHeadlessPrepareStep(opts: {
     modelId: opts.modelId,
     defaultEffort: opts.defaultEffort,
     thinkingBudget: opts.thinkingBudget,
+    tools: opts.tools,
     getEscalationModel: opts.getEscalationModel,
     recordStepModelId: opts.recordStepModelId,
     invocationId: opts.invocationId,
