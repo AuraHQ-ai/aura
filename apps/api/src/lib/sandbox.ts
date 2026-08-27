@@ -71,6 +71,47 @@ interface SandboxCommandRunner {
   };
 }
 
+interface SandboxCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+/**
+ * Run a sandbox command, tolerating non-zero exit codes.
+ *
+ * The E2B SDK's `commands.run()` THROWS `CommandExitError` on any non-zero
+ * exit instead of returning a result — so `if (result.exitCode !== 0)`
+ * branches after a bare `run()` are unreachable. This helper converts a
+ * thrown `CommandExitError` (recognized structurally by its numeric
+ * `exitCode`) back into a `{ exitCode, stdout, stderr }` result so callers
+ * can branch on the exit code. Genuine transport/connection errors carry no
+ * exit code and are re-thrown untouched.
+ */
+async function runTolerant(
+  sandbox: SandboxCommandRunner,
+  command: string,
+  options?: { timeoutMs?: number; envs?: Record<string, string> },
+): Promise<SandboxCommandResult> {
+  try {
+    const result = await sandbox.commands.run(command, options);
+    return {
+      exitCode: result.exitCode ?? 0,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  } catch (error: any) {
+    if (error && typeof error.exitCode === "number") {
+      return {
+        exitCode: error.exitCode,
+        stdout: typeof error.stdout === "string" ? error.stdout : "",
+        stderr: typeof error.stderr === "string" ? error.stderr : "",
+      };
+    }
+    throw error;
+  }
+}
+
 function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
@@ -143,10 +184,11 @@ async function getRootDiskAvailKB(
   envs: Record<string, string>,
 ): Promise<number | null> {
   try {
-    const result = await sandbox.commands.run("df -kP / | awk 'NR==2 {print $4}'", {
+    const result = await runTolerant(sandbox, "df -kP / | awk 'NR==2 {print $4}'", {
       timeoutMs: 8_000,
       envs,
     });
+    if (result.exitCode !== 0) return null;
     const kb = Number.parseInt((result.stdout || "").trim(), 10);
     return Number.isFinite(kb) ? kb : null;
   } catch {
@@ -164,7 +206,7 @@ export async function reclaimSandboxDiskSpace(
   envs: Record<string, string>,
 ): Promise<void> {
   try {
-    await sandbox.commands.run(DISK_RECLAIM_SCRIPT, { timeoutMs: 120_000, envs });
+    await runTolerant(sandbox, DISK_RECLAIM_SCRIPT, { timeoutMs: 120_000, envs });
   } catch (error: any) {
     logger.warn("Sandbox disk reclaim command failed", { error: error.message });
   }
@@ -515,7 +557,8 @@ async function setupSandboxFilesystem(
   envs: Record<string, string>,
 ): Promise<void> {
   try {
-    const mountCheck = await sandbox.commands.run(
+    const mountCheck = await runTolerant(
+      sandbox,
       "mountpoint -q /mnt/aura-files && echo mounted || echo not",
       { timeoutMs: 5_000, envs },
     );
@@ -526,12 +569,13 @@ async function setupSandboxFilesystem(
       return;
     }
 
-    const gcsfuseCheck = await sandbox.commands.run("which gcsfuse", {
+    const gcsfuseCheck = await runTolerant(sandbox, "which gcsfuse", {
       timeoutMs: 5_000,
     });
     if (gcsfuseCheck.exitCode !== 0) {
       const distro = "bookworm";
-      const installResult = await sandbox.commands.run(
+      const installResult = await runTolerant(
+        sandbox,
         `echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt gcsfuse-${distro} main" | sudo tee /etc/apt/sources.list.d/gcsfuse.list && curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo tee /usr/share/keyrings/cloud.google.asc > /dev/null && sudo apt-get update -qq && sudo apt-get install -y -qq gcsfuse && { grep -q user_allow_other /etc/fuse.conf 2>/dev/null || echo user_allow_other | sudo tee -a /etc/fuse.conf > /dev/null; }`,
         { timeoutMs: 60_000, envs },
       );
@@ -544,7 +588,8 @@ async function setupSandboxFilesystem(
       }
     }
 
-    const mountResult = await sandbox.commands.run(
+    const mountResult = await runTolerant(
+      sandbox,
       `touch /tmp/gcs-sa-key.json && chmod 600 /tmp/gcs-sa-key.json && echo "$GOOGLE_SA_KEY_B64" | base64 -d > /tmp/gcs-sa-key.json && sudo mkdir -p /mnt/aura-files && sudo chown 1000:1000 /mnt/aura-files && sudo gcsfuse --key-file=/tmp/gcs-sa-key.json --implicit-dirs --uid=1000 --gid=1000 -o allow_other aura-files /mnt/aura-files; EXIT=$?; rm -f /tmp/gcs-sa-key.json; exit $EXIT`,
       { timeoutMs: 30_000, envs },
     );
@@ -598,13 +643,19 @@ export async function bootstrapToolsRepo(
   const checkoutPathArg = quoteShellArg(checkoutPath);
 
   try {
-    const repoCheck = await sandbox.commands.run(
-      `git -C ${checkoutPathArg} rev-parse --is-inside-work-tree`,
+    // Shell-level guard so the probe always exits 0 regardless of whether the
+    // checkout exists — the E2B SDK throws on non-zero exits, which previously
+    // made the `git clone` below unreachable exactly when the checkout was
+    // missing. Branch on stdout, never on the exit code.
+    const repoCheck = await runTolerant(
+      sandbox,
+      `git -C ${checkoutPathArg} rev-parse --is-inside-work-tree 2>/dev/null && echo AURA_REPO_OK || echo AURA_REPO_MISSING`,
       { timeoutMs: 5_000, envs: commandEnvs },
     );
 
-    if (repoCheck.exitCode === 0) {
-      const pullResult = await sandbox.commands.run(
+    if (repoCheck.stdout.includes("AURA_REPO_OK")) {
+      const pullResult = await runTolerant(
+        sandbox,
         `git -C ${checkoutPathArg} pull --ff-only`,
         { timeoutMs: 60_000, envs: commandEnvs },
       );
@@ -619,24 +670,25 @@ export async function bootstrapToolsRepo(
       return;
     }
 
-    const cloneResult = await sandbox.commands.run(
+    const cloneResult = await runTolerant(
+      sandbox,
       `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/${toolsRepo}.git" ${checkoutPathArg}`,
       { timeoutMs: 120_000, envs: commandEnvs },
     );
     if (cloneResult.exitCode !== 0) {
-      logger.warn("Failed to clone configured tools repository", {
-        toolsRepo,
-        checkoutPath,
-        exitCode: cloneResult.exitCode,
-        stderr: redactGitAuth(cloneResult.stderr),
-      });
+      recordError(
+        "sandbox.bootstrapToolsRepo",
+        new Error("Failed to clone configured tools repository"),
+        {
+          toolsRepo,
+          checkoutPath,
+          exitCode: cloneResult.exitCode,
+          stderr: redactGitAuth(cloneResult.stderr),
+        },
+      );
     }
   } catch (error: any) {
-    logger.warn("Failed to bootstrap configured tools repository", {
-      toolsRepo,
-      checkoutPath,
-      error: error.message,
-    });
+    recordError("sandbox.bootstrapToolsRepo", error, { toolsRepo, checkoutPath });
   }
 }
 
@@ -665,7 +717,8 @@ export async function ensureUserHome(
   }
 
   try {
-    const mountCheck = await sandbox.commands.run(
+    const mountCheck = await runTolerant(
+      sandbox,
       "mountpoint -q /mnt/aura-files && echo mounted || echo not",
       { timeoutMs: 5_000, envs },
     );
@@ -676,7 +729,8 @@ export async function ensureUserHome(
 
     const userHome = `/mnt/aura-files/users/${userId}`;
 
-    const mkdirResult = await sandbox.commands.run(
+    const mkdirResult = await runTolerant(
+      sandbox,
       `mkdir -p "${userHome}"/{downloads,repos,projects}`,
       { timeoutMs: 10_000, envs },
     );
@@ -770,7 +824,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
       });
 
       // Health check: verify the sandbox is actually responsive
-      const healthCheck = await sandbox.commands.run("echo ok", {
+      const healthCheck = await runTolerant(sandbox, "echo ok", {
         timeoutMs: 5_000,
       });
       if (healthCheck.exitCode !== 0) {
@@ -846,13 +900,14 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
 
   // Install Claude Code if not already present (persists across pause/resume)
   try {
-    const check = await sandbox.commands.run("which claude", {
+    const check = await runTolerant(sandbox, "which claude", {
       timeoutMs: 5_000,
       envs,
     });
     if (check.exitCode !== 0) {
       logger.info("Installing Claude Code in sandbox");
-      const installResult = await sandbox.commands.run(
+      const installResult = await runTolerant(
+        sandbox,
         "npm install -g @anthropic-ai/claude-code",
         { timeoutMs: 120_000, envs },
       );
