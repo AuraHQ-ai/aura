@@ -31,7 +31,6 @@ import {
   hasPermission,
 } from "./lib/api-credentials.js";
 import { resolveConfirmation } from "./lib/confirmation.js";
-import { isSlackAgentViewEnabled } from "./lib/slack-agent-view.js";
 import { bootstrapAssistantThread } from "./slack/thread-bootstrap.js";
 import { executionContext, type ExecutionContext } from "./lib/tool.js";
 import { setSetting, getConfig } from "./lib/settings.js";
@@ -296,33 +295,64 @@ app.post("/api/slack/events", async (c) => {
       return c.json({ ok: true });
     }
 
-    // Handle assistant thread started — bootstrap the thread (suggested
-    // prompts in split-view). Legacy assistant_view entry point: only wired
-    // while SLACK_AGENT_VIEW is off. Under agent_view this event no longer
-    // fires; the equivalent entry point is app_home_opened (messages tab).
+    // Legacy assistant_view event, retired since the app manifest was flipped
+    // to agent_view (issue #1345). It should no longer fire, but the event
+    // subscription lives in the Slack dashboard (not this repo) — ack any
+    // straggler here so it never falls through to the message pipeline.
     if (event.type === "assistant_thread_started") {
-      if (!isSlackAgentViewEnabled()) {
-        const threadStartPromise = (async () => {
-          try {
-            await bootstrapAssistantThread({
-              client: slackClient,
-              channelId: event.assistant_thread?.channel_id,
-              threadTs: event.assistant_thread?.thread_ts,
-            });
-          } catch (err) {
-            recordError("assistant_thread_started", err);
-          }
-        })();
-        waitUntil(threadStartPromise);
-      }
+      return c.json({ ok: true });
+    }
+
+    // Stop button (agent_view). Slack has already halted the streaming
+    // message(s) in `event.streaming_message_ts`; it is OUR job to stop the
+    // generation and to move the session out of `processing` — the status
+    // does not update by itself (https://docs.slack.dev/reference/events/agent_session_stopped).
+    // Requires the `agent_session_stopped` bot event subscription in the app
+    // manifest (see docs/slack-agent-view-rollout.md).
+    if (event.type === "agent_session_stopped") {
+      const stopPromise = (async () => {
+        const channelId: string | undefined = event.channel;
+        const threadTs: string | undefined = event.thread_ts;
+        if (!channelId || !threadTs) {
+          logger.warn("agent_session_stopped without channel/thread_ts", { event });
+          return;
+        }
+        try {
+          const { stopInvocation } = await import("./lib/invocation-lock.js");
+          const displaced = await stopInvocation(
+            channelId,
+            threadTs,
+            String(event.event_ts ?? threadTs),
+            process.env.DEFAULT_WORKSPACE_ID || "default",
+          );
+          logger.info("agent_session_stopped handled", {
+            channelId,
+            threadTs,
+            userId: event.user,
+            displaced,
+            haltedStreams: event.streaming_message_ts,
+          });
+        } catch (err) {
+          recordError("agent_session_stopped", err, { userId: event.user, channelId });
+        }
+        // Clear the loading UX regardless — the turn will unwind on its next
+        // step, but the user pressed Stop and expects the spinner gone now.
+        const { trySetAgentSessionStatus } = await import("./lib/slack-status.js");
+        await trySetAgentSessionStatus({
+          client: slackClient,
+          channelId,
+          threadTs,
+          status: "active",
+        });
+      })();
+      waitUntil(stopPromise);
       return c.json({ ok: true });
     }
 
     // Handle App Home opened
     if (event.type === "app_home_opened") {
-      // Agent-view entry point for thread bootstrap: only wired while
-      // SLACK_AGENT_VIEW is on, and only for the Messages tab.
-      if (isSlackAgentViewEnabled() && event.tab === "messages") {
+      // Agent-view entry point for thread bootstrap (Messages tab only).
+      if (event.tab === "messages") {
         const bootstrapPromise = (async () => {
           try {
             await bootstrapAssistantThread({
