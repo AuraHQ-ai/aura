@@ -716,10 +716,15 @@ async function runSlackAgentStep(
         },
         stackTrace: cause?.stack,
       });
-      // Bubble a descriptive error: the workflow catches it, finalizes the
-      // turn (closes the stream, posts a note, clears the session status)
-      // instead of dying with the loading UX stuck on "processing".
-      throw new Error(`Model call failed: ${message}`);
+      // FatalError, deliberately: the Workflow DevKit re-executes a throwing
+      // step up to DEFAULT_STEP_MAX_RETRIES (3) more times, and this step IS
+      // the model call + tool execution + Slack appends — a plain Error here
+      // meant up to 4 full model calls (and re-run sandbox commands) for a
+      // context-overflow / bad-request that can never succeed on retry.
+      // FatalError bubbles straight to the workflow, which finalizes the turn
+      // (closes the stream, posts a note, clears the session status).
+      const { FatalError } = await import("workflow");
+      throw new FatalError(`Model call failed: ${message}`);
     }
 
     const [response, finishReason, usage] = await Promise.all([
@@ -761,6 +766,33 @@ async function runSlackAgentStep(
       hadToolFailure,
       stepModelId,
     };
+  } catch (error: any) {
+    // Make step failures VISIBLE. The DevKit retries a throwing step up to 3
+    // times and only its own console logger sees attempts 1–3; nothing
+    // reached error_events. Record every attempt (with the attempt number)
+    // and rethrow so retry semantics are unchanged — FatalError still
+    // bypasses retries, anything else still gets its 3 retries.
+    const { FatalError, getStepMetadata } = await import("workflow");
+    let attempt: number | undefined;
+    try { attempt = getStepMetadata().attempt; } catch { /* not in a step (tests) */ }
+    if (!FatalError.is(error)) {
+      logError({
+        errorName: error?.name && error.name !== "Error" ? error.name : "SlackWorkflowStepError",
+        errorMessage: `Step ${stepIndex} failed (attempt ${attempt ?? "?"}): ${error?.message || String(error)}`,
+        errorCode: "workflow_step_error",
+        channelId: input.channelId,
+        userId: input.userId,
+        context: {
+          path: "slack-respond-workflow",
+          stepIndex,
+          attempt,
+          modelId: stepModelId,
+          willRetry: true,
+        },
+        stackTrace: error?.stack,
+      });
+    }
+    throw error;
   } finally {
     clearTimeout(inactivityTimer);
     clearInterval(keepAlive);
