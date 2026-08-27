@@ -913,14 +913,21 @@ async function finalizeSlackRespond(params: {
       };
       if (outcome === "superseded") {
         // "stopped" = the user pressed Stop (agent_session_stopped) — Slack
-        // has already halted the stream, so both calls are best effort.
+        // has already halted the stream AND renders its own native grey
+        // "(stopped)" indicator on the bubble (ai_context.result_status =
+        // "stopped_by_user"), so appending our `_[stopped]_` here would show
+        // the marker twice (issue #1355). Only "newer_message" keeps the
+        // markdown note — Slack has no native indicator for that. Append is
+        // best effort: the stream may already be closed.
         const { getSupersedeReason, interruptionNote } = await import("../src/lib/invocation-lock.js");
-        const note = interruptionNote(await getSupersedeReason(input.channelId, input.threadTs));
-        await slackClient.apiCall("chat.appendStream", {
-          channel: input.channelId,
-          ts: streamState.streamTs,
-          chunks: [{ type: "markdown_text", text: `\n\n${note}` }],
-        }).catch(() => {});
+        const reason = await getSupersedeReason(input.channelId, input.threadTs);
+        if (reason !== "stopped") {
+          await slackClient.apiCall("chat.appendStream", {
+            channel: input.channelId,
+            ts: streamState.streamTs,
+            chunks: [{ type: "markdown_text", text: `\n\n${interruptionNote(reason)}` }],
+          }).catch(() => {});
+        }
       }
       if (failureNote) {
         await slackClient.apiCall("chat.appendStream", {

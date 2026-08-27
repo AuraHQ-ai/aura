@@ -1727,8 +1727,16 @@ export async function generateResponse(
       // already been streamed (pure tool-call tail), the unsent buffer is
       // empty and the fallback would post an effectively empty block list.
       // Post a short stub instead so the user knows the turn was cut short.
+      //
+      // Stop press (issue #1355): when a Slack streaming bubble exists,
+      // Slack halted it and renders its own native grey "(stopped)"
+      // indicator (ai_context.result_status = "stopped_by_user") — posting
+      // our `_[stopped]_` stub as a NEW message would show the marker twice.
+      // The stub survives only when streaming never happened (no bubble, no
+      // native indicator); with a live bubble nothing more is delivered.
+      const stopRenderedNativelyBySlack = stoppedByUser && streamer != null;
       const interruptedStubText = stoppedByUser
-        ? "_[stopped]_"
+        ? stopRenderedNativelyBySlack ? null : "_[stopped]_"
         : !emptyCompletionDetected && !formattedUnsent && toolCallRecords.length > 0
           ? `_Turn interrupted after ${toolCallRecords.length} tool call${toolCallRecords.length === 1 ? "" : "s"} — rerun?_`
           : null;
@@ -1766,61 +1774,69 @@ export async function generateResponse(
         ? emptyCompletionFallbackText
         : interruptedStubText ?? (formattedUnsent || "_I processed your request but had nothing to say._");
 
-      try {
-        const fallbackResult = await safePostMessage(slackClient, {
-          channel: channelId,
-          text: fallbackText,
-          thread_ts: threadTs,
-          blocks,
-          ...(toolMeta && { metadata: toolMeta }),
-        });
-
-        if (!fallbackResult.ok) {
-          flushPendingMessageNotInStreamingStateError(false);
-          logger.warn("LLM response lost — channel does not support posting", {
-            channelId,
-            rawLength: finalText.length,
-            usage: { inputTokens, outputTokens, totalTokens },
-          });
-          logChannelTypeUnsupportedFallbackFailure("safePostMessage_returned_not_ok");
-        } else {
-          flushPendingMessageNotInStreamingStateError(true);
-          pendingChannelTypeUnsupportedFallback = null;
-          if (pendingNativeBlocks.length > 0) {
-            logger.info("NativeBlockDelivered", {
-              toolCallIds: pendingNativeBlockToolCallIds,
-              path: "post_message_fallback",
-            });
-            pendingNativeBlocks = [];
-            pendingNativeBlockToolCallIds = [];
-          }
-          logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
-            rawLength: finalText.length,
-            channelId,
-            usage: { inputTokens, outputTokens, totalTokens },
-          });
-        }
-      } catch (fallbackErr: any) {
-        flushPendingMessageNotInStreamingStateError(false);
-        logger.error("Fallback safePostMessage also failed — posting plain text", {
+      if (stopRenderedNativelyBySlack) {
+        // Nothing left to deliver: the unsent buffer is suppressed on a Stop
+        // press and Slack's own indicator marks the halted bubble.
+        logger.info("Stop press rendered natively by Slack — skipping fallback delivery", {
           channelId,
-          error: fallbackErr?.message || String(fallbackErr),
-          slackError: fallbackErr?.data?.error,
         });
+      } else {
         try {
-          await slackClient.chat.postMessage({
+          const fallbackResult = await safePostMessage(slackClient, {
             channel: channelId,
-            text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
+            text: fallbackText,
             thread_ts: threadTs,
+            blocks,
+            ...(toolMeta && { metadata: toolMeta }),
           });
-          pendingChannelTypeUnsupportedFallback = null;
-        } catch (plainPostErr: any) {
-          logChannelTypeUnsupportedFallbackFailure("plain_post_failed", plainPostErr);
-          logger.error("All message delivery paths failed", {
+
+          if (!fallbackResult.ok) {
+            flushPendingMessageNotInStreamingStateError(false);
+            logger.warn("LLM response lost — channel does not support posting", {
+              channelId,
+              rawLength: finalText.length,
+              usage: { inputTokens, outputTokens, totalTokens },
+            });
+            logChannelTypeUnsupportedFallbackFailure("safePostMessage_returned_not_ok");
+          } else {
+            flushPendingMessageNotInStreamingStateError(true);
+            pendingChannelTypeUnsupportedFallback = null;
+            if (pendingNativeBlocks.length > 0) {
+              logger.info("NativeBlockDelivered", {
+                toolCallIds: pendingNativeBlockToolCallIds,
+                path: "post_message_fallback",
+              });
+              pendingNativeBlocks = [];
+              pendingNativeBlockToolCallIds = [];
+            }
+            logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
+              rawLength: finalText.length,
+              channelId,
+              usage: { inputTokens, outputTokens, totalTokens },
+            });
+          }
+        } catch (fallbackErr: any) {
+          flushPendingMessageNotInStreamingStateError(false);
+          logger.error("Fallback safePostMessage also failed — posting plain text", {
             channelId,
-            error: plainPostErr?.message || String(plainPostErr),
-            slackError: plainPostErr?.data?.error,
+            error: fallbackErr?.message || String(fallbackErr),
+            slackError: fallbackErr?.data?.error,
           });
+          try {
+            await slackClient.chat.postMessage({
+              channel: channelId,
+              text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
+              thread_ts: threadTs,
+            });
+            pendingChannelTypeUnsupportedFallback = null;
+          } catch (plainPostErr: any) {
+            logChannelTypeUnsupportedFallbackFailure("plain_post_failed", plainPostErr);
+            logger.error("All message delivery paths failed", {
+              channelId,
+              error: plainPostErr?.message || String(plainPostErr),
+              slackError: plainPostErr?.data?.error,
+            });
+          }
         }
       }
     } else {
@@ -2100,14 +2116,20 @@ export async function generateResponse(
       const interruptedNote = interruptionNote(supersedeReason);
       if (streamer && !streamingFailed) {
         try {
-          await streamer.stop({
-            chunks: [
-              ...buildOptimisticToolErrorChunks(
-                supersedeReason === "stopped" ? "Stopped by user" : "Interrupted by a newer message",
-              ),
-              toChunkMarkdownText(`\n\n${interruptedNote}`),
-            ],
-          });
+          // On a Stop press Slack renders its own native grey "(stopped)"
+          // indicator on the halted bubble (ai_context.result_status =
+          // "stopped_by_user") — appending our `_[stopped]_` too would show
+          // the marker twice (issue #1355). Only "newer_message" keeps the
+          // markdown note; Slack has no native indicator for that.
+          const closingChunks = [
+            ...buildOptimisticToolErrorChunks(
+              supersedeReason === "stopped" ? "Stopped by user" : "Interrupted by a newer message",
+            ),
+            ...(supersedeReason !== "stopped"
+              ? [toChunkMarkdownText(`\n\n${interruptedNote}`)]
+              : []),
+          ];
+          await streamer.stop(closingChunks.length > 0 ? { chunks: closingChunks } : undefined);
           optimisticToolCards.clear();
         } catch {
           // Stream may already be closed
