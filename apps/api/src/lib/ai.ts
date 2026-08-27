@@ -1,5 +1,6 @@
 import { gateway, GatewayAuthenticationError } from "@ai-sdk/gateway";
 import {
+  addToolInputExamplesMiddleware,
   wrapLanguageModel,
   type LanguageModelMiddleware,
 } from "ai";
@@ -216,6 +217,101 @@ async function retryWithSelfHealedThinking<T>(opts: {
   return { healed: true, result: await opts.retry(retryParams) };
 }
 
+/**
+ * Matches provider capability-divergence errors like
+ *   "tools.10.custom.input_examples: Extra inputs are not permitted"
+ * — e.g. Bedrock's Anthropic passthrough rejecting a tool field that the
+ * anthropic/vertex upstreams accept (the gateway free-routes across all
+ * three). Captures the offending field name (last path segment).
+ */
+const UNSUPPORTED_TOOL_FIELD_PATTERN =
+  /tools\.\d+(?:\.[\w$-]+)*\.([\w$-]+)\s*:\s*Extra inputs are not permitted/;
+
+function collectErrorMessages(error: unknown, acc: string[] = []): string[] {
+  if (error instanceof Error) {
+    acc.push(error.message, String(error));
+
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause) collectErrorMessages(cause, acc);
+
+    const nested = (error as { errors?: unknown }).errors;
+    if (Array.isArray(nested)) {
+      for (const item of nested) collectErrorMessages(item, acc);
+    }
+  } else if (error != null) {
+    acc.push(String(error));
+  }
+  return acc;
+}
+
+function findUnsupportedToolField(error: unknown): string | null {
+  for (const message of collectErrorMessages(error)) {
+    const match = UNSUPPORTED_TOOL_FIELD_PATTERN.exec(message);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+function snakeToCamel(field: string): string {
+  return field.replace(/_([a-z])/g, (_, char: string) => char.toUpperCase());
+}
+
+/**
+ * Return a copy of the tools array with the offending field removed from
+ * every tool, or null if no tool carried it (so a retry would be pointless).
+ * The provider reports the wire-format (snake_case) field name while the
+ * middleware-level tool objects use camelCase — strip both spellings.
+ */
+function stripFieldFromTools(tools: unknown, field: string): unknown[] | null {
+  if (!Array.isArray(tools) || tools.length === 0) return null;
+
+  const candidates = new Set([field, snakeToCamel(field)]);
+  let stripped = false;
+
+  const next = tools.map((tool) => {
+    if (!isRecord(tool)) return tool;
+    const present = [...candidates].filter((name) => name in tool);
+    if (present.length === 0) return tool;
+    stripped = true;
+    const copy = { ...tool };
+    for (const name of present) delete copy[name];
+    return copy;
+  });
+
+  return stripped ? next : null;
+}
+
+/**
+ * Self-heal gateway "Extra inputs are not permitted" errors caused by
+ * provider capability divergence (one gateway upstream rejects a tool field
+ * that others accept): strip the offending field from every tool and retry
+ * once. Safety net — addToolInputExamplesMiddleware should prevent the known
+ * inputExamples case from ever reaching the provider.
+ */
+async function retryWithStrippedToolField<T>(opts: {
+  error: unknown;
+  gatewayId: string;
+  params: unknown;
+  retry: (params: any) => PromiseLike<T>;
+}): Promise<SelfHealRetryResult<T>> {
+  const field = findUnsupportedToolField(opts.error);
+  if (!field) return { healed: false };
+
+  const strippedTools = stripFieldFromTools((opts.params as any)?.tools, field);
+  if (!strippedTools) return { healed: false };
+
+  logger.warn(
+    "Gateway upstream rejected a tool field (provider capability divergence), stripping it and retrying",
+    { field, modelId: opts.gatewayId },
+  );
+
+  const retryParams = {
+    ...(isRecord(opts.params) ? opts.params : {}),
+    tools: strippedTools,
+  };
+  return { healed: true, result: await opts.retry(retryParams) };
+}
+
 function gatewayFallbackMiddleware(
   directModelId: string,
   gatewayId: string,
@@ -237,6 +333,17 @@ function gatewayFallbackMiddleware(
             gatewayModel.doGenerate(retryParams) as ReturnType<typeof doGenerate>,
         });
         if (healed.healed) return healed.result;
+
+        const strippedField = await retryWithStrippedToolField<
+          Awaited<ReturnType<typeof doGenerate>>
+        >({
+          error,
+          gatewayId,
+          params,
+          retry: (retryParams) =>
+            gatewayModel.doGenerate(retryParams) as ReturnType<typeof doGenerate>,
+        });
+        if (strippedField.healed) return strippedField.result;
 
         if (GatewayAuthenticationError.isInstance(error)) {
           logger.warn(
@@ -264,6 +371,17 @@ function gatewayFallbackMiddleware(
         });
         if (healed.healed) return healed.result;
 
+        const strippedField = await retryWithStrippedToolField<
+          Awaited<ReturnType<typeof doStream>>
+        >({
+          error,
+          gatewayId,
+          params,
+          retry: (retryParams) =>
+            gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
+        });
+        if (strippedField.healed) return strippedField.result;
+
         if (GatewayAuthenticationError.isInstance(error)) {
           logger.warn(
             "Gateway auth failed (stream), falling back to direct Anthropic API",
@@ -279,19 +397,36 @@ function gatewayFallbackMiddleware(
 }
 
 /**
- * Universal helper that adds Anthropic fallback to any gateway model.
- * For non-Anthropic models, returns the model unchanged.
- * For Anthropic models, wraps with fallback middleware.
+ * Universal helper that wraps every model we build with the shared
+ * middleware chain:
+ *
+ * 1. addToolInputExamplesMiddleware (all models) — folds each tool's
+ *    inputExamples into its description and strips the field before the
+ *    provider serialises the tools. Some gateway upstreams (Bedrock's
+ *    Anthropic passthrough) reject the serialised `input_examples` field
+ *    with "Extra inputs are not permitted" while anthropic/vertex accept
+ *    it, so the field must never reach the provider (issue #1353).
+ * 2. gatewayFallbackMiddleware (Anthropic models only) — self-heals
+ *    thinking-mode mismatches and capability-divergence errors, and falls
+ *    back to the direct Anthropic API on gateway auth failures.
+ *
+ * Order matters: the examples middleware is first (outermost), so the
+ * fallback middleware — and every retry/fallback path inside it — only ever
+ * sees params with inputExamples already stripped.
  */
 export function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: string): WrappableModel {
+  const middleware: LanguageModelMiddleware[] = [
+    addToolInputExamplesMiddleware(),
+  ];
+
   const directId = toDirectAnthropicId(gatewayId);
-  if (!directId) {
-    return gatewayModel;
+  if (directId) {
+    middleware.push(gatewayFallbackMiddleware(directId, gatewayId, gatewayModel));
   }
 
   return wrapLanguageModel({
     model: gatewayModel,
-    middleware: gatewayFallbackMiddleware(directId, gatewayId, gatewayModel),
+    middleware,
   });
 }
 
