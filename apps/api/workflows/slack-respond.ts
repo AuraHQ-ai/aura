@@ -72,6 +72,8 @@ export interface SlackStreamState {
   charCount: number;
   /** Streaming unsupported on this channel — buffer and post at finalize. */
   streamingFailed: boolean;
+  /** Slack refused an append with `stopped_by_user` — never post a fallback. */
+  stoppedByUser?: boolean;
   /** Number of bubbles opened so far (continuations / expiry recoveries). */
   bubbleCount: number;
 }
@@ -245,7 +247,11 @@ async function runSlackAgentStep(
   const { pruneMessages } = await import("ai");
   const { logger } = await import("../src/lib/logger.js");
 
+  const { logError } = await import("../src/lib/error-logger.js");
+
   const state: SlackStreamState = { ...streamState };
+  // Set by streamText's onError — the real provider error for this step.
+  let streamError: unknown = null;
 
   // ── Invocation staleness: one check per model call ──────────────────
   try {
@@ -376,7 +382,7 @@ async function runSlackAgentStep(
     }
   }
 
-  async function append(rawChunks: Array<AnyChunk | Record<string, unknown>>): Promise<void> {
+  async function append(rawChunks: AnyChunk[]): Promise<void> {
     if (state.streamingFailed) return;
     if (!state.streamTs) await openStream();
     if (!state.streamTs) return;
@@ -405,6 +411,16 @@ async function runSlackAgentStep(
       state.charCount += JSON.stringify(chunks).length;
     } catch (error: any) {
       const code = error?.data?.error;
+      if (code === "stopped_by_user") {
+        // Stop button: Slack halted the stream and refuses appends. Terminal;
+        // finalize must not re-post the buffered text.
+        state.streamingFailed = true;
+        state.stoppedByUser = true;
+        logger.info("slackRespondWorkflow: append refused — stopped_by_user", {
+          channelId: input.channelId,
+        });
+        return;
+      }
       if (isChunkSchemaRejection(error)) {
         // Schema rejection is per-batch and atomic: retry the text-only
         // subset so the words still land, record the exact rejected payload
@@ -567,9 +583,12 @@ async function runSlackAgentStep(
           stopWhen: isStepCount(1),
           abortSignal: abortController.signal,
           providerOptions: providerOptions as any,
-          onError: () => {
-            // Errors surface via the awaited promises below; this prevents
-            // unhandled rejection noise inside the step.
+          onError: ({ error }) => {
+            // Keep the REAL provider error (context overflow, auth, 4xx…).
+            // Without this the only thing that surfaces is the generic
+            // `AI_NoOutputGeneratedError` from the awaited promises below,
+            // which hides the cause and killed the whole run un-finalized.
+            streamError = error;
           },
         }),
     );
@@ -585,11 +604,16 @@ async function runSlackAgentStep(
         }
         case "tool-input-start": {
           const meta = getSlackMeta((tools as any)[(chunk as any).toolName]);
+          // Seen in production (2026-08-27): the gateway emits this event with
+          // `id` rather than `toolCallId`; without the fallback the task_update
+          // had no id and poisoned the whole append batch (issue #1348).
+          const startId = (chunk as any).toolCallId ?? (chunk as any).id;
+          if (typeof startId !== "string") break;
           await flushText(true);
           await append([
             {
               type: "task_update",
-              id: (chunk as any).toolCallId,
+              id: startId,
               title: meta?.status ?? "Working on it...",
               status: "in_progress",
             },
@@ -674,6 +698,30 @@ async function runSlackAgentStep(
 
     await flushText(true);
 
+    if (streamError) {
+      const cause = streamError as { message?: string; name?: string; stack?: string };
+      const message = cause?.message || String(streamError);
+      logError({
+        errorName: cause?.name && cause.name !== "Error" ? cause.name : "SlackWorkflowModelError",
+        errorMessage: `Model call failed (${stepModelId}, step ${stepIndex}): ${message}`,
+        errorCode: "workflow_model_error",
+        channelId: input.channelId,
+        userId: input.userId,
+        context: {
+          path: "slack-respond-workflow",
+          stepIndex,
+          modelId: stepModelId,
+          messageCount: prunedMessages.length,
+          textSoFar: text.length,
+        },
+        stackTrace: cause?.stack,
+      });
+      // Bubble a descriptive error: the workflow catches it, finalizes the
+      // turn (closes the stream, posts a note, clears the session status)
+      // instead of dying with the loading UX stuck on "processing".
+      throw new Error(`Model call failed: ${message}`);
+    }
+
     const [response, finishReason, usage] = await Promise.all([
       result.response,
       result.finishReason,
@@ -757,13 +805,18 @@ async function finalizeSlackRespond(params: {
   stepModelIds: string[];
   toolRecords: ToolCallRecord[];
   outcome: "completed" | "superseded" | "failed";
+  /** Set when outcome === "failed": the step error, shown to the user (truncated). */
+  failureMessage?: string;
 }): Promise<void> {
   "use step";
   const { WebClient } = await import("@slack/web-api");
   const { runBackgroundTasks } = await import("../src/pipeline/index.js");
   const { logger } = await import("../src/lib/logger.js");
 
-  const { input, streamState, fullText, steps, stepModelIds, toolRecords, outcome } = params;
+  const { input, streamState, fullText, steps, stepModelIds, toolRecords, outcome, failureMessage } = params;
+  const failureNote = outcome === "failed"
+    ? `_Sorry — something went wrong and I had to stop${failureMessage ? `: ${failureMessage.slice(0, 300)}` : "."}_`
+    : null;
   const { trySetAgentSessionStatus } = await import("../src/lib/slack-status.js");
   const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN);
 
@@ -785,7 +838,28 @@ async function finalizeSlackRespond(params: {
           chunks: [{ type: "markdown_text", text: `\n\n${note}` }],
         }).catch(() => {});
       }
+      if (failureNote) {
+        await slackClient.apiCall("chat.appendStream", {
+          channel: input.channelId,
+          ts: streamState.streamTs,
+          chunks: [{ type: "markdown_text", text: `\n\n${failureNote}` }],
+        }).catch(() => {});
+      }
       await slackClient.apiCall("chat.stopStream", stopParams);
+    } else if (failureNote) {
+      // Nothing was streamed (or streaming is unsupported here): tell the
+      // user in a plain message rather than leaving the thread silent.
+      await slackClient.chat.postMessage({
+        channel: input.channelId,
+        thread_ts: input.threadTs,
+        text: fullText.trim() ? `${fullText}\n\n${failureNote}` : failureNote,
+      });
+    } else if (streamState.stoppedByUser) {
+      // Stop button — Slack already halted the bubble; do not re-post the
+      // stopped answer. The `_[stopped]_` note comes from the superseded path.
+      logger.info("slackRespondWorkflow: stopped by user — skipping fallback delivery", {
+        channelId: input.channelId,
+      });
     } else if (outcome === "completed" && fullText.trim()) {
       // Streaming never worked on this channel — deliver the buffered text.
       await slackClient.chat.postMessage({
@@ -900,6 +974,7 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
   let hardDeadlineHandled = false;
   let continuationSpawned = false;
 
+  try {
   for (let stepIndex = 0; stepIndex < SLACK_STEP_LIMIT; stepIndex++) {
     const { softDeadlineReached, hardDeadlineReached } = evaluateTurnDeadlines(
       elapsedMs,
@@ -971,6 +1046,24 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
     }
 
     break;
+  }
+  } catch (error: any) {
+    // A step threw (model/provider error, tool crash, Slack outage…). Before
+    // this catch existed the run died here as a Workflow FatalError: no
+    // message, and — worse — the agent session stayed in "processing" so the
+    // user saw "working" until Slack's 1-hour timeout. Always finalize.
+    const failureMessage: string = error?.message || String(error);
+    await finalizeSlackRespond({
+      input,
+      streamState,
+      fullText,
+      steps,
+      stepModelIds,
+      toolRecords,
+      outcome: "failed",
+      failureMessage,
+    });
+    return { interrupted: false, failed: true, text: fullText, error: failureMessage };
   }
 
   await finalizeSlackRespond({
