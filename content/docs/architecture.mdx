@@ -188,6 +188,8 @@ Every incoming message claims a row in `conversation_locks` (keyed by channel + 
 
 The agent_view Stop button fires a Slack `agent_session_stopped` event. The handler calls `stopInvocation()`, which overwrites the lock with a `stop:`-prefixed sentinel (without advancing `message_ts`) so every in-flight step for that thread fails its next currency check, and immediately clears the loading status since Slack does not do this automatically. `getSupersedeReason()` distinguishes "stopped" from "a newer message arrived" so the interruption note appended to the truncated response reads either `_[stopped]_` or `_[interrupted — new message received]_` accordingly.
 
+The between-steps check alone left a race: a superseding message arriving during the final generation step (after the last between-step check but before the answer posts) could still deliver a stale answer. `generateResponse()` re-checks `isInvocationCurrent()` a second time immediately before final delivery -- once before `streamer.stop()` on the happy path, once before the `safePostMessage` fallback -- via a shared `isCurrentAtFinalDelivery()` helper. If the invocation lost currency in that window, it throws `InvocationSupersededError` so the turn unwinds through the same supersede path (interruption note + telemetry) instead of posting.
+
 ## Multi-Tenancy
 
 Aura's database schema is workspace-scoped. A central `workspaces` table (keyed by Slack team ID) owns all data, and every major table includes a `workspace_id` foreign key:
