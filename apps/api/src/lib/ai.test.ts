@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   gatewayAuthIsInstance: vi.fn(),
   getModelCapabilities: vi.fn(),
   updateModelCapabilities: vi.fn(),
+  recordError: vi.fn(),
   // Mirrors the real wrapLanguageModel composition: accepts a single
   // middleware or an array (first = outermost), applying transformParams
   // before wrapGenerate/wrapStream at each layer.
@@ -76,6 +77,11 @@ vi.mock("./logger.js", () => ({
 
 vi.mock("./invocation-lock.js", () => ({
   isInvocationCurrent: vi.fn(),
+}));
+
+vi.mock("./metrics.js", () => ({
+  recordError: mocks.recordError,
+  recordPipelineMetrics: vi.fn(),
 }));
 
 import { withAnthropicFallback, getModelByCategory, isJobModelCategory, LAST_RESORT_MODELS } from "./ai.js";
@@ -491,5 +497,240 @@ describe("gatewayFallbackMiddleware — unsupported tool field self-heal", () =>
 
     // Initial call + exactly one stripped retry.
     expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("gatewayFallbackMiddleware — missing tool_result self-heal (issue #1375)", () => {
+  // Bedrock's Anthropic passthrough drops the tool_search_bm25 result block;
+  // the next request then fails provider validation with this error.
+  const MISSING_TOOL_RESULT_ERROR = new Error(
+    "messages.1: `tool_search_tool_bm25` tool use with id `srvtoolu_bdrk_016DVFjwkdVBingwcsepQwr9` was found without a corresponding `tool_search_tool_bm25_tool_result` block",
+  );
+
+  const toolSearchTool = () => ({
+    type: "provider-defined",
+    id: "anthropic.tool_search_tool_bm25_20251119",
+    name: "toolSearch",
+    args: {},
+  });
+  const deferredTool = (name: string) => ({
+    type: "function",
+    name,
+    inputSchema: { type: "object" },
+    providerOptions: { anthropic: { deferLoading: true } },
+  });
+  const eagerTool = (name: string) => ({
+    type: "function",
+    name,
+    inputSchema: { type: "object" },
+  });
+
+  const expectMaterialized = (tools: any[]) => {
+    expect(tools.some((t) => t.name === "toolSearch")).toBe(false);
+    expect(
+      tools.some((t) => typeof t.id === "string" && t.id.includes("tool_search")),
+    ).toBe(false);
+    for (const tool of tools) {
+      expect(tool.providerOptions?.anthropic?.deferLoading).toBeUndefined();
+    }
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.gatewayAuthIsInstance.mockReturnValue(false);
+  });
+
+  it("drops toolSearch, materializes deferred tools, and retries once (generate)", async () => {
+    const result = { text: "ok" };
+    const gatewayModel = {
+      doGenerate: vi
+        .fn()
+        .mockRejectedValueOnce(MISSING_TOOL_RESULT_ERROR)
+        .mockResolvedValueOnce(result),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-sonnet-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({
+        tools: [toolSearchTool(), deferredTool("bq_execute_query"), eagerTool("run_command")],
+      }),
+    ).resolves.toBe(result);
+
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);
+    const retryTools = gatewayModel.doGenerate.mock.calls[1][0].tools;
+    expect(retryTools).toHaveLength(2);
+    expectMaterialized(retryTools);
+
+    // The heal must land in error_events, not just a warn log (lesson from #1362).
+    expect(mocks.recordError).toHaveBeenCalledWith(
+      "gateway.missing_tool_result",
+      MISSING_TOOL_RESULT_ERROR,
+      expect.objectContaining({
+        modelId: "anthropic/claude-sonnet-4.5",
+        toolName: "tool_search_tool_bm25",
+      }),
+    );
+  });
+
+  it("drops toolSearch, materializes deferred tools, and retries once (stream)", async () => {
+    const streamResult = { stream: "ok" };
+    const gatewayModel = {
+      doGenerate: vi.fn(),
+      doStream: vi
+        .fn()
+        .mockRejectedValueOnce(MISSING_TOOL_RESULT_ERROR)
+        .mockResolvedValueOnce(streamResult),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-sonnet-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doStream({
+        tools: [toolSearchTool(), deferredTool("send_email"), eagerTool("run_command")],
+      }),
+    ).resolves.toBe(streamResult);
+
+    expect(gatewayModel.doStream).toHaveBeenCalledTimes(2);
+    const retryTools = gatewayModel.doStream.mock.calls[1][0].tools;
+    expect(retryTools).toHaveLength(2);
+    expectMaterialized(retryTools);
+    expect(mocks.recordError).toHaveBeenCalledTimes(1);
+  });
+
+  it("finds the error message in a nested cause", async () => {
+    const result = { text: "ok" };
+    const wrappedError = new Error("gateway request failed");
+    (wrappedError as any).cause = MISSING_TOOL_RESULT_ERROR;
+    const gatewayModel = {
+      doGenerate: vi
+        .fn()
+        .mockRejectedValueOnce(wrappedError)
+        .mockResolvedValueOnce(result),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-sonnet-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({ tools: [toolSearchTool(), eagerTool("run_command")] }),
+    ).resolves.toBe(result);
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates the error after exactly one retry when the retry also fails", async () => {
+    const gatewayModel = {
+      doGenerate: vi.fn().mockRejectedValue(MISSING_TOOL_RESULT_ERROR),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-sonnet-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({
+        tools: [toolSearchTool(), deferredTool("bq_execute_query")],
+      }),
+    ).rejects.toBe(MISSING_TOOL_RESULT_ERROR);
+
+    // Initial call + exactly one degraded retry — no infinite loop.
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes non-matching errors through untouched without retrying", async () => {
+    const error = new Error("boom");
+    const gatewayModel = {
+      doGenerate: vi.fn().mockRejectedValue(error),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-sonnet-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({
+        tools: [toolSearchTool(), deferredTool("bq_execute_query")],
+      }),
+    ).rejects.toBe(error);
+
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(1);
+    expect(mocks.recordError).not.toHaveBeenCalled();
+  });
+
+  it("rethrows when the error matches but there is no toolSearch and no deferred tool (retry would be pointless)", async () => {
+    const gatewayModel = {
+      doGenerate: vi.fn().mockRejectedValue(MISSING_TOOL_RESULT_ERROR),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-sonnet-4.5",
+    ) as any;
+
+    await expect(
+      wrapped.doGenerate({ tools: [eagerTool("run_command")] }),
+    ).rejects.toBe(MISSING_TOOL_RESULT_ERROR);
+
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(1);
+    expect(mocks.recordError).not.toHaveBeenCalled();
+  });
+
+  it("sticks for the rest of the invocation: later steps never re-attach toolSearch", async () => {
+    const gatewayModel = {
+      doGenerate: vi
+        .fn()
+        .mockRejectedValueOnce(MISSING_TOOL_RESULT_ERROR)
+        .mockResolvedValue({ text: "ok" }),
+      doStream: vi.fn(),
+    };
+
+    const wrapped = withAnthropicFallback(
+      gatewayModel as any,
+      "anthropic/claude-sonnet-4.5",
+    ) as any;
+
+    const params = () => ({
+      tools: [toolSearchTool(), deferredTool("bq_execute_query"), eagerTool("run_command")],
+    });
+
+    // Step 1: fails once, heals, retries.
+    await wrapped.doGenerate(params());
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(2);
+
+    // Step 2 (same wrapped model instance = same turn): tools are degraded
+    // up front via transformParams — one call, no failure, no retry.
+    await wrapped.doGenerate(params());
+    expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(3);
+    const stepTwoTools = gatewayModel.doGenerate.mock.calls[2][0].tools;
+    expect(stepTwoTools).toHaveLength(2);
+    expectMaterialized(stepTwoTools);
+
+    // A separate wrapped model instance (new invocation) is unaffected.
+    const freshGatewayModel = {
+      doGenerate: vi.fn().mockResolvedValue({ text: "ok" }),
+      doStream: vi.fn(),
+    };
+    const freshWrapped = withAnthropicFallback(
+      freshGatewayModel as any,
+      "anthropic/claude-sonnet-4.5",
+    ) as any;
+    await freshWrapped.doGenerate(params());
+    const freshTools = freshGatewayModel.doGenerate.mock.calls[0][0].tools;
+    expect(freshTools.some((t: any) => t.name === "toolSearch")).toBe(true);
   });
 });

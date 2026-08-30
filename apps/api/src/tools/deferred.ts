@@ -3,6 +3,9 @@ import { db } from "../db/client.js";
 import { deferredToolThreadCache } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+import { hasDeferredLoading, withoutDeferredLoading } from "./deferred-loading.js";
+
+export { hasDeferredLoading, withoutDeferredLoading } from "./deferred-loading.js";
 
 export interface DeferredToolManifestEntry {
   name: string;
@@ -103,15 +106,6 @@ function toOneLineDescription(description: unknown): string {
     : withoutTerminalPunctuation;
 }
 
-function hasDeferredLoading(tool: unknown): boolean {
-  return Boolean(
-    tool &&
-      typeof tool === "object" &&
-      (tool as { providerOptions?: { anthropic?: { deferLoading?: boolean } } })
-        .providerOptions?.anthropic?.deferLoading === true,
-  );
-}
-
 function getThreadCacheKey(context?: ScheduleContext): {
   workspaceId: string;
   channelId: string;
@@ -122,20 +116,6 @@ function getThreadCacheKey(context?: ScheduleContext): {
     workspaceId: context.workspaceId ?? "default",
     channelId: context.channelId,
     threadTs: context.threadTs,
-  };
-}
-
-function withoutDeferredLoading(tool: any): any {
-  if (!tool || typeof tool !== "object") return tool;
-  const providerOptions = tool.providerOptions ?? {};
-  const anthropicOptions = providerOptions.anthropic ?? {};
-  const { deferLoading: _deferLoading, ...restAnthropicOptions } = anthropicOptions;
-  return {
-    ...tool,
-    providerOptions: {
-      ...providerOptions,
-      anthropic: restAnthropicOptions,
-    },
   };
 }
 
