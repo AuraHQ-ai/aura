@@ -204,6 +204,7 @@ function baseJob(overrides: Record<string, unknown> = {}) {
     todayExecutions: 1,
     lastExecutionDate: "2026-05-20",
     enabled: 1,
+    systemGenerated: false,
     requiredCredentialIds: [],
     createdAt: new Date("2026-05-01T00:00:00.000Z"),
     updatedAt: new Date("2026-05-20T08:59:00.000Z"),
@@ -794,13 +795,6 @@ describe("supervisor cron", () => {
 
   it.each([
     {
-      name: "recurring clean success silently resolves",
-      job: baseJob({ cronSchedule: "50 8 * * 1-5", notifyOnSuccess: false }),
-      executions: [baseExecution({ status: "succeeded", error: null, summary: "No changes needed" })],
-      expectedDecision: "silent_success",
-      expectedDmCount: 0,
-    },
-    {
       name: "one-shot clean success reports completion",
       job: baseJob({ cronSchedule: null, notifyOnSuccess: false }),
       executions: [baseExecution({ status: "succeeded", error: null, summary: "Task completed" })],
@@ -844,7 +838,7 @@ describe("supervisor cron", () => {
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ ok: true, decision: expectedDecision });
     expect(prompt).toContain("silent_success");
-    expect(prompt).toContain("default for routine recurring runs");
+    expect(prompt).toContain("already enforced silent in code");
     expect(prompt).toContain("notify_on_success is true");
     expect(promptContext.job).toMatchObject({
       cron_schedule: job.cronSchedule,
@@ -854,6 +848,138 @@ describe("supervisor cron", () => {
     expect(finalOutcomeUpdate()).toMatchObject({
       supervisorStatus: "resolved",
       supervisorDecision: expectedDecision,
+    });
+  });
+
+  // ── Deterministic notification policy (issue #1373) ───────────────────────
+
+  it.each([
+    {
+      name: "recurring notify_on_success=false clean success short-circuits to silent_success without the LLM",
+      job: baseJob({ cronSchedule: "50 8 * * 1-5", notifyOnSuccess: false }),
+      executions: [baseExecution({ status: "succeeded", error: null, summary: "No changes needed" })],
+    },
+    {
+      name: "system-generated one-shot clean success short-circuits to silent_success without the LLM",
+      job: baseJob({ cronSchedule: null, notifyOnSuccess: false, systemGenerated: true }),
+      executions: [baseExecution({ status: "completed", error: null, summary: "Continuation finished" })],
+    },
+    {
+      name: "continue- name prefix fallback short-circuits pre-migration rows with systemGenerated=false",
+      job: baseJob({
+        name: "continue-turn-deadline-abc",
+        cronSchedule: null,
+        notifyOnSuccess: false,
+        systemGenerated: false,
+      }),
+      executions: [baseExecution({ status: "completed", error: null, summary: "Continuation finished" })],
+    },
+  ])("$name", async ({ job, executions }) => {
+    queueDbResults([baseOutcome({ outcomeStatus: "succeeded", error: null })], [job], executions);
+
+    const response = await invokeSupervisor();
+    const body = await response.json();
+    const { logger } = await import("../lib/logger.js");
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: true,
+      decision: "silent_success",
+      shortCircuit: true,
+    });
+    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+    expect(safePostMessageMock).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      "job_supervisor_short_circuit_silent",
+      expect.objectContaining({
+        jobId: job.id,
+        outcomeId: "00000000-0000-4000-8000-000000000001",
+      }),
+    );
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: "silent_success",
+      supervisorReasoning: "deterministic short-circuit: routine recurring/system success",
+    });
+  });
+
+  it("recurring notify_on_success=false recovery run still reaches the LLM and report_success DMs", async () => {
+    mockCleanSuccessDecisionPolicy();
+    queueDbResults(
+      [baseOutcome({ outcomeStatus: "succeeded", error: null })],
+      [baseJob({ cronSchedule: "0 9 * * *", notifyOnSuccess: false })],
+      [
+        baseExecution({ status: "succeeded", error: null, summary: "Recovered" }),
+        baseExecution({
+          id: "00000000-0000-4000-8000-000000000021",
+          status: "failed",
+          error: "Previous run failed",
+        }),
+      ],
+    );
+
+    const response = await invokeSupervisor();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, decision: "report_success" });
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+    expect(sendJobFailureDmMock).toHaveBeenCalledTimes(1);
+    expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedBy: "U_REQUESTER" }),
+    );
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: "report_success",
+    });
+  });
+
+  it.each([
+    {
+      name: "downgrades a stray LLM report_success for a recurring notify_on_success=false job",
+      job: baseJob({ cronSchedule: "0 9 * * *", notifyOnSuccess: false }),
+    },
+    {
+      name: "downgrades a stray LLM report_success for a system-generated job",
+      job: baseJob({ cronSchedule: null, notifyOnSuccess: false, systemGenerated: true }),
+    },
+  ])("$name", async ({ job }) => {
+    generateTextMock.mockResolvedValue({
+      output: {
+        decision: "report_success",
+        reasoning: "Model ignored the notification policy.",
+        user_message: "Your job succeeded!",
+      },
+    });
+    // A non-clean outcome (warning text) so the request is not short-circuited
+    // and actually exercises the applySupervisorDecision guard.
+    queueDbResults(
+      [baseOutcome({ outcomeStatus: "succeeded", error: "completed with warnings" })],
+      [job],
+      [baseExecution({ status: "succeeded", error: null })],
+    );
+
+    const response = await invokeSupervisor();
+    const body = await response.json();
+    const { logger } = await import("../lib/logger.js");
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, decision: "report_success" });
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+    expect(sendJobFailureDmMock).not.toHaveBeenCalled();
+    expect(safePostMessageMock).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      "job_supervisor_report_success_downgraded",
+      expect.objectContaining({
+        jobId: job.id,
+        outcomeId: "00000000-0000-4000-8000-000000000001",
+        reasoning: "Model ignored the notification policy.",
+      }),
+    );
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: "report_success",
     });
   });
 
