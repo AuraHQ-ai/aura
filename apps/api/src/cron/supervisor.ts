@@ -603,6 +603,9 @@ async function applySupervisorDecision(
     }
 
     case "retry_as_is": {
+      // executeAt = now → picked up by the next heartbeat sweep. For recurring
+      // jobs the sweep classifies this off-tick executeAt as trigger "recovery"
+      // so the retry does not consume the min_interval budget (issue #1238).
       await db
         .update(jobs)
         .set({ status: "pending", retries: 0, executeAt: now, updatedAt: now })
@@ -616,6 +619,7 @@ async function applySupervisorDecision(
     }
 
     case "retry_with_fix": {
+      // Same recovery-trigger semantics as retry_as_is (issue #1238).
       await db
         .update(jobs)
         .set({ status: "pending", retries: 0, executeAt: now, updatedAt: now })
