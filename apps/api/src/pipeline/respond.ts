@@ -30,8 +30,20 @@ import { InvocationSupersededError } from "./prepare-step.js";
 import { cleanupScratchpad } from "../tools/scratchpad.js";
 import { cacheDeferredToolResolutions } from "../tools/deferred.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
-import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
 import { getSettingJSON } from "../lib/settings.js";
+import {
+  sanitizeChunks,
+  markdownOnly,
+  describeChunks,
+  slackErrorDetail,
+  isChunkSchemaRejection,
+  type AnyChunk,
+  type BlocksChunk,
+  type MarkdownTextChunk,
+  type TaskUpdateChunk,
+  type URLSource,
+} from "../lib/slack-chunks.js";
+import { getSupersedeReason, interruptionNote, isInvocationCurrent } from "../lib/invocation-lock.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -272,28 +284,24 @@ function estimateAppendSize(payload: any): number {
   return JSON.stringify(payload).length;
 }
 
-type SlackTaskDisplayMode = "timeline" | "plan" | "hybrid";
-type URLSourceElement = { type: "url"; url: string; text: string };
-type LegacyTaskUpdateChunk = {
-  type: "task_update";
-  id: string;
-  title: string;
-  status: "pending" | "in_progress" | "complete" | "error";
-  details?: string;
-  output?: string;
-  sources?: URLSourceElement[];
-};
-type LegacyPlanUpdateChunk = { type: "plan_update"; title: string };
-type LegacyMarkdownChunk = { type: "markdown_text"; text: string };
-type LegacyKnownChunk = LegacyTaskUpdateChunk | LegacyPlanUpdateChunk | LegacyMarkdownChunk;
-type SlackStreamChunk = LegacyKnownChunk | { type: string; [key: string]: unknown };
+// Slack accepts exactly `timeline` (default) | `plan` for chat.startStream
+// `task_display_mode` (https://docs.slack.dev/reference/methods/chat.startStream).
+// "hybrid" was never a valid value — it would make the lazy startStream fail
+// on the first append and silently drop the whole turn to postMessage.
+type SlackTaskDisplayMode = "timeline" | "plan";
+// Chunk shapes are the real `@slack/types` contracts (see lib/slack-chunks.ts)
+// so a wrong status enum or a missing required field fails `tsc`, not Slack.
+type SlackStreamChunk = AnyChunk;
 
 function normalizeTaskDisplayMode(value: unknown): SlackTaskDisplayMode {
-  if (value === "plan" || value === "hybrid" || value === "timeline") return value;
+  if (value === "plan" || value === "timeline") return value;
+  if (value === "hybrid") {
+    logger.warn("slack_task_display_mode 'hybrid' is not a Slack value; using 'timeline'");
+  }
   return "timeline";
 }
 
-function toChunkMarkdownText(text: string): SlackStreamChunk {
+function toChunkMarkdownText(text: string): MarkdownTextChunk {
   return {
     type: "markdown_text",
     text,
@@ -304,21 +312,21 @@ function toChunkMarkdownText(text: string): SlackStreamChunk {
 function toTaskUpdateChunk(params: {
   id: string;
   title: string;
-  status: "pending" | "in_progress" | "complete" | "error";
+  status: TaskUpdateChunk["status"];
   details?: string;
   output?: string;
-  sources?: URLSourceElement[];
-}): SlackStreamChunk {
+  sources?: URLSource[];
+}): TaskUpdateChunk {
   return {
     type: "task_update",
     ...params,
   };
 }
 
-function toBlocksChunk(blocks: Record<string, any>[]): SlackStreamChunk {
+function toBlocksChunk(blocks: Record<string, any>[]): BlocksChunk {
   return {
     type: "blocks",
-    blocks,
+    blocks: blocks as BlocksChunk["blocks"],
   };
 }
 
@@ -339,49 +347,27 @@ function asAppendPayload(payload: {
   markdown_text?: string;
   chunks?: SlackStreamChunk[];
 }): Omit<ChatAppendStreamArguments, "channel" | "ts"> {
-  const normalizeChunk = (chunk: SlackStreamChunk): LegacyKnownChunk => {
-    if (
-      chunk.type === "task_update" &&
-      typeof chunk.id === "string" &&
-      typeof chunk.title === "string" &&
-      typeof chunk.status === "string"
-    ) {
-      return {
-        type: "task_update",
-        id: chunk.id,
-        title: chunk.title,
-        status: chunk.status as LegacyTaskUpdateChunk["status"],
-        ...(typeof chunk.details === "string" ? { details: chunk.details } : {}),
-        ...(typeof chunk.output === "string" ? { output: chunk.output } : {}),
-        ...(Array.isArray(chunk.sources) ? { sources: chunk.sources as URLSourceElement[] } : {}),
-      };
-    }
-    if (chunk.type === "plan_update" && typeof chunk.title === "string") {
-      return { type: "plan_update", title: chunk.title };
-    }
-    if (chunk.type === "markdown_text") {
-      const text =
-        typeof (chunk as { text?: unknown }).text === "string"
-          ? (chunk as { text: string }).text
-          : "";
-      return { type: "markdown_text", text };
-    }
-    // Unknown / forward-compatible chunk types are intentionally cast here.
-    return chunk as unknown as LegacyKnownChunk;
-  };
-
   // Always stream in chunks mode to avoid `streaming_mode_mismatch`.
-  const chunks: LegacyKnownChunk[] = [];
+  const raw: unknown[] = [];
   if (payload.markdown_text != null) {
-    chunks.push(normalizeChunk(toChunkMarkdownText(payload.markdown_text)));
+    raw.push(toChunkMarkdownText(payload.markdown_text));
   }
   if (payload.chunks && payload.chunks.length > 0) {
-    chunks.push(...payload.chunks.map(normalizeChunk));
+    raw.push(...payload.chunks);
+  }
+
+  // Every chunk is coerced to the exact server schema (or dropped) BEFORE it
+  // leaves the process — one malformed element rejects the whole batch
+  // (`invalid_arguments … [json-pointer:/chunks/N]`) and the text in that
+  // batch would never reach Slack.
+  const { chunks, dropped } = sanitizeChunks(raw);
+  if (dropped.length > 0) {
+    logger.warn("Dropped malformed Slack stream chunk(s) before append", {
+      dropped: dropped.map((d) => ({ reason: d.reason, chunk: describeChunks(d.chunk, 300) })),
+    });
   }
   if (chunks.length > 0) {
-    return {
-      chunks: chunks as ChatAppendStreamArguments["chunks"],
-    };
+    return { chunks };
   }
   return {};
 }
@@ -448,7 +434,9 @@ export async function generateResponse(
     throw new Error("threadTs is required for chatStream (chat.startStream requires thread_ts)");
   }
 
-  const streamParams: Record<string, any> = {
+  // Typed against v8's `chat.startStream` contract so an unknown/misspelled
+  // param is a compile error (this used to be `Record<string, any>` + `as any`).
+  const streamParams: Parameters<WebClient["chatStream"]>[0] = {
     channel: channelId,
     thread_ts: threadTs,
   };
@@ -468,6 +456,9 @@ export async function generateResponse(
   // chat.startStream. When we detect this, we flip to buffer-only mode
   // and post the final result via chat.postMessage.
   let streamingFailed = skipStreaming;
+  // Slack refused an append with `stopped_by_user` (Stop button): terminal,
+  // and the buffered text must NOT be re-posted as a fallback.
+  let stoppedByUser = false;
   let streamTombstoneSent = false;
   let pendingMessageNotInStreamingStateError: Parameters<typeof logError>[0] | null = null;
   let pendingChannelTypeUnsupportedFallback: { errorMessage: string } | null = null;
@@ -528,33 +519,68 @@ export async function generateResponse(
         pendingChannelTypeUnsupportedFallback = {
           errorMessage: err?.message || "channel_type_not_supported",
         };
-      } else if (isInvalidChunks(err) || isInvalidArguments(err)) {
-        // Non-fatal: some chunk shapes (e.g. the 2026 `plan` / `url_source` /
-        // `blocks` chunk types) may be rejected by the Slack API with either
-        // `invalid_chunks` or `invalid_arguments` depending on which
-        // validation layer trips. Skip the offending payload, keep streaming,
-        // and let the rest of the response land as normal `task_update` /
-        // `markdown_text` chunks.
+      } else if (isChunkSchemaRejection(err) || isInvalidChunks(err) || isInvalidArguments(err)) {
+        // Non-fatal: Slack rejected the chunk payload (`invalid_chunks` or
+        // `invalid_arguments` depending on which validation layer trips —
+        // the `[json-pointer:/chunks/N]` metadata is the reliable tell).
+        // The batch is atomic, so any markdown text in it was NOT delivered:
+        // retry with the text-only subset so the user still sees the words,
+        // then keep streaming. Log the exact rejected payload — sanitizeChunks
+        // should make this unreachable, so a hit here is a new Slack schema
+        // change we need to see verbatim.
         const errCode = err?.data?.error || (isInvalidArguments(err) ? "invalid_arguments" : "invalid_chunks");
-        const chunkTypes = Array.isArray((payload as any)?.chunks)
-          ? (payload as any).chunks.map((c: any) => c?.type).filter(Boolean)
+        const rejectedChunks = Array.isArray((payload as any)?.chunks)
+          ? ((payload as any).chunks as AnyChunk[])
           : [];
-        logger.warn("chatStream append returned recoverable validation error; skipping this chunk", {
+        const chunkTypes = rejectedChunks.map((c) => c?.type).filter(Boolean);
+        const slackDetail = slackErrorDetail(err);
+        const rejectedPayload = describeChunks(payload);
+        logger.warn("chatStream append rejected by Slack schema validation; retrying text-only", {
           channelId,
           slackError: errCode,
-          payloadKeys: Object.keys(payload as Record<string, unknown>),
+          slackDetail,
           chunkTypes,
+          rejectedPayload,
         });
+
+        let textRecovered = false;
+        const textOnly = markdownOnly(rejectedChunks);
+        if (textOnly.length > 0 && textOnly.length < rejectedChunks.length) {
+          try {
+            await streamer.append({ chunks: textOnly });
+            textRecovered = true;
+          } catch (retryErr: any) {
+            logger.warn("Text-only retry after chunk rejection also failed", {
+              channelId,
+              slackError: retryErr?.data?.error || retryErr?.message,
+              slackDetail: slackErrorDetail(retryErr),
+            });
+          }
+        }
+
         logError({
           errorName: isInvalidArguments(err) ? "InvalidArguments" : "InvalidChunks",
-          errorMessage: err?.message || `${errCode} on stream append`,
+          errorMessage: slackDetail
+            ? `${errCode} on stream append: ${slackDetail}`
+            : err?.message || `${errCode} on stream append`,
           errorCode: errCode,
           channelId,
           context: {
-            payloadKeys: Object.keys(payload as Record<string, unknown>),
             chunkTypes,
+            rejectedPayload,
+            textRecovered,
+            textChunkCount: textOnly.length,
           },
         });
+        return textRecovered;
+      } else if (err?.data?.error === "stopped_by_user") {
+        // The user pressed Stop: Slack halted this stream and refuses further
+        // appends. Terminal — do NOT fall back to postMessage (that would
+        // dump the answer they just stopped). The turn unwinds via the
+        // stop sentinel on the next step (see stopInvocation()).
+        streamingFailed = true;
+        stoppedByUser = true;
+        logger.info("chatStream append refused: stopped_by_user — ending delivery", { channelId });
         return false;
       } else if (isInvalidBlocks(err)) {
         streamingFailed = true;
@@ -710,7 +736,7 @@ export async function generateResponse(
   streamParams.task_display_mode = configuredTaskDisplayMode;
 
   if (!skipStreaming) {
-    streamer = slackClient.chatStream(streamParams as any);
+    streamer = slackClient.chatStream(streamParams);
     streamStartedAt = Date.now();
   }
 
@@ -798,6 +824,47 @@ export async function generateResponse(
       options.context ?? { channelId, threadTs },
       toolCallRecords.map((record) => record.name),
     );
+  };
+  // Issue #1342: prepareStep's supersede check only runs BETWEEN agent steps,
+  // so a follow-up that arrives while the FINAL step is generating/streaming
+  // would otherwise let both the old and new invocation post final answers to
+  // the same thread. Re-check the conversation lock immediately before final
+  // delivery (one indexed SELECT per turn). Fail-open on read errors — same
+  // policy as the between-steps check in prepare-step.ts.
+  const isCurrentAtFinalDelivery = async (deliveryPath: string): Promise<boolean> => {
+    let stillCurrent = true;
+    try {
+      stillCurrent = await isInvocationCurrent(channelId, threadTs, invocationId);
+    } catch (err: any) {
+      logger.warn("Final-delivery invocation check failed, assuming still current", {
+        invocationId,
+        channelId,
+        deliveryPath,
+        error: err?.message,
+      });
+      return true;
+    }
+    if (!stillCurrent) {
+      logger.info("Invocation superseded at final delivery — suppressing answer", {
+        invocationId,
+        channelId,
+        threadTs,
+        deliveryPath,
+      });
+      logError({
+        errorName: "InvocationSupersededAtFinalDelivery",
+        errorMessage: "Invocation superseded before final delivery; suppressing the answer",
+        errorCode: "superseded_at_final_delivery",
+        channelId,
+        context: {
+          invocationId,
+          deliveryPath,
+          accumulatedTextLength: accumulatedText.length,
+          toolCallCount: toolCallRecords.length,
+        },
+      });
+    }
+    return stillCurrent;
   };
   let continuationCount = 0;
   let currentSegmentIndex = 0;
@@ -1119,7 +1186,7 @@ export async function generateResponse(
     }
 
     try {
-      streamer = slackClient.chatStream(streamParams as any);
+      streamer = slackClient.chatStream(streamParams);
       streamStartedAt = Date.now();
       currentStreamLength = 0;
       streamTombstoneSent = false;
@@ -1242,14 +1309,10 @@ export async function generateResponse(
   }
 
   try {
-    // Signal extended thinking phase to the user via Slack thread status
-    await trySetAssistantThreadStatus({
-      client: slackClient,
-      channelId,
-      threadTs,
-      status: "Thinking deeply...",
-    });
-
+    // No mid-stream status update here: agents.sessions.setStatus only
+    // accepts the enum "suspended"|"processing"|"active"|"closed" — the
+    // pipeline already set "processing" at turn start and free-text phases
+    // like "Thinking deeply..." are not expressible under agent_view.
     let currentStreamCallOptions = streamCallOptions;
     while (true) {
       supersededDuringStream = false;
@@ -1267,7 +1330,9 @@ export async function generateResponse(
         }
 
         case "tool-input-start": {
-          const toolCallId = (chunk as any).toolCallId;
+          // The gateway can emit this event with `id` instead of `toolCallId`
+          // (seen in production 2026-08-27) — accept both.
+          const toolCallId = (chunk as any).toolCallId ?? (chunk as any).id;
           const toolName = (chunk as any).toolName;
           if (typeof toolCallId !== "string" || typeof toolName !== "string") {
             break;
@@ -1646,17 +1711,22 @@ export async function generateResponse(
       // Fallback: post the unsent portion via safePostMessage.
       // If a continuation split partially succeeded, only post text that
       // wasn't already streamed (fallbackStartIdx marks the boundary).
-      const unsentText = fallbackStartIdx > 0
-        ? finalText.slice(fallbackStartIdx)
-        : finalText;
+      // After a Stop press nothing further is delivered — the user asked for
+      // silence, not a bulk dump of what they stopped.
+      const unsentText = stoppedByUser
+        ? ""
+        : fallbackStartIdx > 0
+          ? finalText.slice(fallbackStartIdx)
+          : finalText;
       const blocks: any[] = [];
       const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
       // Issue #1121: when the stream died after everything visible had
       // already been streamed (pure tool-call tail), the unsent buffer is
       // empty and the fallback would post an effectively empty block list.
       // Post a short stub instead so the user knows the turn was cut short.
-      const interruptedStubText =
-        !emptyCompletionDetected && !formattedUnsent && toolCallRecords.length > 0
+      const interruptedStubText = stoppedByUser
+        ? "_[stopped]_"
+        : !emptyCompletionDetected && !formattedUnsent && toolCallRecords.length > 0
           ? `_Turn interrupted after ${toolCallRecords.length} tool call${toolCallRecords.length === 1 ? "" : "s"} — rerun?_`
           : null;
       if (formattedUnsent) {
@@ -1692,6 +1762,12 @@ export async function generateResponse(
       const fallbackText = emptyCompletionDetected
         ? emptyCompletionFallbackText
         : interruptedStubText ?? (formattedUnsent || "_I processed your request but had nothing to say._");
+
+      // Issue #1342: skip the fallback post entirely when a newer message has
+      // taken over the thread — unwind through the existing supersede path.
+      if (!(await isCurrentAtFinalDelivery("post_message_fallback"))) {
+        throw new InvocationSupersededError(invocationId);
+      }
 
       try {
         const fallbackResult = await safePostMessage(slackClient, {
@@ -1770,6 +1846,13 @@ export async function generateResponse(
       stopBlocks.push(feedbackBlock);
       const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
+
+      // Issue #1342: do NOT finalize the stream with the answer when a newer
+      // message has taken over the thread — unwind through the existing
+      // supersede path (streamer.stop with interruption note, telemetry).
+      if (!(await isCurrentAtFinalDelivery("stream_stop"))) {
+        throw new InvocationSupersededError(invocationId);
+      }
 
       try {
         await streamer.stop(stopArgs);
@@ -2012,12 +2095,19 @@ export async function generateResponse(
         },
       });
 
+      // "stopped" = the user pressed Stop (agent_session_stopped); otherwise a
+      // newer message claimed the lock. Slack already halted the stream on a
+      // Stop press, so stop() may reject — best effort.
+      const supersedeReason = await getSupersedeReason(channelId, threadTs);
+      const interruptedNote = interruptionNote(supersedeReason);
       if (streamer && !streamingFailed) {
         try {
           await streamer.stop({
             chunks: [
-              ...buildOptimisticToolErrorChunks("Interrupted by a newer message"),
-              toChunkMarkdownText("\n\n_[interrupted — new message received]_"),
+              ...buildOptimisticToolErrorChunks(
+                supersedeReason === "stopped" ? "Stopped by user" : "Interrupted by a newer message",
+              ),
+              toChunkMarkdownText(`\n\n${interruptedNote}`),
             ],
           });
           optimisticToolCards.clear();
@@ -2030,7 +2120,7 @@ export async function generateResponse(
 
       turnMarkerStatus = "completed";
       return {
-        raw: accumulatedText + "\n\n_[interrupted — new message received]_",
+        raw: accumulatedText + `\n\n${interruptedNote}`,
         alreadyPosted: true,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         toolCalls: toolCallRecords,

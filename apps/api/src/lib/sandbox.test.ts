@@ -23,6 +23,7 @@ const dbMock = vi.hoisted(() => {
 
 const decryptCredentialMock = vi.hoisted(() => vi.fn((value: string) => value));
 const resolveUserCredentialsMock = vi.hoisted(() => vi.fn());
+const recordErrorMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../db/client.js", () => ({
   db: {
@@ -50,6 +51,10 @@ vi.mock("./logger.js", () => ({
     error: vi.fn(),
     debug: vi.fn(),
   },
+}));
+
+vi.mock("./metrics.js", () => ({
+  recordError: recordErrorMock,
 }));
 
 import { logger } from "./logger.js";
@@ -478,6 +483,42 @@ describe("getSandboxEnvNames", () => {
 
 describe("bootstrapToolsRepo", () => {
   const checkoutPath = `/home/user/${["aura", "tools"].join("-")}`;
+  const repoProbe = `git -C '${checkoutPath}' rev-parse --is-inside-work-tree 2>/dev/null && echo AURA_REPO_OK || echo AURA_REPO_MISSING`;
+
+  /**
+   * Mirrors the real E2B SDK behavior: `commands.run()` THROWS a
+   * `CommandExitError` (carrying exitCode/stdout/stderr) on any non-zero
+   * exit instead of returning a result. Mocks that RETURN `{ exitCode: 128 }`
+   * are exactly why issue #1363 was never caught by tests.
+   */
+  class FakeCommandExitError extends Error {
+    constructor(
+      private readonly result: { exitCode: number; stdout: string; stderr: string },
+    ) {
+      super(`exit status ${result.exitCode}`);
+      this.name = "CommandExitError";
+    }
+    get exitCode() {
+      return this.result.exitCode;
+    }
+    get stdout() {
+      return this.result.stdout;
+    }
+    get stderr() {
+      return this.result.stderr;
+    }
+  }
+
+  function commandResult({
+    exitCode = 0,
+    stdout = "",
+    stderr = "",
+  }: { exitCode?: number; stdout?: string; stderr?: string }) {
+    if (exitCode !== 0) {
+      throw new FakeCommandExitError({ exitCode, stdout, stderr });
+    }
+    return { exitCode, stdout, stderr };
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -491,18 +532,17 @@ describe("bootstrapToolsRepo", () => {
 
     expect(run).not.toHaveBeenCalled();
     expect(loggerWarnMock).not.toHaveBeenCalled();
+    expect(recordErrorMock).not.toHaveBeenCalled();
   });
 
   it("clones the configured repository when the checkout is missing", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
     const run = vi.fn(async (command: string, _options?: unknown) => {
       if (command.includes("rev-parse")) {
-        return { exitCode: 128, stdout: "", stderr: "missing" };
+        // The shell guard absorbs git's non-zero exit — the command exits 0.
+        return commandResult({ stdout: "AURA_REPO_MISSING\n" });
       }
-      if (command.startsWith("git clone")) {
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
+      return commandResult({});
     });
 
     await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
@@ -516,6 +556,30 @@ describe("bootstrapToolsRepo", () => {
       envs: { GITHUB_TOKEN: "token" },
     });
     expect(loggerWarnMock).not.toHaveBeenCalled();
+    expect(recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("still clones when the existence probe THROWS like the real SDK (issue #1363)", async () => {
+    getSettingMock.mockResolvedValue("acme/tools");
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.includes("rev-parse")) {
+        // Real SDK behavior for a missing checkout without the shell guard:
+        // rev-parse exits 128 and commands.run() throws CommandExitError.
+        return commandResult({ exitCode: 128, stderr: "fatal: not a git repository" });
+      }
+      return commandResult({});
+    });
+
+    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+
+    const cloneCall = run.mock.calls.find(([command]) =>
+      command.startsWith("git clone"),
+    );
+    expect(cloneCall).toBeDefined();
+    expect(cloneCall![0]).toContain(
+      'git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
+    );
+    expect(recordErrorMock).not.toHaveBeenCalled();
   });
 
   it("pulls on re-acquire when the checkout is already a git repository", async () => {
@@ -523,53 +587,77 @@ describe("bootstrapToolsRepo", () => {
     let checkoutExists = false;
     const run = vi.fn(async (command: string, _options?: unknown) => {
       if (command.includes("rev-parse")) {
-        return { exitCode: checkoutExists ? 0 : 128, stdout: "", stderr: "" };
+        return commandResult({
+          stdout: checkoutExists ? "AURA_REPO_OK\n" : "AURA_REPO_MISSING\n",
+        });
       }
       if (command.startsWith("git clone")) {
         checkoutExists = true;
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return commandResult({});
       }
       if (command.includes("pull --ff-only")) {
-        return { exitCode: 0, stdout: "Already up to date.", stderr: "" };
+        return commandResult({ stdout: "Already up to date." });
       }
-      return { exitCode: 0, stdout: "", stderr: "" };
+      return commandResult({});
     });
 
     await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
     await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
 
     expect(run.mock.calls.map(([command]) => command)).toEqual([
-      `git -C '${checkoutPath}' rev-parse --is-inside-work-tree`,
+      repoProbe,
       `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git" '${checkoutPath}'`,
-      `git -C '${checkoutPath}' rev-parse --is-inside-work-tree`,
+      repoProbe,
       `git -C '${checkoutPath}' pull --ff-only`,
     ]);
     expect(loggerWarnMock).not.toHaveBeenCalled();
+    expect(recordErrorMock).not.toHaveBeenCalled();
   });
 
-  it("logs a warning but does not throw when clone fails", async () => {
+  it("records an error but does not throw when clone fails", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
     const run = vi.fn(async (command: string, _options?: unknown) => {
       if (command.includes("rev-parse")) {
-        return { exitCode: 128, stdout: "", stderr: "missing" };
+        return commandResult({ stdout: "AURA_REPO_MISSING\n" });
       }
       if (command.startsWith("git clone")) {
-        return { exitCode: 128, stdout: "", stderr: "repository not found" };
+        return commandResult({ exitCode: 128, stderr: "repository not found" });
       }
-      return { exitCode: 0, stdout: "", stderr: "" };
+      return commandResult({});
     });
 
     await expect(
       bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" }),
     ).resolves.toBeUndefined();
 
-    expect(loggerWarnMock).toHaveBeenCalledWith(
-      "Failed to clone configured tools repository",
+    expect(recordErrorMock).toHaveBeenCalledWith(
+      "sandbox.bootstrapToolsRepo",
+      expect.any(Error),
       expect.objectContaining({
         toolsRepo: "acme/tools",
+        checkoutPath,
         exitCode: 128,
         stderr: "repository not found",
       }),
+    );
+  });
+
+  it("records genuine connection errors via recordError without throwing", async () => {
+    getSettingMock.mockResolvedValue("acme/tools");
+    const run = vi.fn(async (_command: string, _options?: unknown) => {
+      // A transport failure carries no exitCode — runTolerant must re-throw it.
+      throw new Error("sandbox connection lost");
+    });
+
+    await expect(
+      bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" }),
+    ).resolves.toBeUndefined();
+
+    expect(run.mock.calls.map(([command]) => command)).toEqual([repoProbe]);
+    expect(recordErrorMock).toHaveBeenCalledWith(
+      "sandbox.bootstrapToolsRepo",
+      expect.objectContaining({ message: "sandbox connection lost" }),
+      { toolsRepo: "acme/tools", checkoutPath },
     );
   });
 });

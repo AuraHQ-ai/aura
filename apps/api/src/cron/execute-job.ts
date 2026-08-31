@@ -339,7 +339,9 @@ export async function executeJob(
       try {
         const { getOrCreateSandbox, truncateOutput, getSandboxEnvs, filterEnvsByAllowlist } =
           await import("../lib/sandbox.js");
-        const sandbox = await getOrCreateSandbox();
+        // Use the job requester's sandbox so the script layer shares state
+        // (checkouts, installed deps) with the job's LLM run_command calls.
+        const sandbox = await getOrCreateSandbox(job.requestedBy);
         // Script layer runs outside executionContext.run, so apply the job's
         // env allowlist explicitly here (narrows, never widens).
         const envs = filterEnvsByAllowlist(
