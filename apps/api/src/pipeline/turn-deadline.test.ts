@@ -64,6 +64,7 @@ import {
   TURN_HARD_DEADLINE_MS,
   MAX_CONTINUATION_DEPTH,
   CONTINUATION_DEPTH_EXCEEDED_MESSAGE,
+  TRUNCATED_MESSAGE_MAX_CHARS,
   resolveTurnDeadlines,
   spawnTurnContinuationJob,
 } from "./turn-deadline.js";
@@ -171,6 +172,78 @@ describe("spawnTurnContinuationJob", () => {
     expect(row.channelId).toBe("");
     expect(row.threadTs).toBeNull();
     expect(row.requestedBy).toBe("aura");
+  });
+
+  it("appends the truncated message verbatim to the description (issue #1336)", async () => {
+    const truncatedMessage =
+      "Here are rows 1-40 as promised.\n\n" +
+      "Remaining: rows 41-100, plus the corrected Smart View recipe.";
+
+    const ok = await spawnTurnContinuationJob({
+      channelId: "C0123456",
+      threadTs: "1755500000.000100",
+      elapsedMs: 723_456,
+      step: 41,
+      truncatedMessage,
+    });
+
+    expect(ok).toBe(true);
+    const description = dbMock.insertValues[0].description as string;
+    expect(description).toContain(
+      `Your previous message ended here before being cut off:\n"""\n${truncatedMessage}\n"""`,
+    );
+    expect(description).toContain(
+      "Anything you stated as remaining or promised for later in that text is still owed",
+    );
+    expect(description).toContain(
+      "treat it as a checklist and deliver ALL of it",
+    );
+    // The generic boilerplate is preserved in front of the appended message.
+    expect(description).toMatch(/^\[CONTINUE:turn-deadline-/);
+    expect(description).toContain("complete the remaining work and post the results in the same thread.");
+  });
+
+  it("keeps only the tail of a very long truncated message", async () => {
+    const tail = "END-OF-MESSAGE: remaining items are X, Y and Z.";
+    const truncatedMessage = "a".repeat(TRUNCATED_MESSAGE_MAX_CHARS * 3) + tail;
+
+    await spawnTurnContinuationJob({
+      channelId: "C0123456",
+      elapsedMs: 720_000,
+      step: 12,
+      truncatedMessage,
+    });
+
+    const description = dbMock.insertValues[0].description as string;
+    expect(description).toContain(tail);
+    expect(description).not.toContain(truncatedMessage);
+    const quoted = description.split('"""')[1];
+    expect(quoted.trim().length).toBe(TRUNCATED_MESSAGE_MAX_CHARS);
+  });
+
+  it("omits the cut-off framing when truncatedMessage is absent or blank (backward compatible)", async () => {
+    await spawnTurnContinuationJob({
+      channelId: "C0123456",
+      elapsedMs: 720_000,
+      step: 12,
+    });
+    await spawnTurnContinuationJob({
+      channelId: "C0123456",
+      elapsedMs: 720_000,
+      step: 12,
+      truncatedMessage: "   \n  ",
+    });
+
+    expect(dbMock.insertValues).toHaveLength(2);
+    for (const row of dbMock.insertValues) {
+      const description = row.description as string;
+      expect(description).not.toContain("ended here before being cut off");
+      expect(description).not.toContain('"""');
+      // Exactly the pre-#1336 description shape.
+      expect(description).toMatch(
+        /^\[CONTINUE:turn-deadline-[^\]]+\] The previous turn in Slack channel C0123456 hit its wall-clock budget after 720s \(step 12\) and was stopped before finishing\. Read the recent messages in that thread to see what was requested and what was already done, then complete the remaining work and post the results in the same thread\.$/,
+      );
+    }
   });
 
   it("is fail-soft: returns false and logs when the insert throws", async () => {

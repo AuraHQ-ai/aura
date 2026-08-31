@@ -277,6 +277,70 @@ describe("createPrepareStep turn wall-clock deadlines (issue #1318)", () => {
     expect(softCalls).toHaveLength(0);
   });
 
+  it("passes the accumulated text to the continuation as truncatedMessage (issue #1336)", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      channelId: "C0123456",
+      threadTs: "1755500000.000100",
+      turnDeadlines: { softDeadlineMs: 0, hardDeadlineMs: 0 },
+      getAccumulatedText: () =>
+        "Rows 1-40 delivered. Remaining: rows 41-100, plus the corrected Smart View recipe.",
+    });
+
+    await prepareStep(buildStepArgs(10));
+
+    expect(turnDeadlineMocks.spawnTurnContinuationJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        truncatedMessage:
+          "Rows 1-40 delivered. Remaining: rows 41-100, plus the corrected Smart View recipe.",
+      }),
+    );
+  });
+
+  it("falls back to the steps' text when no accumulator is wired (headless path)", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      channelId: "C0123456",
+      turnDeadlines: { softDeadlineMs: 0, hardDeadlineMs: 0 },
+    });
+
+    await prepareStep({
+      stepNumber: 10,
+      steps: [
+        { text: "Working on part one." },
+        { text: "" },
+        { toolResults: [] },
+        { text: "Part one done; part two still pending." },
+      ],
+      messages,
+    });
+
+    expect(turnDeadlineMocks.spawnTurnContinuationJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        truncatedMessage: "Working on part one.\n\nPart one done; part two still pending.",
+      }),
+    );
+  });
+
+  it("omits truncatedMessage when no partial text exists, and survives a broken getter", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      channelId: "C0123456",
+      turnDeadlines: { softDeadlineMs: 0, hardDeadlineMs: 0 },
+      getAccumulatedText: () => {
+        throw new Error("getter exploded");
+      },
+    });
+
+    const result = await prepareStep(buildStepArgs(10));
+
+    // The wrap-up step is unaffected and the spawn still happens.
+    expect(result?.activeTools).toEqual([]);
+    expect(turnDeadlineMocks.spawnTurnContinuationJob).toHaveBeenCalledTimes(1);
+    const [params] = turnDeadlineMocks.spawnTurnContinuationJob.mock.calls[0];
+    expect(params).not.toHaveProperty("truncatedMessage");
+  });
+
   it("spawns the next continuation at the current depth + 1 (issue #1320)", async () => {
     const prepareStep = createPrepareStep({
       stablePrefix: "PREFIX",

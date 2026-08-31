@@ -34,6 +34,13 @@ export const TURN_CONTINUATION_DELAY_MS = 2 * 60_000;
  */
 export const MAX_CONTINUATION_DEPTH = 3;
 
+/**
+ * Max characters of the truncated assistant message carried into the
+ * continuation job description (issue #1336). Long messages keep their TAIL,
+ * since the "remaining work" enumeration lands at the end of a cut-off reply.
+ */
+export const TRUNCATED_MESSAGE_MAX_CHARS = 2000;
+
 /** Posted to the originating thread when the continuation chain hits the cap. */
 export const CONTINUATION_DEPTH_EXCEEDED_MESSAGE =
   `I couldn't finish this work within its time budget: it has already been ` +
@@ -99,6 +106,15 @@ export async function spawnTurnContinuationJob(params: {
    * event is logged.
    */
   depth?: number;
+  /**
+   * The partial assistant text the interrupted turn had produced when the
+   * hard deadline tripped (issue #1336). Appended verbatim (tail-truncated to
+   * TRUNCATED_MESSAGE_MAX_CHARS) to the continuation job description so any
+   * promises the model made inside its own cut-off reply ("remaining: rows
+   * 41-100, plus the corrected recipe") survive into the continuation instead
+   * of being lossily re-derived from the thread history.
+   */
+  truncatedMessage?: string;
 }): Promise<boolean> {
   const depth = params.depth ?? 1;
   const suffix = (params.invocationId ?? Date.now().toString(36)).slice(0, 8);
@@ -114,11 +130,22 @@ export async function spawnTurnContinuationJob(params: {
     : params.channelId
       ? ` in Slack channel ${params.channelId}`
       : "";
-  const description =
+  let description =
     `[CONTINUE:${topic}:d${depth}] The previous turn${threadRef} hit its wall-clock budget ` +
     `after ${Math.round(params.elapsedMs / 1000)}s (step ${params.step}) and was stopped before finishing. ` +
     `Read the recent messages in that thread to see what was requested and what was already done, ` +
     `then complete the remaining work and post the results in the same thread.`;
+
+  const truncatedMessage = params.truncatedMessage?.trim();
+  if (truncatedMessage) {
+    const tail = truncatedMessage.length > TRUNCATED_MESSAGE_MAX_CHARS
+      ? truncatedMessage.slice(-TRUNCATED_MESSAGE_MAX_CHARS)
+      : truncatedMessage;
+    description +=
+      `\n\nYour previous message ended here before being cut off:\n"""\n${tail}\n"""\n` +
+      `Anything you stated as remaining or promised for later in that text is still owed — ` +
+      `treat it as a checklist and deliver ALL of it, not just what you infer from the thread.`;
+  }
 
   try {
     await db.insert(jobs).values({
