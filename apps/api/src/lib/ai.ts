@@ -10,6 +10,11 @@ export type WrappableModel = Parameters<typeof wrapLanguageModel>[0]["model"];
 import { getSetting } from "./settings.js";
 import { type ModelCategory, updateModelCapabilities } from "./model-catalog.js";
 import { logger } from "./logger.js";
+import { recordError } from "./metrics.js";
+import {
+  hasDeferredLoading,
+  withoutDeferredLoading,
+} from "../tools/deferred-loading.js";
 import {
   getProviderThinkingOptions,
   resolveProviderThinkingOptions,
@@ -312,13 +317,123 @@ async function retryWithStrippedToolField<T>(opts: {
   return { healed: true, result: await opts.retry(retryParams) };
 }
 
+/**
+ * Matches the provider validation error emitted when a server-tool result
+ * block goes missing from the conversation, e.g. Bedrock's Anthropic
+ * passthrough dropping the tool_search_bm25 result block (issue #1375):
+ *   "messages.1: `tool_search_tool_bm25` tool use with id
+ *    `srvtoolu_bdrk_...` was found without a corresponding
+ *    `tool_search_tool_bm25_tool_result` block"
+ * Captures the offending tool name.
+ */
+const MISSING_TOOL_RESULT_PATTERN =
+  /`([\w$-]+)` tool use with id `[^`]+` was found without a corresponding `\1_tool_result` block/;
+
+function findMissingToolResultName(error: unknown): string | null {
+  for (const message of collectErrorMessages(error)) {
+    const match = MISSING_TOOL_RESULT_PATTERN.exec(message);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/** The tool-map key applyAnthropicToolDiscovery uses for the BM25 meta-tool. */
+const TOOL_SEARCH_NAME = "toolSearch";
+
+function isToolSearchTool(tool: unknown): boolean {
+  if (!isRecord(tool)) return false;
+  if (tool.name === TOOL_SEARCH_NAME) return true;
+  // Provider-defined tool ids look like "anthropic.tool_search_tool_bm25_20251119".
+  return typeof tool.id === "string" && tool.id.includes("tool_search");
+}
+
+/**
+ * Return a copy of the tools array with the toolSearch meta-tool removed and
+ * every deferred tool materialised (deferLoading marker stripped so the model
+ * sees full schemas up front), or null if no tool carried the deferred marker
+ * and there was no toolSearch (so a retry would be pointless).
+ */
+function materializeDeferredTools(tools: unknown): unknown[] | null {
+  if (!Array.isArray(tools) || tools.length === 0) return null;
+
+  let changed = false;
+  const next: unknown[] = [];
+  for (const tool of tools) {
+    if (isToolSearchTool(tool)) {
+      changed = true;
+      continue;
+    }
+    if (hasDeferredLoading(tool)) {
+      changed = true;
+      next.push(withoutDeferredLoading(tool));
+      continue;
+    }
+    next.push(tool);
+  }
+  return changed ? next : null;
+}
+
+/**
+ * Self-heal gateway "tool use without a corresponding tool_result" errors
+ * caused by an upstream dropping server-tool result blocks (Bedrock's
+ * Anthropic passthrough drops tool_search_bm25 results while anthropic/vertex
+ * return them — the gateway free-routes across all three, issue #1375):
+ * drop the toolSearch meta-tool, materialise every deferred tool's schema,
+ * and retry once. Deferred loading is a token optimisation — losing it for
+ * one turn is strictly better than losing the whole run.
+ */
+async function retryWithMaterializedTools<T>(opts: {
+  error: unknown;
+  gatewayId: string;
+  params: unknown;
+  retry: (params: any) => PromiseLike<T>;
+  /** Invoked when the heal fires, before the retry (used for sticky avoidance). */
+  onHeal?: () => void;
+}): Promise<SelfHealRetryResult<T>> {
+  const toolName = findMissingToolResultName(opts.error);
+  if (!toolName) return { healed: false };
+
+  const materializedTools = materializeDeferredTools((opts.params as any)?.tools);
+  if (!materializedTools) return { healed: false };
+
+  recordError("gateway.missing_tool_result", opts.error, {
+    modelId: opts.gatewayId,
+    toolName,
+    heal: "removed toolSearch meta-tool and materialized deferred tool schemas, retrying once",
+  });
+
+  opts.onHeal?.();
+
+  const retryParams = {
+    ...(isRecord(opts.params) ? opts.params : {}),
+    tools: materializedTools,
+  };
+  return { healed: true, result: await opts.retry(retryParams) };
+}
+
 function gatewayFallbackMiddleware(
   directModelId: string,
   gatewayId: string,
   gatewayModel: WrappableModel,
 ): LanguageModelMiddleware {
+  // Sticky avoidance for the missing-tool_result heal (issue #1375): once a
+  // step has healed by dropping toolSearch, don't re-attach it for the
+  // remaining steps of the turn — every subsequent step would pay the same
+  // failure + retry. Scoped to this wrapped model instance (models are built
+  // per invocation), so it cannot leak across invocations.
+  let toolSearchDegraded = false;
+  const markToolSearchDegraded = () => {
+    toolSearchDegraded = true;
+  };
+
   return {
     specificationVersion: "v3" as const,
+    transformParams: async ({ params }) => {
+      if (!toolSearchDegraded) return params;
+      const materializedTools = materializeDeferredTools((params as any)?.tools);
+      if (!materializedTools) return params;
+      return { ...params, tools: materializedTools } as typeof params;
+    },
     wrapGenerate: async ({ doGenerate, params }) => {
       try {
         return await doGenerate();
@@ -344,6 +459,18 @@ function gatewayFallbackMiddleware(
             gatewayModel.doGenerate(retryParams) as ReturnType<typeof doGenerate>,
         });
         if (strippedField.healed) return strippedField.result;
+
+        const materialized = await retryWithMaterializedTools<
+          Awaited<ReturnType<typeof doGenerate>>
+        >({
+          error,
+          gatewayId,
+          params,
+          retry: (retryParams) =>
+            gatewayModel.doGenerate(retryParams) as ReturnType<typeof doGenerate>,
+          onHeal: markToolSearchDegraded,
+        });
+        if (materialized.healed) return materialized.result;
 
         if (GatewayAuthenticationError.isInstance(error)) {
           logger.warn(
@@ -382,6 +509,18 @@ function gatewayFallbackMiddleware(
         });
         if (strippedField.healed) return strippedField.result;
 
+        const materialized = await retryWithMaterializedTools<
+          Awaited<ReturnType<typeof doStream>>
+        >({
+          error,
+          gatewayId,
+          params,
+          retry: (retryParams) =>
+            gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
+          onHeal: markToolSearchDegraded,
+        });
+        if (materialized.healed) return materialized.result;
+
         if (GatewayAuthenticationError.isInstance(error)) {
           logger.warn(
             "Gateway auth failed (stream), falling back to direct Anthropic API",
@@ -407,7 +546,8 @@ function gatewayFallbackMiddleware(
  *    with "Extra inputs are not permitted" while anthropic/vertex accept
  *    it, so the field must never reach the provider (issue #1353).
  * 2. gatewayFallbackMiddleware (Anthropic models only) — self-heals
- *    thinking-mode mismatches and capability-divergence errors, and falls
+ *    thinking-mode mismatches and capability-divergence errors (including
+ *    upstreams dropping tool_search result blocks, issue #1375), and falls
  *    back to the direct Anthropic API on gateway auth failures.
  *
  * Order matters: the examples middleware is first (outermost), so the

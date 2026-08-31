@@ -520,8 +520,22 @@ export const resources = pgTable(
 // ── Jobs (unified: one-shot tasks, recurring work, continuations) ───────────
 
 export interface FrequencyConfig {
+  /**
+   * Minimum hours between SCHEDULED fires. Anchored to the most recent
+   * job_executions row with trigger = 'heartbeat' (a genuine on-schedule
+   * fire) — off-schedule runs (trigger 'dispatch', 'continuation',
+   * 'recovery') do NOT reset this clock (issue #1238).
+   */
   minIntervalHours?: number;
+  /**
+   * Daily execution cap. Counts ALL executions regardless of trigger — a
+   * manual dispatch or recovery run consumes the daily budget.
+   */
   maxPerDay?: number;
+  /**
+   * Post-run cooldown before the next scheduled fire. Same scheduled-only
+   * anchoring as minIntervalHours.
+   */
   cooldownHours?: number;
 }
 
@@ -555,6 +569,12 @@ export const jobs = pgTable(
     lastExecutionDate: text("last_execution_date"),
     enabled: integer("enabled").notNull().default(1),
     archivedAt: timestamptz("archived_at"),
+    /**
+     * True for jobs spawned by Aura's own machinery (e.g. turn continuations)
+     * rather than a user request. Clean successes resolve silently; failures
+     * keep the normal ops-channel routing (issue #1373).
+     */
+    systemGenerated: boolean("system_generated").notNull().default(false),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
     // ── Scoped execution (issue #1302) — all nullable so existing jobs run unchanged ──
     /** Model catalog category to execute with. Null = 'medium' (job default). */
@@ -762,6 +782,11 @@ export const conversationTraces = pgTable(
     tokenUsage: jsonb("token_usage").$type<DetailedTokenUsage>(),
     costUsd: numeric("cost_usd"),
     costPricedAt: timestamptz("cost_priced_at"),
+    // Per-turn context-compaction totals (issue #1328): how many old tool
+    // results were stubbed across all steps and the estimated input tokens
+    // that avoided being re-sent. Null = turn ran before compaction existed.
+    compactedToolResults: integer("compacted_tool_results"),
+    compactionTokensSaved: integer("compaction_tokens_saved"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [

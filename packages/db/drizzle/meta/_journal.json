@@ -575,6 +575,20 @@
       "when": 1787158001000,
       "tag": "0081_drop_model_catalog_selections",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1788076830000,
+      "tag": "0082_jobs_system_generated",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1788167223177,
+      "tag": "0083_conversation_trace_compaction",
+      "breakpoints": true
     }
   ]
 }

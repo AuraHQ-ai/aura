@@ -63,7 +63,12 @@ function isSafeBigQueryIdentifier(id: string): boolean {
   return SAFE_IDENTIFIER_RE.test(id);
 }
 
-/** Max result payload size to avoid token bloat. */
+/**
+ * Max result payload size to avoid token bloat. Deliberately kept BELOW
+ * defineTool's default result cap (12000) so the row-halving here — which is
+ * smarter than generic truncation because it keeps whole rows and reports
+ * exact counts — always fires first and the generic cap never double-truncates.
+ */
 const MAX_RESULT_CHARS = 8000;
 
 const BIGQUERY_SQL_STYLE_GUIDANCE =

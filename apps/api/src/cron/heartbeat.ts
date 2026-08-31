@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
-import { eq, and, lt, lte, gte, sql, isNull, or, inArray } from "drizzle-orm";
+import { eq, and, lt, lte, gte, sql, isNull, or, inArray, desc } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions, jobOutcomes } from "@aura/db/schema";
@@ -32,7 +32,31 @@ const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN || "");
 
 // ── Job Eligibility (recurring jobs) ─────────────────────────────────────────
 
-function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
+/**
+ * Most recent ON-SCHEDULE execution for a job (issue #1238).
+ *
+ * Only `trigger = 'heartbeat'` rows are genuine scheduled fires. Off-schedule
+ * runs ("dispatch" manual runs, "continuation" resumes, "recovery" requeues
+ * from the supervisor or stale-running detection) must NOT reset the
+ * minIntervalHours/cooldownHours clock — otherwise a recovery run between two
+ * scheduled fires silently pushes the next fire by up to the full interval.
+ *
+ * Returns null when the job has never had a scheduled execution; the frequency
+ * gates then pass (fail-open) and the cron-tick dedup anchor on the jobs row
+ * still prevents double fires within the same tick.
+ */
+async function lastScheduledExecutionAt(jobId: string): Promise<Date | null> {
+  const [row] = await db
+    .select({ startedAt: jobExecutions.startedAt })
+    .from(jobExecutions)
+    .where(and(eq(jobExecutions.jobId, jobId), eq(jobExecutions.trigger, "heartbeat")))
+    .orderBy(desc(jobExecutions.startedAt))
+    .limit(1);
+
+  return row?.startedAt ?? null;
+}
+
+async function isRecurringJobDue(job: typeof jobs.$inferSelect): Promise<boolean> {
   const now = new Date();
 
   if (job.cronSchedule) {
@@ -64,11 +88,22 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
   const config = job.frequencyConfig as FrequencyConfig | null;
   if (!config) return true;
 
-  if (config.minIntervalHours && job.lastExecutedAt) {
+  // minIntervalHours / cooldownHours are anchored to the last ON-SCHEDULE
+  // execution (job_executions.trigger = 'heartbeat'), NOT jobs.lastExecutedAt,
+  // which every trigger stamps (issue #1238). jobs.lastExecutedAt remains the
+  // cron-tick dedup anchor above — only the frequency gates moved.
+  const lastScheduledAt =
+    config.minIntervalHours || config.cooldownHours
+      ? await lastScheduledExecutionAt(job.id)
+      : null;
+
+  if (config.minIntervalHours && lastScheduledAt) {
     const minIntervalMs = config.minIntervalHours * 60 * 60 * 1000;
-    if (now < new Date(job.lastExecutedAt.getTime() + minIntervalMs)) return false;
+    if (now < new Date(lastScheduledAt.getTime() + minIntervalMs)) return false;
   }
 
+  // maxPerDay deliberately keeps counting ALL executions (jobs-row counters):
+  // a manual dispatch or recovery run reasonably consumes the daily cap.
   if (config.maxPerDay) {
     const todayStr = now.toISOString().slice(0, 10);
     const executionsToday =
@@ -76,12 +111,54 @@ function isRecurringJobDue(job: typeof jobs.$inferSelect): boolean {
     if (executionsToday >= config.maxPerDay) return false;
   }
 
-  if (config.cooldownHours && job.lastExecutedAt) {
+  // cooldownHours follows the same scheduled-only rule as minIntervalHours.
+  if (config.cooldownHours && lastScheduledAt) {
     const cooldownMs = config.cooldownHours * 60 * 60 * 1000;
-    if (now < new Date(job.lastExecutedAt.getTime() + cooldownMs)) return false;
+    if (now < new Date(lastScheduledAt.getTime() + cooldownMs)) return false;
   }
 
   return true;
+}
+
+/**
+ * Classify how a recurring job picked up via the `executeAt <= now` branch
+ * should be triggered (issue #1238).
+ *
+ * A recurring job only carries a concrete executeAt in two situations:
+ * - ON-SCHEDULE: first fire after creation (tools/jobs.ts) or exhausted-stale
+ *   recovery (below) — both set executeAt to an EXACT cron tick via cron-parser.
+ * - OFF-SCHEDULE: supervisor retry_as_is/retry_with_fix (supervisor.ts) and
+ *   stale-running recovery (below) — both set executeAt to "now", and the
+ *   failure-retry path (execute-job.ts) sets it to now + retry delay. None of
+ *   these land on an exact cron tick except by sub-second coincidence.
+ *
+ * Off-schedule pickups run as "recovery" so they don't consume the
+ * minIntervalHours/cooldownHours budget in isRecurringJobDue().
+ */
+function classifyRecurringPickupTrigger(
+  job: typeof jobs.$inferSelect,
+): "heartbeat" | "recovery" {
+  if (!job.executeAt) return "heartbeat";
+  if (!job.cronSchedule) {
+    // Frequency-only recurring jobs never get an on-schedule executeAt;
+    // a concrete executeAt can only come from a requeue path.
+    return "recovery";
+  }
+
+  try {
+    // Same +1 s offset trick as isRecurringJobDue: prev() is exclusive of
+    // currentDate, so offset to make it inclusive of the exact tick second.
+    const cron = CronExpressionParser.parse(job.cronSchedule, {
+      currentDate: new Date(job.executeAt.getTime() + 1000),
+      tz: job.timezone || undefined,
+    });
+    const nearestTick = cron.prev().toDate();
+    const alignedWithTick =
+      Math.abs(nearestTick.getTime() - job.executeAt.getTime()) <= 1000;
+    return alignedWithTick ? "heartbeat" : "recovery";
+  } catch {
+    return "recovery";
+  }
 }
 
 type OrphanSweepResult = {
@@ -355,7 +432,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
         dueJobs.push(job);
       } else if (job.cronSchedule || job.frequencyConfig) {
         // Recurring: evaluate cron + frequency guards
-        if (isRecurringJobDue(job)) {
+        if (await isRecurringJobDue(job)) {
           dueJobs.push(job);
         }
       }
@@ -366,7 +443,14 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
       for (const job of dueJobs) {
         try {
-          const ran = await executeJob(job, "heartbeat");
+          // Recurring jobs re-entering via a requeued executeAt (supervisor
+          // retry, stale recovery) run as "recovery" so they don't consume
+          // the min_interval/cooldown budget (issue #1238).
+          const trigger =
+            job.executeAt && (job.cronSchedule || job.frequencyConfig)
+              ? classifyRecurringPickupTrigger(job)
+              : "heartbeat";
+          const ran = await executeJob(job, trigger);
           if (ran) executed++;
         } catch (error: any) {
           logger.error("Heartbeat: job execution error", {
@@ -448,6 +532,9 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
         // Do NOT touch lastExecutedAt here — it is the cron-dedup anchor
         // (lastExecutedAt >= lastCronTick → not due) and mutating it would
         // break normal cron scheduling.
+        // Because executeAt = now is off any cron tick, the sweep pickup
+        // classifies this run as trigger "recovery" (issue #1238) so it does
+        // not consume the min_interval/cooldown budget.
         executeAt: now,
         updatedAt: new Date(),
       })

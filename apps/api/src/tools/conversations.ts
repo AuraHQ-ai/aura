@@ -8,6 +8,8 @@ import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import { formatTimestamp } from "../lib/temporal.js";
 
+// Deliberate PER-MESSAGE cap: keeps each message short so many threads fit in
+// one result. defineTool's default whole-result cap (12000) applies on top.
 const MAX_CONTENT_LENGTH = 500;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;

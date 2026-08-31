@@ -190,9 +190,20 @@ async function loadPlanNote(topic: string): Promise<string | null> {
 
 // ── Job Execution ────────────────────────────────────────────────────────────
 
+/**
+ * Trigger semantics (issue #1238):
+ * - "heartbeat":    a genuine ON-SCHEDULE cron/frequency fire. The ONLY trigger
+ *                   that consumes the minIntervalHours/cooldownHours budget in
+ *                   isRecurringJobDue().
+ * - "dispatch":     manual/immediate run (dispatch_headless tool, /api/execute-now).
+ * - "continuation": plan-note continuation resume.
+ * - "recovery":     off-schedule requeue (supervisor retry_as_is/retry_with_fix,
+ *                   stale-running recovery). Runs like a heartbeat fire but must
+ *                   NOT reset the frequency-gate interval clock.
+ */
 export async function executeJob(
   job: typeof jobs.$inferSelect,
-  trigger: "heartbeat" | "dispatch" | "continuation" = "heartbeat",
+  trigger: "heartbeat" | "dispatch" | "continuation" | "recovery" = "heartbeat",
 ): Promise<boolean> {
   const jobId = job.id;
 
@@ -328,7 +339,9 @@ export async function executeJob(
       try {
         const { getOrCreateSandbox, truncateOutput, getSandboxEnvs, filterEnvsByAllowlist } =
           await import("../lib/sandbox.js");
-        const sandbox = await getOrCreateSandbox();
+        // Use the job requester's sandbox so the script layer shares state
+        // (checkouts, installed deps) with the job's LLM run_command calls.
+        const sandbox = await getOrCreateSandbox(job.requestedBy);
         // Script layer runs outside executionContext.run, so apply the job's
         // env allowlist explicitly here (narrows, never widens).
         const envs = filterEnvsByAllowlist(
@@ -474,7 +487,7 @@ export async function executeJob(
       prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`\n\n---\n\n${prompt}`;
     }
 
-    const { agent, modelId, getStepModelIds } = await createHeadlessAgent({
+    const { agent, modelId, getStepModelIds, getCompactionTotals } = await createHeadlessAgent({
       slackClient,
       context: {
         userId: job.requestedBy,
@@ -585,8 +598,13 @@ export async function executeJob(
 
     const stepUsages = buildStepUsages(steps, stepModelIds, modelId);
 
-    // Update trace with token usage + cost
-    await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);
+    // Update trace with token usage + cost + per-turn compaction totals
+    await updateConversationTraceUsage(
+      conversationId,
+      tokenUsage,
+      stepUsages,
+      getCompactionTotals?.(),
+    );
 
     // Persist scratchpad contents for debugging
     const scratchpadContents = getScratchpadContents(invocationId);

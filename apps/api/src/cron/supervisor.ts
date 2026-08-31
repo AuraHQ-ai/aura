@@ -60,11 +60,67 @@ type ClaimedOutcome = typeof jobOutcomes.$inferSelect;
 type JobRow = typeof jobs.$inferSelect;
 type JobExecutionRow = typeof jobExecutions.$inferSelect;
 
-type SupervisorContext = {
+export type SupervisorContext = {
   outcome: ClaimedOutcome;
   job: JobRow;
   executions: JobExecutionRow[];
 };
+
+/**
+ * System-generated jobs (e.g. `spawnTurnContinuationJob` continuations) are
+ * internal plumbing, never user-requested. The name-prefix fallback covers
+ * rows created before the `system_generated` column migration.
+ */
+function isSystemGeneratedJob(job: Pick<JobRow, "systemGenerated" | "name">): boolean {
+  return job.systemGenerated || job.name.startsWith("continue-");
+}
+
+function executionFailed(execution: JobExecutionRow): boolean {
+  return execution.status === "failed" || Boolean(execution.error);
+}
+
+/**
+ * A recovery run is a success that follows a failure: walking the prior
+ * executions newest-first, a failed execution appears before (more recently
+ * than) the last success. Recoveries stay reportable even when
+ * notify_on_success is false.
+ */
+function isRecoveryRun(executions: JobExecutionRow[]): boolean {
+  for (const execution of executions.slice(1)) {
+    if (SUCCESSFUL_EXECUTION_STATUSES.has(execution.status)) return false;
+    if (executionFailed(execution)) return true;
+  }
+  return false;
+}
+
+function isCleanSuccess(context: SupervisorContext): boolean {
+  const latestExecution = context.executions[0];
+  return (
+    (!context.outcome.error || context.outcome.error.trim() === "") &&
+    latestExecution !== undefined &&
+    SUCCESSFUL_EXECUTION_STATUSES.has(latestExecution.status)
+  );
+}
+
+/** Recurring job whose owner opted out of success DMs, and this isn't a recovery. */
+function isOptedOutRecurringSuccess(context: SupervisorContext): boolean {
+  return (
+    context.job.cronSchedule != null &&
+    !context.job.notifyOnSuccess &&
+    !isRecoveryRun(context.executions)
+  );
+}
+
+/**
+ * Deterministic notification policy (issue #1373): clean successes of
+ * opted-out recurring jobs and of system-generated jobs never need the LLM —
+ * they always resolve silent_success. Recovery runs (a failure more recent
+ * than the last success) still go to the LLM so they stay reportable.
+ */
+export function shouldShortCircuitSilent(context: SupervisorContext): boolean {
+  if (!isCleanSuccess(context)) return false;
+  return isSystemGeneratedJob(context.job) || isOptedOutRecurringSuccess(context);
+}
 
 export const supervisorApp = new Hono();
 
@@ -209,8 +265,8 @@ async function runSupervisorLlm(context: SupervisorContext): Promise<SupervisorD
           prompt: truncateForPrompt(`Review this completed job outcome and decide the next action.
 
 Decision meanings:
-- silent_success: outcome succeeded cleanly and should be resolved with no DM. This is the default for routine recurring runs when cron_schedule is set and notify_on_success is false.
-- report_success: outcome succeeded and the requester should be told. Reserve this for noteworthy success: a job that had been failing recovered, the first successful run after a code change, or notify_on_success is true. One-shot jobs with no cron_schedule should usually report success.
+- silent_success: outcome succeeded cleanly and should be resolved with no DM. Routine recurring successes (cron_schedule set, notify_on_success false) and system-generated jobs are already enforced silent in code, so you do not need to reason about those cases.
+- report_success: outcome succeeded and the requester should be told. Reserve this for noteworthy success: a job that had been failing recovered, the first successful run after a code change, or notify_on_success is true. One-shot user-requested jobs with no cron_schedule should usually report success.
 - report_failure: outcome failed in a way the requester should know about; do not retry.
 - retry_as_is: transient failure or likely timeout; retry immediately without changing the job.
 - retry_with_fix: likely Aura code/config bug; retry now and create an engineering issue.
@@ -516,6 +572,18 @@ async function applySupervisorDecision(
     }
 
     case "report_success": {
+      // Hard downgrade guard (issue #1373): notification policy is
+      // deterministic. If the LLM still returns report_success for an
+      // opted-out recurring job (no recovery) or a system-generated job,
+      // resolve silently instead of DMing the requester.
+      if (isOptedOutRecurringSuccess(context) || isSystemGeneratedJob(context.job)) {
+        logger.info("job_supervisor_report_success_downgraded", {
+          jobId: context.job.id,
+          outcomeId: context.outcome.id,
+          reasoning: decision.reasoning,
+        });
+        return;
+      }
       await sendSupervisorDm(
         context.job,
         `${buildUserMessage(decision, `Job \`${context.job.name}\` completed successfully.`)}\n\nDetails: ${link}`,
@@ -535,6 +603,9 @@ async function applySupervisorDecision(
     }
 
     case "retry_as_is": {
+      // executeAt = now → picked up by the next heartbeat sweep. For recurring
+      // jobs the sweep classifies this off-tick executeAt as trigger "recovery"
+      // so the retry does not consume the min_interval budget (issue #1238).
       await db
         .update(jobs)
         .set({ status: "pending", retries: 0, executeAt: now, updatedAt: now })
@@ -548,6 +619,7 @@ async function applySupervisorDecision(
     }
 
     case "retry_with_fix": {
+      // Same recovery-trigger semantics as retry_as_is (issue #1238).
       await db
         .update(jobs)
         .set({ status: "pending", retries: 0, executeAt: now, updatedAt: now })
@@ -701,6 +773,19 @@ supervisorApp.post("/api/cron/supervisor", async (c) => {
     }
 
     const context = await loadSupervisorContext(claimedOutcome);
+
+    if (shouldShortCircuitSilent(context)) {
+      logger.info("job_supervisor_short_circuit_silent", {
+        jobId: context.job.id,
+        outcomeId: claimedOutcome.id,
+      });
+      await finalizeOutcome(claimedOutcome.id, {
+        decision: "silent_success",
+        reasoning: "deterministic short-circuit: routine recurring/system success",
+      });
+      return c.json({ ok: true, outcomeId, decision: "silent_success", shortCircuit: true });
+    }
+
     const decision = await runSupervisorLlm(context);
     await applySupervisorDecision(context, decision);
     await finalizeOutcome(claimedOutcome.id, decision);

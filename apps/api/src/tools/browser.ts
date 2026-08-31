@@ -59,6 +59,11 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
       description:
         "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors.",
       requiredCredentials: ["browserbase_api_key"],
+      // Deliberate override: html extraction below caps at 32k, so the
+      // generic defineTool default (12k) would double-truncate. The
+      // screenshot_base64 field is exempt from the cap (binary payload
+      // consumed by toModelOutput as a native image part).
+      maxResultChars: 32000,
       inputSchema: z.object({
         url: z
           .string()

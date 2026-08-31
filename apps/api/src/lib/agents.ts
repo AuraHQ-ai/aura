@@ -34,6 +34,20 @@ export interface InteractiveAgentOptions {
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
+  /**
+   * Returns the assistant text streamed so far in this turn (issue #1336).
+   * respond.ts wires this to its accumulator so a hard-deadline continuation
+   * carries the truncated message's own "remaining work" promises.
+   */
+  getAccumulatedText?: () => string;
+}
+
+/** Per-turn context-compaction totals (issue #1328), persisted on the trace. */
+export interface CompactionTotals {
+  /** Sum over steps of compacted tool results (each would have been re-sent). */
+  compactedToolResults: number;
+  /** Estimated input tokens NOT sent across the whole turn thanks to stubs. */
+  compactionTokensSaved: number;
 }
 
 export interface InteractiveAgentResult {
@@ -41,6 +55,7 @@ export interface InteractiveAgentResult {
   tools: Awaited<ReturnType<typeof createSlackTools>>;
   modelId: string;
   getStepModelIds: () => string[];
+  getCompactionTotals: () => CompactionTotals;
 }
 
 export async function createInteractiveAgent(
@@ -49,6 +64,10 @@ export async function createInteractiveAgent(
   const { modelId, model } = await getMainModel();
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const stepModelIds: string[] = [];
+  const compactionTotals: CompactionTotals = {
+    compactedToolResults: 0,
+    compactionTokensSaved: 0,
+  };
   // Deferred-tool manifest is environment-level ("what you can call"), so it
   // rides in the cached environment layer ahead of the conversation — not the
   // volatile runtime tail.
@@ -85,15 +104,28 @@ export async function createInteractiveAgent(
       recordStepModelId: (stepNumber, stepModelId) => {
         stepModelIds[stepNumber - 1] = stepModelId ?? modelId;
       },
+      // Summing each step's savings gives the turn total: without compaction
+      // every step would have re-sent those tokens (issue #1328).
+      recordCompaction: (stats) => {
+        compactionTotals.compactedToolResults += stats.compactedCount;
+        compactionTotals.compactionTokensSaved += stats.estimatedTokensSaved;
+      },
       invocationId: options.invocationId,
       channelId: options.channelId,
       threadTs: options.threadTs,
       userId: options.context?.userId,
       turnDeadlines: resolveTurnDeadlines("interactive"),
+      getAccumulatedText: options.getAccumulatedText,
     }),
   });
 
-  return { agent, tools, modelId, getStepModelIds: () => [...stepModelIds] };
+  return {
+    agent,
+    tools,
+    modelId,
+    getStepModelIds: () => [...stepModelIds],
+    getCompactionTotals: () => ({ ...compactionTotals }),
+  };
 }
 
 // ── Headless Agent ───────────────────────────────────────────────────────────
@@ -122,6 +154,10 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       : await getModelByCategory(category);
   const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
   const stepModelIds: string[] = [];
+  const compactionTotals: CompactionTotals = {
+    compactedToolResults: 0,
+    compactionTokensSaved: 0,
+  };
   const systemPrompt = appendDeferredToolsBlock(
     options.systemPrompt,
     getDeferredToolManifest(tools),
@@ -145,6 +181,10 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       recordStepModelId: (stepNumber, stepModelId) => {
         stepModelIds[stepNumber - 1] = stepModelId ?? modelId;
       },
+      recordCompaction: (stats) => {
+        compactionTotals.compactedToolResults += stats.compactedCount;
+        compactionTotals.compactionTokensSaved += stats.estimatedTokensSaved;
+      },
       // channelId/threadTs let a hard-deadline continuation resume in the
       // job's thread. invocationId is intentionally NOT passed — headless
       // jobs never claim invocation locks, so enabling the staleness check
@@ -157,7 +197,12 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
     }),
   });
 
-  return { agent, modelId, getStepModelIds: () => [...stepModelIds] };
+  return {
+    agent,
+    modelId,
+    getStepModelIds: () => [...stepModelIds],
+    getCompactionTotals: () => ({ ...compactionTotals }),
+  };
 }
 
 // ── Subagent ─────────────────────────────────────────────────────────────────

@@ -7,8 +7,6 @@ import type { ScheduleContext } from "@aura/db/schema";
 const SHEETS_URL_REGEX =
   /docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/;
 
-const MAX_RESULT_CHARS = 8000;
-
 function extractSpreadsheetId(input: string): string {
   const match = input.match(SHEETS_URL_REGEX);
   if (match) return match[1];
@@ -167,37 +165,16 @@ export function createSheetsTools(context?: ScheduleContext) {
             totalDataRows,
           });
 
-          let result: Record<string, unknown> = {
+          // Oversized results are handled by defineTool's default result cap,
+          // which drops rows from the end with an explicit marker.
+          return {
             ok: true,
             spreadsheet_id: id,
             range: effectiveRange,
             headers,
             rows,
             total_rows: totalDataRows,
-          };
-
-          const serialized = JSON.stringify(result);
-          if (serialized.length > MAX_RESULT_CHARS) {
-            let truncated = rows.slice();
-            do {
-              truncated = truncated.slice(0, Math.floor(truncated.length / 2));
-              result = {
-                ok: true,
-                spreadsheet_id: id,
-                range: effectiveRange,
-                headers,
-                rows: truncated,
-                total_rows: totalDataRows,
-                _truncated: true,
-                _note: `Showing ${truncated.length} of ${totalDataRows} rows to stay within size limits. Use a specific range to narrow results.`,
-              };
-            } while (
-              JSON.stringify(result).length > MAX_RESULT_CHARS &&
-              truncated.length > 0
-            );
-          }
-
-          return result;
+          } as Record<string, unknown>;
         } catch (error: any) {
           logger.error("read_google_sheet tool failed", {
             spreadsheet_id,
