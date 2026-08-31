@@ -141,7 +141,9 @@ export function createWebTools() {
               const response = await tvly.extract([url]);
               const result = response.results?.[0];
               if (result) {
-                const content = (result.rawContent || "").substring(0, 4000);
+                // Size is enforced by defineTool's default result cap, which
+                // truncates with a visible marker instead of a silent cut.
+                const content = result.rawContent || "";
                 logger.info("read_url tool called (tavily)", { url, contentLength: content.length });
                 return {
                   ok: true as const,
@@ -201,14 +203,11 @@ export function createWebTools() {
           const contentType = response.headers.get("content-type") || "";
           const rawBody = await response.text();
 
-          let content: string;
-          if (contentType.includes("text/html")) {
-            content = stripHtml(rawBody).substring(0, 4000);
-          } else if (contentType.includes("application/json")) {
-            content = rawBody.substring(0, 4000);
-          } else {
-            content = rawBody.substring(0, 4000);
-          }
+          // Size is enforced by defineTool's default result cap, which
+          // truncates with a visible marker instead of a silent cut.
+          const content: string = contentType.includes("text/html")
+            ? stripHtml(rawBody)
+            : rawBody;
 
           logger.info("read_url tool called (fetch)", { url, contentLength: content.length });
 

@@ -43,7 +43,7 @@ import {
   type TaskUpdateChunk,
   type URLSource,
 } from "../lib/slack-chunks.js";
-import { getSupersedeReason, interruptionNote } from "../lib/invocation-lock.js";
+import { getSupersedeReason, interruptionNote, isInvocationCurrent } from "../lib/invocation-lock.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -199,6 +199,8 @@ export interface LLMResponse {
   stepsPromise?: PromiseLike<any[]>;
   /** Canonical gateway model ID used for each step in order */
   stepModelIds?: string[];
+  /** Per-turn context-compaction totals (issue #1328), for the trace row */
+  compactionTotals?: { compactedToolResults: number; compactionTokensSaved: number };
   /** Whether the response was interrupted by a newer invocation */
   interrupted?: boolean;
   /** Whether the turn was delegated to the durable WDK workflow (issue #1111) */
@@ -717,8 +719,12 @@ export async function generateResponse(
   let longToolSplitTimer: ReturnType<typeof setTimeout> | null = null;
   let longToolSplitInFlight = false;
 
+  // Declared before the agent so the getAccumulatedText closure below is
+  // always safe to invoke; appended to in handleTextDelta during streaming.
+  let accumulatedText = "";
+
   // ── Build agent ──────────────────────────────────────────────────────
-  const { agent, tools, modelId, getStepModelIds } = await createInteractiveAgent({
+  const { agent, tools, modelId, getStepModelIds, getCompactionTotals } = await createInteractiveAgent({
     slackClient: options.slackClient,
     context: options.context,
     stablePrefix: options.stablePrefix,
@@ -728,6 +734,9 @@ export async function generateResponse(
     invocationId,
     channelId: options.channelId,
     threadTs: options.threadTs,
+    // Lets a hard-deadline continuation job carry the truncated message's
+    // own "remaining work" promises verbatim (issue #1336).
+    getAccumulatedText: () => accumulatedText,
   });
 
   const configuredTaskDisplayMode = normalizeTaskDisplayMode(
@@ -804,7 +813,6 @@ export async function generateResponse(
   });
 
   // ── Stream and send to Slack ────────────────────────────────────────
-  let accumulatedText = "";
   let currentStreamLength = 0;
   let fallbackStartIdx = 0;
   let streamedRawIdx = 0;
@@ -824,6 +832,47 @@ export async function generateResponse(
       options.context ?? { channelId, threadTs },
       toolCallRecords.map((record) => record.name),
     );
+  };
+  // Issue #1342: prepareStep's supersede check only runs BETWEEN agent steps,
+  // so a follow-up that arrives while the FINAL step is generating/streaming
+  // would otherwise let both the old and new invocation post final answers to
+  // the same thread. Re-check the conversation lock immediately before final
+  // delivery (one indexed SELECT per turn). Fail-open on read errors — same
+  // policy as the between-steps check in prepare-step.ts.
+  const isCurrentAtFinalDelivery = async (deliveryPath: string): Promise<boolean> => {
+    let stillCurrent = true;
+    try {
+      stillCurrent = await isInvocationCurrent(channelId, threadTs, invocationId);
+    } catch (err: any) {
+      logger.warn("Final-delivery invocation check failed, assuming still current", {
+        invocationId,
+        channelId,
+        deliveryPath,
+        error: err?.message,
+      });
+      return true;
+    }
+    if (!stillCurrent) {
+      logger.info("Invocation superseded at final delivery — suppressing answer", {
+        invocationId,
+        channelId,
+        threadTs,
+        deliveryPath,
+      });
+      logError({
+        errorName: "InvocationSupersededAtFinalDelivery",
+        errorMessage: "Invocation superseded before final delivery; suppressing the answer",
+        errorCode: "superseded_at_final_delivery",
+        channelId,
+        context: {
+          invocationId,
+          deliveryPath,
+          accumulatedTextLength: accumulatedText.length,
+          toolCallCount: toolCallRecords.length,
+        },
+      });
+    }
+    return stillCurrent;
   };
   let continuationCount = 0;
   let currentSegmentIndex = 0;
@@ -1722,6 +1771,12 @@ export async function generateResponse(
         ? emptyCompletionFallbackText
         : interruptedStubText ?? (formattedUnsent || "_I processed your request but had nothing to say._");
 
+      // Issue #1342: skip the fallback post entirely when a newer message has
+      // taken over the thread — unwind through the existing supersede path.
+      if (!(await isCurrentAtFinalDelivery("post_message_fallback"))) {
+        throw new InvocationSupersededError(invocationId);
+      }
+
       try {
         const fallbackResult = await safePostMessage(slackClient, {
           channel: channelId,
@@ -1799,6 +1854,13 @@ export async function generateResponse(
       stopBlocks.push(feedbackBlock);
       const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
+
+      // Issue #1342: do NOT finalize the stream with the answer when a newer
+      // message has taken over the thread — unwind through the existing
+      // supersede path (streamer.stop with interruption note, telemetry).
+      if (!(await isCurrentAtFinalDelivery("stream_stop"))) {
+        throw new InvocationSupersededError(invocationId);
+      }
 
       try {
         await streamer.stop(stopArgs);
@@ -2011,6 +2073,7 @@ export async function generateResponse(
         ? Promise.all(stepsPromises).then((steps) => steps.flat())
         : latestResult?.steps,
       stepModelIds: getStepModelIds(),
+      compactionTotals: getCompactionTotals?.(),
     };
   } catch (error: any) {
     clearTimeout(inactivityTimer);
@@ -2072,6 +2135,7 @@ export async function generateResponse(
         toolCalls: toolCallRecords,
         modelId,
         stepModelIds: getStepModelIds(),
+        compactionTotals: getCompactionTotals?.(),
         interrupted: true,
       };
     }

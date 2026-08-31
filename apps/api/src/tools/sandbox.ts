@@ -1024,7 +1024,6 @@ export function createSandboxTools(context?: ScheduleContext) {
           .describe("The 8-character command id returned by run_command_detached or a timed-out run_command."),
         tail_lines: z
           .number()
-          .int()
           .min(1)
           .max(1000)
           .default(200)
