@@ -555,6 +555,12 @@ export const jobs = pgTable(
     lastExecutionDate: text("last_execution_date"),
     enabled: integer("enabled").notNull().default(1),
     archivedAt: timestamptz("archived_at"),
+    /**
+     * True for jobs spawned by Aura's own machinery (e.g. turn continuations)
+     * rather than a user request. Clean successes resolve silently; failures
+     * keep the normal ops-channel routing (issue #1373).
+     */
+    systemGenerated: boolean("system_generated").notNull().default(false),
     requiredCredentialIds: jsonb("required_credential_ids").$type<string[]>().default([]),
     // ── Scoped execution (issue #1302) — all nullable so existing jobs run unchanged ──
     /** Model catalog category to execute with. Null = 'medium' (job default). */

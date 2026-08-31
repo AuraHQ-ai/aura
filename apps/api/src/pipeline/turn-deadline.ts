@@ -156,6 +156,9 @@ export async function spawnTurnContinuationJob(params: {
       threadTs: params.threadTs || null,
       requestedBy: params.userId || "aura",
       priority: "high",
+      // Internal plumbing, never user-requested: the job supervisor resolves
+      // clean successes silently instead of DMing anyone (issue #1373).
+      systemGenerated: true,
     });
 
     logger.info("turn-deadline: continuation job spawned", {

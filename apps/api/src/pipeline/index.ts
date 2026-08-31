@@ -41,7 +41,10 @@ import { logger } from "../lib/logger.js";
 import { withTraceSpan } from "../lib/langfuse.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
-import { trySetAssistantThreadStatus } from "../lib/slack-status.js";
+import {
+  setAssistantThreadTitle,
+  trySetAgentSessionStatus,
+} from "../lib/slack-status.js";
 import {
   generateInitialDmThreadTitle,
   generateUpdatedDmThreadTitle,
@@ -281,6 +284,14 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   let capturedSystemPrompt: string | undefined;
   let capturedUserPrompt: string | undefined;
   let bareMentionWithContext = false;
+  // True while THIS invocation owns the agent-session status (set to
+  // "processing" below). Released when ownership transfers elsewhere: to the
+  // durable workflow (which clears in its finalize step) or to a newer
+  // superseding invocation (which has already set its own "processing" —
+  // clearing from here would wipe the newer turn's loading UX). The finally
+  // block clears to "active" whenever we still own it, on success AND error
+  // paths — Slack does not auto-clear on message post (see slack-status.ts).
+  let sessionStatusOwned = false;
 
   try {
     // ── Edge case: empty or near-empty message (but allow image-only) ───
@@ -333,20 +344,18 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       });
     }
 
-    // Set assistant thread status — triggers the shimmer animation on
-    // Aura's name and shows a loading indicator while processing.
-    // Status auto-clears on reply.
-    await trySetAssistantThreadStatus({
+    // Set the agent-session status — shows the loading UX on Aura's name
+    // while processing. `agents.sessions.setStatus` only accepts the enum
+    // "suspended" | "processing" | "active" | "closed", and Slack does NOT
+    // auto-clear on reply: the finally block below sets "active" at end of
+    // turn (or the session spins until Slack's 1-hour timeout).
+    await trySetAgentSessionStatus({
       client,
       channelId: context.channelId,
       threadTs: replyThreadTs,
-      status: "Thinking...",
-      loadingMessages: [
-        "Gathering context...",
-        "Searching memories...",
-        "Pulling it together...",
-      ],
+      status: "processing",
     });
+    sessionStatusOwned = true;
 
     // 4b. Download files if the message has attachments. Voice notes produce
     // transcripts for the canonical message body instead of file content parts.
@@ -572,7 +581,9 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     } = turn;
 
     if (response.workflowDelegated) {
-      // The durable workflow owns delivery + persistence from here on.
+      // The durable workflow owns delivery + persistence from here on —
+      // including clearing the session status in its finalize step.
+      sessionStatusOwned = false;
       logger.info("Pipeline delegated to durable Slack respond workflow", {
         channelId: context.channelId,
         totalMs: Date.now() - pipelineStart,
@@ -581,6 +592,8 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     }
 
     if (response.interrupted) {
+      // The superseding invocation owns the session status now.
+      sessionStatusOwned = false;
       logger.info("Pipeline interrupted — invocation superseded", {
         channelId: context.channelId,
       });
@@ -660,6 +673,8 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // No manual sandbox pause -- autoPause handles inactivity, and a sandbox
     // that just errored is more useful kept warm for the user's retry.
     if (error instanceof InvocationSupersededError) {
+      // The superseding invocation owns the session status now.
+      sessionStatusOwned = false;
       logger.info("Pipeline interrupted — invocation superseded", {
         invocationId: error.invocationId,
         channelId: context.channelId,
@@ -717,6 +732,20 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
         channelId: context.channelId,
         slackError: notifyErr?.data?.error,
         error: notifyErr?.message || String(notifyErr),
+      });
+    }
+  } finally {
+    // End-of-turn: clear the loading UX. Slack does not auto-clear when the
+    // app posts a message — without this, the session shows an infinite
+    // spinner until Slack's 1-hour timeout. Guaranteed on success and error
+    // paths alike; skipped only when ownership moved elsewhere (durable
+    // workflow / superseding invocation). Soft-fail inside the helper.
+    if (sessionStatusOwned) {
+      await trySetAgentSessionStatus({
+        client,
+        channelId: context.channelId,
+        threadTs: replyThreadTs,
+        status: "active",
       });
     }
   }
@@ -1203,11 +1232,9 @@ async function setInitialDmThreadTitle(params: {
       assistantResponse,
     });
     if (!title) return;
-    await client.assistant.threads.setTitle({
-      channel_id: channelId,
-      thread_ts: threadTs,
-      title,
-    });
+    // agents.sessions.rename via raw apiCall. Soft-fail semantics are
+    // preserved by the surrounding catch.
+    await setAssistantThreadTitle({ client, channelId, threadTs, title });
     logger.info("Set initial DM thread title", { title, channelId });
   } catch (error: any) {
     logger.warn("Failed to set DM thread title", {
@@ -1247,9 +1274,12 @@ async function maybeUpdateDmThreadTitle(params: {
       assistantResponse,
     });
     if (newTitle) {
-      await client.assistant.threads.setTitle({
-        channel_id: channelId,
-        thread_ts: threadTs,
+      // agents.sessions.rename via raw apiCall. Soft-fail semantics are
+      // preserved by the surrounding catch.
+      await setAssistantThreadTitle({
+        client,
+        channelId,
+        threadTs,
         title: newTitle,
       });
       logger.info("Updated DM thread title at checkpoint", {
