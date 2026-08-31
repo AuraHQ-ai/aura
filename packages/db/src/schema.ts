@@ -939,6 +939,40 @@ export const conversationLocks = pgTable(
   ],
 );
 
+// ── Stop Events (append-only audit of Stop presses, issue #1359) ─────────────
+// `conversation_locks` is the live coordination mechanism (one row per thread,
+// overwritten by the next claim); this table is the durable audit log — one
+// row per Stop press, never updated or deleted.
+
+export const stopEvents = pgTable(
+  "stop_events",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    channelId: text("channel_id").notNull(),
+    threadTs: text("thread_ts").notNull(),
+    userId: text("user_id"),
+    /** Slack `event_ts` of the agent_session_stopped event */
+    eventTs: text("event_ts"),
+    /** Streaming message ts(s) Slack halted (`event.streaming_message_ts`) */
+    streamingMessageTs: text("streaming_message_ts"),
+    /** Whether the stop actually displaced a live invocation */
+    displaced: boolean("displaced").notNull().default(false),
+    /** The `stop:<uuid>` sentinel written to conversation_locks */
+    stopId: text("stop_id").notNull(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("stop_events_channel_thread_created_idx").on(
+      table.channelId,
+      table.threadTs,
+      table.createdAt.desc(),
+    ),
+  ],
+);
+
 // ── Turn Markers (stream-death watchdog, issue #1109) ────────────────────────
 // Ground-truth record that a Slack respond turn started. Written early in the
 // respond pipeline and marked terminal on every in-process exit path. Rows
@@ -1207,6 +1241,8 @@ export type EventLock = typeof eventLocks.$inferSelect;
 export type NewEventLock = typeof eventLocks.$inferInsert;
 export type ConversationLock = typeof conversationLocks.$inferSelect;
 export type NewConversationLock = typeof conversationLocks.$inferInsert;
+export type StopEvent = typeof stopEvents.$inferSelect;
+export type NewStopEvent = typeof stopEvents.$inferInsert;
 export type TurnMarker = typeof turnMarkers.$inferSelect;
 export type NewTurnMarker = typeof turnMarkers.$inferInsert;
 export type ErrorEvent = typeof errorEvents.$inferSelect;

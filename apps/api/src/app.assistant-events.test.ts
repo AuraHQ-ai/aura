@@ -1,19 +1,25 @@
 import crypto from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { stopEvents } from "@aura/db/schema";
 
 process.env.DATABASE_URL ??= "postgresql://user:pass@example.com/db";
 process.env.SLACK_SIGNING_SECRET = "slack-signing-secret";
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 
-const mocks = vi.hoisted(() => ({
-  bootstrapAssistantThreadMock: vi.fn(),
-  publishHomeTabMock: vi.fn(),
-  recordErrorMock: vi.fn(),
-  stopInvocationMock: vi.fn(),
-  trySetAgentSessionStatusMock: vi.fn(),
-  runPipelineMock: vi.fn(),
-  waitUntilPromises: [] as Array<Promise<unknown>>,
-}));
+const mocks = vi.hoisted(() => {
+  const dbInsertValuesMock = vi.fn(async () => undefined);
+  return {
+    bootstrapAssistantThreadMock: vi.fn(),
+    publishHomeTabMock: vi.fn(),
+    recordErrorMock: vi.fn(),
+    stopInvocationMock: vi.fn(),
+    trySetAgentSessionStatusMock: vi.fn(),
+    runPipelineMock: vi.fn(),
+    dbInsertValuesMock,
+    dbInsertMock: vi.fn(() => ({ values: dbInsertValuesMock })),
+    waitUntilPromises: [] as Array<Promise<unknown>>,
+  };
+});
 
 vi.mock("@slack/web-api", () => ({
   WebClient: vi.fn(function WebClient() {
@@ -146,11 +152,7 @@ vi.mock("./lib/slack-messaging.js", () => ({
 
 vi.mock("./db/client.js", () => ({
   db: {
-    insert: vi.fn(() => ({
-      values: vi.fn(() => ({
-        catch: vi.fn(),
-      })),
-    })),
+    insert: mocks.dbInsertMock,
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(() => ({
@@ -278,7 +280,10 @@ describe("agent_session_stopped (Stop button)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.waitUntilPromises.length = 0;
-    mocks.stopInvocationMock.mockResolvedValue(true);
+    mocks.stopInvocationMock.mockResolvedValue({
+      displaced: true,
+      stopId: "stop:11111111-2222-3333-4444-555555555555",
+    });
     mocks.trySetAgentSessionStatusMock.mockResolvedValue(undefined);
   });
 
@@ -307,6 +312,66 @@ describe("agent_session_stopped (Stop button)", () => {
     });
     expect(mocks.runPipelineMock).not.toHaveBeenCalled();
     expect(mocks.recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("writes exactly one stop receipt with the stop's channel/thread/user/displaced/stopId", async () => {
+    const response = await postSlackEvent({
+      type: "agent_session_stopped",
+      channel: "D0AFEC7BEMP",
+      thread_ts: "1787785660.512159",
+      event_ts: "1787785700.000100",
+      user: "U0678NQJ2",
+      streaming_message_ts: ["1787785661.000200"],
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.dbInsertMock).toHaveBeenCalledExactlyOnceWith(stopEvents);
+    expect(mocks.dbInsertValuesMock).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: "default",
+      channelId: "D0AFEC7BEMP",
+      threadTs: "1787785660.512159",
+      userId: "U0678NQJ2",
+      eventTs: "1787785700.000100",
+      streamingMessageTs: "1787785661.000200",
+      displaced: true,
+      stopId: "stop:11111111-2222-3333-4444-555555555555",
+    });
+    expect(mocks.recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("a receipt-insert failure still returns 200 and still stops the turn", async () => {
+    mocks.dbInsertValuesMock.mockRejectedValueOnce(
+      new Error("stop_events table missing"),
+    );
+
+    const response = await postSlackEvent({
+      type: "agent_session_stopped",
+      channel: "D0AFEC7BEMP",
+      thread_ts: "1787785660.512159",
+      event_ts: "1787785700.000100",
+      user: "U0678NQJ2",
+    });
+
+    expect(response.status).toBe(200);
+    // The stop itself went through before the receipt failed…
+    expect(mocks.stopInvocationMock).toHaveBeenCalledExactlyOnceWith(
+      "D0AFEC7BEMP",
+      "1787785660.512159",
+      "1787785700.000100",
+      "default",
+    );
+    expect(mocks.trySetAgentSessionStatusMock).toHaveBeenCalledExactlyOnceWith({
+      client: expect.anything(),
+      channelId: "D0AFEC7BEMP",
+      threadTs: "1787785660.512159",
+      status: "active",
+    });
+    // …and the failure was recorded as its own non-fatal error.
+    expect(mocks.recordErrorMock).toHaveBeenCalledExactlyOnceWith(
+      "stop_event_receipt",
+      expect.any(Error),
+      expect.objectContaining({ channelId: "D0AFEC7BEMP" }),
+    );
   });
 
   it("still clears the session status when stopping the lock fails", async () => {

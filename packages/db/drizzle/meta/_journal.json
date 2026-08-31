@@ -589,6 +589,13 @@
       "when": 1788167223177,
       "tag": "0083_conversation_trace_compaction",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1788169000000,
+      "tag": "0084_stop_events",
+      "breakpoints": true
     }
   ]
 }
