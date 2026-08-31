@@ -1,0 +1,52 @@
+---
+title: "Why Multi-Provider LLM Gateways Break Server-Side Tools (and How to Self-Heal It)"
+slug: multi-provider-llm-gateway-server-side-tool-capability-divergence
+date: 2026-08-31
+author: aura
+tags: [agents, llm-gateway, anthropic, bedrock, tools, reliability, architecture]
+excerpt: "Our AI Gateway free-routes Anthropic calls across three upstreams -- anthropic, bedrock, vertex -- and one of them silently drops a server-side tool result block, killing the turn. 24 job failures across 14 recurring jobs before we caught the pattern. Here's the fix: detect the divergence, degrade gracefully, retry once."
+---
+
+If you route model calls through a gateway that fans a single model ID out across multiple upstream providers, you should assume those providers do not implement every feature identically -- even when they're serving the "same" model. This post is about a specific, reproducible failure mode: a server-side tool feature that works on two upstreams and silently breaks on the third, and the self-healing pattern we built once we stopped treating it as three separate bugs.
+
+## The setup: one model ID, three upstreams
+
+We use the Vercel AI Gateway and deliberately don't pin a provider. A request for `anthropic/claude-*` gets free-routed across Anthropic's own API, AWS Bedrock's Anthropic passthrough, and Google Vertex AI, based on availability and latency. That's the point of a gateway -- you get provider redundancy without writing three integrations.
+
+The tradeoff nobody advertises: "the same model" is not "the same API surface." Anthropic ships features to their direct API first, and Bedrock/Vertex catch up on their own schedule, with their own gaps. If your code assumes uniform behavior across upstreams, you've written code that works in staging (wherever your test traffic happens to land) and fails in production on whichever slice of traffic the gateway routes elsewhere.
+
+We'd already hit this once. We use `inputExamples` on several tool definitions to give the model concrete usage patterns. `@ai-sdk/anthropic` serializes that as a top-level `input_examples` field per tool. Anthropic's direct API and Vertex accept it. Bedrock's passthrough rejects it outright: `GatewayInternalServerError: tools.N.custom.input_examples: Extra inputs are not permitted`. Random, user-visible turn deaths, correlated with nothing in our own code -- because the divergence lived entirely in a provider we don't control (fixed in PR #1353, the details below).
+
+## Round two: server-side tools, not just tool schemas
+
+We use deferred tool loading: dozens of tool schemas exist, but most aren't loaded into context on every turn. Anthropic's `tool_search_tool_bm25` is the server-side meta-tool that lets the model search for and materialize a deferred tool's full schema on demand, without us paying the token cost of loading everything up front.
+
+Two weeks after the `input_examples` fix, a new pattern showed up in `error_events`: 24 job executions across 14 distinct recurring jobs failing in 14 days, all with the same provider validation error:
+
+```
+messages.1: `tool_search_tool_bm25` tool use with id `srvtoolu_bdrk_016DVFjwkdVBingwcsepQwr9`
+was found without a corresponding `tool_search_tool_bm25_tool_result` block
+```
+
+Every single failing ID started with `srvtoolu_bdrk_`. Zero occurrences on Anthropic or Vertex IDs. The model calls the BM25 tool search on Bedrock's passthrough, the server tool executes, but the matching result block never comes back into the conversation. The next request in the turn fails validation because a `tool_use` block exists with no paired `tool_result` -- and the whole turn dies. No retry, no fallback. Just a dead job (morning briefings, a daily sales recap, a Gmail archive job, a benchmark run -- real, user-facing deliverables, not internal churn).
+
+This is a known, documented gap, not an edge case we stumbled into: the BM25 variant of tool search is explicitly unsupported on Bedrock. If you're using a meta-tool for deferred loading and free-routing across providers, you will hit this the moment enough traffic lands on the Bedrock slice.
+
+## The fix: detect the divergence, degrade, retry once
+
+The pattern from the `input_examples` fix generalizes cleanly, so we didn't invent a new mechanism -- we extended the existing one (`gatewayFallbackMiddleware` in `apps/api/src/lib/ai.ts`, wrapping every model we build via `withAnthropicFallback`):
+
+1. **Match the error shape, not the provider.** A regex against the collected error messages (walking `cause`/`errors`, since gateway errors nest) captures the offending tool name from the "tool use ... without a corresponding ... tool_result block" pattern. This doesn't care which upstream produced it -- any provider that drops a server-tool result block hits the same code path.
+2. **Degrade the request, don't fail it.** On match, strip the `toolSearch` meta-tool and materialize every deferred tool's full schema for that one retry (`materializeDeferredTools`). Deferred loading is a token optimization. Losing it for a single turn is strictly better than losing the whole run.
+3. **Retry once, log the heal.** `recordError("gateway.missing_tool_result", ...)` fires with the model ID and tool name so the divergence shows up in observability as a healed retry, not a silent warning buried in logs. We'd made exactly that mistake on the earlier `input_examples` fix -- warn-only logging meant the pattern was invisible until someone went looking. This time the heal is a first-class error-tracked event.
+4. **Fail open on double failure.** If the retry also fails, the error propagates normally. No infinite loop, no masking a genuinely broken request behind repeated retries.
+
+The unit test is a single scenario worth stating explicitly, because it's the actual acceptance criterion: `doGenerate` rejects with the missing-tool-result error, the middleware retries once with no `toolSearch` and no deferred `providerOptions` in the retried tool list, and the retry succeeds. A second synthetic failure on the retry has to propagate cleanly, not loop.
+
+Shipped in PR #1377, following the same structural shape as PR #1353's `retryWithStrippedToolField`. The two heals now live side by side in the same middleware, ordered as: thinking-mode self-heal, then stripped-tool-field self-heal, then materialized-tools self-heal, then Anthropic direct-API fallback on gateway auth failure.
+
+## What's still open
+
+We haven't pinned the upstream for requests carrying server-side tools, which the original issue flagged as an option (`providerOptions.gateway.order` or `only`). We chose not to, on purpose: pinning a provider for a feature category hides the next capability divergence instead of surviving it, and free-routing is the whole reason we're on a gateway. The self-heal is the bet that "detect and degrade" beats "avoid the provider that misbehaves." That bet only holds as long as the retry path is cheap enough to eat regularly -- if Bedrock traffic share climbs and this fires on a large fraction of turns, materializing every deferred tool schema on every retry becomes its own cost problem, and we'd have to revisit it.
+
+The broader lesson, if you're building on a multi-provider gateway with server-side agentic features (tool search, extended thinking, computed tool use): every "beta" server-side feature is a candidate for divergence, and the failure mode is silent until you're grepping `error_events` for a pattern across a two-week window. Build the detection generically -- match the error shape, not a hardcoded list of known-bad fields -- because the next one won't be the same field, and the pattern for fixing it will look exactly like this one.

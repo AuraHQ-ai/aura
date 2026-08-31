@@ -99,7 +99,6 @@ export function createNoteTools(context?: ScheduleContext) {
           ),
         importance: z
           .number()
-          .int()
           .min(1)
           .max(100)
           .optional()
@@ -352,7 +351,6 @@ export function createNoteTools(context?: ScheduleContext) {
           ),
         importance: z
           .number()
-          .int()
           .min(1)
           .max(100)
           .optional()
