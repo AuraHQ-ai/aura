@@ -305,6 +305,11 @@ export async function updateConversationTraceUsage(
   conversationId: string,
   tokenUsage: DetailedTokenUsage,
   stepUsages?: StepUsage[],
+  /** Per-turn context-compaction totals (issue #1328), when compaction ran. */
+  compaction?: {
+    compactedToolResults: number;
+    compactionTokensSaved: number;
+  },
 ): Promise<void> {
   try {
     let costUsd: string | null = null;
@@ -363,6 +368,10 @@ export async function updateConversationTraceUsage(
         ...(costPricedAt != null && { costPricedAt }),
         ...(stepUsages?.[0]?.resolvedModelId && {
           resolvedModelId: stepUsages[0].resolvedModelId,
+        }),
+        ...(compaction && {
+          compactedToolResults: compaction.compactedToolResults,
+          compactionTokensSaved: compaction.compactionTokensSaved,
         }),
       })
       .where(eq(conversationTraces.id, conversationId));

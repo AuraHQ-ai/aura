@@ -476,7 +476,7 @@ export async function executeJob(
       prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`\n\n---\n\n${prompt}`;
     }
 
-    const { agent, modelId, getStepModelIds } = await createHeadlessAgent({
+    const { agent, modelId, getStepModelIds, getCompactionTotals } = await createHeadlessAgent({
       slackClient,
       context: {
         userId: job.requestedBy,
@@ -587,8 +587,13 @@ export async function executeJob(
 
     const stepUsages = buildStepUsages(steps, stepModelIds, modelId);
 
-    // Update trace with token usage + cost
-    await updateConversationTraceUsage(conversationId, tokenUsage, stepUsages);
+    // Update trace with token usage + cost + per-turn compaction totals
+    await updateConversationTraceUsage(
+      conversationId,
+      tokenUsage,
+      stepUsages,
+      getCompactionTotals?.(),
+    );
 
     // Persist scratchpad contents for debugging
     const scratchpadContents = getScratchpadContents(invocationId);

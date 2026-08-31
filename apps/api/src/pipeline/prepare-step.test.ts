@@ -370,3 +370,109 @@ describe("createPrepareStep turn wall-clock deadlines (issue #1318)", () => {
     expect(result?.instructions).not.toContain("continuation job has already been scheduled");
   });
 });
+
+describe("createPrepareStep context compaction (issue #1328)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+  });
+
+  function buildLongConversation(stepCount: number, resultLength: number): ModelMessage[] {
+    const history: ModelMessage[] = [
+      { role: "user", content: "Investigate the thing." },
+    ];
+    for (let i = 0; i < stepCount; i++) {
+      const id = `call-${i}`;
+      history.push({
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: id, toolName: `tool_${i}`, input: {} }],
+      });
+      history.push({
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: id,
+            toolName: `tool_${i}`,
+            output: { type: "text", value: "x".repeat(resultLength) },
+          },
+        ],
+      });
+    }
+    return history;
+  }
+
+  function countCompactedParts(messages: ModelMessage[] | undefined): number {
+    let count = 0;
+    for (const msg of messages ?? []) {
+      if (msg.role !== "tool" || !Array.isArray(msg.content)) continue;
+      for (const part of msg.content as any[]) {
+        if (
+          part.type === "tool-result" &&
+          part.output?.type === "text" &&
+          part.output.value.startsWith("[Compacted]")
+        ) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  it("compacts old large tool results past COMPACTION_START_STEP and reports stats", async () => {
+    const recordCompaction = vi.fn();
+    const prepareStep = createPrepareStep({ stablePrefix: "PREFIX", recordCompaction });
+
+    const result = await prepareStep({
+      stepNumber: 40,
+      steps: [],
+      messages: buildLongConversation(40, 8000),
+    });
+
+    expect(countCompactedParts(result?.messages)).toBeGreaterThan(0);
+    expect(recordCompaction).toHaveBeenCalledTimes(1);
+    expect(recordCompaction).toHaveBeenCalledWith({
+      stepNumber: 40,
+      compactedCount: expect.any(Number),
+      estimatedTokensSaved: expect.any(Number),
+    });
+    expect(recordCompaction.mock.calls[0][0].compactedCount).toBeGreaterThan(0);
+    expect(recordCompaction.mock.calls[0][0].estimatedTokensSaved).toBeGreaterThan(0);
+  });
+
+  it("does not compact below COMPACTION_START_STEP", async () => {
+    const recordCompaction = vi.fn();
+    const prepareStep = createPrepareStep({ stablePrefix: "PREFIX", recordCompaction });
+
+    const result = await prepareStep({
+      stepNumber: 10,
+      steps: [],
+      messages: buildLongConversation(40, 8000),
+    });
+
+    expect(countCompactedParts(result?.messages)).toBe(0);
+    expect(recordCompaction).not.toHaveBeenCalled();
+  });
+
+  it("never orphans a tool-call from its tool-result after compaction + pruning", async () => {
+    const prepareStep = createPrepareStep({ stablePrefix: "PREFIX" });
+
+    const result = await prepareStep({
+      stepNumber: 40,
+      steps: [],
+      messages: buildLongConversation(40, 8000),
+    });
+
+    const callIds = new Set<string>();
+    const resultIds = new Set<string>();
+    for (const msg of result?.messages ?? []) {
+      if (!Array.isArray(msg.content)) continue;
+      for (const part of msg.content as any[]) {
+        if (part.type === "tool-call") callIds.add(part.toolCallId);
+        if (part.type === "tool-result") resultIds.add(part.toolCallId);
+      }
+    }
+    expect(callIds.size).toBeGreaterThan(0);
+    expect([...callIds].sort()).toEqual([...resultIds].sort());
+  });
+});

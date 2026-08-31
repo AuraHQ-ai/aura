@@ -1,6 +1,7 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
+import { compactMessages } from "./compact-messages.js";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
@@ -54,6 +55,13 @@ export const TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION =
   "the remaining work.";
 
 export type EffortLevel = "low" | "medium" | "high";
+
+/** Per-step compaction stats reported via `recordCompaction` (issue #1328). */
+export interface CompactionStepStats {
+  stepNumber: number;
+  compactedCount: number;
+  estimatedTokensSaved: number;
+}
 
 type PrepareStepResult = {
   system?: string;
@@ -203,6 +211,12 @@ export function createPrepareStep(opts: {
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
   recordStepModelId?: (stepNumber: number, modelId?: string) => void;
+  /**
+   * Called on each step where compaction replaced at least one old tool
+   * result (issue #1328). Callers accumulate per-turn totals for the
+   * conversation_traces row; the persisted trace itself stays untouched.
+   */
+  recordCompaction?: (stats: CompactionStepStats) => void;
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
@@ -454,8 +468,29 @@ export function createPrepareStep(opts: {
         + "\n\n" + systemSuffixes.join("\n\n");
     }
 
+    // --- Context compaction (issue #1328) ---
+    // Applied universally (interactive AND headless): past the step threshold,
+    // old large tool results are replaced with stubs that KEEP toolCallId +
+    // toolName, so the model still sees what it already did (no #499 re-run
+    // loops) and no tool-call is orphaned from its tool-result. Only the
+    // in-flight array is modified — the persisted trace stays complete.
+    const compaction = compactMessages(messages, stepNumber);
+    if (compaction.compactedCount > 0) {
+      logger.info("prepareStep: compacting messages", {
+        stepNumber,
+        totalMessages: messages.length,
+        compactedCount: compaction.compactedCount,
+        estimatedTokensSaved: compaction.estimatedTokensSaved,
+      });
+      opts.recordCompaction?.({
+        stepNumber,
+        compactedCount: compaction.compactedCount,
+        estimatedTokensSaved: compaction.estimatedTokensSaved,
+      });
+    }
+
     const prunedMessages = pruneMessages({
-      messages,
+      messages: compaction.messages,
       reasoning: "before-last-message",
     });
 
@@ -471,7 +506,7 @@ export function createPrepareStep(opts: {
   };
 }
 
-/** Factory for interactive Slack agent prepareStep (250-step limit). */
+/** Factory for interactive Slack agent prepareStep (250-step limit, with context compaction). */
 export function createInteractivePrepareStep(opts: {
   stablePrefix: string;
   environmentContext?: string;
@@ -482,6 +517,7 @@ export function createInteractivePrepareStep(opts: {
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
   recordStepModelId?: (stepNumber: number, modelId?: string) => void;
+  recordCompaction?: (stats: CompactionStepStats) => void;
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
@@ -503,6 +539,7 @@ export function createInteractivePrepareStep(opts: {
     thinkingBudget: opts.thinkingBudget,
     getEscalationModel: opts.getEscalationModel,
     recordStepModelId: opts.recordStepModelId,
+    recordCompaction: opts.recordCompaction,
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
@@ -513,7 +550,7 @@ export function createInteractivePrepareStep(opts: {
   });
 }
 
-/** Factory for headless job execution prepareStep (350-step limit). */
+/** Factory for headless job execution prepareStep (350-step limit, with context compaction). */
 export function createHeadlessPrepareStep(opts: {
   stablePrefix: string;
   environmentContext?: string;
@@ -524,6 +561,7 @@ export function createHeadlessPrepareStep(opts: {
   thinkingBudget?: number;
   getEscalationModel?: () => Promise<{ modelId: string; model: LanguageModel }>;
   recordStepModelId?: (stepNumber: number, modelId?: string) => void;
+  recordCompaction?: (stats: CompactionStepStats) => void;
   invocationId?: string;
   channelId?: string;
   threadTs?: string;
@@ -545,6 +583,7 @@ export function createHeadlessPrepareStep(opts: {
     thinkingBudget: opts.thinkingBudget,
     getEscalationModel: opts.getEscalationModel,
     recordStepModelId: opts.recordStepModelId,
+    recordCompaction: opts.recordCompaction,
     invocationId: opts.invocationId,
     channelId: opts.channelId,
     threadTs: opts.threadTs,
