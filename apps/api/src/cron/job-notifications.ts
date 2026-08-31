@@ -1,5 +1,7 @@
 import { WebClient } from "@slack/web-api";
+import { logError } from "../lib/error-logger.js";
 import { logger } from "../lib/logger.js";
+import { getSetting } from "../lib/settings.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { resolveSlackDestination } from "../tools/slack.js";
 
@@ -27,24 +29,47 @@ export type OpsNoticeTarget = {
   destination: string;
 };
 
+/** Settings key for the ops channel (channel ID or name). Takes priority over the AURA_OPS_CHANNEL env var. */
+export const OPS_CHANNEL_SETTING_KEY = "aura_ops_channel";
+/** Settings key for the founder's Slack user ID. Takes priority over the FOUNDER_USER_ID env var. */
+export const FOUNDER_USER_ID_SETTING_KEY = "founder_user_id";
+
+/**
+ * Resolve the founder's Slack user ID: DB setting first (editable from the
+ * dashboard), then the FOUNDER_USER_ID env var. Returns null when neither
+ * is configured.
+ */
+export async function resolveFounderUserId(): Promise<string | null> {
+  return (
+    (await getSetting(FOUNDER_USER_ID_SETTING_KEY))?.trim() ||
+    process.env.FOUNDER_USER_ID?.trim() ||
+    null
+  );
+}
+
 /**
  * Resolve where internal job lifecycle/ops notices (retries, escalations,
  * disable notices, retry-exhausted alerts) should go. These are internal
  * plumbing, NOT user deliverables, so they must not land in the requester's
  * DM when an ops destination is configured.
  *
- * Fallback ladder:
- * 1. AURA_OPS_CHANNEL env (channel ID or name)
- * 2. FOUNDER_USER_ID env (DM)
- * 3. Last resort only: DM requestedBy (keeps the `requestedBy === "aura"` skip)
+ * Fallback ladder (DB settings first so ops routing is configurable from the
+ * dashboard without a redeploy):
+ * 1. settings.aura_ops_channel (channel ID or name)
+ * 2. AURA_OPS_CHANNEL env (channel ID or name)
+ * 3. settings.founder_user_id (DM)
+ * 4. FOUNDER_USER_ID env (DM)
+ * 5. Last resort only: DM requestedBy (keeps the `requestedBy === "aura"` skip)
  */
-export function resolveOpsNotificationTarget(
+export async function resolveOpsNotificationTarget(
   requestedBy: string | null | undefined,
-): OpsNoticeTarget | null {
-  const opsChannel = process.env.AURA_OPS_CHANNEL?.trim();
+): Promise<OpsNoticeTarget | null> {
+  const opsChannel =
+    (await getSetting(OPS_CHANNEL_SETTING_KEY))?.trim() ||
+    process.env.AURA_OPS_CHANNEL?.trim();
   if (opsChannel) return { kind: "ops_channel", destination: opsChannel };
 
-  const founderUserId = process.env.FOUNDER_USER_ID?.trim();
+  const founderUserId = await resolveFounderUserId();
   if (founderUserId) return { kind: "founder_dm", destination: founderUserId };
 
   const requester = resolveJobFailureDmTarget(requestedBy);
@@ -84,7 +109,7 @@ export async function sendJobOpsNotice({
   text: string;
   logContext?: Record<string, unknown>;
 }): Promise<SendJobOpsNoticeResult> {
-  const target = resolveOpsNotificationTarget(requestedBy);
+  const target = await resolveOpsNotificationTarget(requestedBy);
 
   if (!target) {
     logger.warn("job_ops_notice_skipped_no_target", {
@@ -98,9 +123,18 @@ export async function sendJobOpsNotice({
 
   if (target.kind === "requester_dm") {
     logger.warn(
-      "job_ops_notice_no_ops_destination_configured: set AURA_OPS_CHANNEL or FOUNDER_USER_ID; falling back to requester DM",
+      "job_ops_notice_no_ops_destination_configured: set the aura_ops_channel / founder_user_id settings (or AURA_OPS_CHANNEL / FOUNDER_USER_ID env vars); falling back to requester DM",
       { jobId, jobName, requestedBy, ...logContext },
     );
+    // Surface the misconfiguration in monitoring (error_events + #aura-errors),
+    // not just in logs — an internal engineering notice is about to land in an
+    // end user's DM.
+    logError({
+      errorName: "job_ops_notice_no_ops_destination",
+      errorMessage: `Job ops notice for "${jobName}" fell back to the requester DM because no ops destination is configured. Set the aura_ops_channel or founder_user_id setting (or the AURA_OPS_CHANNEL / FOUNDER_USER_ID env vars).`,
+      userId: target.destination,
+      context: { jobId, jobName, requestedBy, ...logContext },
+    });
   }
 
   const message =

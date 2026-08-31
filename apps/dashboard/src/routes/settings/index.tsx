@@ -48,6 +48,28 @@ interface ModelCatalog {
   lastSyncedAt: string | null;
 }
 
+/**
+ * Ops notification routing keys — internal job lifecycle notices (retries,
+ * escalations, disable notices) are routed here instead of the requester's DM.
+ * DB settings take priority over the AURA_OPS_CHANNEL / FOUNDER_USER_ID env vars.
+ */
+const OPS_NOTIFICATION_KEYS = [
+  {
+    key: "aura_ops_channel",
+    title: "Ops Channel",
+    placeholder: "e.g. C0123456789 or #aura-ops",
+    description:
+      "Slack channel (ID or name) that receives internal job lifecycle notices (retries, escalations, disable notices). Takes priority over the AURA_OPS_CHANNEL env var.",
+  },
+  {
+    key: "founder_user_id",
+    title: "Founder User ID",
+    placeholder: "e.g. U0123456789",
+    description:
+      "Slack user DM'd with ops notices when no ops channel is set. Takes priority over the FOUNDER_USER_ID env var. Without either, notices fall back to the job requester's DM.",
+  },
+] as const;
+
 /** Runtime-state keys that represent per-sandbox/per-user transient state. */
 function isRuntimeKey(key: string): boolean {
   return (
@@ -75,6 +97,7 @@ function SettingsPage() {
   });
 
   const [modelDrafts, setModelDrafts] = useState<Partial<Record<ModelCategory, string>>>({});
+  const [opsDrafts, setOpsDrafts] = useState<Record<string, string>>({});
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -123,6 +146,19 @@ function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
     },
+  });
+
+  function actualOpsValue(key: string): string {
+    return opsDrafts[key] ?? getSettingValue(key);
+  }
+
+  const saveOpsMutation = useMutation({
+    mutationFn: async () => {
+      for (const { key } of OPS_NOTIFICATION_KEYS) {
+        await apiPut(`/settings/${key}`, { value: actualOpsValue(key).trim() });
+      }
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
   });
 
   const saveSettingMutation = useMutation({
@@ -219,6 +255,38 @@ function SettingsPage() {
           </div>
           <Button onClick={() => saveModelsMutation.mutate()} disabled={saveModelsMutation.isPending} size="sm">
             <Save className="h-4 w-4" /> {saveModelsMutation.isPending ? "Saving..." : "Save Models"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Ops Notifications</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Where internal job lifecycle notices (retries, escalations, disable notices,
+            retry-exhausted alerts) are sent. Without an ops channel or founder, these
+            fall back to the job requester's DM.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {OPS_NOTIFICATION_KEYS.map((field) => (
+              <div key={field.key}>
+                <label className="text-sm font-medium mb-1 block" htmlFor={`ops-${field.key}`}>
+                  {field.title}
+                </label>
+                <Input
+                  id={`ops-${field.key}`}
+                  placeholder={field.placeholder}
+                  value={actualOpsValue(field.key)}
+                  onChange={(e) =>
+                    setOpsDrafts((drafts) => ({ ...drafts, [field.key]: e.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground mt-1">{field.description}</p>
+              </div>
+            ))}
+          </div>
+          <Button onClick={() => saveOpsMutation.mutate()} disabled={saveOpsMutation.isPending} size="sm">
+            <Save className="h-4 w-4" /> {saveOpsMutation.isPending ? "Saving..." : "Save Ops Notifications"}
           </Button>
         </CardContent>
       </Card>

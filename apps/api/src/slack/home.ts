@@ -42,16 +42,35 @@ const TOOLS_REPO_CHECKOUT_PATH = `/home/user/${["aura", "tools"].join("-")}`;
 
 // ── Block Kit Helpers ────────────────────────────────────────────────────────
 
+/** Block Kit limits for `static_select` — exceeding either invalidates the whole view. */
+export const SELECT_MAX_OPTIONS = 100;
+export const SELECT_LABEL_MAX_CHARS = 75;
+
+function truncateLabel(label: string, max: number): string {
+  return label.length <= max ? label : `${label.slice(0, max - 1)}…`;
+}
+
 function buildDropdown(
   actionId: string,
   label: string,
   options: ModelOption[],
   currentValue: string,
 ) {
-  const slackOptions = options.map((opt) => ({
-    text: { type: "plain_text" as const, text: opt.label },
+  // Slack rejects the ENTIRE home view (`views.publish` → invalid_arguments
+  // "failed to match all allowed schemas [json-pointer:/view]") when a
+  // static_select carries more than 100 options or an option label exceeds
+  // 75 chars. The gateway catalog has 300+ language models, so cap here and
+  // always keep the current selection in the list.
+  const toOption = (opt: ModelOption) => ({
+    text: { type: "plain_text" as const, text: truncateLabel(opt.label, SELECT_LABEL_MAX_CHARS) },
     value: opt.value,
-  }));
+  });
+  const current = options.find((o) => o.value === currentValue);
+  const limited = options.slice(0, SELECT_MAX_OPTIONS);
+  if (current && !limited.some((o) => o.value === current.value)) {
+    limited[limited.length - 1] = current;
+  }
+  const slackOptions = limited.map(toOption);
 
   // Find the initial option (current selection)
   const initialOption = slackOptions.find((o) => o.value === currentValue) || slackOptions[0];
@@ -824,8 +843,15 @@ export async function publishHomeTab(
     });
 
     logger.info("Published App Home tab", { userId, isAdminRole: admin });
-  } catch (error) {
-    logger.error("Failed to publish App Home tab", { userId, error });
+  } catch (error: any) {
+    // Surface Slack's validation detail (`response_metadata.messages`, e.g.
+    // "failed to match all allowed schemas [json-pointer:/view]") — the bare
+    // error object hides it and the home tab silently stays stale.
+    logger.error("Failed to publish App Home tab", {
+      userId,
+      slackError: error?.data?.error || error?.message,
+      slackDetail: error?.data?.response_metadata?.messages,
+    });
   }
 }
 
