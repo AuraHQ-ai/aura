@@ -141,6 +141,7 @@ Configure instance behavior:
 - Admin user IDs
 - Model selection for all five categories (fast, medium, main, escalation, embedding) from the **full** Vercel AI Gateway catalog — a searchable, type-to-filter autocomplete grouped by provider, filtered only by capability metadata (image/video/embedding/reranking models are excluded from the chat categories). Choices persist as `model_*` settings through the settings API
 - Manual "Refresh Catalog" sync for newly available gateway models
+- **Ops Notifications** card: `aura_ops_channel` and `founder_user_id`, the DB-first destination for internal job lifecycle notices (retries, escalations, disable notices). Not secrets, so shown/edited in plain text; see [Jobs -- Ops notice routing](/tools/jobs#ops-notice-routing) for the full fallback ladder.
 - Feature flags
 - Theme selection (light/dark/system) -- moved here from the header
 
