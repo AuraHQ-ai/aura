@@ -190,9 +190,20 @@ async function loadPlanNote(topic: string): Promise<string | null> {
 
 // ── Job Execution ────────────────────────────────────────────────────────────
 
+/**
+ * Trigger semantics (issue #1238):
+ * - "heartbeat":    a genuine ON-SCHEDULE cron/frequency fire. The ONLY trigger
+ *                   that consumes the minIntervalHours/cooldownHours budget in
+ *                   isRecurringJobDue().
+ * - "dispatch":     manual/immediate run (dispatch_headless tool, /api/execute-now).
+ * - "continuation": plan-note continuation resume.
+ * - "recovery":     off-schedule requeue (supervisor retry_as_is/retry_with_fix,
+ *                   stale-running recovery). Runs like a heartbeat fire but must
+ *                   NOT reset the frequency-gate interval clock.
+ */
 export async function executeJob(
   job: typeof jobs.$inferSelect,
-  trigger: "heartbeat" | "dispatch" | "continuation" = "heartbeat",
+  trigger: "heartbeat" | "dispatch" | "continuation" | "recovery" = "heartbeat",
 ): Promise<boolean> {
   const jobId = job.id;
 
