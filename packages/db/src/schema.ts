@@ -583,6 +583,12 @@ export const jobs = pgTable(
     envAllowlist: text("env_allowlist").array(),
     /** 'task' = minimal task prompt (no personality/notes). Null = 'full' (current behavior). */
     promptMode: text("prompt_mode").$type<"full" | "task">(),
+    /**
+     * While set and in the future, this running job is legitimately parked
+     * awaiting a detached-command webhook resume (issue #1326). Stale-kill
+     * sweeps must skip it until this deadline elapses.
+     */
+    suspendedUntil: timestamptz("suspended_until"),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
@@ -613,6 +619,12 @@ export const jobExecutions = pgTable(
     summary: text("summary"),
     tokenUsage: jsonb("token_usage"),
     error: text("error"),
+    /**
+     * Set when this execution dispatched a detached command with a webhook
+     * resume (issue #1326): the run is suspended, not hung. Watchdogs must
+     * not fail it before this deadline.
+     */
+    suspendedUntil: timestamptz("suspended_until"),
   },
   (table) => [
     index("job_executions_job_id_idx").on(table.jobId),
