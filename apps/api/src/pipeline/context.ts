@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 import { generateText } from "ai";
 import { getFastModel, withCacheControl } from "../lib/ai.js";
+import type { AppContextEntity } from "../lib/app-context.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
@@ -29,6 +30,9 @@ export interface SlackMessageEvent {
   subtype?: string;
   files?: Array<Record<string, unknown>>;
   attachments?: SlackAttachment[];
+  /** Agent context: what the user currently has open (agent_view apps
+   * subscribed to app_context_changed receive this on message.im events) */
+  app_context?: { entities?: AppContextEntity[] };
 }
 
 export interface SlackAppMentionEvent {
@@ -77,6 +81,9 @@ export interface MessageContext {
   useSurroundingContext?: boolean;
   /** When set, this message is a Slackbot notification about a Slack List item */
   slackListItemContext?: SlackListItemContext;
+  /** What the user currently has open in Slack (agent context, DMs only).
+   * Resolved from the event's inline app_context or the app_context_cache. */
+  appContextEntities?: AppContextEntity[];
 }
 
 /**

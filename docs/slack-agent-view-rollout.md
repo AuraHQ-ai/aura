@@ -84,3 +84,51 @@ Handler (`apps/api/src/app.ts`, `/api/slack/events`):
 
 Event payload used: `channel`, `thread_ts`, `event_ts`, `user`,
 `streaming_message_ts[]` (the messages Slack already halted).
+
+## Agent context / `app_context` (issue #1295) — manifest change REQUIRED
+
+Slack's [agent context](https://docs.slack.dev/changelog/2026/07/02/app-context)
+feature (agent_view apps only) tells us what a user currently has open —
+channel, DM, thread, canvas, or list. Two delivery paths:
+
+1. [`app_context_changed`](https://docs.slack.dev/reference/events/app_context_changed)
+   fires whenever the user's active view changes while the app is open. The
+   payload is `context.entities`, ordered by relevance (empty `context: {}`
+   when nothing relevant is open).
+2. Once the app is subscribed to `app_context_changed`, Slack also includes an
+   inline `app_context` field on `message.im` (and `app_home_opened`) events.
+
+The subscription lives in the Slack app dashboard (not this repo). Add it:
+
+```yaml
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_context_changed   # ← add (scope: assistant:write, already granted)
+```
+
+### How app_context flows into the pipeline
+
+Why: a recurring DM failure class — a user drops an artifact (Close link,
+canvas, list item) into a DM with no framing, and Aura reads it memory-first
+instead of artifact-first. app_context tells us exactly what they're viewing.
+
+1. **Cache on change** — the `app_context_changed` handler in
+   `apps/api/src/app.ts` upserts `context.entities` into the
+   `app_context_cache` table (`packages/db/src/schema.ts`), keyed by
+   `(workspace_id, user_id)`. Empty payloads are stored too — the user
+   navigated away, and that must overwrite the previous context. Failures go
+   through `recordError` and never break the 200 ack.
+2. **Read at message time** — for DMs, the pipeline
+   (`apps/api/src/pipeline/index.ts`) prefers the inline `app_context` on the
+   message event (freshest); otherwise it falls back to the cached row,
+   ignoring entries older than 5 minutes (`APP_CONTEXT_TTL_MS` in
+   `apps/api/src/lib/app-context.ts`). No cron cleanup — stale rows are
+   simply ignored and overwritten by the next upsert.
+3. **Inject into the prompt** — `assemblePrompt`
+   (`apps/api/src/pipeline/prompt.ts`) appends a small "User's current view"
+   block to the dynamic context (DMs only, fresh context only) instructing the
+   model to read the open artifact FIRST before memory retrieval. Entities are
+   rendered from their typed refs (`slack#/types/channel_id` → `<#C…>`,
+   canvas/list/thread as labeled IDs) with no extra Slack API calls at
+   injection time.

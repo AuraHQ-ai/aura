@@ -6,6 +6,7 @@ import { resolveChannelName } from "./context.js";
 import type { ConversationContext } from "./slack-context.js";
 import { formatConversationContext } from "./slack-context.js";
 import { buildCorePrompt } from "./core-prompt.js";
+import { buildAppContextBlock } from "../lib/app-context.js";
 import { getProfile } from "../users/profiles.js";
 
 export interface AssembledPrompt {
@@ -131,6 +132,15 @@ Do NOT respond to or paraphrase the notification text. Instead, investigate the 
 2. Based on the thread content, provide useful triage, context, or follow-up — not a restatement of the notification.
 
 If the thread content is sparse, try list_slack_list_items to find the item by matching thread_ts and get its full field data.`;
+  }
+
+  // Agent context: what the user currently has open (DMs only, fresh only —
+  // staleness is filtered upstream in the pipeline; see issue #1295).
+  if (context.isDm && context.appContextEntities?.length) {
+    const appContextBlock = buildAppContextBlock(context.appContextEntities);
+    if (appContextBlock) {
+      dynamicContext += `\n\n${appContextBlock}`;
+    }
   }
 
   return {
