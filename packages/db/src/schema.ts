@@ -1601,6 +1601,52 @@ export const evalResponseScores = pgTable(
   ],
 );
 
+// ── GitHub Pull Requests (issue #271, webhook phase 1) ──────────────────────
+//
+// One row per PR seen by the /api/webhook/github endpoint. Records the PR ↔
+// issue mapping (closing keywords parsed from the PR body) so issue tracking
+// stays accurate: on merge, referenced issues are auto-closed and the row is
+// updated with the terminal state.
+
+export const githubPullRequests = pgTable(
+  "github_pull_requests",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    /** Repository in "owner/name" form, e.g. "AuraHQ-ai/aura". */
+    repo: text("repo").notNull(),
+    number: integer("number").notNull(),
+    title: text("title"),
+    url: text("url"),
+    author: text("author"),
+    /** "open" | "closed" | "merged" */
+    state: text("state").notNull().default("open"),
+    /** Issue numbers referenced via closing keywords ("Fixes #N") in the body. */
+    linkedIssues: integer("linked_issues")
+      .array()
+      .notNull()
+      .default(sql`'{}'::integer[]`),
+    openedAt: timestamptz("opened_at"),
+    mergedAt: timestamptz("merged_at"),
+    closedAt: timestamptz("closed_at"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("github_prs_workspace_repo_number_idx").on(
+      table.workspaceId,
+      table.repo,
+      table.number,
+    ),
+    index("github_prs_state_idx").on(table.state),
+  ],
+);
+
+export type GithubPullRequest = typeof githubPullRequests.$inferSelect;
+export type NewGithubPullRequest = typeof githubPullRequests.$inferInsert;
+
 export type EvalResponseScore = typeof evalResponseScores.$inferSelect;
 export type NewEvalResponseScore = typeof evalResponseScores.$inferInsert;
 export type ConversationTrace = typeof conversationTraces.$inferSelect;
