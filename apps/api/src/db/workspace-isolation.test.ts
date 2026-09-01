@@ -16,13 +16,21 @@
  *                             withWorkspace middleware (DEFAULT_WORKSPACE_ID=ws-a)
  *
  * Also proves deny-by-default: a connection with NO app.workspace_id set
- * (even as the table owner, because of FORCE ROW LEVEL SECURITY) reads zero
- * rows and cannot write; the documented maintenance GUC restores access.
+ * reads zero rows and cannot write; the documented maintenance GUC restores
+ * access for operator sessions.
+ *
+ * ROLE SHAPE: the suite runs as `aura_app` (migration 0092) — NOSUPERUSER,
+ * NOBYPASSRLS, owns nothing — the shape production must have after the
+ * DATABASE_URL cutover. It FAILS (in beforeAll) if run under a bypassing,
+ * superuser, or table-owning role, because RLS is exempt for those and every
+ * assertion here would be vacuous (this is exactly how the first cut of this
+ * test green-lit an inert configuration: prod's neondb_owner has BYPASSRLS).
  *
  * Run via: pnpm --filter aura-api test:workspace-isolation
  * (scripts/workspace-isolation-test.sh — provisions a DISPOSABLE local
- * Postgres db, applies the migration chain, sets WORKSPACE_ISOLATION_TEST=1).
- * Skipped entirely in the normal unit-test suite.
+ * Postgres db, applies the migration chain as the owner role, then runs this
+ * suite as aura_app with WORKSPACE_ISOLATION_TEST=1). Skipped entirely in
+ * the normal unit-test suite.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type pg from "pg";
@@ -65,6 +73,29 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
     const pgMod = await import("pg");
     rawClient = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL });
     await rawClient.connect();
+
+    // HARD GATE (issue #1393 review): this suite must FAIL — not skip, not
+    // pass vacuously — when run under an RLS-exempt or table-owning role.
+    // BYPASSRLS/SUPERUSER beat FORCE ROW LEVEL SECURITY, so a green run under
+    // such a role certifies nothing. Production's neondb_owner HAS BYPASSRLS;
+    // the app must connect as the non-bypassing aura_app role (migration
+    // 0092), and so must this test.
+    const shape = await rawClient.query(
+      "SELECT current_user::text AS role, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user",
+    );
+    const { role, rolbypassrls, rolsuper } = shape.rows[0];
+    const owner = await rawClient.query(
+      "SELECT pg_get_userbyid(relowner)::text AS owner FROM pg_class WHERE oid = 'public.messages'::regclass",
+    );
+    if (rolbypassrls || rolsuper || owner.rows[0].owner === role) {
+      throw new Error(
+        `workspace-isolation test is running under a privileged role: "${role}" ` +
+          `(rolbypassrls=${rolbypassrls}, rolsuper=${rolsuper}, ` +
+          `messages owner=${owner.rows[0].owner}). RLS is exempt for such roles, so ` +
+          `every isolation assertion below would be meaningless. Run via ` +
+          `scripts/workspace-isolation-test.sh, which executes this suite as aura_app.`,
+      );
+    }
 
     // The workspaces registry itself carries no RLS — seed the two tenants.
     await rawClient.query(
@@ -192,6 +223,64 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
     await rawClient?.end();
   });
 
+  // ── Role shape (must hold BEFORE any isolation claim means anything) ─────
+
+  it("runs as a non-bypassing, non-superuser, non-owner role — the shape production must have", async () => {
+    const shape = await rawClient.query(
+      "SELECT current_user::text AS role, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user",
+    );
+    expect(shape.rows[0].rolbypassrls).toBe(false);
+    expect(shape.rows[0].rolsuper).toBe(false);
+    const owner = await rawClient.query(
+      "SELECT pg_get_userbyid(relowner)::text AS owner FROM pg_class WHERE oid = 'public.messages'::regclass",
+    );
+    expect(owner.rows[0].owner).not.toBe(shape.rows[0].role);
+  });
+
+  it("every public table outside the global allowlist has workspace_id + FORCE RLS + both policies", async () => {
+    // This is the check that stops the next table from being forgotten
+    // (approval_items was absent from the first cut of 0090/0091). Global
+    // allowlist: the tenant registry and the public content index. The
+    // drizzle ledger lives in the `drizzle` schema, so `public` is exhaustive.
+    const GLOBAL_ALLOWLIST = new Set(["workspaces", "content"]);
+    const tables = (
+      await rawClient.query(
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
+      )
+    ).rows.map((r: { tablename: string }) => r.tablename);
+    expect(tables.length).toBeGreaterThan(35);
+
+    const problems: string[] = [];
+    for (const table of tables) {
+      if (GLOBAL_ALLOWLIST.has(table)) continue;
+      const col = await rawClient.query(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = 'workspace_id'",
+        [table],
+      );
+      if (col.rowCount === 0) problems.push(`${table}: missing workspace_id column`);
+
+      const rls = await rawClient.query(
+        "SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = $1",
+        [table],
+      );
+      if (!rls.rows[0]?.relrowsecurity) problems.push(`${table}: RLS not enabled`);
+      if (!rls.rows[0]?.relforcerowsecurity) problems.push(`${table}: RLS not forced`);
+
+      const policies = await rawClient.query(
+        "SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = $1 ORDER BY policyname",
+        [table],
+      );
+      const names = policies.rows.map((r: { policyname: string }) => r.policyname);
+      if (!names.includes(`${table}_workspace_isolation`)) {
+        problems.push(`${table}: missing ${table}_workspace_isolation policy`);
+      }
+      if (!names.includes(`${table}_maintenance`)) {
+        problems.push(`${table}: missing ${table}_maintenance policy`);
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
   // ── Guard ────────────────────────────────────────────────────────────────
 
   it("rejects empty / missing workspace ids", async () => {
@@ -204,7 +293,7 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
 
   // ── Deny by default ──────────────────────────────────────────────────────
 
-  it("denies all access on a connection with no workspace context (even for the table owner)", async () => {
+  it("denies all access on a connection with no workspace context", async () => {
     const memories = await rawClient.query("SELECT count(*)::int AS n FROM memories");
     expect(memories.rows[0].n).toBe(0);
     const notes = await rawClient.query("SELECT count(*)::int AS n FROM notes");
