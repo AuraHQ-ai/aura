@@ -4,7 +4,7 @@ import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions, credentials } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
-import { sendJobOpsNotice } from "./job-notifications.js";
+import { sendJobOpsNotice, truncateJobFailureText } from "./job-notifications.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext } from "../lib/tool.js";
@@ -20,7 +20,6 @@ import {
   buildConversationSteps,
 } from "./persist-conversation.js";
 import { detectScriptOutputError } from "./script-output.js";
-import { sendJobOpsNotice, truncateJobFailureText } from "./job-notifications.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import { withTrace } from "../lib/langfuse.js";
