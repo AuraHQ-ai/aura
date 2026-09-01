@@ -99,6 +99,10 @@ Tools are defined using `defineTool()`, a wrapper around the Vercel AI SDK's `to
 | **Integration** | Credentials, Cursor agents | Credential management and async coding agents |
 | **Communication** | Voice, resources | Phone calls, content ingestion |
 
+### Result cap
+
+`defineTool()` caps the serialized size of every tool result at **12,000 characters** by default (`DEFAULT_MAX_RESULT_CHARS`), unless a tool overrides it via `maxResultChars` (a number) or opts out entirely (`false`). Oversized results degrade gracefully instead of erroring: array items are dropped from the end (BigQuery-style row-halving), a dominant string field is truncated in place, or the whole serialization is wrapped with an explicit truncation marker -- never malformed JSON. Base64 binary payloads consumed by `toModelOutput` are exempt. Per-tool overrides: `browse` keeps a 32k ceiling, `conversations` caps at 500 chars per message. Every cap firing logs a warning and increments a per-tool in-process counter (`getToolResultCapCounts()`). This exists because uncapped tool output is a silent cost bomb -- one oversized result gets re-sent on every subsequent step of a turn (#1328/#1329).
+
 Each tool has a description that guides the LLM on when and how to use it -- these descriptions are a critical part of Aura's behavior.
 
 ### Deferred tool loading
