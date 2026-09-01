@@ -64,6 +64,7 @@ const safePostMessageMock = vi.hoisted(() => vi.fn());
 const resolveSlackDestinationMock = vi.hoisted(() => vi.fn());
 const getSettingMock = vi.hoisted(() => vi.fn());
 const logErrorMock = vi.hoisted(() => vi.fn());
+const waitUntilMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../db/client.js", () => ({
   db: {
@@ -123,6 +124,10 @@ vi.mock("../lib/error-logger.js", () => ({
   sanitizeErrorText: vi.fn((value: string | null | undefined) => value ?? ""),
   flushLoggerDrops: vi.fn(),
   resetErrorLoggerStateForTest: vi.fn(),
+}));
+
+vi.mock("@vercel/functions", () => ({
+  waitUntil: waitUntilMock,
 }));
 
 function mockSettingsRows(rows: Record<string, string>) {
@@ -200,6 +205,21 @@ describe("heartbeat stale running recovery", () => {
       async (_client: unknown, destination: string) =>
         destination.startsWith("U") ? `D_${destination}` : destination,
     );
+    // Default: fan-out dispatch fails (non-2xx) so that existing tests which
+    // expect executeJobMock to be called continue working via the inline
+    // fallback path.  Individual tests override this with vi.stubGlobal.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (typeof url === "string" && url.includes("/api/execute-now")) {
+          return { status: 500, ok: false };
+        }
+        return { ok: true };
+      }),
+    );
+    waitUntilMock.mockImplementation((p: Promise<unknown>) => {
+      void p;
+    });
   });
 
   afterEach(() => {
@@ -1116,6 +1136,276 @@ describe("heartbeat stale running recovery", () => {
 
     expect(source).not.toContain(legacyFunction);
     expect(source).not.toContain(legacyMarkerTopic);
+  });
+
+  // ── Fanout dispatch tests ─────────────────────────────────────────────────
+
+  describe("heartbeat fanout dispatch", () => {
+    // Restore any Date.now spies after each test so they don't bleed over.
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("dispatches due jobs via fetch to /api/execute-now rather than executing inline", async () => {
+      process.env.AURA_PUBLIC_URL = "https://aura.test";
+      const fetchMock = vi.fn(async (url: string) => {
+        if ((url as string).includes("/api/execute-now")) {
+          return { status: 202, ok: true };
+        }
+        return { ok: true };
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const dueJob = baseJob({
+        status: "pending",
+        executeAt: new Date("2026-05-20T08:00:00.000Z"),
+      });
+      queueDbResults(
+        [dueJob], // pending jobs
+        [],       // expired plan notes
+        [],       // stale plan notes
+        [],       // orphan pending_review
+        [],       // orphan in_progress
+        [],       // dequeued without exec
+        [],       // stuck executions (sweepStuckJobs)
+        [],       // stale running
+        [],       // stale exhausted
+      );
+
+      const { heartbeatApp } = await import("./heartbeat.js");
+      const response = await heartbeatApp.request("/api/cron/heartbeat", {
+        headers: { authorization: "Bearer test-secret" },
+      });
+
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://aura.test/api/execute-now",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            authorization: "Bearer test-secret",
+          }),
+          body: JSON.stringify({ jobId: "job-1", trigger: "heartbeat" }),
+        }),
+      );
+      expect(executeJobMock).not.toHaveBeenCalled();
+      const body = await response.json();
+      expect(body.dispatched).toBe(1);
+      expect(body.executed).toBe(0);
+    });
+
+    it("falls back to inline executeJob when fan-out dispatch fails (non-2xx)", async () => {
+      // Default fetch stub in beforeEach returns 500 for /api/execute-now
+      executeJobMock.mockResolvedValue(true);
+
+      const dueJob = baseJob({
+        status: "pending",
+        executeAt: new Date("2026-05-20T08:00:00.000Z"),
+      });
+      queueDbResults(
+        [dueJob], // pending jobs
+        [],       // expired plan notes
+        [],       // stale plan notes
+        [],       // orphan pending_review
+        [],       // orphan in_progress
+        [],       // dequeued without exec
+        [],       // stuck executions (sweepStuckJobs)
+        [],       // stale running
+        [],       // stale exhausted
+      );
+
+      const { heartbeatApp } = await import("./heartbeat.js");
+      const response = await heartbeatApp.request("/api/cron/heartbeat", {
+        headers: { authorization: "Bearer test-secret" },
+      });
+
+      expect(response.status).toBe(200);
+      expect(executeJobMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "job-1" }),
+        "heartbeat",
+      );
+      const body = await response.json();
+      expect(body.dispatched).toBe(0);
+      expect(body.executed).toBe(1);
+    });
+
+    it("wall-clock budget guard skips dispatch and inline fallback once elapsed > 600s", async () => {
+      // First Date.now() call captures sweepStart; all subsequent calls
+      // return sweepStart + 700_000ms (well past the 600s budget).
+      const t0 = 1_000;
+      let callCount = 0;
+      vi.spyOn(Date, "now").mockImplementation(() =>
+        callCount++ === 0 ? t0 : t0 + 700_000,
+      );
+
+      const dueJob = baseJob({
+        status: "pending",
+        executeAt: new Date("2026-05-20T08:00:00.000Z"),
+      });
+      queueDbResults(
+        [dueJob], // pending jobs
+        [],       // expired plan notes
+        [],       // stale plan notes
+        [],       // orphan pending_review
+        [],       // orphan in_progress
+        [],       // dequeued without exec
+        [],       // stuck executions (sweepStuckJobs)
+        [],       // stale running
+        [],       // stale exhausted
+      );
+
+      const { heartbeatApp } = await import("./heartbeat.js");
+      const response = await heartbeatApp.request("/api/cron/heartbeat", {
+        headers: { authorization: "Bearer test-secret" },
+      });
+
+      expect(response.status).toBe(200);
+      expect(executeJobMock).not.toHaveBeenCalled();
+      const body = await response.json();
+      expect(body.deferred).toBe(1);
+      expect(body.dispatched).toBe(0);
+      expect(body.executed).toBe(0);
+    });
+
+    it("watchdog sweeps run and complete before the dispatch section; per-job errors are counted but do not abort the sweep", async () => {
+      // Default fetch stub returns 500 for execute-now → fallback fires.
+      // executeJobMock throws → failed++.
+      // Crucially: stale running recovery (section 5) runs BEFORE dispatch
+      // (section 8), so staleRunningRecovered must appear in the response
+      // even though the per-job dispatch/execution ultimately fails.
+      executeJobMock.mockRejectedValue(new Error("execution crashed"));
+
+      const dueJob = baseJob({
+        status: "pending",
+        executeAt: new Date("2026-05-20T08:00:00.000Z"),
+      });
+      queueDbResults(
+        [dueJob],  // pending jobs
+        [],        // expired plan notes
+        [],        // stale plan notes
+        [],        // orphan pending_review
+        [],        // orphan in_progress
+        [],        // dequeued without exec
+        [],        // stuck executions (sweepStuckJobs)
+        [{ id: "job-stale", name: "stale-job", workspaceId: "default" }], // stale running → recovered
+        [],        // stale exhausted
+        [],        // running execution cleanup (interruptedExecutions update)
+      );
+
+      const { heartbeatApp } = await import("./heartbeat.js");
+      const response = await heartbeatApp.request("/api/cron/heartbeat", {
+        headers: { authorization: "Bearer test-secret" },
+      });
+
+      // Per-job errors are caught; heartbeat must return 200 not 500
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // Watchdog ran before dispatch: staleRunningRecovered is reflected
+      expect(body.staleRunningRecovered).toBe(1);
+      // Dispatch failed → inline fallback threw → counted as failed
+      expect(body.failed).toBe(1);
+      expect(body.executed).toBe(0);
+    });
+  });
+
+  // ── /api/execute-now async tests ──────────────────────────────────────────
+
+  describe("/api/execute-now async execution", () => {
+    it("returns 202 immediately and runs executeJob in the background via waitUntil", async () => {
+      const waitUntilPromises: Array<Promise<unknown>> = [];
+      waitUntilMock.mockImplementation((p: Promise<unknown>) => {
+        waitUntilPromises.push(p);
+      });
+      executeJobMock.mockResolvedValue(true);
+
+      const pendingJob = baseJob({
+        status: "pending",
+        executeAt: new Date("2026-05-20T08:00:00.000Z"),
+      });
+      queueDbResults([pendingJob]);
+
+      const { heartbeatApp } = await import("./heartbeat.js");
+      const response = await heartbeatApp.request("/api/execute-now", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jobId: "job-1" }),
+      });
+
+      expect(response.status).toBe(202);
+      const body = await response.json();
+      expect(body.ok).toBe(true);
+      expect(body.message).toBe("Execution started");
+
+      // Resolve background work and verify executeJob was called
+      await Promise.all(waitUntilPromises);
+      expect(executeJobMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "job-1" }),
+        "dispatch",
+      );
+    });
+
+    it("passes a valid trigger field from the request body through to executeJob", async () => {
+      const waitUntilPromises: Array<Promise<unknown>> = [];
+      waitUntilMock.mockImplementation((p: Promise<unknown>) => {
+        waitUntilPromises.push(p);
+      });
+      executeJobMock.mockResolvedValue(true);
+
+      const pendingJob = baseJob({
+        status: "pending",
+        executeAt: new Date("2026-05-20T08:00:00.000Z"),
+      });
+      queueDbResults([pendingJob]);
+
+      const { heartbeatApp } = await import("./heartbeat.js");
+      await heartbeatApp.request("/api/execute-now", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jobId: "job-1", trigger: "recovery" }),
+      });
+
+      await Promise.all(waitUntilPromises);
+      expect(executeJobMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "job-1" }),
+        "recovery",
+      );
+    });
+
+    it("defaults trigger to dispatch for unknown/missing trigger values", async () => {
+      const waitUntilPromises: Array<Promise<unknown>> = [];
+      waitUntilMock.mockImplementation((p: Promise<unknown>) => {
+        waitUntilPromises.push(p);
+      });
+      executeJobMock.mockResolvedValue(true);
+
+      const pendingJob = baseJob({
+        status: "pending",
+        executeAt: new Date("2026-05-20T08:00:00.000Z"),
+      });
+      queueDbResults([pendingJob]);
+
+      const { heartbeatApp } = await import("./heartbeat.js");
+      await heartbeatApp.request("/api/execute-now", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jobId: "job-1", trigger: "invalid-trigger" }),
+      });
+
+      await Promise.all(waitUntilPromises);
+      expect(executeJobMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "job-1" }),
+        "dispatch",
+      );
+    });
   });
 
 });
