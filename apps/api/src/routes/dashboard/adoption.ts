@@ -370,11 +370,13 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
           ${ADOPTION_TIMEZONE}::text AS adoption_tz
       ),
       user_base AS (
+        -- Team comes from the linked person entity (#911 — replaces users.known_facts).
         SELECT
           u.slack_user_id,
           u.display_name,
-          COALESCE(NULLIF(u.known_facts->>'team', ''), 'Unassigned') AS team
+          COALESCE(NULLIF(e.metadata->>'team', ''), 'Unassigned') AS team
         FROM users u
+        LEFT JOIN entities e ON e.id = u.entity_id
         CROSS JOIN params p
         WHERE u.slack_user_id IS NOT NULL
           AND u.slack_user_id != p.aura_user_id
@@ -469,13 +471,14 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       SELECT
         a.user_id,
         u.display_name,
-        COALESCE(NULLIF(u.known_facts->>'team', ''), 'Unassigned') AS team,
+        COALESCE(NULLIF(e.metadata->>'team', ''), 'Unassigned') AS team,
         COUNT(*)::int AS messages_7d,
         COUNT(DISTINCT a.day)::int AS active_days_7d,
         MAX(a.day)::text AS last_seen
       FROM active_msgs a
       LEFT JOIN users u ON u.slack_user_id = a.user_id
-      GROUP BY a.user_id, u.display_name, COALESCE(NULLIF(u.known_facts->>'team', ''), 'Unassigned')
+      LEFT JOIN entities e ON e.id = u.entity_id
+      GROUP BY a.user_id, u.display_name, COALESCE(NULLIF(e.metadata->>'team', ''), 'Unassigned')
       ORDER BY messages_7d DESC, active_days_7d DESC, display_name
       LIMIT 10;
     `));
@@ -522,11 +525,12 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       SELECT
         abu.user_id,
         u.display_name,
-        COALESCE(NULLIF(u.known_facts->>'team', ''), 'Unassigned') AS team,
+        COALESCE(NULLIF(e.metadata->>'team', ''), 'Unassigned') AS team,
         abu.last_seen::text,
         abu.previous_messages
       FROM activity_by_user abu
       LEFT JOIN users u ON u.slack_user_id = abu.user_id
+      LEFT JOIN entities e ON e.id = u.entity_id
       WHERE abu.was_previous_mau AND NOT COALESCE(abu.is_mau, false)
       ORDER BY abu.previous_messages DESC, abu.last_seen DESC
       LIMIT 25;

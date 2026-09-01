@@ -116,6 +116,12 @@ export async function generateEntitySummary(
   // For person entities, include linked user profile data as context
   let profileContext = "";
   if (entity.type === "person") {
+    // NOTE (#911): users.known_facts is deprecated and frozen (no longer
+    // written), but it is INTENTIONALLY still read here during the soak
+    // period: summary regeneration overwrites entities.summary wholesale, so
+    // feeding the frozen facts into the prompt keeps the migrated content
+    // represented in regenerated summaries. The follow-up drop migration must
+    // remove this read together with the column.
     const linkedUsers = await db
       .select({
         displayName: users.displayName,

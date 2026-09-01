@@ -185,7 +185,6 @@ export { formatMemoriesForPrompt } from "../memory/format-for-prompt.js";
  */
 function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): string {
   const style = profile.communicationStyle;
-  const facts = profile.knownFacts;
   const parts: string[] = [];
 
   parts.push(`About the person you're talking to:`);
@@ -224,13 +223,9 @@ function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): 
     }
   }
 
-  if (facts) {
-    if (facts.role) parts.push(`Role: ${facts.role}`);
-    if (facts.team) parts.push(`Team: ${facts.team}`);
-    if (facts.personalDetails && facts.personalDetails.length > 0) {
-      parts.push(`Personal: ${facts.personalDetails.slice(-10).join("; ")}`);
-    }
-  }
+  // NOTE (#911): the users.known_facts blob is no longer injected here — the
+  // interlocutor's compiled profile arrives via the <entity_summaries> block
+  // (entities.summary), which is the single source of truth for human profiles.
 
   parts.push(`Interactions so far: ${profile.interactionCount}`);
 
