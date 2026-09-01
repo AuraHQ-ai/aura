@@ -358,7 +358,7 @@ export function createResourceTools(context?: ScheduleContext) {
               updatedAt: now,
             })
             .onConflictDoUpdate({
-              target: resources.url,
+              target: [resources.workspaceId, resources.url],
               set: {
                 parentUrl: nextParentUrl,
                 title: nextTitle,
