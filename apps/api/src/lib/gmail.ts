@@ -1107,3 +1107,143 @@ export async function readUserEmail(
 
   return getEmailWithClient(result.client, messageId);
 }
+
+// ── Archive ─────────────────────────────────────────────────────────────────
+
+export interface ArchiveThreadResult {
+  threadId: string;
+  status: "archived" | "failed" | "not_found";
+  error?: string;
+}
+
+/** Gmail's messages.batchModify accepts at most 1000 message IDs per call. */
+const BATCH_MODIFY_MAX_IDS = 1000;
+
+function gmailErrorStatus(error: any): number | undefined {
+  return error?.code ?? error?.response?.status ?? error?.status;
+}
+
+/**
+ * Archive Gmail threads by removing the INBOX label. Messages stay in
+ * All Mail — nothing is deleted.
+ *
+ * Resolves each thread's message IDs, then removes INBOX from all of them
+ * via a single messages.batchModify call. Because batchModify reports no
+ * per-message outcome, a batch failure triggers a per-thread threads.modify
+ * fallback so every thread gets an explicit archived/failed/not_found result.
+ *
+ * Exported separately from archiveThreads so tests can inject a mocked
+ * Gmail client.
+ */
+export async function archiveThreadsWithClient(
+  gmailClient: any,
+  threadIds: string[],
+): Promise<ArchiveThreadResult[]> {
+  const uniqueThreadIds = [...new Set(threadIds)];
+  const results = new Map<string, ArchiveThreadResult>();
+  const resolved: { threadId: string; messageIds: string[] }[] = [];
+
+  for (const threadId of uniqueThreadIds) {
+    try {
+      const res = await gmailClient.users.threads.get({
+        userId: "me",
+        id: threadId,
+        format: "minimal",
+      });
+      const messageIds = (res.data.messages || [])
+        .map((m: any) => m.id)
+        .filter(Boolean) as string[];
+      if (messageIds.length === 0) {
+        results.set(threadId, {
+          threadId,
+          status: "not_found",
+          error: "Thread exists but has no messages",
+        });
+      } else {
+        resolved.push({ threadId, messageIds });
+      }
+    } catch (error: any) {
+      const status = gmailErrorStatus(error);
+      if (status === 404) {
+        results.set(threadId, {
+          threadId,
+          status: "not_found",
+          error: "Thread not found in Gmail",
+        });
+      } else {
+        results.set(threadId, {
+          threadId,
+          status: "failed",
+          error: error?.message || String(error),
+        });
+      }
+    }
+  }
+
+  if (resolved.length > 0) {
+    const allMessageIds = resolved.flatMap((r) => r.messageIds);
+    try {
+      for (let i = 0; i < allMessageIds.length; i += BATCH_MODIFY_MAX_IDS) {
+        await gmailClient.users.messages.batchModify({
+          userId: "me",
+          requestBody: {
+            ids: allMessageIds.slice(i, i + BATCH_MODIFY_MAX_IDS),
+            removeLabelIds: ["INBOX"],
+          },
+        });
+      }
+      for (const r of resolved) {
+        results.set(r.threadId, { threadId: r.threadId, status: "archived" });
+      }
+    } catch (batchError: any) {
+      logger.warn("Gmail batchModify failed, falling back to per-thread modify", {
+        threads: resolved.length,
+        error: batchError?.message,
+      });
+      // Re-archiving an already-archived thread is a no-op, so the fallback
+      // is safe even when some batchModify chunks succeeded.
+      for (const r of resolved) {
+        try {
+          await gmailClient.users.threads.modify({
+            userId: "me",
+            id: r.threadId,
+            requestBody: { removeLabelIds: ["INBOX"] },
+          });
+          results.set(r.threadId, { threadId: r.threadId, status: "archived" });
+        } catch (error: any) {
+          results.set(r.threadId, {
+            threadId: r.threadId,
+            status: "failed",
+            error: error?.message || String(error),
+          });
+        }
+      }
+    }
+  }
+
+  return uniqueThreadIds.map((id) => results.get(id)!);
+}
+
+/**
+ * Archive Gmail threads in a specific user's mailbox (remove the INBOX label).
+ * Returns null if the user has not authorized Aura via OAuth.
+ */
+export async function archiveThreads(
+  userId: string,
+  threadIds: string[],
+): Promise<ArchiveThreadResult[] | null> {
+  const result = await getGmailClientForUser(userId);
+  if (!result) return null;
+
+  const results = await archiveThreadsWithClient(result.client, threadIds);
+
+  logger.info("Gmail threads archived", {
+    userId,
+    requested: threadIds.length,
+    archived: results.filter((r) => r.status === "archived").length,
+    failed: results.filter((r) => r.status === "failed").length,
+    notFound: results.filter((r) => r.status === "not_found").length,
+  });
+
+  return results;
+}

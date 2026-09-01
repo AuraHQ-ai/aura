@@ -3,9 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const userRows = new Map<string, Array<{ id: string; displayName: string; realName: string; username: string }>>();
 const selectQueues = new Map<string, unknown[][]>();
 const updateReturningQueue: unknown[][] = [];
+const updateSetCalls: Array<{ table: string | undefined; values: unknown }> = [];
+
+function emailsRawSetCalls() {
+  return updateSetCalls.filter((c) => c.table === "emails_raw");
+}
 const syncEmailsMock = vi.fn();
 const computeThreadStatesMock = vi.fn();
 const hasRoleMock = vi.fn();
+const archiveThreadsMock = vi.fn();
 
 const slackClient = {
   users: {
@@ -80,12 +86,18 @@ vi.mock("../db/client.js", () => ({
   db: {
     select: vi.fn(() => createSelectBuilder("select")),
     selectDistinct: vi.fn(() => createSelectBuilder("selectDistinct")),
-    update: vi.fn(() => ({
-      set: vi.fn(() => ({
-        where: vi.fn(() => ({
-          returning: vi.fn(() => updateReturningQueue.shift() ?? []),
-        })),
-      })),
+    update: vi.fn((table: unknown) => ({
+      set: vi.fn((values: unknown) => {
+        updateSetCalls.push({
+          table: (table as any)?.[Symbol.for("drizzle:Name")],
+          values,
+        });
+        return {
+          where: vi.fn(() => ({
+            returning: vi.fn(() => updateReturningQueue.shift() ?? []),
+          })),
+        };
+      }),
     })),
     insert: vi.fn(() => ({
       values: vi.fn(() => ({
@@ -97,6 +109,10 @@ vi.mock("../db/client.js", () => ({
 
 vi.mock("../lib/email-sync.js", () => ({
   syncEmails: syncEmailsMock,
+}));
+
+vi.mock("../lib/gmail.js", () => ({
+  archiveThreads: archiveThreadsMock,
 }));
 
 vi.mock("../lib/email-triage.js", async (importOriginal) => ({
@@ -123,6 +139,7 @@ describe("email sync tools", () => {
     userRows.clear();
     selectQueues.clear();
     updateReturningQueue.length = 0;
+    updateSetCalls.length = 0;
     userRows.set("users", [
       { id: "UJOAN", displayName: "Joan", realName: "Joan Rodriguez", username: "joan" },
     ]);
@@ -225,5 +242,141 @@ describe("email sync tools", () => {
     expect(result).toMatchObject({ ok: false });
     expect(result.error).toContain("own email pipeline");
     expect(syncEmailsMock).not.toHaveBeenCalled();
+  });
+
+  it("archives threads in Gmail and marks them resolved in the triage pipeline", async () => {
+    const { createEmailSyncTools } = await import("./email-sync.js");
+    const tools = createEmailSyncTools(slackClient as any, { userId: "UJOAN" });
+
+    archiveThreadsMock.mockResolvedValue([
+      { threadId: "thread-1", status: "archived" },
+      { threadId: "thread-2", status: "archived" },
+    ]);
+
+    const result = await (tools.archive_emails as any).execute({
+      user_name: "Joan",
+      gmail_thread_ids: ["thread-1", "thread-2"],
+      reason: "junk cleanup",
+    });
+
+    expect(archiveThreadsMock).toHaveBeenCalledWith("UJOAN", [
+      "thread-1",
+      "thread-2",
+    ]);
+    expect(result).toMatchObject({
+      ok: true,
+      archived: 2,
+      failed: 0,
+      not_found: 0,
+    });
+    expect(result.details).toEqual([
+      { gmail_thread_id: "thread-1", status: "archived" },
+      { gmail_thread_id: "thread-2", status: "archived" },
+    ]);
+    expect(emailsRawSetCalls()).toHaveLength(1);
+    expect(emailsRawSetCalls()[0]?.values).toMatchObject({
+      threadState: "resolved",
+      threadStateReason: "junk cleanup",
+    });
+  });
+
+  it("reports per-thread partial failures without claiming success for failed threads", async () => {
+    const { createEmailSyncTools } = await import("./email-sync.js");
+    const tools = createEmailSyncTools(slackClient as any, { userId: "UJOAN" });
+
+    archiveThreadsMock.mockResolvedValue([
+      { threadId: "thread-1", status: "archived" },
+      { threadId: "thread-2", status: "failed", error: "Backend Error" },
+      { threadId: "thread-3", status: "not_found", error: "Thread not found in Gmail" },
+    ]);
+
+    const result = await (tools.archive_emails as any).execute({
+      user_name: "Joan",
+      gmail_thread_ids: ["thread-1", "thread-2", "thread-3"],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      archived: 1,
+      failed: 1,
+      not_found: 1,
+    });
+    expect(result.details).toEqual([
+      { gmail_thread_id: "thread-1", status: "archived" },
+      { gmail_thread_id: "thread-2", status: "failed", error: "Backend Error" },
+      {
+        gmail_thread_id: "thread-3",
+        status: "not_found",
+        error: "Thread not found in Gmail",
+      },
+    ]);
+    // Only the archived thread gets its triage state synced
+    expect(emailsRawSetCalls()).toHaveLength(1);
+  });
+
+  it("returns ok:false when no threads were archived", async () => {
+    const { createEmailSyncTools } = await import("./email-sync.js");
+    const tools = createEmailSyncTools(slackClient as any, { userId: "UJOAN" });
+
+    archiveThreadsMock.mockResolvedValue([
+      { threadId: "thread-1", status: "failed", error: "Insufficient Permission" },
+    ]);
+
+    const result = await (tools.archive_emails as any).execute({
+      user_name: "Joan",
+      gmail_thread_ids: ["thread-1"],
+    });
+
+    expect(result).toMatchObject({ ok: false, archived: 0, failed: 1 });
+    expect(result.error).toContain("No threads were archived");
+    expect(emailsRawSetCalls()).toHaveLength(0);
+  });
+
+  it("blocks cross-user archiving for non-admin callers", async () => {
+    const { createEmailSyncTools } = await import("./email-sync.js");
+    const tools = createEmailSyncTools(slackClient as any, { userId: "UOTHER" });
+
+    const result = await (tools.archive_emails as any).execute({
+      user_name: "Joan",
+      gmail_thread_ids: ["thread-1"],
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toContain("own email pipeline");
+    expect(archiveThreadsMock).not.toHaveBeenCalled();
+  });
+
+  it("allows admins to archive another user's threads", async () => {
+    const { createEmailSyncTools } = await import("./email-sync.js");
+    const tools = createEmailSyncTools(slackClient as any, { userId: "UADMIN" });
+    hasRoleMock.mockResolvedValue(true);
+
+    archiveThreadsMock.mockResolvedValue([
+      { threadId: "thread-1", status: "archived" },
+    ]);
+
+    const result = await (tools.archive_emails as any).execute({
+      user_name: "Joan",
+      gmail_thread_ids: ["thread-1"],
+    });
+
+    expect(hasRoleMock).toHaveBeenCalledWith("UADMIN", "admin");
+    expect(archiveThreadsMock).toHaveBeenCalledWith("UJOAN", ["thread-1"]);
+    expect(result).toMatchObject({ ok: true, archived: 1 });
+  });
+
+  it("returns an OAuth error when the user has no Gmail access", async () => {
+    const { createEmailSyncTools } = await import("./email-sync.js");
+    const tools = createEmailSyncTools(slackClient as any, { userId: "UJOAN" });
+
+    archiveThreadsMock.mockResolvedValue(null);
+
+    const result = await (tools.archive_emails as any).execute({
+      user_name: "Joan",
+      gmail_thread_ids: ["thread-1"],
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toContain("authorize Aura via OAuth");
   });
 });
