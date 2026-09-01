@@ -123,6 +123,21 @@ Each integration degrades gracefully if unconfigured — missing keys disable fe
 
 ---
 
+## Post-deploy smoke check
+
+`GET /api/internal/smoke` performs one cheap, authenticated liveness call per external integration (Slack `auth.test`, GitHub `/rate_limit`, BigQuery dataset list, E2B sandbox list, AI Gateway credits, Gmail profile, Cursor agent list) with a 5s timeout each. It's gated by the same Bearer `CRON_SECRET` used for the cron endpoints:
+
+```bash
+curl -s -H "Authorization: Bearer $CRON_SECRET" \
+  https://aura-alpha-five.vercel.app/api/internal/smoke | jq
+```
+
+Returns HTTP 200 when nothing failed, 503 when at least one integration failed. Unconfigured integrations report `skipped` and don't fail the check. Output contains only per-integration `ok`/`failed`/`skipped`, latency, and a short reason code — never credential values or raw error text.
+
+Run it manually after a deploy, or wire it to a Vercel deploy webhook / alerting later (deliberately not part of the endpoint).
+
+---
+
 ## Memory benchmark
 
 The harness in `apps/api/bench/` makes memory changes falsifiable. It replays vendored LongMemEval (default) / LoCoMo corpora through Aura's real `extract → retrieve → answer` pipeline on a **production-faithful timeline** — per-assistant-reply extraction runs as a producer that advances a global watermark, and each question is scored the moment the watermark passes its timestamp, retrieving **bi-temporally as-of that instant** (so questions never see the future). It scores per category with both deterministic retrieval recall@15 and LLM-judged QA accuracy, and persists every run to `bench_runs` so deltas are honest.

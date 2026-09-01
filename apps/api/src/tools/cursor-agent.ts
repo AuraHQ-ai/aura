@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -106,7 +107,11 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             .replace(/[^a-z0-9]+/g, "-")
             .slice(0, 40)
             .replace(/-$/, "");
-          const branchName = `${branch_prefix}/${slug}`;
+          // Unique suffix so repeat dispatches of similar tasks never collide
+          // on the same auto-derived branch (see the Jul 6 incident in #1190:
+          // three agents pushed to one branch and reverted each other).
+          const uniqueSuffix = crypto.randomBytes(3).toString("hex");
+          const branchName = `${branch_prefix}/${slug}-${uniqueSuffix}`;
 
           const keyFilesSection =
             key_files && key_files.length > 0

@@ -34,6 +34,7 @@
     "@ai-sdk/provider": "^4.0.2",
     "@ai-sdk/provider-utils": "^5.0.5",
     "@aura/db": "workspace:*",
+    "@cursor/sdk": "1.0.30",
     "@elevenlabs/elevenlabs-js": "^2.36.0",
     "@google-cloud/bigquery": "^8.1.1",
     "@googleapis/calendar": "^14.2.0",

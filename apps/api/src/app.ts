@@ -9,6 +9,7 @@ import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { createSandboxCommandWebhookApp } from "./webhook/sandbox-command.js";
 import { createGitHubWebhookApp } from "./webhook/github.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
+import { internalApp } from "./routes/internal.js";
 import { runPipeline } from "./pipeline/index.js";
 import {
   publishHomeTab,
@@ -169,6 +170,9 @@ app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);
 
 // Mount dashboard API (all /api/dashboard/* routes with shared auth middleware)
 app.route("/api/dashboard", dashboardApp);
+
+// Mount internal operational endpoints (/api/internal/*, CRON_SECRET-gated)
+app.route("/", internalApp);
 
 // ── Slack Signature Verification ────────────────────────────────────────────
 
